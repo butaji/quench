@@ -7,7 +7,7 @@ const GET_TRAP_ARGUMENTS: usize = 3;
 /// What a read of `atom` of the proxy `object` calls where the trap's call is the whole
 /// read: the `get` trap, a plain data property of an ordinary handler up its chain (so
 /// finding it runs no guest code), the handler it is called on, and the values it is called
-/// with. The target's shape leaves the key unconstrained (`Vm::shape_leaves_key_unconstrained`),
+/// with. The target's shape leaves the key unconstrained (`Vm::shape_leaves_atom_unconstrained`),
 /// so no invariant checks the trap's result. `None` for any other read: no proxy, a revoked
 /// one, a private name, no trap, or a target that may constrain the key.
 fn get_trap_call<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::Atom) -> Option<(Value, Value, [Value; GET_TRAP_ARGUMENTS])> {
@@ -16,8 +16,7 @@ fn get_trap_call<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::
         return None;
     }
     let trap = vm.plain_property_lookup(handler, crate::vm::PropertyKey::string(vm.runtime_atoms.get))??;
-    let key = vm.atom_string(atom);
-    vm.shape_leaves_key_unconstrained(target, key).then_some((trap, handler, [target, key, object]))
+    vm.shape_leaves_atom_unconstrained(target, atom).then_some((trap, handler, [target, vm.atom_string(atom), object]))
 }
 
 /// A lane read at the record `ip` of `read`'s base and name that no cached getter answers:

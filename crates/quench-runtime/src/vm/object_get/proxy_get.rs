@@ -113,17 +113,23 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    /// Whether an ordinary `target`'s shape shows that it holds no own property `key`, or holds
-    /// it configurable: then the target constrains no trap result for it, which a descriptor
-    /// would show at more cost. `false` where the shape does not answer (an index key, an
-    /// arguments object, an exotic or dictionary object, a symbol key).
+    /// Whether `target`'s shape shows that it holds no own property `key`, or holds it
+    /// configurable: then the target constrains no trap result for it, which a descriptor
+    /// would show at more cost. `false` where the shape does not answer (a symbol key, see
+    /// `shape_leaves_atom_unconstrained`).
     pub(in crate::vm) fn shape_leaves_key_unconstrained(&mut self, target: Value, key: Value) -> bool {
-        let Some(atom) = self.string_key_atom(key) else {
-            return false;
-        };
-        if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
-            || self.heap.ordinary_object(target).is_none_or(|data| data.is_arguments_object())
-        {
+        match self.string_key_atom(key) {
+            Some(atom) => self.shape_leaves_atom_unconstrained(target, atom),
+            None => false,
+        }
+    }
+
+    /// `shape_leaves_key_unconstrained` of the string key `atom`, for a target whose shape
+    /// holds every own name: an ordinary object, an array (whose elements and `length` the
+    /// shape lookup excludes) or a collection. `false` for an index key, an arguments
+    /// object, a dictionary-shaped target or any other exotic one.
+    pub(in crate::vm) fn shape_leaves_atom_unconstrained(&self, target: Value, atom: Atom) -> bool {
+        if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) || !self.shape_names_own_keys(target) {
             return false;
         }
         let Some(data) = self.shape_property_lookup(target, atom) else {
@@ -133,6 +139,21 @@ impl<H: Host> Vm<H> {
         match self.shape_slot(shape, atom) {
             None => true,
             Some(slot) => self.shape_slot_attributes(shape, slot).is_some_and(|attributes| attributes.configurable),
+        }
+    }
+
+    /// Whether `target`'s shape holds each own name it has beyond the virtual ones
+    /// `shape_property_lookup` excludes and the indices it leaves to the caller.
+    fn shape_names_own_keys(&self, target: Value) -> bool {
+        match self.heap.ordinary_object(target) {
+            Some(data) => !data.is_arguments_object(),
+            None => {
+                self.heap.array(target).is_some()
+                    || matches!(
+                        self.heap.get(target),
+                        Some(Cell::Map { .. } | Cell::Set { .. } | Cell::WeakMap { .. } | Cell::WeakSet { .. })
+                    )
+            }
         }
     }
 }
