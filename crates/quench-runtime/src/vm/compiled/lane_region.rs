@@ -1644,7 +1644,9 @@ pub(super) fn lower(
     lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], observed);
     lowering.intrinsics = native_calls::intrinsic_calls(unit, global_reads, |pc| direct.contains_key(&pc));
     let loops = local_loops(unit, &program.constants, entry_pc, &lowering.intrinsics);
-    lowering.counted = loops.iter().filter_map(|&(header, back)| counted_loops::counted_loop(&instructions, &program.constants, header, back)).collect();
+    // A loop whose code left at its header (its entry check missed: an array that grows) runs its guards each iteration.
+    lowering.counted = loops.iter().filter(|(header, _)| !generic.contains(header))
+        .filter_map(|&(header, back)| counted_loops::counted_loop(&instructions, &program.constants, header, back)).collect();
     // One entry query of the call depth replaces each binding's helper with its cached
     // target probe (`cached_call_target`). A completed call leaves the depth it found.
     if !numeric && unit.frames.iter().any(|frame| frame.target.callee == CalleeBinding::Function) {

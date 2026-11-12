@@ -238,3 +238,46 @@ mod tests {
         assert_eq!(others(elements), u64::from(crate::heap::OTHERS_UNKNOWN), "an unknown count stays unknown");
     }
 }
+
+/// The bias that orders int32 as unsigned: `x + INT32_BIAS` (mod 2^32) is monotone in `x`.
+const INT32_BIAS: u64 = 1 << (u32::BITS - 1);
+
+/// The int32 held in the low 32 bits of `word`, as a signed 64-bit word.
+fn int32<S: Stage>(stage: &mut S, word: S::Word) -> S::Word {
+    let unsigned = stage.uextend32(word);
+    let biased = stage.add_imm(unsigned, INT32_BIAS);
+    let biased = stage.and_imm(biased, u64::from(u32::MAX));
+    stage.add_imm(biased, INT32_BIAS.wrapping_neg())
+}
+
+/// One element access of a counted loop: the int32 its index register holds on entry, the steps
+/// of that register per iteration and before the access, and the array backing's length.
+pub(crate) struct CountedAccess<W> { pub(crate) start: W, pub(crate) steps: u32, pub(crate) before: u32, pub(crate) length: W }
+
+/// A counted loop's entry check (`lane_region::counted_loops`). With `trips` iterations (the
+/// test `driver < bound` or `driver <= bound`, the driver stepping once per iteration), an access
+/// reads `start + steps * k + before` on iteration `k < trips`. Every such index is below its
+/// array's `length`, and the first is not negative, or the loop runs no iteration: else `miss`.
+/// All arithmetic is 64-bit, where int32 operands and a `u32` trip count cannot wrap.
+pub(crate) fn counted_in_bounds<S: Stage>(stage: &mut S, driver: S::Word, bound: S::Word, inclusive: bool,
+    accesses: &[CountedAccess<S::Word>], miss: S::Miss) -> Option<()> {
+    let (driver, bound) = (int32(stage, driver), int32(stage, bound));
+    let span = stage.sub(bound, driver);
+    // The last iteration's number, `trips - 1`; negative when the loop runs none.
+    let last = stage.add_imm(span, if inclusive { 0 } else { u64::MAX });
+    let empty = stage.ugt_imm(last, i64::MAX as u64);
+    let mut admitted: Option<S::Cond> = None;
+    for access in accesses {
+        let start = int32(stage, access.start);
+        let negative = stage.ugt_imm(start, i64::from(i32::MAX) as u64);
+        let natural = stage.not(negative);
+        let travelled = stage.mul_imm(last, access.steps);
+        let largest = stage.add(start, travelled);
+        let largest = stage.add_imm(largest, access.before);
+        let below = stage.ult(largest, access.length);
+        let near = stage.any(empty, below);
+        let ok = stage.pick(natural, near, empty);
+        admitted = Some(match admitted { Some(all) => stage.pick(all, ok, all), None => ok });
+    }
+    match admitted { Some(all) => stage.guard(all, miss), None => Some(()) }
+}

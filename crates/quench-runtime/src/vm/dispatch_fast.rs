@@ -8402,7 +8402,9 @@ fn lane_loop_run<H: Host>(
     match outcome {
         // An entry guard missed: registers are untouched, so the backward jump runs in
         // the interpreter.
-        LoopOutcome::NotEntered => LoopContinuation::Jump,
+        // A miss at the header counts as a leave there: the next compilation drops a counted loop's
+        // entry check (`counted_loops`), which an array that grows misses at every entry.
+        LoopOutcome::NotEntered => { site.tier.borrow_mut().left_at(site.header, false); LoopContinuation::Jump }
         // A run pays for its entry with the iterations it completed, wherever it leaves.
         LoopOutcome::Resume(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Resume(pc) }
         LoopOutcome::Exit(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Exit(pc) }

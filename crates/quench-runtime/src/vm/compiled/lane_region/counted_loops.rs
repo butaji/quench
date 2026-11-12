@@ -9,6 +9,7 @@
 //! `r0 + steps * k + before` on iteration `k`.
 
 use super::*;
+use crate::staged::Stage;
 use crate::vm::operations::NumberRelation;
 
 /// One element access whose index register has a closed form in the iteration number.
@@ -135,35 +136,25 @@ fn writes_any(body: &[WideInstruction], register: Register) -> bool {
 }
 
 impl Lowering<'_, '_> {
-    /// The loop's trip count from its entry values, in 64 bits: the driver's int32 and the
-    /// bound's (a constant, a register the loop never writes, or the loop's hoisted int32
-    /// capture read), which the loop's own test compares each iteration.
-    fn counted_trips(&mut self, state: &mut State, counted: usize, exit: ir::Block) -> Option<ir::Value> {
-        let (driver, bound, bound_read, inclusive) = {
-            let counted = &self.counted[counted];
-            (counted.driver, counted.bound, counted.bound_read, counted.inclusive)
-        };
-        let start = self.int(state, driver, exit);
-        let limit = match (bound.kind()?, bound_read) {
+    /// The loop's bound on its entry edge: an int32 constant, a register the loop never writes, or
+    /// the loop's hoisted int32 capture read, which the loop's own test compares each iteration.
+    fn counted_bound(&mut self, state: &mut State, counted: usize, exit: ir::Block) -> Option<ir::Value> {
+        let (bound, bound_read) = (self.counted[counted].bound, self.counted[counted].bound_read);
+        Some(match (bound.kind()?, bound_read) {
             (OperandKind::Constant, _) => {
                 let value = self.program.constants.get(usize::from(bound.payload())).and_then(super::super::facts::immediate)?;
-                self.ins().iconst(types::I32, i64::from(value.as_int()?))
+                Emit { builder: &mut self.builder, property_values: None }.constant(u64::from(value.as_int()? as u32))
             }
             (_, Some(read)) => {
                 let read = self.hoisted.get(&read).copied().filter(|read| read.representation == Representation::Int32)?;
                 self.builder.use_var(read.value)
             }
             (_, None) => self.int(state, bound.payload(), exit),
-        };
-        let (start, limit) = (self.ins().sextend(types::I64, start), self.ins().sextend(types::I64, limit));
-        let span = self.ins().isub(limit, start);
-        Some(if inclusive { self.ins().iadd_imm_s(span, 1) } else { span })
+        })
     }
 
-    /// A counted loop's entry check: every counted access's largest index on the last iteration,
-    /// `r0 + steps * (trips - 1) + before`, is below its array's hoisted length, and its smallest
-    /// is not negative (`r0 >= 0`); a loop that runs no iteration passes. A miss leaves at the
-    /// loop header, before any iteration, so the accesses then need no bounds guard.
+    /// A counted loop's entry check (`staged::elements::counted_in_bounds`): a miss leaves at
+    /// the loop header, before any iteration, so the accesses it proves need no bounds guard.
     pub(super) fn counted_entry(&mut self, state: &mut State, header: usize) {
         let Some(index) = self.counted.iter().position(|counted| counted.header == header) else { return };
         let uses: Vec<(IndexUse, LoopArray)> = self.counted[index].uses.iter().filter_map(|used| {
@@ -172,25 +163,20 @@ impl Lowering<'_, '_> {
         }).collect();
         if uses.is_empty() { return; }
         let exit = self.guard_exit(state, header as u32);
-        let Some(trips) = self.counted_trips(state, index, exit) else { return };
-        let empty = self.ins().icmp_imm_s(IntCC::SignedLessThanOrEqual, trips, 0);
-        let last = self.ins().iadd_imm_s(trips, -1);
-        let mut admitted = self.ins().iconst(types::I8, 1);
-        for (used, array) in &uses {
+        let Some(bound) = self.counted_bound(state, index, exit) else { return };
+        let driver = self.int(state, self.counted[index].driver, exit);
+        let accesses: Vec<_> = uses.iter().map(|(used, array)| {
             let start = self.int(state, used.register, exit);
-            let start = self.ins().sextend(types::I64, start);
             let (_, length) = self.hoisted_view(*array);
-            let length = self.ins().uextend(types::I64, length);
-            let travelled = self.ins().imul_imm_s(last, i64::from(used.steps));
-            let largest = self.ins().iadd(start, travelled);
-            let largest = self.ins().iadd_imm_s(largest, i64::from(used.before));
-            let below = self.ins().icmp(IntCC::SignedLessThan, largest, length);
-            let natural = self.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, start, 0);
-            let ok = self.ins().band(below, natural);
-            let ok = self.ins().bor(ok, empty);
-            admitted = self.ins().band(admitted, ok);
-        }
-        emit_js_guard(&mut self.builder, admitted, exit);
+            (used.steps, used.before, start, length)
+        }).collect();
+        let mut stage = Emit { builder: &mut self.builder, property_values: None };
+        let accesses: Vec<_> = accesses.into_iter().map(|(steps, before, start, length)| {
+            let length = stage.uextend32(length);
+            crate::staged::elements::CountedAccess { start, steps, before, length }
+        }).collect();
+        crate::staged::elements::counted_in_bounds(&mut stage, driver, bound, self.counted[index].inclusive, &accesses, exit)
+            .expect("the emit stage continues past its guards");
         self.counted_proven.extend(uses.iter().map(|(used, _)| used.pc));
     }
 }
