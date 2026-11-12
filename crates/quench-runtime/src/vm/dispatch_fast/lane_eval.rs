@@ -89,7 +89,9 @@ fn direct_eval_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip,
     // SAFETY: as `promote_window`.
     let previous_this = (!receiver.is_undefined()).then(|| unsafe { (*record).replace_this(receiver) });
     vm.eval_callers.push(EvalCaller { frames: vm.frames.len(), record });
-    let result = vm.nested_lane_run(|vm| vm.call_value(code, callee, receiver, args));
+    // SAFETY: the running lane's context.
+    let innermost = unsafe { [(*cx).this, (*cx).env] };
+    let result = vm.nested_lane_run(innermost, |vm| vm.call_value(code, callee, receiver, args));
     vm.eval_callers.pop();
     (vm.direct_eval, vm.parameter_eval) = previous;
     // SAFETY: as above; the eval's stores to the locals went through the record.

@@ -25,6 +25,13 @@ pub(super) struct LaneArrayStep {
     pub(super) entry: PreparedEntry,
 }
 
+impl LaneArrayStep {
+    /// The values the step keeps alive: its iteration's and the entry's environment and receiver.
+    pub(super) fn roots(&self) -> impl Iterator<Item = Value> {
+        self.iteration.values(self.element).into_iter().chain([self.entry.env, self.entry.this])
+    }
+}
+
 /// An array callback method's callback and `thisArg` among the values it was passed; a
 /// reducer's second value is its initial accumulator, and its callback's `thisArg` is
 /// `undefined`.

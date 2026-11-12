@@ -19,7 +19,8 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn run_job(&mut self, code: &ResidualProgram, job: JobRoot, resume: JobResume) -> JobEnd {
         let nested = !self.lane_stack.activations.is_empty() || self.lane_deferred.is_some();
         let admitted = if nested {
-            self.nested_lane_run(|vm| vm.run_lane_job(code, job, resume))
+            let innermost = self.innermost_lane_state();
+            self.nested_lane_run(innermost, |vm| vm.run_lane_job(code, job, resume))
         } else {
             self.run_lane_job(code, job, resume)
         };

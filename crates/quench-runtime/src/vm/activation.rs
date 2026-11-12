@@ -5,7 +5,7 @@ mod frame_record;
 mod generator_record;
 pub(crate) use frame_record::FrameRecord;
 #[cfg(test)]
-pub(in crate::vm) use frame_record::frames_made;
+pub(in crate::vm) use frame_record::{frames_made, note_frame_made};
 pub(crate) use generator_record::{GeneratorRecord, GeneratorState};
 
 /// The only state that crosses an activation boundary. The value is kept as a

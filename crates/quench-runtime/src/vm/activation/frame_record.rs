@@ -58,14 +58,22 @@ pub(crate) struct FrameRecord {
 
 #[cfg(test)]
 thread_local! {
-    /// The frames `into_frame` made on this thread: a lane resume makes none.
+    /// The frames made on this thread from a suspension or a lane activation (`note_frame_made`):
+    /// a lane resume or run that stays in the lane makes none.
     static FRAMES_MADE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// How many `Box<Frame>`s resuming made on this thread (`FrameRecord::into_frame`).
+/// How many frames resuming (`FrameRecord::into_frame`) or materializing a lane activation
+/// (`Vm::push_script_frame_with_registers`) made on this thread.
 #[cfg(test)]
 pub(in crate::vm) fn frames_made() -> usize {
     FRAMES_MADE.get()
+}
+
+/// Counts a frame made from a suspension or a lane activation.
+#[cfg(test)]
+pub(in crate::vm) fn note_frame_made() {
+    FRAMES_MADE.set(FRAMES_MADE.get() + 1);
 }
 
 impl FrameRecord {
@@ -239,7 +247,7 @@ impl FrameRecord {
     /// every register holds a value, and the state a run derives for itself starts anew.
     pub(in crate::vm) fn into_frame(self: Box<Self>, with_base: usize) -> Box<Frame> {
         #[cfg(test)]
-        FRAMES_MADE.set(FRAMES_MADE.get() + 1);
+        note_frame_made();
         let this = self.this();
         let Self {
             prefix: _, context, reflected_parameters, original_arguments, program, function, pc, env,
@@ -265,7 +273,7 @@ impl FrameRecord {
     /// Its edges, appended to `out`. Locals and registers contribute only their heap values,
     /// and registers only the live ones where the suspension knows them (`live_registers`):
     /// each other one would cost the mark a push and a pop to find it names no cell.
-    pub(super) fn extend_roots(&self, out: &mut Vec<Value>) {
+    pub(in crate::vm) fn extend_roots(&self, out: &mut Vec<Value>) {
         out.extend(self.context.callee());
         out.extend_from_slice(&self.original_arguments);
         out.extend_from_slice(&self.with_objects);

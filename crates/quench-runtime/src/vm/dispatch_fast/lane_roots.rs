@@ -83,22 +83,57 @@ pub(in crate::vm) enum JobEnd {
     Frames(Result<FrameOutcome, JsError>),
 }
 
+/// A lane stack a nested run parked (`Vm::nested_lane_run`) with the receiver and environment of
+/// its innermost activation, which the lane's context held.
+pub(in crate::vm) struct ParkedLane {
+    pub(in crate::vm) stack: LaneStack,
+    innermost: [Value; 2],
+}
+
+impl ParkedLane {
+    /// Appends to `out` every value the parked run holds.
+    pub(in crate::vm) fn extend_roots(&self, out: &mut Vec<Value>) {
+        self.stack.extend_roots(out);
+        out.extend(self.innermost);
+    }
+}
+
 impl<H: Host> Vm<H> {
+    /// The receiver and environment of the innermost activation of the live lane, which its
+    /// context holds: the context of the native call it runs beside (`lane_deferred`) or of the
+    /// native whose callbacks it runs (`lane_native`). Both `undefined` where no native
+    /// does, a direct eval's record then holding them (`lane_eval`).
+    pub(in crate::vm) fn innermost_lane_state(&self) -> [Value; 2] {
+        let cx = self.lane_deferred.map(|call| call.cx).or(self.lane_native.map(|call| call.cx));
+        // SAFETY: a native call's lane runs, so its context lives.
+        cx.map_or([Value::UNDEFINED; 2], |cx| unsafe {
+            let cx = cx.cast::<LaneContext<H>>();
+            [(*cx).this, (*cx).env]
+        })
+    }
+
     /// Runs `run`, which starts lane runs, above the activations of the run that is live, which
     /// it must neither see nor disturb: that run's lane stack parks on the root stack
-    /// (`Vm::lane_roots`) with its deferred native call and the native it called, while `run`
-    /// starts over a fresh one, so every run's materialization takes its own activations alone.
-    /// Collections are held off meanwhile, as no collection traces the parked windows. A job
-    /// run (`run_job`) and the code of a direct eval (`lane_eval`) start nested runs.
-    pub(in crate::vm) fn nested_lane_run<T>(&mut self, run: impl FnOnce(&mut Self) -> T) -> T {
-        let parked = std::mem::take(&mut self.lane_stack);
-        self.lane_roots.push(parked);
+    /// (`Vm::lane_roots`) with the `innermost` receiver and environment of its context, its
+    /// deferred native call and the native it called, while `run` starts over a fresh one, so
+    /// every run's materialization takes its own activations alone. A collection `run` makes
+    /// traces the parked stacks as the live one (`LaneStack::extend_roots`), except one whose
+    /// Wasm payload no walk reads (`traces_every_window`), which holds collections off. The
+    /// parked run's call targets name the objects of the generation it left, which a collection
+    /// retires (`enter_generation`). A job run (`run_job`) and the code of a direct eval
+    /// (`lane_eval`) start nested runs.
+    pub(in crate::vm) fn nested_lane_run<T>(&mut self, innermost: [Value; 2], run: impl FnOnce(&mut Self) -> T) -> T {
+        let stack = std::mem::take(&mut self.lane_stack);
+        let held = (!stack.traces_every_window()).then(|| self.heap.hold_collection());
+        self.lane_roots.push(ParkedLane { stack, innermost });
         let (deferred, native) = (self.lane_deferred.take(), self.lane_native.take());
-        let held = self.heap.hold_collection();
         let result = run(self);
-        self.heap.release_collection(held);
+        if let Some(held) = held {
+            self.heap.release_collection(held);
+        }
         (self.lane_deferred, self.lane_native) = (deferred, native);
-        self.lane_stack = self.lane_roots.pop().expect("the lane stack this run parked");
+        self.lane_stack = self.lane_roots.pop().expect("the lane stack this run parked").stack;
+        self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
         result
     }
 

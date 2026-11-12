@@ -2070,7 +2070,7 @@ impl Heap {
         self.allocated >= self.collect_at
     }
     /// Holds collections off: nothing is due until `release_collection` gives back the threshold
-    /// this returns. For a run that must not collect, as lane windows no collection traces are parked.
+    /// this returns. For a run that must not collect, as a parked lane stack holds raw Wasm payload no collection traces (`LaneStack::traces_every_window`).
     pub(crate) fn hold_collection(&mut self) -> usize {
         std::mem::replace(&mut self.collect_at, usize::MAX)
     }

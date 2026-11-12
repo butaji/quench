@@ -1991,7 +1991,7 @@ pub(crate) struct Vm<H> {
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
     /// The lane stacks of the runs a nested lane run parked, outermost first (`Vm::nested_lane_run`).
-    lane_roots: Vec<dispatch_fast::LaneStack>,
+    lane_roots: Vec<dispatch_fast::ParkedLane>,
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
     native_execution_rejections: u64,

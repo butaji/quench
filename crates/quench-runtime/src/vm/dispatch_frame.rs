@@ -704,6 +704,8 @@ impl<H: Host> Vm<H> {
         passed: &[Value],
         registers: &[Value],
     ) {
+        #[cfg(test)]
+        super::activation::note_frame_made();
         // The receiver is already coerced and the body binds no `arguments` object, so
         // activation cannot fail; the registers below replace what it placed in them.
         self.activate_user_frame(p, id, env, this, passed, context)
