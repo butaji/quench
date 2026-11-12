@@ -54,3 +54,13 @@ impl ShadowFrame {
     pub(in crate::vm) const EMPTY: Self = Self { callee: std::ptr::null(), this: 0, body: 0, window: 0 };
 }
 
+
+const _: () = {
+    use crate::staged::frame;
+    assert!(std::mem::offset_of!(ShadowFrame, callee) == frame::CALLEE);
+    assert!(std::mem::offset_of!(ShadowFrame, this) == frame::THIS);
+    assert!(std::mem::offset_of!(ShadowFrame, body) == frame::BODY);
+    assert!(std::mem::offset_of!(ShadowFrame, window) == frame::WINDOW);
+    assert!(std::mem::size_of::<ShadowFrame>() == frame::PREFIX_BYTES);
+    assert!(std::mem::offset_of!(crate::vm::dispatch_fast::Activation, native) == 0);
+};

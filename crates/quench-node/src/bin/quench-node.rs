@@ -95,8 +95,9 @@ fn main() -> std::process::ExitCode {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     // `compile` is the builder's own command; `--build-aot` is the same closed-world build
     // reached through the Node-compatible command line.
-    let build_aot = arguments.first().is_some_and(|argument| argument == "compile" || argument == "--build-aot");
-    let result = if build_aot {
+    let result = if let Some(result) = quench_node::qimg::route(&arguments) {
+        result
+    } else if arguments.first().is_some_and(|argument| argument == "--build-aot") {
         #[cfg(feature = "aot")]
         { quench_node::aot::cli::run(arguments.into_iter().skip(1).collect()) }
         #[cfg(not(feature = "aot"))]
