@@ -94,6 +94,10 @@ impl<H: Host> Vm<H> {
                 self.profile.index_get(ARRAY_INDEX_GET_DENSE);
                 return Ok(value);
             }
+            if let Some((target, handler)) = self.proxy_parts(object) {
+                let key = self.to_property_key(p, key)?;
+                return self.proxy_get_key_value(p, target, handler, object, key);
+            }
             if let Some(value) = self.absent_array_element(object, key) {
                 return Ok(value);
             }
@@ -153,14 +157,10 @@ impl<H: Host> Vm<H> {
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
             return self.get_symbol_property_with_receiver(p, object, key, object);
         }
-
-        let atom = match self.string_key_atom(key) {
-            Some(atom) => atom,
-            None => {
-                let key = self.coerce_js_string(p, key)?;
-                self.intern_js_atom(&key)
-            }
-        };
+        if let Some((target, handler)) = self.proxy_parts(object) {
+            return self.proxy_get_key_value(p, target, handler, object, key);
+        }
+        let atom = self.key_atom(p, key)?;
         self.get_property(p, object, atom)
     }
 

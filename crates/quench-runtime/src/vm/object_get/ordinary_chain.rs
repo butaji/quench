@@ -59,6 +59,14 @@ impl<H: Host> Vm<H> {
     /// its non-index names. `None` for any other target or key, and wherever the walk meets an
     /// exotic link.
     pub(in crate::vm) fn reflect_chain_read(&self, target: Value, key: Value) -> Option<ChainRead> {
+        if let Some(array) = self.heap.array(target) {
+            let index = super::super::object_static::array_index(self.heap.string(key)?.host_string());
+            if let Some(index) = index {
+                // A present dense element is an own data property; any other index is the general read's.
+                let element = array.elements().get(index as usize).copied().filter(|element| !element.is_deleted());
+                return element.map(ChainRead::Value);
+            }
+        }
         let atom = self.lookup_string_atom(key)?;
         if self.is_private_name(atom) {
             return None;

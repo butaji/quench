@@ -43,6 +43,31 @@ impl<H: Host> Vm<H> {
         property: PropertyKey,
     ) -> Result<Value, JsError> {
         let key = self.proxy_key_value(p, property)?;
+        self.proxy_get_keyed(p, target, handler, receiver, key, Some(property))
+    }
+
+    /// `proxy_get` of a key that is already a string or symbol value, as a computed read
+    /// makes it: its atom, which only a handler without a `get` trap needs, is found then.
+    pub(in crate::vm) fn proxy_get_key_value(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        handler: Value,
+        receiver: Value,
+        key: Value,
+    ) -> Result<Value, JsError> {
+        self.proxy_get_keyed(p, target, handler, receiver, key, None)
+    }
+
+    fn proxy_get_keyed(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        handler: Value,
+        receiver: Value,
+        key: Value,
+        property: Option<PropertyKey>,
+    ) -> Result<Value, JsError> {
         if handler.is_null() {
             return Err(self.type_error(p, "cannot access a revoked proxy".into()));
         }
@@ -60,15 +85,31 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// The atom of the string key `key`.
+    pub(in crate::vm) fn key_atom(&mut self, p: &ResidualProgram, key: Value) -> Result<Atom, JsError> {
+        match self.string_key_atom(key) {
+            Some(atom) => Ok(atom),
+            None => {
+                let name = self.coerce_js_string(p, key)?;
+                Ok(self.intern_js_atom(&name))
+            }
+        }
+    }
+
     /// `[[Get]]` of the target, for a handler without a `get` trap.
     fn proxy_get_target(
         &mut self,
         p: &ResidualProgram,
         target: Value,
         receiver: Value,
-        property: PropertyKey,
+        property: Option<PropertyKey>,
         key: Value,
     ) -> Result<Value, JsError> {
+        let property = match property {
+            Some(property) => property,
+            None if matches!(self.heap.get(key), Some(Cell::Symbol(_))) => PropertyKey::symbol(key),
+            None => PropertyKey::string(self.key_atom(p, key)?),
+        };
         match property {
             PropertyKey::String(atom) => self.get_property_with_receiver(p, target, atom, receiver),
             PropertyKey::Symbol(_) => self.get_symbol_property_with_receiver(p, target, key, receiver),
@@ -118,10 +159,21 @@ impl<H: Host> Vm<H> {
     /// would show at more cost. `false` where the shape does not answer (a symbol key, see
     /// `shape_leaves_atom_unconstrained`).
     pub(in crate::vm) fn shape_leaves_key_unconstrained(&mut self, target: Value, key: Value) -> bool {
+        if self.array_leaves_index_unconstrained(target, key) {
+            return true;
+        }
         match self.string_key_atom(key) {
             Some(atom) => self.shape_leaves_atom_unconstrained(target, atom),
             None => false,
         }
+    }
+
+    /// Whether `key` is a string naming an index of an array whose elements all have default
+    /// attributes: an extensible array no descriptor was recorded an index for.
+    fn array_leaves_index_unconstrained(&self, target: Value, key: Value) -> bool {
+        self.heap.array(target).is_some()
+            && self.object_data(target).is_some_and(|data| data.is_extensible() && !data.has_indexed_descriptors())
+            && self.heap.string(key).is_some_and(|text| super::super::object_static::array_index(text.host_string()).is_some())
     }
 
     /// `shape_leaves_key_unconstrained` of the string key `atom`, for a target whose shape
