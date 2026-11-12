@@ -122,6 +122,16 @@ fn shadow_net_ns(length: u64, entries: u32, ir: usize, entering_region: bool, lo
 /// The part per thousand of a compile's time that waits on the running program: the prior's
 /// where the process has a second core for the code generator's thread, all of it where it
 /// has one (the compile then takes the program's own time).
+/// The completed runs after which an Optimized recompile of a Quick body repays: the extra
+/// compile (per IR instruction, at its share of wall) over the run time it saves per completion
+/// (per IR instruction). The body's size cancels.
+pub(in crate::vm) fn promotion_completions() -> u32 {
+    let priors = &TIERS.priors;
+    let extra = (priors.compile_ns_per_ir - priors.quick_compile_ns_per_ir) * compile_wall_permille();
+    let saved = (priors.body_ns_per_ir_permille * priors.ultra_saving_permille).max(1);
+    u32::try_from(extra * super::tier_policy::PER_MILLE / saved).unwrap_or(u32::MAX)
+}
+
 const SINGLE_CORE: usize = 1;
 
 fn compile_wall_permille() -> u64 {

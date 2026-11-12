@@ -260,7 +260,8 @@ impl<H: Host> Vm<H> {
         // than compile code no caller may ever run.
         if entry.is_none() && !called && !amortizes_entry(&plan.unit, function, &plan.direct) { plan_miss(Miss::PlanNotAmortized); return Err(Unstarted::Short); }
         bind_callees(&plan.direct, caller);
-        let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget, arrays));
+        let level = caller.compile_level();
+        let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget, arrays) ^ u64::from(level == super::jit_backend::CompileLevel::Quick));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
         if let Some(entries) = observed && !pays_compile(program, function, entries, native.dfg.num_insts(), caller, self.programs.js_jit_diagnostics_enabled()) { return Err(Unstarted::Unpaid); }
         if !self.programs.admit_lane_compile(&key, TIERS.lane_body.max_compiles) { plan_miss(Miss::PlanCompileBound); return Err(Unstarted::Declined); }
@@ -275,7 +276,7 @@ impl<H: Host> Vm<H> {
             generic: generic.len(), direct: plan.direct.len(), budget, observed, closed: plan.closed });
         let code = super::jit_backend::run_in_background(move || {
             let started = std::time::Instant::now();
-            let code = lane_code(native, super::jit_backend::CompileLevel::run_default());
+            let code = lane_code(native, level);
             if let Some(census) = census { eprintln!("{}", census.report(started.elapsed(), code.as_ref().map_or(0, |code| code.len()))); }
             code
         });

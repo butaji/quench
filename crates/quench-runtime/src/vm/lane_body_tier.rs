@@ -26,6 +26,8 @@ pub(super) struct LaneBodyHistory {
     short: bool,
     /// Whether a caller's compile asked for its body (`LaneView::demand_body`).
     demanded: bool,
+    /// Whether its Quick body repaid an Optimized compile, which its next compile is.
+    promoted: bool,
 }
 
 /// The entries and the milliseconds of warming past which a function specializes by its
@@ -87,10 +89,16 @@ impl LaneView {
     pub(super) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool, left_new: impl FnOnce((Option<u32>, usize))) {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier_lane.get() };
-        let LaneBody::Specialized { exits, leaves_at, completed, completions, recompiles, stuck, method, .. } = body else { return };
+        let LaneBody::Specialized { exits, leaves_at, completed, completions, recompiles, stuck, method, promote_at, .. } = body else { return };
         if completed_region || matches!(exit, LaneExit::Returned { .. }) {
             completed.set(true);
             completions.set(completions.get().saturating_add(1));
+            if *promote_at != 0 && completions.get() >= *promote_at {
+                // A Quick body that ran this long repays an Optimized one: compile again.
+                self.history.set(LaneBodyHistory { promoted: true, ..self.history.get() });
+                let next = LaneBody::Unspecialized { entries: 0, recompiles: *recompiles, stuck: *stuck };
+                self.retire_body(body, next);
+            }
             return;
         }
         exits.set(exits.get().saturating_add(1));
@@ -123,6 +131,14 @@ impl LaneView {
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
         self.entry.withdraw();
         self.retired.borrow_mut().push(method);
+    }
+
+    /// The level its next compile runs at: the mode's where it fixes one, else Quick until the
+    /// body has repaid an Optimized compile (`LaneBodyHistory::promoted`).
+    pub(in crate::vm) fn compile_level(&self) -> super::jit_backend::CompileLevel {
+        use super::jit_backend::CompileLevel;
+        if crate::jit_mode::quick_only() || !crate::jit_mode::tier_allowed(crate::jit_mode::Tier::Quick) { return CompileLevel::run_default(); }
+        if self.history.get().promoted { CompileLevel::Optimized } else { CompileLevel::Quick }
     }
 
     /// The entries before its next body specializes: the warm-up, doubled per dropped body.
@@ -281,7 +297,8 @@ impl LaneView {
             self.entry.publish(&method);
         }
         LaneBody::Specialized { method, tier_prologue, completions: Cell::new(0), exits: Cell::new(0),
-            leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }
+            leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck,
+            promote_at: if self.compile_level() == super::jit_backend::CompileLevel::Quick { super::compiled::promotion_completions() } else { 0 } }
     }
 
     /// `--b-jit` compiles no function body: the view's body is declined, once.
