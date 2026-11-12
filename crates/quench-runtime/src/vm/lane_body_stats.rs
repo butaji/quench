@@ -24,6 +24,9 @@ pub(in crate::vm) struct LaneBodyStats {
 }
 
 impl LaneBodyStats {
+    /// The function whose body these counters are of, for the trial's diagnostic.
+    pub(in crate::vm) fn function(&self) -> u32 { self.function.get() }
+
     pub(in crate::vm) fn compiled(&self, function: u32, frames: &[super::super::compiled::InlinedCall]) {
         self.function.set(function);
         self.compiles.set(self.compiles.get() + 1);

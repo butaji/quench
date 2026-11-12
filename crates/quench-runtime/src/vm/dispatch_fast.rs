@@ -346,6 +346,16 @@ pub(super) struct LaneView {
     /// The frameless body the prologue runs once the JavaScript tier declined the
     /// function (`Vm::compile_lane_method`).
     tier_lane: std::cell::UnsafeCell<LaneBody>,
+    /// The lane's measured nanoseconds per run over the entries before its next body
+    /// compiled (`LaneView::note_lane_rate`), the rate a body's trial is judged against.
+    lane_ns_per_run: std::cell::Cell<u32>,
+    /// When the current lane warm-up began (`note_lane_rate` ends it at a compile).
+    lane_started: std::cell::Cell<Option<std::time::Instant>>,
+    /// A published body's trial: when it published, the runs since, and whether the trial
+    /// judged it (`LaneView::note_native_run`).
+    native_since: std::cell::Cell<Option<std::time::Instant>>,
+    native_runs: std::cell::Cell<u32>,
+    native_judged: std::cell::Cell<bool>,
     /// The warming tick (`lane_body_tier::warm_ticks`) of the entry its body began warming at, which a function
     /// entered rarely but for long (`LaneView::recurrent`) specializes by.
     warm_since: std::cell::Cell<u32>,
@@ -19774,6 +19784,8 @@ fn derive_lane_view<'live, H: Host>(
         }),
         tier_direct: std::cell::Cell::new(None),
         tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }), history: Default::default(), warm_since: std::cell::Cell::new(0),
+        lane_ns_per_run: std::cell::Cell::new(0), lane_started: std::cell::Cell::new(None),
+        native_since: std::cell::Cell::new(None), native_runs: std::cell::Cell::new(0), native_judged: std::cell::Cell::new(false),
         retired: std::cell::RefCell::default(), callers: std::cell::RefCell::default(), entry: super::compiled::entry_cell::EntryCell::new(), pinned: std::cell::RefCell::default(),
         body_stats: LaneBodyStats::default(),
         accumulator_registers: accumulator_registers.into_boxed_slice(),

@@ -74,6 +74,18 @@ pub(in crate::vm) struct LaneBody {
     /// sites have linked their targets, which the body inlines (`lane_unit::unit`), and that
     /// only a function called repeatedly pays for compiling one.
     pub(in crate::vm) warmup_entries: u16,
+    /// The native runs a published body takes before its entry is judged against the lane's
+    /// measured rate (`LaneView::note_native_run`): a body no faster than the lane pays its
+    /// entry and its compile for nothing (V8-v7 Crypto's hash body: 10M runs, 26% slower than
+    /// the lane), and a function entered seldom never reaches the trial.
+    pub(in crate::vm) native_trial_runs: u32,
+    /// The per-mille of the lane's rate a native run may take and keep its entry: 1000 retires
+    /// a body that is not faster at all, without retiring one that ties within the timers.
+    pub(in crate::vm) native_slow_permille: u32,
+    /// The longest a trial's runs may average before the window is read as calls spread over
+    /// idle time, not a rate: the trial then times the next window instead of judging. A
+    /// function entered once a millisecond is not slow, its caller is idle.
+    pub(in crate::vm) native_sample_max_ns: u32,
     /// The share of a body's runs, in percent, its leaves may reach, from `reoptimize_exits`
     /// leaves on, before it specializes again.
     pub(in crate::vm) reoptimize_share: u8,
@@ -218,6 +230,9 @@ const MEASURED: Tiers = Tiers {
     loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8, region_entry_work: 3 },
     lane_body: LaneBody {
         warmup_entries: 400,
+        native_trial_runs: 512,
+        native_slow_permille: 1000,
+        native_sample_max_ns: 100_000,
         reoptimize_share: 1,
         retire_after_runs: 1000,
         retire_share: 10,

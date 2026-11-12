@@ -87,6 +87,7 @@ impl LaneView {
     pub(super) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool, left_new: impl FnOnce((Option<u32>, usize))) {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier_lane.get() };
+        self.note_native_run(body);
         let LaneBody::Specialized { exits, leaves_at, completed, completions, recompiles, stuck, method, .. } = body else { return };
         if completed_region || matches!(exit, LaneExit::Returned { .. }) {
             completed.set(true);
@@ -112,6 +113,46 @@ impl LaneView {
         };
         let next = LaneBody::Unspecialized { entries: 0, recompiles: *recompiles + 1, stuck };
         self.retire_body(body, next);
+    }
+
+    /// Records the lane's nanoseconds per run over the `entries` since it began warming, which
+    /// the body a compile starts is judged against.
+    fn note_lane_rate(&self, entries: u16) {
+        let Some(started) = self.lane_started.take() else { return };
+        if entries == 0 { return; }
+        let nanos = started.elapsed().as_nanos() / u128::from(entries);
+        self.lane_ns_per_run.set(u32::try_from(nanos).unwrap_or(u32::MAX));
+    }
+
+    /// Counts a run of the specialized body; at `native_trial_runs` it judges the body's
+    /// entry against the lane's measured rate: a native run that takes at least the lane's
+    /// (`native_slow_permille`) keeps neither its entry nor its compile, and the function runs
+    /// in the lane again. A body the lane measured no rate for (one serving native callers
+    /// only) is not judged.
+    fn note_native_run(&self, body: &mut LaneBody) {
+        if self.native_judged.get() || !matches!(body, LaneBody::Specialized { .. }) { return; }
+        let runs = self.native_runs.get().saturating_add(1);
+        self.native_runs.set(runs);
+        if runs < TIERS.lane_body.native_trial_runs { return; }
+        self.native_judged.set(true);
+        let Some(since) = self.native_since.get() else { return };
+        let lane = u128::from(self.lane_ns_per_run.get());
+        if lane == 0 { return; }
+        let native = since.elapsed().as_nanos() / u128::from(runs);
+        if crate::trace::Channel::JsJit.on() {
+            eprintln!("QUENCH_LANE_TRIAL {{\"function\":{},\"runs\":{runs},\"lane_ns\":{lane},\"native_ns\":{native}}}", self.body_stats.function());
+        }
+        if native > u128::from(TIERS.lane_body.native_sample_max_ns) {
+            // Calls spread over idle time, not a rate: time the next window.
+            self.native_since.set(Some(std::time::Instant::now()));
+            self.native_runs.set(0);
+            self.native_judged.set(false);
+            return;
+        }
+        if native * 1000 < lane * u128::from(TIERS.lane_body.native_slow_permille) { return; }
+        super::dispatch_fast::lane_body_stats::decline("trial:slower-than-lane");
+        self.retire_body(body, LaneBody::Declined);
+        self.release_from_tier();
     }
 
     /// Replaces the specialized `body` with `next`: its entry's handler runs no more, its entry
@@ -263,6 +304,9 @@ impl LaneView {
 
     /// The body a just published method makes of this view.
     pub(super) fn specialized(&self, entry: Handler, method: std::rc::Rc<super::super::compiled::PublishedLaneMethod>, recompiles: u8, stuck: LaneLeaves) -> LaneBody {
+        self.native_since.set(Some(std::time::Instant::now()));
+        self.native_runs.set(0);
+        self.native_judged.set(false);
         // A body whose entry would not pay for itself serves native callers only
         // (`lane_body_call`, direct calls); the lane's own entries keep the records, and it
         // has no trial to run.
@@ -322,13 +366,14 @@ impl LaneView {
                     return false;
                 }
                 super::super::compiled::base_region::count(super::super::compiled::base_region::Event::BodyCompile);
+                self.note_lane_rate(entries);
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
                 (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| u32::from(entries) + 1), called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
             }
             LaneBody::Unspecialized { entries, recompiles, stuck } => {
                 let ticks = warm_ticks();
-                if entries == 0 { self.warm_since.set(ticks); }
+                if entries == 0 { self.warm_since.set(ticks); self.lane_started.set(Some(std::time::Instant::now())); }
                 *body = LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck };
                 return true;
             }
