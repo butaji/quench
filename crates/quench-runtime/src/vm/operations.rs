@@ -2,6 +2,7 @@ use super::*;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
 mod number_operators;
+mod primitive_comparison;
 pub(crate) use number_operators::static_number_binary;
 pub(super) use number_operators::immediate_number_pair;
 use number_operators::*;

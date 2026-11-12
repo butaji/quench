@@ -5,11 +5,29 @@ use super::*;
 
 script_handler! {
     /// `Unary`: logical not and `typeof` of any value, and the numeric operators of a
-    /// Number, run no guest code; any other operand takes the general path.
+    /// Number, run no guest code; any other operand takes the general operation in place
+    /// (`lane_unary_general`).
     fn lane_unary<>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { lane_unary_value(cx, r, i) }) else {
+            sibling!(lane_unary_general::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_unary` of an operand its value declines: the general operation made in place
+    /// (`lane_in_place`), which may reach guest code (a `ToPrimitive` hook of an object
+    /// concatenated or negated) or throw. A throw takes the general path, which raises it.
+    #[inline(never)]
+    fn lane_unary_general<>(cx, r, ip, i, view) {
+        let (operator, operand) = (i.imm(), r.get(i.b));
+        let Some(value) = lane_in_place(cx, ip, |vm, code| vm.unary(code, operator, operand)) else {
             return exit(ip);
         };
+        // Guest code the operator ran made the activations frames, whose registers these are.
+        let r = unsafe { (*cx).registers };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }

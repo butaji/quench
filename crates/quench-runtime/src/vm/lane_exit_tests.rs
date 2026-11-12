@@ -59,6 +59,37 @@ print(out.join(" | "));
     );
 }
 
+/// Equality and relational operators of every pair of primitives (`undefined`, `null`, Booleans,
+/// Numbers with `NaN` and `-0`, strings, BigInts, a Symbol) and of objects whose conversions
+/// run guest code, as plain operators, as branch tests, with `-`, `~` and `+` on each, give
+/// Node's results, throws included (a checksum of the results).
+#[test]
+fn comparisons_and_unary_operators_of_every_primitive_pair_match_node() {
+    let source = r#"
+const vals = [undefined, null, true, false, 0, -0, 1, 5, NaN, Infinity, 1.5, "", "0", "5", " 5 ", "abc", "0x10", 10n, 0n, 5n, Symbol.for("s"), {}, [5], function () {}, new Number(5), { valueOf() { return 5; } }];
+const ops = {
+  "==": (a, b) => a == b, "!=": (a, b) => a != b, "===": (a, b) => a === b,
+  "<": (a, b) => a < b, ">=": (a, b) => a >= b,
+  "if<": (a, b) => { if (a < b) return 1; return 0; }, "if==": (a, b) => { if (a == b) return 1; return 0; },
+};
+const parts = [];
+for (const [name, f] of Object.entries(ops)) for (let i = 0; i < vals.length; i++) for (let j = 0; j < vals.length; j++) {
+  let r;
+  for (let k = 0; k < 30; k++) { try { r = f(vals[i], vals[j]); } catch (e) { r = e.constructor.name; } }
+  parts.push(i + name + j + "=" + r);
+}
+const un = { "-": (a) => -a, "~": (a) => ~a, concat: (a) => "x" + a, "ret-": (a) => { return -a; } };
+for (const [name, f] of Object.entries(un)) for (let i = 0; i < vals.length; i++) {
+  let r;
+  for (let k = 0; k < 30; k++) { try { r = f(vals[i]); } catch (e) { r = e.constructor.name; } }
+  parts.push(name + i + ":" + (typeof r === "bigint" ? r + "n" : Object.is(r, -0) ? "-0" : String(r)));
+}
+const text = parts.join("\n"); let h = 7; for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) % 1000000007;
+print(h + " " + parts.length);
+"#;
+    assert_eq!(printed(source, "primitive-comparisons.js"), ["279404947 4836"]);
+}
+
 /// `split` at short and long, one-byte and longer, ASCII, non-ASCII, empty and surrogate
 /// separators, with limits and regular expressions, cuts as Node does (a checksum of every
 /// result, each separator run on strings of both widths).

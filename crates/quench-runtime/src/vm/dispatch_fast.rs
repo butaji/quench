@@ -7861,6 +7861,9 @@ fn lane_relation_other<H: Host>(operator: u32, left: Value, right: Value) -> Opt
         // A test of an arithmetic or bitwise result (`if (flags & MASK)`): the Number
         // operator's value, whose ToBoolean runs no guest code.
         .or_else(|| vm.bigint_relation(operator, left, right))
+        // The remaining primitive pairs, whose conversions are pure: `undefined > 5`,
+        // `flag == 1`, `"3" == 3`.
+        .or_else(|| vm.primitive_comparison(operator, left, right))
         .or_else(|| vm.number_binary(operator, left, right)?.truthiness())
 }
 
@@ -17270,8 +17273,8 @@ script_handler! {
                         };
                     }
                 },
-                RETURNING_UNARY => lane_unary_value(cx, r, i),
-                RETURNING_BINARY => lane_returning_binary_value(cx, r, i),
+                RETURNING_UNARY => lane_unary_value(cx, r, i).or_else(|| lane_operation_in_place(cx, ip, r, i, true)),
+                RETURNING_BINARY => lane_returning_binary_value(cx, r, i).or_else(|| lane_operation_in_place(cx, ip, r, i, false)),
                 RETURNING_OBJECT => Some(lane_object_pair(cx, r, i)),
                 RETURNING_OBJECT_LITERAL => Some(lane_object_literal_value(cx, r, i)),
                 _ => lane_literal_value(cx, r, i),
@@ -17282,6 +17285,22 @@ script_handler! {
         };
         lane_return_value!(cx, ip, value, LEAF)
     }
+}
+
+/// The value of a `Unary` (`unary`) or `Binary` record whose operands the lane's own values
+/// decline, made by the general operation in place (`lane_in_place`): it may reach guest code
+/// (an object's `ToPrimitive` hook) or throw, which takes the general path. `None` for an
+/// operand the lane cannot read. Out of line, so the returning handlers keep their code.
+#[cold]
+#[inline(never)]
+fn lane_operation_in_place<H: Host>(cx: *mut LaneContext<H>, ip: Ip, r: Registers, i: &LaneInstruction, unary: bool) -> Option<Value> {
+    let operator = i.imm();
+    if unary {
+        let operand = r.get(i.b);
+        return lane_in_place(cx, ip, |vm, code| vm.unary(code, operator, operand));
+    }
+    let (left, right) = (lane_operand_value(cx, r, i.b)?, lane_operand_value(cx, r, i.c)?);
+    lane_in_place(cx, ip, |vm, code| vm.binary(code, operator, left, right))
 }
 
 script_handler! {
