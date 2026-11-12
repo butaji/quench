@@ -74,7 +74,7 @@ impl Lowering<'_, '_> {
             // A loop's read leaves at a root-held binding until the code has left here: the
             // helper is a call every value live around the loop is spilled across (`left_here`).
             let loop_code = matches!(self.coverage, Coverage::Loop { .. });
-            if rooted != RootedRead::No && self.completion == Completion::StatusAndPc
+            if rooted != RootedRead::No && self.completion.status_and_pc()
                 && (self.left_here || !loop_code || rooted == RootedRead::OnEntry) {
                 return self.capture_get(instruction, exit);
             }

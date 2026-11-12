@@ -80,13 +80,13 @@ impl CompileLevel {
     /// The level a compile uses unless its caller chooses: `Optimized`, or `Quick` while the
     /// `quick-compile` experiment measures that level.
     pub(super) fn run_default() -> Self {
-        if crate::trace::Dev::QuickCompile.on() { Self::Quick } else { Self::Optimized }
+        if crate::jit_mode::quick_only() || crate::trace::Dev::QuickCompile.on() { Self::Quick } else { Self::Optimized }
     }
 
     /// The Cranelift settings a level fixes, applied after the publication's.
     fn settings(self) -> &'static [(&'static str, &'static str)] {
         match self {
-            Self::Quick => &[("opt_level", "none"), ("regalloc_algorithm", "single_pass")],
+            Self::Quick => &[("opt_level", "none")],
             Self::Large => &[("regalloc_algorithm", "single_pass")],
             Self::Optimized => &[],
         }
