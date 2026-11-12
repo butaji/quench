@@ -1894,8 +1894,8 @@ const NO_SCRIPT_GENERATION: ScriptGeneration = 0;
 impl Default for LaneStack {
     fn default() -> Self {
         Self {
-            values: Vec::new(),
-            activations: Vec::new(),
+            values: Vec::with_capacity(1 << 20),
+            activations: Vec::with_capacity(1 << 16),
             wasm_storage_bytes: 0,
             call_sites: std::cell::RefCell::default(),
             script_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
