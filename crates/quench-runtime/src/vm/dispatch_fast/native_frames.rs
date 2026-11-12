@@ -156,10 +156,10 @@ pub(super) fn discard_frames<H: Host>(cx: *mut LaneContext<H>) {
     let vm = unsafe { vm(cx) };
     let (count, len) = (vm.lane_stack.activations.native_depth(), vm.lane_stack.activations.len());
     if count == 0 { return; }
-    // SAFETY: the outermost frame's window starts within the values, which hold no drop glue.
+    // SAFETY: the values hold no drop glue.
     unsafe {
-        let window = (*vm.lane_stack.activations.slot(len - count)).native.window;
+        let window = (*vm.lane_stack.activations.slot(len - count)).window_ptr();
         vm.lane_stack.activations.set_len(len - count);
-        vm.lane_stack.values.set_top(window as *mut Value);
+        vm.lane_stack.values.release_window(window);
     }
 }

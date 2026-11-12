@@ -1371,9 +1371,21 @@ struct ActivationState {
 }
 
 impl Activation {
-    /// The lane-stack index of this activation's first register, in a stack whose values start at `values`.
-    fn window(&self, values: *const Value) -> usize {
-        (self.native.window - values.addr()) / std::mem::size_of::<Value>()
+    /// The address of this activation's first register: its prefix's WINDOW word, which names
+    /// the lane stack's values by default and any other register file (a generator's) alike.
+    #[inline(always)]
+    pub(in crate::vm) fn window_ptr(&self) -> *mut Value {
+        self.native.window as *mut Value
+    }
+
+    /// The first `len` values from the window: its registers, and what follows them
+    /// (`ScriptActivation::forwards`, `environment`).
+    ///
+    /// # Safety
+    /// The window holds `len` initialized values, which nothing else writes while the slice lives.
+    #[inline(always)]
+    unsafe fn window(&self, len: usize) -> &[Value] {
+        unsafe { std::slice::from_raw_parts(self.window_ptr(), len) }
     }
 }
 
@@ -11134,7 +11146,6 @@ impl<H: Host> Vm<H> {
                 .sum::<usize>()
         );
         let mut caller = unsafe { (*cx).frame };
-        let mut registers = std::mem::take(&mut self.lane_stack.values);
         let mut forwarders = std::mem::take(&mut self.lane_stack.forwarders).into_iter();
         let mut settling = std::mem::take(&mut self.lane_stack.settling).into_iter();
         let mut steps = std::mem::take(&mut self.lane_stack.steps).into_iter();
@@ -11181,7 +11192,9 @@ impl<H: Host> Vm<H> {
             self.frames[caller].pc = call_pc + 1;
             self.frames[caller].pc_is_resume = true;
             let count = usize::from(code.function(activation.function as usize).registers);
-            let at = activation.window(registers.as_ptr()); let window = &registers[at..at + count];
+            // SAFETY: the activation's window holds its registers, which nothing writes until
+            // its frame takes them.
+            let window = unsafe { activation.window(count) };
             let completion = match activation.script().map(|script| script.completion) {
                 Some(completion) if completion.constructs() => CallCompletion::Constructor(state.this),
                 Some(Completion::SettlesPromise) => CallCompletion::Promise(
@@ -11200,14 +11213,15 @@ impl<H: Host> Vm<H> {
                     // A forwarding activation kept the values after its registers; any other
                     // passed them all to parameter registers.
                     let passed = if script.forwards {
-                        &registers[at + count..at + count + argc]
+                        // SAFETY: the window holds the registers, then the `argc` kept values.
+                        &unsafe { activation.window(count + argc) }[count..]
                     } else if script.environment {
                         // After its environment and locals (`lane_activate_environment`).
-                        let kept = at
-                            + count
+                        let kept = count
                             + usize::from(WINDOW_LOCALS)
                             + usize::from(code.function(activation.function as usize).locals);
-                        &registers[kept..kept + argc]
+                        // SAFETY: the window holds them, then the `argc` kept values.
+                        &unsafe { activation.window(kept + argc) }[kept..]
                     } else {
                         &window[..argc]
                     };
@@ -11265,13 +11279,13 @@ impl<H: Host> Vm<H> {
                     if script.environment {
                         // The frame its promotion would have made: the environment it holds,
                         // and its locals.
-                        let held = at + count;
-                        // SAFETY: the activation's window, intact in the taken registers.
+                        let held = count;
+                        // SAFETY: the activation's window, intact.
                         let environment = unsafe {
                             window_environment(
                                 self,
                                 code,
-                                registers.as_mut_ptr().add(held),
+                                activation.window_ptr().add(held),
                                 activation.function,
                                 state.env,
                                 program,
@@ -11290,12 +11304,14 @@ impl<H: Host> Vm<H> {
                         let body = code.function(activation.function as usize);
                         let arguments = body.arguments_slot.map(usize::from);
                         let object = arguments.map(|slot| frame.locals[slot]);
-                        frame.locals.copy_from_slice(&registers[locals..locals + count]);
+                        // SAFETY: the window holds the environment's locals after the registers.
+                        frame.locals.copy_from_slice(&unsafe { activation.window(locals + count) }[locals..]);
                         if let (Some(slot), Some(object)) = (arguments, object) {
                             frame.locals[slot] = object;
                             if body.arguments_alias_parameters() {
                                 for parameter in 0..usize::from(body.params).min(argc) {
-                                    let value = registers[locals + parameter];
+                                    // SAFETY: as the locals' read.
+                                    let value = unsafe { activation.window(locals + parameter + 1) }[locals + parameter];
                                     self.store_mapped_argument(object, parameter, value);
                                 }
                             }
@@ -11345,7 +11361,6 @@ impl<H: Host> Vm<H> {
             let natives = boundary.natives.min(self.realm.promise.active_native.len());
             self.shift_beside_natives(natives, boundary.deferred.frames, added);
         }
-        self.lane_stack.values = registers;
         self.lane_stack.values.clear();
         self.lane_stack.activations = activations;
         // The frames now hold the guards the activations were counted against.
@@ -14393,12 +14408,7 @@ unsafe fn lane_kept_arguments<H: Host>(cx: *mut LaneContext<H>) -> Option<Activa
     let script = activation.script().filter(|script| script.forwards)?;
     let registers = usize::from(unsafe { &*(*cx).code }.function(activation.function as usize).registers);
     // SAFETY: the activation's window holds its registers, then its kept values.
-    let values = unsafe {
-        vm.lane_stack
-            .values
-            .as_ptr()
-            .add(activation.window(vm.lane_stack.values.as_ptr()) + registers)
-    };
+    let values = unsafe { activation.window_ptr().add(registers) };
     Some(ActivationArguments::Kept(values, usize::from(script.argc)))
 }
 
@@ -16430,14 +16440,14 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
         return None;
     }
     let destination = destination & crate::bytecode::REGISTER_MASK;
-    let (call, caller_registers, caller_base, window) = (top.call, top.caller_registers, top.caller_base, top.native.window as *mut Value);
+    let (call, caller_registers, caller_base, window) = (top.call, top.caller_registers, top.caller_base, top.window_ptr());
     let (this, env, capture) = (script.caller_this, script.caller_env, script.caller_capture);
     let caller_program = top.caller_program;
     // SAFETY: a script activation holds no drop glue and no Wasm storage
-    // (`Activation::frame_storage_bytes`); its window starts within the values.
+    // (`Activation::frame_storage_bytes`); the values hold no drop glue.
     unsafe {
         stack.activations.discard_top();
-        stack.values.set_top(window);
+        stack.values.release_window(window);
     }
     // The caller's memory view reads its program's records (`MemoryView::script`), which an
     // activation of the caller's own JavaScript program left in place.
@@ -16587,8 +16597,8 @@ fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, value: Value)
 #[inline(always)]
 fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: &Activation) -> (MemoryView, Value) {
     let vm = unsafe { vm(cx) };
-    // SAFETY: an activation's window starts within the values, which hold no drop glue.
-    unsafe { vm.lane_stack.values.set_top(activation.native.window as *mut Value) };
+    // SAFETY: the values hold no drop glue.
+    unsafe { vm.lane_stack.values.release_window(activation.window_ptr()) };
     let caller_memory = activation.caller_memory(cx);
     let this = unsafe { (*cx).this };
     unsafe {
@@ -21753,22 +21763,21 @@ fn lane_push_prepared<H: Host>(
 }
 
 /// `lane_push_prepared`'s admission: `activation` pushed over a window at the lane stack's
-/// top with `room`, whose lane-stack index it answers for the entry to fill. `None`, which
+/// top with `room`, whose address it answers for the entry to fill. `None`, which
 /// changes nothing, where the lane stack lacks room.
 #[inline(always)]
-fn lane_admit_prepared<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, room: usize) -> Option<usize> {
+fn lane_admit_prepared<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, room: usize) -> Option<*mut Value> {
     let stack = &mut unsafe { vm(cx) }.lane_stack;
-    let window = stack.values.len();
-    if stack.activations.len() >= stack.activation_limit.get() || stack.values.capacity() - window < room {
+    if stack.activations.len() >= stack.activation_limit.get() || stack.values.room() < room {
         return None;
     }
     // SAFETY: as `lane_push_callback`'s.
-    let at = stack.values.as_mut_ptr().wrapping_add(window);
+    let at = stack.values.top();
     unsafe { stack.push_activation(*activation, at) };
-    Some(window)
+    Some(at)
 }
 
-/// The activation `entry` enters, whose window starts at the lane-stack index `window`,
+/// The activation `entry` enters, whose window starts at `registers`,
 /// for a call with `args`: the window filled and the context made the callee's. Its first
 /// record.
 ///
@@ -21779,16 +21788,15 @@ unsafe fn lane_enter_prepared<H: Host>(
     cx: *mut LaneContext<H>,
     entry: &PreparedEntry,
     args: &[Value],
-    window: usize,
+    registers: *mut Value,
 ) -> Ip {
     unsafe {
-        let registers = vm(cx).lane_stack.values.as_mut_ptr().add(window);
         fill_window(registers, entry.registers, Value::UNDEFINED);
         copy_arguments(registers, args.as_ptr(), entry.passed);
         if entry.keeps {
             copy_arguments(registers.add(entry.registers), args.as_ptr(), entry.argc);
         }
-        lane_enter_filled(cx, entry, registers, window)
+        lane_enter_filled(cx, entry, registers)
     }
 }
 
@@ -21802,11 +21810,11 @@ unsafe fn lane_enter_prepared_values<H: Host, const N: usize>(
     cx: *mut LaneContext<H>,
     entry: &PreparedEntry,
     values: [Value; N],
-    window: usize,
+    registers: *mut Value,
 ) -> Ip {
     unsafe {
-        let registers = lane_fill_prepared_values(cx, entry, values, window);
-        lane_enter_filled(cx, entry, registers, window)
+        let registers = lane_fill_prepared_values(cx, entry, values, registers);
+        lane_enter_filled(cx, entry, registers)
     }
 }
 
@@ -21817,23 +21825,23 @@ unsafe fn lane_enter_prepared_values<H: Host, const N: usize>(
 ///
 /// # Safety
 /// As `lane_enter_prepared_values`'s, for the innermost activation, whose window `entry`
-/// entered at `window` and whose return the context still holds.
+/// entered at `registers` and whose return the context still holds.
 #[inline(always)]
 unsafe fn lane_reenter_prepared_values<H: Host, const N: usize>(
     cx: *mut LaneContext<H>,
     entry: &PreparedEntry,
     values: [Value; N],
-    window: usize,
+    registers: *mut Value,
 ) -> Ip {
     unsafe {
-        let registers = lane_fill_prepared_values(cx, entry, values, window);
+        let registers = lane_fill_prepared_values(cx, entry, values, registers);
         debug_assert!(
             (*cx).registers.0 == registers
                 && (*cx).base == (*entry.view).records()
                 && (*cx).this == entry.this
                 && (*cx).env == entry.env
                 && (*cx).capture == entry.capture
-                && vm(cx).lane_stack.values.len() == window + entry.size,
+                && vm(cx).lane_stack.values.top() == registers.add(entry.size),
             "a returning activation's context is its own"
         );
         let vm = vm(cx);
@@ -21843,7 +21851,7 @@ unsafe fn lane_reenter_prepared_values<H: Host, const N: usize>(
     }
 }
 
-/// The window of an activation of `entry` at the lane-stack index `window` filled for a call
+/// The window of an activation of `entry` at `registers` filled for a call
 /// passing `values` (`lane_enter_prepared_values`): its registers.
 ///
 /// # Safety
@@ -21853,11 +21861,10 @@ unsafe fn lane_fill_prepared_values<H: Host, const N: usize>(
     cx: *mut LaneContext<H>,
     entry: &PreparedEntry,
     values: [Value; N],
-    window: usize,
+    registers: *mut Value,
 ) -> *mut Value {
     debug_assert_eq!(usize::from(entry.argc), N);
     unsafe {
-        let registers = vm(cx).lane_stack.values.as_mut_ptr().add(window);
         fill_window(registers, entry.registers, Value::UNDEFINED);
         for (index, value) in values.into_iter().enumerate() {
             if index < usize::from(entry.passed) {
@@ -21871,8 +21878,7 @@ unsafe fn lane_fill_prepared_values<H: Host, const N: usize>(
     }
 }
 
-/// The activation `entry` enters whose window at the lane-stack index `window`, at
-/// `registers`, is filled: the context made the callee's. Its first record.
+/// The activation `entry` enters whose window, at `registers`, is filled: the context made the callee's. Its first record.
 ///
 /// # Safety
 /// As `lane_enter_prepared`'s; the window's values are written.
@@ -21881,11 +21887,10 @@ unsafe fn lane_enter_filled<H: Host>(
     cx: *mut LaneContext<H>,
     entry: &PreparedEntry,
     registers: *mut Value,
-    window: usize,
 ) -> Ip {
     let vm = unsafe { vm(cx) };
     unsafe {
-        vm.lane_stack.values.set_len(window + entry.size);
+        vm.lane_stack.values.set_top(registers.add(entry.size));
         (*cx).registers = Registers(registers);
         (*cx).base = (*entry.view).records();
         (*cx).this = entry.this;

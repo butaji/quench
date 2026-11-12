@@ -43,6 +43,20 @@ impl LaneValues {
     #[inline(always)]
     pub(super) fn clear(&mut self) { self.top = self.base; }
 
+    /// The addresses of the allocation, `base..end`: where the windows the stack allocated lie.
+    #[inline(always)]
+    pub(super) fn span(&self) -> std::ops::Range<usize> { self.base.addr()..self.end.addr() }
+
+    /// Ends the values at `window`, the first register of a window that returned, if the
+    /// stack allocated it; a window in another register file (a generator's) frees nothing here.
+    ///
+    /// # Safety
+    /// As `set_top`, for a `window` in the allocation.
+    #[inline(always)]
+    pub(super) unsafe fn release_window(&mut self, window: *mut Value) {
+        if self.span().contains(&window.addr()) { self.top = window; }
+    }
+
     /// Ends the values at `top`, an address within the allocation.
     ///
     /// # Safety
