@@ -6144,6 +6144,7 @@ impl CompiledOsrRegion {
                 native.dispatch.residual = Rc::as_ptr(&program) as usize;
             }
             native.dispatch.refresh_object_bases(vm);
+            native.dispatch.field_entries = vm.program_field_entries(program).unwrap_or(0);
             let mut context = CallContext::interrupt_only(&*interrupt);
             context.vm = std::ptr::from_mut(vm).cast();
             context.program = program;

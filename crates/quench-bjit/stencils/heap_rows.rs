@@ -22,7 +22,7 @@ use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole64, index_of, number_w
 use crate::stage::StencilStage;
 use crate::staged::{elements, entry, environment, value};
 
-pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, FIELD_ROW, INDEX_ROW, LENGTH_ROW, CAPTURE_SET_ROW, SITE_OBJECT_AT, SITE_ROW, STORE_ROW};
+pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, INDEX_ROW, LENGTH_ROW, SITE_OBJECT_AT, SITE_ROW, STORE_ROW};
 
 unsafe extern "C" {
     static HOLE_V0: u8;
@@ -113,16 +113,28 @@ fn field_row<const D: u8>(s: S, payload: usize) -> Out {
     deliver::<D>(s, entry::entry_word(&mut stage, record, offset))
 }
 
-/// A field read through the site's cache entry (`entry::site_read`): the object is the register
-/// whose frame offset hole 0 carries above the destination's.
+/// A field read through the site's cache entry (`entry::site_read`), or with `CHAIN` through two
+/// (`entry::site_chain`, whose first and second entry offsets are hole 2's low and high halves):
+/// `object` is the receiver the row names.
 #[inline(always)]
-fn site_row<const D: u8>(s: S, payload: usize) -> Out {
-    let object = word_at(s.frame, (hole64::<0>() >> SITE_OBJECT_AT) as usize);
+fn site_row<const D: u8, const CHAIN: bool>(s: S, payload: usize, object: u64) -> Out {
     let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
     let mut stage = StencilStage::with_values(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE));
-    let (entries, records) = (word_at(payload, JS_STEP_FIELD_ENTRIES), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
-    let offset = stage_site(&mut stage);
-    deliver::<D>(s, need!(s, entry::site_read(&mut stage, (entries, records), object, offset, ())))
+    let tables = (word_at(payload, JS_STEP_FIELD_ENTRIES), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
+    let word = if CHAIN {
+        let offsets = hole64::<HOLE_B>();
+        entry::site_chain(&mut stage, tables, object, (offsets & u64::from(u32::MAX), offsets >> CHAIN_SECOND_AT), ())
+    } else {
+        let offset = stage_site(&mut stage);
+        entry::site_read(&mut stage, tables, object, offset, ())
+    };
+    deliver::<D>(s, need!(s, word))
+}
+
+/// The object register a site row names: its frame offset sits above the destination's in hole 0.
+#[inline(always)]
+fn register_object(s: &S) -> u64 {
+    word_at(s.frame, (hole64::<0>() >> SITE_OBJECT_AT) as usize)
 }
 
 /// The `length` of the array word at hole 1 (`elements::array_length`).
@@ -170,7 +182,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         CAPTURE_ROW => capture_row::<D>(s, payload),
         CAPTURE_SET_ROW => capture_set_row::<A>(s, payload),
         FIELD_ROW => field_row::<D>(s, payload),
-        SITE_ROW => site_row::<D>(s, payload),
+        SITE_ROW => site_row::<D, ENTRY>(s, payload, register_object(&s)),
         ARRAY_ROW => array_row(s),
         LENGTH_ROW => length_row::<D>(s, payload),
         INDEX_ROW => index_row::<ENTRY, D, B>(s, payload),

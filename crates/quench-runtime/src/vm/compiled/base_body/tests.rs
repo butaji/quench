@@ -184,3 +184,16 @@ fn prototype_held_fields_run_in_a_body() {
          print(t); proto.scale = 5; print(area(o));",
     );
 }
+
+/// A nested lookup (`a.b.c`, which the compiler fuses into one instruction over two cache sites)
+/// is one row that reads the second entry's field of the object the first entry reads; a
+/// third level is another row over the first's result.
+#[test]
+fn nested_field_chains_run_in_a_body() {
+    assert_bodies_never_leave(
+        "function deep(a) { return a.inner.x + a.inner.y + a.inner.core.z; }
+         const o = { inner: { x: 3, y: 4, core: { z: 5 } } }; let t = 0;
+         for (let k = 0; k < 300; k++) t = (t + deep(o)) | 0;
+         print(t);",
+    );
+}

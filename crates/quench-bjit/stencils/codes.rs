@@ -53,6 +53,9 @@ pub const CAPTURE_SET_ROW: u8 = 7;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries
 /// the destination's frame offset beneath it.
 pub const SITE_OBJECT_AT: u32 = 32;
+/// Bits below the second cache entry's byte offset in a chained site read's hole 2, which carries
+/// the first entry's offset beneath it.
+pub const CHAIN_SECOND_AT: u32 = 32;
 
 /// The kind families the library is built from.
 pub const fn is_copy(kind: u8) -> bool {

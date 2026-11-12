@@ -153,25 +153,52 @@ fn entry_array(region: &LoopRegion, facts: Facts, register: Register) -> u64 {
     }
 }
 
-/// The row of a field read: an array's `length`, the value the loop's entry recorded, or the
-/// site's cache entry (a named field of a register, not of `this`, whose receiver arrives outside
-/// the registers).
+/// The byte offset of the field cache entry of `site` in the program's table.
+fn entry_offset(site: u16) -> u64 {
+    u64::from(site) * crate::vm::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64
+}
+
+/// The row of a named field read of a register through the site's cache entry, or a nested
+/// lookup's two (`FieldSite`: `base.first.second`, with no sink field): a read of `this` has
+/// its receiver outside the registers.
+fn site_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
+    let (base, first, second) = match instruction.field_lookup()? {
+        FieldLookup::Atom { base, cache_site, .. } => (base, cache_site, None),
+        FieldLookup::Site(index) => {
+            let site = known.program.field_sites.get(index).filter(|site| site.sink.is_none())?;
+            (site.base, site.first.1, site.second.map(|(_, cache_site)| cache_site))
+        }
+    };
+    let (heap, hole) = match second {
+        Some(second) => (Heap::SiteChain, entry_offset(first) | entry_offset(second) << numeric::library::CHAIN_SECOND_AT),
+        None => (Heap::Site, entry_offset(first)),
+    };
+    let object = Some(Source::Register(base.register_index()?));
+    Some(Decoded { hole, ..Decoded::heap(heap, Some(instruction.result_register()), object, None) })
+}
+
+/// The row of a field the loop's entry recorded: its value, which the loop does not write (`Facts::Entry`).
+fn recorded_field(region: &LoopRegion, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+    let index = *region.field_reads().get(&(pc - region.header))?;
+    let hole = super::super::osr_loop::field_word(region, index) as u64 * SLOT;
+    let row = Decoded::heap(Heap::Field, Some(instruction.result_register()), None, None);
+    (!region.is_dynamic_field(index) && u32::try_from(hole).is_ok()).then_some(Decoded { hole, ..row })
+}
+
+/// The row of a field read: an array's `length`, the value a loop's entry recorded, or the site's
+/// cache entry (`site_row`), which also answers a loop's read its entry did not record, or that
+/// reads through a register the loop redefines.
 fn field_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
-    let result = Some(instruction.result_register());
     if let Some(FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup()
         && known.names_length(atom)
     {
-        return Some(Decoded::heap(Heap::Length, result, Some(Source::Register(base.register_index()?)), None));
+        let array = Some(Source::Register(base.register_index()?));
+        return Some(Decoded::heap(Heap::Length, Some(instruction.result_register()), array, None));
     }
-    if matches!(facts, Facts::Site) {
-        let FieldLookup::Atom { base, cache_site, .. } = instruction.field_lookup()? else { return None };
-        let site = u64::from(cache_site) * crate::vm::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64;
-        return Some(Decoded { hole: site, ..Decoded::heap(Heap::Site, result, Some(Source::Register(base.register_index()?)), None) });
+    match facts {
+        Facts::Entry { .. } => recorded_field(region, pc, instruction).or_else(|| site_row(known, instruction)),
+        Facts::Site => site_row(known, instruction),
     }
-    let index = *region.field_reads().get(&(pc - region.header))?;
-    let word = super::super::osr_loop::field_word(region, index);
-    let row = Decoded::heap(Heap::Field, result, None, None);
-    (!region.is_dynamic_field(index) && u32::try_from(word as u64 * SLOT).is_ok()).then_some(Decoded { hole: word as u64 * SLOT, ..row })
 }
 
 /// Whether `instruction` stores to a depth-0 capture and nothing else (`general_capture::lower_capture`'s

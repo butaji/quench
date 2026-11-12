@@ -151,7 +151,8 @@ pub type HeapCode = (u8, bool, u8, u8, u8);
 /// The heap row whose stencil computes `code`: the places a row ignores are fixed.
 pub fn heap_canonical((heap, entry, dst, a, b): HeapCode) -> HeapCode {
     match heap {
-        CAPTURE_ROW | FIELD_ROW | SITE_ROW | LENGTH_ROW => (heap, false, dst, MEM, MEM),
+        CAPTURE_ROW | FIELD_ROW | LENGTH_ROW => (heap, false, dst, MEM, MEM),
+        SITE_ROW => (heap, entry, dst, MEM, MEM),
         INDEX_ROW => (heap, entry, dst, MEM, b),
         STORE_ROW => (heap, entry, MEM, a, b),
         CAPTURE_SET_ROW => (heap, false, MEM, a, MEM),

@@ -32,6 +32,9 @@ pub(super) enum Heap {
     /// (`entry::site_read`), read from the object register whose frame offset sits above the
     /// destination's in hole 0 (hole 2: the entry's byte offset).
     Site,
+    /// A chain of two such reads, `object.first.second` (a nested field lookup), whose entry offsets
+    /// share hole 2: the first below `CHAIN_SECOND_AT` bits, the second above them.
+    SiteChain,
     /// The `length` of the direct array at hole 1, an int32 (what the array's record counts).
     Length,
     /// Stores the value operand (hole 0) into depth-0 capture `slot` of an activation whose slots
@@ -46,7 +49,8 @@ pub(super) struct HeapRow {
     pub(super) dst: Place,
     pub(super) a: Place,
     pub(super) b: Place,
-    /// The array's backing is the entry record's (the offset at the array hole), not looked up per access.
+    /// The row's variant: an array's backing is the entry record's (the offset at the array hole), not
+    /// looked up per access (`Index`, `Store`); a site read is a chain of two reads (`SiteChain`).
     pub(super) entry: bool,
 }
 
@@ -59,7 +63,7 @@ impl Heap {
             Heap::Store => library::STORE_ROW,
             Heap::Field => library::FIELD_ROW,
             Heap::Array => library::ARRAY_ROW,
-            Heap::Site => library::SITE_ROW,
+            Heap::Site | Heap::SiteChain => library::SITE_ROW,
             Heap::Length => library::LENGTH_ROW,
             Heap::CaptureSet(_) => library::CAPTURE_SET_ROW,
         }

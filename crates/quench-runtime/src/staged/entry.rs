@@ -122,21 +122,25 @@ pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S:
     own_entry_value(stage, record, entry, miss)
 }
 
-/// A field read through the cache entry `offset` bytes into the field cache table `entries`
-/// (the running program's, as `Vm::program_field_entries` hands it), of the object `object`
-/// names in the record table at `records`: the data value the entry holds, own or held by the
-/// receiver's prototype, or `None` (leaving at `miss`) where either table is absent, the word is
-/// no direct object, or the entry is no entry for the record (`own_entry_value`,
-/// `holder_entry_value`). The offset is the row's only per-site operand, so a site is read as
-/// the interpreter's cached read reads it.
-// Read by the b-jit stencil build (`quench-bjit/stencils`), which includes this file.
-#[allow(dead_code)]
+/// Guards that the field cache table `entries` (the running program's, as
+/// `Vm::program_field_entries` hands it) and the object record table `records` are present.
 #[inline(always)]
-pub(crate) fn site_read<S: Stage>(stage: &mut S, (entries, records): (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
+fn site_tables<S: Stage>(stage: &mut S, (entries, records): (S::Word, S::Word), miss: S::Miss) -> Option<()> {
     for base in [entries, records] {
         let present = stage.ne_imm(base, 0u32);
         stage.guard(present, miss)?;
     }
+    Some(())
+}
+
+/// A field read through the cache entry `offset` bytes into the table `entries`, of the object
+/// `object` names in the record table at `records`, whose presence the caller proved
+/// (`site_tables`): the data value the entry holds, own or held by the receiver's prototype, or
+/// `None` (leaving at `miss`) where the word is no direct object or the entry is no entry for
+/// the record (`own_entry_value`, `holder_entry_value`).
+#[inline(always)]
+fn site_read_in<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
+    let (entries, records) = tables;
     let direct = super::value::is_direct_object(stage, object);
     stage.guard(direct, miss)?;
     let id = stage.and_imm(object, u64::from(u32::MAX));
@@ -145,6 +149,30 @@ pub(crate) fn site_read<S: Stage>(stage: &mut S, (entries, records): (S::Word, S
     let stored_holder = stage.load_u32(entry, ENTRY.holder_offset as i32);
     let own = stage.eq_imm(stored_holder, u64::from(ENTRY.holder_complement ^ ENTRY.own_holder));
     stage.choose_leaving(own, |stage| own_entry_value(stage, record, entry, miss), |stage| holder_entry_value(stage, records, record, entry, miss))
+}
+
+/// A field read through the cache entry `offset` bytes into the field cache table `entries`
+/// of the object `object` names in the record table at `records`: the data value the entry
+/// holds (`site_read_in`), or `None` (leaving at `miss`) where either table is absent too. The
+/// offset is the row's only per-site operand, so a site is read as the interpreter's cached
+/// read reads it.
+// Read by the b-jit stencil build (`quench-bjit/stencils`), which includes this file.
+#[allow(dead_code)]
+#[inline(always)]
+pub(crate) fn site_read<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
+    site_tables(stage, tables, miss)?;
+    site_read_in(stage, tables, object, offset, miss)
+}
+
+/// A nested lookup's chain of two reads, `object.first.second` (`FieldLookup::Site`): the value
+/// the first entry reads is the object the second reads from, and the tables are proved once.
+// Read by the b-jit stencil build (`quench-bjit/stencils`), which includes this file.
+#[allow(dead_code)]
+#[inline(always)]
+pub(crate) fn site_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, (first, second): (S::Imm, S::Imm), miss: S::Miss) -> Option<S::Word> {
+    site_tables(stage, tables, miss)?;
+    let middle = site_read_in(stage, tables, object, first, miss)?;
+    site_read_in(stage, tables, middle, second, miss)
 }
 
 /// The word the loop entry record holds at the per-site byte `offset`: a field value the loop's
@@ -263,6 +291,28 @@ mod tests {
             assert_eq!(read(stray, stored(shape_of(&heap, stray), holder_shape, 0)), None, "a receiver of another prototype");
             assert_eq!(read(Value::integer(1), stored(receiver_shape, holder_shape, 0)), None, "no object");
         }
+    }
+
+    /// A chain reads the second entry's field of the object the first entry reads, and misses
+    /// where the first value is no object.
+    #[test]
+    fn a_site_chain_reads_the_second_field_of_the_first_value() {
+        let mut heap = Heap::new();
+        heap.register_property_shape(1, 1, None);
+        let leaf = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        heap.property_add(leaf, Value::integer(9), 1);
+        let (outer, plain) = (heap.alloc(Cell::Object(Object::new(Value::NULL))), heap.alloc(Cell::Object(Object::new(Value::NULL))));
+        heap.property_add(outer, leaf, 1);
+        heap.property_add(plain, Value::integer(4), 1);
+        let shape = heap.object(leaf).unwrap().exact_shape();
+        let entries = [stored(shape, ENTRY.own_holder, 0), stored(shape, ENTRY.own_holder, 0)];
+        let records = heap.object_record_base().expect("object records exist") as u64;
+        let read = |object: Value| {
+            let mut stage = crate::staged::Concrete::new(heap.arena_values_base());
+            site_chain(&mut stage, (entries.as_ptr() as u64, records), object.to_bits(), (0u64, ENTRY.entry_size as u64), ()).map(Value::from_bits)
+        };
+        assert_eq!(read(outer), Some(Value::integer(9)));
+        assert_eq!(read(plain), None, "an integer has no fields");
     }
 
     /// The row has no per-site hole of its own: the entry address is the caller's word.

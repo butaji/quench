@@ -97,7 +97,7 @@ fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Planned>, Str
 fn framed(homes: &Homes, row: &Decoded) -> bool {
     let through = match row.heap {
         Some(Heap::Store) => row.base,
-        Some(Heap::Index | Heap::Array | Heap::Site | Heap::Length) => row.a.and_then(register_of),
+        Some(Heap::Index | Heap::Array | Heap::Site | Heap::SiteChain | Heap::Length) => row.a.and_then(register_of),
         _ => None,
     };
     through.is_none_or(|register| homes.place(register) == Place::Mem)
