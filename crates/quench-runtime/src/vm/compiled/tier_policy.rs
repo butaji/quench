@@ -85,9 +85,12 @@ pub(in crate::vm) struct LaneBody {
     /// a hot loop while the code compiles (Richards' first body: 300 ms); the code waits at
     /// most this many entries once ready.
     pub(in crate::vm) compile_poll_interval: u16,
-    /// What compiling one IR instruction of a body costs, in interpreted-instruction units: the
-    /// V8-v7 compiles took 7 us an IR instruction (`QUENCH_LANE_COMPILE`), an interpreted
-    /// instruction some 50 ns.
+    /// The admission margin per IR instruction of a body, in interpreted-instruction units
+    /// (`repays_compile`). It is not the compile's cost: compiling takes 3 to 7 us an IR
+    /// instruction (`QUENCH_LANE_COMPILE`), over a hundred interpreted instructions at the 5 to
+    /// 50 ns each takes, but it runs on the second core, so a body is admitted at a fraction of
+    /// that, measured on V8-v7 as the margin that wins on both cores. The tier model replaces it
+    /// with the measured cost per IR (`tier-decision-rule-v1`).
     pub(in crate::vm) compile_cost_per_ir: u64,
     /// The share of a function's interpreted work its compiled body saves, as a fraction.
     pub(in crate::vm) saved_share: (u64, u64),
