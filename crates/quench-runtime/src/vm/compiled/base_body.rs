@@ -6,7 +6,8 @@
 //! takes the helper row, and an instruction with no row leaves the body at its PC.
 
 use super::*;
-use super::base_region::function::{build_body, Body, Callees};
+use super::base_region::callees::{Callees, InlineBody};
+use super::base_region::function::{build_body, Body};
 use super::lane_facts::bind_callees;
 use crate::bytecode::Register;
 use crate::compile::liveness::RegisterMasks;
@@ -53,10 +54,10 @@ impl<H: Host> Vm<H> {
         let code: Vec<_> = body.instructions().collect();
         let Some(region) = LoopRegion::of_function(code.clone(), self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let (ints, doubles) = observed(parameters);
-        let callees = Callees::of(&code, &direct(self));
+        let callees = Callees::of(&code, &direct(self), &|callee| program.function_get(callee as usize).map(InlineBody::of));
         let helpers = super::process_lane_helpers::<H>();
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
-        let Ok(built) = (unsafe { build_body(&region, body.registers, &widened(generic), [&ints, &doubles], &callees, helpers) }) else { return LaneBodyOutcome::Declined };
+        let Ok(built) = (unsafe { build_body(&region, function, body.registers, &widened(generic), [&ints, &doubles], &callees, helpers) }) else { return LaneBodyOutcome::Declined };
         let closed = callees.closed(&code);
         let Some(method) = LaneMethod::of_base_body(built, function, body.registers, callees.owned, closed) else { return LaneBodyOutcome::Declined };
         if !method.amortizes_entry() { return LaneBodyOutcome::Short }

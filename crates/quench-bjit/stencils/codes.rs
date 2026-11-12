@@ -59,6 +59,9 @@ pub const SITE_ROW: u8 = 5;
 pub const THIS_ROW: u8 = 6;
 pub const LOAD_LOCAL_ROW: u8 = 7;
 pub const STORE_LOCAL_ROW: u8 = 8;
+/// The frame slot at hole 1 holds exactly the word at hole 2: the proof a call's callee is the one
+/// a site was stitched for.
+pub const IDENTITY_ROW: u8 = 9;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries
 /// the destination's frame offset beneath it.
 pub const SITE_OBJECT_AT: u32 = 32;

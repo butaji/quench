@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 mod call_plan;
+pub(in crate::vm::compiled) mod callees;
 mod decode;
 pub(in crate::vm::compiled) mod function;
 mod link;

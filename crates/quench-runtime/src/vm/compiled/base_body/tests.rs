@@ -178,3 +178,36 @@ fn this_truthiness_and_negation_print_what_the_interpreter_prints() {
     assert_eq!(interpreted, compiled);
     assert!(runs > 100, "the body ran {runs} times");
 }
+
+/// A call of a small callee runs as the callee's one row in the caller's body. A guard that fails
+/// inside it (an operand that is no Number) leaves at the call, where the interpreter makes the
+/// whole call, so the output is the interpreter's for every kind of operand.
+#[test]
+fn a_guard_failing_inside_an_inlined_callee_prints_what_the_interpreter_prints() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function add(a, b) { return a + b; }
+         function f(n, x) { let s = 0; for (let i = 0; i < n; i++) s = s + add(i, x); return s; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + f(k % 9, 2)) | 0;
+         print(t); print(f(5, 1.5)); print(f(4, '1')); print(f(3, null)); print(f(2, { valueOf() { return 7; } }));
+         print(f(3, 2147483647)); print(f(3, -0));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+}
+
+/// The callee an inlined site was stitched for is proved at the call: a redefinition, and a
+/// different function arriving through the same register, run as themselves.
+#[test]
+fn a_redefined_callee_is_not_run_as_the_inlined_one() {
+    let (interpreted, compiled, _) = run_both(
+        "var g = function (a) { return a + 1; };
+         function f(n) { let s = 0; for (let i = 0; i < n; i++) s = s + g(i); return s; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + f(k % 7)) | 0;
+         print(t);
+         g = function (a) { return a * 100; };
+         print(f(5));
+         g = (a) => -a;
+         print(f(6));",
+    );
+    assert_eq!(interpreted, compiled);
+}

@@ -138,7 +138,7 @@ fn plan_helper(layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned
 fn plan_call(layout: &Layout, shape: CallShape, helpers: LaneHelpers) -> Result<Planned, String> {
     let helper = call_plan::helper_address(helpers, LaneHelper::Call).ok_or("call: no helper address")?;
     let (spills, reloads) = (layout.spills(shape.call_pc), layout.spills(shape.call_pc + 1));
-    let plan = CallPlan { shape, direct: layout.callee(shape.call_pc), inline: None, helper, spills: &spills, reloads: &reloads };
+    let plan = CallPlan { shape, direct: layout.callee(shape.call_pc), helper, spills: &spills, reloads: &reloads };
     let CallChain { parts, record, choice } = call_plan::plan_call(&plan)?;
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     chained(parts, spills.len(), record)

@@ -37,6 +37,8 @@ pub(super) enum Heap {
     LoadLocal(u16),
     /// The first operand written to the activation's local slot `slot`, whose number is hole 2.
     StoreLocal(u16),
+    /// The register at the frame offset of hole 1 holds exactly the word of hole 2.
+    Identity,
 }
 
 /// A heap row: its operation and where its operands and destination live.
@@ -63,6 +65,7 @@ impl Heap {
             Heap::This => library::THIS_ROW,
             Heap::LoadLocal(_) => library::LOAD_LOCAL_ROW,
             Heap::StoreLocal(_) => library::STORE_LOCAL_ROW,
+            Heap::Identity => library::IDENTITY_ROW,
         }
     }
 
@@ -70,7 +73,7 @@ impl Heap {
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
     /// slots, which every run reads live.
     pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_))
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity)
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value

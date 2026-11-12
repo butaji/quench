@@ -59,7 +59,7 @@ fn row_at(region: &LoopRegion, pc: Pc) -> Option<usize> {
 impl Decoded {
     /// The registers the row reads.
     fn reads(&self) -> impl Iterator<Item = Register> {
-        [self.a.and_then(register_of), self.b.and_then(register_of), self.base].into_iter().flatten()
+        [self.a.and_then(register_of), self.b.and_then(register_of), self.base, self.identity.map(|(register, _)| register)].into_iter().flatten()
     }
 
     /// Where control goes after row `k` of `count`.
@@ -349,8 +349,9 @@ impl Renamer<'_> {
                 other => other,
             };
             let (a, b, base) = (source(row.a), source(row.b), row.base.map(|register| read(register)));
+            let identity = row.identity.map(|(register, word)| (read(register), word));
             let dst = defs.written[k].map(|def| self.web(def));
-            renamed.push(Decoded { dst, a, b, base, ..*row });
+            renamed.push(Decoded { dst, a, b, base, identity, ..*row });
             at.extend(here);
         }
         let leaf_at = (0..flow.leaf_pcs.len()).flat_map(|leaf| self.table(flow.leaf(leaf))).collect();
