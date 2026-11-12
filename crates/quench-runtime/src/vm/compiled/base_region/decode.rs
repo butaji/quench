@@ -33,6 +33,9 @@ pub(super) fn kind_of(operator: u32, relational: bool) -> Option<Kind> {
 pub(super) enum Source {
     Register(Register),
     Constant(u64),
+    /// A constant that is no Number: a tagged word (`undefined`, a boolean, `null`, a string or a
+    /// BigInt the program holds) a row writes as it is, whose register is tagged whatever else holds.
+    Value(u64),
 }
 
 /// The receiver a folded prototype-held read stands on (`Heap::Held`): the exact shape and the
@@ -372,12 +375,22 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32,
     }
 }
 
+/// The row of a `LoadConst` of a constant that is no Number (`undefined`, `null`, a boolean, a
+/// string, a BigInt): the tagged word the compiling VM holds for it, written as it is
+/// (`Source::Value`), where the VM has the program's constants (`Known::constants`).
+fn value_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
+    let loads = instruction.op().class() == Class::LoadConst && instruction.result_flags() == 0;
+    let value = known.constants.get(instruction.constant_index()).filter(|_| loads)?;
+    Some(Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Value(value.to_bits())), None, None))
+}
+
 /// The row of `instruction` at `pc`: a numeric or heap row where one takes it, else the step the
 /// interpreter's own operation makes (`steps`), so no instruction is refused.
 pub(super) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
     numeric_row(&|index| region.number_constant(index), instruction)
         .flatten()
         .or_else(|| heap_row(region, facts, known, pc, instruction).filter(|_| instruction.result_flags() == 0))
+        .or_else(|| value_row(known, instruction))
         .unwrap_or_else(|| decode_step(pc, instruction, (helpers, matches!(facts, Facts::Site))))
 }
 
@@ -432,6 +445,6 @@ pub(super) const INT_HIGH: u64 = crate::value::ValueLayout::INT_TAG >> HALF;
 pub(super) fn register_of(source: Source) -> Option<Register> {
     match source {
         Source::Register(register) => Some(register),
-        Source::Constant(_) => None,
+        Source::Constant(_) | Source::Value(_) => None,
     }
 }

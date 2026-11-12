@@ -289,19 +289,21 @@ fn plan_catch(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers)
     Ok(row)
 }
 
-/// The run of a fast arm at `pc`: the heap row `fast` over the operand's frame slot, whose hit hops
-/// past the rest of the run to the next instruction, and behind it the helper step the row leaves
-/// into where its proof fails. An operand or result held outside its frame slot (a pinned register
-/// holds a Number, which no fast arm takes) has the helper step alone.
+/// The run of a fast arm at `pc`: the heap row `fast` over the operands' places, whose hit hops past
+/// the rest of the run to the next instruction, and behind it the helper step the row leaves into
+/// where its proof fails. A row that reads a word of its operand's frame slot (`Heap::reads_frame_word`)
+/// with the operand held outside it (a pinned register holds a Number, which no such arm takes), or a
+/// result held outside its frame slot, has the helper step alone.
 fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     let slow = plan_helper(layout, pc, decoded, helpers)?;
     let homes = &layout.homes;
     let ((read, read_hole), (written, written_hole)) = (operand(homes, decoded.a), operand(homes, decoded.dst.map(Source::Register)));
-    if read != Place::Mem || written != Place::Mem {
+    if read != Place::Mem && fast.reads_frame_word() || written != Place::Mem {
         return Ok(slow);
     }
     let row = HeapRow { heap: fast, dst: written, a: read, b: Place::Mem, entry: false };
-    let mut run = Planned::single(base_rows::stencil(row)?, [written_hole, read_hole, 0], Some(pc + 1), None);
+    let holes = heap_holes(decoded, homes, fast, false, [written_hole, read_hole, 0]);
+    let mut run = Planned::single(base_rows::stencil(row)?, holes, Some(pc + 1), None);
     run.exits = vec![Exit::Ahead(1)];
     Ok(behind(run, slow))
 }

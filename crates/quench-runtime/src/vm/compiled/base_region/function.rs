@@ -37,6 +37,8 @@ pub(in crate::vm::compiled) struct Body {
 /// the program facts its rows read.
 struct Sites<'a> {
     function: &'a Function,
+    /// The index of `function` in its program.
+    id: u32,
     callees: &'a Callees,
     facts: &'a [Option<DirectFacts>],
     context: Context,
@@ -62,8 +64,14 @@ fn lowered(region: &LoopRegion, pc: u32, sites: &mut Sites, (instruction, return
         Class::Return if plain && instruction.register_a() < sites.registers => {
             Decoded { a: Some(Source::Register(instruction.register_a())), ..Decoded::step(Step::Return, None) }
         }
-        _ => decode(region, (Facts::Site, sites.known), pc, instruction, helpers),
+        _ => locals::fast_row(sites.function, sites.id, instruction)
+            .unwrap_or_else(|| decode(region, (Facts::Site, sites.known), pc, instruction, helpers)),
     }
+}
+
+/// Whether the row is a fast arm of its instruction: a fast step, or a constant written as it is.
+fn is_fast(row: &Decoded) -> bool {
+    matches!(row.step, Some(Step::Fast(_))) || matches!(row.a, Some(Source::Value(_)))
 }
 
 /// Whether a row may be followed by the completion of the activation with its result: it falls
@@ -79,6 +87,9 @@ fn completable(row: &Decoded) -> bool {
 fn cover(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
     let (plain, returning) = instruction.split_return();
     let row = lowered(region, pc, sites, (plain, returning), helpers);
+    if is_fast(&row) {
+        note_fast(instruction.op());
+    }
     Decoded { completes: returning && completable(&row), ..row }
 }
 
@@ -201,7 +212,7 @@ fn plan_row(layout: &Layout, reprs: &Reprs, reached: bool, pc: u32, row: &Decode
 pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, (function, registers): (u32, u16), known: Known, widened: &[usize], seen: [&[Register]; SEEN], callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     // SAFETY: the caller's contract.
     let facts = unsafe { callees.facts() };
-    let sites = Sites { function: known.program.function(function as usize), callees, facts: &facts, context: Context::root(function, registers), registers, known };
+    let sites = Sites { function: known.program.function(function as usize), id: function, callees, facts: &facts, context: Context::root(function, registers), registers, known };
     let built = assemble_body(region, widened, seen, sites, helpers);
     note(|totals, rejects| match &built {
         Ok(body) => {

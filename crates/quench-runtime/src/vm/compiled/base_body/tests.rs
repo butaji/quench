@@ -525,3 +525,25 @@ fn returning_call_forms_complete_the_activation() {
     assert_eq!(interpreted, compiled);
     assert!(runs > 100, "the bodies ran {runs} times");
 }
+
+/// A constant that is no Number (a string, `undefined`, `null`, a boolean) is the row that writes its
+/// word, an `InitializeTdz` of a frame-owned slot and a store that initializes one are the row over
+/// the activation's locals with the helper step behind it as the slow arm: each has its fast row in
+/// the bodies compiled, and a read of a binding in its temporal dead zone still raises.
+#[test]
+fn non_number_constants_and_local_initializations_are_fast_rows() {
+    use crate::bytecode::Op;
+    let ops = [Op::LoadConst, Op::InitializeTdz, Op::StoreLocal];
+    let before = ops.map(super::super::base_region::fast_rows);
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function tdz(n) { let s = 0; for (let i = 0; i < n; i++) { try { s = s + z; let z = 1; } catch (e) { s = s + 1; } } return s; }
+         function consts(n) { let k = 'k', u = undefined, w = null, b = false, c = 0; for (let i = 0; i < n; i++) { k = k === 'k' ? 'j' : 'k'; b = !b; c = c + (u === undefined ? 1 : 0) + (w === null ? 2 : 0); } return k + b + c; }
+         let t = 0; for (let m = 0; m < 300; m++) t = (t + tdz(m % 5) + consts(m % 4).length) | 0;
+         print(t); print(tdz(3)); print(consts(3));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+    for (op, before) in ops.into_iter().zip(before) {
+        assert!(super::super::base_region::fast_rows(op) > before, "{op:?} has no fast row");
+    }
+}

@@ -71,6 +71,7 @@ impl<H: Host> Vm<H> {
             program, stores: folds.then(|| self.method_cache_atoms.bits()),
             reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
             invalidation: Some(invalidation.address()),
+            constants: self.programs.constants(self.active_program),
         };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, (function, body.registers), known, &widened(generic), [&ints, &doubles], &callees, helpers) }) else { return LaneBodyOutcome::Declined };

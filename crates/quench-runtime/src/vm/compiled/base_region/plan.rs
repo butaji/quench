@@ -52,7 +52,7 @@ pub(super) fn operand(homes: &Homes, source: Option<Source>) -> (Place, u64) {
     match source {
         Some(Source::Register(register)) => (homes.place(register), u64::from(homes.orig[usize::from(register)]) * SLOT),
         Some(Source::Constant(word)) if word >> HALF == INT_HIGH => (Place::Imm, word & u64::from(u32::MAX)),
-        Some(Source::Constant(word)) => (Place::Const, word),
+        Some(Source::Constant(word) | Source::Value(word)) => (Place::Const, word),
         None => (Place::Mem, 0),
     }
 }
@@ -143,7 +143,7 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
 }
 
 /// The hole values of a heap row of `decoded`, given its holes of destination, first and second operand.
-fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bool, holes @ [dst_hole, a_hole, b_hole]: [u64; 3]) -> [u64; HOLES] {
+pub(super) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bool, holes @ [dst_hole, a_hole, b_hole]: [u64; 3]) -> [u64; HOLES] {
     let base = if entry { decoded.hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
     site_holes(decoded, heap, base, holes).unwrap_or_else(|| match heap {
         Heap::Store => [base, a_hole, b_hole],

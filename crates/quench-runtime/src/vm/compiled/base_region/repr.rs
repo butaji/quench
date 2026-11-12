@@ -18,6 +18,7 @@ pub(super) fn operand_repr(reprs: &[Repr], source: Option<Source>) -> Repr {
         Some(Source::Register(register)) => reprs.get(usize::from(register)).copied().unwrap_or(Repr::Tagged),
         Some(Source::Constant(word)) if word >> HALF == INT_HIGH => Repr::Int,
         Some(Source::Constant(_)) => Repr::Double,
+        Some(Source::Value(_)) => Repr::Tagged,
         None => Repr::Unseen,
     }
 }

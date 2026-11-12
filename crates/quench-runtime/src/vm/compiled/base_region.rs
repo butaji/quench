@@ -27,6 +27,7 @@ pub(in crate::vm::compiled) mod callees;
 mod decode;
 pub(in crate::vm::compiled) mod function;
 mod link;
+mod locals;
 mod plan;
 mod repr;
 mod steps;
@@ -57,6 +58,9 @@ pub(in crate::vm::compiled) struct Known<'a> {
     /// The address of the code's invalidation word (`code_dependencies::Invalidation`), which a body that
     /// holds a Stable fact and makes a call reads before the rows that hold it. `None` for a region.
     pub(in crate::vm::compiled) invalidation: Option<usize>,
+    /// The program's constants as the compiling VM materialized them (a string or BigInt is a heap
+    /// value there, which lives as long as the program), where it has them; none for a region.
+    pub(in crate::vm::compiled) constants: &'a [Value],
 }
 
 impl Known<'_> {
@@ -114,6 +118,20 @@ pub(in crate::vm) enum Event {
     Compiled,
     /// A lane body compile started (a Cranelift function tier; none under `--b-jit`).
     BodyCompile,
+}
+
+/// The rows planned as a fast arm (`Step::Fast`, or a constant a row writes as it is), by the opcode
+/// they stand for, counted whether or not the trace channel is on: a test asks that an operation's
+/// fast row exists in the bodies it compiled.
+static FAST_ROWS: [std::sync::atomic::AtomicU64; crate::bytecode::Op::COUNT] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::bytecode::Op::COUNT];
+
+/// The fast rows planned for `op`.
+pub(in crate::vm) fn fast_rows(op: crate::bytecode::Op) -> u64 {
+    FAST_ROWS[op as usize].load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn note_fast(op: crate::bytecode::Op) {
+    FAST_ROWS[op as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// The direct-cell call sites the stitcher inlined (`call_plan::plan_call`), counted whether or not

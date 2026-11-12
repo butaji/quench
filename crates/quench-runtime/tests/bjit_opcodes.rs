@@ -113,6 +113,8 @@ const FAMILIES: &[(&str, &str)] = &[
     ("call-spread-array-and-forwarded", "var sum3 = function () { var r = 0; for (var q = 0; q < arguments.length; q++) r += arguments[q]; return r; }; acc += sum3(...arr) + sum3(i, ...arr) + sum3.apply(null, arr) + sum3.call(null, i);"),
     ("construct-returning-and-super", "class P2 { constructor(v) { this.v = v; } } class Q2 extends P2 { constructor(v) { super(v + 1); } } var mk2 = function (v) { return new Q2(v); }; acc += mk2(i & 3).v + new P2(i & 1).v;"),
     ("name-call-of-a-global", "acc += Math.max(i, 5) + parseInt('12', 10) + add(i, 1);"),
+    ("non-number-constants", "var u = undefined, w = null, bl = false, st = 'k'; t = [u, w, bl, st]; acc += t.length + (u === undefined ? 1 : 0) + (st === 'k' ? 2 : 0);"),
+    ("local-initialization-and-dead-zone", "{ let a = i & 3; acc += a; } try { acc += qq; let qq = 1; } catch (e) { acc += e instanceof ReferenceError ? 1 : 0; } { let b2; acc += b2 === undefined ? 1 : 0; b2 = i; acc += b2; }"),
     ("async-function", "(async function () { await 0; acc += 1; })();"),
 ];
 

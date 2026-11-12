@@ -120,6 +120,12 @@ impl Heap {
         !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Live | Heap::Object | Heap::Key)
     }
 
+    /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
+    /// which a register held in a pinned register as a Number does not have there.
+    pub(super) fn reads_frame_word(self) -> bool {
+        matches!(self, Heap::Object | Heap::Key)
+    }
+
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value
     /// the activation holds, not a Number the region proved.
     pub(super) fn yields_tagged(self) -> bool {
