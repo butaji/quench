@@ -22112,10 +22112,46 @@ if (mapped[1999].o.i !== 1999 || mapped.length !== 2000) throw Error('values sto
     }
 }
 
+#[test]
+fn lane_name_loads_resolve_undefined_intrinsics_and_call_receivers() {
+    // By-name loads of the global `undefined`, of globals a call reads (whose receiver is
+    // `undefined`: a strict function's `this`, globalThis for a sloppy one), of intrinsic
+    // names (`{ __proto__: v }`, `super`) and of intrinsic natives, run from their first
+    // resolution to their bound reads (`lane_load_name_resolve`, `lane_load_name_bound`). The
+    // expected values are Node's.
+    let source = r#"
+      function hot(f) { var s = 0; for (var i = 0; i < 3000; i++) s = (s + f(i)) | 0; return s; }
+      function strictThis() { "use strict"; return this === undefined ? 1 : 0; }
+      function sloppyThis() { return this === globalThis ? 1 : 0; }
+      var out = [];
+      out.push(hot(function () { return undefined === void 0 ? 1 : 0; }));
+      out.push(hot(function () { return strictThis(); }));
+      out.push(hot(function () { return sloppyThis(); }));
+      out.push(hot(function (i) { return Math.max(i, 5) & 7; }));
+      out.push(hot(function (i) { return { __proto__: Array.prototype, v: i } instanceof Array ? 1 : 0; }));
+      class A { m() { return 1; } }
+      class B extends A { m() { return super.m() + 1; } }
+      var b = new B();
+      out.push(hot(function () { return b.m(); }));
+      out.push(hot(function () { return typeof parseInt === "function" ? 1 : 0; }));
+      out.push(hot(function () { return Number.isInteger(parseInt("12", 10)) ? 2 : 0; }));
+      print(out.join(" "));
+    "#;
+    let program = Engine::specialize(source, "lane-name-loads.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["3000 3000 3000 10515 3000 6000 3000 6000"], "{mode:?}");
+    }
+}
+
 #[cfg(not(quench_profiled))]
 #[test]
 fn global_reads_follow_redefinition_deletion_accessors_and_later_lexical_declarations() {
-    // Hot reads of global bindings (`lane_load_global_name`) across every change of what the
+    // Hot reads of global bindings (`lane_load_name_bound`) across every change of what the
     // name resolves to; the expectations are Node's, each script run as its own global Script.
     let first = r#"
 function hot(read) { var s = 0; for (var i = 0; i < 2000; i++) s = (s + read()) | 0; return s; }

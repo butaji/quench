@@ -3,7 +3,7 @@
 use super::*;
 use crate::bytecode::{Operand, Register};
 use crate::bytecode::RegisterWindow;
-use crate::staged::{Allocation, Concrete, Constant, Edge, Frame, NumberOperation, NumericFrame, Operation, Step};
+use crate::staged::{Allocation, Concrete, Constant, Edge, Frame, GlobalBinding, NumberOperation, NumericFrame, Operation, Step};
 
 /// The maker of a frame's heap values: allocates in the lane context it is given and runs no
 /// guest code; `None` leaves the instruction to the general path.
@@ -13,13 +13,39 @@ type AllocationMaker = unsafe fn(*mut (), Registers, Allocation) -> Option<Value
 /// guest code; `None` leaves the instruction to the general path.
 type PropertyDeleter = unsafe fn(*mut (), Value, Value) -> Option<Value>;
 
+/// The reader of a frame's by-name load: the value of `atom` under a binding the record's first
+/// run resolved, which runs no guest code; `None` leaves the instruction to the residual.
+type NameReader = unsafe fn(*mut (), NameRead, u32) -> Option<Value>;
+
+/// How a by-name load's record reads its name once resolved (`lane_name_resolution`).
+#[derive(Clone, Copy)]
+pub(super) enum NameRead {
+    /// The active realm's function for the native the name stands for (`Vm::intrinsic_natives`).
+    Native,
+    /// An intrinsic name's value (`Vm::intrinsic_name_value`).
+    Intrinsic,
+    /// The global object's own data field the record's hint names.
+    Field(crate::vm::FieldCache),
+}
+
+/// What a by-name load's record resolved its name to: the global `undefined`, a constant no
+/// binding changes, or a read of the VM's heap.
+#[derive(Clone, Copy)]
+pub(super) enum NameBinding {
+    Undefined,
+    Read(NameRead),
+}
+
 /// The lane context (type-erased, so the frame is one type for every host) and what it makes
-/// for a staged row: an allocation or a property deletion.
+/// for a staged row: an allocation, a property deletion or a by-name load's value.
 #[derive(Clone, Copy)]
 struct LaneHost {
     cx: *mut (),
     allocate: AllocationMaker,
     delete: PropertyDeleter,
+    read_name: NameReader,
+    /// What the by-name load the frame runs resolved its name to, if it runs one.
+    name: Option<NameBinding>,
 }
 
 /// The interpreter's frame: the live register file and the accumulator view a producer
@@ -45,8 +71,17 @@ impl<const ACC: u8> LaneFrame<ACC> {
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
     fn hosted<H: Host>(registers: Registers, view: Carried, cx: *mut LaneContext<H>) -> Self {
-        let host = LaneHost { cx: cx.cast(), allocate: lane_allocation::<H>, delete: lane_delete_value::<H> };
+        let host = LaneHost { cx: cx.cast(), allocate: lane_allocation::<H>, delete: lane_delete_value::<H>,
+            read_name: lane_name_value::<H>, name: None };
         Self { host: Some(host), ..Self::new(registers, view) }
+    }
+
+    /// This frame running a by-name load whose record resolved its name to `binding`.
+    fn named(mut self, binding: NameBinding) -> Self {
+        if let Some(host) = self.host.as_mut() {
+            host.name = Some(binding);
+        }
+        self
     }
 
     /// A frame that may read and write the activation's local slots.
@@ -137,7 +172,32 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 }
 
-impl<const ACC: u8> crate::staged::GlobalFrame<Concrete> for LaneFrame<ACC> {}
+/// The by-name load's binding as the row asks for it: the global `undefined` is a constant; any
+/// other is the lane's own read (`GlobalFrame::global_read`) of what its record resolved.
+impl<const ACC: u8> crate::staged::GlobalFrame<Concrete> for LaneFrame<ACC> {
+    fn global_binding(&mut self, _proof: ()) -> GlobalBinding {
+        match self.host.and_then(|host| host.name) {
+            Some(NameBinding::Undefined) => GlobalBinding::Constant(Value::UNDEFINED),
+            _ => GlobalBinding::Dynamic,
+        }
+    }
+
+    #[inline(always)]
+    fn global_constant(&mut self, _stage: &mut Concrete, destination: Register, value: Value) -> Option<()> {
+        self.registers.set(destination, value);
+        Some(())
+    }
+
+    #[inline(always)]
+    fn global_read(&mut self, _stage: &mut Concrete, destination: Register, atom: u32, _site: u16, _proof: ()) -> Option<()> {
+        let host = self.host?;
+        let Some(NameBinding::Read(read)) = host.name else { return None };
+        // SAFETY: the reader was made for the lane context this frame runs in.
+        let value = unsafe { (host.read_name)(host.cx, read, atom) }?;
+        self.registers.set(destination, value);
+        Some(())
+    }
+}
 
 impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     type Plans = crate::staged::NoPlans;
@@ -324,6 +384,25 @@ unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Alloca
     }
 }
 
+/// The value of `atom` under `read` in the lane context `cx`, which allocates nothing and runs
+/// no guest code; `None` where the binding does not answer it (a native no first run recorded,
+/// an intrinsic name the VM cannot evaluate, a hint the global object's shape no longer fits).
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(never)]
+unsafe fn lane_name_value<H: Host>(cx: *mut (), read: NameRead, atom: u32) -> Option<Value> {
+    let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
+    match read {
+        NameRead::Native => {
+            let &(_, native) = vm.intrinsic_natives.iter().find(|&&(named, _)| named == atom)?;
+            Some(vm.native_value(native))
+        }
+        NameRead::Intrinsic => vm.intrinsic_name_value(atom),
+        NameRead::Field(hint) => vm.record_field_entry_hit(hint, vm.realm.globals),
+    }
+}
+
 /// The `true` of `delete base[key]` of a string key on an ordinary object, which runs no guest
 /// code. A refused deletion (a non-configurable property) has changed nothing and, like any
 /// other base or key, is the general path's: strict code makes it an error.
@@ -396,4 +475,16 @@ pub(super) fn staged_delete<H: Host>(cx: *mut LaneContext<H>, r: Registers, [des
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
     matches!(crate::staged::step(&mut stage, &mut frame, Operation::Delete { destination, base, key, strict }), Step::Value(_))
+}
+
+/// The by-name load of record `i` (a call's, with a receiver, where `call`) by the staged
+/// `LoadName` row over `binding`, in the lane context `cx`'s own run; false, writing nothing,
+/// where the binding does not answer it.
+#[inline(always)]
+pub(super) fn staged_load_name<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction, call: bool,
+    binding: NameBinding) -> bool {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx).named(binding);
+    let row = Operation::LoadName { destination: i.a, atom: i.imm(), site: i.c, receiver: call.then_some(i.b), proof: () };
+    matches!(crate::staged::step(&mut stage, &mut frame, row), Step::Value(_))
 }

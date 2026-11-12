@@ -1,6 +1,7 @@
 //! The name, environment and iteration rows on the interpreter's stage (`Concrete`).
 use crate::bytecode::{Op, Operand, Register, WideInstruction};
 use crate::heap::EnvironmentSlots;
+use crate::typed_ir::Type;
 use crate::staged::{step, CallOut, Concrete, Constant, Edge, Frame, GlobalBinding, GlobalFrame, NoPlans, NumericFrame, Operation, PropertyFrame, Protocol, Step};
 use crate::Value;
 use crate::staged::Operation as Row;
@@ -17,6 +18,10 @@ struct Probe {
     global_writes: Vec<(u32, u16, u64, bool)>,
     /// The immutable global a read of this frame resolves, if any.
     constant: Option<Value>,
+    /// The value a dependency holds for the global a read of this frame resolves, if any.
+    held: Option<Value>,
+    /// The value the frame's own read of the global answers, if it does.
+    read: Option<Value>,
 }
 
 impl Probe {
@@ -64,7 +69,18 @@ impl Frame<Concrete> for Probe {
 
 impl GlobalFrame<Concrete> for Probe {
     fn global_binding(&mut self, _proof: ()) -> GlobalBinding {
-        self.constant.map_or(GlobalBinding::Dynamic, GlobalBinding::Constant)
+        match (self.constant, self.held) {
+            (Some(value), _) => GlobalBinding::Constant(value),
+            (None, Some(value)) => GlobalBinding::Held { value, ty: Type::ANY },
+            (None, None) => GlobalBinding::Dynamic,
+        }
+    }
+    fn global_held(&mut self, _stage: &mut Concrete, destination: Register, value: Value, _ty: Type) -> Option<()> {
+        self.registers[usize::from(destination)] = value.to_bits();
+        Some(())
+    }
+    fn global_read(&mut self, _stage: &mut Concrete, destination: Register, _atom: u32, _site: u16, _proof: ()) -> Option<()> {
+        self.read.map(|value| self.registers[usize::from(destination)] = value.to_bits())
     }
     fn global_constant(&mut self, _stage: &mut Concrete, destination: Register, value: Value) -> Option<()> {
         self.registers[usize::from(destination)] = value.to_bits();
@@ -275,4 +291,66 @@ fn the_name_reads_decode_with_the_tiers_proof() {
     assert!(matches!(decode(Op::LoadName), Some(Row::LoadName { destination: 1, atom: 4, receiver: None, proof: 7, .. })));
     assert!(matches!(decode(Op::LoadNameCall), Some(Row::LoadName { destination: 1, receiver: Some(2), .. })));
     assert!(decode(Op::Move).is_none());
+}
+
+/// The frame's own read of a global that is there (an own data field its hint names, an
+/// intrinsic native, an intrinsic name) defines the name, and a call's receiver is `undefined`;
+/// the VM is not asked.
+#[test]
+fn a_name_the_frame_reads_defines_the_name_and_a_calls_receiver_without_the_vm() {
+    let mut frame = Probe::new(2);
+    frame.read = Some(Value::number(6.0));
+    frame.registers[1] = Value::number(1.0).to_bits();
+    let call = Row::LoadName { destination: 0, atom: 8, site: 3, receiver: Some(1), proof: () };
+    assert!(matches!(run(&mut frame, call), Step::Value(_)));
+    assert_eq!(Value::from_bits(frame.registers[0]), Value::number(6.0));
+    assert_eq!(Value::from_bits(frame.registers[1]), Value::UNDEFINED);
+    let read = Row::LoadName { destination: 0, atom: 8, site: 3, receiver: None, proof: () };
+    frame.read = Some(Value::number(7.0));
+    assert!(matches!(run(&mut frame, read), Step::Value(_)));
+    assert_eq!(Value::from_bits(frame.registers[0]), Value::number(7.0));
+    assert!(frame.calls.is_empty());
+}
+
+/// A read the frame does not answer (a hint the global object's shape no longer fits, a global
+/// lexical binding, a name the global object lacks, a `with` scope) is the VM's binding rules
+/// for a plain read, whose residual refills the site, and the interpreter's for a call.
+#[test]
+fn a_name_the_frame_cannot_read_leaves_its_refill_to_the_vm_and_a_call_to_the_interpreter() {
+    let mut frame = Probe::new(2);
+    let read = Row::LoadName { destination: 0, atom: 8, site: 3, receiver: None, proof: () };
+    assert!(matches!(run(&mut frame, read), Step::Value(_)));
+    assert_eq!(frame.calls, [(CallOut::LoadName { atom: 8, site: 3 }, Some(0))]);
+    frame.declines = true;
+    assert!(matches!(run(&mut frame, read), Step::Unresolved), "the VM raised (a temporal dead zone, an unresolvable name)");
+    let call = Row::LoadName { destination: 0, atom: 8, site: 3, receiver: Some(1), proof: () };
+    assert!(matches!(run(&mut frame, call), Step::Unresolved));
+}
+
+/// A global a dependency holds (a binding its layout fixed, a value inherited through the
+/// prototype chain the dependency covers) is defined from the fact with no read and no call.
+#[test]
+fn a_global_a_dependency_holds_is_defined_from_the_fact_with_no_read() {
+    let mut frame = Probe::new(2);
+    frame.held = Some(Value::number(3.0));
+    frame.read = Some(Value::number(99.0));
+    let call = Row::LoadName { destination: 0, atom: 8, site: 3, receiver: Some(1), proof: () };
+    assert!(matches!(run(&mut frame, call), Step::Value(_)));
+    assert_eq!(Value::from_bits(frame.registers[0]), Value::number(3.0), "the held fact, not the read");
+    assert_eq!(Value::from_bits(frame.registers[1]), Value::UNDEFINED);
+    assert!(frame.calls.is_empty());
+}
+
+/// The global `undefined` is a constant: it defines the name and a call's receiver without a
+/// read, whatever the frame's own read would answer.
+#[test]
+fn the_global_undefined_is_a_constant_no_read_or_call_answers() {
+    let mut frame = Probe::new(2);
+    frame.constant = Some(Value::UNDEFINED);
+    frame.read = Some(Value::number(99.0));
+    frame.registers[1] = Value::number(1.0).to_bits();
+    let call = Row::LoadName { destination: 0, atom: 8, site: 3, receiver: Some(1), proof: () };
+    assert!(matches!(run(&mut frame, call), Step::Value(_)));
+    assert_eq!((Value::from_bits(frame.registers[0]), Value::from_bits(frame.registers[1])), (Value::UNDEFINED, Value::UNDEFINED));
+    assert!(frame.calls.is_empty());
 }

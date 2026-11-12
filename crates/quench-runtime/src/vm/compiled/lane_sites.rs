@@ -4,7 +4,7 @@ use super::super::global_facts::GlobalRead;
 
 impl<H: Host> Vm<H> {
     /// The PCs of `unit` whose by-name loads read the global scope as the lane's own does
-    /// (`dispatch_fast::lane_load_name_first`): in a function whose unresolved names are
+    /// (`dispatch_fast::lane_name_resolution`): in a function whose unresolved names are
     /// global and resolve statically, a name no internal binding owns; each with its constant
     /// where the name is an immutable global (`builtins::immutable_globals`), else with the
     /// cell it reads now as a Stable fact (`Vm::stable_global_read`).
