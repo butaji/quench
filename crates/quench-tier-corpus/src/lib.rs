@@ -146,3 +146,5 @@ mod tests {
         assert!(answer.contains("globalThis.answer = h"));
     }
 }
+
+pub mod residuals;

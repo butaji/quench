@@ -84,6 +84,8 @@ setting! {
         OsrReject = "osr-reject",
         JitPeak = "jit-peak",
         JitDump = "jit-dump",
+        /// Per-loop residual counts of each compiled hot loop (`quench-bench --residuals`).
+        Residuals = "residuals",
         PerfMap = "perf-map",
         NameAtoms = "name-atoms",
         FieldPrimitives = "field-primitives",

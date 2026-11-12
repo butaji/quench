@@ -358,6 +358,7 @@ pub(in crate::vm) fn start_osr_region(
     // lowering with its own facts, widenings and entry record.
     let lowered = lane?;
     let function = lowered.function;
+    super::residuals::report_clif(region.header, &function);
     let clif = native_dump_directory().map(|_| function.display().to_string());
     let facts = OsrFacts { roots: lowered.stable.roots, ..OsrFacts::observed(observation) };
     let code = super::super::jit_backend::run_in_background(move || {
