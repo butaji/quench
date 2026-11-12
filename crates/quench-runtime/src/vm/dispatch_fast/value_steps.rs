@@ -125,9 +125,10 @@ unsafe fn lane_body_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u
             next != following
         })
     });
-    if branched.is_some() && instruction.op() == crate::bytecode::Op::InitializeThis {
-        // The step bound the frame's `this`: the rows that read the receiver take the payload's.
-        vm.publish_body_receiver(unsafe { (*cx).registers }.get(instruction.register_a()));
+    if branched.is_some() && (instruction.op() == crate::bytecode::Op::InitializeThis || instruction.writes_current_this()) {
+        // The step bound the frame's `this` (`super()`): the rows that read the receiver take the payload's.
+        let this = vm.current_this(frame).unwrap_or(Value::DELETED);
+        vm.publish_body_receiver(this);
     }
     // SAFETY: as above; the dropped caches are derived again where the lane next needs them.
     unsafe {

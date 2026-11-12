@@ -64,16 +64,19 @@ pub(super) enum CallForm {
 
 impl CallForm {
     /// The form of the call `instruction` is, if a body's call chain makes it: a call form with no
-    /// result flag left (the return flag is `cover`'s) and no `eval` (which declares bindings in the
-    /// caller's scope, the webs' registers and locals being fixed once compiled).
+    /// result flag left but the `this` binding (the return flag is `cover`'s). A call that binds the caller's
+    /// `this` (`SET_THIS_REGISTER`, a `super()` call) or has an `eval` flag (which declares bindings in the
+    /// caller's scope) is the step helper's own step made in place, a helper call row whatever its form: the
+    /// helper binds the frame's `this` and publishes the receiver, or runs the eval in the frame.
     pub(super) fn of(instruction: WideInstruction) -> Option<Self> {
-        if !instruction.op().makes_script_call() || instruction.result_flags() != 0 || instruction.resolves_dynamic_scope() {
+        if !instruction.op().makes_script_call() || instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER != 0 {
             return None;
         }
+        let in_place = instruction.writes_current_this() || instruction.resolves_dynamic_scope();
         let over_registers = instruction.op().class() == Class::Construct && !instruction.is_super_construct() && !ImmediateLayout::construct_array_arguments(instruction.imm());
         Some(match instruction.op().class() {
-            Class::Call => Self::Plain,
-            Class::Construct if over_registers => Self::Construct,
+            Class::Call if !in_place => Self::Plain,
+            Class::Construct if over_registers && !in_place => Self::Construct,
             _ => Self::Stepped,
         })
     }
@@ -351,6 +354,8 @@ mod tests {
         }
         assert_eq!(form(Op::Move), None);
         assert_eq!(CallForm::of(WideInstruction::new(Op::Call, 1 | RETURN_REGISTER, 2, 3, 0)), None);
+        let binds_this = WideInstruction::new(Op::Call, 1 | crate::bytecode::SET_THIS_REGISTER, 2, 3, 0);
+        assert_eq!(CallForm::of(binds_this), binds_this.writes_current_this().then_some(CallForm::Stepped), "a call that binds `this` is the helper step");
         let [plain, construct, stepped] = [CallForm::Plain, CallForm::Construct, CallForm::Stepped].map(|form| form.helper() as usize);
         assert!(plain != construct && construct != stepped && plain != stepped, "each form has its own helper");
     }

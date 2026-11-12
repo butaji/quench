@@ -28,9 +28,8 @@
 //! 4. A leave (`CallRow::Here`): the region ends at the instruction and the interpreter runs it,
 //!    for every other instruction: the suspensions `Await`, `Yield` and
 //!    `YieldStar`, whose generator or async record the lane resumes in the interpreter, so no native
-//!    code could continue past them; the Wasm opcodes (`EXCLUDED`); a call with an `eval` flag, or with
-//!    a result flag other than the return flag (a `super()` that binds `this`, an update of a numeric
-//!    local); a conditional jump the helper would take backward in a loop region, which has no row that
+//!    code could continue past them; the Wasm opcodes (`EXCLUDED`); a call with a result flag other than the
+//!    return flag and the `this` binding; a conditional jump the helper would take backward in a loop region, which has no row that
 //!    polls the interrupt flag before it (a body has: `function::preludes`); and any instruction that
 //!    carries result flags the body does not complete with.
 //!

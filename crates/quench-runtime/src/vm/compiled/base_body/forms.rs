@@ -75,3 +75,20 @@ fn a_ten_deep_call_chain_makes_its_steps_in_the_callees() {
     assert_eq!(interpreted, compiled);
     assert!(runs > 1000 && returns > 1000, "the bodies ran {runs} times and completed {returns}");
 }
+
+/// A call that binds `this` (`super(...)` with an argument that is a call) and a direct `eval` are the helper's own
+/// step made in place, not leaves: a body holding either runs as the interpreter does, the receiver `super()` bound
+/// read by the rows after it and the eval's effect on the function's scope seen by the names after it.
+#[test]
+fn calls_that_bind_this_or_run_eval_are_helper_calls() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function twice(x) { return x * 2; }
+         class A { constructor(n) { this.a = n; } }
+         class B extends A { constructor(n) { super(twice(n) + 1); this.b = this.a + n; } }
+         function ev(n) { let s = 0; for (let i = 0; i < n; i++) { s = s + eval('i + 1'); } return s; }
+         let t = 0; for (let k = 0; k < 300; k++) { const o = new B(k % 4); t = (t + o.a + o.b + ev(k % 3)) | 0; }
+         print(t); const q = new B(5); print(q.a); print(q.b); print(ev(4));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 0, "no body ran");
+}
