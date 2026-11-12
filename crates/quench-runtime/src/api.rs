@@ -284,7 +284,13 @@ impl<H: Host> Runtime<H> {
         read_host: impl FnOnce(&mut H, &mut crate::SnapshotReader<'_, '_>) -> Result<(), String>,
     ) -> Result<ResidualProgram, String> {
         entry.validate_unless_proven()?;
-        self.vm.restore_snapshot(snapshot, entry, read_host).map_err(|error| error.0)
+        let mode = self.execution_mode();
+        let restored = self.vm.restore_snapshot(snapshot, entry, read_host).map_err(|error| error.0)?;
+        // A snapshot carries the realm, not the process's tier enrollment: the restored
+        // program store starts from the store defaults, which enable no lane body. The mode
+        // this runtime was put in is the process's, so it is adopted again here.
+        self.set_execution_mode(mode);
+        Ok(restored)
     }
 
     /// `execute_deferred_jobs` for a restored runtime (`restore_snapshot`).
@@ -665,6 +671,19 @@ pub enum RuntimeError {
 mod tests {
     use super::*;
     use crate::test_host::TestHost;
+
+    #[test]
+    fn a_restored_runtime_adopts_the_process_tier_enrollment_again() {
+        let program = Engine::specialize("1;", "restore-tier.js").unwrap();
+        let mut builder = Runtime::new(TestHost::default());
+        let snapshot = builder.build_snapshot(&program, |_, _| Ok(())).unwrap();
+        let mut restored = Runtime::new(TestHost::default());
+        restored.set_execution_mode(crate::ExecutionMode::Compiled);
+        assert!(restored.vm.lane_methods_enrolled(), "the mode enrolls the lane-body tier");
+        restored.restore_snapshot(std::rc::Rc::new(snapshot), &program, |_, _| Ok(())).unwrap();
+        assert_eq!(restored.execution_mode(), crate::ExecutionMode::Compiled);
+        assert!(restored.vm.lane_methods_enrolled(), "a restore carries the realm, not the tier enrollment");
+    }
 
     fn assert_output_in_execution_modes(source: &str, expected: &[&str]) {
         for (mode, compile) in [
