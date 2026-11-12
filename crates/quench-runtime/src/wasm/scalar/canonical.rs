@@ -12,6 +12,7 @@ use std::cell::RefCell;
 /// The id of a canonical function type, an index of the table. The two ids at the top of the
 /// range are no type: they say what a table element holds instead of a function of a module.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(transparent)]
 pub(crate) struct CanonicalSignature(u32);
 
 impl CanonicalSignature {
@@ -23,7 +24,7 @@ impl CanonicalSignature {
     /// The first id that names no type.
     const RESERVED: u32 = Self::FOREIGN.0;
 
-    /// The id as the word of a native table's element.
+    /// The id as the word a staged rule compares.
     pub(crate) const fn word(self) -> u64 {
         self.0 as u64
     }
@@ -127,9 +128,9 @@ mod tests {
         let first = pool(&types, embedded(&[WasmType::I32], &[WasmType::I64]));
         let second = pool(&types, embedded(&[WasmType::I32], &[WasmType::I64]));
         let other = pool(&types, embedded(&[WasmType::I64], &[WasmType::I64]));
-        assert_eq!(first.function_canonical(0), second.function_canonical(0));
-        assert_ne!(first.function_canonical(0), other.function_canonical(0));
-        assert_eq!(first.type_canonical(0), first.function_canonical(0));
+        assert_eq!(first.defined_canonical(0), second.defined_canonical(0));
+        assert_ne!(first.defined_canonical(0), other.defined_canonical(0));
+        assert_eq!(first.type_canonical(0), first.defined_canonical(0));
     }
 
     #[test]
@@ -140,8 +141,8 @@ mod tests {
         let first = pool(&first_types, first_type);
         let second = pool(&second_types, second_type);
         let other = pool(&other_types, other_type);
-        assert_eq!(first.function_canonical(0), second.function_canonical(0));
-        assert_ne!(first.function_canonical(0), other.function_canonical(0));
+        assert_eq!(first.defined_canonical(0), second.defined_canonical(0));
+        assert_ne!(first.defined_canonical(0), other.defined_canonical(0));
         assert!(first.accepts(0, &second, 0, true));
         assert!(!first.accepts(0, &other, 0, false));
     }
@@ -153,8 +154,8 @@ mod tests {
         let implicit = embedded(&[WasmType::I32], &[WasmType::I32]);
         let from_embedder = pool(&WasmTypes::default(), implicit);
         assert_ne!(
-            from_module.function_canonical(0),
-            from_embedder.function_canonical(0)
+            from_module.defined_canonical(0),
+            from_embedder.defined_canonical(0)
         );
         assert!(from_module.accepts(0, &from_embedder, 0, false));
         assert!(from_embedder.accepts(0, &from_module, 0, false));
@@ -164,7 +165,7 @@ mod tests {
     fn no_type_has_the_id_of_a_null_or_foreign_element() {
         let types = WasmTypes::default();
         let signatures = pool(&types, embedded(&[], &[]));
-        let id = signatures.function_canonical(0).unwrap();
+        let id = signatures.defined_canonical(0).unwrap();
         assert_ne!(id, CanonicalSignature::NULL);
         assert_ne!(id, CanonicalSignature::FOREIGN);
         assert_ne!(CanonicalSignature::NULL, CanonicalSignature::FOREIGN);

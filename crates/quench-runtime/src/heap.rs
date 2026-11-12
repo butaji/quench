@@ -4457,7 +4457,7 @@ impl Heap {
                         }
                 }
                 Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
-                Cell::WasmTable { elements, .. } => elements.capacity() * size_of::<Value>(),
+                Cell::WasmTable { elements, .. } => elements.external_bytes(),
                 Cell::WasmGc { fields, .. } => fields.allocated_bytes(),
                 Cell::TemporalPlainDate { calendar, .. }
                 | Cell::TemporalPlainDateTime { calendar, .. }

@@ -30,8 +30,9 @@ impl WasmSignatures {
         Some(self.types.get(index as usize)?.canonical)
     }
 
-    /// The canonical id of the signature of `function`: what a table element holding it stores.
-    pub(crate) fn function_canonical(&self, function: usize) -> Option<CanonicalSignature> {
-        self.type_canonical(self.function_type_index(function)?)
+    /// The canonical id of the signature of defined function `function`: what a table element
+    /// holding it stores.
+    pub(crate) fn defined_canonical(&self, function: u32) -> Option<CanonicalSignature> {
+        self.type_canonical(self.defined_type_index(function)?)
     }
 }

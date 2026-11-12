@@ -11,6 +11,7 @@ use super::wasm_call::WasmTable;
 use super::wasm_float::{Float, Truncation};
 use super::wasm_instance::{Storage, WasmInstance};
 use super::wasm_memory::{Access, WasmMemory, WasmMemoryWrite};
+use crate::wasm::CanonicalSignature;
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
@@ -34,11 +35,12 @@ pub(crate) struct ConcreteInstance<'a> {
     pub(crate) memory: &'a mut [u8],
 }
 
-/// A stage over a table of function references; `matches` says whether a reference's function
-/// has the expected signature type.
+/// A stage over a table of function references and the signature id of each; `related` says
+/// whether a reference whose id is not the expected one satisfies the expected type anyway.
 pub(crate) struct ConcreteTable<'a> {
     pub(crate) elements: &'a [Value],
-    pub(crate) matches: &'a mut dyn FnMut(Value) -> bool,
+    pub(crate) signatures: &'a [CanonicalSignature],
+    pub(crate) related: &'a mut dyn FnMut(Value) -> bool,
 }
 
 /// Methods that are `ConcreteWasm`'s: one definition, delegated.
@@ -83,21 +85,21 @@ scalar_stage!(
 );
 
 impl WasmTable for ConcreteTable<'_> {
-    fn table_length(&mut self) -> u64 {
-        self.elements.len() as u64
+    fn table_range_exceeds(&mut self, index: u64, extent: u64) -> u64 {
+        range_past(self.elements.len(), index, extent)
+    }
+
+    fn element_signature(&mut self, index: u64) -> u64 {
+        self.signatures[index as usize].word()
     }
 
     fn table_element(&mut self, index: u64) -> u64 {
         self.elements[index as usize].to_bits()
     }
 
-    fn reference_is_null(&mut self, reference: u64) -> u64 {
-        u64::from(Value::from_bits(reference).is_null())
-    }
-
-    /// The signature type is the closure's to know: it closes over the expected one.
-    fn reference_matches(&mut self, reference: u64, _: u32) -> u64 {
-        u64::from((self.matches)(Value::from_bits(reference)))
+    /// Equal ids are equivalent types; the closure knows the expected type, which it closes over.
+    fn signature_accepts(&mut self, reference: u64, signature: u64, expected: u64) -> u64 {
+        u64::from(signature == expected || (self.related)(Value::from_bits(reference)))
     }
 }
 
@@ -164,12 +166,12 @@ fn store_word(memory: &mut [u8], access: Access, index: u64, offset: u32, value:
     memory[access_bytes(access, index, offset)].copy_from_slice(bytes);
 }
 
-/// The flag that `extent` bytes from `index` pass the end of `memory`: the shared range check
-/// of memories, tables and bulk operations.
+/// The flag that `extent` units from `index` pass the end of `length` units: the shared range
+/// check of memories, tables and bulk operations.
 #[inline(always)]
-fn range_past(memory: &[u8], index: u64, extent: u64) -> u64 {
-    let inside = usize::try_from(extent)
-        .is_ok_and(|extent| checked_range(index, extent, memory.len()).is_ok());
+fn range_past(length: usize, index: u64, extent: u64) -> u64 {
+    let inside =
+        usize::try_from(extent).is_ok_and(|extent| checked_range(index, extent, length).is_ok());
     u64::from(!inside)
 }
 
@@ -199,7 +201,7 @@ macro_rules! readable_memory {
 
             #[inline(always)]
             fn range_exceeds(&mut self, index: u64, extent: u64) -> u64 {
-                range_past(self.memory, index, extent)
+                range_past(self.memory.len(), index, extent)
             }
         }
     )+};

@@ -428,18 +428,14 @@ impl<H: Host> Vm<H> {
         let length = usize::try_from(ty.initial).map_err(|_| {
             JsError::validation("Wasm table size exceeds host address space".into())
         })?;
-        let mut elements = Vec::new();
-        elements
-            .try_reserve_exact(length)
-            .map_err(|_| JsError::validation("Wasm table allocation failed".into()))?;
-        elements.resize(length, initial);
+        let signature = self.wasm_element_signature(initial);
+        let elements =
+            crate::heap::WasmTableElements::filled(length, ty.maximum, initial, signature)
+                .ok_or_else(|| JsError::validation("Wasm table allocation failed".into()))?;
         Ok(self.heap.alloc(Cell::WasmTable {
             object: Box::new(Self::empty_object(self.wasm_js.table)),
             table64: ty.table64,
-            elements: Box::new(crate::heap::WasmTableElements {
-                values: elements,
-                maximum: ty.maximum,
-            }),
+            elements: Box::new(elements),
             element_type: ty.element_type,
             declarations,
         }))
@@ -482,10 +478,11 @@ impl<H: Host> Vm<H> {
                 .heap
                 .environment_slot(environment, table_base + index)
                 .unwrap();
+            let signature = self.wasm_element_signature(initial);
             let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(table) else {
                 unreachable!("allocated table")
             };
-            elements.fill(initial);
+            elements.fill(0..elements.len(), initial, signature);
         }
         for (index, segment) in module.elements.iter().enumerate() {
             let mut values = Vec::new();

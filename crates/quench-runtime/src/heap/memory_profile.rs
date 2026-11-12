@@ -691,7 +691,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::TemporalPlainMonthDay { calendar, .. }
             | Cell::TemporalPlainYearMonth { calendar, .. } => calendar.capacity(),
             Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
-            Cell::WasmTable { elements, .. } => elements.capacity() * size_of::<Value>(),
+            Cell::WasmTable { elements, .. } => elements.external_bytes(),
             Cell::WasmGc { fields, .. } => fields.allocated_bytes(),
             Cell::Array { object } => object.elements().capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),

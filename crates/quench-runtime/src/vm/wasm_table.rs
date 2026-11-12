@@ -184,11 +184,12 @@ impl<H: Host> Vm<H> {
         if !self.wasm_table_accepts(table, value) {
             return Err(JsError::validation("invalid Wasm table reference".into()));
         }
+        let signature = self.wasm_element_signature(value);
         let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(table) else {
             unreachable!()
         };
         let range = table_range(index, length, elements.len())?;
-        elements[range].fill(value);
+        elements.fill(range, value, signature);
         self.invalidate_wasm_reference_caches();
         Ok(())
     }
@@ -202,6 +203,7 @@ impl<H: Host> Vm<H> {
         if !self.wasm_table_accepts(table, initial) {
             return Err(JsError::validation("invalid Wasm table reference".into()));
         }
+        let signature = self.wasm_element_signature(initial);
         let Some(Cell::WasmTable {
             elements, table64, ..
         }) = self.heap.get_mut(table)
@@ -219,12 +221,11 @@ impl<H: Host> Vm<H> {
         else {
             return Ok(None);
         };
-        let before = elements.capacity() * size_of::<Value>();
-        if elements.try_reserve_exact(length - old_size).is_err() {
+        let before = elements.external_bytes();
+        if !elements.try_grow(length, initial, signature) {
             return Ok(None);
         }
-        elements.resize(length, initial);
-        let after = elements.capacity() * size_of::<Value>();
+        let after = elements.external_bytes();
         self.heap.adjust_external_bytes(before, after);
         self.invalidate_wasm_reference_caches();
         Ok(Some(old_size as u64))
@@ -249,10 +250,14 @@ impl<H: Host> Vm<H> {
         let input = table_range(input, length, values.len())?;
         let output = table_range(output, length, self.wasm_table_elements(table)?.len())?;
         let values = values[input].to_vec();
+        let signatures: Vec<_> = values
+            .iter()
+            .map(|value| self.wasm_element_signature(*value))
+            .collect();
         let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(table) else {
             unreachable!()
         };
-        elements[output].copy_from_slice(&values);
+        elements.copy_in(output.start, &values, &signatures);
         self.invalidate_wasm_reference_caches();
         Ok(())
     }
@@ -302,7 +307,7 @@ impl<H: Host> Vm<H> {
             else {
                 unreachable!()
             };
-            destination_elements[output].copy_from_slice(&source_elements[input]);
+            destination_elements.copy_from(output, source_elements, input);
         }
         self.invalidate_wasm_reference_caches();
         Ok(())
