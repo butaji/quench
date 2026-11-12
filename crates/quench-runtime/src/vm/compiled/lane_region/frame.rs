@@ -473,7 +473,7 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
         matches!(self.edges, Edges::ValueGuarded { .. }).then(|| self.miss())
     }
 
-    fn html_dda(&self) -> bool {
+    fn html_dda_possible(&self) -> bool {
         self.html_dda
     }
 

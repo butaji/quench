@@ -87,7 +87,7 @@ pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + supe
     /// Whether an IsHTMLDDA object can exist (the host provides one): a heap cell other than an
     /// object or array record may then be it, which no word decides.
     #[inline(always)]
-    fn html_dda(&self) -> bool { true }
+    fn html_dda_possible(&self) -> bool { true }
 
     /// The miss edge a local access uses, where this frame guards it. A frame whose locals
     /// are plain storage reads and writes them without a guard returns `None`, and its

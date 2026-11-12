@@ -68,7 +68,7 @@ impl NumericFrame<Concrete> for Probe {
     fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 { unreachable!("no Number operand") }
     fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { None }
     fn miss(&self) {}
-    fn html_dda(&self) -> bool { self.html_dda }
+    fn html_dda_possible(&self) -> bool { self.html_dda }
     fn int_fact(&self) {}
     fn number_fact(&self) {}
 }

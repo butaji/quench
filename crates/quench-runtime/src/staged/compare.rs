@@ -207,7 +207,7 @@ fn known_equal(ty: Type, expected: Nullish, strict: bool) -> Option<bool> {
 /// which no word decides: it leaves at the miss edge.
 #[inline(always)]
 fn loosely_nullish<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, word: S::Word) -> Option<S::Cond> {
-    if frame.html_dda() {
+    if frame.html_dda_possible() {
         let tag = stage.and_imm(word, ValueLayout::TAG_MASK);
         let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
         let (object, array) = (is_direct_object(stage, word), is_direct_array(stage, word));
