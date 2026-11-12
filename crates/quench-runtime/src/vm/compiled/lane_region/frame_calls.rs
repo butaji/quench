@@ -7,7 +7,8 @@ use super::{BindingTime, Fact, Proof, Projection, RegisterFact, Representation, 
 use crate::bytecode::Register;
 use cranelift_codegen::ir;
 use crate::Value;
-use cranelift_codegen::ir::{types, InstBuilder, MemFlagsData, condcodes::IntCC};
+use cranelift_codegen::ir::{types, InstBuilder, condcodes::IntCC};
+use crate::vm::compiled::regions;
 
 /// A fault-polling body records its poll instruction; any other leaves at the miss edge when
 /// the flag is set.
@@ -20,7 +21,7 @@ pub(in super::super) fn safepoint_parts(builder: &mut cranelift_frontend::Functi
     polls: &mut smallvec::SmallVec<[cranelift_codegen::ir::Inst; super::super::INLINE_EFFECT_EDGES]>,
     proof: EmitProof) -> Option<()> {
     let EmitProof::Safepoint { interrupt, miss, fault_poll } = proof else { return None };
-    let requested = builder.ins().atomic_load(types::I8, MemFlagsData::trusted(), interrupt);
+    let requested = builder.ins().atomic_load(types::I8, regions::dispatch(), interrupt);
     if fault_poll {
         let cranelift_codegen::ir::ValueDef::Result(inst, _) = builder.func.dfg.value_def(requested) else { return None };
         polls.push(inst);

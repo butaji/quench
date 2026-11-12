@@ -61,6 +61,8 @@ region_flags! {
     entry_cell => EntryCell.mutable,
     /// The code's invalidation word.
     invalidation => Invalidation.mutable,
+    /// A record-reservation base word of the dispatch.
+    record_base => RecordBases.readonly,
     /// A per-site feedback counter.
     miss_counter => MissCounters.mutable,
     /// A word of the loop entry record: written before the run, never during it.

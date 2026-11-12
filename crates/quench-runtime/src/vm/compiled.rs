@@ -1351,6 +1351,13 @@ fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, o
     builder.ins().load(types::I64, regions::dispatch(), payload, offset)
 }
 
+/// A record reservation's base in the dispatch payload (`JsStepDispatch::object_record_base`,
+/// `function_record_base`): fixed for a whole native run, so the load merges and hoists.
+fn emit_js_record_base(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
+    let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
+    builder.ins().load(types::I64, regions::record_base(), payload, offset)
+}
+
 fn emit_js_property_values(builder: &mut FunctionBuilder<'_>, payload: ir::Value) -> (ir::Value, ir::Value) {
     let header = builder.ins().load(types::I64, invariant(), payload,
         std::mem::offset_of!(JsStepDispatch, property_buffer) as i32);

@@ -52,7 +52,7 @@ impl Lowering<'_, '_> {
         let hit = self.ins().band(hit, bound);
         if self.fault_poll { return hit; }
         let flag = self.interrupt;
-        let requested = self.ins().atomic_load(types::I8, MemFlagsData::trusted(), flag);
+        let requested = self.ins().atomic_load(types::I8, regions::dispatch(), flag);
         let clear = self.ins().icmp_imm_u(IntCC::Equal, requested, 0);
         self.ins().band(hit, clear)
     }

@@ -340,8 +340,12 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
         FieldPlan::Arms(list) => {
             let at = frame.receiver_record(stage, owner, object, readable, miss)?;
             for held in list.iter().filter_map(|arm| arm.holds) { frame.hold_prototype(stage, held, miss)?; }
-            let shape = ic::shape_word(stage, &at);
             let records = frame.object_records(stage);
+            let proven = frame.proven_shape(stage, owner);
+            if let Some(arm) = proven.and_then(|shape| list.iter().find(|arm| arm.shapes.contains(&shape))) {
+                return ic::run(stage, arm.ops, at, records, miss);
+            }
+            let shape = ic::shape_word(stage, &at);
             arms(stage, list, Reached { shape: Some(shape), ..at }, records, miss)
         }
         FieldPlan::Inherited { shape, holder, constants } => {

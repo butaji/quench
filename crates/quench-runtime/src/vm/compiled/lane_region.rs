@@ -2294,7 +2294,7 @@ impl Lowering<'_, '_> {
         let mut miss = None;
         let object_table = accesses_fields
             .then(|| {
-                let base = emit_js_payload_word(&mut self.builder, self.payload,
+                let base = emit_js_record_base(&mut self.builder, self.payload,
                     std::mem::offset_of!(JsStepDispatch, object_record_base));
                 let exit = *miss.get_or_insert_with(|| self.builder.create_block());
                 CheckedObjectTable::prove(&mut self.builder, base, exit)
@@ -2498,7 +2498,7 @@ impl Lowering<'_, '_> {
             } else {
                 let records = match object_table {
                     Some(table) => ObjectTable::Checked(table),
-                    None => ObjectTable::Unchecked(*records.get_or_insert_with(|| emit_js_payload_word(&mut self.builder,
+                    None => ObjectTable::Unchecked(*records.get_or_insert_with(|| emit_js_record_base(&mut self.builder,
                         self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base)))),
                 };
                 // An unwritten register holds its entry value at either start, in the file.

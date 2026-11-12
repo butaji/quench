@@ -242,6 +242,7 @@ mod tests {
     use super::*;
     use crate::heap::{Cell, Heap, Object, PlainPropertyStorage};
     use crate::staged::object::{own_layout, read_slot, Form, PackedAccess};
+    use crate::staged::Region;
 
     /// Objects of every storage form, with their values: narrow and wide, inline and spilled,
     /// plain and marked as prototypes.
@@ -375,23 +376,23 @@ mod tests {
     #[test]
     fn a_readonly_word_read_in_a_loop_is_a_movable_plain_load() {
         let isa = super::super::super::super::jit_backend::target_isa().unwrap();
-        let function = word_summed_in_a_loop(&*isa, crate::staged::Region::LoopEntry.readonly());
+        let function = word_summed_in_a_loop(&*isa, Region::LoopEntry.readonly());
         cranelift_codegen::verify_function(&function, &*isa).unwrap();
         let [(opcode, flags)] = accesses(&function)[..] else { panic!("one access") };
         assert_eq!(opcode, ir::Opcode::Load);
         assert!(flags.readonly() && flags.can_move() && flags.notrap() && flags.aligned());
-        assert_eq!(flags.alias_region(), regions::flags(crate::staged::Region::LoopEntry.readonly()).alias_region());
+        assert_eq!(flags.alias_region(), regions::flags(Region::LoopEntry.readonly()).alias_region());
     }
 
     /// A word a store can change keeps its place: not movable, still tagged with its region.
     #[test]
     fn a_mutable_word_read_in_a_loop_stays_in_the_loop() {
         let isa = super::super::super::super::jit_backend::target_isa().unwrap();
-        let function = word_summed_in_a_loop(&*isa, crate::staged::Region::ObjectSlots.mutable());
+        let function = word_summed_in_a_loop(&*isa, Region::ObjectSlots.mutable());
         let [(opcode, flags)] = accesses(&function)[..] else { panic!("one access") };
         assert_eq!(opcode, ir::Opcode::Uload32);
         assert!(!flags.readonly() && !flags.can_move() && flags.notrap());
-        assert_eq!(flags.alias_region(), regions::flags(crate::staged::Region::ObjectSlots.mutable()).alias_region());
+        assert_eq!(flags.alias_region(), regions::flags(Region::ObjectSlots.mutable()).alias_region());
     }
 
     /// The barrier-log path of a store's gate is a guard failure: the only cold block the
@@ -417,5 +418,70 @@ mod tests {
         builder.finalize(isa.frontend_config());
         cranelift_codegen::verify_function(&function, &*isa).unwrap();
         assert_eq!(function.layout.blocks().filter(|block| function.layout.is_cold(*block)).count(), 1);
+    }
+    /// A loop that reads the object record base in its body, with or without a helper call
+    /// beside the read, optimized by Cranelift; the base loads it keeps, in the loop and out.
+    fn record_base_loads_after_optimizing(isa: &dyn cranelift_codegen::isa::TargetIsa, with_call: bool) -> (usize, usize) {
+        let mut signature = Signature::new(isa.default_call_conv());
+        signature.params.extend([AbiParam::new(types::I64); 2]);
+        signature.returns.push(AbiParam::new(types::I64));
+        let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature.clone());
+        regions::declare_regions(&mut function);
+        let mut context = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut function, &mut context);
+        let helper = builder.import_signature(signature);
+        let (entry, header, body, exit) =
+            (builder.create_block(), builder.create_block(), builder.create_block(), builder.create_block());
+        builder.append_block_params_for_function_params(entry);
+        let (sum, index) = (builder.append_block_param(header, types::I64), builder.append_block_param(header, types::I64));
+        let total = builder.append_block_param(exit, types::I64);
+        builder.switch_to_block(entry);
+        let [payload, count] = builder.block_params(entry).try_into().unwrap();
+        let zero = builder.ins().iconst(types::I64, 0);
+        builder.ins().jump(header, &[zero.into(), zero.into()]);
+        builder.switch_to_block(header);
+        let more = builder.ins().icmp(IntCC::UnsignedLessThan, index, count);
+        builder.ins().brif(more, body, &[], exit, &[sum.into()]);
+        builder.switch_to_block(body);
+        let base = super::super::emit_js_record_base(&mut builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, object_record_base));
+        let record = builder.ins().iadd(base, index);
+        let field = Emit { builder: &mut builder, property_values: None, gate: None }.load_u64(Region::ObjectSlots.mutable(), record, 8);
+        let sum_next = builder.ins().iadd(sum, field);
+        if with_call {
+            let target = builder.ins().iconst(types::I64, 8);
+            builder.ins().call_indirect(helper, target, &[payload, index]);
+        }
+        let index_next = builder.ins().iadd_imm_u(index, 1);
+        builder.ins().jump(header, &[sum_next.into(), index_next.into()]);
+        builder.switch_to_block(exit);
+        builder.ins().return_(&[total]);
+        builder.seal_all_blocks();
+        builder.finalize(isa.frontend_config());
+        let mut compiling = cranelift_codegen::Context::for_function(function);
+        compiling.optimize(isa, &mut cranelift_codegen::control::ControlPlane::default()).unwrap();
+        compiling.flowgraph();
+        compiling.compute_loop_analysis();
+        let record_base = regions::record_base().alias_region();
+        let (mut inside, mut outside) = (0, 0);
+        for block in compiling.func.layout.blocks() {
+            for inst in compiling.func.layout.block_insts(block) {
+                let flags = compiling.func.dfg.insts[inst].memflags_data(&compiling.func.dfg);
+                if flags.is_some_and(|flags| flags.alias_region() == record_base) {
+                    if compiling.loop_analysis.innermost_loop(block).is_some() { inside += 1 } else { outside += 1 }
+                }
+            }
+        }
+        (inside, outside)
+    }
+
+    /// The base of a record reservation is read once, before the loop, whether or not the
+    /// loop calls a helper: a reservation does not move while a run executes, so there is
+    /// no reload after the call.
+    #[test]
+    fn a_record_base_is_read_once_outside_a_loop_with_or_without_a_call() {
+        let isa = super::super::super::super::jit_backend::target_isa().unwrap();
+        for with_call in [false, true] {
+            assert_eq!(record_base_loads_after_optimizing(&*isa, with_call), (0, 1), "call: {with_call}");
+        }
     }
 }

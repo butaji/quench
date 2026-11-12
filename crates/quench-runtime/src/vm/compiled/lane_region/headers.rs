@@ -17,7 +17,7 @@ pub(super) fn owner_bits(builder: &mut FunctionBuilder<'_>, registers: &mut Regi
 pub(super) fn object_table(builder: &mut FunctionBuilder<'_>, entry: &Entry, payload: ir::Value) -> ObjectTable {
     match entry.object_table {
         Some(table) => ObjectTable::Checked(table),
-        None => ObjectTable::Unchecked(emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base))),
+        None => ObjectTable::Unchecked(emit_js_record_base(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base))),
     }
 }
 
@@ -69,7 +69,7 @@ pub(super) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
         if read && !fact.is_some_and(|fact| fact.ty.is_direct_object_family()) {
             readable = true;
             let records = object_table_base(builder, entry, payload);
-            let functions = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
+            let functions = emit_js_record_base(builder, payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
             ObjectHeader::prove_readable(builder, bits, records, functions, exit)
         } else {
             let records = object_table(builder, entry, payload);

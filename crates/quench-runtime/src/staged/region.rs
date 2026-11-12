@@ -38,6 +38,9 @@ pub(crate) enum Region {
     Constants,
     /// The code's invalidation word: written only by a retirement.
     Invalidation,
+    /// The dispatch's record-reservation bases: set when a native run is entered, and a
+    /// reservation never moves while the run executes.
+    RecordBases,
 }
 
 /// Whether any operation can change the memory an access reads while compiled code runs.
@@ -61,7 +64,7 @@ impl Region {
     pub(crate) const ALL: &'static [Region] = &[
         Self::Frame, Self::ObjectSlots, Self::ShapeWord, Self::Elements, Self::HeapMeta, Self::MissCounters,
         Self::Records, Self::Payload, Self::Cells, Self::EntryCell, Self::LoopEntry, Self::Dispatch,
-        Self::Constants, Self::Invalidation,
+        Self::Constants, Self::Invalidation, Self::RecordBases,
     ];
 
     pub(crate) const fn mutable(self) -> Access {

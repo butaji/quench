@@ -319,7 +319,7 @@ fn emit_tier_body(
     params: &[ir::Value],
 ) {
     let tier = builder.ins().iconst(types::I64, tier);
-    builder.ins().store(MemFlagsData::trusted(), tier, observation, 0);
+    builder.ins().store(super::regions::dispatch(), tier, observation, 0);
     let target = builder.ins().iconst(isa.pointer_type(), body as usize as i64);
     let call = builder.ins().call_indirect(signature, target, params);
     let status = builder.inst_results(call)[0];
@@ -426,7 +426,7 @@ fn emit_eager_fallback_call(
     let table = builder.ins().iconst(isa.pointer_type(), entries as usize as i64);
     let offset = builder.ins().imul_imm_u(pc, i64::from(isa.pointer_bytes()));
     let slot = builder.ins().iadd(table, offset);
-    let callee = builder.ins().load(isa.pointer_type(), MemFlagsData::trusted(), slot, 0);
+    let callee = builder.ins().load(isa.pointer_type(), super::regions::heap_meta(), slot, 0);
     let base = builder.ins().iconst(isa.pointer_type(), operands as usize as i64);
     let operands_offset = builder.ins().imul_imm_u(pc, std::mem::size_of::<super::NativeJsOperands>() as i64);
     let record = builder.ins().iadd(base, operands_offset);
