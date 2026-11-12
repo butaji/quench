@@ -74,7 +74,7 @@ pub(super) fn record_store_class<H: Host>(vm: &mut Vm<H>, site: u16, value: Valu
         return;
     }
     let word = &mut vm.field_caches.stored_mut(index)[StoreClass::WORD];
-    let recorded = (*word & u32::from(u16::MAX)) | ((class as u32) << StoreClass::SHIFT);
+    let recorded = (*word & !(super::super::object::FIELD_BYTE << StoreClass::SHIFT)) | ((class as u32) << StoreClass::SHIFT);
     if *word != recorded {
         *word = recorded;
         vm.note_field_cache_write(index);
@@ -93,9 +93,9 @@ pub(super) fn emit_store(builder: &mut FunctionBuilder<'_>, (arguments, payload)
     builder.switch_to_block(probe);
     let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_entries));
     let entry = usize::from(site) * CACHE.entry_size + CACHE.slot_offset;
-    let word = builder.ins().load(types::I32, MemFlagsData::trusted(), entries,
-        i32::try_from(entry).expect("field entry offset fits i32"));
-    let recorded = builder.ins().ushr_imm_u(word, i64::from(StoreClass::SHIFT));
+    // The class is byte 2 of the slot word (byte 3 counts the site's leaves), so one byte load reads it.
+    let recorded = builder.ins().uload8(types::I32, MemFlagsData::trusted(), entries,
+        i32::try_from(entry + super::super::object::FIELD_CLASS_BYTE).expect("field entry offset fits i32"));
     let classes = StoreClass::ALL.map(|class| (class, class.emit_holds(builder, value)));
     let both: Vec<ir::Value> = classes.iter().map(|&(class, holds)| {
         let named = builder.ins().icmp_imm_u(IntCC::Equal, recorded, i64::from(class as u32));
