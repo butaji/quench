@@ -13,6 +13,7 @@ members = [
     "crates/quench-node-test",
     "crates/quench-runtime",
     "crates/quench-stack",
+    "crates/quench-bjit",
     "crates/quench-alloc",
     "crates/quench-regexp",
     "crates/quench-intl",
