@@ -52,8 +52,8 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     /// The view an earlier access of the same array value proved, which no storage change has
     /// retired; a writable view answers a read.
     fn kept_view(&mut self, stage: &mut Emit<'b, 'c>, base: ir::Value, writable: bool) -> Option<ElementView<ir::Value>> {
-        let view = self.state.proofs.arrays.iter()
-            .find(|(known, view)| *known == base && (view.writable || !writable)).map(|(_, view)| *view)?;
+        let view = self.held.filter(|view| view.writable || !writable).or_else(|| self.state.proofs.arrays.iter()
+            .find(|(known, view)| *known == base && (view.writable || !writable)).map(|(_, view)| *view))?;
         Some(ElementView { values: view.values, length: stage.uextend32(view.length) })
     }
 

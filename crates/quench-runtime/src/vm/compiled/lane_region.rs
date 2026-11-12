@@ -479,6 +479,9 @@ struct Lowering<'a, 'f> {
     proving_entry: bool,
     /// Whether a previous body left at the instruction being lowered (`generic`): its reads probe the VM's caches.
     left_here: bool,
+    /// The view of the loop's hoisted dense array the next element row reads or writes through, which
+    /// its entering edge proved once (`EmitFrame::held`).
+    held_view: Option<super::DenseArrayView>,
     /// The shared leave of a failed input proof (`LaneExit::Entry`), made at its first guard
     /// and filled with the other exits.
     entry_exit: Option<ir::Block>,
@@ -1576,7 +1579,7 @@ pub(super) fn lower(
         vm,
         stable: Default::default(),
         generic,
-        proving_entry: false, left_here: false, entry_exit: None,
+        proving_entry: false, left_here: false, held_view: None, entry_exit: None,
         direct,
         frame_captures,
         context,
@@ -3007,7 +3010,8 @@ impl Lowering<'_, '_> {
             stable: StableHold { uses: &mut self.stable, online: self.vm.online, at: self.at } });
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
-            payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls, fields, call_out };
+            payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls, fields, call_out,
+            held: self.held_view.take() };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step
@@ -4014,29 +4018,10 @@ impl Lowering<'_, '_> {
         self.builder.use_var(variables.kind)
     }
 
-    /// Element `index` (an int32) of a hoisted array's view, into `destination`: a dense
-    /// array's present element, tagged, or a typed array's element, a Number. Any other
-    /// element exits.
+    /// Element `index` (an int32) of a hoisted typed array's view, into `destination`, a Number.
+    /// Any other element exits. A hoisted dense array is read by its row (`held_dense`).
     fn loop_element_read(&mut self, state: &mut State, array: LoopArray, index: ir::Value, (pc, destination): (usize, Register), exit: ir::Block) {
         let (values, length) = self.hoisted_view(array);
-        let number = self.observed.at(pc).is_some();
-        if array.views == ElementViews::Dense && number {
-            // An element read as a Number (`number_reads`) needs no hole test of its own: a hole
-            // is a NaN pattern, which the Number proof's one NaN test sends to the tag check
-            // that leaves.
-            let in_bounds = self.ins().icmp(IntCC::UnsignedLessThan, index, length);
-            emit_js_guard(&mut self.builder, in_bounds, exit);
-            let offset = self.ins().uextend(types::I64, index);
-            let offset = self.ins().imul_imm_s(offset, std::mem::size_of::<crate::Value>() as i64);
-            let address = self.ins().iadd(values, offset);
-            let value = self.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-            return self.set_tagged(state, destination, value);
-        }
-        if array.views == ElementViews::Dense {
-            let view = super::DenseArrayView { values, length, writable: array.writable, uncounted: array.writable };
-            let value = super::emit_dense_element(&mut self.builder, view, index, exit).1;
-            return self.set_tagged(state, destination, value);
-        }
         let kind = self.hoisted_kind(array);
         let proof = super::EmitProof::TypedIndex { values, length, kind, absent: exit };
         let number = match self.step(state, frame::Edges::ValueGuarded { miss: exit },
@@ -4047,18 +4032,12 @@ impl Lowering<'_, '_> {
         self.set_number(state, destination, number);
     }
 
-    /// A Number's store through a hoisted dense array view (`loop_element_write`).
+    /// A Number's store through a hoisted dense array view at a site that left (`left_here`): in place,
+    /// else appended inline (`dense_append`), else the VM's store. Any other hoisted store is its row.
     fn dense_element_write(&mut self, state: &mut State, array: LoopArray, pc: u32, instruction: WideInstruction,
         index: ir::Value, exit: ir::Block) {
         let (values, length) = self.hoisted_view(array);
         let value = self.tagged(state, instruction.register_a());
-        // A store the code has not left at replaces an element in place or leaves: the
-        // append helper is a call every live value is spilled around, which a loop that
-        // never appends should not pay (a site that left compiles it, `left_here`).
-        if !self.left_here {
-            let view = super::DenseArrayView { values, length, writable: true, uncounted: true };
-            return self.index_write(state, index, value, view, exit);
-        }
         let base = self.tagged(state, instruction.register_b());
         let key = self.tagged(state, instruction.register_c());
         let (slow, done) = (self.builder.create_block(), self.builder.create_block());

@@ -44,6 +44,9 @@ pub(super) struct EmitFrame<'a> {
     pub(super) fields: Option<super::frame_fields::FieldFacts<'a>>,
     /// The record a call-out calls for, where the lowering made one (`call_outs`).
     pub(super) call_out: Option<&'a call_out::CallOutSite>,
+    /// The view of a loop's hoisted dense array the element row reads through, proved at the loop's
+    /// entering edge (`ElementFrame::kept_view`).
+    pub(super) held: Option<super::super::DenseArrayView>,
 }
 
 impl EmitFrame<'_> {
