@@ -115,6 +115,7 @@ const FAMILIES: &[(&str, &str)] = &[
     ("name-call-of-a-global", "acc += Math.max(i, 5) + parseInt('12', 10) + add(i, 1);"),
     ("non-number-constants", "var u = undefined, w = null, bl = false, st = 'k'; t = [u, w, bl, st]; acc += t.length + (u === undefined ? 1 : 0) + (st === 'k' ? 2 : 0);"),
     ("local-initialization-and-dead-zone", "{ let a = i & 3; acc += a; } try { acc += qq; let qq = 1; } catch (e) { acc += e instanceof ReferenceError ? 1 : 0; } { let b2; acc += b2 === undefined ? 1 : 0; b2 = i; acc += b2; }"),
+    ("typeof-fast-arm-test-switch-and-flip", "var tv = i < 1500 ? i : i % 2 ? 'k' : {}; switch (typeof tv) { case 'number': acc += 1; break; case 'string': acc += 2; break; default: acc += 3; } acc += (typeof tv === 'object' ? 4 : 0) + (typeof tv !== 'number' ? 8 : 0);"),
     ("async-function", "(async function () { await 0; acc += 1; })();"),
 ];
 

@@ -126,12 +126,23 @@ fn steps_in_place(instruction: WideInstruction) -> bool {
     instruction.op().steps_in_body() && instruction.result_flags() == 0 && instruction.written_registers().count() <= STEP_WRITES
 }
 
+/// The heap row that is the fast arm of a `Unary` that is a `typeof` index or test
+/// (`staged::value::immediate_typeof_index`), where the test's name index fits its hole.
+fn typeof_arm(operator: u32) -> Option<Heap> {
+    if operator == crate::bytecode::UNARY_TYPEOF_INDEX {
+        return Some(Heap::TypeofIndex);
+    }
+    let (index, negated) = crate::bytecode::typeof_test(operator)?;
+    Some(Heap::TypeofIs { index: u8::try_from(index).ok()?, negated })
+}
+
 /// The heap row that is the fast arm of `instruction`, where its meaning has one its operand
-/// register's word decides (`staged::iteration`); both read register B.
+/// register's word decides (`staged::iteration`, `staged::value`); all read register B.
 fn fast_arm(instruction: WideInstruction) -> Option<Heap> {
     match instruction.op().class() {
         Class::RequireIteratorResult => Some(Heap::Object),
         Class::ToPropertyKey => Some(Heap::Key),
+        Class::Unary => typeof_arm(instruction.unary_operator()),
         _ => None,
     }
 }
@@ -289,21 +300,40 @@ fn plan_catch(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers)
     Ok(row)
 }
 
+/// The word a `typeof` fast arm answers for any Number, which an operand held in a pinned register or an
+/// int slot always is: the fact is the operand's representation, proved once where it was defined.
+fn number_typeof(fast: Heap) -> Option<u64> {
+    match fast {
+        Heap::TypeofIndex => Some(Value::integer(crate::staged::value::TYPEOF_NUMBER as i32).to_bits()),
+        Heap::TypeofIs { index, negated } => Some(Value::boolean((u64::from(index) == crate::staged::value::TYPEOF_NUMBER) != negated).to_bits()),
+        _ => None,
+    }
+}
+
 /// The run of a fast arm at `pc`: the heap row `fast` over the operands' places, whose hit hops past
-/// the rest of the run to the next instruction, and behind it the helper step the row leaves into
-/// where its proof fails. A row that reads a word of its operand's frame slot (`Heap::reads_frame_word`)
-/// with the operand held outside it (a pinned register holds a Number, which no such arm takes), or a
-/// result held outside its frame slot, has the helper step alone.
+/// the rest of the run to the next instruction (to the completion where the instruction returns its
+/// result), and behind it the helper step the row leaves into where its proof fails. A row that reads a
+/// word of its operand's frame slot (`Heap::reads_frame_word`) with the operand held outside it has the
+/// helper step alone, or, where the operand is a Number its representation proves, the constant the arm
+/// answers for one (`number_typeof`); so does a result held outside its frame slot.
 fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     let slow = plan_helper(layout, pc, decoded, helpers)?;
     let homes = &layout.homes;
     let ((read, read_hole), (written, written_hole)) = (operand(homes, decoded.a), operand(homes, decoded.dst.map(Source::Register)));
-    if read != Place::Mem && fast.reads_frame_word() || written != Place::Mem {
+    if written != Place::Mem {
+        return Ok(slow);
+    }
+    if let Some(word) = number_typeof(fast).filter(|_| matches!(read, Place::Pin(_) | Place::PinF(_) | Place::MemInt)) {
+        return plan(&Decoded::number(Kind::Move, decoded.dst, Some(Source::Value(word)), None, None), layout, pc, true, helpers);
+    }
+    if read != Place::Mem && fast.reads_frame_word() {
         return Ok(slow);
     }
     let row = HeapRow { heap: fast, dst: written, a: read, b: Place::Mem, entry: false };
     let holes = heap_holes(decoded, homes, fast, false, [written_hole, read_hole, 0]);
-    let mut run = Planned::single(base_rows::stencil(row)?, holes, Some(pc + 1), None);
+    let parts = 2 + slow.pre.len() + slow.post.len();
+    let mut run = Planned::single(base_rows::stencil(row)?, holes, None, None);
+    run.branch = Some(if decoded.completes { Branch::Part(parts) } else { Branch::Pc(pc + 1) });
     run.exits = vec![Exit::Ahead(1)];
     Ok(behind(run, slow))
 }

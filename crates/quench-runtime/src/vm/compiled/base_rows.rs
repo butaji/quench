@@ -73,6 +73,13 @@ pub(super) enum Heap {
     /// The fast arm of `ToPropertyKey`: the register at hole 1 holds a direct string, which is copied to
     /// the register at hole 0, else the row leaves into the helper step after it.
     Key,
+    /// The fast arm of `Unary`'s `typeof` index (`staged::value::immediate_typeof_index`): the register at
+    /// hole 1 holds a value whose tag decides its index, an int written to the register at hole 0, else the
+    /// row leaves into the helper step after it.
+    TypeofIndex,
+    /// The fast arm of `Unary`'s `typeof` test: whether (or, where `negated`, whether not) that index is
+    /// `index` (hole 2), as a boolean.
+    TypeofIs { index: u8, negated: bool },
 }
 
 /// A heap row: its operation and where its operands and destination live.
@@ -110,6 +117,9 @@ impl Heap {
             Heap::Live => library::LIVE_ROW,
             Heap::Object => library::OBJECT_ROW,
             Heap::Key => library::KEY_ROW,
+            Heap::TypeofIndex => library::TYPEOF_INDEX_ROW,
+            Heap::TypeofIs { negated: false, .. } => library::TYPEOF_IS_ROW,
+            Heap::TypeofIs { negated: true, .. } => library::TYPEOF_ISNOT_ROW,
         }
     }
 
@@ -117,13 +127,13 @@ impl Heap {
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
     /// slots, which every run reads live.
     pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Live | Heap::Object | Heap::Key)
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Live | Heap::Object | Heap::Key | Heap::TypeofIndex | Heap::TypeofIs { .. })
     }
 
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
     /// which a register held in a pinned register as a Number does not have there.
     pub(super) fn reads_frame_word(self) -> bool {
-        matches!(self, Heap::Object | Heap::Key)
+        matches!(self, Heap::Object | Heap::Key | Heap::TypeofIndex | Heap::TypeofIs { .. })
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value

@@ -153,6 +153,7 @@ pub(super) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bo
         Heap::Capture(slot) => [dst_hole, u64::from(slot), u64::from(slot) * SLOT],
         Heap::LoadLocal(slot) => [dst_hole, u64::from(slot), 0],
         Heap::StoreLocal(slot) => [0, a_hole, u64::from(slot)],
+        Heap::TypeofIs { index, .. } => [dst_hole, a_hole, u64::from(index)],
         Heap::Identity => [0, a_hole, decoded.hole],
         Heap::CaptureSet(slot) => [a_hole, u64::from(slot), u64::from(slot) * SLOT],
         _ => [dst_hole, a_hole, b_hole],

@@ -80,3 +80,62 @@ pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::C
     let unheaped_truthy = stage.pick(tagged, tagged_truthy, double_truthy);
     (undecided, stage.pick(heap, record, unheaped_truthy))
 }
+
+/// The indexes in `bytecode::TYPEOF_NAMES` of the names a value's tag alone decides: `typeof` of
+/// `undefined`, of `null` (an object) and a boolean and a Number. A test pins each to its name.
+pub(crate) const TYPEOF_UNDEFINED: u64 = 0;
+pub(crate) const TYPEOF_OBJECT: u64 = 1;
+pub(crate) const TYPEOF_BOOLEAN: u64 = 2;
+pub(crate) const TYPEOF_NUMBER: u64 = 3;
+
+/// The index in `bytecode::TYPEOF_NAMES` of `typeof` of the value `bits` where its tag alone decides
+/// it (`undefined` and the deleted marker, `null`, a boolean, an int32 or a double): a heap value,
+/// whose cell decides (a string, BigInt, symbol, object or function), or an internal marker leaves
+/// at `miss`.
+#[inline(always)]
+pub(crate) fn immediate_typeof_index<S: Stage>(stage: &mut S, bits: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
+    let integer = stage.eq_imm(tag, ValueLayout::INT_TAG);
+    let field = stage.shr_imm(bits, ValueLayout::TAG_SHIFT);
+    let offset = stage.add_imm(field, ValueLayout::FIRST_TAG_FIELD.wrapping_neg());
+    let double = stage.ugt_imm(offset, ValueLayout::TAG_FIELD_SPAN);
+    let number = stage.any(integer, double);
+    let boolean = stage.eq_imm(tag, crate::Value::TRUE.to_bits() & ValueLayout::TAG_MASK);
+    let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
+    let unset = [crate::Value::UNDEFINED, crate::Value::DELETED].map(|value| stage.eq_imm(bits, value.to_bits()));
+    let decided = [number, boolean, null, unset[0], unset[1]].into_iter().reduce(|any, each| stage.any(any, each)).expect("five tag classes");
+    stage.guard(decided, miss)?;
+    let [undefined, object, boolean_name, number_name] = [TYPEOF_UNDEFINED, TYPEOF_OBJECT, TYPEOF_BOOLEAN, TYPEOF_NUMBER].map(|index| stage.constant(index));
+    let word = stage.select(boolean, boolean_name, undefined);
+    let word = stage.select(null, object, word);
+    Some(stage.select(number, number_name, word))
+}
+
+/// The interpreter's `immediate_typeof_index` of `value`.
+#[inline(always)]
+pub(crate) fn concrete_immediate_typeof_index(value: crate::Value) -> Option<usize> {
+    let mut stage = crate::staged::Concrete::new(std::ptr::null());
+    immediate_typeof_index(&mut stage, value.to_bits(), ()).map(|index| index as usize)
+}
+
+#[cfg(test)]
+mod typeof_tests {
+    use super::*;
+    use crate::Value;
+    use crate::bytecode::TYPEOF_NAMES;
+
+    /// The tag classes answer the index of their `typeof` name; a heap value or an internal marker has none.
+    #[test]
+    fn the_tag_classes_name_their_typeof_index() {
+        let named = |value: Value| concrete_immediate_typeof_index(value).map(|index| TYPEOF_NAMES[index]);
+        assert_eq!(named(Value::UNDEFINED), Some("undefined"));
+        assert_eq!(named(Value::DELETED), Some("undefined"));
+        assert_eq!(named(Value::NULL), Some("object"));
+        assert_eq!([named(Value::TRUE), named(Value::FALSE)], [Some("boolean"); 2]);
+        assert_eq!([named(Value::integer(-3)), named(Value::number(2.5)), named(Value::number(f64::NAN))], [Some("number"); 3]);
+        assert_eq!(TYPEOF_NAMES[TYPEOF_UNDEFINED as usize], "undefined");
+        assert_eq!(TYPEOF_NAMES[TYPEOF_OBJECT as usize], "object");
+        assert_eq!(TYPEOF_NAMES[TYPEOF_BOOLEAN as usize], "boolean");
+        assert_eq!(TYPEOF_NAMES[TYPEOF_NUMBER as usize], "number");
+    }
+}

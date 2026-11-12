@@ -547,3 +547,24 @@ fn non_number_constants_and_local_initializations_are_fast_rows() {
         assert!(super::super::base_region::fast_rows(op) > before, "{op:?} has no fast row");
     }
 }
+
+/// `typeof v === 'name'` and `switch (typeof v)` are a fast row over the tag of the operand, which leaves
+/// into the interpreter's step for a heap value (a string, symbol, BigInt, object, function): the same
+/// answers for every kind of value, whether the result is returned, branched on or switched on.
+#[test]
+fn typeof_tests_and_indexes_are_fast_rows() {
+    use crate::bytecode::Op;
+    let before = super::super::base_region::fast_rows(Op::Unary);
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function is(v) { return typeof v === 'number'; }
+         function kind(v) { switch (typeof v) { case 'number': return 1; case 'string': return 2; case 'undefined': return 3; default: return 4; } }
+         function mix(v) { return (typeof v !== 'boolean' ? 1 : 0) + (typeof v === 'object' ? 2 : 0) + (typeof v === 'function' ? 4 : 0); }
+         function counted(n) { let c = 0; for (let i = 0; i < n; i++) { if (typeof i === 'number') c = c + 1; } return c; }
+         const vs = [1, 2.5, 'a', undefined, null, true, {}, function () {}, Symbol(), 1n]; let t = 0;
+         for (let k = 0; k < 300; k++) { const v = vs[k % 10]; t = (t + (is(v) ? 1 : 0) + kind(v) + mix(v) + counted(k % 4)) | 0; }
+         print(t); print(is(3)); print(kind('s')); print(mix(null)); print(mix(undefined)); print(counted(5));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+    assert!(super::super::base_region::fast_rows(Op::Unary) > before, "no typeof fast row");
+}

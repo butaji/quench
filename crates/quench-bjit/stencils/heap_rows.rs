@@ -23,14 +23,15 @@ use crate::layout::{
     JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_STRING_RECORD_BASE, PROPERTY_BUFFER_BASE,
 };
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole, hole64, index_of, number_word};
-use crate::places::{DEST, LEFT, Places, tagged_place};
+use crate::places::{DEST, LEFT, Places, Rep, tagged_place};
 use crate::stage::StencilStage;
+use crate::value::ValueLayout;
 use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-use crate::staged::{Stage, Step, elements, entry, environment, iteration, load_this, read_local, strings, value, write_local};
+use crate::staged::{Frame, Stage, Step, elements, entry, environment, iteration, load_this, read_local, strings, value, write_local};
 
 pub(crate) use crate::codes::{
     ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
-    STORE_LOCAL_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, KEY_ROW, OBJECT_ROW,
+    STORE_LOCAL_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW,
 };
 
 unsafe extern "C" {
@@ -236,6 +237,37 @@ fn key_row(s: S) -> Out {
     finish_fast(frame, done)
 }
 
+/// The tag-decided `typeof` index of the operand (hole 1) as an int in the destination (hole 0), or a
+/// heap value, which leaves (`value::immediate_typeof_index`).
+#[inline(always)]
+fn typeof_index_row(s: S) -> Out {
+    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let mut stage = StencilStage::from_hole(0);
+    let word = frame.tagged(&mut stage, LEFT);
+    let done = value::immediate_typeof_index(&mut stage, word, ()).map(|index| {
+        let boxed = stage.or_imm(index, ValueLayout::INT_TAG);
+        frame.write(&mut stage, DEST, boxed, Rep::Tagged);
+    }).is_some();
+    finish_fast(frame, done)
+}
+
+/// Whether the tag-decided `typeof` index of the operand (hole 1) is the name at index hole 2 (or is
+/// not, where `NEGATED`), as a boolean in the destination (hole 0).
+#[inline(always)]
+fn typeof_is_row<const NEGATED: bool>(s: S) -> Out {
+    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let mut stage = StencilStage::from_hole(HOLE_B);
+    let word = frame.tagged(&mut stage, LEFT);
+    let done = value::immediate_typeof_index(&mut stage, word, ()).map(|index| {
+        let tested = stage.site(0);
+        let named = stage.eq_imm(index, tested);
+        let holds = if NEGATED { stage.not(named) } else { named };
+        let (boolean, fact) = frame.boolean(&mut stage, holds);
+        frame.write(&mut stage, DEST, boolean, fact);
+    }).is_some();
+    finish_fast(frame, done)
+}
+
 /// The activation's `this` into the destination (`staged::load_this`).
 #[inline(always)]
 fn this_row<const D: u8>(s: S) -> Out {
@@ -311,6 +343,9 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         ARRAY_ROW => array_row(s),
         OBJECT_ROW => object_row(s),
         KEY_ROW => key_row(s),
+        TYPEOF_INDEX_ROW => typeof_index_row(s),
+        TYPEOF_IS_ROW => typeof_is_row::<false>(s),
+        TYPEOF_ISNOT_ROW => typeof_is_row::<true>(s),
         IDENTITY_ROW => identity_row(s),
         THIS_ROW => this_row::<D>(s),
         LOAD_LOCAL_ROW => load_local_row::<D>(s),

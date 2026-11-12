@@ -87,10 +87,13 @@ fn completable(row: &Decoded) -> bool {
 fn cover(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
     let (plain, returning) = instruction.split_return();
     let row = lowered(region, pc, sites, (plain, returning), helpers);
+    if returning && !completable(&row) {
+        return Decoded::step(Step::Leave, None);
+    }
     if is_fast(&row) {
         note_fast(instruction.op());
     }
-    Decoded { completes: returning && completable(&row), ..row }
+    Decoded { completes: returning, ..row }
 }
 
 /// Which rows control reaches from PC 0; an error where one falls off the function's end.

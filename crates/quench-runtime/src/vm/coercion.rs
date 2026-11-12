@@ -53,17 +53,16 @@ impl<H: Host> Vm<H> {
     /// `bytecode::TYPEOF_NAMES` of the name `typeof value` is.
     #[inline]
     pub(super) fn typeof_index_value(&self, value: Value) -> Value {
-        if let Some(kind) = immediate_value_type(value) {
-            return Value::integer(typeof_name_index(kind) as i32);
-        }
-        Value::integer(typeof_name_index(self.typeof_kind(value)) as i32)
+        let index = immediate_typeof_index(value).unwrap_or_else(|| typeof_name_index(self.typeof_kind(value)));
+        Value::integer(index as i32)
     }
 
     /// The boolean a `UNARY_TYPEOF_IS` operator testing the name at `index` in
     /// `bytecode::TYPEOF_NAMES` yields for `value`.
     #[inline]
     pub(super) fn typeof_test_value(&self, value: Value, index: usize, negated: bool) -> Value {
-        if (typeof_name_index(self.typeof_kind(value)) == index) != negated { Value::TRUE } else { Value::FALSE }
+        let named = immediate_typeof_index(value).unwrap_or_else(|| typeof_name_index(self.typeof_kind(value)));
+        if (named == index) != negated { Value::TRUE } else { Value::FALSE }
     }
 
     /// The one string `typeof` yields for values of `kind`: every result and every string
@@ -484,16 +483,16 @@ pub(super) fn immediate_to_string(value: Value) -> Option<JsString> {
     }
 }
 
-/// The kind of a value its bits alone decide (undefined, null, a boolean, a Number); `None`
-/// for a heap value, whose kind its cell decides (`Vm::value_type`). None of these kinds is
-/// the `[[IsHTMLDDA]]` object's.
-#[inline(always)]
 /// The index in `bytecode::TYPEOF_NAMES` of `typeof value` for a value outside the heap,
-/// which its tag alone decides; `None` for a heap value.
+/// which its tag alone decides (`staged::value::immediate_typeof_index`, which the tiers run as
+/// well); `None` for a heap value. None of these kinds is the `[[IsHTMLDDA]]` object's.
+#[inline(always)]
 pub(super) fn immediate_typeof_index(value: Value) -> Option<usize> {
-    immediate_value_type(value).map(typeof_name_index)
+    crate::staged::value::concrete_immediate_typeof_index(value)
 }
 
+/// The kind of a value its bits alone decide (undefined, null, a boolean, a Number); `None`
+/// for a heap value, whose kind its cell decides (`Vm::value_type`).
 fn immediate_value_type(value: Value) -> Option<crate::ValueType> {
     use crate::ValueType as T;
     Some(if value.is_undefined() || value.is_deleted() {
@@ -507,4 +506,18 @@ fn immediate_value_type(value: Value) -> Option<crate::ValueType> {
     } else {
         return None;
     })
+}
+
+#[cfg(test)]
+mod immediate_typeof_tests {
+    use super::*;
+
+    /// The staged tag classification names the `typeof` index of the kind `immediate_value_type` decides.
+    #[test]
+    fn the_staged_classification_agrees_with_the_kind_of_an_immediate() {
+        let samples = [Value::UNDEFINED, Value::DELETED, Value::NULL, Value::TRUE, Value::FALSE, Value::integer(7), Value::number(1.5), Value::number(f64::INFINITY)];
+        for value in samples {
+            assert_eq!(immediate_typeof_index(value), immediate_value_type(value).map(typeof_name_index), "{value:?}");
+        }
+    }
 }

@@ -79,6 +79,14 @@ pub const LIVE_ROW: u8 = 16;
 /// helper step laid out after the row; a miss leaves through EXIT0 into it.
 pub const OBJECT_ROW: u8 = 17;
 pub const KEY_ROW: u8 = 18;
+/// A fast arm of `Unary`'s `typeof` index and tests (`staged::value::immediate_typeof_index`): the frame
+/// slot at hole 1 holds a value whose tag decides its `typeof` index, which is the destination's int
+/// (`TYPEOF_INDEX_ROW`, hole 0), or whether it is (`TYPEOF_IS_ROW`) or is not (`TYPEOF_ISNOT_ROW`) the
+/// name at index hole 2, as a boolean. A hit continues at TAKEN; a heap value leaves through EXIT0 into
+/// the helper step after the row.
+pub const TYPEOF_INDEX_ROW: u8 = 19;
+pub const TYPEOF_IS_ROW: u8 = 20;
+pub const TYPEOF_ISNOT_ROW: u8 = 21;
 /// Bits below the prototype link in a folded read's hole 1, which carries the receiver's exact shape beneath it.
 pub const HELD_LINK_AT: u32 = 32;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries
