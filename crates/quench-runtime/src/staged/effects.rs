@@ -1,5 +1,5 @@
 //! What an operation reads, writes and may do, as data (Stage v2): the alias regions a native
-//! load or store belongs to, the effect row of an `Operation`, and the targets of a call. A
+//! load or store belongs to, the effect row of an `Operation`. A
 //! specializer reads them to keep facts across operations (a fact about a region survives
 //! until an operation that writes the region), and the interpreter ignores them.
 
@@ -71,15 +71,6 @@ impl Effects {
     /// An operation that may run guest code or collect: it reads and writes every region.
     const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: true,
         may_collect: true, may_call_js: true, may_throw: true };
-}
-
-/// What a call enters: a function whose entry is known (`Direct`), an entry word read at
-/// run time (`Indirect`), or a builtin row (`Builtin`).
-#[derive(Clone, Copy)]
-pub(crate) enum CallTarget<W> {
-    Direct(u64),
-    Indirect(W),
-    Builtin(u32),
 }
 
 impl<W> CallOperation<W> {

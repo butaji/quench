@@ -54,7 +54,7 @@ pub(crate) mod effects;
 #[cfg(test)]
 pub(crate) mod trace;
 #[allow(unused_imports)] // the Stage v2 vocabulary: stencil and UltraJIT stages use the rest
-pub(crate) use effects::{CallTarget, Effects, Region, RegionSet};
+pub(crate) use effects::{Effects, Region, RegionSet};
 pub(crate) use ic::concrete_own_field_hit;
 pub(crate) use object::{Form, Layout, concrete_own_read};
 
@@ -164,13 +164,6 @@ pub(crate) trait Frame<S: Stage> {
     /// The VM's field-store hit (`LaneHelper::FieldSet`).
     #[inline(always)]
     fn field_store_miss(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _site: u16, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
-
-    /// A call of `target` with `args` and effect row `effects`; a non-returning status leaves
-    /// at `leave`. `None` where the frame has no call protocol (Stage v2).
-    #[inline(always)]
-    #[allow(dead_code)]
-    fn call(&mut self, _stage: &mut S, _target: CallTarget<S::Word>, _args: &[S::Word], _effects: Effects,
-        _leave: S::Miss) -> Option<S::Word> { None }
 
     /// Leave the function with `value` (Stage v2); `None` where the frame cannot.
     #[inline(always)]
