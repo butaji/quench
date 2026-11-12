@@ -2909,7 +2909,8 @@ impl Lowering<'_, '_> {
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
             payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls, fields,
-            call_out: sites.call_out, capture: sites.capture, html_dda: self.vm.html_dda };
+            call_out: sites.call_out, capture: sites.capture, html_dda: self.vm.html_dda,
+            prototype: sites.prototype, table_entry: self.entry.as_ref() };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step

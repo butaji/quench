@@ -26,13 +26,20 @@ impl CaptureStores {
 struct Decisions {
     context: *mut (),
     decide: fn(*mut (), u32, Value, Value) -> Option<bool>,
+    /// The encoded `prototype` link of a constructor the VM proved Stable (`Vm::instanceof_fact`).
+    prototype: fn(*mut (), Value) -> Option<u32>,
+    /// The base of the object record table.
+    records: fn(*mut ()) -> Option<u64>,
 }
 
 impl Decisions {
     /// The decisions of the running lane's `cx`.
     fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
         Self { context: cx.cast(), decide: |context, operator, left, right|
-            super::vm_steps::lane_decision(unsafe { vm(context.cast::<LaneContext<H>>()) }, operator, left, right) }
+            super::vm_steps::lane_decision(unsafe { vm(context.cast::<LaneContext<H>>()) }, operator, left, right),
+            prototype: |context, constructor| unsafe { vm(context.cast::<LaneContext<H>>()) }.instanceof_fact(constructor)
+                .map(|fact| fact.link),
+            records: |context| unsafe { vm(context.cast::<LaneContext<H>>()) }.heap.object_record_base().map(|base| base as u64) }
     }
 }
 
@@ -174,6 +181,12 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     type Plans = crate::staged::NoPlans;
 
     fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
+
+    /// The live object record table, which an `instanceof` walk addresses.
+    fn object_records(&mut self, _stage: &mut Concrete) -> Option<u64> {
+        let Decisions { context, records, .. } = self.decisions?;
+        records(context)
+    }
 }
 
 impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
@@ -194,6 +207,13 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
         let word = self.operand_word(stage, operand).expect("a staged numeric operand is one the frame reads");
         Value::from_bits(word).as_number().expect("a proved Number operand").to_bits()
+    }
+
+    /// The constructor's live `prototype` link, where the VM proved its `instanceof` steady: the
+    /// interpreter reads it from the objects each time, so it needs no dependency.
+    fn stable_prototype(&mut self, stage: &mut Concrete, constructor: Register) -> Option<u64> {
+        let Decisions { context, prototype, .. } = self.decisions?;
+        prototype(context, Value::from_bits(self.read(stage, constructor))).map(u64::from)
     }
 
     /// ToInt32 of a Number operand, as the bitwise operators read it.

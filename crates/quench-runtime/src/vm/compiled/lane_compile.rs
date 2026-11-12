@@ -194,8 +194,9 @@ impl<H: Host> Vm<H> {
         let active = self.active_program;
         let constants = self.programs.residual(active).filter(|running| std::ptr::eq(*running, program))
             .map_or(&[][..], |_| self.programs.constants(active));
+        let instanceofs = |constructor: Value| self.instanceof_fact(constructor);
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
-            invalidation: invalidation.address(), constants }), ..self.vm_facts() };
+            invalidation: invalidation.address(), constants, instanceofs: &instanceofs }), ..self.vm_facts() };
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(&unit))).chain(self.adding_stores(&unit)).collect();
         let number_reads = super::osr_compile::observed_reads(&unit, arrays, &[], &left_at);
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
@@ -494,6 +495,8 @@ impl LaneDependencies {
             && stable.holders.iter().all(|holder| crate::heap::subscribe_prototype_values(*holder, code))
             && stable.atoms.iter().all(|atom| method_atoms.subscribe(*atom, code))
             && stable.globals.iter().all(|fact| crate::heap::subscribe_global_value(*fact, code))
+            && stable.instanceofs.iter().all(|fact| heap.subscribe_slot_observation(fact.slot_dependency(), code)
+                && heap.subscribe_shape(fact.shape, code) && crate::heap::subscribe_prototype_values(fact.holder, code))
     }
 }
 

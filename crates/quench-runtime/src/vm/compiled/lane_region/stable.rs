@@ -13,6 +13,8 @@ pub(crate) struct StableFacts {
     pub(crate) atoms: Box<[Atom]>,
     /// Global cells whose values it holds (`heap::subscribe_global_value`).
     pub(crate) globals: Box<[crate::heap::GlobalFact]>,
+    /// Constructors whose `prototype` it holds for an `instanceof` (`Vm::instanceof_fact`).
+    pub(crate) instanceofs: Box<[crate::code_dependencies::InstanceofFact]>,
 }
 
 /// The Stable facts a lowering folded so far.
@@ -24,6 +26,8 @@ pub(super) struct StableUses {
     atoms: BTreeSet<Atom>,
     /// Global cells whose values the code took as constants.
     globals: BTreeSet<crate::heap::GlobalFact>,
+    /// Constructors whose `prototype` the code took as a constant for an `instanceof`.
+    instanceofs: BTreeSet<crate::code_dependencies::InstanceofFact>,
     /// Loops, by header and backedge, entered only through forward edges that proved the realm
     /// (`Lowering::hoist_stable`): their blocks hold the proof.
     realm_loops: Vec<(usize, usize)>,
@@ -39,7 +43,8 @@ impl StableUses {
     pub(super) fn take(&mut self) -> StableFacts {
         StableFacts { holders: std::mem::take(&mut self.holders).into_iter().collect(),
             atoms: std::mem::take(&mut self.atoms).into_iter().collect(),
-            globals: std::mem::take(&mut self.globals).into_iter().collect() }
+            globals: std::mem::take(&mut self.globals).into_iter().collect(),
+            instanceofs: std::mem::take(&mut self.instanceofs).into_iter().collect() }
     }
 
     /// Holds the values of prototypes of exact shape `holder` from the instruction at `at`: an
@@ -75,6 +80,18 @@ fn read_invalidation_word(builder: &mut FunctionBuilder<'_>, helpers: LaneHelper
 }
 
 impl Lowering<'_, '_> {
+    /// The encoded `prototype` link of the constructor in `constructor`, where the facts type it a
+    /// known function and the VM proved its `instanceof` Stable: held from here to the block's next
+    /// helper that may change one (`hold_stable`), under a dependency on the constructor's
+    /// `prototype` slot, its shape and its `@@hasInstance` holder.
+    pub(super) fn hold_instanceof(&mut self, state: &mut State, exit: ir::Block, constructor: Operand) -> Option<u32> {
+        let identity = state.values[usize::from(constructor.register_index()?)].value.ty.function_identity()?;
+        let fact = (self.vm.online?.instanceofs)(identity)?;
+        self.hold_stable(state, exit);
+        self.stable.instanceofs.insert(fact);
+        Some(fact.link)
+    }
+
     /// The division this lowering specializes under: online where it may take code
     /// dependencies on the VM (`VmFacts::online`), offline for code shared across VMs.
     pub(super) fn division(&self) -> Division {

@@ -27,6 +27,8 @@ pub(super) enum Edges {
 pub(super) struct Sites<'a> {
     pub(super) call_out: Option<&'a call_out::CallOutSite>,
     pub(super) capture: Option<&'a super::captures::CaptureSite>,
+    /// The Stable `prototype` link of an `instanceof`'s constructor (`Lowering::hold_instanceof`).
+    pub(super) prototype: Option<u32>,
 }
 
 /// The lane specializer's register frame (`crate::staged::Frame`): the SSA homes and the facts
@@ -56,6 +58,11 @@ pub(super) struct EmitFrame<'a> {
     pub(super) capture: Option<&'a super::captures::CaptureSite>,
     /// Whether an IsHTMLDDA object can exist (`VmFacts::html_dda`).
     pub(super) html_dda: bool,
+    /// The Stable `prototype` link of the step's `instanceof` constructor.
+    pub(super) prototype: Option<u32>,
+    /// The region's entry proofs, whose object record table a prototype walk addresses where the
+    /// step carries no field facts.
+    pub(super) table_entry: Option<&'a Entry>,
 }
 
 impl EmitFrame<'_> {
@@ -475,6 +482,10 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
 
     fn html_dda_possible(&self) -> bool {
         self.html_dda
+    }
+
+    fn stable_prototype(&mut self, stage: &mut Emit<'_, '_>, _constructor: Register) -> Option<ir::Value> {
+        self.prototype.map(|link| stage.builder.ins().iconst(types::I64, i64::from(link)))
     }
 
     fn int_fact(&self) -> RegisterFact {

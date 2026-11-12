@@ -2023,6 +2023,8 @@ pub(super) struct OnlineFacts<'a> {
     pub(super) invalidation: usize,
     /// The program's constants as the VM made and roots them (`Vm::active_constant`).
     pub(super) constants: &'a [Value],
+    /// What the VM proved of a constructor's `instanceof` (`Vm::instanceof_fact`), by its identity.
+    pub(super) instanceofs: &'a dyn Fn(Value) -> Option<crate::code_dependencies::InstanceofFact>,
 }
 
 impl OnlineFacts<'_> {
