@@ -19,15 +19,9 @@ fn ahead_image(source: &str) -> (RelocatableCode, usize) {
     (image, usize::from(unit.caller_registers))
 }
 
-#[test]
-fn a_lane_function_compiled_ahead_names_only_helper_symbols_and_runs_once_linked() {
-    let (image, registers) = ahead_image("function pick(o){return o?1:2;}");
-    assert!(!image.relocations.is_empty(), "the truthiness helper is a symbol");
-    assert!(image.relocations.iter().all(|relocation| relocs::helper_key(relocation.namespace, relocation.key).is_some()),
-        "no address but a helper's is named: {:?}", image.relocations);
-    let table = LaneHelper::addresses::<crate::test_host::TestHost>();
-    let linked = image.link(0, |namespace, key| table.get(relocs::helper_key(namespace, key)?).map(|address| *address as usize as u64)).unwrap();
-    let memory = CodeMemory::new(&linked).unwrap();
+/// Runs `linked` as a lane entry over `pick`'s inputs and checks each result.
+fn run_pick(linked: &[u8], registers: usize) {
+    let memory = CodeMemory::new(linked).unwrap();
     // SAFETY: the image is a lane entry of the shared ABI, its helpers now this process's.
     let entry = unsafe { std::mem::transmute::<*mut u8, super::super::Entry>(memory.pointer()) };
     let mut frame = super::super::LaneFrame::new();
@@ -44,4 +38,75 @@ fn a_lane_function_compiled_ahead_names_only_helper_symbols_and_runs_once_linked
         assert_eq!(status, super::super::LANE_BODY_RETURNED, "{input}");
         assert_eq!(Value::from_bits(word), Value::number(expected), "{input}");
     }
+}
+
+/// The image linked against this process's helper table.
+fn link_here(image: &RelocatableCode) -> Vec<u8> {
+    let table = LaneHelper::addresses::<crate::test_host::TestHost>();
+    image.link(0, |namespace, key| table.get(relocs::helper_key(namespace, key)?).map(|address| *address as usize as u64)).unwrap()
+}
+
+/// The image as a file: code, then each relocation as offset, kind, namespace, key, addend.
+fn write_image(image: &RelocatableCode, registers: usize) -> Vec<u8> {
+    let mut out = (registers as u64).to_le_bytes().to_vec();
+    out.extend((image.code.len() as u64).to_le_bytes());
+    out.extend(&*image.code);
+    out.extend((image.relocations.len() as u64).to_le_bytes());
+    for relocation in &*image.relocations {
+        assert_eq!(relocation.kind, cranelift_codegen::binemit::Reloc::Abs8, "a symbol is an absolute word");
+        out.extend((relocation.offset as u64).to_le_bytes());
+        out.extend(relocation.namespace.to_le_bytes());
+        out.extend(relocation.key.to_le_bytes());
+        out.extend(relocation.addend.to_le_bytes());
+    }
+    out
+}
+
+/// The image `write_image` wrote, and its caller registers.
+fn read_image(file: &[u8]) -> (RelocatableCode, usize) {
+    let word = |at: usize| u64::from_le_bytes(file[at..at + 8].try_into().unwrap());
+    let half = |at: usize| u32::from_le_bytes(file[at..at + 4].try_into().unwrap());
+    let (registers, length) = (word(0) as usize, word(8) as usize);
+    let code: Box<[u8]> = file[16..16 + length].into();
+    let (count, mut at) = (word(16 + length) as usize, 24 + length);
+    let relocations = (0..count).map(|_| {
+        let relocation = crate::vm::jit_backend::relocatable_code::Relocation { offset: word(at) as usize,
+            kind: cranelift_codegen::binemit::Reloc::Abs8, namespace: half(at + 8), key: half(at + 12),
+            addend: word(at + 16) as i64 };
+        at += 24;
+        relocation
+    }).collect();
+    (RelocatableCode { code, relocations }, registers)
+}
+
+#[test]
+fn a_lane_function_compiled_ahead_names_only_helper_symbols_and_runs_once_linked() {
+    let (image, registers) = ahead_image("function pick(o){return o?1:2;}");
+    assert!(!image.relocations.is_empty(), "the truthiness helper is a symbol");
+    assert!(image.relocations.iter().all(|relocation| relocs::helper_key(relocation.namespace, relocation.key).is_some()),
+        "no address but a helper's is named: {:?}", image.relocations);
+    run_pick(&link_here(&image), registers);
+}
+
+/// The image of `pick` written to a file and run by a second process, whose helpers live at
+/// other addresses: the file holds no address of the process that compiled it.
+#[test]
+fn a_lane_image_written_out_is_linked_and_run_by_a_fresh_process() {
+    const FILE: &str = "QUENCH_AHEAD_IMAGE";
+    if let Ok(path) = std::env::var(FILE) {
+        let (image, registers) = read_image(&std::fs::read(path).unwrap());
+        run_pick(&link_here(&image), registers);
+        println!("ahead image ran in {}", std::process::id());
+        return;
+    }
+    let (image, registers) = ahead_image("function pick(o){return o?1:2;}");
+    let path = std::env::temp_dir().join(format!("quench-ahead-{}.img", std::process::id()));
+    std::fs::write(&path, write_image(&image, registers)).unwrap();
+    let name = format!("{}::a_lane_image_written_out_is_linked_and_run_by_a_fresh_process", module_path!().split_once("::").unwrap().1);
+    let child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", &name, "--nocapture", "--test-threads=1"]).env(FILE, &path).output().unwrap();
+    std::fs::remove_file(&path).ok();
+    let stdout = String::from_utf8_lossy(&child.stdout);
+    assert!(child.status.success(), "{stdout}{}", String::from_utf8_lossy(&child.stderr));
+    assert!(stdout.contains("ahead image ran in") && !stdout.contains(&format!("ran in {}", std::process::id())), "{stdout}");
 }
