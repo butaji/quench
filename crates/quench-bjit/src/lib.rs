@@ -6,6 +6,9 @@
 //! values in the registers `PINNED` and `PINNED_F` count.
 
 mod patch;
+#[cfg(test)]
+#[path = "../stencils/shards.rs"]
+mod shards;
 pub mod numeric;
 pub use patch::{HOLES, Imm32};
 
