@@ -33,6 +33,9 @@ pub(super) enum Heap {
     Site,
     /// The `length` of the direct array at hole 1, an int32 (what the array's record counts).
     Length,
+    /// Stores the value operand (hole 0) into depth-0 capture `slot` of an activation whose slots
+    /// admit every direct store; the slot is hole 1 and its byte offset hole 2.
+    CaptureSet(u16),
 }
 
 /// A heap row: its operation and where its operands and destination live.
@@ -57,6 +60,7 @@ impl Heap {
             Heap::Array => library::ARRAY_ROW,
             Heap::Site => library::SITE_ROW,
             Heap::Length => library::LENGTH_ROW,
+            Heap::CaptureSet(_) => library::CAPTURE_SET_ROW,
         }
     }
 }
@@ -119,8 +123,8 @@ mod tests {
             [mirror::CALL_CONTEXT_ADAPTER_PAYLOAD, mirror::JS_STEP_LOOP_ENTRY, mirror::JS_STEP_CAPTURE_VALUES, mirror::JS_STEP_CAPTURE_LEN, mirror::JS_STEP_ARRAY_RECORD_BASE, mirror::JS_STEP_RETURNED_PC]
         );
         assert_eq!(
-            [std::mem::offset_of!(JsStepDispatch, object_record_base), std::mem::offset_of!(JsStepDispatch, property_buffer), std::mem::offset_of!(JsStepDispatch, field_entries), crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, super::super::entry_cell::CAPTURE_ADDRESS_BITS as usize],
-            [mirror::JS_STEP_OBJECT_RECORD_BASE, mirror::JS_STEP_PROPERTY_BUFFER, mirror::JS_STEP_FIELD_ENTRIES, mirror::PROPERTY_BUFFER_BASE, mirror::CAPTURE_ADDRESS_BITS as usize]
+            [std::mem::offset_of!(JsStepDispatch, object_record_base), std::mem::offset_of!(JsStepDispatch, property_buffer), std::mem::offset_of!(JsStepDispatch, field_entries), crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, super::super::entry_cell::CAPTURE_ADDRESS_BITS as usize, std::mem::offset_of!(JsStepDispatch, capture_stores), super::super::super::dispatch_fast::CAPTURE_STORES],
+            [mirror::JS_STEP_OBJECT_RECORD_BASE, mirror::JS_STEP_PROPERTY_BUFFER, mirror::JS_STEP_FIELD_ENTRIES, mirror::PROPERTY_BUFFER_BASE, mirror::CAPTURE_ADDRESS_BITS as usize, mirror::JS_STEP_CAPTURE_STORES, mirror::CAPTURE_STORES_BIT as usize]
         );
     }
 }

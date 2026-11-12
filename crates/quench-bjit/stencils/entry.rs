@@ -17,10 +17,13 @@
 //! the status), `leave_stop_pop` (the word an exit stub pushed) and `leave_returned` (the
 //! activation completes with the register slot at hole 0; hole 1 the status, hole 2 the
 //! record that completes it, which the lane reads from the dispatch payload). A body's captures
-//! word is unpacked into the payload's capture words for its run, as a loop region's entry
-//! leaves them, and cleared when it returns.
+//! word is unpacked into the payload's capture words for its run (the slots, their count and whether
+//! they admit every direct store), as a loop region's entry leaves them, and cleared when it returns.
 
-use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, CAPTURE_ADDRESS_BITS, CAPTURE_ADDRESS_PAD, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_VALUES, JS_STEP_RETURNED_PC};
+use crate::layout::{
+    CALL_CONTEXT_ADAPTER_PAYLOAD, CAPTURE_ADDRESS_BITS, CAPTURE_ADDRESS_PAD, CAPTURE_STORES_BIT, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES,
+    JS_STEP_RETURNED_PC,
+};
 use crate::staged::frame;
 use crate::words::HOLE_V0;
 
@@ -76,7 +79,8 @@ pub unsafe extern "C" fn leave_pop() {
 
 /// The body entry: saves the callee-saved registers, takes the context in r13 and the register
 /// file in r12, publishes the captures word (the dense slots' address below `CAPTURE_ADDRESS_BITS`,
-/// their count above) as the payload's capture words, calls the first row, clears them, and
+/// whose low bit says they admit every direct store, and their count above) as the payload's
+/// capture words, calls the first row, clears them, and
 /// returns (status, word) as the chain left them in (rdx, rax). The pad keeps the stack 16-byte
 /// aligned at the call, as the six pushes and the return address leave it 8 off.
 #[unsafe(naked)]
@@ -96,6 +100,10 @@ pub unsafe extern "C" fn entry_body() {
         "mov r8, rdx",
         "shl r8, {pad}",
         "shr r8, {pad}",
+        "mov r9, r8",
+        "and r9, {stores_bit}",
+        "mov [rax + {stores}], r9",
+        "xor r8, r9",
         "mov [rax + {values}], r8",
         "shr rdx, {bits}",
         "mov [rax + {len}], rdx",
@@ -103,6 +111,7 @@ pub unsafe extern "C" fn entry_body() {
         "mov rcx, [r13 + {payload}]",
         "mov qword ptr [rcx + {values}], 0",
         "mov qword ptr [rcx + {len}], 0",
+        "mov qword ptr [rcx + {stores}], 0",
         "add rsp, 8",
         "pop r15",
         "pop r14",
@@ -116,6 +125,8 @@ pub unsafe extern "C" fn entry_body() {
         payload = const CALL_CONTEXT_ADAPTER_PAYLOAD,
         values = const JS_STEP_CAPTURE_VALUES,
         len = const JS_STEP_CAPTURE_LEN,
+        stores = const JS_STEP_CAPTURE_STORES,
+        stores_bit = const CAPTURE_STORES_BIT,
         bits = const CAPTURE_ADDRESS_BITS,
         pad = const CAPTURE_ADDRESS_PAD,
     )

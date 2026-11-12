@@ -7132,8 +7132,9 @@ impl<H: Host> Vm<H> {
     ) -> LaneExit {
         let frame = lane_frame();
         // SAFETY: the activation's capture slots outlive its body's run, which collects nothing.
-        let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(captures) }
+        let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(super::dispatch_fast::capture_reads(captures)) }
             .unwrap_or((std::ptr::null(), 0));
+        let stores = super::dispatch_fast::capture_stores(captures).is_some();
         // SAFETY: the frame lives for the thread and is never moved once made; no reference
         // into it is held across the body's run, which may enter it again
         // (`run_nested_lane_method`).
@@ -7178,9 +7179,9 @@ impl<H: Host> Vm<H> {
             let context = unsafe { &mut *context };
             context.bind_native_adapter(context.adapter_payload,
                 self.execution_interrupt.atomic_flag() as *const _, poll);
-            unsafe { enter_body(context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast(), method.entry) }
+            unsafe { enter_body(context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len, stores), registers.cast_const().cast(), method.entry) }
         } else {
-            unsafe { (method.entry)(&mut *context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast()) }
+            unsafe { (method.entry)(&mut *context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len, stores), registers.cast_const().cast()) }
         };
         #[cfg(test)]
         LANE_BODY_RUNS.with(|runs| { let [all, returned] = runs.get(); runs.set([all + 1, returned + usize::from(status == LANE_BODY_RETURNED)]); });

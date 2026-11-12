@@ -25,7 +25,7 @@ macro_rules! need {
 
 /// The tagged word of an operand.
 #[inline(always)]
-fn word_of<const P: u8, const H: u8>(s: &S) -> u64 {
+pub(crate) fn word_of<const P: u8, const H: u8>(s: &S) -> u64 {
     match P {
         MEM | MEMINT => unsafe { (slot::<H>(s) as *const u64).read() },
         CONST => hole64::<H>(),

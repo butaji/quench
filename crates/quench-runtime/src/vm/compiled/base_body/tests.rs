@@ -157,3 +157,16 @@ fn array_length_runs_in_a_body() {
     );
     assert_eq!(interpreted, compiled);
 }
+
+/// A depth-0 capture's store runs in the body, into the slots the activation's capture word says
+/// admit every direct store (the closure's environment is already in the remembered set); a read
+/// after it sees the write, and the interpreter's counter agrees.
+#[test]
+fn capture_writes_run_in_a_body() {
+    assert_bodies_never_leave(
+        "function counter() { let n = 0; return function () { n = n + 1; return n; }; }
+         const next = counter(); let t = 0;
+         for (let k = 0; k < 300; k++) t = (t + next()) | 0;
+         print(t); print(next());",
+    );
+}

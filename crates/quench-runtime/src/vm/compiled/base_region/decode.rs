@@ -174,6 +174,12 @@ fn field_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instructi
     (!region.is_dynamic_field(index) && u32::try_from(word as u64 * SLOT).is_ok()).then_some(Decoded { hole: word as u64 * SLOT, ..row })
 }
 
+/// Whether `instruction` stores to a depth-0 capture and nothing else (`general_capture::lower_capture`'s
+/// conditions): it completes no activation, sets no `this`, and is no numeric local's update.
+fn own_capture_store(instruction: WideInstruction) -> bool {
+    instruction.capture_depth() == 0 && !instruction.returns_from_frame() && !instruction.writes_current_this() && instruction.numeric_local_target().is_none()
+}
+
 /// The heap instructions: a capture, a dense element read or store, a recorded or cached field,
 /// the proof that a base is an array.
 pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
@@ -182,6 +188,8 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32,
         Class::LoadCapture if instruction.capture_depth() == 0 => {
             Some(Decoded::heap(Heap::Capture(instruction.capture_slot()), Some(instruction.result_register()), None, None))
         }
+        // A loop region's payload never admits direct capture stores, so only a function's rows write them.
+        Class::StoreCapture if matches!(facts, Facts::Site) && own_capture_store(instruction) => Some(Decoded::heap(Heap::CaptureSet(instruction.capture_slot()), None, register(instruction.register_a()), None)),
         Class::GetIndex if !instruction.returns_from_frame() => {
             let base = instruction.operand_b().register_index()?;
             let index = source(region, instruction.operand_c()).ok()?;

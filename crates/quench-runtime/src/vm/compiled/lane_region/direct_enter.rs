@@ -22,7 +22,7 @@ impl Lowering<'_, '_> {
         self.word_store(next, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, native_top)));
         let signature = lane_body_signature(types::I64, self.builder.func.signature.call_conv);
         let signature = self.builder.import_signature(signature);
-        let captures = self.reloc(RelocKind::CaptureWords, callee.target.function, super::super::entry_cell::capture_word(callee.capture_values, callee.capture_len) as u64);
+        let captures = self.reloc(RelocKind::CaptureWords, callee.target.function, super::super::entry_cell::capture_word(callee.capture_values, callee.capture_len, false) as u64);
         let context = self.context;
         let call = self.word_call_all(signature, entry, &[context, this, captures, top]);
         self.word_store(top, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, native_top)));

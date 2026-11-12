@@ -81,13 +81,16 @@ impl EntryCell {
 /// Bits of a capture word that hold the dense slots' address; the slot count sits above them
 /// (a user-space address fits 48 bits).
 pub(super) const CAPTURE_ADDRESS_BITS: u32 = 48;
-/// The mask of those bits.
-pub(super) const CAPTURE_ADDRESS_MASK: i64 = (1 << CAPTURE_ADDRESS_BITS) - 1;
+/// The bit of the address a store tag takes: slots are aligned past it (`CAPTURE_STORES`).
+const CAPTURE_STORES_BIT: u64 = super::super::dispatch_fast::CAPTURE_STORES as u64;
+/// The mask of the address bits.
+pub(super) const CAPTURE_ADDRESS_MASK: i64 = ((1 << CAPTURE_ADDRESS_BITS) - 1) & !(CAPTURE_STORES_BIT as i64);
 
-/// The one word a body's entry takes its captures in: the dense slots' address and count.
-pub(in crate::vm) fn capture_word(values: *const Value, len: usize) -> u64 {
+/// The one word a body's entry takes its captures in: the dense slots' address and count, and
+/// whether they admit every direct store (`dispatch_fast::capture_stores`).
+pub(in crate::vm) fn capture_word(values: *const Value, len: usize, stores: bool) -> u64 {
     debug_assert!(values.addr() >> CAPTURE_ADDRESS_BITS == 0 && len >> (u64::BITS - CAPTURE_ADDRESS_BITS) == 0);
-    values.addr() as u64 | (len as u64) << CAPTURE_ADDRESS_BITS
+    values.addr() as u64 | u64::from(stores) * CAPTURE_STORES_BIT | (len as u64) << CAPTURE_ADDRESS_BITS
 }
 
 /// Grows the scratch window to `width` registers for a body native code may call: an

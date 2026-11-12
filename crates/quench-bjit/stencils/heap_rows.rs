@@ -8,19 +8,21 @@
 //! and the slot's byte offset) are holes 1 and 2. A site field read (`SITE_ROW`) packs the
 //! object register's frame offset above the destination's in hole 0, takes the process's narrow
 //! upper-word table as hole 1 and its cache entry's byte offset as hole 2. An array length read
-//! (`LENGTH_ROW`) takes the destination in hole 0 and the array word's frame offset in hole 1.
+//! (`LENGTH_ROW`) takes the destination in hole 0 and the array word's frame offset in hole 1. A
+//! capture store (`CAPTURE_SET_ROW`) takes its value operand in hole 0 and the slot and its byte
+//! offset in holes 1 and 2.
 //! Every failed proof leaves through exit 0 with nothing written, so the interpreter runs the
 //! instruction.
 
 use crate::layout::{
-    CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_VALUES, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
+    CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
     JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE,
 };
-use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole64, index_of, number_word};
+use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole64, index_of, number_word, word_of};
 use crate::stage::StencilStage;
 use crate::staged::{elements, entry, environment, value};
 
-pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, FIELD_ROW, INDEX_ROW, LENGTH_ROW, SITE_OBJECT_AT, SITE_ROW, STORE_ROW};
+pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, FIELD_ROW, INDEX_ROW, LENGTH_ROW, CAPTURE_SET_ROW, SITE_OBJECT_AT, SITE_ROW, STORE_ROW};
 
 unsafe extern "C" {
     static HOLE_V0: u8;
@@ -93,6 +95,16 @@ fn capture_row<const D: u8>(s: S, payload: usize) -> Out {
     deliver::<D>(s, word)
 }
 
+/// A store of the value operand (hole 0) into the same capture slot (holes 1 and 2), where the
+/// run's slots admit every direct store (`environment::dense_capture_store`).
+#[inline(always)]
+fn capture_set_row<const A: u8>(s: S, payload: usize) -> Out {
+    let mut stage = StencilStage::from_hole(HOLE_A);
+    let slots = (word_at(payload, JS_STEP_CAPTURE_VALUES), word_at(payload, JS_STEP_CAPTURE_LEN), word_at(payload, JS_STEP_CAPTURE_STORES));
+    need!(s, environment::dense_capture_store(&mut stage, slots, 0, word_of::<A, 0>(&s), ()));
+    Out::Next(s)
+}
+
 #[inline(always)]
 fn field_row<const D: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::from_hole(HOLE_A);
@@ -156,6 +168,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
     let payload = payload(&s);
     match KIND {
         CAPTURE_ROW => capture_row::<D>(s, payload),
+        CAPTURE_SET_ROW => capture_set_row::<A>(s, payload),
         FIELD_ROW => field_row::<D>(s, payload),
         SITE_ROW => site_row::<D>(s, payload),
         ARRAY_ROW => array_row(s),
