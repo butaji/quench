@@ -8052,12 +8052,13 @@ fn lane_loop_native<H: Host>(
     };
     // The tier's state is borrowed only here, so the dispatch below holds no borrow.
     let continuation = lane_loop_run(cx, r, site, region, &mut entry, views);
+    count_continuation(&continuation);
     site.declines.set(if matches!(continuation, LoopContinuation::Jump) { site.declines.get() + 1 } else { 0 });
     lane_loop_hold_header::<H>(header, site);
     match continuation {
         LoopContinuation::Jump | LoopContinuation::Compiling => LoopAttempt::Declined,
         LoopContinuation::Resume(pc) => LoopAttempt::At(at(pc)),
-        LoopContinuation::Exit(pc) => { count_arithmetic_leave(cx, site, pc); LoopAttempt::Leave(exit(at(pc))) }
+        LoopContinuation::Exit(pc) => { count_arithmetic_leave(cx, site, pc, region.header..=region.backedge); LoopAttempt::Leave(exit(at(pc))) }
         LoopContinuation::Inlined { frame, pc } => { let frame = region.inlining.as_ref().expect("an inlining region").frames[frame];
             LoopAttempt::Leave(exit(lane_inlined_activation(cx, r, region, &entry, frame, at(frame.call), pc))) }
         LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header, Slot::unset())),
@@ -8074,15 +8075,19 @@ fn lane_loop_native<H: Host>(
 /// element store, whose append helper it can compile, or a capture read, whose root-held binding
 /// it can read by helper; a leave at any other guard (a shape, say) widens nothing.
 #[cold]
-fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32) {
+fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32, region: std::ops::RangeInclusive<u32>) {
+    if !region.contains(&pc) { return; }
     // SAFETY: the lane's VM is live, and nothing borrows it across the read.
     let machine = unsafe { vm(cx) };
     let counted = machine.programs.get(machine.active_program).as_deref().and_then(|program| {
         let body = program.function(site.function() as usize);
         body.code.get(pc as usize).and_then(|packed| {
             let op = decoded_instruction(body, *packed).op();
+            super::compiled::base_region::leave(site.function(), pc, op);
             (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
-                || matches!(op.class(), Class::LoadCapture)).then(|| op.is_get_index())
+                || matches!(op.class(), Class::LoadCapture)
+                // A BaseJIT region also holds a loaded field as an int32 until it leaves there.
+                || (crate::jit_mode::base_regions() && matches!(op.class(), Class::GetField))).then(|| op.is_get_index())
         })
     });
     if let Some(read) = counted { site.tier.borrow_mut().left_at(pc, read); }
@@ -8244,6 +8249,16 @@ enum LoopContinuation {
     Callee,
 }
 
+/// Counts what a loop run came to (`QUENCH_TRACE=js-jit`).
+fn count_continuation(continuation: &LoopContinuation) {
+    use super::compiled::base_region::{count, Event};
+    count(match continuation {
+        LoopContinuation::Jump | LoopContinuation::Compiling => Event::Declined,
+        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Safepoint | LoopContinuation::Callee => Event::Left,
+        LoopContinuation::Resume(_) | LoopContinuation::Completed(..) => Event::Entered,
+    });
+}
+
 /// Compiles `site`'s region if it has no current code, for the element `views` its entry
 /// proved, then runs it on `r` with `entry`. A representation an outcome shows wrong is
 /// widened, and the code dropped for the next compilation.
@@ -8270,7 +8285,7 @@ fn lane_loop_run<H: Host>(
         let int_entries = loop_tier::int_entries(r, region);
         let typed_captures = loop_tier::typed_capture_slots(cx);
         let int_captures = loop_tier::int_capture_slots(cx);
-        lane_loop_compile(cx, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures, &int_captures);
+        lane_loop_compile(cx, r, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures, &int_captures);
         if !tier.is_published() {
             return LoopContinuation::Compiling;
         }
@@ -8594,6 +8609,8 @@ fn lane_inlining_region<H: Host>(
     r: Registers,
     site: &LoopSite,
 ) -> Option<super::compiled::LoopRegion> {
+    // `--b-jit` runs no inlining regions, so it does not analyze them.
+    if crate::jit_mode::base_only() { return None; }
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let program = unsafe { (*cx).program };
@@ -19905,7 +19922,7 @@ fn install_loop_sites<'live, H: Host>(
                     widenings: std::cell::Cell::new(0),
                     compile_attempts: std::cell::Cell::new(0),
                     compile_successes: std::cell::Cell::new(0),
-                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::IDLE),
+                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::initial()),
                 },
             )
         })

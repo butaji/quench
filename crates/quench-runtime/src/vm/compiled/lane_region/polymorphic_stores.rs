@@ -12,7 +12,7 @@ impl Lowering<'_, '_> {
     pub(super) fn finish_shape_switch_store(&mut self, state: &mut State, object_bits: ir::Value, atom: Atom, site: u16,
         value: ir::Value, ty: Type, exit: ir::Block, header: Option<ObjectHeader>, general: ir::Block,
         widens: &[ir::Block], done: ir::Block) {
-        if self.completion != Completion::StatusAndPc {
+        if !self.completion.status_and_pc() {
             return self.finish_store(state, object_bits, atom, site, value, ty, exit, header, general, widens, done);
         }
         for block in std::iter::once(general).chain(widens.iter().copied()) {
