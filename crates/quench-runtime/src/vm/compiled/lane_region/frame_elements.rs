@@ -33,8 +33,15 @@ pub(super) fn index_get(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, (base, 
 }
 
 impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
+    /// The VM's store; a hoisted array's store leaves at `miss` instead, which no recorded miss
+    /// planned a helper arm for (`Lowering::element_write`): the helper's call spills every live
+    /// value, which a loop that never misses should not pay.
     fn index_set_host(&mut self, stage: &mut Emit<'b, 'c>, base: ir::Value, key: ir::Value, value: ir::Value,
         miss: ir::Block) -> Option<()> {
+        if self.held.is_some() {
+            let never = stage.ult(key, key);
+            return stage.guard(never, miss);
+        }
         calls::index_set(self, stage, (base, key, value), miss);
         Some(())
     }

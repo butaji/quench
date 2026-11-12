@@ -68,9 +68,11 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// An element store. A Number into a writable hoisted array goes through its view; any other
-    /// store is the row, which replaces a present element in place and otherwise takes the VM's
-    /// store, which may add the element and so retires every view. A key that is a string names a
+    /// An element store. A Number into a writable hoisted array goes through its view: its row
+    /// replaces a present element in place and, where no miss was recorded at the site, leaves
+    /// at the miss (`ElementFrame::index_set_host`); a site that missed plans the helper arm
+    /// (`dense_element_write`). Any other store is the row, which replaces a present element in
+    /// place and otherwise takes the VM's store, which may add the element and so retires every view. A key that is a string names a
     /// property, which the element store never makes: it leaves for the interpreter.
     fn element_write(&mut self, state: &mut State, (pc, instruction): (usize, WideInstruction),
         (value, base, key): (Register, Register, Register)) -> bool {

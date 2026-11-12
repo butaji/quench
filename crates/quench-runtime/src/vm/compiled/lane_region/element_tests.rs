@@ -58,3 +58,18 @@ fn a_hoisted_number_read_has_no_hole_test_and_any_other_read_keeps_it() {
     let unobserved = region(SUM, false, false);
     assert!(hole_tests(&unobserved, &loop_body(&unobserved)) > 0, "a read no Number proof follows tests the hole: {unobserved}");
 }
+
+/// The calls to the element store's host helper in `body`.
+fn index_set_calls(function: &ir::Function, body: &[ir::Inst]) -> usize {
+    let helper = LaneHelper::addresses::<crate::test_host::TestHost>()[LaneHelper::IndexSet as usize] as usize;
+    body.iter().filter(|&&inst| function.dfg.insts[inst].opcode() == ir::Opcode::CallIndirect
+        && is_constant(function, function.dfg.inst_args(inst)[0], helper as u64)).count()
+}
+
+#[test]
+fn a_hoisted_store_calls_no_helper_in_its_loop_until_its_site_has_missed() {
+    let unobserved = region(FILL, false, false);
+    assert_eq!(index_set_calls(&unobserved, &loop_body(&unobserved)), 0, "a never-missed store exits cold: {unobserved}");
+    let missed = region(FILL, false, true);
+    assert!(index_set_calls(&missed, &loop_body(&missed)) > 0, "a recorded miss plans the helper arm: {missed}");
+}
