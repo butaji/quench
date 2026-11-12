@@ -165,5 +165,16 @@ pub(crate) const JS_STEP_LOOP_ENTRY: usize = 0;
 pub(crate) const JS_STEP_CAPTURE_VALUES: usize = 96;
 pub(crate) const JS_STEP_CAPTURE_LEN: usize = 104;
 pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = 112;
+/// The heap bases a field read through a site's cache entry reads: the object record
+/// reservation, the allocator header of the property values (whose base is at
+/// `PROPERTY_BUFFER_BASE`) and the field cache entries of the running program.
+pub(crate) const JS_STEP_OBJECT_RECORD_BASE: usize = 120;
+pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = 152;
+pub(crate) const JS_STEP_FIELD_ENTRIES: usize = 160;
+pub(crate) const PROPERTY_BUFFER_BASE: usize = 0;
+/// Bits of a body's capture word that hold the dense slots' address; the slot count sits above
+/// them (`entry_cell::CAPTURE_ADDRESS_BITS`), and the pad is what a shift pair clears them with.
+pub(crate) const CAPTURE_ADDRESS_BITS: u32 = 48;
+pub(crate) const CAPTURE_ADDRESS_PAD: u32 = u64::BITS - CAPTURE_ADDRESS_BITS;
 /// The record a completed body names (`LANE_BODY_RETURNED`).
 pub(crate) const JS_STEP_RETURNED_PC: usize = 256;

@@ -51,6 +51,28 @@ pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S:
     }))
 }
 
+/// A field read through the cache entry `offset` bytes into the field cache table `entries`
+/// (the running program's, as `Vm::program_field_entries` hands it), of the object `object`
+/// names in the record table at `records`: the own data value the entry holds, or `None`
+/// (leaving at `miss`) where either table is absent, the word is no direct object, or the entry
+/// is not an own entry for the record's shape (`own_read_entry`). The offset is the row's only
+/// per-site operand, so a site is read as the interpreter's cached read reads it.
+// Read by the b-jit stencil build (`quench-bjit/stencils`), which includes this file.
+#[allow(dead_code)]
+#[inline(always)]
+pub(crate) fn site_read<S: Stage>(stage: &mut S, (entries, records): (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
+    for base in [entries, records] {
+        let present = stage.ne_imm(base, 0u32);
+        stage.guard(present, miss)?;
+    }
+    let direct = super::value::is_direct_object(stage, object);
+    stage.guard(direct, miss)?;
+    let id = stage.and_imm(object, u64::from(u32::MAX));
+    let record = super::object::object_record_at(stage, records, id);
+    let entry = stage.add_imm(entries, offset);
+    own_read_entry(stage, record, entry, miss)
+}
+
 /// The word the loop entry record holds at the per-site byte `offset`: a field value the loop's
 /// entry recorded (`LoopEntry`), written before the run and never during it.
 // Read by the b-jit stencil build (`quench-bjit/stencils`), which includes this file.

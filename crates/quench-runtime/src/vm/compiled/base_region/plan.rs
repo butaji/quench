@@ -95,6 +95,7 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
         Heap::Store => [base, a_hole, b_hole],
         Heap::Index if entry => [dst_hole, decoded.hole, b_hole],
         Heap::Field => [dst_hole, decoded.hole, 0],
+        Heap::Site => [dst_hole | a_hole << numeric::library::SITE_OBJECT_AT, crate::value::NarrowLayout::upper_words() as u64, decoded.hole],
         Heap::Capture(slot) => [dst_hole, u64::from(slot), u64::from(slot) * SLOT],
         _ => [dst_hole, a_hole, b_hole],
     };
@@ -102,8 +103,8 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
     Ok(Planned::single(base_rows::stencil(HeapRow { heap, dst, a, b, entry })?, holes, None, Some(pc)))
 }
 
-/// The row of `decoded` at `pc`; a backward jump takes the row `poll` names.
-pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool, poll: Kind) -> Result<Planned, String> {
+/// The row of `decoded` at `pc`; a backward jump takes the poll row `ending` names.
+pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool, ending: Ending) -> Result<Planned, String> {
     let (a, a_hole) = operand(homes, decoded.a);
     let (b, b_hole) = operand(homes, decoded.b);
     let (dst, dst_hole) = operand(homes, decoded.dst.map(Source::Register));
@@ -115,7 +116,7 @@ pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool, pol
         return heap_plan(decoded, homes, heap, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)]);
     }
     let polls = decoded.target.is_some_and(|target| target <= pc) && decoded.kind == Kind::Jump;
-    let kind = if polls { poll } else { decoded.kind };
+    let kind = if polls { ending.poll() } else { decoded.kind };
     let stencil = numeric::stencil(numeric::Row { kind, dst, a, b, speculate: !general })?;
     let interrupt = std::mem::offset_of!(super::super::CallContext, interrupt) as u64;
     let exits = polls || !matches!(kind, Kind::Jump | Kind::Move) || matches!(dst, Place::Pin(_) | Place::PinF(_) | Place::MemInt);

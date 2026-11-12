@@ -5,7 +5,8 @@
 //!
 //! Operands are holes: 0 is the destination frame offset (the array's, for a store), 1 and 2 the
 //! operands' (a field row's entry-record byte offset in 1; a capture's slot and the slot's byte
-//! offset). Every failed proof leaves through exit 0 with nothing written, so the interpreter
+//! offset; a site field row packs its object register's frame offset above the destination's in
+//! 0, takes the narrow upper-word table in 1 and the cache entry's byte offset in 2). Every failed proof leaves through exit 0 with nothing written, so the interpreter
 //! runs the instruction.
 
 use quench_bjit::numeric::{library, Place};
@@ -27,6 +28,9 @@ pub(super) enum Heap {
     Field,
     /// The array word at hole 1 is a direct array (what `RequireObjectCoercible` of one proves).
     Array,
+    /// The own data field the site's field cache entry names, read from the object register
+    /// whose frame offset sits above the destination's in hole 0 (hole 2: the entry's byte offset).
+    Site,
 }
 
 /// A heap row: its operation and where its operands and destination live.
@@ -49,6 +53,7 @@ impl Heap {
             Heap::Store => library::STORE_ROW,
             Heap::Field => library::FIELD_ROW,
             Heap::Array => library::ARRAY_ROW,
+            Heap::Site => library::SITE_ROW,
         }
     }
 }
@@ -109,6 +114,10 @@ mod tests {
         assert_eq!(
             [std::mem::offset_of!(CallContext, adapter_payload), std::mem::offset_of!(JsStepDispatch, loop_entry), std::mem::offset_of!(JsStepDispatch, capture_values), std::mem::offset_of!(JsStepDispatch, capture_len), std::mem::offset_of!(JsStepDispatch, array_record_base), std::mem::offset_of!(JsStepDispatch, returned_pc)],
             [mirror::CALL_CONTEXT_ADAPTER_PAYLOAD, mirror::JS_STEP_LOOP_ENTRY, mirror::JS_STEP_CAPTURE_VALUES, mirror::JS_STEP_CAPTURE_LEN, mirror::JS_STEP_ARRAY_RECORD_BASE, mirror::JS_STEP_RETURNED_PC]
+        );
+        assert_eq!(
+            [std::mem::offset_of!(JsStepDispatch, object_record_base), std::mem::offset_of!(JsStepDispatch, property_buffer), std::mem::offset_of!(JsStepDispatch, field_entries), crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, super::super::entry_cell::CAPTURE_ADDRESS_BITS as usize],
+            [mirror::JS_STEP_OBJECT_RECORD_BASE, mirror::JS_STEP_PROPERTY_BUFFER, mirror::JS_STEP_FIELD_ENTRIES, mirror::PROPERTY_BUFFER_BASE, mirror::CAPTURE_ADDRESS_BITS as usize]
         );
     }
 }

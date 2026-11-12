@@ -57,11 +57,14 @@ pub(super) struct Decoded {
     pub(super) hole: u64,
     /// Set for a row that leaves the function: it has no successor.
     pub(super) end: Option<End>,
+    /// A `ToNumeric` copy: its operand is no Number until the row proves it (a loop's entry guards
+    /// prove the registers it names; a function's registers are not proved).
+    pub(super) checked: bool,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, end: None }
+        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, end: None, checked: false }
     }
 
     /// A row that leaves the function (`End`), reading `a`.
@@ -131,16 +134,43 @@ pub(super) fn inc_dec(instruction: WideInstruction) -> Result<Decoded, String> {
     ))
 }
 
-/// The heap instructions: a capture, a dense element read or store, a recorded field, the proof
-/// that a base is an array.
-/// The entry-record byte offset of the array `register` holds through the region, which an
-/// indexing row reads the backing of from the record; 0 where the array is looked up per access.
-fn entry_array(region: &LoopRegion, dense: bool, register: Register) -> u64 {
-    // A row's hole is a u32 patch: an offset past it is looked up per access instead.
-    if dense { region.array_entry_offset(register).filter(|offset| u32::try_from(*offset).is_ok()).unwrap_or(0) } else { 0 }
+/// Where a heap row's recorded facts come from: a loop region's entry record (its arrays read
+/// through it where the views are `dense`), or nowhere, as a whole function's rows read the heap
+/// by its tables (an array word's record, a field's cache entry).
+#[derive(Clone, Copy)]
+pub(super) enum Facts {
+    Entry { dense: bool },
+    Site,
 }
 
-pub(super) fn heap_row(region: &LoopRegion, dense: bool, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+/// The entry-record byte offset of the array `register` holds through the region, which an
+/// indexing row reads the backing of from the record; 0 where the array is looked up per access.
+fn entry_array(region: &LoopRegion, facts: Facts, register: Register) -> u64 {
+    // A row's hole is a u32 patch: an offset past it is looked up per access instead.
+    match facts {
+        Facts::Entry { dense: true } => region.array_entry_offset(register).filter(|offset| u32::try_from(*offset).is_ok()).unwrap_or(0),
+        Facts::Entry { dense: false } | Facts::Site => 0,
+    }
+}
+
+/// The row of a field read: the value the loop's entry recorded, or the site's cache entry
+/// (a named field of a register, not of `this`, whose receiver arrives outside the registers).
+fn field_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+    let result = Some(instruction.result_register());
+    if matches!(facts, Facts::Site) {
+        let FieldLookup::Atom { base, cache_site, .. } = instruction.field_lookup()? else { return None };
+        let site = u64::from(cache_site) * crate::vm::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64;
+        return Some(Decoded { hole: site, ..Decoded::heap(Heap::Site, result, Some(Source::Register(base.register_index()?)), None) });
+    }
+    let index = *region.field_reads().get(&(pc - region.header))?;
+    let word = super::super::osr_loop::field_word(region, index);
+    let row = Decoded::heap(Heap::Field, result, None, None);
+    (!region.is_dynamic_field(index) && u32::try_from(word as u64 * SLOT).is_ok()).then_some(Decoded { hole: word as u64 * SLOT, ..row })
+}
+
+/// The heap instructions: a capture, a dense element read or store, a recorded or cached field,
+/// the proof that a base is an array.
+pub(super) fn heap_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     let register = |register| Some(Source::Register(register));
     match instruction.op().class() {
         Class::LoadCapture if instruction.capture_depth() == 0 => {
@@ -150,28 +180,23 @@ pub(super) fn heap_row(region: &LoopRegion, dense: bool, pc: u32, instruction: W
             let base = instruction.operand_b().register_index()?;
             let index = source(region, instruction.operand_c()).ok()?;
             let row = Decoded::heap(Heap::Index, Some(instruction.result_register()), register(base), Some(index));
-            Some(Decoded { hole: entry_array(region, dense, base), ..row })
+            Some(Decoded { hole: entry_array(region, facts, base), ..row })
         }
         Class::SetIndex => {
             let value = register(instruction.register_a());
             let row = Decoded::heap(Heap::Store, None, value, register(instruction.register_c()));
-            Some(Decoded { base: Some(instruction.register_b()), hole: entry_array(region, dense, instruction.register_b()), ..row })
+            Some(Decoded { base: Some(instruction.register_b()), hole: entry_array(region, facts, instruction.register_b()), ..row })
         }
         Class::RequireObjectCoercible => Some(Decoded::heap(Heap::Array, None, register(instruction.register_b()), None)),
-        Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => {
-            let index = *region.field_reads().get(&(pc - region.header))?;
-            let word = super::super::osr_loop::field_word(region, index);
-            let row = Decoded::heap(Heap::Field, Some(instruction.result_register()), None, None);
-            (!region.is_dynamic_field(index) && u32::try_from(word as u64 * SLOT).is_ok()).then_some(Decoded { hole: word as u64 * SLOT, ..row })
-        }
+        Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, pc, instruction),
         _ => None,
     }
 }
 
-pub(super) fn decode(region: &LoopRegion, dense: bool, pc: u32, instruction: WideInstruction) -> Result<Decoded, String> {
+pub(super) fn decode(region: &LoopRegion, facts: Facts, pc: u32, instruction: WideInstruction) -> Result<Decoded, String> {
     let decoded = match numeric_row(region, instruction) {
         Some(decoded) => decoded,
-        None => heap_row(region, dense, pc, instruction).filter(|_| instruction.result_flags() == 0),
+        None => heap_row(region, facts, pc, instruction).filter(|_| instruction.result_flags() == 0),
     };
     decoded.ok_or_else(|| reject(region, instruction))
 }
@@ -183,8 +208,9 @@ pub(super) fn numeric_row(region: &LoopRegion, instruction: WideInstruction) -> 
     let plain = instruction.result_flags() == 0;
     Some(match instruction.op().class() {
         Class::Move => plain.then(copy),
-        // A Number operand (the entry guards and the region's own rows prove it) is its own numeric value.
-        Class::ToNumeric => plain.then(copy),
+        // A Number operand is its own numeric value: the loop's entry guards and its own rows prove
+        // it, and a function's row proves it itself (`checked`).
+        Class::ToNumeric => plain.then(|| Decoded { checked: true, ..copy() }),
         Class::LoadConst => load_const(region, instruction).ok().filter(|_| plain),
         Class::Binary | Class::NumericAdd | Class::NumericMultiply => binary(region, instruction).ok().filter(|_| plain),
         Class::IncDec => inc_dec(instruction).ok().filter(|_| plain),

@@ -5,15 +5,20 @@
 //!
 //! Holes: 0 is the destination frame offset (the array's, for a store), 1 and 2 the operands'
 //! (a field row's entry-record byte offset in 1); a capture's two per-site operands (the slot,
-//! and the slot's byte offset) are holes 1 and 2. Every failed proof leaves through exit 0 with
-//! nothing written, so the interpreter runs the instruction.
+//! and the slot's byte offset) are holes 1 and 2. A site field read (`SITE_ROW`) packs the
+//! object register's frame offset above the destination's in hole 0, takes the process's narrow
+//! upper-word table as hole 1 and its cache entry's byte offset as hole 2. Every failed proof
+//! leaves through exit 0 with nothing written, so the interpreter runs the instruction.
 
-use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_VALUES, JS_STEP_LOOP_ENTRY};
-use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of, number_word};
+use crate::layout::{
+    CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_VALUES, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
+    JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE,
+};
+use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole64, index_of, number_word};
 use crate::stage::StencilStage;
 use crate::staged::{elements, entry, environment, value};
 
-pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, FIELD_ROW, INDEX_ROW, STORE_ROW};
+pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, FIELD_ROW, INDEX_ROW, SITE_OBJECT_AT, SITE_ROW, STORE_ROW};
 
 unsafe extern "C" {
     static HOLE_V0: u8;
@@ -94,6 +99,18 @@ fn field_row<const D: u8>(s: S, payload: usize) -> Out {
     deliver::<D>(s, entry::entry_word(&mut stage, record, offset))
 }
 
+/// A field read through the site's cache entry (`entry::site_read`): the object is the register
+/// whose frame offset hole 0 carries above the destination's.
+#[inline(always)]
+fn site_row<const D: u8>(s: S, payload: usize) -> Out {
+    let object = word_at(s.frame, (hole64::<0>() >> SITE_OBJECT_AT) as usize);
+    let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
+    let mut stage = StencilStage::with_values(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE));
+    let (entries, records) = (word_at(payload, JS_STEP_FIELD_ENTRIES), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
+    let offset = stage_site(&mut stage);
+    deliver::<D>(s, need!(s, entry::site_read(&mut stage, (entries, records), object, offset, ())))
+}
+
 #[inline(always)]
 fn array_row(s: S) -> Out {
     let mut stage = StencilStage::from_hole(0);
@@ -129,6 +146,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
     match KIND {
         CAPTURE_ROW => capture_row::<D>(s, payload),
         FIELD_ROW => field_row::<D>(s, payload),
+        SITE_ROW => site_row::<D>(s, payload),
         ARRAY_ROW => array_row(s),
         INDEX_ROW => index_row::<ENTRY, D, B>(s, payload),
         _ => store_row::<ENTRY, A, B>(s, payload),

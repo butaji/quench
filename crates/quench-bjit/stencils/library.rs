@@ -17,7 +17,7 @@ fn read_operands(kind: u8, dst: u8, a: u8, b: u8) -> (u8, u8, u8) {
     match kind {
         _ if is_copy(kind) => (dst, a, MEM),
         _ if is_compare(kind) => (MEM, a, b),
-        JUMP | JUMP_POLL | JUMP_WATCH | TAG_INIT => (MEM, MEM, MEM),
+        JUMP | JUMP_POLL | JUMP_WATCH | POLL | TAG_INIT => (MEM, MEM, MEM),
         GUARD => (dst, a, MEM),
         SPILL => (MEM, a, MEM),
         _ => (dst, a, b),
@@ -123,7 +123,7 @@ fn products(places: &Places, rows: &mut BTreeSet<Code>) {
 /// Jumps, entry tagging, guards and spills (of a pinned double to a canonical word, of a pinned
 /// int32 back to a tagged int word).
 fn control(places: &Places, rows: &mut BTreeSet<Code>) {
-    for kind in [JUMP, JUMP_POLL, JUMP_WATCH, TAG_INIT] {
+    for kind in [JUMP, JUMP_POLL, JUMP_WATCH, POLL, TAG_INIT] {
         rows.insert(canonical((kind, MEM, MEM, MEM, true)));
     }
     for &dst in places.floats_dst.iter().chain(&places.ints_dst) {
@@ -151,7 +151,7 @@ pub type HeapCode = (u8, bool, u8, u8, u8);
 /// The heap row whose stencil computes `code`: the places a row ignores are fixed.
 pub fn heap_canonical((heap, entry, dst, a, b): HeapCode) -> HeapCode {
     match heap {
-        CAPTURE_ROW | FIELD_ROW => (heap, false, dst, MEM, MEM),
+        CAPTURE_ROW | FIELD_ROW | SITE_ROW => (heap, false, dst, MEM, MEM),
         INDEX_ROW => (heap, entry, dst, MEM, b),
         STORE_ROW => (heap, entry, MEM, a, b),
         _ => (heap, false, MEM, MEM, MEM),
@@ -171,7 +171,7 @@ pub fn heap_library() -> Vec<HeapCode> {
     let mut rows = BTreeSet::new();
     for entry in [false, true] {
         for &dst in &dsts {
-            for heap in [CAPTURE_ROW, INDEX_ROW, FIELD_ROW] {
+            for heap in [CAPTURE_ROW, INDEX_ROW, FIELD_ROW, SITE_ROW] {
                 rows.extend(srcs.iter().map(|&b| heap_canonical((heap, entry, dst, MEM, b))));
             }
         }

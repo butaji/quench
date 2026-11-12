@@ -39,12 +39,18 @@ pub const GUARD: u8 = 20;
 pub const TAG_INIT: u8 = 21;
 pub const SPILL: u8 = 22;
 pub const JUMP_WATCH: u8 = 23;
+/// Polls the interrupt flag and continues: the guard a conditional branch back passes first.
+pub const POLL: u8 = 24;
 
 pub const CAPTURE_ROW: u8 = 0;
 pub const INDEX_ROW: u8 = 1;
 pub const STORE_ROW: u8 = 2;
 pub const FIELD_ROW: u8 = 3;
 pub const ARRAY_ROW: u8 = 4;
+pub const SITE_ROW: u8 = 5;
+/// Bits below the object register's frame offset in a site field read's hole 0, which carries
+/// the destination's frame offset beneath it.
+pub const SITE_OBJECT_AT: u32 = 32;
 
 /// The kind families the library is built from.
 pub const fn is_copy(kind: u8) -> bool {

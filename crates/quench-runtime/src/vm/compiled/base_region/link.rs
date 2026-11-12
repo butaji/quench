@@ -17,6 +17,13 @@ pub(super) enum Ending {
 }
 
 impl Ending {
+    /// The row of a backward jump: a loop region counts the edge in its entry record
+    /// (`JumpPoll`); a function body has no such record, so it only polls (`JumpWatch`).
+    /// The one place a poll row is chosen, so no body can reach the counting one.
+    pub(super) fn poll(self) -> Kind {
+        match self { Self::Region => Kind::JumpPoll, Self::Body => Kind::JumpWatch }
+    }
+
     fn thunk(self) -> &'static str {
         match self { Self::Region => "entry_thunk", Self::Body => "entry_body" }
     }

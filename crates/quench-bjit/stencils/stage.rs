@@ -17,28 +17,35 @@ unsafe extern "C" {
     fn UNSUPPORTED_number_operator(a: u64, b: u64, c: u64) -> u64;
     fn UNSUPPORTED_number_truthy(a: u64) -> u64;
     fn UNSUPPORTED_shape_in(a: u64) -> u64;
-    fn UNSUPPORTED_table(a: u64) -> u64;
     fn UNSUPPORTED_site(a: u64) -> u64;
 }
 
-/// The stencil stage; `sites` is the number of the next value hole a `site` call names.
+/// The stencil stage; `sites` is the number of the next value hole a `site` call names, and
+/// `values` the property arena's value base a row that reads object storage was given.
 #[derive(Clone, Copy)]
 pub(crate) struct StencilStage {
     sites: u8,
+    values: u64,
 }
 
 impl StencilStage {
     /// A stage whose first `site` is hole `first`.
     #[inline(always)]
     pub(crate) fn from_hole(first: u8) -> Self {
-        Self { sites: first }
+        Self { sites: first, values: 0 }
+    }
+
+    /// As `from_hole`, with the property arena's value base (`Table::PropertyValues`).
+    #[inline(always)]
+    pub(crate) fn with_values(first: u8, values: u64) -> Self {
+        Self { sites: first, values }
     }
 
     /// The runtime's `Concrete::new`, which the shared rows' interpreter wrappers call; those
     /// wrappers are never used here.
     #[inline(always)]
     pub(crate) fn new(_property_values: *const crate::Value) -> Self {
-        Self { sites: 0 }
+        Self { sites: 0, values: 0 }
     }
 }
 
@@ -166,8 +173,9 @@ impl Stage for StencilStage {
     fn known(&self, _cond: bool) -> Option<bool> { None }
     #[inline(always)]
     fn table(&mut self, table: Table) -> u64 {
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_table(table as u64) }
+        match table {
+            Table::PropertyValues => self.values,
+        }
     }
 }
 

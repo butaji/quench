@@ -58,13 +58,11 @@ pub(crate) mod value {
         pub(crate) const INDEX_BITS: u32 = words::NARROW_INDEX_BITS;
         pub(crate) const DIRECT_OBJECT_UPPER: u64 = words::DIRECT_OBJECT_UPPER;
         pub(crate) const DIRECT_OBJECT_CODE: u32 = words::DIRECT_OBJECT_NARROW_CODE;
-        /// The process's upper-word table: a hole a row that decodes a narrow value must be
-        /// given (no row does yet; an unknown hole fails `build.rs`).
+        /// The process's upper-word table, which the one row that decodes a narrow value (the
+        /// site field read, `heap_rows.rs`) is given as value hole 1.
+        #[inline(always)]
         pub(crate) fn upper_words() -> *const u64 {
-            unsafe extern "C" {
-                static HOLE_UPPER_WORDS: u64;
-            }
-            &raw const HOLE_UPPER_WORDS
+            crate::words::hole64::<{ crate::words::HOLE_A }>() as *const u64
         }
     }
 }

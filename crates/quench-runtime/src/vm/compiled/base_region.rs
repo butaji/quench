@@ -11,7 +11,7 @@
 //! that finds a register that is no Number returns `LaneExit::Entry`.
 
 use super::osr_loop::LoopRegion;
-use crate::bytecode::{Class, OperandKind, Register, WideInstruction};
+use crate::bytecode::{Class, FieldLookup, OperandKind, Register, WideInstruction};
 use crate::value::Value;
 use oxc_ast::ast::BinaryOperator;
 use super::base_rows::{self, Heap, HeapRow};
@@ -168,7 +168,7 @@ pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [
 fn analyze(region: &LoopRegion, decoded: &[Decoded], widened: &[usize], seen: [&[Register]; SEEN]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
     // A register with several webs may not have a web in an int slot, whose writes keep a
     // tagged word's high half; such a register is left whole.
-    let mut merged: std::collections::BTreeSet<Register> = Default::default();
+    let mut merged = Bits::default();
     loop {
         let (webs, renamed) = Webs::split(region, decoded, &merged);
         let reprs = representations(region, &renamed, widened, seen, &webs);
@@ -177,7 +177,9 @@ fn analyze(region: &LoopRegion, decoded: &[Decoded], widened: &[usize], seen: [&
         if split.is_empty() {
             return (reprs, homes, webs, renamed);
         }
-        merged.extend(split);
+        for register in split {
+            merged.insert(usize::from(register));
+        }
     }
 }
 
@@ -187,12 +189,13 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
     let (header, backedge) = (region.header, region.backedge);
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
-    let decoded = instructions.iter().enumerate().map(|(k, instruction)| decode(region, dense, header + k as u32, *instruction)).collect::<Result<Vec<_>, _>>()?;
+    let facts = Facts::Entry { dense };
+    let decoded = instructions.iter().enumerate().map(|(k, instruction)| decode(region, facts, header + k as u32, *instruction)).collect::<Result<Vec<_>, _>>()?;
     let (reprs, homes, webs, decoded) = analyze(region, &decoded, widened, seen);
     let layout = Layout { header, backedge, homes, webs, region, ending: Ending::Region };
     let mut body = Vec::with_capacity(count);
     for (k, row) in decoded.iter().enumerate() {
-        body.push(plan(row, &layout.homes, header + k as u32, is_general(row, &reprs), Kind::JumpPoll)?);
+        body.push(plan(row, &layout.homes, header + k as u32, is_general(row, &reprs), layout.ending)?);
     }
     let bare = decoded.iter().all(|row| row.heap.is_none());
     Ok((link(&layout, &body)?, bare))

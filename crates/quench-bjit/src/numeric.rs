@@ -73,6 +73,9 @@ pub enum Kind {
     /// Write a pinned double (operand `a`) to the frame slot at hole 0 as a canonical Number word.
     Spill,
     JumpWatch,
+    /// Poll the interrupt flag, then continue at the next row: a conditional branch back is
+    /// preceded by it, as an unconditional one is by its own poll.
+    Poll,
 }
 
 impl Kind {

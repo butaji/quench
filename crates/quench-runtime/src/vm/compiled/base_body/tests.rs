@@ -54,3 +54,86 @@ fn recursion_prints_what_the_interpreter_prints() {
     );
     assert_eq!(interpreted, compiled);
 }
+
+/// Runs `source` and checks that every activation a body ran completed in it: the interpreter's
+/// output, no leave, and enough runs to show bodies ran at all.
+fn assert_bodies_never_leave(source: &str) {
+    let (interpreted, compiled, [runs, returns]) = run_both(source);
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100 && returns == runs, "the body ran {runs} times and completed {returns}");
+}
+
+/// A field read through the site's cache entry runs in the body.
+#[test]
+fn property_reads_run_in_a_body() {
+    assert_bodies_never_leave(
+        "function norm(p) { return p.x * p.x + p.y * p.y; }
+         const pt = { x: 3, y: 4 }; let t = 0;
+         for (let k = 0; k < 300; k++) t = (t + norm(pt)) | 0;
+         print(t);",
+    );
+}
+
+/// An element read, and one replaced in place, run in the body; the array is a parameter, so its
+/// register is a tagged frame slot the rows read.
+#[test]
+fn element_reads_and_stores_run_in_a_body() {
+    assert_bodies_never_leave(
+        "function fill(a, n) { let s = 0; for (let i = 0; i < n; i++) { a[i] = i * 2; s = s + a[i]; } return s; }
+         const xs = [0, 0, 0, 0, 0, 0, 0, 0]; let t = 0;
+         for (let k = 0; k < 300; k++) t = (t + fill(xs, 8)) | 0;
+         print(t); print(xs[7]);",
+    );
+}
+
+/// A depth-0 capture read runs in the body, the captures word the entry gets unpacked into the
+/// payload for the run.
+#[test]
+fn capture_reads_run_in_a_body() {
+    assert_bodies_never_leave(
+        "function make(k) { return function (x) { return x * k + 1; }; }
+         const f = make(3); let t = 0;
+         for (let i = 0; i < 300; i++) t = (t + f(i)) | 0;
+         print(t);",
+    );
+}
+
+/// A `while` loop whose test and back edge are rows runs in the body, as does the `ToNumeric` of
+/// a postfix update's old value; one that is no Number leaves at it, and the interpreter converts.
+#[test]
+fn loops_and_to_numeric_run_in_a_body() {
+    assert_bodies_never_leave(
+        "function down(n) { let c = 0; while (n > 0) { c = c + n--; } return c; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + down(k % 7)) | 0;
+         print(t);",
+    );
+    let (interpreted, compiled, _) = run_both(
+        "function down(n) { let c = 0; while (n > 0) { c = c + n--; } return c; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + down(k % 7)) | 0;
+         print(t); print(down('5')); print(down(null)); print(down(2.5));",
+    );
+    assert_eq!(interpreted, compiled);
+}
+
+/// Branches back that are conditional (`continue`, `do`-`while`) poll the interrupt flag and
+/// print what the interpreter prints.
+#[test]
+fn conditional_branches_back_print_what_the_interpreter_prints() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function odds(n) { let i = 0, c = 0; do { i = i + 1; if (i < 3) continue; c = c + i; } while (i < n); return c; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + odds(k % 11 + 1)) | 0;
+         print(t); print(odds(40));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the body ran {runs} times");
+}
+
+/// A parameter dead at entry gets no entry guard: it may hold anything, and the body still runs.
+#[test]
+fn a_dead_parameter_is_not_guarded_at_entry() {
+    assert_bodies_never_leave(
+        "function f(a, junk) { junk = 1; return a + junk; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + f(k, k % 2 ? 'x' : { y: 1 })) | 0;
+         print(t);",
+    );
+}
