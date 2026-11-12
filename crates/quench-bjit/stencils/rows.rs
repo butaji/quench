@@ -1,9 +1,11 @@
 //! The b-jit stencil rows, compiled by `build.rs` with the toolchain's rustc into one object.
-//! Every row is an `extern "rust-preserve-none"` function: the frame arrives in r12, the context
-//! in r13, the pinned ints in r14, r15, rdi, rsi and the pinned doubles in xmm0..7, and every
-//! successor is a guaranteed tail call (`become`) through a hole (`HOLE_NEXT`, `HOLE_TAKEN`,
-//! `HOLE_EXIT0`); no row saves or restores a register. `HOLE_V<n>` are the value holes the
-//! stitcher patches. `build.rs` appends the generated instances (one row per kind, places and
+//! Every row is an `extern "rust-preserve-none"` function, and every successor is a guaranteed
+//! tail call (`become`) through a hole (`HOLE_NEXT`, `HOLE_TAKEN`, `HOLE_EXIT0`); no row saves
+//! or restores a register. The row ABI below is the register map, assigned by LLVM and never
+//! named in a row: x86-64 frame r12, context r13, pinned ints r14, r15, rdi, rsi; AArch64 frame
+//! x0, context x1, pinned ints x2..x5 (`preserve_none` has no callee-saved registers, so x19-x28
+//! are free scratch, not a home for the pins); pinned doubles xmm0..7 / d0..d7. `HOLE_V<n>` are
+//! the value holes the stitcher patches (`words.rs` `hole_word!` says how each target spells one). `build.rs` appends the generated instances (one row per kind, places and
 //! speculation) after this file and turns the object's relocations into the stencil tables.
 #![no_std]
 #![feature(explicit_tail_calls, rust_preserve_none_cc)]
@@ -11,6 +13,10 @@
 extern crate core as std;
 
 mod codes;
+#[cfg(target_arch = "x86_64")]
+mod entry;
+#[cfg(target_arch = "aarch64")]
+#[path = "entry_a64.rs"]
 mod entry;
 mod facade;
 mod heap_rows;
