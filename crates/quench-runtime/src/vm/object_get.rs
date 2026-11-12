@@ -196,6 +196,9 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<bool, JsError> {
+        if self.handler_lacks_trap(handler, ProxyTrap::Set) && !matches!(property, PropertyKey::Private(_)) {
+            return self.proxy_set_target(p, target, receiver, property, value, strict);
+        }
         let key = self.proxy_key_value(p, property)?;
         if handler.is_null() {
             return Err(self.type_error(p, "cannot access a revoked proxy".into()));
@@ -206,43 +209,14 @@ impl<H: Host> Vm<H> {
         let key = self.heap.root(key);
         let value = self.heap.root(value);
         let outcome = (|| {
-            let trap = self.proxy_trap(p, self.heap.root_value(handler).unwrap(), self.runtime_atoms.set)?;
+            let trap = self.proxy_trap(p, self.heap.root_value(handler).unwrap(), self.trap_atom(ProxyTrap::Set))?;
             if trap.is_null() || trap.is_undefined() {
-                let delegate_target = self.heap.root_value(target).unwrap();
-                let receiver = self.heap.root_value(receiver).unwrap();
-                let value = self.heap.root_value(value).unwrap();
-                if let Some((inner, handler)) = self.proxy_parts(delegate_target) {
-                    return self
-                        .proxy_set_mode(p, inner, handler, receiver, property, value, strict);
-                }
-                return match property {
-                    PropertyKey::String(atom) => {
-                        let written = self.set_property_with_receiver(
-                            p,
-                            delegate_target,
-                            atom,
-                            value,
-                            receiver,
-                        )?;
-                        if !written && strict {
-                            return Err(self.rejected_assignment_error(
-                                p,
-                                self.heap.root_value(target).unwrap(),
-                                atom,
-                                true,
-                            ));
-                        }
-                        Ok(written)
-                    }
-                    PropertyKey::Symbol(_) => self.set_symbol_property_with_receiver(
-                        p,
-                        delegate_target,
-                        self.heap.root_value(key).unwrap(),
-                        value,
-                        receiver,
-                    ),
-                    PropertyKey::Private(_) => unreachable!("private keys cannot reach Proxy Set"),
-                };
+                let (delegate_target, receiver, value) = (
+                    self.heap.root_value(target).unwrap(),
+                    self.heap.root_value(receiver).unwrap(),
+                    self.heap.root_value(value).unwrap(),
+                );
+                return self.proxy_set_target(p, delegate_target, receiver, property, value, strict);
             }
             if !self.is_function(trap) {
                 return Err(self.type_error(p, "proxy set trap is not callable".into()));

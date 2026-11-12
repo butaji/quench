@@ -6915,16 +6915,7 @@ fn lane_set_field_in_place<H: Host>(
     if let Some(resumed) = setters::lane_store_setter(cx, r, ip, i, object) {
         return resumed;
     }
-    let vm = unsafe { vm(cx) };
-    let function = match vm.lane_stack.activations.last() {
-        Some(activation) => activation.function,
-        None => vm.frames[unsafe { (*cx).frame }].function,
-    };
-    // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
-    // innermost activation's view.
-    let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
-    let body = code.function(function as usize);
-    let Some(FieldStore { strict, .. }) = decoded_instruction(body, body.code[pc]).op().field_store() else {
+    let Some(strict) = lane_store_is_strict(cx, ip) else {
         return Resumed::Exit(exit(ip));
     };
     let (atom, value, site) = (i.imm(), r.get(i.a), i.c);
@@ -6937,6 +6928,21 @@ fn lane_set_field_in_place<H: Host>(
     // Guest code the store ran made the activations frames, whose registers these are.
     let r = unsafe { (*cx).registers };
     Resumed::At(r, following(ip), Carried::script(cx))
+}
+
+/// Whether the named field store at the record `ip` rejects a refused write with a
+/// `TypeError`, as its opcode says; `None` for any other record.
+fn lane_store_is_strict<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Option<bool> {
+    let vm = unsafe { vm(cx) };
+    let function = match vm.lane_stack.activations.last() {
+        Some(activation) => activation.function,
+        None => vm.frames[unsafe { (*cx).frame }].function,
+    };
+    // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
+    // innermost activation's view.
+    let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
+    let body = code.function(function as usize);
+    decoded_instruction(body, body.code[pc]).op().field_store().map(|store| store.strict)
 }
 
 /// The brand of private name `atom` at the record `ip`, whose home follows the running
@@ -16640,9 +16646,7 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
         return Some(resumed);
     }
     let vm = unsafe { vm(cx) };
-    // A strict store's `set` trap that refuses it returns from its frame, whose pending call
-    // raises the store's `TypeError` (`CallCompletion::AssignedChecked`).
-    if proxy_traps::set_trap_refuses(vm, value) {
+    if proxy_traps::set_trap_refuses(vm, vm.lane_stack.activations.last(), value) {
         return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
     }
     // A settling activation whose promise's resolution would observe the value returns it
@@ -16687,21 +16691,29 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
         }
         // The call returns its callee's completion: its caller completes in turn, an
         // activation here or the frame in the general loop, which the exit hands it to.
-        let in_frame = match vm.lane_stack.activations.last() {
-            None => true,
-            Some(caller) if settling(caller) => match lane_settled_then(vm, value) {
-                Some(read) => {
-                    then = read;
-                    false
-                }
-                None => true,
-            },
-            Some(_) => false,
-        };
-        if in_frame {
+        if lane_caller_returns_in_frame(vm, value, &mut then) {
             return Some(Resumed::Exit(lane_frame_return(vm, activation.call, value)));
         }
         activation = vm.lane_stack.pop_activation().expect("the caller activation is the innermost");
+    }
+}
+
+/// Whether the caller a returning call completes in turn with `value` returns from its frame
+/// in the general loop instead: the frame itself, an activation whose promise's settlement
+/// the general path makes (`lane_settled_then` reads the `then` it resolves with into
+/// `then`), or a strict store's `set` trap that refuses it (`proxy_traps::set_trap_refuses`).
+#[inline(always)]
+fn lane_caller_returns_in_frame<H: Host>(vm: &mut Vm<H>, value: Value, then: &mut Value) -> bool {
+    match vm.lane_stack.activations.last() {
+        None => true,
+        Some(caller) if settling(caller) => match lane_settled_then(vm, value) {
+            Some(read) => {
+                *then = read;
+                false
+            }
+            None => true,
+        },
+        caller => proxy_traps::set_trap_refuses(vm, caller, value),
     }
 }
 

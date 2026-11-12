@@ -6,6 +6,7 @@
 use super::super::object::AtomClass;
 use super::super::*;
 use super::PropertyKey;
+use crate::vm::proxy::ProxyTrap;
 
 impl<H: Host> Vm<H> {
     /// GetMethod's read of the trap `atom` from `handler`.
@@ -42,6 +43,9 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         property: PropertyKey,
     ) -> Result<Value, JsError> {
+        if !matches!(property, PropertyKey::Private(_)) && self.handler_lacks_trap(handler, ProxyTrap::Get) {
+            return self.proxy_get_target(p, target, receiver, Some(property), Value::UNDEFINED);
+        }
         let key = self.proxy_key_value(p, property)?;
         self.proxy_get_keyed(p, target, handler, receiver, key, Some(property))
     }
@@ -112,7 +116,7 @@ impl<H: Host> Vm<H> {
         };
         match property {
             PropertyKey::String(atom) => self.get_property_with_receiver(p, target, atom, receiver),
-            PropertyKey::Symbol(_) => self.get_symbol_property_with_receiver(p, target, key, receiver),
+            PropertyKey::Symbol(symbol) => self.get_symbol_property_with_receiver(p, target, symbol, receiver),
             PropertyKey::Private(_) => unreachable!("private keys cannot reach Proxy Get"),
         }
     }

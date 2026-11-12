@@ -4,6 +4,8 @@ use super::*;
 /// 10.5): the one list the trap atoms (`Vm::trap_atom`) derive from.
 #[derive(Clone, Copy)]
 pub(super) enum ProxyTrap {
+    Get,
+    Set,
     GetPrototypeOf,
     SetPrototypeOf,
     IsExtensible,
@@ -18,7 +20,9 @@ pub(super) enum ProxyTrap {
 }
 
 /// `ProxyTrap`'s names, in its order.
-pub(super) const PROXY_TRAP_NAMES: [&str; 11] = [
+pub(super) const PROXY_TRAP_NAMES: [&str; 13] = [
+    "get",
+    "set",
     "getPrototypeOf",
     "setPrototypeOf",
     "isExtensible",
