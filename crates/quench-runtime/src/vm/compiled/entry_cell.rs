@@ -52,6 +52,7 @@ impl EntryCell {
     pub(in crate::vm) fn withdraw(&self) {
         self.entry.set(Self::stub());
         self.recovery.set(std::ptr::addr_of!(NO_RECOVERY).addr());
+        self.body.set(0);
     }
 }
 
