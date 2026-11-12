@@ -4273,6 +4273,12 @@ impl Lowering<'_, '_> {
         })
     }
 
+    /// The entry record's word that answers the static read at `pc`. A call the region continues
+    /// past may write the field, so the entry's value no longer stands: the read takes the slot.
+    fn entry_field(&self, pc: usize) -> Option<u32> {
+        if self.native_calls { None } else { self.entry_fields.get(&pc).copied() }
+    }
+
     fn get_field(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         // A returning read completes the activation with its value, at a caller record; an
         // inlined callee's is the unit's read, move and jump (`lane_unit`).
@@ -4307,7 +4313,7 @@ impl Lowering<'_, '_> {
         // An OSR region's static field read answers from the entry record, as the verified
         // lowering's does: the value the field held at entry, which the loop does not write.
         if sink.is_none() && completes.is_none() && !instruction.writes_current_this()
-            && let Some(&word) = self.entry_fields.get(&pc)
+            && let Some(word) = self.entry_field(pc)
         {
             self.entry_field_read(state, destination, word);
             return Some(true);
