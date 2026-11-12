@@ -2040,6 +2040,9 @@ fn admit_register_roles(
             Some(_) => None,
         })
         .collect();
+    // A call the region continues past may write any field, so a read through a receiver the
+    // region never rewrites reads its current slot, as one of the region's own stored names does.
+    let calls = instructions.iter().any(|instruction| instruction.op().is_ordinary_call());
     let mut dynamic_field_stores = std::collections::BTreeMap::new();
     let mut field_store_sites = Vec::new();
     let defined_registers: std::collections::BTreeSet<Register> = instructions
@@ -2068,7 +2071,7 @@ fn admit_register_roles(
                 })
             {
                 dynamic_field_reads.insert(offset as u32, index);
-            } else if path.steps.len() == 1 && stored_fixed.contains(&(path.steps[0].0, path.root)) {
+            } else if path.steps.len() == 1 && (calls || stored_fixed.contains(&(path.steps[0].0, path.root))) {
                 dynamic_field_reads.insert(offset as u32, index);
                 if path.root == FieldReceiver::This && !admission.captures.contains(&THIS_CAPTURE) {
                     admission.captures.push(THIS_CAPTURE);
