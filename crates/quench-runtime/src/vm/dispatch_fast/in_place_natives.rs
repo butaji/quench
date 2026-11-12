@@ -2,6 +2,7 @@
 //! error. The lane and the general tier both read it (`Vm::in_place_native_value`); a case
 //! may allocate, and each caller notes that its own way.
 use super::*;
+use crate::vm::object_get::ordinary_chain::ChainRead;
 
 impl<H: Host> Vm<H> {
     /// A native call's value where its common case completes in place: the steady cases
@@ -52,10 +53,23 @@ fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native,
         // Pure of any arguments: SameValue.
         Native::ObjectIs => vm.call_object_native(code, Native::ObjectIs, args).ok(),
         Native::ReflectGet => {
-            let target = *args.first()?;
+            let (target, key) = (argument, *args.get(1)?);
+            if vm.heap.is_string(key) {
+                return match vm.reflect_chain_read(target, key)? {
+                    ChainRead::Value(value) => Some(value),
+                    ChainRead::Absent => Some(Value::UNDEFINED),
+                    ChainRead::Getter(_) | ChainRead::Exotic(_) => None,
+                };
+            }
             vm.heap.ordinary_object(target)?;
-            vm.plain_keyed_get(target, *args.get(1)?)
+            vm.plain_keyed_get(target, key)
         }
+        // `HasProperty` calls no getter, so an accessor is a present property.
+        Native::ReflectHas => match vm.reflect_chain_read(argument, *args.get(1)?)? {
+            ChainRead::Value(_) | ChainRead::Getter(_) => Some(Value::TRUE),
+            ChainRead::Absent => Some(Value::FALSE),
+            ChainRead::Exotic(_) => None,
+        },
         // An object's own enumerable properties, where its shape lists them.
         _ if let Some(kind) = super::super::object_keys::EnumerableOwnPropertyKind::of(native) =>
             vm.plain_enumerable_own_properties(argument, kind),

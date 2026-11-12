@@ -5,9 +5,11 @@ use super::super::object::AtomClass;
 use super::super::{Atom, Host, PropertyKey, Value, Vm};
 
 /// Where `Vm::ordinary_chain_read` stopped.
-pub(super) enum ChainRead {
-    /// The key's data value, or `undefined` where the chain ends without it.
+pub(in crate::vm) enum ChainRead {
+    /// The key's data value.
     Value(Value),
+    /// No link holds the key.
+    Absent,
     /// The key is an accessor, with its getter if it has one.
     Getter(Option<Value>),
     /// A link the walk leaves to the general read (exotic, or holding the key off its shape).
@@ -17,7 +19,7 @@ pub(super) enum ChainRead {
 impl<H: Host> Vm<H> {
     /// The read of `atom` from `object` along the records whose shapes alone say what they
     /// hold. `None` where the key is an index, which exotic receivers answer by position.
-    pub(super) fn ordinary_chain_read(&self, mut object: Value, atom: Atom) -> Option<ChainRead> {
+    pub(in crate::vm) fn ordinary_chain_read(&self, mut object: Value, atom: Atom) -> Option<ChainRead> {
         if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) {
             return None;
         }
@@ -36,7 +38,7 @@ impl<H: Host> Vm<H> {
             }
             object = data.proto();
             if object.is_null() {
-                return Some(ChainRead::Value(Value::UNDEFINED));
+                return Some(ChainRead::Absent);
             }
         }
     }
@@ -50,5 +52,27 @@ impl<H: Host> Vm<H> {
             return ChainRead::Getter(attributes.getter);
         }
         self.slot_data_value(data, slot).map_or(ChainRead::Exotic(object), ChainRead::Value)
+    }
+
+    /// The chain read a `Reflect.get` or `Reflect.has` of the string `key` on `target` makes
+    /// where shapes alone decide it: an ordinary record's chain, or an array's `length` and
+    /// its non-index names. `None` for any other target or key, and wherever the walk meets an
+    /// exotic link.
+    pub(in crate::vm) fn reflect_chain_read(&self, target: Value, key: Value) -> Option<ChainRead> {
+        let atom = self.lookup_string_atom(key)?;
+        if self.is_private_name(atom) {
+            return None;
+        }
+        if self.heap.object_record(target).is_some() {
+            return self.ordinary_chain_read(target, atom).filter(|read| !matches!(read, ChainRead::Exotic(_)));
+        }
+        self.heap.array(target)?;
+        if atom == self.length_atom {
+            return self.own_array_length(target).map(|length| ChainRead::Value(Value::length(length)));
+        }
+        match self.plain_property_lookup(target, PropertyKey::string(atom))? {
+            Some(value) => Some(ChainRead::Value(value)),
+            None => Some(ChainRead::Absent),
+        }
     }
 }

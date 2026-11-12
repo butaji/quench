@@ -27,6 +27,7 @@ use smallvec::SmallVec;
 use crate::heap::InlineObjectHeader;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::*;
+use super::object_get::ordinary_chain::ChainRead;
 use crate::bytecode::index as opc;
 use crate::bytecode::{Class, Traits};
 use crate::bytecode::{
@@ -13112,7 +13113,42 @@ script_handler! {
         if matches!(native, Native::FunctionApply | Native::ReflectApply) {
             sibling!(lane_apply_call::<H>, r, ip, Carried::script(cx))
         }
+        if native == Native::ReflectGet {
+            sibling!(lane_reflect_get_call::<H>, r, ip, Carried::script(cx))
+        }
         resume!(cx, lane_native_call_value(cx, r, ip, i, native))
+    }
+}
+
+script_handler! {
+    /// `lane_native_call` of `Reflect.get`, read once along an ordinary chain
+    /// (`Vm::reflect_chain_read`): a data value or an absent key completes the call in place,
+    /// an accessor with a getter is that getter's activation with the receiver argument as
+    /// `this` (`lane_activate_getter`), whose completion is the call's value; any other
+    /// call is the native's (`lane_native_call_value`).
+    #[inline(never)]
+    fn lane_reflect_get_call<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        // SAFETY: the window is registers of the running function, read before anything runs.
+        let window = unsafe { lane_call_window(r, i) };
+        if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
+            return exit(ip);
+        }
+        let read = match window {
+            [target, key, ..] => vm.reflect_chain_read(*target, *key).map(|read| (read, window.get(2).copied().unwrap_or(*target))),
+            _ => None,
+        };
+        match read {
+            Some((ChainRead::Value(value), _)) => resume!(cx, lane_native_complete(cx, ip, i, Some(value))),
+            Some((ChainRead::Absent, _)) => resume!(cx, lane_native_complete(cx, ip, i, Some(Value::UNDEFINED))),
+            Some((ChainRead::Getter(Some(getter)), receiver)) if !getter.is_undefined() => {
+                match lane_activate_getter(cx, r, ip, getter, receiver) {
+                    Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+                    Err(next) => next,
+                }
+            }
+            _ => resume!(cx, lane_native_call_value(cx, r, ip, i, Native::ReflectGet)),
+        }
     }
 }
 
