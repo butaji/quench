@@ -44,7 +44,7 @@ impl Lowering<'_, '_> {
         let shadow_end = load(self, payload, std::mem::offset_of!(JsStepDispatch, shadow_end));
         let activations = load(self, recovery, std::mem::offset_of!(LaneRecoverySpace, activations));
         let frames = self.word_add_imm(activations, 1);
-        let frame_bytes = self.word_mul_imm(frames, std::mem::size_of::<ShadowFrame>() as i64);
+        let frame_bytes = self.word_mul_imm(frames, super::super::FRAME_BYTES as i64);
         let recovered = self.word_add(shadow, frame_bytes);
         let room = self.word_cmp(IntCC::UnsignedLessThanOrEqual, recovered, shadow_end);
         (top, next, shadow, [fits, room])

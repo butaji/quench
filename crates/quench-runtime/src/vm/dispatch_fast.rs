@@ -1253,11 +1253,20 @@ impl Carried {
     }
 }
 
+/// The capacity the lane stack reserves once (virtual until touched): values and activations
+/// keep their addresses below it.
+const LANE_STACK_VALUES: usize = 1 << 20;
+const LANE_STACK_ACTIVATIONS: usize = 1 << 16;
+
 /// An activation a lane call made without a VM frame. Its registers are
 /// a window of the lane stack; it returns to the record after `call` in its
 /// caller, whose registers, view and memory it keeps for the return.
 #[derive(Clone, Copy)]
-struct Activation {
+#[repr(C)]
+pub(in crate::vm) struct Activation {
+    /// The native prefix: a direct call's frame, which a leave inside it links in place
+    /// (`lane_materialize_frames`); empty for an activation the lane made.
+    pub(in crate::vm) native: super::compiled::ShadowFrame,
     function: u32,
     call: Ip,
     caller_base: Ip,
@@ -1894,8 +1903,8 @@ const NO_SCRIPT_GENERATION: ScriptGeneration = 0;
 impl Default for LaneStack {
     fn default() -> Self {
         Self {
-            values: Vec::new(),
-            activations: Vec::new(),
+            values: Vec::with_capacity(LANE_STACK_VALUES),
+            activations: Vec::with_capacity(LANE_STACK_ACTIVATIONS),
             wasm_storage_bytes: 0,
             call_sites: std::cell::RefCell::default(),
             script_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
@@ -11698,12 +11707,12 @@ impl<H: Host> Vm<H> {
     /// The lane stack's free values, its next and the end of its capacity, where a lane
     /// body's direct calls place their callees' registers (`compiled::DirectCallee`); and the
     /// activations it may still take past one, which those calls' frames may become.
-    pub(super) fn lane_stack_spare(&mut self) -> (*mut Value, *mut Value, usize) {
+    pub(super) fn lane_stack_spare(&mut self) -> (*mut Value, *mut Value, usize, *mut Activation) {
         let stack = &mut self.lane_stack;
         let activations = stack.activation_limit.get().saturating_sub(stack.activations.len() + 1);
         let values = &mut stack.values;
         // SAFETY: both bound the vector's own allocation.
-        unsafe { (values.as_mut_ptr().add(values.len()), values.as_mut_ptr().add(values.capacity()), activations) }
+        unsafe { (values.as_mut_ptr().add(values.len()), values.as_mut_ptr().add(values.capacity()), activations, stack.activations.as_mut_ptr().add(stack.activations.len())) }
     }
 
     /// The lane view a hot loop of `function` runs with (`Vm::note_back_edge`), or null.
@@ -12024,7 +12033,7 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
         (leaf.caller_env, leaf.caller_capture)
     };
     let activation = Activation {
-        function: target.function,
+        native: crate::vm::compiled::ShadowFrame::EMPTY, function: target.function,
         call: leaf.call,
         caller_base: leaf.caller_base,
         caller_registers: leaf.caller_registers,
@@ -15763,7 +15772,7 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     // Only a plain call activates another program's callee (`Vm::resolve_script_call_target`).
     let cross = lane_crosses::<H, GENERAL>(cx, target);
     let activation = Activation {
-        function: target.function,
+        native: crate::vm::compiled::ShadowFrame::EMPTY, function: target.function,
         call: ip,
         caller_base: unsafe { (*cx).base },
         caller_registers: r,
@@ -15933,7 +15942,7 @@ fn lane_activate_environment<H: Host>(
         Registers(registers)
     };
     let activation = Activation {
-        function: target.function,
+        native: crate::vm::compiled::ShadowFrame::EMPTY, function: target.function,
         call: ip,
         caller_base: unsafe { (*cx).base },
         caller_registers: r,
@@ -16193,7 +16202,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         Registers(registers)
     };
     let activation = Activation {
-        function: target.function,
+        native: crate::vm::compiled::ShadowFrame::EMPTY, function: target.function,
         call: ip,
         caller_base: unsafe { (*cx).base },
         caller_registers: r,
@@ -21666,7 +21675,7 @@ impl PreparedShape {
         let keeps = target.forwards() || argc > params && !target.drops_extra_arguments();
         let size = if keeps { registers + argc } else { registers };
         let activation = Activation {
-            function: target.function,
+            native: crate::vm::compiled::ShadowFrame::EMPTY, function: target.function,
             call,
             caller_base: caller.base,
             caller_registers: caller.registers,
