@@ -1,5 +1,5 @@
 use super::*;
-use quench_bjit::HOLES;
+use quench_bjit::{padded_holes, HOLES};
 
 /// Where the registers of the region live: pinned (int32 or double), int slots, or tagged
 /// frame slots.
@@ -78,16 +78,19 @@ impl Planned {
 
 /// The plan of a heap row, given its (place, hole) of destination, first and second operand.
 fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hole), (b, b_hole)]: [(Place, u64); 3]) -> Result<Planned, String> {
+    if let Some(cache) = &decoded.cache {
+        return cache_plan(decoded, cache, homes, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)]);
+    }
     // An array the entry record holds is named by its record offset (`decoded.hole`), else by its slot.
     let entry = decoded.hole != 0 && matches!(heap, Heap::Store | Heap::Index);
     let base = if entry { decoded.hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
-    let holes = match heap {
+    let holes = padded_holes(match heap {
         Heap::Store => [base, a_hole, b_hole],
         Heap::Index if entry => [dst_hole, decoded.hole, b_hole],
         Heap::Field => [dst_hole, decoded.hole, 0],
         Heap::Capture(slot) => [dst_hole, u64::from(slot), u64::from(slot) * SLOT],
         _ => [dst_hole, a_hole, b_hole],
-    };
+    });
     // The row's stencil reads pinned operands and delivers a pinned result itself.
     Ok(Planned::single(base_rows::stencil(HeapRow { heap, dst, a, b, entry })?, holes, None, Some(pc)))
 }
@@ -110,7 +113,7 @@ pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> 
     let exits = polls || !matches!(kind, Kind::Jump | Kind::Move) || matches!(dst, Place::Pin(_) | Place::PinF(_) | Place::MemInt);
     // A poll row also names where the run's backward-edge counter lives (`jump_row`).
     let counter = [std::mem::offset_of!(super::super::CallContext, adapter_payload) as u64, std::mem::offset_of!(super::super::JsStepDispatch, loop_entry) as u64];
-    let holes = if polls { [interrupt, counter[0], counter[1]] } else { [dst_hole, a_hole, b_hole] };
+    let holes = padded_holes(if polls { [interrupt, counter[0], counter[1]] } else { [dst_hole, a_hole, b_hole] });
     Ok(Planned::single(stencil, holes, decoded.target, exits.then_some(pc)))
 }
 

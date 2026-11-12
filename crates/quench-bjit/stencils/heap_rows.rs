@@ -3,17 +3,20 @@
 //! value}.rs`) run on `StencilStage`, so the layout reads have one definition across the
 //! interpreter, the specializers and the stencils.
 //!
+//! The inline-cache rows (`ic_rows.rs`) are dispatched from `run`; for them `ENTRY` is `CHAINED`.
+//!
 //! Holes: 0 is the destination frame offset (the array's, for a store), 1 and 2 the operands'
 //! (a field row's entry-record byte offset in 1); a capture's two per-site operands (the slot,
 //! and the slot's byte offset) are holes 1 and 2. Every failed proof leaves through exit 0 with
 //! nothing written, so the interpreter runs the instruction.
 
 use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_VALUES, JS_STEP_LOOP_ENTRY};
+use crate::ic_rows;
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of, number_word};
 use crate::stage::StencilStage;
 use crate::staged::{elements, entry, environment, value};
 
-pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, FIELD_ROW, INDEX_ROW, STORE_ROW};
+pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, FIELD_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_INT_ROW, IC_SET_ROW, INDEX_ROW, STORE_ROW};
 
 unsafe extern "C" {
     static HOLE_V0: u8;
@@ -30,14 +33,14 @@ macro_rules! need {
 }
 
 #[inline(always)]
-fn word_at(base: usize, offset: usize) -> u64 {
+pub(crate) fn word_at(base: usize, offset: usize) -> u64 {
     // SAFETY: a layout offset of a live record, as every staged load.
     unsafe { ((base + offset) as *const u64).read() }
 }
 
 /// The activation's dispatch payload: the context's adapter pointer.
 #[inline(always)]
-fn payload(s: &S) -> usize {
+pub(crate) fn payload(s: &S) -> usize {
     word_at(s.ctx, CALL_CONTEXT_ADAPTER_PAYLOAD) as usize
 }
 
@@ -131,6 +134,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         FIELD_ROW => field_row::<D>(s, payload),
         ARRAY_ROW => array_row(s),
         INDEX_ROW => index_row::<ENTRY, D, B>(s, payload),
+        IC_GET_ROW | IC_GET_HOLDER_ROW | IC_SET_ROW | IC_SET_INT_ROW => ic_rows::run::<KIND, ENTRY, D, A>(s, payload),
         _ => store_row::<ENTRY, A, B>(s, payload),
     }
 }

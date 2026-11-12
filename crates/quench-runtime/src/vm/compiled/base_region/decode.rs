@@ -47,11 +47,13 @@ pub(super) struct Decoded {
     pub(super) heap: Option<Heap>,
     pub(super) base: Option<Register>,
     pub(super) hole: u64,
+    /// The inline-cache entries of a field access (`cache`), which `plan` makes a chain of rows.
+    pub(super) cache: Option<Cache>,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0 }
+        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, cache: None }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -125,7 +127,7 @@ fn entry_array(region: &LoopRegion, dense: bool, register: Register) -> u64 {
     if dense { region.array_entry_offset(register).filter(|offset| u32::try_from(*offset).is_ok()).unwrap_or(0) } else { 0 }
 }
 
-pub(super) fn heap_row(region: &LoopRegion, dense: bool, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+pub(super) fn heap_row(region: &LoopRegion, dense: bool, pc: u32, instruction: WideInstruction, loads: &[Vec<NativeFieldLoad>]) -> Option<Decoded> {
     let register = |register| Some(Source::Register(register));
     match instruction.op().class() {
         Class::LoadCapture if instruction.capture_depth() == 0 => {
@@ -145,18 +147,22 @@ pub(super) fn heap_row(region: &LoopRegion, dense: bool, pc: u32, instruction: W
         Class::RequireObjectCoercible => Some(Decoded::heap(Heap::Array, None, register(instruction.register_b()), None)),
         Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => {
             let index = *region.field_reads().get(&(pc - region.header))?;
+            if region.is_dynamic_field(index) {
+                return cached_get(instruction, loads.get(index)?);
+            }
             let word = super::super::osr_loop::field_word(region, index);
             let row = Decoded::heap(Heap::Field, Some(instruction.result_register()), None, None);
-            (!region.is_dynamic_field(index) && u32::try_from(word as u64 * SLOT).is_ok()).then_some(Decoded { hole: word as u64 * SLOT, ..row })
+            u32::try_from(word as u64 * SLOT).is_ok().then_some(Decoded { hole: word as u64 * SLOT, ..row })
         }
+        _ if instruction.op().is_field_store() => cached_set(region, instruction, loads),
         _ => None,
     }
 }
 
-pub(super) fn decode(region: &LoopRegion, dense: bool, pc: u32, instruction: WideInstruction) -> Result<Decoded, String> {
+pub(super) fn decode(region: &LoopRegion, dense: bool, pc: u32, instruction: WideInstruction, loads: &[Vec<NativeFieldLoad>]) -> Result<Decoded, String> {
     let decoded = match numeric_row(region, instruction) {
         Some(decoded) => decoded,
-        None => heap_row(region, dense, pc, instruction).filter(|_| instruction.result_flags() == 0),
+        None => heap_row(region, dense, pc, instruction, loads).filter(|_| instruction.result_flags() == 0),
     };
     decoded.ok_or_else(|| reject(region, instruction))
 }
@@ -184,7 +190,7 @@ fn reject(region: &LoopRegion, instruction: WideInstruction) -> String {
     let op = instruction.op();
     let fallback = |error: Option<String>| error.unwrap_or_else(|| format!("{op:?}"));
     match op.class() {
-        Class::GetField => "GetField: dynamic or unrecorded".to_string(),
+        Class::GetField => "GetField: unrecorded, or no flat entry the cache rows take".to_string(),
         Class::Binary | Class::NumericAdd | Class::NumericMultiply => fallback(binary(region, instruction).err()),
         Class::JumpBinaryFalse => fallback(jump_binary(region, instruction).err()),
         Class::LoadConst => fallback(load_const(region, instruction).err()),

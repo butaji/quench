@@ -176,7 +176,7 @@ impl Renamer {
                 other => other,
             };
             let dst = row.dst.map(|register| self.web(register, k as Def + 1) as Register);
-            renamed.push(Decoded { kind: row.kind, dst, a: source(row.a), b: source(row.b), target: row.target, heap: row.heap, base: row.base.map(read), hole: row.hole });
+            renamed.push(Decoded { kind: row.kind, dst, a: source(row.a), b: source(row.b), target: row.target, heap: row.heap, base: row.base.map(read), hole: row.hole, cache: row.cache.clone() });
             tables.push(here);
         }
         let leaf_webs = leaves.iter().map(|(target, state)| (*target, self.table(state))).collect();

@@ -165,3 +165,10 @@ pub(crate) const JS_STEP_LOOP_ENTRY: usize = 0;
 pub(crate) const JS_STEP_CAPTURE_VALUES: usize = 96;
 pub(crate) const JS_STEP_CAPTURE_LEN: usize = 104;
 pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = 112;
+pub(crate) const JS_STEP_OBJECT_RECORD_BASE: usize = 120;
+pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = 152;
+pub(crate) const JS_STEP_METHOD_CACHE_ATOMS: usize = 176;
+pub(crate) const JS_STEP_METHOD_CACHE_ATOM_WORDS: usize = 184;
+pub(crate) const JS_STEP_STORES_SPECIALIZED: usize = 192;
+/// Where the property arena's header (`PropertyBuffer`) keeps the address of its first value.
+pub(crate) const PROPERTY_BUFFER_BASE: usize = 0;
