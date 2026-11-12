@@ -6232,10 +6232,6 @@ pub(super) fn loop_tier_compiles(policy: crate::MemoryPolicy) -> bool {
     tier_policy::by_policy(policy).loop_tier
 }
 
-/// Whether the JavaScript function tiers compile under `policy` (`PolicyTiers::js_function_tiers`).
-#[inline] pub(super) fn js_function_tiers_compile(policy: crate::MemoryPolicy) -> bool {
-    tier_policy::by_policy(policy).js_function_tiers
-}
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
 /// The process's peak resident set in KiB, for `QUENCH_TRACE=jit-peak`.
@@ -12561,13 +12557,13 @@ impl<H: Host> Vm<H> {
         native_poll_page(&self.execution_interrupt)
     }
 
-    /// Whether the JavaScript function tiers run: compiled execution under a memory policy
-    /// that compiles them (`PolicyTiers::js_function_tiers`), in a build whose profiles do not count
+    /// Whether any of `tiers` runs: compiled execution under a memory policy
+    /// that compiles them (`PolicyTiers::js_function_tiers`) and a JIT mode that allows one, in a build whose profiles do not count
     /// interpreted work exactly.
-    pub(super) fn js_tier_runs(&self) -> bool {
+    pub(super) fn tier_may_run(&self, tiers: &[crate::jit_mode::Tier]) -> bool {
         !cfg!(quench_profiled)
             && self.execution_mode == ExecutionMode::Compiled
-            && js_function_tiers_compile(self.memory_policy())
+            && tier_policy::tier_may_run(self.memory_policy(), tiers)
     }
 
     /// Keep usable legacy specialized candidates first. If that tier rejects a
@@ -12579,7 +12575,7 @@ impl<H: Host> Vm<H> {
         id: ProgramId,
         function: u32,
     ) -> bool {
-        if !self.js_function_compiles() || program.kind == crate::bytecode::ProgramKind::Wasm {
+        if !self.tier_may_run(crate::jit_mode::Tier::CRANELIFT) || program.kind == crate::bytecode::ProgramKind::Wasm {
             return false;
         }
         let Some(facts) = self.programs.js_entry_facts(id, function) else {
@@ -12591,7 +12587,7 @@ impl<H: Host> Vm<H> {
         // is still theirs to claim.
         let lane_claims = self.programs.js_jit_lane_methods_enabled()
             && program.function_get(function as usize).is_some_and(lane_body_may_amortize);
-        if matches!(state, Some(super::program_store::JsTierState::Unsupported)) {
+        if super::tier_machine::js_tier_state(state.as_ref()) == super::tier_machine::TierState::Declined {
             return lane_claims || self.programs.js_jit_diagnostics_enabled();
         }
         let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_native_entry);
@@ -12866,7 +12862,7 @@ impl<H: Host> Vm<H> {
         allow_inline_calls: bool,
         promote: bool,
     ) -> Option<JsNativeDispatchResult> {
-        if !self.js_function_compiles()
+        if !self.tier_may_run(crate::jit_mode::Tier::CRANELIFT)
             || !self.programs.js_jit_general_dispatch_enabled()
             || program.kind == crate::bytecode::ProgramKind::Wasm
             || start_pc >= program.function_get(self.frames.get(frame)?.function as usize)?.code.len()
@@ -12982,7 +12978,7 @@ impl<H: Host> Vm<H> {
         entry: &TierEntry,
         specialized_guard_miss: &mut bool,
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
-        if !self.js_function_compiles() || program.kind == crate::bytecode::ProgramKind::Wasm {
+        if !self.tier_may_run(crate::jit_mode::Tier::CRANELIFT) || program.kind == crate::bytecode::ProgramKind::Wasm {
             return None;
         }
         let (program_id, function_id) = (entry.program, entry.function);
@@ -13139,7 +13135,7 @@ impl<H: Host> Vm<H> {
         arguments: &[Value],
     ) -> Option<Value> {
         if returns
-            || !self.js_tier_runs()
+            || !self.tier_may_run(crate::jit_mode::Tier::ANY)
             || program_id != self.active_program
             || program.kind == crate::bytecode::ProgramKind::Wasm
         {

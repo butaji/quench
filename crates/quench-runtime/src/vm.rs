@@ -20,6 +20,7 @@ pub use compiled::NativeFaultHandler;
 mod native_op_profile;
 mod js_compiled;
 mod jit_backend;
+mod tier_machine;
 mod shape_transitions;
 mod snapshot;
 mod startup_intrinsics;
@@ -3235,7 +3236,7 @@ impl<H: Host> Vm<H> {
     /// keeps them, from its shape table and what its live objects hold: once its builtins
     /// exist or its realm is restored.
     pub(super) fn keep_slot_representations(&mut self) {
-        if self.programs.js_jit_lane_methods_enabled() && crate::jit_mode::function_tiers() {
+        if self.programs.js_jit_lane_methods_enabled() && crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) {
             let layouts = self.shape_layouts();
             self.heap.track_slot_representations(&layouts);
         }

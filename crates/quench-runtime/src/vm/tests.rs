@@ -13531,7 +13531,7 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
             .expect("hot sum loop lane view");
         let osr = view.osr_diagnostics();
         // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
-        let analyzes = super::compiled::js_function_tiers_compile(policy);
+        let analyzes = super::compiled::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY);
         assert_eq!(osr.admitted_sites, usize::from(analyzes), "field loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
         assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field loop native code under {policy:?}");
@@ -13579,7 +13579,7 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
             .expect("hot fill loop lane view")
             .osr_diagnostics();
         // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
-        let analyzes = super::compiled::js_function_tiers_compile(policy);
+        let analyzes = super::compiled::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY);
         assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-reading store loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
         assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "store loop native code under {policy:?}");
@@ -14586,7 +14586,7 @@ fn shared_osr_indexes_arrays_that_field_reads_give() {
             .expect("hot mix loop lane view")
             .osr_diagnostics();
         // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
-        let analyzes = super::compiled::js_function_tiers_compile(policy);
+        let analyzes = super::compiled::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY);
         assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-array loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
         assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field-array loop native code under {policy:?}");
@@ -21703,10 +21703,10 @@ fn js_function_tiers_follow_the_memory_policy() {
         let mut vm = Vm::new(TestHost::default());
         vm.set_memory_policy(policy);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        assert_eq!(vm.js_tier_runs(), super::compiled::js_function_tiers_compile(policy), "{policy:?}");
+        assert_eq!(vm.tier_may_run(crate::jit_mode::Tier::ANY), super::compiled::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY), "{policy:?}");
     }
-    assert!(super::compiled::js_function_tiers_compile(crate::MemoryPolicy::Throughput));
-    assert!(!super::compiled::js_function_tiers_compile(crate::MemoryPolicy::MemoryFirst));
+    assert!(super::compiled::tier_policy::tier_may_run(crate::MemoryPolicy::Throughput, crate::jit_mode::Tier::ANY));
+    assert!(!super::compiled::tier_policy::tier_may_run(crate::MemoryPolicy::MemoryFirst, crate::jit_mode::Tier::ANY));
 }
 
 #[test]
@@ -22521,7 +22521,7 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         assert_eq!(registers[usize::from(terminal.register_a())], Value::number(expected_total + 11.0));
         assert_eq!(vm.own_property(receiver, total), Some(Value::number(expected_total)));
         assert_eq!(vm.own_property(receiver, calls), Some(Value::number(before_calls + 1.0)));
-        if mode == crate::ExecutionMode::Compiled && super::compiled::js_function_tiers_compile(vm.memory_policy()) {
+        if mode == crate::ExecutionMode::Compiled && super::compiled::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
             let after = super::compiled::LANE_CALLS_INLINED.load(std::sync::atomic::Ordering::Relaxed);
             assert!(after > before, "the storing callee runs inlined in its caller's lane body");
         }
@@ -22588,7 +22588,7 @@ fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
         let atom = vm.intern_atom("answer");
         let answer = vm.own_property(global, atom).and_then(Value::as_number);
         answers.push(answer);
-        if mode == crate::ExecutionMode::Compiled && super::compiled::js_function_tiers_compile(vm.memory_policy()) {
+        if mode == crate::ExecutionMode::Compiled && super::compiled::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
             let after = super::compiled::LANE_METHODS_COMPILED.load(std::sync::atomic::Ordering::Relaxed);
             assert!(after > before, "a declined method runs as a lane body");
         }

@@ -7917,7 +7917,7 @@ script_handler! {
         // Keep the ordinary interpreter and JIT-off lane free of tier metadata
         // lookups. Only the opt-in shared JS baseline observes loop work here.
         let runtime = unsafe { vm(cx) };
-        if runtime.js_tier_runs()
+        if runtime.tier_may_run(crate::jit_mode::Tier::ANY)
             && runtime.programs.js_jit_general_dispatch_enabled()
             && unsafe { &*(*cx).code }.kind != crate::bytecode::ProgramKind::Wasm
         {
@@ -10939,7 +10939,7 @@ fn lane_frame_state<H: Host>(
                     kind,
                     live,
                     sites,
-                    vm.js_tier_runs(),
+                    vm.tier_may_run(crate::jit_mode::Tier::ANY),
                     vm.programs.js_jit_general_dispatch_enabled(),
                     diagnostics,
                 )
@@ -11740,7 +11740,7 @@ impl<H: Host> Vm<H> {
                 kind,
                 live,
                 sites,
-                self.js_tier_runs(),
+                self.tier_may_run(crate::jit_mode::Tier::ANY),
                 self.programs.js_jit_general_dispatch_enabled(),
                 diagnostics,
             )
@@ -21165,7 +21165,7 @@ impl<H: Host> Vm<H> {
                     kind,
                     live,
                     sites,
-                    self.js_tier_runs(),
+                    self.tier_may_run(crate::jit_mode::Tier::ANY),
                     self.programs.js_jit_general_dispatch_enabled(),
                     diagnostics,
                 )

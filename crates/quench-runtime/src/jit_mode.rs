@@ -57,10 +57,15 @@ impl JitMode {
         }
     }
 
+    /// Whether any of `tiers` may run in this mode.
+    pub fn allows_any(self, tiers: &[Tier]) -> bool {
+        tiers.iter().any(|&tier| self.allows(tier))
+    }
+
     /// The execution mode the runtime is set to: `--b-jit` runs the compiled lane with its loop
     /// regions built from BaseJIT stencils only (`base_only`).
     pub fn execution_mode(self) -> ExecutionMode {
-        if [Tier::Base, Tier::Quick, Tier::Ultra].into_iter().any(|tier| self.allows(tier)) { ExecutionMode::Compiled } else { ExecutionMode::Interpreted }
+        if self.allows_any(Tier::ANY) { ExecutionMode::Compiled } else { ExecutionMode::Interpreted }
     }
 
     /// Makes this the process's mode, which `base_only` and `base_regions` report.
@@ -78,6 +83,14 @@ pub enum Tier {
     Ultra,
 }
 
+impl Tier {
+    /// Every tier.
+    pub const ANY: &'static [Tier] = &[Tier::Base, Tier::Quick, Tier::Ultra];
+    /// The Cranelift tiers: lane bodies, their background compiles and entry-cell publication,
+    /// the JavaScript function tiers. `--b-jit` is the interpreter plus stencil regions.
+    pub const CRANELIFT: &'static [Tier] = &[Tier::Quick, Tier::Ultra];
+}
+
 static PROCESS_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(JitMode::Full as u8);
 
 fn process_mode() -> JitMode {
@@ -87,27 +100,21 @@ fn process_mode() -> JitMode {
         .unwrap_or_default()
 }
 
-/// Whether the process's mode lets `tier` run.
-pub fn tier_allowed(tier: Tier) -> bool {
-    process_mode().allows(tier)
-}
-
-/// Whether the Cranelift function tiers (lane bodies, their background compiles and entry-cell
-/// publication, the JavaScript function tiers) run: either Cranelift tier is allowed.
-/// `--b-jit` is the interpreter plus stencil regions.
-pub fn function_tiers() -> bool {
-    tier_allowed(Tier::Quick) || tier_allowed(Tier::Ultra)
+/// Whether the process's mode lets any of `tiers` run: the mode half of the one tier predicate
+/// (`tier_policy::tier_may_run` adds the memory policy).
+pub fn tiers_allowed(tiers: &[Tier]) -> bool {
+    process_mode().allows_any(tiers)
 }
 
 /// Whether the process runs `--b-jit`: loop regions that BaseJIT declines are not compiled by
 /// Cranelift either.
 pub fn base_only() -> bool {
-    tier_allowed(Tier::Base) && !function_tiers()
+    tiers_allowed(&[Tier::Base]) && !tiers_allowed(Tier::CRANELIFT)
 }
 
 /// Whether every Cranelift compile is `CompileLevel::Quick`: only QuickJIT is allowed there.
 pub fn quick_only() -> bool {
-    tier_allowed(Tier::Quick) && !tier_allowed(Tier::Ultra)
+    tiers_allowed(&[Tier::Quick]) && !tiers_allowed(&[Tier::Ultra])
 }
 
 /// Whether loop regions are built from BaseJIT stencils: `--b-jit`, or `QUENCH_DEV=bjit`

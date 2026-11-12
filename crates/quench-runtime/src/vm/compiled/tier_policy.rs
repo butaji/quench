@@ -282,6 +282,12 @@ const BY_POLICY: [PolicyTiers; crate::MemoryPolicy::ALL.len()] = [
     PolicyTiers { loop_tier: false, js_function_tiers: false },
 ];
 
+/// The one tier predicate: whether any of `tiers` may run for a function under `policy` and the
+/// process's JIT mode (`jit_mode::tiers_allowed`).
+pub(in crate::vm) fn tier_may_run(policy: crate::MemoryPolicy, tiers: &[crate::jit_mode::Tier]) -> bool {
+    by_policy(policy).js_function_tiers && crate::jit_mode::tiers_allowed(tiers)
+}
+
 /// What `policy` lets the tiers compile.
 pub(in crate::vm) const fn by_policy(policy: crate::MemoryPolicy) -> &'static PolicyTiers {
     &BY_POLICY[policy as usize]

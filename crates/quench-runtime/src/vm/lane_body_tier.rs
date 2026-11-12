@@ -1,6 +1,7 @@
 //! When a lane body compiles again, keeps its code or retires: decisions from what its runs
 //! and its predecessors' did.
 
+use super::super::tier_machine::{TierEvent, TierState};
 use super::{Handler, LaneBody, LaneLeaves, LaneView, TIERS};
 use super::compiled::tier_policy::PERCENT;
 use super::super::compiled::LaneExit;
@@ -117,11 +118,13 @@ impl LaneView {
     /// Replaces the specialized `body` with `next`: its entry's handler runs no more, its entry
     /// cell takes the stub, and its code waits for the callers that still name it.
     fn retire_body(&self, body: &mut LaneBody, next: LaneBody) {
+        let body_state = body.tier_state();
         let LaneBody::Specialized { tier_prologue, .. } = body else { unreachable!() };
+        let event = if matches!(next, LaneBody::Declined) { TierEvent::Decline } else { TierEvent::Demote };
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
-        self.entry.withdraw();
+        super::super::tier_machine::withdraw(&self.entry, body_state, event);
         self.retired.borrow_mut().push(method);
     }
 
@@ -233,8 +236,9 @@ impl LaneView {
         self.history.set(LaneBodyHistory { callee_recompiles: history.callee_recompiles + 1, late_calls: 0, ..history });
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
         let next = LaneBody::Unspecialized { entries: TIERS.lane_body.warmup_entries - 1, recompiles: *recompiles, stuck: *stuck };
+        let body_state = body.tier_state();
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
-        self.entry.withdraw();
+        super::super::tier_machine::withdraw(&self.entry, body_state, TierEvent::Demote);
         self.retired.borrow_mut().push(method);
     }
 
@@ -257,7 +261,7 @@ impl LaneView {
             lifetimes: history.lifetimes.saturating_add(1),
             ..history
         });
-        self.entry.withdraw();
+        super::super::tier_machine::withdraw(&self.entry, body.tier_state(), TierEvent::Demote);
         *body = LaneBody::Unspecialized { entries: 0, recompiles, stuck };
     }
 
@@ -278,7 +282,7 @@ impl LaneView {
         // through the view's pin.
         if let Some(body) = method.lease().filter(|body| body.calls_only_natively()) {
             self.pinned.borrow_mut().push(body);
-            self.entry.publish(&method);
+            super::super::tier_machine::publish(&self.entry, TierState::Compiling, &method);
         }
         LaneBody::Specialized { method, tier_prologue, completions: Cell::new(0), exits: Cell::new(0),
             leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }
@@ -286,7 +290,7 @@ impl LaneView {
 
     /// `--b-jit` compiles no function body: the view's body is declined, once.
     fn declined_by_mode(&self) -> bool {
-        let declined = !crate::jit_mode::function_tiers();
+        let declined = !crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT);
         if declined {
             // SAFETY: as `lane_body`.
             unsafe { *self.tier_lane.get() = LaneBody::Declined };
@@ -436,4 +440,17 @@ fn awaits_look(body: &LaneBody) -> bool {
     let left = wait.get();
     wait.set(left.saturating_sub(1));
     left > 0
+}
+
+impl LaneBody {
+    /// Its place in the per-function tier machine (`tier_machine`).
+    pub(super) fn tier_state(&self) -> TierState {
+        match self {
+            Self::Unspecialized { .. } => TierState::Warming,
+            Self::Compiling { .. } => TierState::Compiling,
+            Self::Specialized { .. } if crate::jit_mode::quick_only() => TierState::QJit,
+            Self::Specialized { .. } => TierState::UJit,
+            Self::Declined => TierState::Declined,
+        }
+    }
 }

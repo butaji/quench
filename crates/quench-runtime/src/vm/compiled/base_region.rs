@@ -184,11 +184,3 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
     let bare = decoded.iter().all(|row| row.heap.is_none());
     Ok((link(&layout, &body)?, bare))
 }
-
-impl<H: crate::Host> crate::vm::Vm<H> {
-    /// Whether the JavaScript function tiers compile function bodies: they run (`js_tier_runs`) and the process runs
-    /// Cranelift function tiers at all (not `--b-jit`, whose loop sites are still admitted by `js_tier_runs`).
-    pub(in crate::vm) fn js_function_compiles(&self) -> bool {
-        self.js_tier_runs() && crate::jit_mode::function_tiers()
-    }
-}

@@ -928,7 +928,7 @@ pub(crate) struct ProgramStore {
     js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
     /// Whether ordinary JS functions promote to the general native dispatch tier
     /// (`note_js_general_dispatch_entry`). Off unless `QUENCH_DEV=js-general-dispatch`;
-    /// the memory policy's `js_function_tiers_compile` and the entry price of a
+    /// the memory policy's `tier_policy::tier_may_run` and the entry price of a
     /// loop-free body still decide whether the tier takes a function
     /// (`general_tier_admits`).
     js_jit_general_dispatch_enabled: bool,
@@ -2148,7 +2148,7 @@ impl ProgramStore {
         policy: crate::MemoryPolicy,
     ) -> bool {
         self.js_jit_general_dispatch_enabled
-            && super::compiled::js_function_tiers_compile(policy)
+            && super::compiled::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY)
             && (!acyclic || self.general_baseline_may_pay(instructions))
     }
 
@@ -2171,7 +2171,7 @@ impl ProgramStore {
         policy: crate::MemoryPolicy,
     ) -> bool {
         // Admission: the tier's switch, and the memory policy's (`PolicyTiers::js_function_tiers`).
-        if !self.js_jit_general_dispatch_enabled || !super::compiled::js_function_tiers_compile(policy) {
+        if !self.js_jit_general_dispatch_enabled || !super::compiled::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY) {
             return false;
         }
         let priced = self.general_baseline_priced;
@@ -3803,7 +3803,7 @@ mod general_promotion_tests {
     }
 }
 
-// Profiled builds deliberately disable JS function tiers (`Vm::js_tier_runs`).
+// Profiled builds deliberately disable JS function tiers (`Vm::tier_may_run`).
 #[cfg(all(test, not(quench_profiled)))]
 mod lane_diagnostic_tests {
     #[test]
