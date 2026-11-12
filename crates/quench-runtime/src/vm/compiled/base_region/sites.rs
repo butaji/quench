@@ -1,5 +1,6 @@
-//! What the VM remembers of the sites a body's rows stand on, read when the body is compiled: the constructor each
-//! `instanceof` names and what each `in` answered. The constructor is only a hint: the `instanceof` row guards its
+//! What the VM remembers of the sites a body's rows stand on, read when the body is compiled, and the rows built on it:
+//! the `instanceof` fast arm of a constructor the VM proved steady and the `in` row of a key one receiver layout
+//! answered (the facts each holds, `held_instanceofs` and the folded holders). The constructor is only a hint: the `instanceof` row guards its
 //! constructor register against the hinted identity each run, so a hint that is wrong (another path reaches the
 //! register, a name another scope binds) costs the row's fast arm and nothing else.
 
@@ -8,12 +9,12 @@ use crate::vm::in_presence::InPresence;
 use std::collections::BTreeSet;
 
 /// Whether `instruction` is `left instanceof right`, which writes a boolean to a register.
-pub(super) fn is_instanceof(instruction: WideInstruction) -> bool {
+fn is_instanceof(instruction: WideInstruction) -> bool {
     instruction.op().class() == Class::Binary && instruction.binary_operator() == BinaryOperator::Instanceof as u32
 }
 
 /// Whether `instruction` is `key in object`, which writes a boolean to a register.
-pub(super) fn is_membership(instruction: WideInstruction) -> bool {
+fn is_membership(instruction: WideInstruction) -> bool {
     instruction.op().class() == Class::Binary && instruction.binary_operator() == BinaryOperator::In as u32
 }
 
@@ -61,6 +62,41 @@ fn membership_keys(code: &[WideInstruction], constants: &[Value]) -> Vec<Option<
         };
         constants.get(key).copied()
     }).collect()
+}
+
+/// The exact shapes of the holders the rows' `instanceof`s inherit the native `@@hasInstance` from, with the slots and
+/// shapes of their constructors' `prototype`s (`Decoded::instanceof`): the Stable facts the code takes, which a write
+/// of a `prototype`, a departure of a constructor's shape or a change of a holder's values retires it.
+pub(super) fn held_instanceofs(decoded: &[Decoded]) -> Box<[InstanceofFact]> {
+    distinct(decoded.iter().filter_map(|row| row.instanceof.map(|(_, fact)| fact)))
+}
+
+/// The constructors whose identity the rows' `instanceof`s name (`Decoded::instanceof`): the code holds each
+/// one, which a collection that frees it retires the code over (`LaneMethod::constructors`).
+pub(super) fn held_constructors(decoded: &[Decoded]) -> Box<[Value]> {
+    distinct(decoded.iter().filter_map(|row| row.instanceof.map(|(constructor, _)| constructor.to_bits()))).iter().map(|bits| Value::from_bits(*bits)).collect()
+}
+
+/// The row of `key in object` over a register's object, where the VM remembers exactly one receiver layout answering the
+/// key (`Known::presences`): the boolean it answered, while the object has that exact shape and prototype link
+/// (`Heap::Held`, the folded read's row over a constant), under the dependency on the prototypes' layouts that
+/// `Folded::holder` names.
+pub(super) fn membership_row(known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+    let fact = known.presences?.get(pc as usize).copied().flatten().filter(|_| is_membership(instruction))?;
+    let object = Some(Source::Register(instruction.operand_c().register_index()?));
+    let row = Decoded::heap(Heap::Held, Some(instruction.result_register()), object, None);
+    Some(Decoded { hole: Value::boolean(fact.present).to_bits(), folded: Some(Folded { shape: fact.shape, link: fact.link, holder: fact.holder }), ..row })
+}
+
+/// The step `row` of the `instanceof` at `pc` as the fast arm of a constructor the VM proved steady
+/// (`Known::instanceofs`): the value and constructor registers are its operands, the constructor's identity its
+/// `hole`, with the helper step behind it as the slow arm. Any other row is as it is.
+pub(super) fn instanceof_arm(known: Known, pc: u32, instruction: WideInstruction, row: Decoded) -> Decoded {
+    let operands = instruction.operand_b().register_index().zip(instruction.operand_c().register_index());
+    let proved = known.instanceofs.zip(operands).filter(|_| is_instanceof(instruction) && row.step == Some(Step::Helper) && row.dst.is_some());
+    let Some((proved, (value, constructor))) = proved.and_then(|(facts, operands)| facts(pc as usize).map(|found| (found, operands))) else { return row };
+    let hole = proved.0.to_bits();
+    Decoded { step: Some(Step::Fast(Heap::Instanceof)), a: Some(Source::Register(value)), b: Some(Source::Register(constructor)), hole, instanceof: Some(proved), ..row }
 }
 
 impl<H: crate::Host> crate::vm::Vm<H> {

@@ -147,6 +147,7 @@ mod eval;
 mod fdlibm_math;
 mod field_cache;
 mod in_presence;
+mod instanceof_walk;
 mod site_table;
 mod finalization;
 mod first_call_chunk;

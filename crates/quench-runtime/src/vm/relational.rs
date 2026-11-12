@@ -260,71 +260,13 @@ impl<H: Host> Vm<H> {
         if prototype.is_deleted() {
             return None;
         }
-        let target = ProtoLink::object_record(prototype.direct_object_index()?);
-        if let Some(holds) = self.instanceof_by_words(value, target) {
-            return Some(holds);
-        }
-        let mut object = match value.direct_object_index() {
-            Some(record) => self.heap.object_record_by_id(record),
-            // Another object kind (an array, a function, a typed array, a Buffer) starts from
-            // its own link; a proxy's [[GetPrototypeOf]] may run its trap, which the walk makes.
-            None => self.ordinary_link_holder(value)?,
-        };
-        // The walk compares encoded links; only a link outside the object records decodes.
-        loop {
-            let link = object.proto_link();
-            if link == target {
-                return Some(true);
-            }
-            if link == ProtoLink::NULL {
-                return Some(false);
-            }
-            object = match link.object_record_id() {
-                Some(id) => self.heap.object_record_by_id(id),
-                None => self.ordinary_link_holder(object.proto())?,
-            };
-        }
-    }
-
-    /// Whether `value instanceof` the constructor whose `prototype` is `target` holds by the words of a
-    /// direct object's chain (`staged::object::instanceof_by_words`, which the b-jit's row runs too);
-    /// `None` leaves any other cell and any longer chain to the walk below it.
-    #[inline(always)]
-    fn instanceof_by_words(&self, value: Value, target: ProtoLink) -> Option<bool> {
-        let records = self.heap.object_record_base()? as u64;
-        let mut stage = crate::staged::Concrete::new(std::ptr::null());
-        crate::staged::object::instanceof_by_words(&mut stage, records, value.to_bits(), u64::from(target.bits()), ())
-    }
-
-    /// The facts a lowering may take of `instanceof constructor` as Stable, from what the steady case
-    /// remembers of the constructor (its layout, its prototype slot, the holder it inherits the native
-    /// `@@hasInstance` from): `None` where the steady case has not proved them.
-    pub(super) fn instanceof_fact(&self, constructor: Value) -> Option<crate::code_dependencies::InstanceofFact> {
-        let FunctionRecord { kind, object, .. } = self.heap.function(constructor)?;
-        if matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) {
-            return None;
-        }
-        let (shape, slot) = self.instanceof_constructor_layouts[instanceof_layout_index(object.shape())]?;
-        let holder = object.proto();
-        if shape != object.shape()
-            || object.proto_link() != self.instanceof_has_instance_link && !self.remembers_inheriting_holder(holder)
-        {
-            return None;
-        }
-        // SAFETY: as `steady_instanceof`: the memo names the slot of `prototype` in the shape it holds.
-        let prototype = unsafe { self.heap.property_get_shaped(object, slot) }?;
-        Some(crate::code_dependencies::InstanceofFact {
-            link: ProtoLink::object_record(prototype.direct_object_index()?).bits(),
-            shape: object.exact_shape(),
-            slot: u16::try_from(slot).ok()?,
-            holder: self.heap.object(holder)?.exact_shape(),
-        })
+        self.instanceof_chain(value, ProtoLink::object_record(prototype.direct_object_index()?))
     }
 
     /// The object of `value`, a heap object other than a proxy, whose prototype link
     /// `[[GetPrototypeOf]]` reads without running guest code.
     #[inline(always)]
-    fn ordinary_link_holder(&self, value: Value) -> Option<&crate::heap::Object> {
+    pub(super) fn ordinary_link_holder(&self, value: Value) -> Option<&crate::heap::Object> {
         if matches!(self.heap.get(value), Some(Cell::Proxy { .. })) {
             return None;
         }
@@ -489,7 +431,7 @@ impl<H: Host> Vm<H> {
     /// Whether `holder` holds a current proof that it inherits the native `@@hasInstance`
     /// (`Vm::instanceof_inheriting_holders`).
     #[inline(always)]
-    fn remembers_inheriting_holder(&self, holder: Value) -> bool {
+    pub(super) fn remembers_inheriting_holder(&self, holder: Value) -> bool {
         self.instanceof_inheriting_holders[instanceof_holder_index(holder)]
             == Some((holder, crate::heap::prototype_layout_epoch()))
     }
@@ -674,7 +616,7 @@ fn compare_positive_bigint_number(integer: BigInt, number: f64) -> Ordering {
 
 /// The `Vm::instanceof_constructor_layouts` entry a constructor of `shape` takes.
 #[inline(always)]
-fn instanceof_layout_index(shape: u32) -> usize {
+pub(super) fn instanceof_layout_index(shape: u32) -> usize {
     shape as usize % INSTANCEOF_CONSTRUCTOR_LAYOUTS
 }
 
