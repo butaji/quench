@@ -22,6 +22,9 @@ pub enum CallRow {
     /// The pinned register `Place::Pin` or `Place::PinF` back from the tagged word a spill wrote
     /// to the frame slot at hole 0; successor NEXT.
     Reload(Place),
+    /// The unconditional leave at the instruction: successor EXIT0 alone, every register as it
+    /// came (the exit stub writes the live pinned ones back).
+    Here,
 }
 
 /// The routine a leave through a (status, word) pair ends in (`stencils/call_rows.rs`).
@@ -32,6 +35,7 @@ impl CallRow {
     pub fn name(self) -> Result<String, String> {
         match self {
             CallRow::Helper => Ok("call_helper".to_string()),
+            CallRow::Here => Ok("exit_here".to_string()),
             CallRow::Direct { argc, sloppy } if usize::from(argc) <= MAX_DIRECT_ARGC => {
                 Ok(format!("call_direct_a{argc}_{}", if sloppy { "sloppy" } else { "strict" }))
             }
@@ -63,7 +67,7 @@ mod tests {
     fn rows() -> Vec<CallRow> {
         let direct = (0..=MAX_DIRECT_ARGC as u8).flat_map(|argc| [false, true].map(|sloppy| CallRow::Direct { argc, sloppy }));
         let pins = (0..crate::PINNED as u8).map(Place::Pin).chain((0..crate::PINNED_F as u8).map(Place::PinF)).map(CallRow::Reload);
-        [CallRow::Helper].into_iter().chain(direct).chain(pins).collect()
+        [CallRow::Helper, CallRow::Here].into_iter().chain(direct).chain(pins).collect()
     }
 
     /// Every row the planner can name was built, and its successors and holes are the contract's.
@@ -77,6 +81,10 @@ mod tests {
                 CallRow::Helper => {
                     assert!([NEXT, EXIT, EXIT + 1].iter().all(|s| successors.contains(s)), "{successors:?}");
                     assert!(values.contains(&0) && values.contains(&1), "{values:?}");
+                }
+                CallRow::Here => {
+                    assert_eq!(successors, [EXIT]);
+                    assert!(values.is_empty() && stencil.imm32.is_empty());
                 }
                 CallRow::Direct { .. } => {
                     assert!([NEXT, TAKEN, EXIT].iter().all(|s| successors.contains(s)), "{successors:?}");

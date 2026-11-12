@@ -86,35 +86,55 @@ impl Decoded {
     }
 }
 
-/// The definitions reaching each row, and each leave target.
+/// The definitions reaching each row, and each leave target. A row control never reaches (it
+/// follows a jump, or an instruction that is a leave) is taken as entered with the region's
+/// entry values: its webs are never run, but they must exist.
 fn reaching(region: &LoopRegion, decoded: &[Decoded]) -> (Vec<Reaching>, BTreeMap<Pc, Reaching>) {
     let count = decoded.len();
     let mut at: Vec<Reaching> = vec![Reaching::new(); count];
     let mut leaves: BTreeMap<Pc, Reaching> = BTreeMap::new();
+    let mut entry = Reaching::new();
     for row in decoded {
         for register in row.registers() {
-            at[0].entry(register).or_default().insert(ENTRY);
+            entry.entry(register).or_default().insert(ENTRY);
         }
     }
-    let merge = |into: &mut Reaching, from: &Reaching| {
-        let mut grew = false;
-        for (register, defs) in from {
-            let set = into.entry(*register).or_default();
-            let before = set.len();
-            set.extend(defs);
-            grew |= set.len() != before;
-        }
-        grew
-    };
+    at[0] = entry.clone();
+    let mut reached = vec![false; count];
+    reached[0] = true;
     let mut work: Vec<usize> = vec![0];
+    loop {
+        flow(region, decoded, &mut at, &mut leaves, &mut reached, &mut work);
+        let Some(k) = reached.iter().position(|reached| !reached) else { break };
+        (at[k], reached[k]) = (entry.clone(), true);
+        work.push(k);
+    }
+    (at, leaves)
+}
+
+/// Adds the definitions of `from` to `into`; whether it grew.
+fn merge(into: &mut Reaching, from: &Reaching) -> bool {
+    let mut grew = false;
+    for (register, defs) in from {
+        let set = into.entry(*register).or_default();
+        let before = set.len();
+        set.extend(defs);
+        grew |= set.len() != before;
+    }
+    grew
+}
+
+/// Propagates the definitions of the rows in `work` to their successors until nothing grows.
+fn flow(region: &LoopRegion, decoded: &[Decoded], at: &mut [Reaching], leaves: &mut BTreeMap<Pc, Reaching>, reached: &mut [bool], work: &mut Vec<usize>) {
     while let Some(k) = work.pop() {
         let mut out = at[k].clone();
         if let Some(dst) = decoded[k].dst {
             out.insert(dst, BTreeSet::from([k as Def + 1]));
         }
-        let (inside, outside) = decoded[k].successors(k, count, region);
+        let (inside, outside) = decoded[k].successors(k, decoded.len(), region);
         for next in inside {
-            if merge(&mut at[next], &out) {
+            let first = !std::mem::replace(&mut reached[next], true);
+            if merge(&mut at[next], &out) || first {
                 work.push(next);
             }
         }
@@ -122,7 +142,6 @@ fn reaching(region: &LoopRegion, decoded: &[Decoded]) -> (Vec<Reaching>, BTreeMa
             merge(leaves.entry(target).or_default(), &out);
         }
     }
-    (at, leaves)
 }
 
 /// The union-find of definitions where one value of a register is live or read, or the
@@ -176,7 +195,7 @@ impl Renamer {
                 other => other,
             };
             let dst = row.dst.map(|register| self.web(register, k as Def + 1) as Register);
-            renamed.push(Decoded { kind: row.kind, dst, a: source(row.a), b: source(row.b), target: row.target, heap: row.heap, base: row.base.map(read), hole: row.hole });
+            renamed.push(Decoded { kind: row.kind, dst, a: source(row.a), b: source(row.b), target: row.target, heap: row.heap, base: row.base.map(read), hole: row.hole, step: row.step });
             tables.push(here);
         }
         let leaf_webs = leaves.iter().map(|(target, state)| (*target, self.table(state))).collect();

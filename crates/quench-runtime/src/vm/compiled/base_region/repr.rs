@@ -31,9 +31,13 @@ fn heap_repr(numbers: bool, widened: bool) -> Repr {
     }
 }
 
-/// The representation a row's result needs: a division, a double operand or a `widened` row
-/// (its int32 speculation failed) gives a double; a bitwise row an int32 unless widened.
+/// The representation a row's result needs: a step's result is whatever the interpreter's
+/// operation wrote, a tagged word; a division, a double operand or a `widened` row (its int32
+/// speculation failed) gives a double; a bitwise row an int32 unless widened.
 pub(super) fn result_repr(row: &Decoded, reprs: &Reprs, widened: bool, numbers: bool) -> Repr {
+    if row.step.is_some() {
+        return Repr::Tagged;
+    }
     if row.heap.is_some() {
         return heap_repr(numbers, widened);
     }

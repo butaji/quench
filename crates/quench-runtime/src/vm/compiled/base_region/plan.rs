@@ -57,13 +57,26 @@ pub(super) fn operand(homes: &Homes, source: Option<Source>) -> (Place, u64) {
     }
 }
 
+/// Where an exit hole of a row, by exit kind, is patched to. Every exit lies in the cold area
+/// after the hot rows, so a row falls through to its successor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Exit {
+    /// A stub that names `pc` and enters the routine writing the live pinned registers back, then
+    /// leaves at `pc`: a guard that failed before the row's effects.
+    Spilling(u32),
+    /// Leave at this pc; nothing is written back (the chain's spills already ran).
+    At(u32),
+    /// `LEAVE_STATUS`: the (status, word) the row left with.
+    Status,
+}
+
 /// A row placed in the program: its stencil, hole values and branch target.
 pub(super) struct Planned {
     pub(super) stencil: &'static Stencil,
     pub(super) holes: [u64; HOLES],
     pub(super) target: Option<u32>,
-    /// The PC a guard of the row exits at.
-    pub(super) exit_pc: Option<u32>,
+    /// The exits of the row by exit kind.
+    pub(super) exits: Vec<Exit>,
     /// Rows that run before and after this one at the same PC (a heap row reads and writes tagged
     /// frame slots only; these move its operands and result between the slot and a pinned register).
     pub(super) pre: Vec<Planned>,
@@ -71,8 +84,8 @@ pub(super) struct Planned {
 }
 
 impl Planned {
-    fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
-        Self { stencil, holes, target, exit_pc, pre: Vec::new(), post: Vec::new() }
+    pub(super) fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
+        Self { stencil, holes, target, exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new() }
     }
 }
 
@@ -92,7 +105,11 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
     Ok(Planned::single(base_rows::stencil(HeapRow { heap, dst, a, b, entry })?, holes, None, Some(pc)))
 }
 
-pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> Result<Planned, String> {
+pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, general: bool, helpers: LaneHelpers) -> Result<Planned, String> {
+    if let Some(step) = decoded.step {
+        return plan_step(step, layout, pc, helpers);
+    }
+    let homes = &layout.homes;
     let (a, a_hole) = operand(homes, decoded.a);
     let (b, b_hole) = operand(homes, decoded.b);
     let (dst, dst_hole) = operand(homes, decoded.dst.map(Source::Register));

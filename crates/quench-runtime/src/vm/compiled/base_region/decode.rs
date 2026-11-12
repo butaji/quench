@@ -47,15 +47,21 @@ pub(super) struct Decoded {
     pub(super) heap: Option<Heap>,
     pub(super) base: Option<Register>,
     pub(super) hole: u64,
+    /// How an instruction no row takes runs (`steps`), in place of the numeric `kind`.
+    pub(super) step: Option<Step>,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0 }
+        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, step: None }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
         Self { heap: Some(heap), ..Self::number(Kind::Move, dst, a, b, None) }
+    }
+
+    pub(super) fn step(step: Step, dst: Option<Register>) -> Self {
+        Self { step: Some(step), ..Self::number(Kind::Move, dst, None, None, None) }
     }
 
     /// The registers the row names.
@@ -153,12 +159,13 @@ pub(super) fn heap_row(region: &LoopRegion, dense: bool, pc: u32, instruction: W
     }
 }
 
-pub(super) fn decode(region: &LoopRegion, dense: bool, pc: u32, instruction: WideInstruction) -> Result<Decoded, String> {
-    let decoded = match numeric_row(region, instruction) {
-        Some(decoded) => decoded,
-        None => heap_row(region, dense, pc, instruction).filter(|_| instruction.result_flags() == 0),
-    };
-    decoded.ok_or_else(|| reject(region, instruction))
+/// The row of `instruction` at `pc`: a numeric or heap row where one takes it, else the step the
+/// interpreter's own operation makes (`steps`), so no instruction is refused.
+pub(super) fn decode(region: &LoopRegion, dense: bool, pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
+    numeric_row(region, instruction)
+        .flatten()
+        .or_else(|| heap_row(region, dense, pc, instruction).filter(|_| instruction.result_flags() == 0))
+        .unwrap_or_else(|| decode_step(pc, instruction, helpers))
 }
 
 /// The row of a numeric instruction: `None` when the instruction is not one, `Some(None)` when it
@@ -177,19 +184,6 @@ fn numeric_row(region: &LoopRegion, instruction: WideInstruction) -> Option<Opti
         Class::Jump => Some(Decoded::number(Kind::Jump, None, None, None, Some(instruction.jump_target()))),
         _ => return None,
     })
-}
-
-/// Why no row takes `instruction`.
-fn reject(region: &LoopRegion, instruction: WideInstruction) -> String {
-    let op = instruction.op();
-    let fallback = |error: Option<String>| error.unwrap_or_else(|| format!("{op:?}"));
-    match op.class() {
-        Class::GetField => "GetField: dynamic or unrecorded".to_string(),
-        Class::Binary | Class::NumericAdd | Class::NumericMultiply => fallback(binary(region, instruction).err()),
-        Class::JumpBinaryFalse => fallback(jump_binary(region, instruction).err()),
-        Class::LoadConst => fallback(load_const(region, instruction).err()),
-        _ => fallback(None),
-    }
 }
 
 /// Bits in a word's high half.

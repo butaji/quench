@@ -2,8 +2,8 @@
 //! behind `QUENCH_DEV=bjit`. The registers the region touches most live in pinned machine
 //! registers through the whole chain of stencils and the rest stay tagged `Value` words in the
 //! activation's register file; every exit writes the pinned registers back first, so it leaves
-//! the lane's state canonical. A region with an instruction that is no row of the stencil
-//! library is declined (`build` names the instruction) and keeps its Cranelift code.
+//! the lane's state canonical. An instruction that is no row of the stencil library is lowered
+//! by `steps` (a helper step or a leave), so no region is declined for its instructions.
 //!
 //! The result word is the exit PC: a leave out of the region resumes there, a guard inside it
 //! exits at its instruction (nothing of that instruction has run), a backward jump exits at the
@@ -17,21 +17,25 @@ use oxc_ast::ast::BinaryOperator;
 use super::base_rows::{self, Heap, HeapRow};
 use quench_bjit::numeric::{self, Kind, Place};
 use quench_bjit::{PINNED, PINNED_F, Row as Placed, Stencil};
+use super::LaneHelpers;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-// The call planner: consumed by the whole-function b-jit planner, which names its chains.
+// The call planner: its direct-call chains are consumed by the whole-function b-jit planner;
+// the helper chain (`plan_step`) is the region's step lowering.
 #[allow(dead_code)]
 mod call_plan;
 mod decode;
 mod link;
 mod plan;
 mod repr;
+mod steps;
 mod webs;
 use decode::*;
 use link::*;
 use plan::*;
 use repr::*;
+use steps::*;
 use webs::*;
 
 /// Bytes of a register slot in the activation's register file.
@@ -138,11 +142,11 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
     }
 }
 
-/// The machine code of `region`, entered at the shared native entry ABI, or the instruction that
-/// has no row. `ints` are the registers that held an int32 as the compile began; `widened` lists the PCs whose int32 speculation failed: they take general rows.
-pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<(Vec<u8>, bool), String> {
+/// The machine code of `region`, entered at the shared native entry ABI, or the stencil it lacks.
+/// `seen` are the registers that held an int32 and a double as the compile began; `widened` lists the PCs whose int32 speculation failed: they take general rows.
+pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], helpers: LaneHelpers) -> Result<(Vec<u8>, bool), String> {
     let started = std::time::Instant::now();
-    let built = assemble(region, dense, widened, seen);
+    let built = assemble(region, dense, widened, seen, helpers);
     let nanos = started.elapsed().as_nanos() as u64;
     note(|totals, rejects| match &built {
         Ok((code, _)) => {
@@ -159,13 +163,14 @@ pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [
     built
 }
 
-/// The code, and whether it reads no heap row: such a region needs from its payload only the entry
-/// record's address (`Crossing::Bare`).
-fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<(Vec<u8>, bool), String> {
+/// The code, and whether it reads no heap row and makes no step: such a region needs from its
+/// payload only the entry record's address (`Crossing::Bare`).
+fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], helpers: LaneHelpers) -> Result<(Vec<u8>, bool), String> {
     let (header, backedge) = (region.header, region.backedge);
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
-    let decoded = instructions.iter().enumerate().map(|(k, instruction)| decode(region, dense, header + k as u32, *instruction)).collect::<Result<Vec<_>, _>>()?;
+    let mut decoded: Vec<Decoded> = instructions.iter().enumerate().map(|(k, instruction)| decode(region, dense, header + k as u32, *instruction, helpers)).collect();
+    settle(&mut decoded);
     // A register with several webs may not have a web in an int slot, whose writes keep a
     // tagged word's high half; such a register is left whole.
     let mut merged: std::collections::BTreeSet<Register> = Default::default();
@@ -182,9 +187,9 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
     let layout = Layout { header, backedge, homes, webs, region };
     let mut body = Vec::with_capacity(count);
     for (k, row) in decoded.iter().enumerate() {
-        body.push(plan(row, &layout.homes, header + k as u32, is_general(row, &reprs))?);
+        body.push(plan(row, &layout, header + k as u32, is_general(row, &reprs), helpers)?);
     }
-    let bare = decoded.iter().all(|row| row.heap.is_none());
+    let bare = decoded.iter().all(|row| row.heap.is_none() && row.step != Some(Step::Helper));
     Ok((link(&layout, &body)?, bare))
 }
 

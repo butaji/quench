@@ -13,11 +13,14 @@
 //! 4. one `reload_*` row per pinned register live after the call (every pinned register is dead
 //!    across a call row).
 //!
+//! `plan_step` is the same chain for any instruction the helper runs in place (`steps`): spills,
+//! the helper row, reloads.
+//!
 //! Successors are chain-local: a part's `taken` is the index of the part it branches to, and
 //! `parts.len()` means the part after the chain (the next instruction). A part's `exits`, by
-//! exit kind, say which leave the linker patches in: `Leave::At(pc)` is a leave at `pc` that
-//! does not spill (the spills already ran), `Leave::Status` is `quench_bjit::call::LEAVE_STATUS`
-//! (the (status, word) in the first two pinned ints is the leave's result). The chain's record
+//! exit kind, say which leave the linker patches in (`Exit`: `At(pc)` leaves at `pc` without
+//! spilling, the spills already ran; `Status` is `quench_bjit::call::LEAVE_STATUS`, the (status,
+//! word) in the first two pinned ints being the leave's result). The chain's record
 //! lives in the chain: the code that uses the chain must not outlive it.
 //!
 //! Direct admission reads the cell's facts word once at plan time (`CellFacts`: its registers,
@@ -25,7 +28,7 @@
 //! validity word becomes the row's expected word, so a republish or withdrawal that bumps the
 //! validity sends the call to the helper row, which resolves the target anew.
 
-use super::SLOT;
+use super::{Exit, SLOT};
 use super::super::direct_callee::DirectCallee;
 use super::super::entry_cell::capture_word;
 use super::super::{FRAME_BYTES, LaneHelper, LaneHelpers};
@@ -145,21 +148,12 @@ pub(super) fn choose(shape: &CallShape, direct: Option<&DirectFacts>) -> Choice 
     declined.into_iter().find(|(declined, _)| *declined).map_or(Choice::Direct, |(_, why)| Choice::Helper(why))
 }
 
-/// The leave a part's exit hole is patched to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Leave {
-    /// Leave at this pc; nothing is spilled (the chain's spills already ran).
-    At(u32),
-    /// `LEAVE_STATUS`: the (status, word) the part left with.
-    Status,
-}
-
 /// One stencil of a chain with its hole values, chain-local `taken` successor and exits by kind.
 pub(super) struct CallPart {
     pub(super) stencil: &'static Stencil,
     pub(super) holes: [u64; HOLES],
     pub(super) taken: Option<usize>,
-    pub(super) exits: Vec<Leave>,
+    pub(super) exits: Vec<Exit>,
 }
 
 /// A planned call: its parts, the record the direct row reads, and the choice that made them.
@@ -192,7 +186,7 @@ fn slot(register: Register) -> u64 {
     u64::from(register) * SLOT
 }
 
-fn part(stencil: &'static Stencil, holes: [u64; HOLES], exits: Vec<Leave>) -> CallPart {
+fn part(stencil: &'static Stencil, holes: [u64; HOLES], exits: Vec<Exit>) -> CallPart {
     CallPart { stencil, holes, taken: None, exits }
 }
 
@@ -205,11 +199,11 @@ fn reload_part(place: Place, register: Register) -> Result<CallPart, String> {
     Ok(part(call::stencil(CallRow::Reload(place))?, [slot(register), 0, 0], Vec::new()))
 }
 
-fn helper_part(shape: &CallShape, helper: usize) -> Result<CallPart, String> {
+fn helper_part(call_pc: u32, helper: usize) -> Result<CallPart, String> {
     if helper == 0 {
         return Err("call: no helper address".to_string());
     }
-    Ok(part(call::stencil(CallRow::Helper)?, [u64::from(shape.call_pc), helper as u64, 0], vec![Leave::At(shape.call_pc), Leave::Status]))
+    Ok(part(call::stencil(CallRow::Helper)?, [u64::from(call_pc), helper as u64, 0], vec![Exit::At(call_pc), Exit::Status]))
 }
 
 /// The direct row and the record it reads, whose address is its hole 0.
@@ -229,7 +223,18 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts) -> Result<(CallPart, Box<
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let stencil = call::stencil(CallRow::Direct { argc, sloppy: facts.global_this.is_some() })?;
-    Ok((part(stencil, [std::ptr::from_ref(&*record).addr() as u64, 0, 0], vec![Leave::Status]), record))
+    Ok((part(stencil, [std::ptr::from_ref(&*record).addr() as u64, 0, 0], vec![Exit::Status]), record))
+}
+
+/// The chain of a helper step at `pc` (any instruction whose operation the helper runs in place):
+/// the spills, the helper row, the reloads.
+pub(super) fn plan_step(pc: u32, helper: usize, spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
+    let mut parts = spills.iter().map(|&(place, register)| spill_part(place, register)).collect::<Result<Vec<_>, _>>()?;
+    parts.push(helper_part(pc, helper)?);
+    for &(place, register) in reloads {
+        parts.push(reload_part(place, register)?);
+    }
+    Ok(parts)
 }
 
 /// The chain of a call (see the module doc for its layout and successors).
@@ -247,7 +252,7 @@ pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
         parts.push(row);
         record = Some(owned);
     }
-    parts.push(helper_part(&plan.shape, plan.helper)?);
+    parts.push(helper_part(plan.shape.call_pc, plan.helper)?);
     for &(place, register) in plan.reloads {
         parts.push(reload_part(place, register)?);
     }
@@ -300,8 +305,8 @@ mod tests {
         assert_eq!(chain.parts.len(), spills.len() + 2 + reloads.len());
         let (direct_at, helper_at) = (spills.len(), spills.len() + 1);
         assert_eq!(chain.parts[direct_at].taken, Some(helper_at + 1), "completion skips the helper row");
-        assert_eq!(chain.parts[direct_at].exits, [Leave::Status]);
-        assert_eq!(chain.parts[helper_at].exits, [Leave::At(SHAPE.call_pc), Leave::Status]);
+        assert_eq!(chain.parts[direct_at].exits, [Exit::Status]);
+        assert_eq!(chain.parts[helper_at].exits, [Exit::At(SHAPE.call_pc), Exit::Status]);
         assert_eq!(chain.parts[helper_at].holes[..2], [u64::from(SHAPE.call_pc), 0x4000]);
         let record = chain.record.expect("the direct row's record");
         assert_eq!(chain.parts[direct_at].holes[0], std::ptr::from_ref(&*record).addr() as u64);
@@ -316,6 +321,16 @@ mod tests {
         assert!(chain.parts.iter().all(|part| part.taken.is_none()));
         let nowhere = CallPlan { helper: 0, ..plan(None, &[], &[]) };
         assert!(plan_call(&nowhere).is_err(), "a helper row needs its address");
+    }
+
+    #[test]
+    fn a_step_chain_is_spills_helper_reloads() {
+        let (spills, reloads) = ([(Place::Pin(0), 1)], [(Place::PinF(1), 5), (Place::Pin(0), 1)]);
+        let parts = plan_step(9, 0x4000, &spills, &reloads).expect("a chain");
+        assert_eq!(parts.len(), spills.len() + 1 + reloads.len());
+        assert_eq!(parts[spills.len()].holes[..2], [9, 0x4000]);
+        assert_eq!(parts[spills.len()].exits, [Exit::At(9), Exit::Status]);
+        assert!(plan_step(9, 0, &[], &[]).is_err(), "a helper row needs its address");
     }
 
     #[test]

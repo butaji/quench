@@ -29,6 +29,10 @@
 //! goes to NEXT, which the planner makes the helper row; a completion stores the word to the
 //! call's register and goes to TAKEN (the reloads); any other status leaves through EXIT0 with
 //! (status, word) in r14, r15, the callee's shadow frames kept for the lane to materialize.
+//!
+//! Exit row `exit_here`: leaves through EXIT0 with every register as it came, so the exit stub
+//! writes the live pinned registers back: the lowering of an instruction whose operation only
+//! the interpreter runs.
 
 #[path = "../src/call_record.rs"]
 mod call_record;
@@ -301,6 +305,12 @@ direct_row!(call_direct_a0_sloppy, 0, true);
 direct_row!(call_direct_a1_sloppy, 1, true);
 direct_row!(call_direct_a2_sloppy, 2, true);
 direct_row!(call_direct_a3_sloppy, 3, true);
+
+/// The unconditional leave: every register is passed to the exit as it came.
+#[unsafe(no_mangle)]
+pub unsafe extern "rust-preserve-none" fn exit_here(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
+    unsafe { go!(HOLE_EXIT0, S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] }) }
+}
 
 /// A pinned register back from the tagged word a `Spill` row wrote to the frame slot at hole 0:
 /// the proof (an int word, a Number) was made by the spill, so it is not made again.
