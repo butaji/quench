@@ -279,3 +279,50 @@ fn an_uncaught_exception_from_compiled_frames_reports_the_throws_location() {
     };
     assert_eq!(location(crate::ExecutionMode::Compiled), location(crate::ExecutionMode::Interpreted));
 }
+
+/// `source` wrapped in a function, which compiled equals the interpreter in the lines it
+/// prints; the native region runs of its function `name`.
+fn wrapped_matches_interpreter(source: &str, name: &str) -> u64 {
+    matches_interpreter(&format!("(function(){{{source}}})();"), name)
+}
+
+/// A catch binding a closure of the catch block captures lives in the frame's environment, a
+/// fresh one per entry of the handler: each closure sees its own value, whether the exception
+/// was a `throw` of the loop or the exception of a call.
+#[test]
+fn a_catch_binding_a_closure_captures_is_fresh_per_entry() {
+    let thrown = r#"
+      function run(n) {
+        const fns = [];
+        let total = 0;
+        for (let i = 0; i < n; i++) {
+          try { if ((i & 1) === 0) throw i; total += 1; }
+          catch (e) { fns.push(() => e + i); }
+        }
+        for (let k = 0; k < fns.length; k++) total += fns[k]();
+        return total;
+      }
+      let result = 0;
+      for (let repeat = 0; repeat < 256; repeat++) result = run(48);
+      print(String(result));
+    "#;
+    let runs = wrapped_matches_interpreter(thrown, "run");
+    assert!(runs > 0, "the loop with a caught throw runs in a native region");
+    let called = r#"
+      function boom(k) { if (k % 3 === 0) throw k; return k; }
+      function run(n) {
+        const fns = [];
+        let total = 0;
+        for (let i = 0; i < n; i++) {
+          try { total += boom(i); }
+          catch (e) { fns.push(() => e * 2); }
+        }
+        for (let k = 0; k < fns.length; k++) total += fns[k]();
+        return total;
+      }
+      let result = 0;
+      for (let repeat = 0; repeat < 256; repeat++) result = run(48);
+      print(String(result));
+    "#;
+    wrapped_matches_interpreter(called, "run");
+}

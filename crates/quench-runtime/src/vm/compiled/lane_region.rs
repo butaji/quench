@@ -1546,7 +1546,7 @@ pub(super) fn lower(
         if alternative < unit.instructions.len() { leaders.insert(alternative); }
     }
     // A handler's block is entered by the throws it catches, edges no jump names.
-    let catches = catches::catch_edges(function, unit, coverage, completion);
+    let catches = catches::catch_edges(program, function, unit, coverage, completion);
     for catch in catches.values() { leaders.insert(catch.target); }
     let blocks: Vec<_> = (0..unit.instructions.len()).map(|pc| leaders.contains(pc).then(|| builder.create_block())).collect();
     let (leave, stop) = (builder.create_block(), builder.create_block());

@@ -1826,6 +1826,8 @@ lane_helper_inventory! { H;
     ValueStep => super::dispatch_fast::lane_body_value_step::<H>,
     /// ToBoolean of a value its cell decides (`lane_truthy`).
     Truthy => lane_truthy::<H>,
+    /// A handler's entry in the frame, for the exception it catches (`dispatch_fast::lane_handler_edge`).
+    HandlerEdge => super::dispatch_fast::lane_handler_edge::<H>,
 }
 
 /// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.
