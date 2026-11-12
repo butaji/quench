@@ -3,7 +3,6 @@
 
 use super::*;
 use super::super::entry_cell::EntryCell;
-use super::super::super::dispatch_fast::LaneRecoverySpace;
 
 impl Lowering<'_, '_> {
     /// What admits the callee and receiver the call names (the descriptor's), and the `this`
@@ -35,14 +34,15 @@ impl Lowering<'_, '_> {
         let top = load(self, payload, std::mem::offset_of!(JsStepDispatch, native_top));
         let end = load(self, payload, std::mem::offset_of!(JsStepDispatch, native_end));
         let next = self.word_add_imm(top, i64::from(callee.registers) * word);
-        let recovery = load(self, cell, std::mem::offset_of!(EntryCell, recovery));
-        let values = load(self, recovery, std::mem::offset_of!(LaneRecoverySpace, values));
-        let bytes = self.word_mul_imm(values, word);
-        let reserved = self.word_add(next, bytes);
+        let facts = load(self, cell, std::mem::offset_of!(EntryCell, facts));
+        let room_words = self.word_shr_imm(facts, i64::from(crate::staged::call::ROOM_SHIFT));
+        let room_words = self.word_and_imm(room_words, i64::from(u16::MAX));
+        let bytes = self.word_mul_imm(room_words, word);
+        let reserved = self.word_add(top, bytes);
         let fits = self.word_cmp(IntCC::UnsignedLessThanOrEqual, reserved, end);
         let shadow = load(self, payload, std::mem::offset_of!(JsStepDispatch, shadow_top));
         let shadow_end = load(self, payload, std::mem::offset_of!(JsStepDispatch, shadow_end));
-        let activations = load(self, recovery, std::mem::offset_of!(LaneRecoverySpace, activations));
+        let activations = self.word_shr_imm(facts, i64::from(crate::staged::call::ACTIVATIONS_SHIFT));
         let frames = self.word_add_imm(activations, 1);
         let frame_bytes = self.word_mul_imm(frames, super::super::FRAME_BYTES as i64);
         let recovered = self.word_add(shadow, frame_bytes);

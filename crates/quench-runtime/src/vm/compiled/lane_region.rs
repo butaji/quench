@@ -719,6 +719,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
     fn word_const(&mut self, bits: i64) -> ir::Value { self.int_const(types::I64, bits) }
     fn int_const(&mut self, ty: ir::Type, bits: i64) -> ir::Value { self.ins().iconst(ty, bits) }
     fn word_add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().iadd(a, b) }
+    fn word_shr_imm(&mut self, a: ir::Value, shift: i64) -> ir::Value { self.ins().ushr_imm_u(a, shift) }
+    fn word_and_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().band_imm_u(a, imm) }
     fn word_add_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().iadd_imm_u(a, imm) }
     fn word_mul_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().imul_imm_u(a, imm) }
     fn word_or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().bor(a, b) }

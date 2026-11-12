@@ -210,10 +210,22 @@ const _: () = assert!(std::mem::size_of::<EntryCellLayoutWords>() == 64 && std::
 /// The facts word: registers, room and params in 16-bit fields from the low end, then the entry
 /// kind byte (`ENTRY_ACTIVATES` for a plain activation).
 const FACT_BITS: u32 = u16::BITS;
-const ROOM_SHIFT: u32 = FACT_BITS;
+pub(crate) const ROOM_SHIFT: u32 = FACT_BITS;
 const PARAMS_SHIFT: u32 = 2 * FACT_BITS;
 const ENTRY_SHIFT: u32 = 3 * FACT_BITS;
+/// The native cell's shadow-frame need: the recovery space's activations, above the entry kind.
+pub(crate) const ACTIVATIONS_SHIFT: u32 = 4 * FACT_BITS - 8;
 pub(crate) const ENTRY_ACTIVATES: u64 = 0;
+
+/// A native cell's facts word: the body's registers, the words a call needs from the lane stack
+/// (its registers and the recovery space's values) and the recovery space's activations; `None`
+/// where a field overflows (the body stays unpublished).
+pub(crate) fn native_facts(registers: usize, values: usize, activations: usize) -> Option<u64> {
+    let room = u16::try_from(registers.checked_add(values)?).ok()?;
+    let registers = u16::try_from(registers).ok()?;
+    let activations = u8::try_from(activations).ok()?;
+    Some(u64::from(registers) | u64::from(room) << ROOM_SHIFT | u64::from(activations) << ACTIVATIONS_SHIFT)
+}
 
 /// Admits a native call: leaving at `miss` unless the cell's validity word is `expected` (one
 /// compare) and `free` holds `room` words. Entry kind and argc are decided at site admission or
