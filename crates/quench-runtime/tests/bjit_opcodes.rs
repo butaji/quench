@@ -22,6 +22,7 @@ C.prototype.get = function () { return this.v; };
 class K { x = 1; #p = 2; static s = 3; get y() { return this.#p; } has(o) { return #p in o; } }
 function* gen(n) { for (var j = 0; j < n; j++) yield j; }
 var kk = new K();
+globalThis.gcount = 0;
 ";
 
 /// (opcode family, loop body over `i` with the locals `acc`, `s`, `t`, `o` and `arr`).
@@ -83,6 +84,11 @@ const FAMILIES: &[(&str, &str)] = &[
     ("int32-overflow-flip", "t = i < 1600 ? 2147483000 + i : i; acc = (acc + t) | 0; acc += t * 2 > 4294967296 ? 1 : 0;"),
     ("negative-zero", "t = i % 2 ? -0 : 0; acc += (1 / t) < 0 ? 1 : 2;"),
     ("async-function", "(async function () { await 0; acc += 1; })();"),
+    ("global-counter", "gcount = (gcount + i) | 0; acc += gcount & 255;"),
+    ("global-typeof", "s = typeof gcount + typeof captured + typeof noSuchGlobal; gcount = i;"),
+    ("global-type-flip", "gcount = i < 1500 ? i : 'g' + i; s = typeof gcount; acc += s === 'number' ? 1 : 2;"),
+    ("global-redefined-to-accessor", "if (i === 1500) Object.defineProperty(globalThis, 'gcount', { get() { return 7; }, set(v) { acc += 1; }, configurable: true }); gcount = i; acc += gcount;"),
+    ("global-deleted", "if (i === 1500) delete globalThis.gcount; try { gcount = i; acc += 1; } catch (e) { acc += 2; }"),
 ];
 
 /// A program that runs `body` hot and ends by throwing a digest of what it computed, so the

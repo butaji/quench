@@ -335,3 +335,34 @@ fn folded_prototype_reads_see_changes_a_call_in_the_body_makes() {
     );
     assert_eq!(interpreted, compiled);
 }
+
+/// A global counter read and written by name, and the `typeof` of a global, run as rows over the
+/// global object's slot (held under its layout), so a body makes none of them leave.
+#[test]
+fn global_counter_loops_run_in_a_body_without_leaving() {
+    assert_bodies_never_leave(
+        "var counter = 0;
+         function bump(n) { for (let i = 0; i < n; i++) { counter = (counter + i) | 0; } return counter; }
+         function kind() { return typeof counter; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + bump(9)) | 0;
+         print(t); print(counter); print(kind());",
+    );
+}
+
+/// A global redefined as an accessor retires the code that held its slot: the writes and reads that
+/// follow are the accessor's, as in the interpreter, and so is a store of another type.
+#[test]
+fn a_global_redefined_as_an_accessor_retires_the_bodies_that_held_it() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "globalThis.total = 0; let reads = 0;
+         function bump(n) { for (let i = 0; i < n; i++) { total = (total + i) | 0; } return total; }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + bump(5)) | 0;
+         print(t);
+         Object.defineProperty(globalThis, 'total', { get() { reads++; return 3; }, set(v) { reads += 10; }, configurable: true });
+         for (let k = 0; k < 20; k++) t = (t + bump(5)) | 0;
+         print(t); print(reads); print(typeof total);
+         total = 'text'; print(typeof total); print(bump(2));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the body ran {runs} times");
+}
