@@ -1,5 +1,6 @@
 //! The `this` a bound run's entry proves once (`Lowering::entry_facts`).
 use super::*;
+use crate::vm::compiled::regions;
 
 impl Lowering<'_, '_> {
     /// A bound run's fixed `this`: the value its payload's slot holds, or
@@ -13,7 +14,7 @@ impl Lowering<'_, '_> {
         let bits = self.builder.append_block_param(join, types::I64);
         self.builder.ins().brif(present, bound, &[], absent, &[]);
         self.builder.switch_to_block(bound);
-        let value = self.builder.ins().load(types::I64, MemFlagsData::trusted(), slot, 0);
+        let value = self.builder.ins().load(types::I64, regions::frame(), slot, 0);
         self.builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
         self.builder.switch_to_block(absent);
         let deleted = self.builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);

@@ -2,6 +2,7 @@
 //! with, and the entry its cell holds.
 
 use super::*;
+use crate::vm::compiled::regions;
 use super::super::entry_cell::EntryCell;
 use super::direct_admission::dispatch_offset;
 
@@ -12,20 +13,20 @@ impl Lowering<'_, '_> {
         let payload = self.payload;
         self.direct_window(instruction, callee, top);
         let descriptor = self.reloc(RelocKind::Descriptor, callee.target.function, callee as *const DirectCallee as u64);
-        let entry = self.word_load(cell, dispatch_offset(std::mem::offset_of!(EntryCell, entry)));
-        let body = self.word_load(cell, dispatch_offset(std::mem::offset_of!(EntryCell, body)));
+        let entry = self.word_load(regions::entry_cell(), cell, dispatch_offset(std::mem::offset_of!(EntryCell, entry)));
+        let body = self.word_load(regions::entry_cell(), cell, dispatch_offset(std::mem::offset_of!(EntryCell, body)));
         for (field, value) in [(std::mem::offset_of!(ShadowFrame, callee), descriptor), (std::mem::offset_of!(ShadowFrame, this), this), (std::mem::offset_of!(ShadowFrame, body), body), (std::mem::offset_of!(ShadowFrame, window), top)] {
-            self.word_store(value, shadow, dispatch_offset(field));
+            self.word_store(regions::frame(), value, shadow, dispatch_offset(field));
         }
         let pushed = self.word_add_imm(shadow, super::super::FRAME_BYTES as i64);
-        self.word_store(pushed, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
-        self.word_store(next, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, native_top)));
+        self.word_store(regions::dispatch(), pushed, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
+        self.word_store(regions::dispatch(), next, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, native_top)));
         let signature = lane_body_signature(types::I64, self.builder.func.signature.call_conv);
         let signature = self.builder.import_signature(signature);
         let captures = self.reloc(RelocKind::CaptureWords, callee.target.function, super::super::entry_cell::capture_word(callee.capture_values, callee.capture_len) as u64);
         let context = self.context;
         let call = self.word_call_all(signature, entry, &[context, this, captures, top]);
-        self.word_store(top, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, native_top)));
+        self.word_store(regions::dispatch(), top, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, native_top)));
         call
     }
 }

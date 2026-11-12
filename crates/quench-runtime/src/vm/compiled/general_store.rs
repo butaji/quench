@@ -11,7 +11,7 @@ use super::super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 use crate::bytecode::Atom;
 use crate::value::ValueLayout;
 use crate::Value;
-use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
+use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder};
 use cranelift_frontend::FunctionBuilder;
 
 /// The value classes a store proof names: each one `ValueArena::note_slot_value` joins alike
@@ -85,7 +85,7 @@ pub(super) fn emit_store(builder: &mut FunctionBuilder<'_>, (arguments, payload)
     let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_entries));
     let entry = usize::from(site) * CACHE.entry_size + CACHE.slot_offset;
     // The class is byte 2 of the slot word (byte 3 counts the site's leaves), so one byte load reads it.
-    let recorded = builder.ins().uload8(types::I32, MemFlagsData::trusted(), entries,
+    let recorded = builder.ins().uload8(types::I32, regions::heap_meta(), entries,
         i32::try_from(entry + super::super::object::FIELD_CLASS_BYTE).expect("field entry offset fits i32"));
     let classes = StoreClass::ALL.map(|class| (class, class.emit_holds(builder, value)));
     let both: Vec<ir::Value> = classes.iter().map(|&(class, holds)| {
@@ -179,7 +179,7 @@ pub(super) fn emit_atom_unnamed(builder: &mut FunctionBuilder<'_>, payload: ir::
     let one = builder.ins().iconst(types::I8, 1);
     builder.ins().brif(covered, present, &[], join, &[ir::BlockArg::Value(one)]);
     builder.switch_to_block(present);
-    let word = builder.ins().load(types::I64, MemFlagsData::trusted(), words,
+    let word = builder.ins().load(types::I64, regions::heap_meta(), words,
         i32::try_from(word_index as usize * size_of::<u64>()).expect("atom word offset fits i32"));
     let named = builder.ins().band_imm_u(word, (1_u64 << (atom % u64::BITS)) as i64);
     let unnamed = builder.ins().icmp_imm_u(IntCC::Equal, named, 0);

@@ -6,8 +6,9 @@ use super::super::{emit_js_payload_word, emit_js_property_values, emit_lane_help
     Emit, JsStepDispatch, LaneHelper, LANE_CALL_COMPLETED, LANE_CALL_MISSED};
 use super::{RegisterFact, Representation, Type};
 use crate::bytecode::Register;
+use crate::vm::compiled::regions;
 use cranelift_codegen::ir;
-use cranelift_codegen::ir::{types, InstBuilder, MemFlagsData, condcodes::IntCC};
+use cranelift_codegen::ir::{types, InstBuilder, condcodes::IntCC};
 
 /// Where a call-out's record is, and what its slow case needs of the lowering: the registers the
 /// helper reads, and where a status other than completion or a miss ends the body.
@@ -34,7 +35,7 @@ pub(super) fn vm_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, resul
     let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = frame.edges else { return None };
     for register in &site.spill {
         let bits = stage.builder.use_var(frame.registers.tagged[usize::from(*register)]);
-        stage.builder.ins().store(MemFlagsData::trusted(), bits, site.registers, register_offset(*register));
+        stage.builder.ins().store(regions::frame(), bits, site.registers, register_offset(*register));
     }
     let context = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
     let record = stage.builder.ins().iconst(types::I64, i64::from(site.record));
@@ -50,7 +51,7 @@ pub(super) fn vm_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, resul
     let (arena, _) = emit_js_property_values(stage.builder, frame.payload);
     stage.builder.def_var(site.properties, arena);
     Some(match result {
-        Some(register) => (stage.builder.ins().load(types::I64, MemFlagsData::trusted(), site.registers, register_offset(register)),
+        Some(register) => (stage.builder.ins().load(types::I64, regions::frame(), site.registers, register_offset(register)),
             RegisterFact::definition(Type::ANY, Representation::Tagged)),
         None => (stage.builder.ins().iconst(types::I64, 0), RegisterFact::canonical()),
     })

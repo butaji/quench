@@ -16,7 +16,7 @@ use crate::vm::compiled::regions;
 use crate::bytecode::{ConstructArguments, WideInstruction};
 use crate::value::ValueLayout;
 use crate::Value;
-use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
+use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder};
 use cranelift_frontend::FunctionBuilder;
 
 #[path = "frameless/admission.rs"] mod admission;
@@ -164,7 +164,7 @@ pub(super) fn emit_activation(
     (destination, framed): (i32, ir::Block),
 ) {
     let entry = emit_entry(builder, payload, callee, framed);
-    let meta = builder.ins().load(types::I64, MemFlagsData::trusted(), entry, std::mem::offset_of!(CallEntry, meta) as i32);
+    let meta = builder.ins().load(types::I64, regions::heap_meta(), entry, std::mem::offset_of!(CallEntry, meta) as i32);
     let fits = emit_fits(builder, (entry, meta), passed.len() as u16, receiver.is_none());
     let registers = builder.ins().ushr_imm_u(meta, i64::from(META_REGISTERS));
     let registers = builder.ins().band_imm_u(registers, i64::from(u16::MAX));
@@ -188,7 +188,7 @@ fn emit_returned(builder: &mut FunctionBuilder<'_>, (payload, arguments): (ir::V
     let done = builder.create_block();
     builder.ins().brif(returned, done, &[], exact.stopped_block, &[]);
     builder.switch_to_block(done);
-    let mut value = builder.ins().load(types::I64, MemFlagsData::trusted(), exact.result_pointer, 0);
+    let mut value = builder.ins().load(types::I64, regions::dispatch(), exact.result_pointer, 0);
     if let Some(constructed) = constructed {
         value = emit_construct_result(builder, payload, (value, constructed));
     }
@@ -212,7 +212,7 @@ fn emit_fits(builder: &mut FunctionBuilder<'_>, (entry, meta): (ir::Value, ir::V
     let params = builder.ins().ushr_imm_u(meta, i64::from(META_PARAMS));
     let fits = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, params, i64::from(count));
     if !constructs { return fits; }
-    let admitted = builder.ins().load(types::I64, MemFlagsData::trusted(), entry, std::mem::offset_of!(CallEntry, constructs) as i32);
+    let admitted = builder.ins().load(types::I64, regions::heap_meta(), entry, std::mem::offset_of!(CallEntry, constructs) as i32);
     let admitted = builder.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0);
     builder.ins().band(fits, admitted)
 }
@@ -227,15 +227,15 @@ fn emit_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, (callee,
     let bound = builder.create_block();
     builder.ins().brif(allocated, super::forced_or(bound, framed), &[], framed, &[]);
     builder.switch_to_block(bound);
-    builder.ins().store(MemFlagsData::trusted(), receiver, record, std::mem::offset_of!(ShadowRecord, this) as i32);
+    builder.ins().store(regions::frame(), receiver, record, std::mem::offset_of!(ShadowRecord, this) as i32);
     (builder.ins().iadd_imm_u(record, std::mem::offset_of!(ShadowRecord, this) as i64), Some(receiver))
 }
 
 /// The shadow record's call PC and callee.
 fn emit_record(builder: &mut FunctionBuilder<'_>, record: ir::Value, pc: usize, callee: ir::Value) {
-    builder.ins().store(MemFlagsData::trusted(), callee, record, std::mem::offset_of!(ShadowRecord, callee) as i32);
+    builder.ins().store(regions::frame(), callee, record, std::mem::offset_of!(ShadowRecord, callee) as i32);
     let call_pc = builder.ins().iconst(types::I64, pc as i64);
-    builder.ins().store(MemFlagsData::trusted(), call_pc, record, std::mem::offset_of!(ShadowRecord, call_pc) as i32);
+    builder.ins().store(regions::frame(), call_pc, record, std::mem::offset_of!(ShadowRecord, call_pc) as i32);
 }
 
 /// The dense capture slots (values, length) of `callee`'s admission (`emit_entry`), which a
@@ -249,8 +249,8 @@ pub(super) fn emit_admitted_captures(builder: &mut FunctionBuilder<'_>, payload:
     builder.switch_to_block(bound);
     let entry = emit_entry(builder, payload, callee, declined);
     let word = |field: usize| i32::try_from(field).expect("entry field offset fits i32");
-    (builder.ins().load(types::I64, MemFlagsData::trusted(), entry, word(std::mem::offset_of!(CallEntry, capture_values))),
-        builder.ins().load(types::I64, MemFlagsData::trusted(), entry, word(std::mem::offset_of!(CallEntry, capture_len))))
+    (builder.ins().load(types::I64, regions::heap_meta(), entry, word(std::mem::offset_of!(CallEntry, capture_values))),
+        builder.ins().load(types::I64, regions::heap_meta(), entry, word(std::mem::offset_of!(CallEntry, capture_len))))
 }
 
 /// The cache entry admitting `callee` in this epoch, asking `general_frameless_admit` on a
@@ -260,8 +260,8 @@ fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir:
     let slot = builder.ins().band_imm_u(callee, (CACHE_ENTRIES - 1) as i64);
     let offset = builder.ins().imul_imm_u(slot, size_of::<CallEntry>() as i64);
     let cached = builder.ins().iadd(cache, offset);
-    let named = builder.ins().load(types::I64, MemFlagsData::trusted(), cached, std::mem::offset_of!(CallEntry, callee) as i32);
-    let epoch = builder.ins().load(types::I64, MemFlagsData::trusted(), cached, std::mem::offset_of!(CallEntry, epoch) as i32);
+    let named = builder.ins().load(types::I64, regions::heap_meta(), cached, std::mem::offset_of!(CallEntry, callee) as i32);
+    let epoch = builder.ins().load(types::I64, regions::heap_meta(), cached, std::mem::offset_of!(CallEntry, epoch) as i32);
     let current = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, epoch));
     let same = builder.ins().icmp(IntCC::Equal, named, callee);
     let fresh = builder.ins().icmp(IntCC::Equal, epoch, current);
@@ -292,7 +292,7 @@ fn emit_room(builder: &mut FunctionBuilder<'_>, payload: ir::Value, context: ir:
     let pushed = builder.ins().iadd_imm_u(record, size_of::<ShadowRecord>() as i64);
     let records = builder.ins().icmp(IntCC::UnsignedLessThanOrEqual, pushed, last);
     let stack = builder.ins().get_stack_pointer(types::I64);
-    let limit = builder.ins().load(types::I64, MemFlagsData::trusted(), context, CONTEXT_STACK_LIMIT);
+    let limit = builder.ins().load(types::I64, regions::dispatch(), context, CONTEXT_STACK_LIMIT);
     let limit = builder.ins().iadd_imm_u(limit, STACK_MARGIN);
     let native = builder.ins().icmp(IntCC::UnsignedGreaterThan, stack, limit);
     let room = builder.ins().band(fits, windows);
@@ -310,7 +310,7 @@ fn emit_room(builder: &mut FunctionBuilder<'_>, payload: ir::Value, context: ir:
 fn emit_window(builder: &mut FunctionBuilder<'_>, (arguments, top, end): (ir::Value, ir::Value, ir::Value), passed: &[i32]) {
     for (index, offset) in passed.iter().enumerate() {
         let value = builder.ins().load(types::I64, regions::frame(), arguments, *offset);
-        builder.ins().store(MemFlagsData::trusted(), value, top, (index * size_of::<Value>()) as i32);
+        builder.ins().store(regions::frame(), value, top, (index * size_of::<Value>()) as i32);
     }
     let (header, body, filled) = (builder.create_block(), builder.create_block(), builder.create_block());
     let slot = builder.append_block_param(header, types::I64);
@@ -321,7 +321,7 @@ fn emit_window(builder: &mut FunctionBuilder<'_>, (arguments, top, end): (ir::Va
     let more = builder.ins().icmp(IntCC::UnsignedLessThan, slot, end);
     builder.ins().brif(more, body, &[], filled, &[]);
     builder.switch_to_block(body);
-    builder.ins().store(MemFlagsData::trusted(), undefined, slot, 0);
+    builder.ins().store(regions::frame(), undefined, slot, 0);
     let following = builder.ins().iadd_imm_u(slot, size_of::<Value>() as i64);
     builder.ins().jump(header, &[ir::BlockArg::Value(following)]);
     builder.switch_to_block(filled);
@@ -331,7 +331,7 @@ fn emit_window(builder: &mut FunctionBuilder<'_>, (arguments, top, end): (ir::Va
 /// no receiver it was passed (`CallEntry::this`): a strict body's receiver as passed, a
 /// sloppy body's direct object, or its global object for `undefined` or `null`.
 fn emit_this(builder: &mut FunctionBuilder<'_>, entry: ir::Value, receiver: ir::Value, record: ir::Value) -> ir::Value {
-    let mode = builder.ins().load(types::I64, MemFlagsData::trusted(), entry, std::mem::offset_of!(CallEntry, this) as i32);
+    let mode = builder.ins().load(types::I64, regions::heap_meta(), entry, std::mem::offset_of!(CallEntry, this) as i32);
     let family = builder.ins().band_imm_u(receiver, ValueLayout::HEAP_FAMILY_MASK as i64);
     let object = builder.ins().icmp_imm_u(IntCC::Equal, family, ValueLayout::DIRECT_OBJECT_TAG as i64);
     let undefined = builder.ins().icmp_imm_u(IntCC::Equal, receiver, Value::UNDEFINED.to_bits() as i64);
@@ -346,7 +346,7 @@ fn emit_this(builder: &mut FunctionBuilder<'_>, entry: ir::Value, receiver: ir::
     let bound = builder.ins().bor(bound, strict);
     let none = builder.ins().bnot(lexical);
     let bound = builder.ins().band(bound, none);
-    builder.ins().store(MemFlagsData::trusted(), value, record, std::mem::offset_of!(ShadowRecord, this) as i32);
+    builder.ins().store(regions::frame(), value, record, std::mem::offset_of!(ShadowRecord, this) as i32);
     let slot = builder.ins().iadd_imm_u(record, std::mem::offset_of!(ShadowRecord, this) as i64);
     let zero = builder.ins().iconst(types::I64, 0);
     builder.ins().select(bound, slot, zero)
@@ -366,23 +366,23 @@ fn emit_enter(builder: &mut FunctionBuilder<'_>, (payload, context, result): (ir
         std::mem::offset_of!(JsStepDispatch, fixed_this_slot),
     ];
     let tops = [std::mem::offset_of!(JsStepDispatch, native_top), std::mem::offset_of!(JsStepDispatch, shadow_top)];
-    let saved = views.map(|field| builder.ins().load(types::I64, MemFlagsData::trusted(), payload, offset(field)));
+    let saved = views.map(|field| builder.ins().load(types::I64, regions::dispatch(), payload, offset(field)));
     let captures = [std::mem::offset_of!(CallEntry, capture_values), std::mem::offset_of!(CallEntry, capture_len),
         std::mem::offset_of!(CallEntry, capture_stores)]
-        .map(|field| builder.ins().load(types::I64, MemFlagsData::trusted(), entry, offset(field)));
+        .map(|field| builder.ins().load(types::I64, regions::heap_meta(), entry, offset(field)));
     let pushed = builder.ins().iadd_imm_u(record, size_of::<ShadowRecord>() as i64);
     for (field, value) in views.iter().chain(&tops).zip(captures.into_iter().chain([this, next, pushed])) {
-        builder.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
+        builder.ins().store(regions::dispatch(), value, payload, offset(*field));
     }
     let zero = builder.ins().iconst(types::I64, 0);
     builder.ins().store(regions::dispatch(), zero, payload, offset(std::mem::offset_of!(JsStepDispatch, start_pc)));
-    let code = builder.ins().load(types::I64, MemFlagsData::trusted(), entry, offset(std::mem::offset_of!(CallEntry, code)));
+    let code = builder.ins().load(types::I64, regions::heap_meta(), entry, offset(std::mem::offset_of!(CallEntry, code)));
     let signature = native_entry_signature(types::I64, builder.func.signature.call_conv);
     let signature = builder.import_signature(signature);
     let call = builder.ins().call_indirect(signature, code, &[context, zero, zero, top, result]);
     let status = builder.inst_results(call)[0];
     for (field, value) in views.iter().chain(&tops).zip(saved.into_iter().chain([top, record])) {
-        builder.ins().store(MemFlagsData::trusted(), value, payload, offset(*field));
+        builder.ins().store(regions::dispatch(), value, payload, offset(*field));
     }
     status
 }

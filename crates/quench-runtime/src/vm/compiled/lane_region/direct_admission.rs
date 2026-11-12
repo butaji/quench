@@ -2,6 +2,7 @@
 //! keep for its window and recovery.
 
 use super::*;
+use crate::vm::compiled::regions;
 use super::super::entry_cell::EntryCell;
 use super::super::super::dispatch_fast::LaneRecoverySpace;
 
@@ -11,9 +12,9 @@ impl Lowering<'_, '_> {
     /// one to the global object (`lane_receiver_this`); any other receiver takes the helper.
     pub(super) fn direct_receiver(&mut self, instruction: WideInstruction, callee: &DirectCallee) -> (Vec<ir::Value>, ir::Value) {
         let base = self.registers_base;
-        let callee_bits = self.word_load(base, register_offset(instruction.register_b()));
+        let callee_bits = self.word_load(regions::frame(), base, register_offset(instruction.register_b()));
         let same = self.word_cmp_imm(IntCC::Equal, callee_bits, callee.callee.to_bits() as i64);
-        let this = self.word_load(base, register_offset(instruction.register_c()));
+        let this = self.word_load(regions::frame(), base, register_offset(instruction.register_c()));
         let Some(global) = callee.sloppy else { return (vec![same], this) };
         let object = crate::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), this);
         let undefined = self.word_cmp_imm(IntCC::Equal, this, Value::UNDEFINED.to_bits() as i64);
@@ -31,18 +32,18 @@ impl Lowering<'_, '_> {
     pub(super) fn direct_room(&mut self, callee: &DirectCallee, cell: ir::Value) -> (ir::Value, ir::Value, ir::Value, [ir::Value; 2]) {
         let word = std::mem::size_of::<Value>() as i64;
         let payload = self.payload;
-        let load = |this: &mut Self, base: ir::Value, field: usize| this.word_load(base, dispatch_offset(field));
-        let top = load(self, payload, std::mem::offset_of!(JsStepDispatch, native_top));
-        let end = load(self, payload, std::mem::offset_of!(JsStepDispatch, native_end));
+        let load = |this: &mut Self, flags: MemFlagsData, base: ir::Value, field: usize| this.word_load(flags, base, dispatch_offset(field));
+        let top = load(self, regions::dispatch(), payload, std::mem::offset_of!(JsStepDispatch, native_top));
+        let end = load(self, regions::dispatch(), payload, std::mem::offset_of!(JsStepDispatch, native_end));
         let next = self.word_add_imm(top, i64::from(callee.registers) * word);
-        let recovery = load(self, cell, std::mem::offset_of!(EntryCell, recovery));
-        let values = load(self, recovery, std::mem::offset_of!(LaneRecoverySpace, values));
+        let recovery = load(self, regions::entry_cell(), cell, std::mem::offset_of!(EntryCell, recovery));
+        let values = load(self, regions::entry_cell(), recovery, std::mem::offset_of!(LaneRecoverySpace, values));
         let bytes = self.word_mul_imm(values, word);
         let reserved = self.word_add(next, bytes);
         let fits = self.word_cmp(IntCC::UnsignedLessThanOrEqual, reserved, end);
-        let shadow = load(self, payload, std::mem::offset_of!(JsStepDispatch, shadow_top));
-        let shadow_end = load(self, payload, std::mem::offset_of!(JsStepDispatch, shadow_end));
-        let activations = load(self, recovery, std::mem::offset_of!(LaneRecoverySpace, activations));
+        let shadow = load(self, regions::dispatch(), payload, std::mem::offset_of!(JsStepDispatch, shadow_top));
+        let shadow_end = load(self, regions::dispatch(), payload, std::mem::offset_of!(JsStepDispatch, shadow_end));
+        let activations = load(self, regions::entry_cell(), recovery, std::mem::offset_of!(LaneRecoverySpace, activations));
         let frames = self.word_add_imm(activations, 1);
         let frame_bytes = self.word_mul_imm(frames, super::super::FRAME_BYTES as i64);
         let recovered = self.word_add(shadow, frame_bytes);

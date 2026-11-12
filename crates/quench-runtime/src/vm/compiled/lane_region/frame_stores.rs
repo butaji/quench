@@ -4,6 +4,7 @@
 //! addresses it is proved under, bound before the run.
 
 use super::*;
+use crate::vm::compiled::regions;
 use crate::staged::property::Owner;
 use crate::staged::{store, PropertyFrame, Stage};
 
@@ -65,12 +66,12 @@ impl EmitFrame<'_> {
         // Ordinary JS own fields are not shared memory. Observation requires
         // a guest/host effect or poll; the backend must prove their absence
         // before deferring this numeric, barrier-free write to an exit.
-        let store = builder.ins().store(MemFlagsData::trusted(), narrow, slot.address, 0);
+        let store = builder.ins().store(regions::payload(), narrow, slot.address, 0);
         builder.func.private_stores.push(store);
         builder.ins().jump(done, &[]);
         builder.switch_to_block(arena);
         // Verified integers neither widen an arena slot nor create a heap edge.
-        let store = builder.ins().store(MemFlagsData::trusted(), value, slot.address, 0);
+        let store = builder.ins().store(regions::object_slots(), value, slot.address, 0);
         builder.func.private_stores.push(store);
         builder.ins().jump(done, &[]);
         builder.switch_to_block(done);

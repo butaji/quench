@@ -6,6 +6,7 @@
 //! registers'.
 
 use super::*;
+use crate::vm::compiled::regions;
 use super::field_plans::LanePlans;
 use super::frame::calls;
 use crate::staged::ic::Reached;
@@ -252,10 +253,10 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         let result = builder.append_block_param(done, types::I64);
         let (address, _) = emit_js_cached_field_slot(builder, registers_base, self.payload, JsFieldReceiver::Value(object),
             site, true, slow, Some(binding), header, Some(packed));
-        let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+        let value = builder.ins().load(types::I64, regions::object_slots(), address, 0);
         builder.ins().jump(done, &[ir::BlockArg::Value(value)]);
         builder.switch_to_block(packed);
-        let narrow = builder.ins().load(types::I32, MemFlagsData::trusted(), packed_address, 0);
+        let narrow = builder.ins().load(types::I32, regions::payload(), packed_address, 0);
         let table = match self.helpers {
             #[cfg(feature = "aot")]
             LaneHelpers::Bound(_, symbol) => NarrowTable::Linked(symbol),

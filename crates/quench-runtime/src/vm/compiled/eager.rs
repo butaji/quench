@@ -286,7 +286,7 @@ fn invalidated_word(builder: &mut FunctionBuilder<'_>, isa: &dyn cranelift_codeg
     invalidation: usize,
 ) -> ir::Value {
     let address = builder.ins().iconst(isa.pointer_type(), invalidation as i64);
-    builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0)
+    builder.ins().load(types::I64, super::regions::invalidation(), address, 0)
 }
 
 /// The dispatcher's entry: branch on the invalidation word and return the observation

@@ -1055,6 +1055,7 @@ fn emit_js_dense_array_get(
     let value = emit_dense_element_read(builder, payload, base, index, fallback);
     builder.ins().store(MemFlagsData::trusted(), value, arguments, destination_offset);
     builder.ins().jump(next, &[]);
+    builder.set_cold_block(fallback);
     builder.switch_to_block(fallback);
     general_elements::emit_absent(builder, payload, (base, key), (arguments, destination_offset, next));
     emit_js_step_fallback(builder, context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc);
@@ -1347,15 +1348,15 @@ fn emit_js_cached_field_slot(
 /// A word of the running dispatch's payload (`JsStepDispatch`).
 fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
     let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
-    builder.ins().load(types::I64, MemFlagsData::trusted(), payload, offset)
+    builder.ins().load(types::I64, regions::dispatch(), payload, offset)
 }
 
 fn emit_js_property_values(builder: &mut FunctionBuilder<'_>, payload: ir::Value) -> (ir::Value, ir::Value) {
     let header = builder.ins().load(types::I64, invariant(), payload,
         std::mem::offset_of!(JsStepDispatch, property_buffer) as i32);
     let layout = crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT;
-    let values = builder.ins().load(types::I64, MemFlagsData::trusted(), header, layout.base as i32);
-    let length = builder.ins().load(types::I64, MemFlagsData::trusted(), header, layout.length as i32);
+    let values = builder.ins().load(types::I64, regions::heap_meta(), header, layout.base as i32);
+    let length = builder.ins().load(types::I64, regions::heap_meta(), header, layout.length as i32);
     (values, length)
 }
 
@@ -1385,6 +1386,7 @@ impl JsExactFallback {
     }
 
     fn emit(&self, builder: &mut FunctionBuilder<'_>, fallback: ir::Block) {
+        builder.set_cold_block(fallback);
         builder.switch_to_block(fallback);
         emit_js_step_fallback(
             builder,

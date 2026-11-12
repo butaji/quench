@@ -722,8 +722,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     // The word vocabulary of the native-call lowerings (`lane_region/direct_*.rs`).
-    fn word_load(&mut self, base: ir::Value, offset: i32) -> ir::Value { self.ins().load(types::I64, MemFlagsData::trusted(), base, offset) }
-    fn word_store(&mut self, value: ir::Value, base: ir::Value, offset: i32) { self.ins().store(MemFlagsData::trusted(), value, base, offset); }
+    fn word_load(&mut self, flags: MemFlagsData, base: ir::Value, offset: i32) -> ir::Value { self.ins().load(types::I64, flags, base, offset) }
+    fn word_store(&mut self, flags: MemFlagsData, value: ir::Value, base: ir::Value, offset: i32) { self.ins().store(flags, value, base, offset); }
     fn word_const(&mut self, bits: i64) -> ir::Value { self.int_const(types::I64, bits) }
     fn int_const(&mut self, ty: ir::Type, bits: i64) -> ir::Value { self.ins().iconst(ty, bits) }
     fn word_add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().iadd(a, b) }
@@ -1903,7 +1903,7 @@ pub(super) fn lower(
                         (std::mem::offset_of!(InlineRecoveryFrame, registers), u32::from(inlined.base - unit.caller_registers)),
                     ] {
                         let bits = lowering.builder.ins().iconst(types::I32, i64::from(value));
-                        lowering.builder.ins().store(MemFlagsData::trusted(), bits, entries,
+                        lowering.builder.ins().store(regions::dispatch(), bits, entries,
                             i32::try_from(depth * size_of::<InlineRecoveryFrame>() + offset).ok()?);
                     }
                 }

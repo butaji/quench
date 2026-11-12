@@ -2,6 +2,7 @@
 //! it admits, the window and frame it pushes, and where each status goes.
 
 use super::*;
+use crate::vm::compiled::regions;
 use super::super::entry_cell::LANE_BODY_NOT_ENTERED;
 use super::direct_admission::dispatch_offset;
 
@@ -30,7 +31,7 @@ impl Lowering<'_, '_> {
     /// hold, or no room takes `helper`.
     pub(super) fn direct_construct(&mut self, instruction: WideInstruction, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
         let (base, payload) = (self.registers_base, self.payload);
-        let constructor = self.word_load(base, register_offset(instruction.register_b()));
+        let constructor = self.word_load(regions::frame(), base, register_offset(instruction.register_b()));
         let same = self.word_cmp_imm(IntCC::Equal, constructor, callee.callee.to_bits() as i64);
         self.direct_admit(&[same], helper);
         let receiver = self.helper_call(LaneHelper::ConstructReceiver, &[payload, constructor]);
@@ -56,16 +57,16 @@ impl Lowering<'_, '_> {
         let not_entered = self.word_cmp_imm(IntCC::Equal, status, i64::from(LANE_BODY_NOT_ENTERED));
         self.word_brif(not_entered, missed, &[], left, &[]);
         self.builder.switch_to_block(missed);
-        self.word_store(shadow, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
+        self.word_store(regions::dispatch(), shadow, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
         self.word_jump(helper, &[]);
         // A leave inside the callee stops the caller with it: the lane makes the frames'
         // activations and continues in the innermost (`dispatch_fast::lane_body_left`).
         self.builder.switch_to_block(left);
         self.leave_with(status, Some(word));
         self.builder.switch_to_block(back);
-        self.word_store(shadow, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
+        self.word_store(regions::dispatch(), shadow, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
         let value = match receiver { Some(receiver) => receiver, None => word };
-        self.word_store(value, base, register_offset(instruction.result_register()));
+        self.word_store(regions::frame(), value, base, register_offset(instruction.result_register()));
         self.word_jump(completed, &[]);
     }
 
@@ -81,9 +82,9 @@ impl Lowering<'_, '_> {
         };
         for register in 0..callee.registers {
             let value = if register < argc {
-                self.word_load(base, register_offset(window + register))
+                self.word_load(regions::frame(), base, register_offset(window + register))
             } else { undefined };
-            self.word_store(value, top, register_offset(register));
+            self.word_store(regions::frame(), value, top, register_offset(register));
         }
     }
 }
