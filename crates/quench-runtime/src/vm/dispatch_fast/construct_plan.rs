@@ -439,14 +439,13 @@ pub(super) fn watch_construct_plan<H: Host>(vm: &mut Vm<H>, index: usize, renew:
     }
 }
 
-/// `lane_initialize_fields` of `stores`: the receiver, and whether every store was a cached add.
+/// `lane_initialize_fields` of the stores `adds` makes to the receiver it is given, each passed
+/// to its `each` as a cached add runs: the receiver, and whether every store was a cached add.
 pub(super) fn lane_initialize_stores<H: Host>(
     vm: &mut Vm<H>,
-    code: &ResidualProgram,
     callee: Value,
     constructor: Value,
-    stores: &[crate::bytecode::InitializerStore],
-    argument: impl Fn(u16) -> Value,
+    adds: impl FnOnce(&mut Vm<H>, Value, &mut dyn FnMut(&crate::bytecode::InitializerStore, Value)) -> bool,
 ) -> Option<(Value, bool)> {
     let plan_index = construct_plan_index(callee);
     let template = vm.inline_construct_template_by(callee, constructor)?;
@@ -459,7 +458,7 @@ pub(super) fn lane_initialize_stores<H: Host>(
         shape: source_shape,
         ..EMPTY_CONSTRUCT_PLAN
     });
-    let added = lane_add_stores(vm, code, this, stores, argument, |_, _| None, |store, value| {
+    let added = adds(vm, this, &mut |store, value| {
         planned = planned.and_then(|plan| plan.with_field(store, value));
     });
     if !added {

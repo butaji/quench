@@ -608,7 +608,7 @@ mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::lane_loop_field_stores;
 mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters; mod proxy_traps; mod completions; use completions::*;
-use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_initialize_stores, lane_return_constructed, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
+use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_initialize_stores, lane_add_stores, lane_return_constructed, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_body_receiver, lane_context_constructs};
 use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
@@ -13799,7 +13799,7 @@ fn lane_super_forwarded_parent<H: Host>(vm: &Vm<H>, callee: Value) -> Option<(Va
         // An error's stack starts past its constructors' frames, which this construction
         // would not make.
         Some(FunctionRecord { kind: FunctionKind::Native(native), .. })
-            if native.constructs_from_lane() && !native.is_error_constructor() =>
+            if (native.constructs_from_lane() && !native.is_error_constructor()) || *native == Native::Array =>
         {
             Some((parent, forwarded))
         }
@@ -13829,6 +13829,17 @@ fn lane_construct_forwarded_parent<H: Host>(
     let passed = (0..count)
         .map(|index| if index < argc { r.get(i.c + index as u16) } else { Value::UNDEFINED })
         .collect::<smallvec::SmallVec<[Value; GATHERED_INLINE_VALUES]>>();
+    let vm = unsafe { vm(cx) };
+    // An array subclass's `super(...)`: the intrinsic's array with the class's `prototype`,
+    // made in place and named as the general path names it (`capture_constructed_value`).
+    if vm.construct_target.is_none()
+        && matches!(vm.heap.function(parent), Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), .. }))
+        && let Some(array) = vm.array_construction_by(callee, &passed)
+    {
+        vm.capture_constructed_value(array, parent, false);
+        note_allocation(vm);
+        return lane_native_complete(cx, ip, i, Some(array));
+    }
     let value = lane_construct_native(cx, ip, parent, callee, &passed);
     lane_native_complete(cx, ip, i, value)
 }
@@ -16105,7 +16116,10 @@ fn lane_initialize_fields<H: Host>(
     function: u32,
     argument: impl Fn(u16) -> Value,
 ) -> Option<(Value, bool)> {
-    lane_initialize_stores(vm, code, callee, constructor, code.function(function as usize).initializer_stores(&code.constants)?, argument)
+    let stores = code.function(function as usize).initializer_stores(&code.constants)?;
+    lane_initialize_stores(vm, callee, constructor, |vm, this, each| {
+        lane_add_stores(vm, code, this, stores, argument, |_, _| None, each)
+    })
 }
 
 /// The receiver `Vm::inline_construct_receiver` allocates for a constructor that forwards its

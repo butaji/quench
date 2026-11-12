@@ -177,3 +177,41 @@ a(5).then(x => print([s, x.o, x instanceof E, [...g()].map(e => e.o).join()].joi
 "#;
     assert_eq!(printed(source, "chain-returns.js"), ["5000949000 5 true 0,1,2"]);
 }
+
+/// A class extending `Array` constructs its array in the lane with its own `prototype`, a
+/// length that is no array length raises a RangeError, and another `new.target` names the
+/// prototype.
+#[test]
+fn array_subclass_constructions_keep_prototype_and_new_target() {
+    let source = r#"
+class M extends Array { constructor(n) { super(n); } }
+M.prototype.klass = "m";
+log(rep((i) => new M(3)).length, rep((i) => new M(2)).klass, new M(1, 2, 3).length, new M("a")[0], Array.isArray(new M(2)) && new M(2) instanceof M);
+try { rep((i) => new M(-1)); } catch (e) { log(e.name); }
+function F() {} F.prototype = Object.create(Array.prototype); F.prototype.tag = "F";
+log(Reflect.construct(M, [3], F).tag, Reflect.construct(M, [3], F) instanceof M);
+print(out.join(" | "));
+"#;
+    assert_eq!(printed(source, "array-subclass.js"), ["3 m 1 a true | RangeError | F false"]);
+}
+
+/// A chain whose classes belong to other programs than the one constructing builds the same
+/// objects, before and after a class in it is reparented.
+#[test]
+fn chain_constructions_cross_programs() {
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let sources = [
+        "globalThis.P = class P { constructor(x) { this.x = x; } }; globalThis.Q = class Q extends P { constructor(x, y) { super(x); this.y = y; } };",
+        "globalThis.R = class R { constructor(a) { this.a = a; this.b = a + 1; } };",
+        "function go() { let s = 0; for (let i = 0; i < 3000; i++) s += new Q(i, 2).y + new R(i).b + new P(i).x; return s + JSON.stringify(new Q(1, 2)) + Object.keys(new Q(1, 2)); } print(go()); Object.setPrototypeOf(Q, R); print(go());",
+    ];
+    for (index, source) in sources.iter().enumerate() {
+        let program = Engine::specialize(source, &format!("cross-{index}.js")).unwrap();
+        vm.execute(&program).unwrap();
+    }
+    assert_eq!(
+        output.take(),
+        ["9006000{\"x\":1,\"y\":2}x,y", "9006000{\"a\":1,\"b\":2,\"y\":2}a,b,y"].map(String::from)
+    );
+}

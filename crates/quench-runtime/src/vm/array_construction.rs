@@ -59,8 +59,15 @@ impl<H: Host> Vm<H> {
         if !matches!(self.heap.function(callee), Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), .. })) {
             return None;
         }
+        self.array_construction_by(callee, args)
+    }
+
+    /// `construct_array_native`'s array for `new_target` whose own `prototype` data names an
+    /// object (a class extending `Array` passes itself), which runs no guest code; `None`
+    /// where the general path must read it or throw.
+    pub(in crate::vm) fn array_construction_by(&mut self, new_target: Value, args: &[Value]) -> Option<Value> {
         let prototype_atom = self.prototype_atom();
-        let prototype = self.own_function_prototype_data(callee, prototype_atom)
+        let prototype = self.own_function_prototype_data(new_target, prototype_atom)
             .filter(|prototype| self.object_data(*prototype).is_some())?;
         match args {
             [length] if let Some(length) = length.as_number() => self.array_of_length(prototype, length),
