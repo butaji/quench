@@ -310,6 +310,19 @@ mod tests {
         assert_eq!(probe.helper, Some(1));
     }
 
+    /// A forwarding call and a returning one differ from a call in what their tier does with the
+    /// result, not in the rows: the same window is entered and the same value completes.
+    #[test]
+    fn a_forwarding_or_returning_call_runs_the_rows_of_a_call() {
+        for form in [Invocation { forwards: true, ..site(Some(1)) }, Invocation { returns: true, ..site(Some(1)) }] {
+            let mut probe = Probe::new(plan(CalleeKind::Script, None));
+            probe.file[..5].copy_from_slice(&[IDENTITY, Value::integer(1).to_bits(), 10, 20, 0]);
+            assert_eq!(call(&mut probe, form), Some(Value::integer(1).to_bits()), "{form:?}");
+            assert_eq!(probe.entered[..2], [10, 20]);
+            assert_eq!(probe.settled, Some(Value::integer(1).to_bits()));
+        }
+    }
+
     #[test]
     fn a_return_completes_with_the_register_value() {
         let mut probe = Probe::new(CallEntry::Helper);
