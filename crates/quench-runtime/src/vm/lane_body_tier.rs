@@ -315,7 +315,11 @@ impl LaneView {
                 self.history.set(LaneBodyHistory { short: true, ..self.history.get() });
                 LaneBody::Declined
             }
-            super::super::compiled::LaneBodyOutcome::Declined => LaneBody::Declined,
+            super::super::compiled::LaneBodyOutcome::Declined => {
+                if self.history.get().lifetimes > 0 { super::dispatch_fast::lane_body_stats::decline("dropped bodies"); }
+                self.body_stats.declined.set(super::dispatch_fast::lane_body_stats::take_decline());
+                LaneBody::Declined
+            }
         }
     }
 
@@ -365,6 +369,7 @@ pub(super) fn site_targets<'a, H: super::Host>(vm: &'a super::Vm<H>, view: &Lane
 pub(super) fn start_gate<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, body: Option<&crate::bytecode::Function>) -> Option<super::super::compiled::LaneBodyOutcome> {
     use super::super::compiled::LaneBodyOutcome;
     if view.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some() && site.enters()) {
+        super::dispatch_fast::lane_body_stats::decline("start-gate: closed loop left to its admitted region");
         return Some(LaneBodyOutcome::Declined);
     }
     let body = body?;

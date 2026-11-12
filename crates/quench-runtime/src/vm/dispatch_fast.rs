@@ -880,6 +880,18 @@ impl LaneView {
         }
     }
 
+    /// Its body's state, the entries it counted, and whether the tier claimed its prologue and
+    /// is still warming, for the diagnostics report of a view that never compiled
+    /// (`QUENCH_LANE_STATE`).
+    pub(super) fn lane_body_detail(&self) -> (&'static str, Option<u16>, bool, bool) {
+        // SAFETY: as `lane_body`.
+        let entries = match unsafe { &*self.tier_lane.get() } {
+            LaneBody::Unspecialized { entries, .. } => Some(*entries),
+            _ => None,
+        };
+        (self.lane_body_state(), entries, self.start.get() == self.prologue.get().cast_const(), self.warming())
+    }
+
     /// The specialized frameless body, if there is one.
     fn lane_body(&self) -> Option<std::rc::Rc<super::compiled::LaneMethod>> {
         // SAFETY: this view is read on its VM's thread. Clone the code owner before
@@ -15761,7 +15773,7 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     };
     // SAFETY: the capacity check above leaves room for the activation.
     unsafe { stack.push_activation(activation) };
-    stack.forwarders.extend(skipped);
+    if let Some(skipped) = skipped { stack.forwarders.push(skipped); }
     // SAFETY: the program store keeps a derived view alive with its program.
     let base = unsafe { (*target.view).records() };
     unsafe {
