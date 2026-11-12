@@ -22,7 +22,7 @@ pub(in crate::vm) struct LaneBodyStats {
     /// Why its body declined (`decline`).
     pub(in crate::vm) declined: std::cell::Cell<&'static str>,
     /// The audit's verdict (`LaneView::audit_verdict`): `None` while it runs.
-    pub(in crate::vm) audit: std::cell::Cell<Option<super::super::lane_body_tier::Verdict>>,
+    pub(in crate::vm) audit: std::cell::Cell<Option<super::lane_body_tier::Verdict>>,
 }
 
 impl LaneBodyStats {
