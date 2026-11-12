@@ -34,6 +34,12 @@ pub(in crate::vm) struct Loops {
     /// Compilations a site may make: each after the first widens a value the last one held as
     /// an `i32`, and a region has few such values.
     pub(in crate::vm) max_compilations: u32,
+    /// The work, in interpreted-instruction units (`LaneBody::compile_cost_per_ir`), a loop
+    /// region's entry costs a call of its function: about 140 ns of entry and exit plumbing per
+    /// entry (V8-v7 Crypto's `am3`, 4.3M entries) at the 50 ns that constant counts an interpreted
+    /// instruction at. A function whose region enters weighs its body compile against that saving
+    /// alone (`pays_compile`): the region already runs the loop.
+    pub(in crate::vm) region_entry_work: u64,
 }
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
@@ -175,7 +181,7 @@ const FLOOR: Tiers = Tiers {
 pub(in crate::vm) const PERCENT: u64 = 100;
 
 const MEASURED: Tiers = Tiers {
-    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8 },
+    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8, region_entry_work: 3 },
     lane_body: LaneBody {
         warmup_entries: 400,
         reoptimize_share: 1,
