@@ -198,6 +198,18 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// `iterator_close` of an iterator whose `return` is absent along its chain, which ends
+    /// the close with `undefined` before any call (the shapes decide it, as in
+    /// `iterator_close`); `None` for any other, which may call guest code or throw.
+    pub(in crate::vm) fn iterator_close_in_place(&self, iterator: Value) -> Option<Value> {
+        let mut current = iterator;
+        while let Some(IteratorRecord { source, kind: IteratorKind::Protocol | IteratorKind::AsyncFromSync, .. }) = self.heap.iterator(current) {
+            current = *source;
+        }
+        let key = PropertyKey::string(self.runtime_atoms.iterator_return);
+        self.iterator_lacks_property(current, key).then_some(Value::UNDEFINED)
+    }
+
     pub(super) fn iterator_close(
         &mut self,
         p: &ResidualProgram,

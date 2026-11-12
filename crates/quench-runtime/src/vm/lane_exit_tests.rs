@@ -58,3 +58,38 @@ print(out.join(" | "));
         ["2,10,b,a,-1 b,z,a a,d a,b | 0,1 0,1    x0y0 | a,b | a,polluted"]
     );
 }
+
+/// Natives the lane runs in place (`Map` iterators, `toString` of strings and functions,
+/// legacy `RegExp` statics, an iterator's close) give Node's values and throw where it throws.
+#[test]
+fn in_place_natives_keep_their_results_and_errors() {
+    let source = r#"
+const m = new Map([[1, "a"], [2, "b"]]);
+log(rep(() => [...m.values()].join()), rep(() => [...m.keys()].join()), rep(() => [...m.entries()].join(";")));
+class MM extends Map {}
+log(rep(() => [...new MM([[3, "c"]]).values()].join()));
+try { Map.prototype.values.call({}); } catch (e) { log(e.constructor.name); }
+try { Map.prototype.values.call(new Set()); } catch (e) { log(e.constructor.name); }
+log(rep(() => "abc".toString() + "x".valueOf()), rep(() => String.prototype.toString.call(new String("w"))));
+try { String.prototype.toString.call(5); } catch (e) { log(e.constructor.name); }
+function foo(a, b) { return a + b; }
+log(rep(() => foo.toString(), 50), rep(() => Math.max.toString(), 50), rep(() => foo.bind(null).toString(), 50));
+try { Function.prototype.toString.call({}); } catch (e) { log(e.constructor.name); }
+/(\d+)-(\w+)/.exec("x 12-ab y");
+log(rep(() => RegExp.$1 + RegExp.$2 + RegExp.lastMatch + RegExp["$`"] + RegExp["$'"], 50), RegExp.lastParen);
+function* gen() { try { yield 1; yield 2; } finally { log("closed"); } }
+for (const x of gen()) { break; }
+for (const x of [1, 2, 3]) { break; }
+const it = { [Symbol.iterator]() { return { next() { return { value: 1, done: false }; }, return() { log("ret"); return {}; } }; } };
+for (const x of it) break;
+const it2 = { [Symbol.iterator]() { return { next() { return { value: 1, done: false }; } }; } };
+for (const x of it2) break;
+const it3 = { [Symbol.iterator]() { return { next() { return { value: 1, done: false }; }, return() { return 5; } }; } };
+try { for (const x of it3) break; } catch (e) { log(e.constructor.name); }
+print(out.join(" | "));
+"#;
+    assert_eq!(
+        printed(source, "in-place-natives.js"),
+        ["a,b 1,2 1,a;2,b | c | TypeError | TypeError | abcx w | TypeError | function foo(a, b) { return a + b; } function max() { [native code] } function () { [native code] } | TypeError | 12ab12-abx  y ab | closed | ret | TypeError"]
+    );
+}
