@@ -15,7 +15,22 @@ var early = guarded();
 early.next();
 var returned = early.return(9);
 var delegated = [...outer()];
-var digest = [sum, steps.join(), returned.value, returned.done, delegated.join(), log.join('|')].join(';');
+function* resumable() { var got = []; try { got.push(yield 'a'); got.push(yield 'b'); } finally { got.push('cleanup'); log.push(got.join()); } return got.length; }
+function* relay() { try { yield* resumable(); } catch (e) { log.push('relay ' + e); return 'relayed'; } }
+var thrownAtStart = resumable();
+var startError = 'none';
+try { thrownAtStart.throw('early'); } catch (e) { startError = e; }
+var running = resumable();
+running.next();
+var viaReturn = [running.return('x'), running.next()].map(function (r) { return r.value + ':' + r.done; }).join();
+var relayed = relay();
+relayed.next();
+var viaThrow = [relayed.throw('t'), relayed.next()].map(function (r) { return r.value + ':' + r.done; }).join();
+var selfResume = (function* me() { try { holder.next(); } catch (e) { yield e instanceof TypeError; } })();
+var holder = selfResume;
+var reentrant = selfResume.next().value;
+var digest = [sum, steps.join(), returned.value, returned.done, delegated.join(), log.join('|'),
+    startError, viaReturn, viaThrow, reentrant].join(';');
 async function leaf(x) { await null; return x + 1; }
 async function chain(n) {
     var total = 0;
@@ -23,5 +38,16 @@ async function chain(n) {
     try { await Promise.reject(new Error('r')); } catch (e) { total += e.message.length; }
     return total;
 }
-chain(50).then(function (total) { throw digest + ';' + total; });
+async function failing(n) { await null; if (n % 2) throw new Error('odd ' + n); return n; }
+async function rejections(n) {
+    var seen = [];
+    for (var i = 0; i < n; i++) {
+        try { seen.push(await failing(i)); } catch (e) { seen.push(e.message); } finally { await null; }
+    }
+    return seen.join();
+}
+async function* ticks(n) { for (var i = 0; i < n; i++) yield await leaf(i); }
+async function collect() { var out = []; for await (var t of ticks(4)) out.push(t); return out.join(); }
+Promise.all([chain(50), rejections(6), collect(), failing(3).catch(function (e) { return e.message; })])
+    .then(function (parts) { throw digest + ';' + parts.join('/'); });
 if (typeof Promise === 'undefined') throw digest;
