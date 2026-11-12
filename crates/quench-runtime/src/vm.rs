@@ -263,10 +263,9 @@ pub use value_serializer::{
 };
 pub(crate) use value_serializer::{ReadHooks, WriteHooks};
 use wtf16::JsString;
-#[cfg(test)]
-mod tests;
-#[cfg(test)]
-mod closure_retention_tests;
+#[cfg(test)] mod tests;
+#[cfg(test)] mod closure_retention_tests;
+#[cfg(test)] mod storage_tests;
 
 /// A native's callback prepared for a loop of calls (`Vm::with_prepared_callback`): the
 /// callee and receiver every call passes, and how its calls run (`CallbackProof`).

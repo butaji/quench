@@ -470,6 +470,16 @@ impl<H: Host> Vm<H> {
         Ok(object)
     }
 
+    /// Whether every Set on `array` is the plain element store (see `fill_plain_array_elements`).
+    fn has_plain_elements(&self, array: Value) -> bool {
+        self.object_data(array).is_some_and(|object| {
+            object.is_extensible()
+                && !object.is_frozen()
+                && !object.has_indexed_descriptors()
+                && !object.is_arguments_object()
+        }) && self.prototypes_hold_no_index(array)
+    }
+
     /// Stores `value` at every index of `indices`, all below the array's length, where each
     /// Set is the plain element store: an extensible, unfrozen array whose elements carry
     /// default attributes and whose prototypes hold no index (`prototypes_hold_no_index`), so
@@ -484,13 +494,7 @@ impl<H: Host> Vm<H> {
         let Some(dense) = self.heap.array(array).map(|array| array.elements().len()) else {
             return false;
         };
-        let plain = self.object_data(array).is_some_and(|object| {
-            object.is_extensible()
-                && !object.is_frozen()
-                && !object.has_indexed_descriptors()
-                && !object.is_arguments_object()
-        }) && self.prototypes_hold_no_index(array);
-        if !plain {
+        if !self.has_plain_elements(array) {
             return false;
         }
         let in_dense = indices.start..indices.end.min(dense);
@@ -500,11 +504,7 @@ impl<H: Host> Vm<H> {
             };
             super::index::mutable_array_elements(array_object.elements_mut()).fill(in_dense, value);
         }
-        // A fill of everything from the dense length to the end replaces the whole sparse tail.
-        let whole_tail = indices.start <= dense
-            && indices.end == self.heap.sparse_length(array).unwrap_or(dense)
-            && indices.end > dense;
-        if whole_tail {
+        if self.heap.fills_sparse_tail(array, &indices) {
             self.heap.fill_array_tail(array, value);
             return true;
         }

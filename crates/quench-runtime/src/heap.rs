@@ -9,6 +9,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 mod access;
 mod array_elements;
+mod dense_growth;
+pub(crate) use dense_growth::dense_write_gap_limit;
 mod store_gate;
 pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod array_proofs;
@@ -237,14 +239,6 @@ const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_
 // A sparse element is an index and a value in a hash table, at least this many dense slots;
 // a sparse array whose elements fill as many slots as its length turns dense.
 const SPARSE_ENTRY_SLOTS: usize = size_of::<(usize, Value)>() / size_of::<Value>();
-
-/// Holes a write may leave below `index` in dense storage. Within the dense hole budget a
-/// gap this wide is bounded memory; past it a hole must cost no more than a sparse entry,
-/// else a strided write pattern (`a[i * 1000]`) would take dense storage of its whole length.
-pub(crate) fn dense_write_gap_limit(index: usize) -> usize {
-    const GAP_WITHIN_BUDGET: usize = 1024;
-    if index < MAX_DENSE_ARRAY_HOLE_LENGTH { GAP_WITHIN_BUDGET } else { SPARSE_ENTRY_SLOTS - 1 }
-}
 
 /// Whether `present` elements of an array of `length` fill as many dense slots as its
 /// length, so dense storage takes no more words than sparse entries would.
@@ -3591,22 +3585,6 @@ impl Heap {
         }
         elements.length = length;
     }
-    /// Makes every index from the dense length up to the array's length hold `value`, as a
-    /// run of stores would, in dense storage taking the whole length at once: the sparse
-    /// elements all lie in the range being overwritten, so none survive.
-    pub(crate) fn fill_array_tail(&mut self, array: Value, value: Value) {
-        self.note_prototype_elements(array);
-        self.write_barrier(array);
-        let length = self.sparse_length(array).or_else(|| self.array_elements(array).map(|dense| dense.len()));
-        if let Some(arrays) = &mut self.sparse_arrays {
-            arrays.remove(&array);
-            if arrays.is_empty() {
-                self.sparse_arrays = None;
-            }
-        }
-        self.grow_array_elements(array, |elements| elements.resize(length.unwrap_or(0), value));
-    }
-
     fn materialize_sparse_array(&mut self, array: Value, length: usize) {
         let sparse = self
             .sparse_arrays
