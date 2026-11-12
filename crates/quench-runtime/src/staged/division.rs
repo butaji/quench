@@ -79,6 +79,7 @@ fn number(operation: &NumberOperation) -> OperandTimes {
             ("decrement", BYTECODE), ("overflow", BYTECODE)]),
         Unary { source, .. } => SmallVec::from_slice(&[("destination", REGISTER),
             ("source", operand(*source)), ("operation", BYTECODE), ("domain", BYTECODE)]),
+        BitwiseNot { source, .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", operand(*source))]),
         ToNumeric { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER)]),
     }
 }

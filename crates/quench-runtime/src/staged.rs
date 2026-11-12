@@ -21,6 +21,7 @@ mod concrete;
 pub(crate) mod numeric;
 mod heap;
 mod global;
+#[cfg_attr(not(test), allow(dead_code))] // the division is data the specializers will ask; today only its tests do
 pub(crate) mod division;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use concrete::Concrete;

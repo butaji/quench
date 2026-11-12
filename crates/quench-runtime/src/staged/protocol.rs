@@ -16,6 +16,7 @@
 //! construction through an initializer is `construct`.
 
 use super::call::admit_room;
+use super::region::Region;
 use super::value::{is_direct_array, is_direct_function, is_direct_object};
 use super::{Stage, Step};
 use crate::bytecode::{ConstructArguments, ImmediateLayout, Op, Register, WideInstruction};
@@ -166,11 +167,11 @@ pub(crate) fn fill_window<S: Stage>(stage: &mut S, top: S::Word, source: S::Word
     let undefined = stage.constant(Value::UNDEFINED.to_bits());
     for register in 0..fill.registers {
         let value = if register < fill.argc {
-            stage.load_u64(source, window_offset(fill.first + register))
+            stage.load_u64(Region::Frame.mutable(), source, window_offset(fill.first + register))
         } else {
             undefined
         };
-        stage.store_u64(top, window_offset(register), value);
+        stage.store_u64(Region::Frame.mutable(), top, window_offset(register), value);
     }
 }
 

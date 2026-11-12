@@ -133,10 +133,6 @@ impl LaneView {
     /// handler entry notes (`lane_materialize_frames`): one add to the cell's word, on the leave.
     pub(super) fn note_native_leave(&self) { self.entry.note_leave(); }
 
-    /// The body's completions and leaves since it specialized (completions of natively called
-    /// runs are credited in bulk, so a bound): the one reader the tier model uses.
-    pub(in crate::vm) fn body_completion_evidence(&self) -> (u64, u64) { self.entry.evidence() }
-
     /// Replaces the specialized `body` with `next`: its entry's handler runs no more, its entry
     /// cell takes the stub, and its code waits for the callers that still name it.
     fn retire_body(&self, body: &mut LaneBody, next: LaneBody) {

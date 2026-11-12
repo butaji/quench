@@ -734,9 +734,6 @@ impl<'a, 'f> Lowering<'a, 'f> {
     fn word_add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().iadd(a, b) }
     fn word_add_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().iadd_imm_u(a, imm) }
     fn word_mul_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().imul_imm_u(a, imm) }
-    fn word_or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().bor(a, b) }
-    fn word_select(&mut self, test: ir::Value, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().select(test, a, b) }
-    fn word_cmp(&mut self, cc: IntCC, a: ir::Value, b: ir::Value) -> ir::Value { self.ins().icmp(cc, a, b) }
     fn word_cmp_imm(&mut self, cc: IntCC, a: ir::Value, imm: i64) -> ir::Value { self.ins().icmp_imm_u(cc, a, imm) }
     fn word_brif(&mut self, test: ir::Value, then: ir::Block, then_args: &[ir::BlockArg], otherwise: ir::Block, otherwise_args: &[ir::BlockArg]) {
         self.ins().brif(test, then, then_args, otherwise, otherwise_args);

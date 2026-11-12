@@ -12,6 +12,7 @@
 //! from the first.
 
 use super::*;
+use quench_bjit::HOLES;
 use quench_bjit::numeric::supernodes::{self, Key, Node, Operand, Shape, Supernode};
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
