@@ -154,6 +154,11 @@ impl ExecutionInterrupt {
         self.state.attention.store(true, Ordering::SeqCst);
     }
 
+    /// Whether a tier-up request is raised and not yet cleared by a header dispatch.
+    pub(crate) fn tier_up_requested(&self) -> bool {
+        self.state.tier_up.load(Ordering::Acquire)
+    }
+
     /// Clears a raised tier-up request at a loop header's dispatch.
     pub(crate) fn clear_tier_up(&self) {
         if self.state.tier_up.swap(false, Ordering::SeqCst) {
@@ -192,9 +197,14 @@ impl ExecutionInterrupt {
         }
     }
     /// The byte compiled code polls at its backward jumps: nonzero for a termination or a
-    /// tier-up request, which the slow path tells apart (`is_termination_requested`).
-    pub(crate) fn atomic_flag(&self) -> &AtomicBool {
+    /// tier-up request, which the slow path tells apart.
+    pub(crate) fn attention_flag(&self) -> &AtomicBool {
         &self.state.attention
+    }
+
+    /// The termination byte, for readers that decline only on termination.
+    pub(crate) fn atomic_flag(&self) -> &AtomicBool {
+        &self.state.requested
     }
 
     /// The address of the poll page compiled code reads at its interrupt checks, and how many

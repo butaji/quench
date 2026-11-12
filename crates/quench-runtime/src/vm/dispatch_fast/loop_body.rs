@@ -114,12 +114,28 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
     let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc),
         &|callee| lane_callee_captures(cx, callee), &direct, work, Some(site.header));
     *body = LoopBody::after(outcome, stuck, attempts);
-    if matches!(*body, LoopBody::Ready { .. }) {
-        // The running regions leave at their next backward jump, and the header dispatch
-        // (`lane_loop_enter_body`) takes the body.
-        vm.execution_interrupt.request_tier_up();
-        if site.diagnostics { site.tier_ups.set(site.tier_ups.get().saturating_add(1)); }
+    if matches!(*body, LoopBody::Ready { .. }) { raise_tier_up(vm, site); }
+}
+
+/// The running regions leave at their next backward jump (`left_for_tier_up`), and the header
+/// dispatch (`lane_loop_enter_body`) takes the body that published.
+fn raise_tier_up<H: Host>(vm: &Vm<H>, site: &LoopSite) {
+    vm.execution_interrupt.request_tier_up();
+    if site.diagnostics { site.tier_ups.set(site.tier_ups.get().saturating_add(1)); }
+}
+
+/// Whether a region's exit at `pc` is its poll's tier-up leave: at the loop's unconditional
+/// backward jump (no guard of it can fail) while a tier-up is requested and no termination,
+/// which the jump's own safepoint ends. The lane resumes at the header, which dispatches.
+pub(super) fn left_for_tier_up<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32) -> bool {
+    let vm = unsafe { vm(cx) };
+    if pc != site.backedge || !vm.execution_interrupt.tier_up_requested() || vm.execution_interrupt.is_termination_requested() {
+        return false;
     }
+    vm.programs.get(vm.active_program).as_deref().is_some_and(|program| {
+        let body = program.function(site.function() as usize);
+        body.code.get(pc as usize).is_some_and(|packed| matches!(decoded_instruction(body, *packed).op().class(), Class::Jump))
+    })
 }
 
 /// The header dispatch rule, at a loop's backward jump and at its held header: a `Ready` body
