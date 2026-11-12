@@ -1,8 +1,7 @@
 //! Calls of a Wasm function as data, and the check of an indirect call's target written once
 //! over `WasmTable`: the element exists, it is initialized, its signature is the expected one,
 //! in that order, from the signature id the element carries. The interpreter runs it on
-//! `ConcreteTable`; the Wasm tier keeps the index in native code and leaves the check to the
-//! interpreter's callout, the same rule.
+//! `ConcreteTable`; the Wasm tier emits it over the table's mirror (`Emitter`).
 
 use super::wasm::{WasmStage, Width};
 use crate::WasmTrap;
@@ -45,14 +44,15 @@ impl Call {
 }
 
 /// A table of function references and the canonical signature of each function
-/// (`wasm::CanonicalSignature`), which an element carries beside its reference.
+/// (`wasm::CanonicalSignature`), which an element carries beside its reference (`TableTarget`).
 pub(crate) trait WasmTable: WasmStage {
     /// The flag that `extent` elements from `index` pass the table's end: the shared range check
     /// (`wasm::memory::checked_range`) of tables, memories and bulk operations.
     fn table_range_exceeds(&mut self, index: Self::Word, extent: Self::Word) -> Self::Word;
     /// The signature word of the element at `index`, which the rule has checked.
     fn element_signature(&mut self, index: Self::Word) -> Self::Word;
-    /// The reference at `index`, which the rule has checked.
+    /// The reference at `index`, which the rule has checked: a stage may answer any word the call
+    /// that follows resolves (the tier's is the element's row).
     fn table_element(&mut self, index: Self::Word) -> Self::Word;
     /// The flag that `reference`, whose element holds the signature word `signature`, satisfies
     /// the `expected` signature word: equal words do, and any other is the machine's to relate

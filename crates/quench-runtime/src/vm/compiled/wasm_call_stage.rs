@@ -1,7 +1,7 @@
 //! The Wasm tier's calls: the lowering of each `Call` step (a direct call linked at placement,
 //! a callout, an indirect call through the VM boundary) and the analysis of its callee and
-//! arguments. An indirect target's checks (`staged::wasm_call::indirect_target`) run in the
-//! interpreter's callout, so the tier keeps the table index in native code.
+//! arguments. An indirect target's checks (`staged::wasm_call::indirect_target`) and its call
+//! are emitted over the table's mirror (`wasm_table_stage`).
 
 use super::wasm_instance_stage::value_kind;
 use super::{
@@ -141,6 +141,7 @@ impl<H: Host> Analysis<'_, H> {
         self.binds_table32(table).then_some(())?;
         (value_kind(state.get(instruction.c(), registers)?)? == Kind::I32).then_some(())?;
         self.type_signature(instruction.imm())?;
+        self.type_canonical(instruction.imm())?;
         let reference = Slot::IndirectReference {
             signature: instruction.imm(),
             table,

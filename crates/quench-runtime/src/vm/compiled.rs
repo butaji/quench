@@ -46,7 +46,6 @@ use cranelift_codegen::ir::{
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_codegen::entity::{SecondaryMap, packed_option::PackedOption};
 use std::ops::{Deref, DerefMut};
-use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
@@ -94,6 +93,7 @@ mod wasm_global_tests;
 mod wasm_memory_stage;
 mod wasm_flow_stage;
 mod wasm_call_stage;
+mod wasm_table_stage;
 mod wasm_simd_stage;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(feature = "aot")]
@@ -4048,13 +4048,16 @@ impl AnalysisState {
 
 /// Traps compiled code can raise, by status (index + 1); status 0 is a
 /// normal return.
-const TRAPS: [crate::WasmTrap; 6] = [
+const TRAPS: [crate::WasmTrap; 9] = [
     crate::WasmTrap::Unreachable,
     crate::WasmTrap::OutOfBoundsMemory,
     crate::WasmTrap::IntegerDivideByZero,
     crate::WasmTrap::IntegerOverflow,
     crate::WasmTrap::CallStackExhausted,
     crate::WasmTrap::InvalidConversionToInteger,
+    crate::WasmTrap::UndefinedElement,
+    crate::WasmTrap::UninitializedElement,
+    crate::WasmTrap::IndirectCallTypeMismatch,
 ];
 
 const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
@@ -4247,6 +4250,9 @@ pub(super) struct CallContext {
     /// address of the global's value in this instance. Heap cells never move,
     /// so the addresses outlive callouts.
     globals: *const *mut Value,
+    /// Per table an indirect call reads (`CompiledProgram::tables`), the words that publish its
+    /// mirror (`TableWords`): the table's rows are read in place, its growth rewrites the words.
+    table_words: *const *const crate::heap::TableWords,
     /// `import_callout` for the VM's host type.
     callout: usize,
     /// VM helper for indirect calls, including table checks and invocation.
@@ -4277,11 +4283,6 @@ pub(super) struct CallContext {
     /// terminated; empty when compiled code checks the flag instead.
     poll_start: usize,
     poll_end: usize,
-    /// VM-local epoch advanced by table writes and collections. Fast indirect
-    /// calls are valid only while their artifact-local cached epoch matches.
-    reference_epoch: *const u64,
-    /// Stable per-site cache storage owned by the current compiled artifact.
-    reference_fast_caches: *mut FastReferenceCache,
     /// Diagnostic-only count of direct Emscripten same-memory copies.
     emscripten_memcpy_fast_path_hits: *mut u64,
     /// Per-import attribution, present only during opt-in diagnostic runs.
@@ -4315,6 +4316,7 @@ impl CallContext {
             guard_start: 0,
             guard_end: 0,
             globals: std::ptr::null(),
+            table_words: std::ptr::null(),
             callout: 0,
             call_reference: 0,
             compiled: std::ptr::null(),
@@ -4330,8 +4332,6 @@ impl CallContext {
             reference_call_site_count: 0,
             poll_start: 0,
             poll_end: 0,
-            reference_epoch: std::ptr::null(),
-            reference_fast_caches: std::ptr::null_mut(),
             emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
             import_callout_counts: std::ptr::null(),
             import_callout_count: 0,
@@ -4369,6 +4369,7 @@ impl CallContext {
             guard_start: 0,
             guard_end: 0,
             globals: std::ptr::null(),
+            table_words: std::ptr::null(),
             callout: 0,
             call_reference: 0,
             compiled: std::ptr::null(),
@@ -4384,8 +4385,6 @@ impl CallContext {
             reference_call_site_count: 0,
             poll_start: poll.map_or(0, |(start, _)| start),
             poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
-            reference_epoch: std::ptr::null(),
-            reference_fast_caches: std::ptr::null_mut(),
             emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
             import_callout_counts: std::ptr::null(),
             import_callout_count: 0,
@@ -4417,6 +4416,7 @@ impl CallContext {
             guard_start: self.guard_start,
             guard_end: self.guard_end,
             globals: self.globals,
+            table_words: self.table_words,
             callout: self.callout,
             call_reference: self.call_reference,
             compiled: self.compiled,
@@ -4432,8 +4432,6 @@ impl CallContext {
             reference_call_site_count: self.reference_call_site_count,
             poll_start: self.poll_start,
             poll_end: self.poll_end,
-            reference_epoch: self.reference_epoch,
-            reference_fast_caches: self.reference_fast_caches,
             emscripten_memcpy_fast_path_hits: self.emscripten_memcpy_fast_path_hits,
             import_callout_counts: self.import_callout_counts,
             import_callout_count: self.import_callout_count,
@@ -4457,15 +4455,13 @@ const CONTEXT_TABLE: i32 = std::mem::offset_of!(CallContext, table) as i32;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 const CONTEXT_ENTRY_STACK: u8 = std::mem::offset_of!(CallContext, entry_stack) as u8;
 const CONTEXT_GLOBALS: i32 = std::mem::offset_of!(CallContext, globals) as i32;
+const CONTEXT_TABLE_WORDS: i32 = std::mem::offset_of!(CallContext, table_words) as i32;
 const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, callout) as i32;
 const CONTEXT_CALL_REFERENCE: i32 = std::mem::offset_of!(CallContext, call_reference) as i32;
 const CONTEXT_MEMORY_LENGTH: i32 = std::mem::offset_of!(CallContext, memory_length) as i32;
 const CONTEXT_CALL_REFERENCE_DIAGNOSTIC: i32 =
     std::mem::offset_of!(CallContext, call_reference_diagnostic) as i32;
-const CONTEXT_REFERENCE_EPOCH: i32 = std::mem::offset_of!(CallContext, reference_epoch) as i32;
 const CONTEXT_ENV: i32 = std::mem::offset_of!(CallContext, env) as i32;
-const CONTEXT_REFERENCE_FAST_CACHES: i32 =
-    std::mem::offset_of!(CallContext, reference_fast_caches) as i32;
 const CONTEXT_JS_CONSTANTS: i32 = std::mem::offset_of!(CallContext, js_constants) as i32;
 const CONTEXT_JS_CONSTANT_COUNT: i32 =
     std::mem::offset_of!(CallContext, js_constant_count) as i32;
@@ -4473,66 +4469,9 @@ const CONTEXT_JS_CONSTANT_COUNT: i32 =
 /// The callout's signature: (context, function index, arguments, result) ->
 /// status; arguments and result are Wasm bits, one word each.
 type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
-type ReferenceCallout = unsafe extern "C" fn(
-    *mut CallContext,
-    u64,
-    u64,
-    u64,
-    u64,
-    *const u64,
-    *mut u64,
-    *mut FastReferenceCache,
-) -> i64;
+type ReferenceCallout =
+    unsafe extern "C" fn(*mut CallContext, u64, u64, u64, u64, *const u64, *mut u64) -> i64;
 type DiagnosticReferenceCallout = ReferenceCallout;
-
-/// A target certificate for same-artifact indirect calls: element `index` of instance `env`'s
-/// table in binding `table` is this artifact's `function`, of type `signature`, whose code is
-/// `body`. An
-/// artifact's call sites share its certificates, one per table index's low bits
-/// (`reference_dispatch_entries`). The body pointer is owned by this artifact's code mapping.
-/// The VM publishes the epoch last after a successful target return and a table-slot recheck;
-/// a nonzero epoch is the validity bit.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct FastReferenceCache {
-    epoch: u64,
-    env: Value,
-    table: u64,
-    index: u64,
-    signature: u64,
-    function: u64,
-    body: u64,
-}
-
-
-/// The most certificates an artifact keeps, however many sites it has: a direct-mapped cache
-/// whose collisions cost only a callout.
-const MAX_REFERENCE_DISPATCH_ENTRIES: usize = 256;
-
-/// The certificates of an artifact with `sites` indirect call sites, indexed by the table
-/// index's low bits: a power of two, none without sites.
-fn reference_dispatch_entries(sites: usize) -> usize {
-    if sites == 0 {
-        return 0;
-    }
-    (sites * tier_policy::POLYMORPHISM)
-        .next_power_of_two()
-        .min(MAX_REFERENCE_DISPATCH_ENTRIES)
-}
-
-impl Default for FastReferenceCache {
-    fn default() -> Self {
-        Self {
-            epoch: 0,
-            env: Value::NULL,
-            table: 0,
-            index: 0,
-            signature: 0,
-            function: 0,
-            body: 0,
-        }
-    }
-}
 
 /// Fill an already bounds-checked range in the instance's direct memory.
 /// The compiler checks against the exact current length before calling this
@@ -4773,7 +4712,6 @@ unsafe extern "C" fn reference_callout<H: Host>(
     site: u64,
     args: *const u64,
     out: *mut u64,
-    fast_cache: *mut FastReferenceCache,
 ) -> i64 {
     // A stable call-site id is present even without diagnostics so the VM can
     // find the per-site monomorphic cache without a hash lookup.
@@ -4786,7 +4724,6 @@ unsafe extern "C" fn reference_callout<H: Host>(
             site,
             args,
             out,
-            fast_cache,
         )
     }
 }
@@ -4801,7 +4738,6 @@ unsafe extern "C" fn diagnostic_reference_callout<H: Host>(
     site: u64,
     args: *const u64,
     out: *mut u64,
-    fast_cache: *mut FastReferenceCache,
 ) -> i64 {
     unsafe {
         reference_callout_inner::<H, true>(
@@ -4812,7 +4748,6 @@ unsafe extern "C" fn diagnostic_reference_callout<H: Host>(
             site,
             args,
             out,
-            fast_cache,
         )
     }
 }
@@ -4828,7 +4763,6 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     site: u64,
     args: *const u64,
     out: *mut u64,
-    fast_cache: *mut FastReferenceCache,
 ) -> i64 {
     // SAFETY: generated code passes the context, table binding, table index,
     // signature index, argument words, and output storage for this call.
@@ -4841,7 +4775,6 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     let mut same_artifact_direct_hit = false;
     let mut target_same_artifact_native = false;
     let mut reference_target_function = None;
-    let mut fast_target: Option<(usize, Value, Value, u32, u64, u64)> = None;
     let mut direct_target_root = None;
     let mut direct_status = None;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -4958,12 +4891,19 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                     .map(|(_, function, _)| *function as usize)
             });
         }
-        if let Some((compiled, function, entry, (base, length), memory_binding, guard, globals)) =
-            direct_entry
+        if let Some((
+            compiled,
+            function,
+            entry,
+            (base, length),
+            memory_binding,
+            guard,
+            (globals, table_words),
+        )) = direct_entry
         {
             // A re-entrant import can mutate the table and collect while this
             // body is running. Keep its function cell alive until the call
-            // returns so a freed slot cannot be reused before cache publish.
+            // returns.
             let callee_root = unsafe { &mut *vm_pointer }.heap.root(callee);
             direct_target_root = Some(callee_root);
             if !cache_hit
@@ -4994,9 +4934,9 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
             let native_entry_should_sample = compiled.note_direct_reference_entry(function);
             let mut nested = context.nested_entry();
             nested.compiled = Rc::as_ptr(&compiled);
-            nested.reference_fast_caches = compiled.reference_fast_caches_ptr();
             nested.table = compiled.table.as_ptr();
             nested.globals = globals.as_ptr();
+            nested.table_words = table_words.as_ptr();
             nested.memory = memory_binding;
             nested.memory_length = length;
             let (guard_start, guard_end) = guard.map_or((0, 0), |(start, size)| {
@@ -5023,19 +4963,9 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
             // the Wasm ABI shape expected by this compiled entry, and `compiled`
             // keeps its executable mapping alive for the duration of the call.
             native_target_hit = true;
-            let same_artifact = !context.compiled.is_null()
-                && std::ptr::eq(context.compiled, Rc::as_ptr(&compiled));
-            if same_artifact
-                && let Some(body) = compiled
-                    .table
-                    .get(function)
-                    .copied()
-                    .filter(|body| *body != 0)
-            {
-                fast_target = Some((function, callee, table, table_slot, index, body as u64));
-            }
             if DIAGNOSTICS {
-                same_artifact_direct_hit = same_artifact;
+                same_artifact_direct_hit = !context.compiled.is_null()
+                    && std::ptr::eq(context.compiled, Rc::as_ptr(&compiled));
                 target_same_artifact_native = same_artifact_direct_hit;
             }
             let native_entry_sample_started =
@@ -5134,39 +5064,6 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
     let vm = unsafe { &mut *vm_pointer };
-    if let Some((function, target, table, table_slot, index, body)) = fast_target {
-        let target_still_matches = direct_target_root
-            .and_then(|root| vm.heap.root_value(root))
-            .is_some_and(|rooted| {
-                rooted == target
-                    && reference_target_matches(vm, target, program, function as u32, context.env)
-            });
-        if !fast_cache.is_null()
-            && direct_status == Some(0)
-            && called.as_ref().is_ok_and(|result| result.is_ok())
-            && target_still_matches
-        {
-            let table_binding = vm.heap.environment_slot(context.env, table_slot as usize);
-            let current_target = usize::try_from(index)
-                .ok()
-                .and_then(|index| vm.wasm_table_elements(table).ok()?.get(index).copied());
-            if table_binding == Some(table) && current_target == Some(target) {
-                // SAFETY: generated code passes a correctly aligned pointer to
-                // this site's UnsafeCell in the owning artifact. The artifact is
-                // retained throughout the call and native code is suspended until
-                // the callout returns.
-                let cache = unsafe { &mut *fast_cache };
-                cache.epoch = 0;
-                cache.env = context.env;
-                cache.table = u64::from(table_slot);
-                cache.index = index;
-                cache.signature = signature_index;
-                cache.function = function as u64;
-                cache.body = body;
-                cache.epoch = vm.wasm_reference_epoch.get();
-            }
-        }
-    }
     if let Some(root) = direct_target_root {
         vm.heap.release_root(root);
     }
@@ -5319,8 +5216,40 @@ type DirectReferenceEntry = (
     (u64, u64),
     Value,
     Option<(*mut u8, usize)>,
-    smallvec::SmallVec<[*mut Value; 8]>,
+    InstanceWords,
 );
+
+/// The addresses a context reads in place for an instance: its globals' cells
+/// (`CallContext::globals`) and its tables' published words (`CallContext::table_words`).
+type InstanceWords = (
+    smallvec::SmallVec<[*mut Value; 8]>,
+    smallvec::SmallVec<[*const crate::heap::TableWords; 8]>,
+);
+
+/// The addresses of the cells and tables of `compiled` in the instance `env`.
+fn instance_words<H: Host>(
+    vm: &mut Vm<H>,
+    compiled: &CompiledProgram,
+    env: Value,
+) -> Option<InstanceWords> {
+    let mut globals = smallvec::SmallVec::new();
+    for slot in &compiled.globals {
+        let binding = vm.heap.environment_slot(env, *slot as usize)?;
+        match vm.heap.get_mut(binding)? {
+            Cell::WasmGlobal { value, .. } => globals.push(value as *mut Value),
+            _ => return None,
+        }
+    }
+    let mut tables = smallvec::SmallVec::new();
+    for slot in &compiled.tables {
+        let binding = vm.heap.environment_slot(env, *slot as usize)?;
+        match vm.heap.get(binding)? {
+            Cell::WasmTable { elements, .. } => tables.push(elements.words() as *const _),
+            _ => return None,
+        }
+    }
+    Some((globals, tables))
+}
 
 /// Build the per-invocation activation for a same-instance compiled indirect
 /// target. Even a monomorphic cache hit comes through here so memory, guards,
@@ -5359,23 +5288,8 @@ fn direct_reference_entry<H: Host>(
             ((base as u64, length as u64), binding, guard)
         }
     };
-    let mut globals: smallvec::SmallVec<[*mut Value; 8]> = smallvec::SmallVec::new();
-    for slot in &compiled.globals {
-        let binding = vm.heap.environment_slot(env, *slot as usize)?;
-        match vm.heap.get_mut(binding)? {
-            Cell::WasmGlobal { value, .. } => globals.push(value),
-            _ => return None,
-        }
-    }
-    Some((
-        compiled,
-        function,
-        entry,
-        memory,
-        memory_binding,
-        guard,
-        globals,
-    ))
+    let words = instance_words(vm, &compiled, env)?;
+    Some((compiled, function, entry, memory, memory_binding, guard, words))
 }
 
 /// Pick a compiled artifact for an indirect target, preferring the artifact
@@ -5514,14 +5428,13 @@ pub(super) struct CompiledProgram {
     /// order of the context's global addresses.
     globals: Vec<u32>,
     diagnostics: Option<WasmJitDiagnostics>,
+    /// The environment slots of the tables compiled code calls through, in the order of the
+    /// context's table words.
+    tables: Vec<u32>,
     /// One optional monomorphic cache per actual compiled `call_indirect`
     /// site. The vector is only pointers until a site becomes hot, and each
     /// cache weakly references its callee artifact to avoid Rc cycles.
     reference_call_caches: std::cell::RefCell<Vec<Option<Box<IndirectCallCacheEntry>>>>,
-    /// Target certificates for native direct dispatch, by table index
-    /// (`reference_dispatch_entries`). These do not retain heap values and are
-    /// invalidated by the VM epoch.
-    reference_fast_caches: Box<[UnsafeCell<FastReferenceCache>]>,
     /// The owner and bytecode PC for each entry in `reference_call_caches`.
     reference_cache_sites: Vec<(usize, usize, u32)>,
     #[cfg(test)]
@@ -5670,12 +5583,6 @@ fn jit_diagnostics_enabled() -> bool {
 }
 
 impl CompiledProgram {
-    fn reference_fast_caches_ptr(&self) -> *mut FastReferenceCache {
-        self.reference_fast_caches
-            .first()
-            .map_or(std::ptr::null_mut(), |cache| cache.get())
-    }
-
     fn indirect_call_cache(&self, site: usize) -> Option<IndirectCallCacheEntry> {
         self.reference_call_caches
             .borrow()
@@ -5759,28 +5666,6 @@ impl CompiledProgram {
     #[cfg(test)]
     pub(super) fn reference_cache_hits(&self) -> u64 {
         self.reference_cache_hits.get()
-    }
-
-    #[cfg(test)]
-    pub(super) fn reference_fast_cache_matches_target(
-        &self,
-        index: usize,
-        target_function: usize,
-    ) -> bool {
-        let entries = self.reference_fast_caches.len();
-        let Some(cache) = (entries != 0)
-            .then(|| self.reference_fast_caches.get(index & (entries - 1)))
-            .flatten()
-        else {
-            return false;
-        };
-        let Some(body) = self.table.get(target_function).copied() else {
-            return false;
-        };
-        // The VM has returned from native execution before tests inspect this
-        // cache, and only the owning artifact's callout writes the cell.
-        let cache = unsafe { *cache.get() };
-        cache.function == target_function as u64 && cache.body == body as u64 && body != 0
     }
 
     #[cfg(test)]
@@ -9402,9 +9287,9 @@ struct Emitter<'a, 'b, H: Host> {
     blocks: Vec<Option<ir::Block>>,
     /// Dense ids for the compiled artifact's actual indirect call sites.
     reference_site_ids: &'a [(usize, usize)],
-    /// The artifact's certificate count less one (`reference_dispatch_entries`), which selects
-    /// a table index's certificate.
-    reference_dispatch_mask: u64,
+    /// The environment slots of the tables the artifact calls through, in the order of the
+    /// context's table words (`CompiledProgram::tables`).
+    tables: &'a [u32],
     /// Selects the diagnostics ABI at compile time; both ABIs carry site ids.
     diagnostics_enabled: bool,
     base: ir::Value,
@@ -9445,6 +9330,8 @@ struct Emitter<'a, 'b, H: Host> {
     /// The words a SIMD kernel callout reads its operands from and writes its result to
     /// (`compiled_simd_kernel`), made at the first callout.
     simd_words: Option<ir::StackSlot>,
+    /// The table an indirect target is being emitted for (`WasmTable`).
+    indirect: Option<wasm_table_stage::IndirectSite>,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -9720,328 +9607,6 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.propagate(status);
         let destination = instruction.result_register();
         match signature.results.first() {
-            Some(ty) => {
-                let kind = Kind::of(*ty).expect("planned");
-                let bits = self
-                    .body.core.builder
-                    .ins()
-                    .load(types::I64, MemFlagsData::trusted(), out, 0);
-                let value = match kind {
-                    Kind::I32 => self.body.core.builder.ins().ireduce(types::I32, bits),
-                    Kind::I64 => bits,
-                };
-                self.write(destination, kind, value);
-            }
-            None => self.write_constant(destination, Kind::I32, 0),
-        }
-    }
-
-    /// Keep the table index in native code until the combined VM callout.
-    fn indirect_target(&mut self, _pc: usize, instruction: WideInstruction) {
-        let index = self.read(instruction.c(), Kind::I32);
-        let index = self.body.core.builder.ins().uextend(types::I64, index);
-        self.write(instruction.a(), Kind::I64, index);
-    }
-
-    /// Resolve and call a table reference through one ordinary VM boundary.
-    fn call_reference(&mut self, pc: usize, instruction: WideInstruction) {
-        let Slot::IndirectReference {
-            signature: signature_index,
-            table,
-        } = self.plan.operand(pc)
-        else {
-            unreachable!("planned indirect calls retain their table binding");
-        };
-        let wasm_signature = self
-            .analysis
-            .type_signature(signature_index)
-            .expect("planned")
-            .clone();
-        let word = types::I64.bytes();
-        let words = wasm_signature.params.len() + 1;
-        let slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
-            ir::StackSlotKind::ExplicitSlot,
-            word * words as u32,
-            word.trailing_zeros() as u8,
-        ));
-        let window = instruction.call_window();
-        for (offset, ty) in wasm_signature.params.iter().enumerate() {
-            let kind = Kind::of(*ty).expect("planned");
-            let value = self.read(window.base + offset as u16, kind);
-            let value = match kind {
-                Kind::I32 => self.body.core.builder.ins().uextend(types::I64, value),
-                Kind::I64 => value,
-            };
-            let address =
-                self.body.core.builder
-                    .ins()
-                    .stack_addr(types::I64, slot, (offset as u32 * word) as i32);
-            self.body.core.builder
-                .ins()
-                .store(MemFlagsData::trusted(), value, address, 0);
-        }
-        let result_offset = (wasm_signature.params.len() as u32 * word) as i32;
-        let args = self.body.core.builder.ins().stack_addr(types::I64, slot, 0);
-        let out = self
-            .body.core.builder
-            .ins()
-            .stack_addr(types::I64, slot, result_offset);
-        let index = self.read(instruction.b(), Kind::I64);
-        let table_slot = self.body.core.builder.ins().iconst(types::I64, i64::from(table));
-        let signature_index = self
-            .body.core.builder
-            .ins()
-            .iconst(types::I64, i64::from(signature_index));
-        let site_id = self
-            .reference_site_ids
-            .binary_search_by_key(&pc, |(site_pc, _)| *site_pc)
-            .ok()
-            .map(|index| self.reference_site_ids[index].1)
-            .expect("compiled indirect call has a cache site id");
-        let fast_cache_base = self.body.core.builder.ins().load(
-            types::I64,
-            invariant(),
-            self.body.core.context,
-            CONTEXT_REFERENCE_FAST_CACHES,
-        );
-        // The certificate of the index's low bits (`reference_dispatch_entries`).
-        let entry = self
-            .body.core.builder
-            .ins()
-            .band_imm_u(index, self.reference_dispatch_mask as i64);
-        let entry_offset = self
-            .body.core.builder
-            .ins()
-            .imul_imm_u(entry, std::mem::size_of::<FastReferenceCache>() as i64);
-        let fast_cache = self.body.core.builder.ins().iadd(fast_cache_base, entry_offset);
-        let cached_epoch = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, epoch) as i32,
-        );
-        let cache_initialized = self
-            .body.core.builder
-            .ins()
-            .icmp_imm_u(IntCC::NotEqual, cached_epoch, 0);
-        let check_cache = self.body.core.builder.create_block();
-        let check_entry = self.body.core.builder.create_block();
-        let fast_call = self.body.core.builder.create_block();
-        let slow_call = self.body.core.builder.create_block();
-        let done = self.body.core.builder.create_block();
-        let status_slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
-            ir::StackSlotKind::ExplicitSlot,
-            types::I64.bytes(),
-            types::I64.bytes().trailing_zeros() as u8,
-        ));
-        self.body.core.builder
-            .ins()
-            .brif(cache_initialized, check_cache, &[], slow_call, &[]);
-
-        // Table writes and collection advance the VM-local epoch. This makes
-        // artifact-local certificates stale without invalidation walks through
-        // recursive native frames.
-        self.body.core.builder.switch_to_block(check_cache);
-        let epoch_pointer = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            self.body.core.context,
-            CONTEXT_REFERENCE_EPOCH,
-        );
-        let current_epoch =
-            self.body.core.builder
-                .ins()
-                .load(types::I64, MemFlagsData::trusted(), epoch_pointer, 0);
-        let epoch_matches = self
-            .body.core.builder
-            .ins()
-            .icmp(IntCC::Equal, current_epoch, cached_epoch);
-        let current_env =
-            self.body.core.builder
-                .ins()
-                .load(types::I64, invariant(), self.body.core.context, CONTEXT_ENV);
-        let cached_env = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, env) as i32,
-        );
-        let env_matches = self
-            .body.core.builder
-            .ins()
-            .icmp(IntCC::Equal, current_env, cached_env);
-        let cached_index = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, index) as i32,
-        );
-        let index_matches = self.body.core.builder.ins().icmp(IntCC::Equal, index, cached_index);
-        let cached_signature = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, signature) as i32,
-        );
-        let signature_matches = self
-            .body.core.builder
-            .ins()
-            .icmp(IntCC::Equal, signature_index, cached_signature);
-        let cached_table = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, table) as i32,
-        );
-        let table_matches = self.body.core.builder.ins().icmp(IntCC::Equal, table_slot, cached_table);
-        let signature_matches = self.body.core.builder.ins().band(signature_matches, table_matches);
-        let epoch_and_env_match = self.body.core.builder.ins().band(epoch_matches, env_matches);
-        let index_and_signature_match = self.body.core.builder.ins().band(index_matches, signature_matches);
-        let cache_matches = self
-            .body.core.builder
-            .ins()
-            .band(epoch_and_env_match, index_and_signature_match);
-        self.body.core.builder
-            .ins()
-            .brif(cache_matches, check_entry, &[], slow_call, &[]);
-        self.body.core.builder.seal_block(check_cache);
-
-        // A valid cache is populated only from a checked same-artifact target,
-        // but keep the index and non-null tests here as a cheap corruption
-        // guard before indexing the artifact's entry table.
-        self.body.core.builder.switch_to_block(check_entry);
-        let cached_function = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, function) as i32,
-        );
-        let function_in_range = self.body.core.builder.ins().icmp_imm_u(
-            IntCC::UnsignedLessThan,
-            cached_function,
-            self.plans.len() as i64,
-        );
-        let body = {
-            let lookup_entry = self.body.core.builder.create_block();
-            self.body.core.builder
-                .ins()
-                .brif(function_in_range, lookup_entry, &[], slow_call, &[]);
-            self.body.core.builder.seal_block(check_entry);
-            self.body.core.builder.switch_to_block(lookup_entry);
-            let artifact_table =
-                self.body.core.builder
-                    .ins()
-                    .load(types::I64, invariant(), self.body.core.context, CONTEXT_TABLE);
-            let entry_offset = self.body.core.builder.ins().ishl_imm_u(cached_function, 3);
-            let entry_address = self.body.core.builder.ins().iadd(artifact_table, entry_offset);
-            let entry =
-                self.body.core.builder
-                    .ins()
-                    .load(types::I64, MemFlagsData::trusted(), entry_address, 0);
-            let entry_present = self.body.core.builder.ins().icmp_imm_u(IntCC::NotEqual, entry, 0);
-            self.body.core.builder
-                .ins()
-                .brif(entry_present, fast_call, &[], slow_call, &[]);
-            self.body.core.builder.seal_block(lookup_entry);
-            entry
-        };
-
-        self.body.core.builder.switch_to_block(fast_call);
-        let mut direct_args = vec![self.body.core.context];
-        if self.memory.base {
-            direct_args.push(self.base);
-        }
-        direct_args.extend(self.length);
-        for (offset, ty) in wasm_signature.params.iter().enumerate() {
-            let raw = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                args,
-                (offset as u32 * word) as i32,
-            );
-            direct_args.push(match Kind::of(*ty).expect("planned") {
-                Kind::I32 => self.body.core.builder.ins().ireduce(types::I32, raw),
-                Kind::I64 => raw,
-            });
-        }
-        let entry_signature = self.body.core.builder.import_signature(internal_signature(
-            self.memory,
-            &wasm_signature.params,
-            wasm_signature.results.first().copied(),
-            self.call_conv,
-        ));
-        let call = self
-            .body.core.builder
-            .ins()
-            .call_indirect(entry_signature, body, &direct_args);
-        let fast_results = self.body.core.builder.inst_results(call).to_vec();
-        let fast_status = fast_results[0];
-        if let Some(result) = wasm_signature.results.first() {
-            let value = match Kind::of(*result).expect("planned") {
-                Kind::I32 => self.body.core.builder.ins().uextend(types::I64, fast_results[1]),
-                Kind::I64 => fast_results[1],
-            };
-            self.body.core.builder
-                .ins()
-                .store(MemFlagsData::trusted(), value, out, 0);
-        }
-        let status_address = self.body.core.builder.ins().stack_addr(types::I64, status_slot, 0);
-        self.body.core.builder
-            .ins()
-            .store(MemFlagsData::trusted(), fast_status, status_address, 0);
-        self.body.core.builder.ins().jump(done, &[]);
-        self.body.core.builder.seal_block(fast_call);
-
-        self.body.core.builder.switch_to_block(slow_call);
-        self.body.core.builder.set_cold_block(slow_call);
-        let target_offset = if self.diagnostics_enabled {
-            CONTEXT_CALL_REFERENCE_DIAGNOSTIC
-        } else {
-            CONTEXT_CALL_REFERENCE
-        };
-        let target = self
-            .body.core.builder
-            .ins()
-            .load(types::I64, invariant(), self.body.core.context, target_offset);
-        let mut call_signature = Signature::new(self.call_conv);
-        for _ in 0..8 {
-            call_signature.params.push(AbiParam::new(types::I64));
-        }
-        call_signature.returns.push(AbiParam::new(types::I64));
-        let call_signature = self.body.core.builder.import_signature(call_signature);
-        let site_id = self.body.core.builder.ins().iconst(types::I64, site_id as i64);
-        let call = self.body.core.builder.ins().call_indirect(
-            call_signature,
-            target,
-            &[
-                self.body.core.context,
-                table_slot,
-                index,
-                signature_index,
-                site_id,
-                args,
-                out,
-                fast_cache,
-            ],
-        );
-        let slow_status = self.body.core.builder.inst_results(call)[0];
-        let status_address = self.body.core.builder.ins().stack_addr(types::I64, status_slot, 0);
-        self.body.core.builder
-            .ins()
-            .store(MemFlagsData::trusted(), slow_status, status_address, 0);
-        self.body.core.builder.ins().jump(done, &[]);
-        self.body.core.builder.seal_block(slow_call);
-
-        self.body.core.builder.switch_to_block(done);
-        self.body.core.builder.seal_block(done);
-        let status_address = self.body.core.builder.ins().stack_addr(types::I64, status_slot, 0);
-        let status =
-            self.body.core.builder
-                .ins()
-                .load(types::I64, MemFlagsData::trusted(), status_address, 0);
-        self.propagate(status);
-        let destination = instruction.result_register();
-        match wasm_signature.results.first() {
             Some(ty) => {
                 let kind = Kind::of(*ty).expect("planned");
                 let bits = self
@@ -10429,7 +9994,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         fixed_base: Option<i32>,
         globals: &[u32],
         reference_site_ids: &'a [(usize, usize)],
-        reference_dispatch_mask: u64,
+        tables: &'a [u32],
         diagnostics_enabled: bool,
     ) -> Option<ir::Function> {
         let function = &self.code.function(index);
@@ -10491,7 +10056,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             plan,
             blocks: vec![None; function.code.len()],
             reference_site_ids,
-            reference_dispatch_mask,
+            tables,
             diagnostics_enabled,
             base,
             length,
@@ -10517,6 +10082,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             pending_copies: Vec::new(),
             vectors: Vec::new(),
             simd_words: None,
+            indirect: None,
         };
         // Registers start at i32 zero, as an activation's register file does.
         for register in 0..function.registers {
@@ -11154,14 +10720,6 @@ fn link(bytes: &mut [u8], body: usize, call: &Call, callee: usize) -> Option<()>
 const FUNCTION_ALIGNMENT: usize = 64;
 
 impl<H: Host> Vm<H> {
-    /// Invalidate artifact-local indirect-call certificates when VM state that
-    /// native code cannot inspect directly changes: table contents or heap IDs.
-    pub(super) fn invalidate_wasm_reference_caches(&self) {
-        let next = self.wasm_reference_epoch.get().wrapping_add(1);
-        self.wasm_reference_epoch
-            .set(if next == 0 { 1 } else { next });
-    }
-
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
         self.execution_mode = mode; super::regexp_native::enable(mode != ExecutionMode::Interpreted);
     }
@@ -12076,6 +11634,8 @@ impl<H: Host> Vm<H> {
         let mut reference_cache_count = 0usize;
         // The globals compiled code accesses, each once.
         let mut globals: Vec<u32> = Vec::new();
+        // The tables it calls through, each once.
+        let mut tables: Vec<u32> = Vec::new();
         // One pass over each callable function's full plan finds both what every body's
         // compilation reads first: its indirect reference sites and the globals it accesses.
         for index in 0..count {
@@ -12101,6 +11661,13 @@ impl<H: Host> Vm<H> {
                                     targets: std::cell::RefCell::new(Vec::new()),
                                 });
                             }
+                        }
+                    }
+                    Some(Step::Call(Call::IndirectTarget)) => {
+                        if let Some(Slot::Binding(slot)) = full_plan.operands[pc]
+                            && !tables.contains(&slot)
+                        {
+                            tables.push(slot);
                         }
                     }
                     Some(Step::Instance(step)) if step.accesses_global() => {
@@ -12149,7 +11716,7 @@ impl<H: Host> Vm<H> {
                 fixed_base,
                 &globals,
                 &reference_site_ids[index],
-                reference_dispatch_entries(reference_cache_count).saturating_sub(1) as u64,
+                &tables,
                 diagnostics_enabled,
             );
             if let Some(started) = body_build_started {
@@ -12290,16 +11857,13 @@ impl<H: Host> Vm<H> {
             guarded,
             fixed_base,
             globals,
+            tables,
             diagnostics,
             reference_call_caches: std::cell::RefCell::new(
                 std::iter::repeat_with(|| None)
                     .take(reference_cache_count)
                     .collect(),
             ),
-            reference_fast_caches: (0..reference_dispatch_entries(reference_cache_count))
-                .map(|_| UnsafeCell::new(FastReferenceCache::default()))
-                .collect::<Vec<_>>()
-                .into_boxed_slice(),
             reference_cache_sites,
             #[cfg(test)]
             reference_cache_hits: std::cell::Cell::new(0),
@@ -12635,14 +12199,7 @@ impl<H: Host> Vm<H> {
             let raw = self.compiled_raw_args(args, &function.params)?;
             let marker = 0u8;
             let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
-            let mut globals: smallvec::SmallVec<[*mut Value; 8]> = smallvec::SmallVec::new();
-            for slot in &compiled.globals {
-                let binding = self.heap.environment_slot(env, *slot as usize)?;
-                match self.heap.get_mut(binding)? {
-                    Cell::WasmGlobal { value, .. } => globals.push(value),
-                    _ => return None,
-                }
-            }
+            let (globals, table_words) = instance_words(self, &compiled, env)?;
             let (guard_start, guard_end) = guard.map_or((0, 0), |(start, size)| {
                 (start as usize, start as usize + size)
             });
@@ -12681,6 +12238,7 @@ impl<H: Host> Vm<H> {
                 guard_start,
                 guard_end,
                 globals: globals.as_ptr(),
+                table_words: table_words.as_ptr(),
                 callout: import_callout::<H> as Callout as usize,
                 call_reference: reference_callout::<H> as ReferenceCallout as usize,
                 compiled: Rc::as_ptr(&compiled),
@@ -12706,8 +12264,6 @@ impl<H: Host> Vm<H> {
                     .map_or(0, |stats| stats.reference_call_sites.len()),
                 poll_start: poll.map_or(0, |(start, _)| start),
                 poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
-                reference_epoch: self.wasm_reference_epoch.as_ptr(),
-                reference_fast_caches: compiled.reference_fast_caches_ptr(),
                 emscripten_memcpy_fast_path_hits: emscripten_memcpy_fast_path_hits_ptr,
                 import_callout_counts: compiled
                     .diagnostics
