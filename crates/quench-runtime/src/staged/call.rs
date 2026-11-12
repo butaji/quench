@@ -181,7 +181,7 @@ pub(crate) struct EntryCellLayoutWords {
     pub(crate) view: u64,
     pub(crate) env: u64,
     pub(crate) capture: u64,
-    /// Entries (low half) and completions (high half), relaxed counters for the tier machine.
+    /// Leaves (low half) and completions (high half), the tier machine's run statistics (`EntryCell::evidence`).
     pub(crate) counters: u64,
 }
 

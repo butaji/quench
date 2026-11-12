@@ -6636,7 +6636,7 @@ pub(super) struct LaneMethod {
     /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
     amortizes: bool,
     /// The callees it calls by their compiled entries, which its code names.
-    pub(super) direct: Box<[DirectCallee]>,
+    pub(in crate::vm) direct: Box<[DirectCallee]>,
     /// Whether every call of it that has run is inlined or direct: under a direct caller's native
     /// frames the lane's helper call misses (`dispatch_fast::lane_body_call`), so only such
     /// a body is called directly.
