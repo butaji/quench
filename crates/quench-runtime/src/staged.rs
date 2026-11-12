@@ -39,7 +39,7 @@ pub(crate) mod holder;
 pub(crate) mod call; pub(crate) mod frame;
 pub(crate) mod construct;
 pub(crate) mod protocol;
-pub(crate) use protocol::{CallOperation, Invocation, WindowFill};
+pub(crate) use protocol::{CallFacts, CallOperation, Invocation, WindowFill};
 pub(crate) mod invoke;
 pub(crate) use invoke::{CalleeKind, CallEntry, CallFrame, DirectPlan, Entered, Room};
 pub(crate) mod plan_fields;

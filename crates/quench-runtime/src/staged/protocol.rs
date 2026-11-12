@@ -18,7 +18,7 @@
 use super::call::admit_room;
 use super::value::{is_direct_array, is_direct_function, is_direct_object};
 use super::{Stage, Step};
-use crate::bytecode::{ConstructArguments, ImmediateLayout, Op, Register, WideInstruction};
+use crate::bytecode::{ConstructArguments, ImmediateLayout, Op, Register, WideInstruction, RETURN_REGISTER};
 use crate::value::ValueLayout;
 use crate::Value;
 
@@ -36,25 +36,65 @@ pub(crate) struct Invocation {
     pub(crate) result: Register,
     /// Whether the call's completion is its activation's: the call returns its callee's value.
     pub(crate) returns: bool,
+    /// Whether the window's last argument is the caller's `arguments`, which the activation keeps
+    /// as values (`CallForwardingArguments`).
+    pub(crate) forwards: bool,
+}
+
+/// What a tier fixes around its calls: the registers its code holds, whether it completes its
+/// activations by status (a call may return its callee's completion), and whether its call reads
+/// the values a forwarding call keeps.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct CallFacts {
+    pub(crate) registers: u16,
+    pub(crate) activates: bool,
+    pub(crate) forwarding: bool,
+}
+
+impl CallFacts {
+    /// Whether the tier holds `register`.
+    pub(crate) const fn holds(self, register: Register) -> bool {
+        register < self.registers
+    }
 }
 
 impl Invocation {
     /// The operands of `instruction`, a call through a register window or a construction with its
-    /// arguments in registers; `None` for any other call form (spread, array, method), whose
-    /// window is not in registers.
+    /// arguments in registers; `None` for any other call form: an eval, which the host decides, a
+    /// super construction, and a spread, array or method call, whose window is not in registers.
     pub(crate) fn of(instruction: WideInstruction) -> Option<Self> {
         let imm = instruction.imm();
         let (receiver, window, argc) = match instruction.op() {
-            Op::Call | Op::CallForwardingArguments => (Some(instruction.register_c()),
-                ImmediateLayout::call_window_base(imm), ImmediateLayout::argument_count(imm)),
-            Op::Construct => match instruction.construct_arguments() {
+            Op::Call | Op::CallForwardingArguments if !instruction.direct_eval() && !instruction.parameter_eval() =>
+                (Some(instruction.register_c()), ImmediateLayout::call_window_base(imm), ImmediateLayout::argument_count(imm)),
+            Op::Construct if !instruction.is_super_construct() => match instruction.construct_arguments() {
                 ConstructArguments::Registers(window) => (None, window.base, window.count),
                 ConstructArguments::Array(_) => return None,
             },
             _ => return None,
         };
-        Some(Self { callee: instruction.register_b(), receiver, window, argc,
-            result: instruction.result_register(), returns: instruction.returns_from_frame() })
+        matches!(instruction.result_flags(), 0 | RETURN_REGISTER).then(|| Self { callee: instruction.register_b(), receiver, window,
+            argc, result: instruction.result_register(), returns: instruction.returns_from_frame(),
+            forwards: instruction.op() == Op::CallForwardingArguments })
+    }
+
+    /// Whether the call allocates its callee's receiver (a construction) instead of binding the
+    /// `this` of a receiver register.
+    pub(crate) const fn constructs(&self) -> bool {
+        self.receiver.is_none()
+    }
+
+    /// The first register past the call's window.
+    pub(crate) fn window_end(&self) -> u32 {
+        u32::from(self.window) + u32::from(self.argc)
+    }
+
+    /// Whether a tier of `facts` lowers the call: it completes by status, holds the registers
+    /// the call names and its whole window, and reads a forwarding call's kept values if the call
+    /// forwards.
+    pub(crate) fn admits(&self, facts: CallFacts) -> bool {
+        facts.activates && (facts.forwarding || !self.forwards) && self.window_end() <= u32::from(facts.registers)
+            && [Some(self.callee), self.receiver, Some(self.result)].into_iter().flatten().all(|register| facts.holds(register))
     }
 }
 
@@ -214,7 +254,7 @@ mod tests {
 
     #[test]
     fn a_site_runs_no_row_alone_and_a_callee_must_be_the_bound_one() {
-        let site = Invocation { callee: 1, receiver: Some(2), window: 3, argc: 1, result: 0, returns: false };
+        let site = Invocation { callee: 1, receiver: Some(2), window: 3, argc: 1, result: 0, returns: false, forwards: false };
         assert_eq!(run(CallOperation::Site(site)), None);
         assert_eq!(run(CallOperation::Callee { held: 9, expected: 9 }), Some(9));
         assert_eq!(run(CallOperation::Callee { held: 8, expected: 9 }), None);
@@ -300,11 +340,58 @@ mod tests {
     #[test]
     fn the_operands_of_a_call_and_a_construction_decode_once() {
         let call = Invocation::of(call_instruction(Op::Call, false)).expect("a call decodes");
-        assert_eq!(call, Invocation { callee: 5, receiver: Some(6), window: 7, argc: 2, result: 4, returns: false });
+        assert_eq!(call, Invocation { callee: 5, receiver: Some(6), window: 7, argc: 2, result: 4, returns: false, forwards: false });
         let construct = Invocation::of(call_instruction(Op::Construct, true)).expect("a construction decodes");
         assert_eq!((construct.callee, construct.receiver, construct.argc, construct.result), (5, None, 2, 4));
         assert_eq!(Invocation::of(call_instruction(Op::Move, false)), None);
         let decoded = crate::staged::Operation::<u64, ()>::decode(call_instruction(Op::Call, false), |_| None);
         assert!(matches!(decoded, Some(crate::staged::Operation::Call(CallOperation::Site(site))) if site == call));
+    }
+
+    fn instruction(op: Op, result: Register, imm: u32) -> WideInstruction {
+        WideInstruction::new(op, result, 5, 6, imm)
+    }
+
+    const FACTS: CallFacts = CallFacts { registers: 10, activates: true, forwarding: false };
+
+    #[test]
+    fn the_forms_with_no_register_window_have_no_invocation() {
+        let eval = ImmediateLayout::call_immediate(7, 2, true, false);
+        let parameter_eval = ImmediateLayout::call_immediate(7, 2, false, true);
+        let sup = ImmediateLayout::construct_immediate(2, true, false);
+        let array = ImmediateLayout::construct_immediate(2, false, true);
+        for (op, imm) in [(Op::Call, eval), (Op::Call, parameter_eval), (Op::Construct, sup), (Op::Construct, array)] {
+            assert_eq!(Invocation::of(instruction(op, 4, imm)), None, "{op:?}");
+        }
+        assert_eq!(Invocation::of(instruction(Op::Call, 4 | crate::bytecode::SET_THIS_REGISTER, ImmediateLayout::call_immediate(7, 2, false, false))), None);
+    }
+
+    #[test]
+    fn a_forwarding_call_decodes_with_its_flag_and_a_returning_one_with_its_own() {
+        let imm = ImmediateLayout::call_immediate(7, 2, false, false);
+        let forwarding = Invocation::of(instruction(Op::CallForwardingArguments, 4, imm)).expect("a forwarding call decodes");
+        assert!(forwarding.forwards && !forwarding.constructs());
+        let returning = Invocation::of(instruction(Op::Call, 4 | RETURN_REGISTER, imm)).expect("a returning call decodes");
+        assert!(returning.returns && !returning.forwards && returning.result == 4);
+    }
+
+    #[test]
+    fn a_tier_admits_the_calls_whose_window_and_registers_it_holds() {
+        let call = Invocation { callee: 1, receiver: Some(2), window: 7, argc: 3, result: 0, returns: false, forwards: false };
+        assert!(call.admits(FACTS), "a window ending at the last register fits");
+        assert!(!Invocation { argc: 4, ..call }.admits(FACTS), "a window past the registers");
+        assert!(!Invocation { callee: 10, ..call }.admits(FACTS), "a callee the tier does not hold");
+        assert!(!call.admits(CallFacts { activates: false, ..FACTS }), "a tier that completes no activation");
+        let forwarding = Invocation { forwards: true, ..call };
+        assert!(!forwarding.admits(FACTS) && forwarding.admits(CallFacts { forwarding: true, ..FACTS }));
+    }
+
+    #[test]
+    fn a_return_is_admitted_by_its_register_and_the_tier_completing() {
+        let row = crate::staged::Operation::<u64, ()>::Return { source: 9 };
+        assert_eq!(row.admitted(FACTS), Some(true));
+        assert_eq!(crate::staged::Operation::<u64, ()>::Return { source: 10 }.admitted(FACTS), Some(false));
+        assert_eq!(row.admitted(CallFacts { activates: false, ..FACTS }), Some(false));
+        assert_eq!(crate::staged::Operation::<u64, ()>::Jump.admitted(FACTS), None);
     }
 }

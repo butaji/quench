@@ -6,16 +6,11 @@ impl Lowering<'_, '_> {
     /// `new callee(...)` by the callee's construct plan (`compiled::lane_construct`): the
     /// arguments pass where the helper reads them (`construct_arguments`); a construction the
     /// plan does not make leaves at the record, before any effect. The allocation may move
-    /// the property arena (`allocated`). A construction a previous body left at runs as a
-    /// call does (`dispatch_fast::lane_body_construct`): the callee's plan, else its activation.
+    /// the property arena (`allocated`). A construction in the caller's window is the call row
+    /// (`call_rows`); one a previous body left at runs as a call does
+    /// (`dispatch_fast::lane_body_construct`): the callee's plan, else its activation.
     pub(super) fn construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let crate::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
-        if self.completion.status_and_pc()
-            && matches!(self.unit.origins.get(pc), Some(super::super::lane_unit::Origin::Caller(_)))
-            && window.base + window.count <= self.unit.caller_registers
-            && matches!(instruction.result_flags(), 0 | crate::bytecode::RETURN_REGISTER) {
-            return Some(self.call(state, pc, instruction));
-        }
         let completes = match (instruction.returns_from_frame(), self.unit.origins.get(pc).copied()) {
             (false, _) if instruction.result_flags() == 0 => None,
             // A static region returns its source PC alone, so the frame's return stays its own.

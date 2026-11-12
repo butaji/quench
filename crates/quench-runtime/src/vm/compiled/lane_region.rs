@@ -60,6 +60,7 @@ use captures::RootedRead;
 #[path = "lane_region/call_frames.rs"] mod call_frames;
 use call_frames::{CallSite, Leave, ReturnSite, Site};
 #[path = "lane_region/call_outs.rs"] mod call_outs;
+#[path = "lane_region/call_rows.rs"] mod call_rows;
 #[path = "lane_region/register_rows.rs"] mod register_rows;
 use loop_arrays::{ArraySource, LoopArray};
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
@@ -2576,15 +2577,10 @@ impl Lowering<'_, '_> {
         let pc32 = pc as u32;
         let plain = instruction.result_flags() == 0;
         let ran = match instruction.op().class() {
-            // A static typed region's canonical code completes its activation.
-            Class::Return if plain && self.completion.status_and_pc() && instruction.register_a() < self.unit.registers => {
-                Some(self.complete(state, pc, instruction.register_a()))
-            }
+            // A call, a construction in the caller's window and a return: the staged operations
+            // the tier's facts admit (`call_rows`).
+            _ if self.is_call_row(instruction) => self.call_row_step(state, pc, instruction),
             _ if self.is_call_out(instruction) => Some(self.call_out_step(state, pc, instruction)),
-            Class::Call if self.completion.status_and_pc()
-                && (plain || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
-                && !instruction.direct_eval()
-                && !instruction.parameter_eval() => Some(self.intrinsic_call(state, pc, instruction) || self.call(state, pc, instruction)),
             _ if self.is_register_row(instruction) => Some(self.register_step(state, pc, instruction)),
             Class::LoadName | Class::LoadNameCall if plain && self.global_reads.contains_key(&pc) => Some(self.global_read(state, pc, instruction)),
             Class::Nop if plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
@@ -2670,8 +2666,7 @@ impl Lowering<'_, '_> {
             // A literal's allocation, by the lane's own (`compiled::lane_new_object`); a due
             // collection leaves first. The staged operation allocates and writes the result.
             Class::MakeObject | Class::MakeArray | Class::MakeConstArray | Class::MakeObject2 if self.literal_completes(instruction, pc) => Some(self.literal(state, pc, instruction)),
-            Class::Construct if self.completion != Completion::Number && !instruction.is_super_construct()
-                && matches!(instruction.construct_arguments(), crate::bytecode::ConstructArguments::Registers(_)) => self.construct(state, pc, instruction),
+            _ if self.is_construction(instruction) => self.construct(state, pc, instruction),
             _ if plain && self.is_jump(instruction) => {
                 let target = instruction.jump_target() as usize;
                 if target <= pc {

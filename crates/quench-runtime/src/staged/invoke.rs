@@ -13,7 +13,7 @@
 //! `concrete_*`); the u-jit's lane frame emits them. `ret` completes an activation with a register.
 
 use super::protocol::{bind_this, complete_call, fill_window, guard_callee, guard_received, window_offset};
-use super::{Frame, Invocation, Register, Stage, Step, WindowFill};
+use super::{CallFacts, CallOperation, Frame, Invocation, Operation, Register, Stage, Step, WindowFill};
 
 /// The kinds of callee a site binds to a direct entry. A native has no body to enter and a bound
 /// function forwards to another callee, so both take the VM's call (`CallEntry::Helper`).
@@ -161,6 +161,19 @@ fn enter_direct<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, miss: S
     Some(value)
 }
 
+impl<W, P> Operation<W, P> {
+    /// Whether a tier of `facts` lowers the call or return this row is (`Invocation::admits`: a
+    /// return's register is one the tier holds, and it completes by status); `None` for any other
+    /// row.
+    pub(crate) fn admitted(&self, facts: CallFacts) -> Option<bool> {
+        match self {
+            Self::Call(CallOperation::Site(site)) => Some(site.admits(facts)),
+            Self::Return { source } => Some(facts.activates && facts.holds(*source)),
+            _ => None,
+        }
+    }
+}
+
 /// Complete the activation with the value of `source`, where the frame can.
 #[inline(always)]
 pub(crate) fn ret<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, source: Register) -> Step<S::Word, F::Control> {
@@ -246,7 +259,7 @@ mod tests {
     }
 
     fn site(receiver: Option<Register>) -> Invocation {
-        Invocation { callee: 0, receiver, window: 2, argc: 2, result: 7, returns: false }
+        Invocation { callee: 0, receiver, window: 2, argc: 2, result: 7, returns: false, forwards: false }
     }
 
     fn call(probe: &mut Probe, site: Invocation) -> Option<u64> {
