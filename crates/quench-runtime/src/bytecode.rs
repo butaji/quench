@@ -1786,7 +1786,9 @@ pub(crate) struct CallPlan {
     /// A function that suspends whose frame locals and environment ride a window past its
     /// registers (`locals_ride_window`), which a lane resumes as an activation over the
     /// frame's register file, binding the window from the record as a call binds a fresh one
-    /// (`GeneratorFrame::open_environment_window`) and storing it back at the suspension.
+    /// (`GeneratorFrame::open_environment_window`) and storing it back at the suspension. Its
+    /// names may resolve through `with` objects and dynamic bindings, which its record carries
+    /// and its window's handlers read (`suspends_scoped`, `scoped_names`).
     pub(crate) suspended_environment: bool,
 }
 
@@ -2288,16 +2290,13 @@ impl Function {
     /// is a frame local (none promoted to a register), the captured ones owned by the
     /// environment, and every instruction that addresses one is a record the window's handlers
     /// read.
-    fn locals_ride_window(&self, tables: &impl FactTables) -> bool {
+    fn locals_ride_window(&self, tables: &impl FactTables, scoped: bool) -> bool {
         self.arguments_own_their_slots(|atom| tables.atom_name(atom))
             && self.self_binding_slot.is_none()
-            && !self.inherited_with_scope
             && self.local_registers.is_empty()
             && (self.arguments_slot.is_none() || self.reads_passed_arguments_only() || self.arguments_ride_window())
-            && self.binding_sites.is_empty()
-            && self.selective_capture_slots.is_some()
             && self.initial_register == InitialRegister::Undefined
-            && !self.has_dynamic_scope_access()
+            && (self.names_resolve_in_window() || scoped && self.suspends_scoped())
             // The implicit bindings `activation_binding_reads` names, but for clones, are a frame's:
             // a suspended function's record keeps them, and the opcodes that read them exit the
             // lane to the frame it becomes, unless a closure would capture them in the window.
@@ -2325,6 +2324,18 @@ impl Function {
                         // The window keeps every value passed, which these answer.
                         || op.reads_arguments())
             })
+    }
+
+    /// Whether the function reaches no scope at run time and lays its locals out selectively:
+    /// the shapes whose every name an environment window answers by slot. An activation that
+    /// consults `with` objects, binding sites or dynamic bindings (`has_dynamic_scope_access`)
+    /// reads them through its activation, which only a function that suspends in a record has
+    /// (`suspends_scoped`).
+    fn names_resolve_in_window(&self) -> bool {
+        !self.inherited_with_scope
+            && self.binding_sites.is_empty()
+            && self.selective_capture_slots.is_some()
+            && !self.has_dynamic_scope_access()
     }
 
     /// Whether a function that suspends in a record may lay out an environment window though it
@@ -2421,7 +2432,7 @@ impl Function {
                         .addressed_local_slots()
                         .all(|slot| Some(slot) == self.arguments_slot)
                 });
-            let environment_activation = in_loop && self.parent.is_some() && self.locals_ride_window(tables);
+            let environment_activation = in_loop && self.parent.is_some() && self.locals_ride_window(tables, false);
             let suspendable = self.suspends_in_record();
             let suspended_registers = suspendable
                 && registers_layout_of_any_kind
@@ -2432,13 +2443,13 @@ impl Function {
                 && !addresses_locals
                 && !self.has_dynamic_scope_access();
             // Its locals and closures ride an environment window as an ordinary body's do, and so
-            // does the `arguments` object it made on entry (`arguments_ride_window`); the dynamic
-            // scope shapes the lane has no window for stay frames.
+            // does the `arguments` object it made on entry (`arguments_ride_window`); so do its
+            // `with` objects and dynamic bindings, which its record and activation carry.
             let suspended_environment = suspendable
                 && !suspended_registers
                 && self.parent.is_some()
                 && !self.parameter_eval_arguments_error
-                && self.locals_ride_window(tables);
+                && self.locals_ride_window(tables, true);
             CallPlan {
                 environment_activation,
                 suspended_registers,

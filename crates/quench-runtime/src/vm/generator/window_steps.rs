@@ -191,7 +191,7 @@ pub(super) mod tests {
 
     /// Per suspending function of `source`, whether its frame rides its register file, with an
     /// environment window after the registers, or stays a frame.
-    fn layouts(source: &str) -> Vec<(bool, bool)> {
+    pub(in crate::vm) fn layouts(source: &str) -> Vec<(bool, bool)> {
         let program = Engine::specialize(source, "suspended-plans.js").unwrap();
         program
             .functions

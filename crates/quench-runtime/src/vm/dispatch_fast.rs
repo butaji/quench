@@ -3085,7 +3085,8 @@ lane_handler! {
     /// `StoreLocal` and `StoreEnvLocal` to a binding a VM frame owns that
     /// `Vm::store_initialized_frame_binding` completes; any other store takes the general
     /// path. A `StoreEnvLocal` of a function that resolves names at run time, which may
-    /// write a `with` object's binding instead, has no record (`derive_lane_view`).
+    /// write a `with` object's binding instead, has no record (`derive_lane_view`) but the
+    /// scoped window's (`scoped_names::lane_store_scoped_local`).
     fn lane_store_local<>(cx, r, ip, i, view) {
         let value = r.get(i.a);
         // SAFETY: the context's program outlives the lane run.
