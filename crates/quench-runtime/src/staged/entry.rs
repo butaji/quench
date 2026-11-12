@@ -129,7 +129,7 @@ fn site_tables<S: Stage>(stage: &mut S, (entries, records): (S::Word, S::Word), 
 /// The id and object record that `object` names in the record table at `records`, whose presence
 /// the caller proved: `None` (leaving at `miss`) where the word is no direct object.
 #[inline(always)]
-fn direct_record<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, miss: S::Miss) -> Option<(S::Word, S::Word)> {
+pub(super) fn direct_record<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let direct = super::value::is_direct_object(stage, object);
     stage.guard(direct, miss)?;
     let id = stage.and_imm(object, u64::from(u32::MAX));

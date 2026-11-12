@@ -22,6 +22,9 @@ C.prototype.get = function () { return this.v; };
 class K { x = 1; #p = 2; static s = 3; get y() { return this.#p; } has(o) { return #p in o; } }
 function* gen(n) { for (var j = 0; j < n; j++) yield j; }
 var kk = new K();
+function P2(a, b) { this.a = a; this.b = b; }
+function Q(v) { this.f = v; }
+var setterHits = 0;
 ";
 
 /// (opcode family, loop body over `i` with the locals `acc`, `s`, `t`, `o` and `arr`).
@@ -93,6 +96,11 @@ const FAMILIES: &[(&str, &str)] = &[
     ("late-type-flip", "t = i < 1500 ? i : 'k' + i; acc += typeof t === 'number' ? 1 : 2;"),
     ("int32-overflow-flip", "t = i < 1600 ? 2147483000 + i : i; acc = (acc + t) | 0; acc += t * 2 > 4294967296 ? 1 : 0;"),
     ("negative-zero", "t = i % 2 ? -0 : 0; acc += (1 / t) < 0 ? 1 : 2;"),
+    ("add-this-field-constructor", "t = new P2(i, i / 4); acc += t.a + t.b;"),
+    ("add-field-prototype-setter-installed-late", "if (i === 1500) Object.defineProperty(Q.prototype, 'f', { set(v) { setterHits += v; }, get() { return 7; }, configurable: true }); t = new Q(i); acc += t.f + setterHits;"),
+    ("add-after-prevent-extensions", "var e = {}; if (i % 40 === 0) Object.preventExtensions(e); e.z = i; acc += 'z' in e ? 1 : 2;"),
+    ("add-wide-object-narrow-then-wide-values", "var w = {}; w.a = i; w.b = 'x'; w.c = i / 4; w.d = {}; w.e = 5; w.f = 6; acc += w.e + w.f + Object.keys(w).length;"),
+    ("define-field-wide-class", "t = new (class { a = 1; b = 2; c = 3; d = 4; e = i; f = i / 4; })(); acc += t.e + t.f;"),
     ("async-function", "(async function () { await 0; acc += 1; })();"),
 ];
 

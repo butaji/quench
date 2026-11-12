@@ -11,7 +11,8 @@
 //! planner (`add_plan`) decides which form can take the add and the row never grows storage. Any
 //! other add is the VM's, which allocates and grows.
 
-use super::object::{Form, plain_payload, store_slot};
+use super::entry::direct_record;
+use super::object::{Form, plain_payload, proto_link, store_slot};
 use super::Stage;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
@@ -61,4 +62,25 @@ pub(crate) fn add_property<S: Stage>(stage: &mut S, record: S::Word, record_id: 
     store_slot(stage, record, payload, edge.slot, form, value, miss)?;
     stage.store_u32(record, OBJECT.auxiliary_offset as i32, edge.after);
     Some(())
+}
+
+/// `add_property` for the object word `object` of the record table at `records`, the way a
+/// compiled site holds it: the word is a direct object (else `None`, leaving at `miss`), and where
+/// `link` is given (an add the prototype chain can intercept, whose chain proof the code holds as
+/// a Stable fact for exactly that prototype) the object's prototype link is it. The chain's own
+/// shapes are not read: a change to any prototype's layout retires the code
+/// (`heap::subscribe_prototype_values`), so only what varies per receiver, its link, is tested.
+#[inline(always)]
+pub(crate) fn site_add<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, (edge, link): (Edge<S::Word>, Option<S::Word>),
+    form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
+    let present = stage.ne_imm(records, 0u32);
+    stage.guard(present, miss)?;
+    let (id, record) = direct_record(stage, records, object, miss)?;
+    if let Some(link) = link {
+        let held = proto_link(stage, record);
+        let moved = stage.sub(held, link);
+        let same = stage.eq_imm(moved, 0u32);
+        stage.guard(same, miss)?;
+    }
+    add_property(stage, record, id, edge, form, value, miss)
 }

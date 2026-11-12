@@ -26,11 +26,13 @@ use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole, hole64, index_of, nu
 use crate::places::{DEST, LEFT, Places, tagged_place};
 use crate::stage::StencilStage;
 use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-use crate::staged::{Stage, Step, elements, entry, environment, iteration, load_this, read_local, strings, value, write_local};
+use crate::staged::{Stage, Step, add, elements, entry, environment, iteration, load_this, object::Form, read_local, strings, value, write_local};
 
 pub(crate) use crate::codes::{
     ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
     STORE_LOCAL_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, KEY_ROW, OBJECT_ROW, APPEND_ROW,
+    ADD_AFTER_AT, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_LINK_AT, ADD_LINK_BITS, ADD_OBJECT_AT, ADD_PACKED_ROW, ADD_SLOT_BITS, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW,
+    THIS_ADD_PACKED_ROW,
 };
 
 unsafe extern "C" {
@@ -306,6 +308,34 @@ fn append_row<const A: u8>(s: S, payload: usize) -> Out {
     Out::Taken(s)
 }
 
+/// The add row of `form`: the value operand (hole 1) is added to `object` by the transition hole 0
+/// (before-shape below `ADD_AFTER_AT`, after-shape above) and hole 2 (slot, and with `CHAINED` the
+/// prototype link the receiver must have) name (`add::site_add`); a hit continues at TAKEN.
+#[inline(always)]
+fn add_row<const A: u8, const CHAINED: bool>(s: S, payload: usize, form: Form, object: impl FnOnce(u64) -> u64) -> Out {
+    let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
+    let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
+    let (shapes, site) = (hole64::<0>(), hole64::<HOLE_B>());
+    let edge = add::Edge { before: shapes & u64::from(u32::MAX), after: shapes >> ADD_AFTER_AT, slot: site & ((1 << ADD_SLOT_BITS) - 1) };
+    let link = CHAINED.then(|| (site >> ADD_LINK_AT) & ((1 << ADD_LINK_BITS) - 1));
+    let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
+    need!(s, add::site_add(&mut stage, records, object(site >> ADD_OBJECT_AT), (edge, link), form, tagged_place::<A, HOLE_A>(&s), ()));
+    Out::Taken(s)
+}
+
+/// The add row of `form` to the object register whose frame offset hole 2 carries.
+#[inline(always)]
+fn register_add_row<const A: u8, const CHAINED: bool>(s: S, payload: usize, form: Form) -> Out {
+    let frame = s.frame;
+    add_row::<A, CHAINED>(s, payload, form, |offset| word_at(frame, offset as usize))
+}
+
+/// The add row of `form` to the activation's receiver, which the payload holds.
+#[inline(always)]
+fn this_add_row<const A: u8, const CHAINED: bool>(s: S, payload: usize, form: Form) -> Out {
+    add_row::<A, CHAINED>(s, payload, form, |_| word_at(payload, JS_STEP_RECEIVER))
+}
+
 #[inline(always)]
 pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, const B: u8>(s: S) -> Out {
     let payload = payload(&s);
@@ -323,6 +353,12 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         OBJECT_ROW => object_row(s),
         KEY_ROW => key_row(s),
         APPEND_ROW => append_row::<A>(s, payload),
+        ADD_PACKED_ROW => register_add_row::<A, ENTRY>(s, payload, Form::Packed),
+        ADD_ARENA_ROW => register_add_row::<A, ENTRY>(s, payload, Form::Arena),
+        ADD_EITHER_ROW => register_add_row::<A, ENTRY>(s, payload, Form::Either),
+        THIS_ADD_PACKED_ROW => this_add_row::<A, ENTRY>(s, payload, Form::Packed),
+        THIS_ADD_ARENA_ROW => this_add_row::<A, ENTRY>(s, payload, Form::Arena),
+        THIS_ADD_EITHER_ROW => this_add_row::<A, ENTRY>(s, payload, Form::Either),
         IDENTITY_ROW => identity_row(s),
         THIS_ROW => this_row::<D>(s),
         LOAD_LOCAL_ROW => load_local_row::<D>(s),

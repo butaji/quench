@@ -70,6 +70,9 @@ pub(super) struct Decoded {
     pub(super) atom: Option<Atom>,
     /// The receiver a folded prototype-held read stands on, with its value in `hole`.
     pub(super) folded: Option<Folded>,
+    /// The recorded transition an add row runs (`adds`), with the form its storage takes and whether
+    /// the receiver is the activation's `this`.
+    pub(super) add: Option<adds::Add>,
     /// A `ToNumeric` copy: its operand is no Number until the row proves it (a loop's entry guards
     /// prove the registers it names; a function's registers are not proved).
     pub(super) checked: bool,
@@ -80,7 +83,7 @@ pub(super) struct Decoded {
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, identity: None }
+        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, add: None, step: None, checked: false, identity: None }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -91,11 +94,11 @@ impl Decoded {
         Self { step: Some(step), ..Self::number(Kind::Move, dst, None, None, None) }
     }
 
-    /// Whether the row holds a Stable fact its code took: a folded prototype-held read, or a store in
+    /// Whether the row holds a Stable fact its code took: a folded prototype-held read, an add, or a store in
     /// place for an atom no method cache names. A change of the fact retires the code, and a run
     /// already inside it learns that from the invalidation word (`Heap::Live`).
     pub(super) fn holds_stable(&self) -> bool {
-        matches!(self.heap, Some(Heap::Held | Heap::ThisHeld | Heap::SiteStore | Heap::ThisStore))
+        self.add.is_some() || matches!(self.heap, Some(Heap::Held | Heap::ThisHeld | Heap::SiteStore | Heap::ThisStore))
     }
 
     /// The registers the row names.
@@ -258,7 +261,7 @@ fn field_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instructi
 /// entry (`entry::site_store`), where the store may run in place (`Known::stores_in_place`).
 fn field_store_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
     let atom = instruction.atom_index();
-    if !known.stores_in_place(atom) || instruction.returns_from_frame() || instruction.writes_current_this() {
+    if !known.stores_in_place(atom) || instruction.returns_from_frame() || instruction.writes_current_this() || adds::of(known, instruction).is_some() {
         return None;
     }
     let (heap, base) = match instruction.field_store_register() {
@@ -282,10 +285,12 @@ fn distinct<T: Ord>(facts: impl Iterator<Item = T>) -> Box<[T]> {
     facts.into()
 }
 
-/// The exact shapes of the holders whose values the rows hold folded (`Decoded::folded`): the Stable
-/// facts the code takes, which a change of a value a prototype of that shape holds retires it.
+/// The exact shapes of the holders whose values the rows hold folded (`Decoded::folded`), and the owners
+/// of the chain proofs the adding stores hold (`adds::Add::chain_owner`): the Stable facts the code
+/// takes, which a change of a value a prototype of that shape holds, or of any prototype's layout, retires it.
 pub(super) fn held_holders(decoded: &[Decoded]) -> Box<[u32]> {
-    distinct(decoded.iter().filter_map(|row| row.folded.map(|folded| folded.holder)))
+    let chained = decoded.iter().filter_map(|row| row.add.and_then(adds::Add::chain_owner));
+    distinct(decoded.iter().filter_map(|row| row.folded.map(|folded| folded.holder)).chain(chained))
 }
 
 /// The atoms the rows hold unnamed by method caches (`Decoded::atom`): the Stable facts the code
@@ -372,7 +377,7 @@ pub(super) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u3
     numeric_row(&|index| region.number_constant(index), instruction)
         .flatten()
         .or_else(|| heap_row(region, facts, known, pc, instruction).filter(|_| instruction.result_flags() == 0))
-        .unwrap_or_else(|| decode_step(pc, instruction, helpers))
+        .unwrap_or_else(|| decode_step(pc, instruction, known, helpers))
 }
 
 /// The row of a numeric instruction: `None` when the instruction is not one, `Some(None)` when it

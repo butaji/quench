@@ -18,3 +18,4 @@ pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Ov
 #[path = "../../quench-runtime/src/staged/frame.rs"] #[allow(dead_code)] pub(crate) mod frame;
 #[path = "../../quench-runtime/src/staged/call.rs"] pub(crate) mod call;
 #[path = "../../quench-runtime/src/staged/iteration.rs"] pub(crate) mod iteration;
+#[path = "../../quench-runtime/src/staged/add.rs"] pub(crate) mod add;

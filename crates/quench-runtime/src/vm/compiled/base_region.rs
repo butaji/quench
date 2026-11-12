@@ -22,6 +22,7 @@ use super::LaneHelpers;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+mod adds;
 mod call_plan;
 pub(in crate::vm::compiled) mod callees;
 mod decode;
@@ -53,6 +54,10 @@ pub(in crate::vm::compiled) struct Known<'a> {
     /// prototype holds folds to the value the holder holds now (`folded_read`), which a change of the
     /// holder's values retires the code over (`Body::holders`). `None` where no fact may be held.
     pub(in crate::vm::compiled) reads: Option<&'a dyn Fn(u16) -> Vec<NativeFieldLoad>>,
+    /// The add a cache site recorded for an atom, as a define's (`false`) or an adding store's (`true`,
+    /// whose proved prototype chain is then a Stable fact) transition (`Vm::native_field_add`): a
+    /// `DefineField` or an adding `SetField` runs it as `staged::add`'s row. `None` where no fact may be held.
+    pub(in crate::vm::compiled) adds: Option<&'a dyn Fn(u16, Atom, bool) -> Option<crate::staged::add_plan::AddSite>>,
     /// The address of the code's invalidation word (`code_dependencies::Invalidation`), which a body that
     /// holds a Stable fact and makes a call reads before the rows that hold it. `None` for a region.
     pub(in crate::vm::compiled) invalidation: Option<usize>,

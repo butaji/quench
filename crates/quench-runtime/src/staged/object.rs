@@ -13,7 +13,7 @@ pub(crate) const HALF_BYTES: u64 = std::mem::size_of::<u32>() as u64;
 
 /// What a site proved about where an object of an exact shape keeps its values. It is a
 /// static input: a specializer reads no word to learn it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum Form {
     /// Packed narrow values in the payload word (`PlainPropertyStorage::PackedInline`).
     Packed,

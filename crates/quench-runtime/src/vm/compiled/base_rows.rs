@@ -9,6 +9,7 @@
 //! 0, takes the narrow upper-word table in 1 and the cache entry's byte offset in 2). Every failed proof leaves through exit 0 with nothing written, so the interpreter
 //! runs the instruction.
 
+use crate::staged::Form;
 use quench_bjit::numeric::{library, Place};
 use quench_bjit::Stencil;
 use std::collections::HashMap;
@@ -77,7 +78,17 @@ pub(super) enum Heap {
     /// the unique writable dense array in the frame slot of hole 0 where the backing's capacity word proves
     /// room, else the row leaves into the helper step after it, which grows the backing.
     Append,
+    /// The property add of a `DefineField` or an adding `SetField` (`staged::add::site_add`): the value
+    /// operand (hole 1) joins the object register (its frame offset in hole 2) or, with `this`, the
+    /// activation's receiver, by the transition holes 0 and 2 carry (`library::ADD_AFTER_AT`,
+    /// `ADD_OBJECT_AT`), where the receiver holds the before-shape in `form`'s storage and, for the
+    /// row's `entry` variant, the prototype link hole 2 names. A hit continues at TAKEN; a miss leaves
+    /// into the helper step after the row, or the leave a guarded row makes.
+    Add { form: Form, this: bool },
 }
+
+/// The storage forms an add row exists for, in the order of `library::ADD_ROWS` (packed, arena, either).
+pub(super) const FORMS: [Form; 3] = [Form::Packed, Form::Arena, Form::Either];
 
 /// A heap row: its operation and where its operands and destination live.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -115,6 +126,7 @@ impl Heap {
             Heap::Object => library::OBJECT_ROW,
             Heap::Key => library::KEY_ROW,
             Heap::Append => library::APPEND_ROW,
+            Heap::Add { form, this } => library::ADD_ROWS[usize::from(this) * FORMS.len() + FORMS.iter().position(|known| *known == form).unwrap_or_default()],
         }
     }
 
@@ -122,7 +134,7 @@ impl Heap {
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
     /// slots, which every run reads live.
     pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Live | Heap::Object | Heap::Key | Heap::Append)
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Live | Heap::Object | Heap::Key | Heap::Append | Heap::Add { .. })
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value

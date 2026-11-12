@@ -16,6 +16,17 @@ pub(crate) struct Transition {
     pub(crate) slot: u16,
 }
 
+/// An add site as compiled code holds it: the transition the site recorded and, for an add the
+/// prototype chain could intercept (a `SetField`, which finds setters and read-only inherited names),
+/// the prototype link its chain proof holds for. The proof is a Stable fact: the code needs only the
+/// receiver's link, and retires when any prototype's layout changes
+/// (`heap::subscribe_prototype_values`). A define consults no chain, so it holds no link.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct AddSite {
+    pub(crate) transition: Transition,
+    pub(crate) link: Option<u32>,
+}
+
 impl Transition {
     /// The storage form that can take the add without growing, a fact of the slot alone: a packed
     /// object has a free half below the inline count, and an arena range of `slot` values has
@@ -88,6 +99,26 @@ mod tests {
         let shape = shape_of(heap, object);
         // SAFETY: a live record of its exact shape, whose slot it holds.
         unsafe { crate::staged::concrete_own_field_hit(heap.object(object).expect("an object"), heap.arena_values_base(), shape, slot) }
+    }
+
+    /// The compiled site's reading (`site_add`): the object word must name a direct object, and a chained
+    /// add holds only for receivers whose prototype link is the proved one.
+    #[test]
+    fn a_site_add_tests_the_object_word_and_the_prototype_link() {
+        use super::super::add::site_add;
+        let (mut heap, object) = heap_of(2);
+        let records = heap.object_record_base().expect("a record table") as u64;
+        let link = u64::from(heap.object(object).expect("an object").proto_link().bits());
+        let edge = Edge { before: 0, after: 1, slot: 0 };
+        let run = |heap: &mut Heap, word: Value, link: Option<u64>| {
+            let mut stage = Concrete::storing(heap);
+            site_add(&mut stage, records, word.to_bits(), (edge, link), Form::Packed, Value::integer(4).to_bits(), ()).is_some()
+        };
+        assert!(!run(&mut heap, Value::integer(3), None), "an int word names no object");
+        assert!(!run(&mut heap, object, Some(link ^ 1)), "another prototype");
+        assert_eq!(shape_of(&heap, object), 0, "a leave changes nothing");
+        assert!(run(&mut heap, object, Some(link)));
+        assert_eq!((shape_of(&heap, object), read(&heap, object, 0)), (1, Some(Value::integer(4))));
     }
 
     #[test]

@@ -67,9 +67,11 @@ impl<H: Host> Vm<H> {
         // place for the atoms no method cache names, and its prototype-held reads fold to their values.
         let folds = self.specialized && program.specialized;
         let reads = |site: u16| self.native_field_read_descriptors(site);
+        let adds = |site: u16, atom, chained| self.native_field_add(site, atom, chained);
         let known = Known {
             program, stores: folds.then(|| self.method_cache_atoms.bits()),
             reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
+            adds: folds.then_some(&adds as &dyn Fn(u16, crate::bytecode::Atom, bool) -> Option<crate::staged::add_plan::AddSite>),
             invalidation: Some(invalidation.address()),
         };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).

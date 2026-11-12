@@ -2027,6 +2027,21 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// The add `atom`'s site recorded that compiled code may run (`staged::add::site_add`): a define's
+    /// (`chained` false) needs no chain proof, an adding store's needs the entry whose prototype chain
+    /// is proved now (`FieldAddCache::proof_holds`), whose link the code then tests per receiver and
+    /// whose proof it holds as a Stable fact. `None` where the site recorded none.
+    pub(super) fn native_field_add(&self, site: u16, atom: Atom, chained: bool) -> Option<AddSite> {
+        let set = self.field_add_indices.get(self.field_cache_index(site));
+        if set == NO_FIELD_ADD_SET {
+            return None;
+        }
+        self.field_add_sets[set as usize].entries().filter(|cache| cache.atom == atom).find_map(|cache| {
+            let link = chained.then_some(cache.proved_prototype);
+            link.is_none_or(|link| cache.proof_holds(link)).then_some(AddSite { transition: cache.transition(), link: link.map(ProtoLink::bits) })
+        })
+    }
+
     /// Whether the site has recorded a cached property add (`try_cached_field_add`).
     pub(super) fn field_site_adds(&self, site: u16) -> bool {
         self.field_add_indices.get(self.field_cache_index(site)) != NO_FIELD_ADD_SET

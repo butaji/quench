@@ -132,38 +132,44 @@ fn appends_one(instruction: WideInstruction) -> bool {
 /// through, the way a store names its array (`Decoded::base`).
 fn fast_operands(instruction: WideInstruction, fast: Heap) -> (Option<Source>, Option<Register>) {
     match fast {
+        Heap::Add { .. } => adds::operands(instruction),
         Heap::Append => (instruction.optional_register_b().map(Source::Register), Some(instruction.register_a())),
         _ => (Some(Source::Register(instruction.register_b())), None),
     }
 }
 
-/// The lowering of `instruction`, where helpers are `helpers`: a helper step (behind its fast
-/// arm, where it has one) where the helper table has the step helper's address, else the leave.
-pub(super) fn lowering(instruction: WideInstruction, helpers: LaneHelpers) -> Step {
+/// The lowering of `instruction`, where helpers are `helpers` and `known` holds the sites' facts: a
+/// helper step (behind its fast arm, where it has one) where the helper table has the step helper's
+/// address, else the leave; an add (`adds`) is a fast arm of its own, whose miss is the helper step
+/// where the instruction has one and the leave where it has none (`Step::Guard`).
+pub(super) fn lowering(instruction: WideInstruction, known: Known, helpers: LaneHelpers) -> Step {
     let addressed = call_plan::helper_address(helpers, LaneHelper::Step).is_some();
-    match fast_arm(instruction) {
-        _ if !(addressed && steps_in_place(instruction)) => Step::Leave,
-        Some(fast) => Step::Fast(fast),
-        None => Step::Helper,
+    let in_place = addressed && steps_in_place(instruction);
+    match (fast_arm(instruction).or_else(|| adds::of(known, instruction).map(adds::Add::heap)), in_place) {
+        (Some(fast @ Heap::Add { .. }), false) => Step::Guard(fast),
+        (_, false) => Step::Leave,
+        (Some(fast), true) => Step::Fast(fast),
+        (None, true) => Step::Helper,
     }
 }
 
 /// The row of an instruction at `pc` that has no numeric or heap row: a `Nop` is the jump to the
 /// next instruction, the rest their step. A helper step names the register it writes, and a fast
-/// arm the register it reads.
-pub(super) fn decode_step(pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
+/// arm the register it reads; an add row also names its transition and the atom it holds unnamed.
+pub(super) fn decode_step(pc: u32, instruction: WideInstruction, known: Known, helpers: LaneHelpers) -> Decoded {
     match instruction.op().class() {
         Class::Nop => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
         _ => {
-            let step = lowering(instruction, helpers);
+            let step = lowering(instruction, known, helpers);
             let helped = step.runs_helper();
             let written = if helped { instruction.written_registers().next() } else { None };
             let target = (helped && instruction.op().control_flow_layout().jumps()).then(|| instruction.jump_target());
             let (read, base) = match step {
-                Step::Fast(fast) => fast_operands(instruction, fast),
+                Step::Fast(fast) | Step::Guard(fast) => fast_operands(instruction, fast),
                 _ => (None, None),
             };
-            Decoded { target, a: read, base, ..Decoded::step(step, written) }
+            let add = adds::of(known, instruction).filter(|add| matches!(step, Step::Fast(fast) | Step::Guard(fast) if fast == add.heap()));
+            Decoded { target, a: read, base, add, atom: add.map(|_| instruction.atom_index()), ..Decoded::step(step, written) }
         }
     }
 }
@@ -215,6 +221,8 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
     match decoded.step.ok_or("plan_step: no step")? {
         Step::Leave => leave(pc),
         Step::Helper => plan_helper(layout, pc, decoded.target, helpers),
+        Step::Fast(Heap::Add { .. }) => adds::plan(decoded, layout, pc, Some(plan_helper(layout, pc, None, helpers)?)),
+        Step::Guard(Heap::Add { .. }) => adds::plan(decoded, layout, pc, None),
         Step::Fast(fast) => plan_fast(decoded, fast, layout, pc, Some(plan_helper(layout, pc, None, helpers)?)),
         Step::Guard(fast) => plan_fast(decoded, fast, layout, pc, None),
         Step::Return => {
@@ -226,7 +234,7 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
 }
 
 /// The row that ends the region at `pc`, where the interpreter runs the instruction.
-fn leave(pc: u32) -> Result<Planned, String> {
+pub(super) fn leave(pc: u32) -> Result<Planned, String> {
     Ok(Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, Some(pc)))
 }
 
@@ -272,7 +280,7 @@ fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, slow: Opti
 
 /// `fast` with the run `slow` laid out behind it: the slow run's parts follow the fast row, so the
 /// parts that name another part of their run are renumbered past it.
-fn behind(mut fast: Planned, mut slow: Planned) -> Planned {
+pub(super) fn behind(mut fast: Planned, mut slow: Planned) -> Planned {
     let (lead, tail) = (std::mem::take(&mut slow.pre), std::mem::take(&mut slow.post));
     fast.owned = slow.owned.take();
     fast.post = lead.into_iter().chain(std::iter::once(slow)).chain(tail).map(|mut part| {
@@ -329,15 +337,25 @@ mod tests {
         WideInstruction::new(op, 1, 2, 3, 0)
     }
 
+    /// The facts of a program that has recorded nothing: no add, no store in place, no fold.
+    fn known(program: &ResidualProgram) -> Known<'_> {
+        Known { program, stores: None, reads: None, adds: None, invalidation: None }
+    }
+
+    fn empty_program() -> ResidualProgram {
+        crate::Engine::specialize("0", "known.js").expect("a program")
+    }
+
     /// Every opcode has a lowering, and the helper steps are exactly the in-place instructions and
     /// the call and construction helpers' own.
     #[test]
     fn every_opcode_is_lowered() {
         let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+        let program = empty_program();
         let mut counts = [0usize; 2];
         for index in 0..Op::COUNT {
             let op = Op::from_index(index).expect("an opcode");
-            let step = lowering(instruction(op), process);
+            let step = lowering(instruction(op), known(&program), process);
             counts[usize::from(step.runs_helper())] += 1;
             if op.traits().has(Traits::LANE_IN_PLACE) && instruction(op).written_registers().count() <= 1 {
                 assert!(step.runs_helper(), "{op:?}");
@@ -351,9 +369,10 @@ mod tests {
     /// still lowered, never refused.
     #[test]
     fn without_helper_addresses_every_opcode_leaves() {
+        let program = empty_program();
         for index in 0..Op::COUNT {
             let op = Op::from_index(index).expect("an opcode");
-            assert_eq!(lowering(instruction(op), LaneHelpers::Ahead), Step::Leave, "{op:?}");
+            assert_eq!(lowering(instruction(op), known(&program), LaneHelpers::Ahead), Step::Leave, "{op:?}");
         }
     }
 
@@ -361,7 +380,7 @@ mod tests {
     /// no fast arm a register's word, a shape or a backing the row can read decides, so the helper
     /// is their whole operation, not a slow arm.
     const RESIDUAL: [Op; 18] = [
-        // The define adds a property. Its staged row (`staged::add`) runs in the interpreter; a stencil needs the site's transition at decode (`Known`), which no planner supplies yet.
+        // The define adds a property: where its site recorded the transition (`Known::adds`) its staged row (`staged::add`) is the fast arm (`adds`) and this helper its slow arm; with none recorded, the helper is the whole operation.
         Op::DefineField,
         // The key is converted (guest code) and the property defined through the shape's slow path.
         Op::DefineComputedField,
@@ -416,7 +435,7 @@ mod tests {
                 let function = program.function(index);
                 for packed in &function.code {
                     let instruction = crate::vm::dispatch_fast::decoded_instruction(function, *packed);
-                    let row = decode_step(0, instruction, process);
+                    let row = decode_step(0, instruction, known(&program), process);
                     if row.step == Some(Step::Helper) {
                         assert!(RESIDUAL.contains(&instruction.op()), "{path:?}: {:?} takes the generic helper", instruction.op());
                         assert_eq!(row.target.is_some(), instruction.op().control_flow_layout().jumps(), "{:?}", instruction.op());
@@ -432,14 +451,15 @@ mod tests {
     fn a_one_element_append_has_a_fast_row_and_a_spread_the_helper_alone() {
         use crate::bytecode::encode_optional_register;
         let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+        let program = empty_program();
         let append = |element: Option<u16>, spread: u16, elisions: u32| {
-            lowering(WideInstruction::new(Op::AppendArray, 1, encode_optional_register(element), spread, elisions), process)
+            lowering(WideInstruction::new(Op::AppendArray, 1, encode_optional_register(element), spread, elisions), known(&program), process)
         };
         assert_eq!(append(Some(2), 0, 0), Step::Fast(Heap::Append));
         assert_eq!(append(Some(2), 1, 0), Step::Helper);
         assert_eq!(append(Some(2), 0, 1), Step::Helper);
         assert_eq!(append(None, 0, 2), Step::Helper);
-        let row = decode_step(0, WideInstruction::new(Op::AppendArray, 1, encode_optional_register(Some(2)), 0, 0), process);
+        let row = decode_step(0, WideInstruction::new(Op::AppendArray, 1, encode_optional_register(Some(2)), 0, 0), known(&program), process);
         assert!(matches!(row.a, Some(Source::Register(2))) && row.base == Some(1) && row.dst.is_none());
     }
 
@@ -471,7 +491,8 @@ mod tests {
 
     #[test]
     fn a_nop_is_the_jump_to_the_next_instruction() {
-        let row = decode_step(7, instruction(Op::Nop), LaneHelpers::Ahead);
+        let program = empty_program();
+        let row = decode_step(7, instruction(Op::Nop), known(&program), LaneHelpers::Ahead);
         assert_eq!((row.kind, row.target, row.step.is_none()), (Kind::Jump, Some(8), true));
     }
 
@@ -494,7 +515,7 @@ mod tests {
                 let function = program.function(index);
                 for packed in &function.code {
                     let instruction = crate::vm::dispatch_fast::decoded_instruction(function, *packed);
-                    let row = decode_step(0, instruction, process);
+                    let row = decode_step(0, instruction, known(&program), process);
                     assert!(row.step.is_some() || row.target.is_some(), "{path:?}: {:?}", instruction.op());
                     instructions += 1;
                 }
