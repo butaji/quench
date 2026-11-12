@@ -63,4 +63,5 @@ const _: () = {
     assert!(std::mem::offset_of!(ShadowFrame, window) == frame::WINDOW);
     assert!(std::mem::size_of::<ShadowFrame>() == frame::PREFIX_BYTES);
     assert!(std::mem::offset_of!(crate::vm::dispatch_fast::Activation, native) == 0);
+    assert!(std::mem::size_of::<crate::vm::dispatch_fast::Activation>().is_power_of_two());
 };
