@@ -113,9 +113,15 @@ pub(super) fn in_innermost_frame<H: Host>(cx: *mut LaneContext<H>, helper: impl 
     vm.link_natives(cx);
     let Some(frame) = vm.lane_stack.activations.top_native() else { return helper() };
     let owner = CallerState::of_context(cx);
+    let depth = vm.lane_stack.activations.len();
     CallerState::of_frame(&frame).install(cx);
     let status = helper();
-    if status != LANE_CALL_LEFT && status != LANE_CALL_TERMINATED { owner.install(cx); }
+    if status == LANE_CALL_LEFT {
+        // The lane continues above the frames, which return into the interpreter.
+        vm.lane_stack.activations.retire_bodies(depth);
+    } else if status != LANE_CALL_TERMINATED {
+        owner.install(cx);
+    }
     status
 }
 

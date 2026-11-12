@@ -82,11 +82,25 @@ impl LaneActivations {
         Self::distance(slot, self.top)
     }
 
-    /// The prefix of the innermost frame while it is a native body's, linked or not.
+    /// The prefix of the innermost frame while a native body runs in it, linked or not: a
+    /// frame the lane continued in (`retire_body`) names no body.
     #[inline(always)]
     pub(super) fn top_native(&self) -> Option<ShadowFrame> {
         // SAFETY: a non-empty region's slot below `top` holds at least its prefix.
-        (!self.is_empty()).then(|| unsafe { (*self.top.sub(1)).native }).filter(|frame| !frame.callee.is_null())
+        (!self.is_empty()).then(|| unsafe { (*self.top.sub(1)).native }).filter(|frame| !frame.callee.is_null() && frame.body != 0)
+    }
+
+    /// Ends the native body of the frames below depth `above` that still name one, from the
+    /// innermost out: the lane continues in them, so the context, not their descriptor, holds
+    /// their state from now on.
+    pub(super) fn retire_bodies(&mut self, above: usize) {
+        for depth in (0..above).rev() {
+            let slot = self.slot(depth);
+            // SAFETY: each slot below `top` holds at least its prefix.
+            let native = unsafe { &mut (*slot).native };
+            if native.callee.is_null() || native.body == 0 { break; }
+            native.body = 0;
+        }
     }
 
     /// The slot of the activation `depth` above the base, which holds at least its prefix
