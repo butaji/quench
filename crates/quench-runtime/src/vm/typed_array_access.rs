@@ -349,9 +349,44 @@ impl<H: Host> Vm<H> {
         Some((base.wrapping_add(if length == 0 { 0 } else { view.offset }), length, view.kind))
     }
 
+    /// The Number at `index` of the typed array `object` of `kind`, read by the staged element row
+    /// over the view's native record (`typed_elements`), the same loads native code makes; the
+    /// VM publishes the record when the proof asks for it. `None` for a kind with no native
+    /// element, a view that cannot be addressed or an index past its elements, which the
+    /// general read answers.
+    fn staged_typed_number(&mut self, object: Value, kind: TypedArrayKind, index: usize) -> Option<f64> {
+        crate::staged::typed_elements::NativeKind::new(kind)?;
+        let entries = self.heap.typed_view_base();
+        let prove = || crate::staged::typed_view::concrete_typed_view(entries, object);
+        let view = prove().or_else(|| self.publish_typed_view(object).then(prove).flatten())?;
+        crate::staged::typed_view::concrete_typed_read(view, index).map(f64::from_bits)
+    }
+
+    /// The slow arm of the staged typed view proof: publishes the elements of the typed array
+    /// `object` in its record's native prefix as its buffer is now, which stays true until the
+    /// next buffer event (`buffer_relocations`); a view native code cannot address is withdrawn
+    /// instead. Whether it is addressable.
+    pub(super) fn publish_typed_view(&mut self, object: Value) -> bool {
+        if matches!(self.heap.get(object), Some(Cell::TypedArray { object, .. }) if object.native.is_retracted()) {
+            return false;
+        }
+        let unshared = self.lane_typed_array_elements(object, true);
+        let published = unshared.or_else(|| self.lane_typed_array_elements(object, false))
+            .and_then(|(data, length, _)| Some((data, u32::try_from(i32::try_from(length).ok()?).ok()?)));
+        let Some(Cell::TypedArray { object: record, .. }) = self.heap.get_mut(object) else { return false };
+        match published {
+            Some((data, length)) => record.native.publish(data, length, unshared.is_some()),
+            None => record.native.retract(),
+        }
+        published.is_some()
+    }
+
     pub(super) fn typed_array_get(&mut self, object: Value, index: usize) -> Option<Value> {
         let view = self.typed_array_view(object)?;
         let kind = view.kind;
+        if let Some(number) = self.staged_typed_number(object, kind, index) {
+            return Some(Value::number(number));
+        }
         let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(view.buffer) else {
             return Some(Value::UNDEFINED);
         };

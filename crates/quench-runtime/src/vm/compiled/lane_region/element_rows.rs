@@ -4,7 +4,7 @@
 //! over the frame's proofs of the array (`frame_elements`), with the exit, the join and the
 //! views a store retires left to this lowering.
 use super::*;
-use crate::staged::typed_elements::TypedView;
+use crate::staged::typed_elements::{TypedView, ViewKind};
 use crate::staged::{Operation, Step};
 
 impl Lowering<'_, '_> {
@@ -64,7 +64,7 @@ impl Lowering<'_, '_> {
         match array.views {
             ElementViews::Dense => frame_elements::Held::Dense(super::super::DenseArrayView {
                 values, length, writable: array.writable, uncounted: array.writable }, packed),
-            ElementViews::Typed => frame_elements::Held::Typed(TypedView { values, length, kind: self.hoisted_kind(array) }),
+            ElementViews::Typed => frame_elements::Held::Typed(TypedView { values, length, kind: ViewKind::Dynamic(self.hoisted_kind(array)) }),
         }
     }
 

@@ -21,7 +21,7 @@ const _: () = assert!(TypedArrayKind::COUNT < NO_KIND as usize);
 
 /// What native code reads of a view record, first in `BufferViewObject` (`#[repr(C)]`), so a
 /// table entry addresses it. `detached` is set while the view cannot be addressed in place:
-/// before its first publication, when its buffer is detached, shrank below it, is shared
+/// before its first publication (its stamp is no count), when its buffer is detached, shrank below it, is shared
 /// atomically or holds no native element.
 #[repr(C)]
 #[derive(Debug)]
@@ -57,7 +57,7 @@ impl Clone for NativeView {
 
 impl NativeView {
     fn unpublished(kind: u8) -> Self {
-        Self { data: 0, stamp: 0, length: 0, kind, detached: 1, unshared: 0, home: std::ptr::null_mut() }
+        Self { data: 0, stamp: u64::MAX, length: 0, kind, detached: 1, unshared: 0, home: std::ptr::null_mut() }
     }
 
     /// Publishes the view's elements: `length` of them from `data`, over bytes `unshared` or not.
@@ -71,6 +71,12 @@ impl NativeView {
     pub(crate) fn retract(&mut self) {
         self.detached = 1;
         self.stamp = buffer_relocations();
+    }
+
+    /// Whether the view was withdrawn since the last event that could have made it addressable,
+    /// so publishing it again would withdraw it again.
+    pub(crate) fn is_retracted(&self) -> bool {
+        self.detached == 1 && self.stamp == buffer_relocations()
     }
 
     /// Names this record by `kind` and by the table entry that holds it.

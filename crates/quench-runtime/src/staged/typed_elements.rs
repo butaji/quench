@@ -1,21 +1,44 @@
 //! A typed array's element access as staged rows: the element at an in-bounds index of a view
-//! proved once (`TypedView`), read as a Number and written from one. The kind word the view's
-//! proof carries picks the element's width and conversion; a stage that holds it as a constant
-//! (a specializer proving the kind) keeps one arm, any other tries the kinds in turn. The
-//! conversions are the language's: ToNumber of the loaded bits, ToInt32 modulo the width, the
-//! binary32 rounding and the clamped byte.
+//! proved once (`TypedView`, `typed_view`), read as a Number and written from one. The kind the
+//! view's proof carries picks the element's width and conversion: a kind the proof compared with
+//! the site's observed one (`ViewKind::Static`) is a constant, so an access keeps one arm; the
+//! record's kind word (`ViewKind::Dynamic`) is tried against the kinds in turn. The conversions
+//! are the language's: ToNumber of the loaded bits, ToInt32 modulo the width, the binary32
+//! rounding and the clamped byte.
 
 use super::{NumericStage, Stage};
 use crate::heap::TypedArrayKind;
 
-/// A typed array's elements as an access reads them, once proved: the first element's address,
-/// the element count (below 2^31, so an int32 index below zero is no index) and the
-/// `TypedArrayKind` discriminant, in one width.
+/// A typed array's elements as an access reads them, once proved: the first element's address
+/// and the element count (below 2^31, so an int32 index below zero is no index), in one width,
+/// and the kind.
 #[derive(Clone, Copy)]
 pub(crate) struct TypedView<W> {
     pub(crate) values: W,
     pub(crate) length: W,
-    pub(crate) kind: W,
+    pub(crate) kind: ViewKind<W>,
+}
+
+/// The kind of a proved view: the kind the proof compared the record's with, or the record's
+/// `TypedArrayKind` discriminant, which an access dispatches on.
+#[derive(Clone, Copy)]
+pub(crate) enum ViewKind<W> {
+    Static(NativeKind),
+    Dynamic(W),
+}
+
+/// A kind whose elements native code reads and writes in place, with what its element is.
+#[derive(Clone, Copy)]
+pub(crate) struct NativeKind {
+    pub(crate) kind: TypedArrayKind,
+    element: Element,
+}
+
+impl NativeKind {
+    /// `kind` as a native kind; `None` for Float16 and the BigInt kinds, which stay on the general path.
+    pub(crate) fn new(kind: TypedArrayKind) -> Option<Self> {
+        ELEMENTS.into_iter().find(|native| native.kind == kind)
+    }
 }
 
 /// The integer elements, by the load that makes their int32 word and the store of its low bytes.
@@ -32,16 +55,16 @@ enum Element {
 
 /// The kinds whose elements native code reads and writes in place, in the order a kind word is
 /// tried. Float16 and BigInt elements stay on the general path.
-const ELEMENTS: [(TypedArrayKind, Element); 9] = [
-    (TypedArrayKind::Float64, Element::Float64),
-    (TypedArrayKind::Int32, Element::Integer(Integer::Signed32)),
-    (TypedArrayKind::Uint8, Element::Integer(Integer::Unsigned8)),
-    (TypedArrayKind::Float32, Element::Float32),
-    (TypedArrayKind::Uint32, Element::Integer(Integer::Unsigned32)),
-    (TypedArrayKind::Int16, Element::Integer(Integer::Signed16)),
-    (TypedArrayKind::Uint16, Element::Integer(Integer::Unsigned16)),
-    (TypedArrayKind::Int8, Element::Integer(Integer::Signed8)),
-    (TypedArrayKind::Uint8Clamped, Element::Integer(Integer::Clamped8)),
+const ELEMENTS: [NativeKind; 9] = [
+    NativeKind { kind: TypedArrayKind::Float64, element: Element::Float64 },
+    NativeKind { kind: TypedArrayKind::Int32, element: Element::Integer(Integer::Signed32) },
+    NativeKind { kind: TypedArrayKind::Uint8, element: Element::Integer(Integer::Unsigned8) },
+    NativeKind { kind: TypedArrayKind::Float32, element: Element::Float32 },
+    NativeKind { kind: TypedArrayKind::Uint32, element: Element::Integer(Integer::Unsigned32) },
+    NativeKind { kind: TypedArrayKind::Int16, element: Element::Integer(Integer::Signed16) },
+    NativeKind { kind: TypedArrayKind::Uint16, element: Element::Integer(Integer::Unsigned16) },
+    NativeKind { kind: TypedArrayKind::Int8, element: Element::Integer(Integer::Signed8) },
+    NativeKind { kind: TypedArrayKind::Uint8Clamped, element: Element::Integer(Integer::Clamped8) },
 ];
 
 /// The int32 word of the `integer` element at `address`.
@@ -116,19 +139,28 @@ fn element_address<S: Stage>(stage: &mut S, values: S::Word, index: S::Word, kin
     stage.add(values, offset)
 }
 
-/// What `access` makes of the element the kind word `kind` names, one arm per kind of `ELEMENTS`
-/// from `first`; a kind no arm names leaves at `miss`.
-fn by_kind<S: Stage>(stage: &mut S, kind: S::Word, (first, rest): ((TypedArrayKind, Element), &[(TypedArrayKind, Element)]),
-    access: &dyn Fn(&mut S, TypedArrayKind, Element) -> Option<S::Word>, miss: S::Miss) -> Option<S::Word> {
-    let (discriminant, element) = first;
-    let named = stage.eq_imm(kind, discriminant as u64);
+/// What `access` makes of the element the kind word `kind` names, one arm per kind of `kinds`
+/// from the first; a kind no arm names leaves at `miss`.
+fn by_word<S: Stage>(stage: &mut S, kind: S::Word, (first, rest): (NativeKind, &[NativeKind]),
+    access: &dyn Fn(&mut S, NativeKind) -> Option<S::Word>, miss: S::Miss) -> Option<S::Word> {
+    let named = stage.eq_imm(kind, first.kind as u64);
     match rest.split_first() {
         None => {
             stage.guard(named, miss)?;
-            access(stage, discriminant, element)
+            access(stage, first)
         }
-        Some((next, rest)) => stage.choose_leaving(named, |stage| access(stage, discriminant, element),
-            |stage| by_kind(stage, kind, (*next, rest), access, miss)),
+        Some((next, rest)) => stage.choose_leaving(named, |stage| access(stage, first),
+            |stage| by_word(stage, kind, (*next, rest), access, miss)),
+    }
+}
+
+/// What `access` makes of the element `kind` names: the one arm of a kind the proof fixed, else
+/// the arm of the kind word that matches.
+fn by_kind<S: Stage>(stage: &mut S, kind: ViewKind<S::Word>,
+    access: &dyn Fn(&mut S, NativeKind) -> Option<S::Word>, miss: S::Miss) -> Option<S::Word> {
+    match kind {
+        ViewKind::Static(native) => access(stage, native),
+        ViewKind::Dynamic(word) => by_word(stage, word, (ELEMENTS[0], &ELEMENTS[1..]), access, miss),
     }
 }
 
@@ -139,11 +171,11 @@ pub(crate) fn typed_read<S: NumericStage>(stage: &mut S, view: TypedView<S::Word
     miss: S::Miss) -> Option<S::Word> {
     let in_bounds = stage.ult(index, view.length);
     stage.guard(in_bounds, miss)?;
-    let access = |stage: &mut S, kind, element| {
-        let address = element_address(stage, view.values, index, kind);
-        Some(load_number(stage, element, address))
+    let access = |stage: &mut S, native: NativeKind| {
+        let address = element_address(stage, view.values, index, native.kind);
+        Some(load_number(stage, native.element, address))
     };
-    by_kind(stage, view.kind, (ELEMENTS[0], &ELEMENTS[1..]), &access, miss)
+    by_kind(stage, view.kind, &access, miss)
 }
 
 /// Stores the Number `number` at element `index` of `view`: past the elements, of a kind
@@ -153,9 +185,9 @@ pub(crate) fn typed_write<S: NumericStage>(stage: &mut S, view: TypedView<S::Wor
     number: S::Word, miss: S::Miss) -> Option<()> {
     let in_bounds = stage.ult(index, view.length);
     stage.guard(in_bounds, miss)?;
-    let access = |stage: &mut S, kind, element| {
-        let address = element_address(stage, view.values, index, kind);
-        store_number(stage, element, address, number, miss).map(|()| number)
+    let access = |stage: &mut S, native: NativeKind| {
+        let address = element_address(stage, view.values, index, native.kind);
+        store_number(stage, native.element, address, number, miss).map(|()| number)
     };
-    by_kind(stage, view.kind, (ELEMENTS[0], &ELEMENTS[1..]), &access, miss).map(|_| ())
+    by_kind(stage, view.kind, &access, miss).map(|_| ())
 }
