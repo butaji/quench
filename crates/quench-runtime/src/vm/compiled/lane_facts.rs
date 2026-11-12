@@ -95,10 +95,12 @@ pub(in crate::vm) fn repays_compile(interpreted: u64, ir: usize) -> bool {
     interpreted * saved >= lane.benefit_over_cost * lane.compile_cost_per_ir * ir as u64 * of
 }
 
-/// `repays_compile` for `function`'s `entries` so far, each running its whole body.
-pub(super) fn pays_compile(program: &ResidualProgram, function: u32, entries: u32, ir: usize) -> bool {
+/// `repays_compile` for `function`'s `entries` so far, each running its whole body; where its
+/// loop runs in a region that enters native code, each saves that entry alone
+/// (`TIERS.loops.region_entry_work`).
+pub(super) fn pays_compile(program: &ResidualProgram, function: u32, entries: u32, ir: usize, entering_region: bool) -> bool {
     let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
-    repays_compile(u64::from(entries) * length, ir)
+    repays_compile(u64::from(entries) * if entering_region { TIERS.loops.region_entry_work } else { length }, ir)
 }
 
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a
