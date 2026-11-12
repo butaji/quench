@@ -119,9 +119,13 @@ pub(in crate::vm::compiled) fn covers(code: &[WideInstruction]) -> bool {
 /// defines beside its callee.
 pub(super) const STEP_WRITES: usize = 2;
 
-/// Whether `instruction` is made in place by `LaneHelper::Step`.
+/// Whether `instruction` is made in place by `LaneHelper::Step`: no result flag but a numeric operator's local target,
+/// which the interpreter's step writes to the frame's local slot (`Vm::step`'s `numeric_local_target`) and defines no
+/// register for (`written_registers`).
 fn steps_in_place(instruction: WideInstruction) -> bool {
-    instruction.op().steps_in_body() && instruction.result_flags() == 0 && instruction.written_registers().count() <= STEP_WRITES
+    let flags = instruction.result_flags();
+    instruction.op().steps_in_body() && (flags == 0 || instruction.writes_numeric_local() && flags == crate::bytecode::NUMERIC_LOCAL_TARGET)
+        && instruction.written_registers().count() <= STEP_WRITES
 }
 
 /// The heap row that is the fast arm of a `Unary` that is a `typeof` string, index or test
