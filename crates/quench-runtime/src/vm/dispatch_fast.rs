@@ -3452,9 +3452,9 @@ fn lane_in_place<H: Host, T>(
 /// Instructions whose general step reads and writes only the frame, its registers and heap
 /// values, runs guest code only through nested calls, and continues (a backward jump in the
 /// general path) or throws: no call, return, `this` binding or environment change the lane caches.
-/// A for-in step jumps out of its loop, which its own handler makes (`for_in_steps`).
+/// A step that leaves its loop (`LANE_LOOP_EXIT`, the for-in step) has its own handler (`for_in_steps`).
 const fn lane_steps_in_place(op: Op) -> bool {
-    op.traits().has(crate::bytecode::Traits::LANE_IN_PLACE) && !matches!(op.class(), Class::ForInNext)
+    op.traits().has(crate::bytecode::Traits::LANE_IN_PLACE)
 }
 
 script_handler! {
@@ -17968,7 +17968,7 @@ const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) 
         Class::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
         Class::JumpTrue => Some(lane_jump_true::<H, BACKWARD>),
         Class::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
-        Class::ForInNext => Some(for_in_steps::for_in_next_handler::<H, BACKWARD>()),
+        _ if opcode.traits().has(crate::bytecode::Traits::LANE_LOOP_EXIT) => Some(for_in_steps::for_in_next_handler::<H, BACKWARD>()),
         Class::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
         Class::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
         _ => wasm_gc_handler::<H>(opcode),

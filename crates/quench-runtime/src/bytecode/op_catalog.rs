@@ -42,7 +42,6 @@ pub(crate) enum Class {
     Nop,
     Jump,
     JumpTrue,
-    ForInNext,
     Unary,
     Return,
     IncDec,
@@ -170,7 +169,6 @@ macro_rules! class_of {
     (Nop) => { Class::Nop };
     (Jump) => { Class::Jump };
     (JumpTrue) => { Class::JumpTrue };
-    (ForInNext) => { Class::ForInNext };
     (Unary) => { Class::Unary };
     (Return) => { Class::Return };
     (IncDec) => { Class::IncDec };
@@ -293,8 +291,9 @@ impl Traits {
     pub(crate) const SCALAR_REGION: Self = Self(1 << 18);
     /// An indexed element read or write, which a loop region views its arrays for.
     pub(crate) const ELEMENT_ACCESS: Self = Self(1 << 19);
-    /// A general step that reads and writes only the frame, its registers and heap values.
+    /// A general step that reads and writes only the frame, its registers and heap values; one that leaves its loop is `LANE_LOOP_EXIT`.
     pub(crate) const LANE_IN_PLACE: Self = Self(1 << 20);
+    pub(crate) const LANE_LOOP_EXIT: Self = Self(1 << 29);
     /// A frame-local step that runs beside frameless activations.
     pub(crate) const LANE_RESULT_STEP: Self = Self(1 << 21);
     /// An op whose result may return from the frame instead of the register file.
@@ -311,7 +310,6 @@ impl Traits {
     pub(crate) const GLOBAL_NAME_ACCESS: Self = Self(1 << 27);
     /// A Wasm op that calls out to the VM or ends the body, which no unrolled loop admits.
     pub(crate) const UNROLL_EXCLUDED: Self = Self(1 << 28);
-
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
 }
@@ -378,7 +376,7 @@ macro_rules! traits_of {
     (CopyDataProperties) => { Traits::LANE_IN_PLACE };
     (GetIterator) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
     (ForInStart) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
-    (ForInNext) => { Traits::LANE_IN_PLACE };
+    (ForInNext) => { Traits::LANE_LOOP_EXIT };
     (RequireIteratorResult) => { Traits::LANE_IN_PLACE };
     (IteratorClose) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
     (IteratorCleanupPush) => { Traits::LANE_IN_PLACE };
