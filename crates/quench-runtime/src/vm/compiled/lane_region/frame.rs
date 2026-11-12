@@ -42,6 +42,10 @@ pub(super) struct EmitFrame<'a> {
     pub(super) polls: &'a mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
     /// The heap identities the emitted code names (`FoldedRoots::embed_heap_identity`).
     pub(super) roots: &'a mut crate::folded_roots::FoldedRoots,
+    /// The dense capture run (values address, length) a capture read resolved.
+    pub(super) captures: Option<(ir::Value, ir::Value)>,
+    /// The Number return edges, joined at the end of the body.
+    pub(super) number_returns: &'a mut smallvec::SmallVec<[NumberReturn; 1]>,
 }
 
 impl EmitFrame<'_> {
@@ -49,19 +53,6 @@ impl EmitFrame<'_> {
     fn native_locals(&self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
         self.locals.then(|| super::super::emit_js_payload_word(stage.builder, self.payload,
             std::mem::offset_of!(super::super::JsStepDispatch, native_locals)))
-    }
-}
-
-impl EmitFrame<'_> {
-    /// A literal's allocation by the lane's own `helper`, whose DELETED answer leaves at the proof's miss edge.
-    fn allocate(&mut self, stage: &mut Emit<'_, '_>, helper: LaneHelper, destination: Register, arguments: &[ir::Value],
-        proof: EmitProof) -> Option<ir::Value> {
-        let EmitProof::Allocation { miss } = proof else { return None };
-        let payload = self.payload;
-        let address = self.helpers.address(&mut stage.builder, helper);
-        let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[&[payload], arguments].concat());
-        calls::finish_allocation(stage, self, destination, value, miss);
-        Some(value)
     }
 }
 
@@ -259,6 +250,16 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         let value = stage.builder.ins().select(holds, yes, no);
         (value, RegisterFact::definition(Type::language(crate::ValueType::Boolean),
             Representation::Tagged))
+    }
+
+    #[inline(always)]
+    fn capture(&mut self, stage: &mut Emit<'_, '_>, depth: u16, slot: u16, miss: ir::Block) -> Option<ir::Value> {
+        calls::capture(self, stage, depth, slot, miss)
+    }
+
+    #[inline(always)]
+    fn ret(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<()> {
+        calls::number_return(self, stage, register)
     }
 
     #[inline(always)]

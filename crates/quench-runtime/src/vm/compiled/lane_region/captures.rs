@@ -21,7 +21,6 @@ impl Lowering<'_, '_> {
     /// where it runs, after any call that may have stored to the slot.
     pub(super) fn load_capture(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, exit: ir::Block,
         admitted_callee: Option<ir::Value>, rooted: RootedRead) -> ir::Value {
-        let slot = crate::bytecode::ImmediateLayout::capture_slot(instruction.imm());
         let frame = match self.unit.origins.get(pc).copied() {
             Some(super::super::lane_unit::Origin::Inlined { frame, .. }) => Some(frame),
             _ => None,
@@ -33,9 +32,11 @@ impl Lowering<'_, '_> {
         let value = self.builder.append_block_param(join, types::I64);
         match dense {
             Some((values, len)) => {
-                let mut stage = Emit { builder: &mut self.builder, property_values: None };
-                let read = crate::staged::environment::dense_capture(&mut stage, values, len, slot, slow)
-                    .expect("the emit stage continues past its guards");
+                let operation = crate::staged::Operation::decode(instruction, |_| None).expect("a capture decodes");
+                let edges = super::frame::Edges::ValueGuarded { miss: slow };
+                let crate::staged::Step::Value(read) = self.step_with_captures(state, edges, Some((values, len)), operation) else {
+                    unreachable!("the emit stage reads the dense run it was given")
+                };
                 self.ins().jump(join, &[ir::BlockArg::Value(read)]);
             }
             None => { self.ins().jump(slow, &[]); }

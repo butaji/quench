@@ -182,10 +182,16 @@ pub(crate) trait Frame<S: Stage> {
     fn call(&mut self, _stage: &mut S, _target: CallTarget<S::Word>, _args: &[S::Word], _effects: Effects,
         _leave: S::Miss) -> Option<S::Word> { None }
 
-    /// Leave the function with `value` (Stage v2); `None` where the frame cannot.
+    /// Leave the function with the Number register `register`, in the representation its fact
+    /// names; `None` where the frame has no numeric completion.
     #[inline(always)]
-    #[allow(dead_code)]
-    fn ret(&mut self, _stage: &mut S, _value: S::Word) -> Option<Self::Control> { None }
+    fn ret(&mut self, _stage: &mut S, _register: Register) -> Option<Self::Control> { None }
+
+    /// The captured value at `slot` of the environment `depth` scopes out: its ordinary
+    /// value, or `None` (leaving at `miss`) where the frame holds no such run of slots or the
+    /// slot holds an internal marker, which the caller resolves the long way.
+    #[inline(always)]
+    fn capture(&mut self, _stage: &mut S, _depth: u16, _slot: u16, _miss: S::Miss) -> Option<S::Word> { None }
 
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
@@ -235,6 +241,11 @@ pub(crate) enum Operation<W, P> {
     /// Define `destination` with the activation's `this`; where the activation does not
     /// hold it, leave at the frame's miss edge.
     LoadThis { destination: Register },
+    /// The captured value at `slot` of the environment `depth` scopes out (`Frame::capture`);
+    /// the caller defines the destination.
+    LoadCapture { depth: u16, slot: u16 },
+    /// Leave the function returning Number register `register` (`Frame::ret`).
+    Return { register: Register },
     /// A Number operation (`numeric`).
     Number(NumberOperation),
     /// Continue where register `register` is neither `null` nor `undefined`; those leave at
@@ -301,7 +312,7 @@ impl<W, P> Operation<W, P> {
                 register: instruction.register_a(), taken: false },
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
-            Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary => return Self::decode_value(instruction),
+            Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::LoadCapture | Op::Return => return Self::decode_value(instruction),
             Op::Call | Op::CallForwardingArguments | Op::Construct =>
                 Self::Call(CallOperation::Site(Invocation::of(instruction)?)),
             _ => return None,
@@ -313,6 +324,10 @@ impl<W, P> Operation<W, P> {
         Some(match instruction.op() {
             Op::LoadThis => Self::LoadThis {
                 destination: instruction.result_register() },
+            Op::LoadCapture => Self::LoadCapture {
+                depth: crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()),
+                slot: crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()) },
+            Op::Return => Self::Return { register: instruction.register_a() },
             Op::RequireObjectCoercible => Self::RequireObjectCoercible {
                 register: instruction.register_b() },
             Op::ToNumeric => Self::Number(NumberOperation::ToNumeric {
@@ -368,3 +383,5 @@ pub(crate) enum Step<W, C> {
 mod tests;
 #[cfg(test)]
 mod coverage_tests;
+#[cfg(test)]
+mod capture_return_tests;
