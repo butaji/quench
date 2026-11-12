@@ -4,16 +4,25 @@
 //! what its binding time fixed and answers through `CallFrame`:
 //!
 //! - which entry reaches the callee (`CallFrame::call_entry`): a direct entry of a published body,
-//!   whose callee kind and identity the frame folds under the dependency that retires the caller
-//!   when either changes (`DirectPlan`), or the VM's own call (`CallFrame::call_helper`) for any
-//!   callee a site is not bound to: a native, a bound function, a callee whose identity changed;
+//!   whose callee kind the frame folds under the dependency that retires the caller when it changes
+//!   and whose identity is checked once per call (`Identity::Guarded`) or folded the same way
+//!   (`Identity::Folded`: a known function, a Stable callee), or the VM's own call
+//!   (`CallFrame::call_helper`) for any callee a site is not bound to: a native, a bound function,
+//!   a callee whose identity changed;
+//! - what the call's form reads (`Invocation`): the callee's register, a function the record names,
+//!   or a method its receiver's property rows load; a receiver register, `this` or none; a window
+//!   of arguments or a list of registers;
 //! - where the words live: the caller's registers, the stacks, the entry itself.
 //!
 //! The interpreter's call admits through the same rows on machine words (`protocol`'s
 //! `concrete_*`); the u-jit's lane frame emits them. `ret` completes an activation with a register.
 
-use super::protocol::{bind_this, complete_call, fill_window, guard_callee, guard_received};
-use super::{word_offset, CallFacts, CallOperation, Frame, Invocation, Operation, Register, Stage, Step, WindowFill};
+use super::property::get_field;
+use super::protocol::{bind_this, complete_call, fill_call, guard_callee, guard_received};
+use super::{word_bytes, word_offset, Arguments, CallFacts, CallOperation, Callee, Frame, Invocation, Operation, Passed, PropertyFrame,
+    Receiver, Register, RegisterList, Stage, Step};
+use crate::bytecode::{FieldBase, FieldLookup};
+use crate::Value;
 
 /// The kinds of callee a site binds to a direct entry. A native has no body to enter and a bound
 /// function forwards to another callee, so both take the VM's call (`CallEntry::Helper`).
@@ -34,12 +43,32 @@ impl CalleeKind {
     }
 }
 
+/// How a direct call knows its callee is the one its plan was made for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Identity {
+    /// The identity varies per execution: the call checks it once (`guard_callee`).
+    Guarded(u64),
+    /// The identity is a constant of the call: a function the record names (Static), or a callee
+    /// the frame proved Stable and folded under the dependency that retires the caller when it
+    /// changes. The call reads and checks nothing.
+    Folded(u64),
+}
+
+impl Identity {
+    /// The callee's identity word.
+    pub(crate) const fn word(self) -> u64 {
+        match self {
+            Self::Guarded(word) | Self::Folded(word) => word,
+        }
+    }
+}
+
 /// What a frame knows of a site's callee at the time it is compiled.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct DirectPlan {
     pub(crate) kind: CalleeKind,
-    /// The callee's identity word, which the site was bound to.
-    pub(crate) identity: u64,
+    /// The callee's identity, which the site was bound to.
+    pub(crate) identity: Identity,
     /// The global object a sloppy callee binds for `undefined` and `null`; `None` for a strict one.
     pub(crate) sloppy: Option<u64>,
     /// The registers of the callee's window.
@@ -88,6 +117,20 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
+    /// The registers of a method call's argument list, from the call records the frame decoded the
+    /// call with; `None` where the frame holds no records.
+    #[inline(always)]
+    fn call_list(&self, _list: RegisterList) -> Option<&[Register]> {
+        None
+    }
+
+    /// The method `atom` (method site `site`) of `receiver`, loaded through the frame's property
+    /// rows; `None` where the frame has no plan for it, leaving at `miss` a method that is not there.
+    #[inline(always)]
+    fn call_method(&mut self, _stage: &mut S, _receiver: S::Word, _atom: u32, _site: u32, _miss: S::Miss) -> Option<S::Word> {
+        None
+    }
+
     /// The receiver `constructor`'s plan allocates; the deleted marker where it declines.
     #[inline(always)]
     fn call_receiver(&mut self, _stage: &mut S, _constructor: S::Word) -> Option<S::Word> {
@@ -127,7 +170,7 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
 /// The call of `site`: by the frame's direct entry where it has one, else by the VM. A guard that
 /// fails leaves at `miss`, where the VM's call runs.
 #[inline(always)]
-pub(crate) fn invoke<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss, site: Invocation)
+pub(crate) fn invoke<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss, site: Invocation)
     -> Step<S::Word, F::Control> {
     let direct = match frame.call_entry(&site) {
         CallEntry::Direct(plan) => enter_direct(stage, frame, miss, &site, plan),
@@ -136,26 +179,77 @@ pub(crate) fn invoke<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, mi
     frame.call_helper(stage, &site, direct).map_or(Step::Unresolved, Step::Value)
 }
 
+/// The receiver `site` binds, a word of the caller's file or the activation's; `None` where the
+/// frame cannot read it. A construction has none: its plan allocates it.
+#[inline(always)]
+fn receiver_word<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, file: S::Word, miss: S::Miss,
+    receiver: Receiver) -> Option<S::Word> {
+    match receiver {
+        Receiver::Register(register) => Some(stage.load_u64(file, word_offset(register))),
+        Receiver::Undefined => Some(stage.constant(Value::UNDEFINED.to_bits())),
+        Receiver::This { path: None } => frame.field_this(stage, miss),
+        Receiver::This { path: Some((atom, cache_site)) } =>
+            get_field(stage, frame, FieldBase::THIS, FieldLookup::Atom { atom, base: FieldBase::THIS, cache_site }, miss),
+        Receiver::Allocated => None,
+    }
+}
+
+/// The callee's word: read and checked once where its identity varies, a constant where the call's
+/// form or the frame's proof fixes it, and a method loaded from the receiver through the frame's
+/// property rows.
+#[inline(always)]
+fn callee_word<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, file: S::Word, miss: S::Miss,
+    (site, plan, receiver): (&Invocation, &DirectPlan, Option<S::Word>)) -> Option<S::Word> {
+    let held = match (site.callee, plan.identity) {
+        (Callee::Register(register), Identity::Guarded(_)) => stage.load_u64(file, word_offset(register)),
+        (Callee::Method { atom, site: index }, Identity::Guarded(_)) => frame.call_method(stage, receiver?, atom, index, miss)?,
+        (_, identity) => return Some(stage.constant(identity.word())),
+    };
+    guard_callee(stage, held, plan.identity.word(), miss)?;
+    Some(held)
+}
+
+/// The callee's `this`: a construction's allocated receiver, or the receiver a call binds, after the
+/// callee's identity is proved.
+#[inline(always)]
+fn callee_this<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, file: S::Word, miss: S::Miss,
+    (site, plan): (&Invocation, &DirectPlan)) -> Option<S::Word> {
+    if plan.kind.allocates_receiver() {
+        let held = callee_word(stage, frame, file, miss, (site, plan, None))?;
+        let allocated = frame.call_receiver(stage, held)?;
+        guard_received(stage, allocated, miss)?;
+        return Some(allocated);
+    }
+    let receiver = receiver_word(stage, frame, file, miss, site.receiver)?;
+    callee_word(stage, frame, file, miss, (site, plan, Some(receiver)))?;
+    bind_this(stage, receiver, plan.sloppy, miss)
+}
+
+/// The callee's window at `top`, filled from the call's arguments: a window of the caller's file, or
+/// the registers of the list the frame resolves.
+#[inline(always)]
+fn fill_arguments<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &F, file: S::Word, top: S::Word, (arguments, registers): (Arguments, u16)) -> Option<()> {
+    let passed = match arguments {
+        Arguments::Window { first, count } => Passed::Window { arguments: stage.add_imm(file, word_bytes(first)), count },
+        Arguments::List(list) => Passed::List { file, registers: frame.call_list(list)? },
+    };
+    fill_call(stage, top, &[], passed, registers);
+    Some(())
+}
+
 /// The direct call of `site` through `plan`: the call protocol's rows in order, on the words the
 /// frame keeps.
 #[inline(always)]
-fn enter_direct<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss, site: &Invocation, plan: DirectPlan)
-    -> Option<S::Word> {
+fn enter_direct<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss, site: &Invocation,
+    plan: DirectPlan) -> Option<S::Word> {
+    let constructs = plan.kind.allocates_receiver();
+    if constructs != site.constructs() { return None; }
     let file = frame.call_registers(stage)?;
-    let held = stage.load_u64(file, word_offset(site.callee));
-    guard_callee(stage, held, plan.identity, miss)?;
-    let this = if plan.kind.allocates_receiver() {
-        let allocated = frame.call_receiver(stage, held)?;
-        guard_received(stage, allocated, miss)?;
-        allocated
-    } else {
-        let receiver = stage.load_u64(file, word_offset(site.receiver?));
-        bind_this(stage, receiver, plan.sloppy, miss)?
-    };
+    let this = callee_this(stage, frame, file, miss, (site, &plan))?;
     let room = frame.call_room(stage, miss)?;
-    fill_window(stage, room.top, file, WindowFill { first: site.window, argc: site.argc, registers: plan.registers });
+    fill_arguments(stage, frame, file, room.top, (site.arguments, plan.registers))?;
     let entered = frame.call_enter(stage, this, room)?;
-    let receiver = plan.kind.allocates_receiver().then_some(this);
+    let receiver = constructs.then_some(this);
     let value = complete_call(stage, entered.status, entered.word, receiver, plan.returned, entered.unfinished)?;
     frame.call_settle(stage, site, entered, room, value)?;
     Some(value)
@@ -182,153 +276,4 @@ pub(crate) fn ret<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, sourc
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::staged::{Concrete, Edge};
-    use crate::Value;
-
-    const RETURNED: u32 = 3;
-    const IDENTITY: u64 = 0x1000;
-    const GLOBAL: u64 = 0x2000;
-
-    /// A frame over plain memory: a register file, one stack of words, and a callee that returns
-    /// the sum of its window.
-    struct Probe {
-        file: [u64; 8],
-        stack: [u64; 8],
-        entry: CallEntry,
-        entered: Vec<u64>,
-        helper: Option<u64>,
-        settled: Option<u64>,
-        returned: Option<u64>,
-    }
-
-    impl Probe {
-        fn new(entry: CallEntry) -> Self {
-            Self { file: [0; 8], stack: [0; 8], entry, entered: Vec::new(), helper: None, settled: None, returned: None }
-        }
-    }
-
-    impl Frame<Concrete> for Probe {
-        type Fact = ();
-        type Control = Edge;
-        fn fact(&self, _register: Register) {}
-        fn read(&mut self, _stage: &mut Concrete, register: Register) -> u64 { self.file[usize::from(register)] }
-        fn write(&mut self, _stage: &mut Concrete, register: Register, value: u64, _fact: ()) {
-            self.file[usize::from(register)] = value;
-        }
-        fn this(&mut self, _stage: &mut Concrete) -> u64 { Value::DELETED.to_bits() }
-        fn define_this(&mut self, _stage: &mut Concrete, _destination: Register, _this: u64) {}
-        fn constant(&mut self, _stage: &mut Concrete, constant: crate::staged::Constant) -> (u64, ()) {
-            (constant.value.to_bits(), ())
-        }
-        fn truthiness(&mut self, _stage: &mut Concrete, _register: Register) -> Option<bool> { None }
-        fn branch(&mut self, _stage: &mut Concrete, _condition: bool) -> Edge { Edge::Following }
-        fn jump(&mut self, _stage: &mut Concrete) -> Edge { Edge::Target }
-        fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, ()) { (Value::boolean(condition).to_bits(), ()) }
-        fn ret(&mut self, _stage: &mut Concrete, value: u64) -> Option<Edge> {
-            self.returned = Some(value);
-            Some(Edge::Target)
-        }
-    }
-
-    impl CallFrame<Concrete> for Probe {
-        fn call_entry(&self, _site: &Invocation) -> CallEntry { self.entry }
-        fn call_registers(&mut self, _stage: &mut Concrete) -> Option<u64> { Some(self.file.as_ptr() as u64) }
-        fn call_receiver(&mut self, _stage: &mut Concrete, _constructor: u64) -> Option<u64> { Some(Value::integer(77).to_bits()) }
-        fn call_room(&mut self, _stage: &mut Concrete, _miss: ()) -> Option<Room<u64>> {
-            let top = self.stack.as_mut_ptr() as u64;
-            Some(Room { cell: 0, top, next: top, shadow: 0 })
-        }
-        fn call_enter(&mut self, _stage: &mut Concrete, this: u64, _room: Room<u64>) -> Option<Entered<u64, ()>> {
-            self.entered = self.stack[..3].to_vec();
-            Some(Entered { status: u64::from(RETURNED), word: this, unfinished: () })
-        }
-        fn call_settle(&mut self, _stage: &mut Concrete, _site: &Invocation, _entered: Entered<u64, ()>, _room: Room<u64>,
-            value: u64) -> Option<()> {
-            self.settled = Some(value);
-            Some(())
-        }
-        fn call_helper(&mut self, _stage: &mut Concrete, _site: &Invocation, direct: Option<u64>) -> Option<u64> {
-            direct.or_else(|| { self.helper = Some(1); Some(0) })
-        }
-    }
-
-    fn plan(kind: CalleeKind, sloppy: Option<u64>) -> CallEntry {
-        CallEntry::Direct(DirectPlan { kind, identity: IDENTITY, sloppy, registers: 3, returned: RETURNED })
-    }
-
-    fn site(receiver: Option<Register>) -> Invocation {
-        Invocation { callee: 0, receiver, window: 2, argc: 2, result: 7, returns: false, forwards: false }
-    }
-
-    fn call(probe: &mut Probe, site: Invocation) -> Option<u64> {
-        match invoke(&mut Concrete::new(std::ptr::null()), probe, (), site) {
-            Step::Value(word) => Some(word),
-            _ => None,
-        }
-    }
-
-    #[test]
-    fn a_frame_without_a_direct_entry_takes_the_vm_call() {
-        let mut probe = Probe::new(CallEntry::Helper);
-        assert_eq!(call(&mut probe, site(Some(1))), Some(0));
-        assert_eq!((probe.helper, probe.settled, probe.entered.len()), (Some(1), None, 0));
-    }
-
-    #[test]
-    fn a_direct_call_admits_binds_fills_enters_and_settles_in_order() {
-        let mut probe = Probe::new(plan(CalleeKind::Script, Some(GLOBAL)));
-        let receiver = Value::UNDEFINED.to_bits();
-        probe.file[..5].copy_from_slice(&[IDENTITY, receiver, 10, 20, 0]);
-        assert_eq!(call(&mut probe, site(Some(1))), Some(GLOBAL), "a sloppy callee binds the global for undefined");
-        assert_eq!(probe.entered, [10, 20, Value::UNDEFINED.to_bits()], "the window takes the arguments then undefined");
-        assert_eq!((probe.settled, probe.helper), (Some(GLOBAL), None));
-    }
-
-    #[test]
-    fn a_construction_yields_the_receiver_its_plan_allocated() {
-        let mut probe = Probe::new(plan(CalleeKind::Class, None));
-        probe.file[..4].copy_from_slice(&[IDENTITY, 0, 5, 6]);
-        assert_eq!(call(&mut probe, site(None)), Some(Value::integer(77).to_bits()));
-        assert_eq!(probe.entered[..2], [5, 6]);
-    }
-
-    #[test]
-    fn a_callee_that_is_not_the_bound_one_takes_the_vm_call() {
-        let mut probe = Probe::new(plan(CalleeKind::Script, None));
-        probe.file[0] = IDENTITY + 1;
-        assert_eq!(call(&mut probe, site(Some(1))), Some(0));
-        assert_eq!((probe.helper, probe.entered.len()), (Some(1), 0), "nothing entered");
-    }
-
-    #[test]
-    fn a_sloppy_callee_leaves_a_primitive_receiver_to_the_host() {
-        let mut probe = Probe::new(plan(CalleeKind::Script, Some(GLOBAL)));
-        probe.file[..2].copy_from_slice(&[IDENTITY, Value::integer(5).to_bits()]);
-        assert_eq!(call(&mut probe, site(Some(1))), Some(0));
-        assert_eq!(probe.helper, Some(1));
-    }
-
-    /// A forwarding call and a returning one differ from a call in what their tier does with the
-    /// result, not in the rows: the same window is entered and the same value completes.
-    #[test]
-    fn a_forwarding_or_returning_call_runs_the_rows_of_a_call() {
-        for form in [Invocation { forwards: true, ..site(Some(1)) }, Invocation { returns: true, ..site(Some(1)) }] {
-            let mut probe = Probe::new(plan(CalleeKind::Script, None));
-            probe.file[..5].copy_from_slice(&[IDENTITY, Value::integer(1).to_bits(), 10, 20, 0]);
-            assert_eq!(call(&mut probe, form), Some(Value::integer(1).to_bits()), "{form:?}");
-            assert_eq!(probe.entered[..2], [10, 20]);
-            assert_eq!(probe.settled, Some(Value::integer(1).to_bits()));
-        }
-    }
-
-    #[test]
-    fn a_return_completes_with_the_register_value() {
-        let mut probe = Probe::new(CallEntry::Helper);
-        probe.file[3] = 42;
-        let step = ret(&mut Concrete::new(std::ptr::null()), &mut probe, 3);
-        assert!(matches!(step, Step::Control(Edge::Target)));
-        assert_eq!(probe.returned, Some(42));
-    }
-}
+mod tests;

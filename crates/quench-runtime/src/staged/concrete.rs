@@ -97,12 +97,15 @@ impl Stage for Concrete {
         unsafe { ((base as *mut u8).offset(offset as isize) as *mut u64).write(value) }
     }
     #[inline(always)]
-    fn fill_window(&mut self, top: u64, arguments: u64, undefined: u64, copied: u16, registers: u16) {
-        // SAFETY: the window at `top` holds `registers` words, none live, and the `copied` arguments lie
-        // outside it (`protocol::fill_window`): the interpreter's own fill and argument copy.
-        unsafe {
-            crate::vm::fill_registers(top as *mut crate::Value, usize::from(registers), crate::Value::from_bits(undefined));
-            crate::vm::copy_arguments(top as *mut crate::Value, arguments as *const crate::Value, copied);
+    fn fill_window(&mut self, top: u64, undefined: u64, prefix: &[u64], passed: super::Passed<'_, u64>, registers: u16) {
+        match passed {
+            // SAFETY: the window at `top` holds `registers` words, none live, and the `count` arguments lie
+            // outside it (`protocol::fill_window`): the interpreter's own fill and argument copy.
+            super::Passed::Window { arguments, count } if prefix.is_empty() => unsafe {
+                crate::vm::fill_registers(top as *mut crate::Value, usize::from(registers), crate::Value::from_bits(undefined));
+                crate::vm::copy_arguments(top as *mut crate::Value, arguments as *const crate::Value, count.min(registers));
+            },
+            _ => super::fill_by_rows(self, top, undefined, prefix, passed, registers),
         }
     }
     #[inline(always)]

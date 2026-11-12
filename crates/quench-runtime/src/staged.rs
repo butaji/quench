@@ -40,10 +40,12 @@ pub(crate) mod store;
 pub(crate) mod holder;
 pub(crate) mod call; pub(crate) mod frame;
 pub(crate) mod construct;
+pub(crate) mod forms;
 pub(crate) mod protocol;
-pub(crate) use protocol::{CallFacts, CallOperation, Invocation, WindowFill};
+pub(crate) use forms::{Arguments, CallFacts, Callee, FunctionId, Invocation, Receiver, RegisterList};
+pub(crate) use protocol::{CallOperation, WindowFill};
 pub(crate) mod invoke;
-pub(crate) use invoke::{CalleeKind, CallEntry, CallFrame, DirectPlan, Entered, Room};
+pub(crate) use invoke::{CalleeKind, CallEntry, CallFrame, DirectPlan, Entered, Identity, Room};
 pub(crate) mod plan_fields;
 pub(crate) mod property;
 mod property_write;
@@ -61,7 +63,7 @@ pub(crate) use ic::concrete_own_field_hit;
 pub(crate) use object::{Form, Layout, concrete_own_read};
 
 mod stage;
-pub(crate) use stage::{Stage, Table, word_bytes, word_offset};
+pub(crate) use stage::{fill_by_rows, Passed, Stage, Table, word_bytes, word_offset};
 
 /// A constant an instruction materializes: its value and the semantic type a stage that
 /// keeps type facts records for it.
@@ -357,8 +359,8 @@ impl<W, P> Operation<W, P> {
             Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::IncDec => return Self::decode_value(instruction),
             Op::GetField | Op::Delete => return Self::decode_property(instruction),
             op if op.is_field_store() => return Self::decode_property(instruction),
-            Op::Call | Op::CallForwardingArguments | Op::Construct =>
-                Self::Call(CallOperation::Site(Invocation::of(instruction)?)),
+            Op::Call | Op::CallForwardingArguments | Op::Construct | Op::CallKnown | Op::CallMethod | Op::CallThisMethod =>
+                Self::Call(CallOperation::Site(Invocation::of(instruction, context)?)),
             Op::Return => Self::Return { source: instruction.register_a() },
             _ => return names::decode(instruction),
         })

@@ -8,9 +8,10 @@ use crate::staged::{CallFacts, CallOperation, Invocation, Operation};
 
 impl Lowering<'_, '_> {
     /// What this lowering fixes around its calls (`CallFacts`): the unit's registers, and whether
-    /// the run completes activations by status. Its call helper reads no forwarding values.
+    /// the run completes activations by status. Its call helper reads no forwarding values and
+    /// only the register forms of a call.
     fn call_facts(&self) -> CallFacts {
-        CallFacts { registers: self.unit.registers, activates: self.completion.status_and_pc(), forwarding: false }
+        CallFacts { registers: self.unit.registers, activates: self.completion.status_and_pc(), forwarding: false, forms: false }
     }
 
     /// The call or return row of `instruction` where the facts admit it.
@@ -27,7 +28,7 @@ impl Lowering<'_, '_> {
     /// Whether `instruction` is a construction with its arguments in registers, which the
     /// construct plan lowers where no call row did.
     pub(super) fn is_construction(&self, instruction: WideInstruction) -> bool {
-        self.completion != Completion::Number && Invocation::of(instruction).is_some_and(|site| site.constructs())
+        self.completion != Completion::Number && Invocation::of(instruction, crate::staged::DecodeContext::of(self.program)).is_some_and(|site| site.constructs())
     }
 
     /// Whether the call at `pc` is a record of the caller whose window its registers hold: the

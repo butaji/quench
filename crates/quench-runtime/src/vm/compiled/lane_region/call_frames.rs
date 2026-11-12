@@ -10,7 +10,7 @@ use super::relocs::address;
 use super::super::entry_cell::{capture_word, EntryCell, LANE_BODY_NOT_ENTERED};
 use super::super::super::dispatch_fast::LaneRecoverySpace;
 use crate::staged::call::admit_room;
-use crate::staged::{CallEntry, CallFrame, CalleeKind, DirectPlan, Entered, Invocation, Room, Stage};
+use crate::staged::{CallEntry, CallFrame, CalleeKind, DirectPlan, Entered, Identity, Invocation, Room, Stage};
 
 /// Where a run's completion goes: the block a run leaves at, and where it publishes its result
 /// word.
@@ -148,8 +148,8 @@ impl EmitFrame<'_> {
 impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn call_entry(&self, site: &Invocation) -> CallEntry {
         let Some(CallSite { callee: Some(callee), .. }) = self.call_site() else { return CallEntry::Helper };
-        let kind = if site.receiver.is_some() { CalleeKind::Script } else { CalleeKind::Class };
-        CallEntry::Direct(DirectPlan { kind, identity: callee.callee.to_bits(), sloppy: callee.sloppy.map(Value::to_bits),
+        let kind = if site.constructs() { CalleeKind::Class } else { CalleeKind::Script };
+        CallEntry::Direct(DirectPlan { kind, identity: Identity::Guarded(callee.callee.to_bits()), sloppy: callee.sloppy.map(Value::to_bits),
             registers: callee.registers, returned: LANE_BODY_RETURNED })
     }
 
@@ -224,7 +224,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
             stage.builder.ins().jump(helper, &[]);
         }
         stage.builder.switch_to_block(helper);
-        let which = if site.receiver.is_some() { LaneHelper::Call } else { LaneHelper::ConstructCall };
+        let which = if site.constructs() { LaneHelper::ConstructCall } else { LaneHelper::Call };
         let context = emit_js_payload_word(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
         let record = stage.builder.ins().iconst(types::I64, i64::from(call.record));
         let address = self.helpers.address(&mut stage.builder, which);

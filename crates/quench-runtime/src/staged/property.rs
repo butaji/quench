@@ -429,7 +429,7 @@ fn chain<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, first: (Ow
 /// `GetField`: `base`'s value, as the loop's entry or the record of an OSR region already
 /// holds it, else read through `lookup`'s plan.
 #[inline(always)]
-fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base: FieldBase, lookup: FieldLookup,
+pub(super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base: FieldBase, lookup: FieldLookup,
     miss: S::Miss) -> Option<S::Word> {
     if let Some(word) = frame.hoisted(stage, lookup) { return Some(word); }
     if let Some(word) = frame.entry_field(stage, lookup) { return Some(word); }

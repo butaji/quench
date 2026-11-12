@@ -20,6 +20,49 @@ pub(crate) fn word_bytes(index: u16) -> u64 {
     u64::from(u32::from(index) * WORD_BYTES)
 }
 
+/// The arguments a call passes, where the caller's registers hold them.
+#[derive(Clone, Copy)]
+pub(crate) enum Passed<'a, W> {
+    /// `count` consecutive words at `arguments`.
+    Window { arguments: W, count: u16 },
+    /// The words of the caller's file at `file` that the register numbers `registers` name, in order.
+    List { file: W, registers: &'a [u16] },
+}
+
+impl<W> Passed<'_, W> {
+    /// How many arguments are passed.
+    pub(crate) fn count(&self) -> usize {
+        match self {
+            Self::Window { count, .. } => usize::from(*count),
+            Self::List { registers, .. } => registers.len(),
+        }
+    }
+}
+
+/// `fill_window` as one store per register of the window: the prefix, the arguments the window
+/// holds room for, then `undefined`.
+#[inline(always)]
+pub(crate) fn fill_by_rows<S: Stage + ?Sized>(stage: &mut S, top: S::Word, undefined: S::Word, prefix: &[u64],
+    passed: Passed<'_, S::Word>, registers: u16) {
+    let mut next = 0_u16;
+    for bits in prefix.iter().take(usize::from(registers)) {
+        let value = stage.constant(*bits);
+        stage.store_u64(top, word_offset(next), value);
+        next += 1;
+    }
+    for index in 0..passed.count().min(usize::from(registers - next)) {
+        let value = match passed {
+            Passed::Window { arguments, .. } => stage.load_u64(arguments, word_offset(index as u16)),
+            Passed::List { file, registers } => stage.load_u64(file, word_offset(registers[index])),
+        };
+        stage.store_u64(top, word_offset(next), value);
+        next += 1;
+    }
+    for register in next..registers {
+        stage.store_u64(top, word_offset(register), undefined);
+    }
+}
+
 /// A binding-time domain: the 64-bit words an operation computes on, its conditions, and where
 /// a failed guard goes. A 32-bit load zero-extends.
 pub(crate) trait Stage {
@@ -117,15 +160,13 @@ pub(crate) trait Stage {
     /// The base of `table`.
     fn table(&mut self, table: Table) -> Self::Word;
 
-    /// A call's window of `registers` words at `top`: the first `copied` are the arguments at
-    /// `arguments`, the rest `undefined` (a word the caller made). A stage with a tuned fill runs
-    /// it instead (`Concrete`).
+    /// A call's window of `registers` words at `top`: the `prefix` constants (a bound function's
+    /// arguments), then the `passed` arguments, the rest `undefined` (a word the caller made). A
+    /// stage with a tuned fill runs it instead (`Concrete`).
     #[inline(always)]
-    fn fill_window(&mut self, top: Self::Word, arguments: Self::Word, undefined: Self::Word, copied: u16, registers: u16) {
-        for register in 0..registers {
-            let value = if register < copied { self.load_u64(arguments, word_offset(register)) } else { undefined };
-            self.store_u64(top, word_offset(register), value);
-        }
+    fn fill_window(&mut self, top: Self::Word, undefined: Self::Word, prefix: &[u64], passed: Passed<'_, Self::Word>,
+        registers: u16) {
+        fill_by_rows(self, top, undefined, prefix, passed, registers);
     }
 
     // Stage v2: additions with defaults, so a stage written before them is unchanged.
