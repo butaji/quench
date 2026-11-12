@@ -13327,6 +13327,7 @@ mod in_place_natives;
 mod native_calls; mod generator_yields; use generator_yields::yield_handler;
 mod array_steps;
 mod value_steps;
+mod for_in_steps;
 pub(in crate::vm) use value_steps::lane_body_value_step;
 use array_steps::*;
 use native_calls::{native_call_handler, reflect_get_call_handler, string_char_at_ascii, string_char_code_at};
@@ -17990,6 +17991,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::DefineField => Some(lane_define_field::<H>),
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
         Class::CopyDataProperties => Some(lane_copy_data_properties::<H>),
+        Class::ForInNext => Some(for_in_steps::for_in_next_handler::<H, BACKWARD>()),
         _ if lane_steps_in_place(opcode) => Some(lane_general_step::<H>),
         Class::IncDec => Some(lane_inc_dec::<H, false>),
         _ if denoted_handler::<H>(opcode).is_some() => denoted_handler::<H>(opcode),

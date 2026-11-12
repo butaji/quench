@@ -63,6 +63,7 @@ pub(crate) enum Class {
     NumericAdd,
     NumericMultiply,
     JumpFalse,
+    ForInNext,
     CloneEnv,
     LoadName,
     WasmFillRegisters,
@@ -191,6 +192,7 @@ macro_rules! class_of {
     (NumericAdd) => { Class::NumericAdd };
     (NumericMultiply) => { Class::NumericMultiply };
     (JumpFalse) => { Class::JumpFalse };
+    (ForInNext) => { Class::ForInNext };
     (CloneEnv) => { Class::CloneEnv };
     (LoadName) => { Class::LoadName };
     (WasmFillRegisters) => { Class::WasmFillRegisters };

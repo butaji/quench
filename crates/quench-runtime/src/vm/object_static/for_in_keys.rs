@@ -96,14 +96,11 @@ impl<H: Host> Vm<H> {
     /// object, past any deleted or made non-enumerable since the snapshot
     /// (EnumerateObjectProperties); `None` once the snapshot is exhausted.
     pub(in crate::vm) fn for_in_next(&mut self, p: &ResidualProgram, state: Value) -> Result<Option<Value>, JsError> {
-        while let Some((object, keys, key, cursor)) = self.for_in_peek(state) {
+        if let Some(step) = self.for_in_step_listed(state) {
+            return Ok(step);
+        }
+        while let Some((object, _, key, cursor)) = self.for_in_peek(state) {
             self.for_in_advance(state, cursor);
-            if self.for_in_snapshot_current(object, keys) {
-                if let Some(listed) = self.for_in.own_keys.as_mut() {
-                    listed.stepped = Some((key, cursor));
-                }
-                return Ok(Some(key));
-            }
             let root = self.heap.root(key);
             let enumerable = self.object_for_in_key_is_enumerable(p, object, key);
             let key = self.heap.root_value(root).expect("rooted for-in key");
@@ -114,6 +111,27 @@ impl<H: Host> Vm<H> {
         }
         self.for_in.spare_state = Some((state, self.heap.collection_epoch()));
         Ok(None)
+    }
+
+    /// The step of the loop over `state` that needs no lookup: `Some(None)` once its snapshot
+    /// is exhausted, `Some(Some(key))` for the next key of a snapshot that is current
+    /// (`for_in_snapshot_current`), whose keys are all still own enumerable properties; `None`
+    /// where each key needs its enumerability checked (`for_in_next`), which may reach a
+    /// proxy's traps.
+    #[inline(always)]
+    pub(in crate::vm) fn for_in_step_listed(&mut self, state: Value) -> Option<Option<Value>> {
+        let Some((object, keys, key, cursor)) = self.for_in_peek(state) else {
+            self.for_in.spare_state = Some((state, self.heap.collection_epoch()));
+            return Some(None);
+        };
+        if !self.for_in_snapshot_current(object, keys) {
+            return None;
+        }
+        self.for_in_advance(state, cursor);
+        if let Some(listed) = self.for_in.own_keys.as_mut() {
+            listed.stepped = Some((key, cursor));
+        }
+        Some(Some(key))
     }
 
     /// The state's object, snapshot, key at the cursor and cursor; `None` past the last key.

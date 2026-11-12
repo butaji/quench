@@ -33,3 +33,28 @@ print(out.join(" | "));
         ["0,0,0,0,0,0,0,0 | 1,1,0,0,0,0,0,1 | 1,1,0,0,0,0,0,1 | 2000 | function | TypeError"]
     );
 }
+
+/// A for-in over shape-listed objects, shadowed or deleted keys, keys added mid-loop, arrays,
+/// strings, `null`, proxies and a polluted `Object.prototype` visits the keys Node does, in its
+/// order.
+#[test]
+fn for_in_steps_visit_the_keys_node_visits() {
+    let source = r#"
+function keys(o) { const r = []; for (const k in o) r.push(k); return r.join(","); }
+const base = { a: 1, b: 2, c: 3 }; const d = Object.create(base); d.b = 9; d.z = 1;
+Object.defineProperty(d, "c", { value: 1, enumerable: false });
+function del(o) { const r = []; for (const k in o) { r.push(k); delete o.b; delete o.c; } return r.join(); }
+function add(o) { const r = []; for (const k in o) { r.push(k); o[k + "x"] = 1; } return r.join(); }
+const px = new Proxy({ a: 1, b: 2 }, { getOwnPropertyDescriptor(t, k) { return Reflect.getOwnPropertyDescriptor(t, k); } });
+function nested() { let r = ""; for (const a in { x: 1, y: 2 }) { for (const b in [1, 2]) { if (b === "1") continue; r += a + b; } if (a === "y") break; } return r; }
+log(rep(() => keys({ b: 1, 10: 1, 2: 1, a: 1, "-1": 1 })), rep(() => keys(d)), rep(() => del({ a: 1, b: 2, c: 3, d: 4 })), rep(() => add({ a: 1, b: 2 })));
+log(rep(() => keys([5, 6])), rep(() => keys("ab")), rep(() => keys(null)), rep(() => keys(undefined)), rep(() => keys(7)), rep(nested));
+log(keys(px));
+Object.prototype.polluted = 1; log(rep(() => keys({ a: 1 }))); delete Object.prototype.polluted;
+print(out.join(" | "));
+"#;
+    assert_eq!(
+        printed(source, "for-in-steps.js"),
+        ["2,10,b,a,-1 b,z,a a,d a,b | 0,1 0,1    x0y0 | a,b | a,polluted"]
+    );
+}
