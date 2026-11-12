@@ -39,7 +39,7 @@ pub(in crate::vm) fn compile_js_typed_numeric_region(program: &ResidualProgram, 
 fn numeric_artifact(code: Vec<u8>, params: usize, number_result: NativeNumberResult) -> crate::vm::js_compiled::JsJitArtifact {
     crate::vm::js_compiled::JsJitArtifact {
         code, params,
-        result: crate::vm::js_compiled::JsJitResultKind::SharedNumberEntry(NativeEntryMode::Resumable, number_result),
+        result: crate::vm::js_compiled::JsJitResultKind::SharedNumberEntry(number_result),
         general_dispatch_native_pcs: Vec::new(),
     }
 }

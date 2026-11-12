@@ -78,7 +78,8 @@ mod lane_compile;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
 #[path = "compiled/numeric_image.rs"] mod numeric_image; pub(super) use numeric_image::compile_js_typed_numeric_region;
 #[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages;
-#[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{enter_body, lane_body_signature, BodyEntry, BodyReturn, LANE_BODY_PARAMS};
+#[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{enter_body, BodyEntry, BodyReturn};
+pub(super) use lane_body_abi::lane_body_signature;
 #[path = "compiled/general_tier_queries.rs"] mod general_tier_queries;
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;
@@ -88,7 +89,7 @@ mod static_loops;
 #[path = "compiled/wasm_callable.rs"]
 mod wasm_callable;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
-#[cfg(feature = "aot")]
+#[cfg(all(test, feature = "aot"))]
 pub(super) use lane_unit::static_call_targets;
 /// The forced-deopt switch (R26): a test arms the Nth guard `emit_js_guard` emits on this
 /// thread, which then always leaves through its exit; tests compile on the running thread.
@@ -121,8 +122,6 @@ fn forced_or(ok: ir::Block, fail: ir::Block) -> ir::Block {
 mod object_slots;
 mod frame_ssa;
 pub(super) use object_slots::{InheritedConstant, NativeFieldLoad};
-#[cfg(feature = "aot")]
-mod scalar_region;
 mod code_heap;
 pub(super) use code_heap::{CodeMemory, CODE_GRANULE};
 #[path = "compiled/direct_call.rs"]
@@ -154,6 +153,11 @@ use exact_budget::PcLowering;
 use direct_call::direct_call;
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 mod guard_aarch64;
+#[cfg(feature = "aot")]
+#[path = "compiled/ahead_entry.rs"]
+mod ahead_entry;
+#[cfg(feature = "aot")]
+pub(super) use ahead_entry::{lower_ahead_entry, AheadTargets};
 #[cfg(feature = "aot")]
 mod eager;
 #[cfg(feature = "aot")]
@@ -733,16 +737,6 @@ fn emit_js_int32_arithmetic(
     builder.ins().jump(next, &[]);
 }
 
-enum JsCalloutPc {
-    Static(usize),
-    #[cfg(feature = "aot")]
-    Dynamic(ir::Value),
-}
-
-impl From<usize> for JsCalloutPc {
-    fn from(pc: usize) -> Self { Self::Static(pc) }
-}
-
 fn emit_js_step_fallback(
     builder: &mut FunctionBuilder<'_>,
     context: ir::Value,
@@ -751,13 +745,9 @@ fn emit_js_step_fallback(
     result_pointer: ir::Value,
     stopped_block: ir::Block,
     continue_block: ir::Block,
-    pc: impl Into<JsCalloutPc>,
+    pc: usize,
 ) {
-    let pc_value = match pc.into() {
-        JsCalloutPc::Static(pc) => builder.ins().iconst(types::I64, pc as i64),
-        #[cfg(feature = "aot")]
-        JsCalloutPc::Dynamic(pc) => pc,
-    };
+    let pc_value = builder.ins().iconst(types::I64, pc as i64);
     let call = builder.ins().call_indirect(
         callout_signature,
         callout,
@@ -1784,11 +1774,9 @@ lane_helper_inventory! { H;
     /// Room for a loop's append to a dense array (`lane_array_append_room`).
     AppendRoom => lane_array_append_room::<H>,
     FunctionBinding => lane_function_binding::<H>,
-    MaterializeInline => lane_materialize_inline::<H>,
     InterruptOwner => lane_interrupt_owner,
     GlobalGet => lane_global_get::<H>,
     FieldWriteAdmission => lane_field_write_admission::<H>,
-    MaterializeInlineChain => lane_materialize_inline_chain::<H>,
     CallBudget => lane_call_budget,
     AdmittedFunctionBinding => lane_admitted_function_binding::<H>,
     /// An outer capture's read (`dispatch_fast::lane_body_capture`).
@@ -1822,39 +1810,6 @@ lane_helper_inventory! { H;
     ValueStep => super::dispatch_fast::lane_body_value_step::<H>,
     /// ToBoolean of a value its cell decides (`lane_truthy`).
     Truthy => lane_truthy::<H>,
-}
-
-/// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.
-#[repr(C)]
-struct InlineRecoveryFrame {
-    function: u32,
-    call_pc: u32,
-    source_pc: u32,
-    registers: u32,
-}
-
-unsafe extern "C" fn lane_materialize_inline_chain<H: Host>(
-    vm: u64, residual: u64, payload: u64, entries: u64, count: u64, registers: u64,
-) -> u64 {
-    // SAFETY: generated code publishes the caller and the complete chain's live homes;
-    // plain activation setup cannot invoke guest code or collect before adoption.
-    let (vm, program, dispatch, entries) = unsafe {
-        (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
-            &mut *(payload as *mut JsStepDispatch),
-            std::slice::from_raw_parts(entries as *const InlineRecoveryFrame, count as usize))
-    };
-    let base = registers as *const Value;
-    // An inlined chain inside frameless activations follows theirs (`frameless::chain`).
-    let inlined = entries.iter().map(|entry| ChainFrame { function: entry.function, call_pc: entry.call_pc,
-        source_pc: entry.source_pc, registers: base.wrapping_add(entry.registers as usize), this: Value::DELETED, callee: Value::DELETED });
-    #[cfg(test)] {
-        INLINE_MATERIALIZATIONS.with(|count| count.set(count.get() + entries.len()));
-        let last = entries.last().expect("a recovery chain");
-        INLINE_LAST_MATERIALIZATION.with(|site| site.set(Some((last.function, last.source_pc))));
-    }
-    let chain = frameless::chain(vm, program, dispatch, entries[0].call_pc, inlined);
-    materialize_chain(vm, program, dispatch, &chain);
-    0
 }
 
 /// Makes the frames of a chain of native activations, outer to inner, above the payload's
@@ -1909,27 +1864,6 @@ unsafe extern "C" fn lane_interrupt_owner(context: u64) -> u64 {
     u64::from(unsafe { context.interrupt_owner.as_ref() }.is_some_and(|owner| owner.exclusive_and_clear()))
 }
 
-/// Recovery is the first operation allowed to allocate a full callee frame.
-/// The native prefix has published both register files before entering here;
-/// ordinary activation setup cannot collect or invoke guest code for these
-/// verified plain callees with an already admitted object receiver.
-unsafe extern "C" fn lane_materialize_inline<H: Host>(
-    vm: u64, residual: u64, payload: u64, function: u64, call_pc: u64,
-    source_pc: u64, registers: u64,
-) -> u64 {
-    let entry = InlineRecoveryFrame {
-        function: function as u32, call_pc: call_pc as u32,
-        source_pc: source_pc as u32, registers: 0,
-    };
-    // SAFETY: the descriptor and native register snapshot live through this call.
-    unsafe { lane_materialize_inline_chain::<H>(vm, residual, payload,
-        &entry as *const InlineRecoveryFrame as u64, 1, registers) }
-}
-
-/// A typed residual has materialized its exact callee continuation in the
-/// dispatch payload rather than returning another source PC to execute.
-const JS_INLINE_MATERIALIZED_PC: u32 = u32::MAX;
-
 #[cfg(test)]
 thread_local! {
     static FIELD_WRITE_ADMISSIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1944,8 +1878,6 @@ thread_local! {
     static PACKED_RANGE_PROOFS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PACKED_RANGE_SITE: std::cell::Cell<Option<(u16, usize)>> = const { std::cell::Cell::new(None) };
     static INT32_PROJECTION_REUSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static INLINE_MATERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static INLINE_LAST_MATERIALIZATION: std::cell::Cell<Option<(u32, u32)>> = const { std::cell::Cell::new(None) };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1966,13 +1898,6 @@ pub(super) fn process_lane_helpers<H: Host>() -> LaneHelpers {
 }
 
 impl LaneHelpers {
-    /// A linked publication's helpers: its helper-table symbol, and the narrow
-    /// table's symbol after the program's functions.
-    #[cfg(all(test, feature = "aot"))]
-    fn linked_for(helper_symbol: u32, program: &ResidualProgram) -> Self {
-        Self::Linked(helper_symbol, u32::try_from(program.function_count()).unwrap_or_default())
-    }
-
     /// Whether this is a frameless Number region, which has no VM helper capability.
     fn is_numeric(self) -> bool {
         matches!(self, Self::Numeric)
@@ -2223,176 +2148,27 @@ enum JsGeneralBranch {
     NullishFalse(NullishComparison),
 }
 
+/// `function_id` lowered as an ahead lane body (`Coverage::Prefix`, the lane body ABI) under
+/// `helpers` and `facts`: it runs from the first record and leaves at the first instruction
+/// it does not lower, with the atoms it stores without a method-cache test. `None` for the
+/// root and where nothing lowers.
 #[cfg(feature = "aot")]
-pub(super) struct StaticTypedRegion {
-    pub(super) header: usize,
-    pub(super) function: ir::Function,
-    /// The Stable facts the region folded, replayed as assumptions when the image loads.
-    pub(super) stable: lane_region::StableFacts,
-    /// Whether this is a bounded scalar range (`Coverage::Range`) rather than a loop.
-    pub(super) scalar: bool,
-}
-
-/// The same static typed regions with process helper addresses, for the eager
-/// publisher, which has no linker to bind a helper table.
-#[cfg(feature = "aot")]
-pub(super) fn lower_static_typed_regions_process<H: Host>(program: &ResidualProgram, function_id: u32,
-    targets: &[Vec<lane_unit::StaticTargets>], isa: &dyn cranelift_codegen::isa::TargetIsa,
-    facts: VmFacts<'_>,
-    global_reads: &crate::vm::global_facts::GlobalReads,
-) -> Vec<StaticTypedRegion> {
-    lower_static_typed_regions(program, function_id, targets, isa,
-        LaneHelpers::Process(LaneHelper::addresses::<H>()), facts, global_reads)
-}
-
-#[cfg(feature = "aot")]
-pub(super) fn lower_static_typed_regions(program: &ResidualProgram, function_id: u32, targets: &[Vec<lane_unit::StaticTargets>],
-    isa: &dyn cranelift_codegen::isa::TargetIsa, helpers: LaneHelpers, facts: VmFacts<'_>,
-    global_reads: &crate::vm::global_facts::GlobalReads,
-) -> Vec<StaticTypedRegion>
-{
-    if isa.pointer_type() != types::I64 { return Vec::new(); }
-    let Some(function) = program.function_get(function_id as usize) else { return Vec::new(); };
-    if function_id == 0 || !js_general_dispatch_candidate(program, function) { return Vec::new(); }
-    // Both binding-time divisions plan the full call graph. Static bindings use
-    // actual function admission and the same exact suspended-frame recovery.
-    let Some(unit) = lane_unit::unit(program, function_id, function, &|caller, pc|
-        targets.get(caller as usize).and_then(|sites| sites.get(pc as usize)).into_iter().flatten()
-            .map(|&function| CallTarget { function, callee: CalleeBinding::Function }).collect(),
-        &|id| program.function_get(id as usize)) else { return Vec::new(); };
-    let mut headers = caller_loop_headers(&unit);
-    let has_calls = unit.instructions.iter().any(|instruction|
-        instruction.op().control_flow_layout() == ControlFlowLayout::Call);
-    let scalar = !has_calls && unit.instructions.iter().all(|instruction|
-        instruction.op().js_denotation() == JsDenotation::NumericBinary
-            || instruction.op().traits().has(crate::bytecode::Traits::SCALAR_REGION)
-            || (instruction.op().class().eq(Class::LoadCapture) && instruction.result_flags() == 0 && instruction.capture_depth() == 0));
-    // A region whose loops index arrays in place also gets its typed-array variant, which the
-    // dispatcher enters at the same header where the dense one leaves there (it comes first
-    // here, the dispatcher trying the last first). Each variant's symbol is its header and kind.
-    let lower = |coverage: lane_region::Coverage| -> Option<Vec<StaticTypedRegion>> {
-        let entry = coverage.entry();
-        let lane_unit::Origin::Caller(header) = unit.origins[entry] else { return None; };
-        let variant = |views: lane_region::ElementViews| {
-            use super::specializer::Specializer;
-            lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
-                fields: &std::collections::BTreeMap::new(), global_reads, facts, generic: &[],
-                direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
-                entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
-                plan: lane_region::RegionPlan { coverage, completion: lane_region::Completion::SourcePc, views } }
-                .specialize(program).ok().filter(|region| region.native != 0)
-                .map(|mut region| {
-                    let symbol = (header << 1) | u32::from(views == lane_region::ElementViews::Typed);
-                    region.function.name = UserFuncName::user(lane_region::LANE_REGION_NAMESPACE, symbol);
-                    (region.hoists_arrays,
-                        StaticTypedRegion { header: header as usize, function: region.function, stable: region.stable, scalar: false })
-                })
-        };
-        let (hoists_arrays, dense) = variant(lane_region::ElementViews::Dense)?;
-        let typed = hoists_arrays.then(|| variant(lane_region::ElementViews::Typed)).flatten().map(|(_, region)| region);
-        Some(typed.into_iter().chain(std::iter::once(dense)).collect())
-    };
-    // Preserve pure preheaders in the SSA graph. Otherwise, first try the
-    // complete region previously admitted by the whole-suffix contract.
-    let mut regions = Vec::new();
-    if scalar && !headers.is_empty() {
-        if let Some(found) = lower(lane_region::Coverage::Full) { regions = found; }
-    }
-    if regions.is_empty()
-        && let Some(header) = headers.first().copied().or_else(|| (has_calls || !unit.frames.is_empty()).then_some(0))
-        && let Some(found) = lower(lane_region::Coverage::FullFrom(header)) {
-        regions = found;
-    }
-    // Independent loop entries share the original unit PC/frame IDs. Prefix
-    // lowering stops before an opaque operation and returns its exact origin;
-    // neither initialization nor a preceding loop is replayed on re-entry.
-    // A body without loops of its own whose inlined calls a full region cannot cover runs
-    // them from its entry up to the first opaque operation. An inlined callee's loop that
-    // indexes arrays stays the callee's own region, which views its arrays at its header.
-    let array_loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
-        instruction.op().control_flow_layout().jumps()
-            && instruction.jump_target() as usize <= pc
-            && unit.instructions[instruction.jump_target() as usize..=pc].iter()
-                .any(|body| body.op().traits().has(crate::bytecode::Traits::ELEMENT_ACCESS)));
-    if regions.is_empty() {
-        if headers.is_empty() && !array_loops && !unit.frames.is_empty() { headers.push(0); }
-        regions = headers.into_iter().filter_map(|header| lower(lane_region::Coverage::PrefixFrom(header))).flatten().collect();
-    }
-    regions.extend(scalar_static_regions(program, function_id, &unit, isa, helpers, facts, global_reads));
-    regions
-}
-
-/// The function's bounded scalar ranges as static regions: straight-line Number work that
-/// leaves at the exact PC of any instruction outside its range.
-#[cfg(feature = "aot")]
-fn scalar_static_regions(program: &ResidualProgram, function_id: u32, unit: &lane_unit::Unit,
-    isa: &dyn cranelift_codegen::isa::TargetIsa, helpers: LaneHelpers, facts: VmFacts<'_>,
-    global_reads: &crate::vm::global_facts::GlobalReads,
-) -> Vec<StaticTypedRegion> {
+pub(super) fn lower_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa,
+    helpers: LaneHelpers, facts: VmFacts<'_>, global_reads: &crate::vm::global_facts::GlobalReads,
+) -> Option<(ir::Function, Box<[Atom]>)> {
     use super::specializer::Specializer;
-    scalar_region::ranges(program, function_id).into_iter().filter_map(|range| {
-        let region = lane_region::RegionSpecializer { function_id, unit, helpers,
-            fields: &std::collections::BTreeMap::new(), global_reads, facts, generic: &[],
-            direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
-            entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
-            plan: lane_region::RegionPlan {
-                coverage: lane_region::Coverage::Range { start: range.start, end: range.end },
-                completion: lane_region::Completion::SourcePc, views: lane_region::ElementViews::Dense } }
-            .specialize(program).ok().filter(|region| region.native != 0)?;
-        let mut function = region.function;
-        function.name = UserFuncName::user(scalar_region::SCALAR_REGION_NAMESPACE, range.start as u32);
-        Some(StaticTypedRegion { header: range.start, function, stable: region.stable, scalar: true })
-    }).collect()
-}
-
-/// The headers of the unit's loops that begin in the caller's own code (a backward jump to a
-/// caller PC), ascending and distinct: where a typed region may enter.
-#[cfg(feature = "aot")]
-fn caller_loop_headers(unit: &lane_unit::Unit) -> smallvec::SmallVec<[usize; 4]> {
-    let mut headers: smallvec::SmallVec<[usize; 4]> = unit.instructions.iter().enumerate()
-        .filter(|(_, instruction)| instruction.op().control_flow_layout().jumps())
-        .map(|(pc, instruction)| (pc, instruction.jump_target() as usize))
-        .filter(|&(pc, target)| target <= pc && matches!(unit.origins.get(target), Some(lane_unit::Origin::Caller(_))))
-        .map(|(_, target)| target).collect();
-    headers.sort_unstable();
-    headers.dedup();
-    headers
-}
-
-#[cfg_attr(not(feature = "aot"), allow(dead_code))]
-#[derive(Clone, Copy)]
-pub(super) struct StaticTypedRegionEntry<'a> {
-    pub(super) header: usize,
-    pub(super) function: &'a ir::Function,
-    /// Whether the entry admits it only while the runtime's stores are specialized: a
-    /// region that stores fields depends on the specialized property layout; a scalar
-    /// range, which stores nothing, enters without that admission.
-    pub(super) gated: bool,
-}
-
-/// The general-dispatch specializer: the tagged baseline lowering over the interpreter's
-/// semantic callouts, shared by JIT and AOT. Its residual is the function IR and the
-/// per-PC lowering table; the publication compiles it.
-#[derive(Clone, Copy)]
-pub(super) struct GeneralDispatchSpecializer<'a> {
-    pub(super) function_id: u32,
-    pub(super) isa: &'a dyn cranelift_codegen::isa::TargetIsa,
-    pub(super) callout: JsGeneralCallout,
-    pub(super) typed_regions: &'a [StaticTypedRegionEntry<'a>],
-}
-
-impl GeneralDispatchSpecializer<'_> {
-    pub(super) fn lower(self, program: &ResidualProgram) -> Result<(ir::Function, Vec<u8>), &'static str> {
-        lower_js_general_dispatch(program, self.function_id, self.isa, self.callout, self.typed_regions)
-    }
-}
-
-impl super::specializer::Specializer for GeneralDispatchSpecializer<'_> {
-    type Residual = (ir::Function, Vec<u8>);
-
-    fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
-        self.lower(program).map_err(str::to_owned)
-    }
+    if function_id == 0 { return None; }
+    let function = program.function_get(function_id as usize)?;
+    let unit = lane_unit::with_budget(program, function_id, function, 0, &|_, _| Vec::new(),
+        &|callee| program.function_get(callee as usize))?;
+    lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
+        fields: &std::collections::BTreeMap::new(), global_reads, facts, generic: &[],
+        direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
+        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
+        plan: lane_region::RegionPlan { coverage: lane_region::Coverage::Prefix,
+            completion: lane_region::Completion::Body, views: lane_region::ElementViews::Dense } }
+        .specialize(program).ok().filter(|region| region.native != 0)
+        .map(|region| (region.function, region.stable.atoms))
 }
 
 pub(super) fn compile_js_general_dispatch(
@@ -2401,9 +2177,7 @@ pub(super) fn compile_js_general_dispatch(
 ) -> Result<super::js_compiled::JsJitArtifact, &'static str> {
     let isa = super::jit_backend::target_isa()
         .ok_or("target-isa-unavailable")?;
-    let (native, general_dispatch_native_pcs) = GeneralDispatchSpecializer {
-        function_id, isa: &*isa, callout: JsGeneralCallout::Dynamic, typed_regions: &[],
-    }.lower(program)?;
+    let (native, general_dispatch_native_pcs) = lower_js_general_dispatch(program, function_id, &*isa)?;
     let function = program.function_get(function_id as usize).ok_or("missing-function")?;
     let code = compile_native_function(
         native,
@@ -2420,45 +2194,17 @@ pub(super) fn compile_js_general_dispatch(
     })
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum JsGeneralCallout {
-    Dynamic,
-    #[cfg(feature = "aot")]
-    Relocatable { fallback: u32 },
-    /// A direct address of a fallback body this publication compiled
-    /// (`compile_eager_native`); the linked image uses `Relocatable`.
-    #[cfg(feature = "aot")]
-    Address(usize),
-}
-
-impl JsGeneralCallout {
-    #[cfg(feature = "aot")]
-    fn fixed_operations(self) -> bool { !matches!(self, Self::Dynamic) }
-}
-
 pub(super) fn lower_js_general_dispatch(
     program: &ResidualProgram,
     function_id: u32,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
-    callout_kind: JsGeneralCallout,
-    _typed_regions: &[StaticTypedRegionEntry<'_>],
 ) -> Result<(ir::Function, Vec<u8>), &'static str> {
     if program.kind == crate::bytecode::ProgramKind::Wasm || function_id == 0 {
         return Err("ineligible-program-or-root-function");
     }
-    // Packed values decode through the process's table, or an image's linked copy of it.
-    let narrow_table = match callout_kind {
-        #[cfg(feature = "aot")]
-        JsGeneralCallout::Relocatable { .. } => NarrowTable::Linked(
-            u32::try_from(program.function_count()).map_err(|_| "native-data-symbol-overflow")?),
-        _ => NarrowTable::Process,
-    };
+    let narrow_table = NarrowTable::Process;
     if isa.pointer_type() != types::I64 {
         return Err("general-dispatch-requires-64-bit-pointers");
-    }
-    #[cfg(feature = "aot")]
-    if !_typed_regions.is_empty() && !callout_kind.fixed_operations() {
-        return Err("typed-region-requires-fixed-native-control");
     }
     let function = program
         .function_get(function_id as usize)
@@ -2491,51 +2237,13 @@ pub(super) fn lower_js_general_dispatch(
     let stopped_block = builder.create_block();
     let continue_block = builder.create_block();
     let continue_pc = builder.append_block_param(continue_block, types::I64);
-    #[cfg(feature = "aot")]
-    let typed_continue = (!_typed_regions.is_empty()).then(|| {
-        let block = builder.create_block();
-        let pc = builder.append_block_param(block, types::I64);
-        (block, pc)
-    });
     let invalid_pc = builder.create_block();
     let invalid_pc_value = builder.append_block_param(invalid_pc, types::I64);
-    let callout = match callout_kind {
-        JsGeneralCallout::Dynamic => builder
-            .ins()
-            .load(types::I64, invariant(), context, CONTEXT_CALLOUT),
-        #[cfg(feature = "aot")]
-        JsGeneralCallout::Relocatable { fallback: symbol, .. } => {
-            let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
-                super::native_object::NATIVE_FUNCTION_NAMESPACE, symbol,
-            ));
-            let address = builder.create_global_value(ir::GlobalValueData::Symbol {
-                name: ir::ExternalName::user(name),
-                offset: ir::immediates::Imm64::new(0),
-                colocated: false,
-                tls: false,
-            });
-            builder.ins().symbol_value(isa.pointer_type(), address)
-        }
-        #[cfg(feature = "aot")]
-        JsGeneralCallout::Address(address) => builder.ins().iconst(isa.pointer_type(), address as i64),
-    };
+    let callout = builder.ins().load(types::I64, invariant(), context, CONTEXT_CALLOUT);
     let blocks: Vec<_> = (0..instruction_count)
         .map(|_| builder.create_block())
         .collect();
-    let entries = std::borrow::Cow::Borrowed(blocks.as_slice());
-    #[cfg(feature = "aot")]
-    let (entries, typed_entries) = {
-        let mut entries = entries;
-        // Units of one header chain: each leaves at the header into the one registered before
-        // it, the first into the header's own code.
-        let typed_entries: Vec<_> = _typed_regions.iter().copied().map(|unit| {
-            let fallback = entries[unit.header];
-            let entry = builder.create_block();
-            entries.to_mut()[unit.header] = entry;
-            (unit, entry, fallback)
-        }).collect();
-        (entries, typed_entries)
-    };
+    let entries = blocks.as_slice();
     let mut general_dispatch_native_pcs = vec![PcLowering::Exact as u8; instruction_count];
     // Start from the caller's exact resume PC. The artifact is shared by normal
     // function entry, call-return re-entry and hot-loop OSR; its canonical frame
@@ -2560,29 +2268,6 @@ pub(super) fn lower_js_general_dispatch(
     callout_signature.returns.push(AbiParam::new(types::I64));
     let callout_signature = builder.import_signature(callout_signature);
     let mut frame_flow = frame_ssa::FrameFlow::new(arguments, function.registers);
-    #[cfg(feature = "aot")]
-    if callout_kind.fixed_operations() {
-        // The bound belongs to this activation and never changes through a
-        // semantic callout. Divide once: normal native code is unbounded;
-        // bounded execution uses the same fixed semantic operations.
-        let stop_pc = builder.ins().load(types::I64, invariant(), payload,
-            std::mem::offset_of!(JsStepDispatch, stop_pc) as i32);
-        let unbounded = builder.ins().icmp_imm_u(IntCC::Equal, stop_pc, JS_NO_STOP_PC as i64);
-        let bounded = builder.create_block();
-        let pc = builder.append_block_param(bounded, types::I64);
-        builder.ins().brif(unbounded, continue_block, &[ir::BlockArg::Value(start_pc)],
-            bounded, &[ir::BlockArg::Value(start_pc)]);
-        builder.switch_to_block(bounded);
-        let run = builder.create_block();
-        let in_range = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, pc, instruction_count as i64);
-        builder.ins().brif(in_range, run, &[], invalid_pc, &[ir::BlockArg::Value(pc)]);
-        builder.switch_to_block(run);
-        emit_js_step_fallback(&mut builder, context, callout, callout_signature,
-            result_pointer, stopped_block, bounded, JsCalloutPc::Dynamic(pc));
-    } else {
-        builder.ins().jump(continue_block, &[ir::BlockArg::Value(start_pc)]);
-    }
-    #[cfg(not(feature = "aot"))]
     builder.ins().jump(continue_block, &[ir::BlockArg::Value(start_pc)]);
     builder.switch_to_block(stopped_block);
     // A nonzero callout status has a rooted `JsStepDispatch` result in the
@@ -3575,34 +3260,6 @@ pub(super) fn lower_js_general_dispatch(
         general_dispatch_native_pcs[pc] = general_binary::lower_rest(&mut builder, program, (instruction, next), &register_offset,
             (arguments, payload), &JsExactFallback { context, callout, callout_signature, result_pointer, stopped_block, continue_block, pc }) as u8;
     }
-    #[cfg(feature = "aot")]
-    let mut typed_returns = Vec::new();
-    #[cfg(feature = "aot")]
-    for (unit, entry, fallback) in &typed_entries {
-        builder.switch_to_block(*entry);
-        let run = builder.create_block();
-        if unit.gated {
-            let specialized = emit_js_payload_word(&mut builder, payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
-            let admitted = builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
-            builder.ins().brif(admitted, run, &[], *fallback, &[]);
-        } else {
-            builder.ins().jump(run, &[]);
-        }
-        builder.switch_to_block(run);
-        let signature = builder.import_signature(lane_body_signature(isa.pointer_type(), isa.default_call_conv()));
-        let name = builder.func.declare_imported_user_function(unit.function.name.get_user()
-            .expect("typed residual has an internal symbol").clone());
-        let target = builder.import_function(ir::ExtFuncData { name: ir::ExternalName::user(name),
-            signature, colocated: false, patchable: false });
-        // The region takes the lane body ABI's four words: the entry's, without its result pointer.
-        let call = builder.ins().call(target, &parameters[..LANE_BODY_PARAMS]);
-        // After inlining ordinary exits preserve SSA edges. Exact callee
-        // materialization owns a canonical frame boundary below.
-        let pc = builder.inst_results(call)[0];
-        typed_returns.push((*fallback, unit.header, pc));
-        let pc = builder.ins().uextend(types::I64, pc);
-        builder.ins().jump(typed_continue.expect("typed continuation").0, &[ir::BlockArg::Value(pc)]);
-    }
     let live = program.register_root_masks(function_id);
     for (pc, resume) in resume_entries.iter().copied().enumerate() {
         builder.switch_to_block(resume);
@@ -3611,96 +3268,9 @@ pub(super) fn lower_js_general_dispatch(
     }
     builder.switch_to_block(continue_block);
     emit_js_pc_dispatch(&mut builder, continue_pc, &resume_entries, invalid_pc);
-    #[cfg(feature = "aot")]
-    if let Some((block, pc)) = typed_continue {
-        builder.switch_to_block(block);
-        let materialized = builder.ins().icmp_imm_u(IntCC::Equal, pc, i64::from(JS_INLINE_MATERIALIZED_PC));
-        let source = builder.create_block();
-        builder.ins().brif(materialized, stopped_block, &[], source, &[]);
-        builder.switch_to_block(source);
-        let targets: Vec<_> = entries.iter().copied().enumerate().map(|(pc, entry)|
-            typed_entries.iter().find(|(unit, _, _)| unit.header == pc).map_or(entry, |(_, _, fallback)| *fallback)).collect();
-        emit_js_pc_dispatch(&mut builder, pc, &targets, invalid_pc);
-    }
     builder.seal_block(continue_block);
     builder.seal_all_blocks();
     builder.into_builder().finalize(isa.frontend_config());
-    #[cfg(feature = "aot")]
-    if !typed_entries.is_empty() {
-        use cranelift_codegen::inline::{Inline, InlineCommand};
-        struct TypedResidual<'a>(&'a [StaticTypedRegionEntry<'a>]);
-        impl Inline for TypedResidual<'_> {
-            fn inline(&mut self, caller: &ir::Function, _: ir::Inst, _: ir::Opcode,
-                callee: ir::FuncRef, _: &[ir::Value]) -> InlineCommand<'_> {
-                let ir::ExternalName::User(name) = caller.dfg.ext_funcs[callee].name else { return InlineCommand::KeepCall };
-                let named = |function: &ir::Function| Some(&caller.params.user_named_funcs()[name]) == function.name.get_user();
-                let Some(function) = self.0.iter().map(|unit| unit.function)
-                    .find(|function| named(function)) else { return InlineCommand::KeepCall; };
-                InlineCommand::Inline { callee: std::borrow::Cow::Borrowed(function), visit_callee: false }
-            }
-        }
-        for unit in _typed_regions {
-            cranelift_codegen::verify_function(unit.function, isa).map_err(|_| "typed-residual-verification-failed")?;
-        }
-        // Cranelift's append-only instruction arena separates the cloned,
-        // verified helper calls from the caller's guest/semantic callouts.
-        let first_inlined = native.dfg.num_insts();
-        let mut context = cranelift_codegen::Context::for_function(native);
-        if !context.inline(TypedResidual(_typed_regions)).map_err(|_| "typed-residual-inlining-failed")? {
-            return Err("typed-residual-call-not-found");
-        }
-        native = context.func;
-        // The residual returns a statically fixed source PC on every exit.
-        // Link those edges before frame promotion instead of dispatching a
-        // known PC through a memory/result join and another jump table.
-        for (own_fallback, header, result) in typed_returns {
-            let result = native.dfg.resolve_aliases(result);
-            let ir::ValueDef::Param(join, parameter) = native.dfg.value_def(result) else {
-                return Err("typed-residual-return-is-not-a-join");
-            };
-            let exits: Vec<_> = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
-                .filter_map(|instruction| {
-                    let ir::InstructionData::Jump { destination, .. } = native.dfg.insts[instruction] else { return None };
-                    if destination.block(&native.dfg.value_lists) != join { return None; }
-                    let ir::BlockArg::Value(value) = destination.args(&native.dfg.value_lists).nth(parameter)? else { return None };
-                    let ir::ValueDef::Result(constant, _) = native.dfg.value_def(native.dfg.resolve_aliases(value)) else { return None };
-                    let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = native.dfg.insts[constant] else { return None };
-                    let pc = usize::try_from(imm.bits()).ok()?;
-                    if pc == JS_INLINE_MATERIALIZED_PC as usize { return Some((instruction, stopped_block)); }
-                    let target = if pc == header { own_fallback } else { *entries.get(pc)? };
-                    Some((instruction, target))
-                }).collect();
-            for (instruction, target) in exits {
-                let destination = native.dfg.block_call(target, &[]);
-                native.dfg.insts[instruction] = ir::InstructionData::Jump { opcode: ir::Opcode::Jump, destination };
-            }
-        }
-        // Static exit linking can orphan the synthetic return/dispatch join.
-        // Discard it before dirty-state analysis so unreachable edges cannot
-        // inflate the live frame footprint of a real semantic callout.
-        let mut context = cranelift_codegen::Context::for_function(native);
-        context.compute_cfg();
-        context.compute_domtree();
-        context.eliminate_unreachable_code(isa).map_err(|_| "typed-residual-cfg-pruning-failed")?;
-        native = context.func;
-        for instruction in native.layout.blocks().flat_map(|block| native.layout.block_insts(block)) {
-            if instruction.as_u32() as usize >= first_inlined && native.dfg.insts[instruction].opcode().is_call() {
-                let materializes = if native.dfg.insts[instruction].opcode() == ir::Opcode::CallIndirect {
-                    let target = native.dfg.resolve_aliases(native.dfg.inst_args(instruction)[0]);
-                    match native.dfg.value_def(target) {
-                        ir::ValueDef::Result(load, _) => matches!(native.dfg.insts[load],
-                            ir::InstructionData::Load { offset, .. }
-                                if [LaneHelper::MaterializeInline, LaneHelper::MaterializeInlineChain].into_iter()
-                                    .any(|helper| i32::from(offset) == helper as i32 * std::mem::size_of::<usize>() as i32)),
-                        _ => false,
-                    }
-                } else { false };
-                if materializes {
-                    frame_flow.residual(instruction, &(0..function.registers).collect::<Vec<_>>());
-                } else { frame_flow.no_frame(instruction); }
-            }
-        }
-    }
     frame_flow.promote(&mut native, callout, live, isa.frontend_config());
     Ok((native, general_dispatch_native_pcs))
 }
@@ -4292,9 +3862,6 @@ fn trap_status(trap: crate::WasmTrap) -> i64 {
 /// Stack compiled code may use below its entry before a call traps as
 /// exhausted; the interpreter's own guards bound the remainder.
 const COMPILED_STACK_BUDGET: usize = 512 * 1024;
-/// Stack left for a guarded leaf-JS entry after the Rust adapter has run. The
-/// JS denotations admitted here have no calls, VM callouts, or internal polls.
-const JS_LEAF_STACK_RESERVE: usize = 16 * 1024;
 
 /// The state every compiled function receives. Field offsets are the ABI
 /// compiled code loads from.
@@ -5119,13 +4686,12 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                 native_entry_should_sample.then(std::time::Instant::now);
             // SAFETY: as the direct path's call; the nested context outlives the call.
             let status = unsafe {
-                enter_native(
+                enter_wasm(
                     &mut nested,
                     base,
                     length,
                     args,
                     out,
-                    NativeEntryMode::Resumable,
                     entry,
                 )
             };
@@ -5320,12 +4886,13 @@ unsafe extern "C" fn import_callout<H: Host>(
     finish_callout(context, called)
 }
 
-/// A compiled function's entry: (context, memory base, memory length,
+/// A compiled Wasm function's entry: (context, memory base, memory length,
 /// arguments, result) -> status.
-type Entry = unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64, *mut u64) -> u32;
+type WasmEntry = unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64, *mut u64) -> u32;
 
-/// The shared native-entry ABI used by compiled Wasm functions and JS OSR regions:
-/// (context, memory base, memory length, arguments or region inputs, result word) -> status.
+/// The native-entry ABI of compiled Wasm functions and the public JS function entries
+/// (`NativeJsFunctionEntry`): (context, memory base or locals, memory length or local count,
+/// arguments or registers, result word) -> status.
 pub(super) fn native_entry_signature(
     pointer: ir::Type,
     call_conv: cranelift_codegen::isa::CallConv,
@@ -5336,14 +4903,6 @@ pub(super) fn native_entry_signature(
     }
     signature.returns.push(AbiParam::new(types::I32));
     signature
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum NativeEntryMode {
-    /// Use the signal-resuming entry, required by guarded memory and poll-page faults.
-    Resumable,
-    /// Use the same ABI directly for a bounded leaf with no possible native fault.
-    Leaf,
 }
 
 /// The verified Number result's machine view in the common native result word.
@@ -5363,7 +4922,7 @@ enum CompiledArgs<'a> {
 const NOT_COMPILED: u32 = u32::MAX;
 
 pub(super) struct CompiledFunction {
-    entry: Entry,
+    entry: WasmEntry,
     params: Vec<crate::WasmType>,
     result: Option<crate::WasmType>,
     #[cfg(test)]
@@ -5392,7 +4951,7 @@ struct IndirectCallCacheEntry {
 type DirectReferenceEntry = (
     Rc<CompiledProgram>,
     usize,
-    Entry,
+    WasmEntry,
     (u64, u64),
     Value,
     Option<(*mut u8, usize)>,
@@ -6281,15 +5840,6 @@ fn dump_native_bytes(directory: &std::path::Path, header: u32, bytes: &[u8], add
     }
 }
 
-/// Publishes compiled `code` of a function lowered with `native_entry_signature` to
-/// executable memory, and its entry.
-fn publish_entry(code: &[u8]) -> Option<(CodeMemory, Entry)> {
-    let memory = publish_code(code)?;
-    // SAFETY: callers lower the function with `native_entry_signature`.
-    let entry = unsafe { std::mem::transmute::<*mut u8, Entry>(memory.pointer()) };
-    Some((memory, entry))
-}
-
 /// Publishes compiled `code` of a region lowered with `lane_body_signature` to executable
 /// memory, and its entry.
 fn publish_body(code: &[u8]) -> Option<(CodeMemory, BodyEntry)> {
@@ -6487,8 +6037,8 @@ pub(super) struct CompiledJsFunction {
 /// The two projections a JavaScript function compiles through (`js_compiled`).
 #[derive(Clone, Copy)]
 enum CompiledJsEntry {
-    SharedNumber { entry: Entry, mode: NativeEntryMode, result: NativeNumberResult },
-    GeneralDispatch(Entry),
+    SharedNumber { entry: BodyEntry, result: NativeNumberResult },
+    GeneralDispatch(super::native_program::NativeJsFunctionEntry),
 }
 
 /// The instruction transition that returns from a general native-dispatch
@@ -7451,7 +7001,7 @@ impl<H: Host> Vm<H> {
 
 /// The frame/register/root and exception boundary shared by JIT and linked entries.
 fn run_js_native_entry<H: Host>(
-    entry: Entry, vm: *mut Vm<H>, program: ProgramId, payload: *mut (),
+    entry: super::native_program::NativeJsFunctionEntry, vm: *mut Vm<H>, program: ProgramId, payload: *mut (),
     interrupt: *const std::sync::atomic::AtomicBool, poll_page: Option<(usize, usize)>,
     native_pcs: &[u8],
 ) -> Option<(u32, u64)> {
@@ -7489,13 +7039,12 @@ fn run_js_native_entry<H: Host>(
     // SAFETY: the function's bytecode, frame and adapter payload outlive
     // the native dispatch. The callout writes only `word` and its payload.
     let status = unsafe {
-        enter_native(
+        enter_js_native(
             &mut context,
             locals as u64,
             u64::try_from(local_count).unwrap_or(u64::MAX),
             arguments,
             &mut word,
-            NativeEntryMode::Resumable,
             entry,
         )
     };
@@ -8293,12 +7842,13 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
 impl CompiledJsFunction {
     pub(super) fn from_artifact(artifact: super::js_compiled::JsJitArtifact) -> Option<Self> {
         let code = CodeMemory::new(&artifact.code)?;
-        // SAFETY: both projections emit the shared native-entry ABI (`native_entry_signature`).
-        let shared = unsafe { std::mem::transmute::<*mut u8, Entry>(code.pointer()) };
         let entry = match artifact.result {
-            super::js_compiled::JsJitResultKind::SharedNumberEntry(mode, result) =>
-                CompiledJsEntry::SharedNumber { entry: shared, mode, result },
-            super::js_compiled::JsJitResultKind::GeneralDispatch => CompiledJsEntry::GeneralDispatch(shared),
+            // SAFETY: a numeric region emits the lane body ABI (`lane_body_signature`).
+            super::js_compiled::JsJitResultKind::SharedNumberEntry(result) => CompiledJsEntry::SharedNumber {
+                entry: unsafe { std::mem::transmute::<*mut u8, BodyEntry>(code.pointer()) }, result },
+            // SAFETY: general dispatch emits the native-entry ABI (`native_entry_signature`).
+            super::js_compiled::JsJitResultKind::GeneralDispatch => CompiledJsEntry::GeneralDispatch(
+                unsafe { std::mem::transmute::<*mut u8, super::native_program::NativeJsFunctionEntry>(code.pointer()) }),
         };
         Some(Self {
             mapped_bytes: code.length(),
@@ -8352,23 +7902,23 @@ impl CompiledJsFunction {
         self.general_dispatch_native_pcs.get(pc) == Some(&(PcLowering::Native as u8))
     }
 
-    /// The numeric body's result on its Number `arguments`; `None` for the general tier's
-    /// artifact, too few arguments, or an interrupted run.
+    /// The numeric body's result on `arguments`; `None` for the general tier's artifact, too
+    /// few arguments, an argument that is no Number, or an interrupted run.
     pub(super) fn call(
         &self,
-        arguments: &[f64],
+        arguments: &[Value],
         interrupt: &crate::ExecutionInterrupt,
         poll_page: Option<(usize, usize)>,
     ) -> Option<Value> {
-        let CompiledJsEntry::SharedNumber { entry, mode, result: format } = self.entry else { return None };
-        if arguments.len() < self.params { return None; }
-        let (status, result) = run_native_entry(entry, arguments, interrupt, poll_page, mode);
+        let CompiledJsEntry::SharedNumber { entry, result: format } = self.entry else { return None };
+        let arguments = arguments.get(..self.params)?;
+        let BodyReturn { status, value } = run_numeric_entry(entry, arguments.as_ptr().cast(), interrupt, poll_page);
         #[cfg(test)]
         self.native_entries.set(self.native_entries.get().saturating_add(1));
         (status == 0).then_some(())?;
         Some(match format {
-            NativeNumberResult::Int32 => Value::integer(result as u32 as i32),
-            NativeNumberResult::Float64 => Value::number(f64::from_bits(result)),
+            NativeNumberResult::Int32 => Value::integer(value as u32 as i32),
+            NativeNumberResult::Float64 => Value::number(f64::from_bits(value)),
         })
     }
 
@@ -8440,18 +7990,6 @@ impl CompiledJsFunction {
             }
             _ => None,
         }
-    }
-
-    fn native_entry_mode(&self) -> NativeEntryMode {
-        match self.entry {
-            CompiledJsEntry::SharedNumber { mode, .. } => mode,
-            CompiledJsEntry::GeneralDispatch(_) => NativeEntryMode::Resumable,
-        }
-    }
-
-    #[cfg(all(test, not(quench_profiled)))]
-    pub(super) fn uses_leaf_entry(&self) -> bool {
-        self.native_entry_mode() == NativeEntryMode::Leaf
     }
 
     #[cfg(all(test, not(quench_profiled)))]
@@ -12109,7 +11647,7 @@ thread_local! {
 /// its landing, which returns the out-of-bounds status through the same
 /// epilogue.
 type Trampoline =
-    unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64, *mut u64, Entry) -> u32;
+    unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64, *mut u64, WasmEntry) -> u32;
 
 /// The trampoline and its landing, once the fault handler is installed.
 struct GuardSupport {
@@ -12321,37 +11859,20 @@ fn poll_address(interrupt: &crate::execution_interrupt::ExecutionInterrupt) -> O
         .map(|(start, _)| start as i64)
 }
 
-/// Runs compiled `entry` through the shared ABI. Resumable entries use the host trampoline
-/// and can return from guard or poll faults; safe JS leaves use a prechecked direct entry.
+/// Runs compiled Wasm `entry` through the host trampoline, which can return from guard or
+/// poll faults.
 ///
 /// # Safety
-/// `entry` is compiled code for this `Entry` signature, and `context`, `arguments` and
+/// `entry` is compiled code for the `WasmEntry` signature, and `context`, `arguments` and
 /// `out` are what it reads and writes for the call's duration.
-unsafe fn enter_native(
+unsafe fn enter_wasm(
     context: &mut CallContext,
     base: u64,
     length: u64,
     arguments: *const u64,
     out: *mut u64,
-    mode: NativeEntryMode,
-    entry: Entry,
+    entry: WasmEntry,
 ) -> u32 {
-    if mode == NativeEntryMode::Leaf {
-        let marker = 0u8;
-        let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
-        if stack_pointer
-            < context
-                .stack_limit
-                .saturating_add(JS_LEAF_STACK_RESERVE)
-        {
-            // A low stack declines the fast path, so the VM can execute the
-            // instruction through its ordinary guarded dispatcher.
-            return 1;
-        }
-        // SAFETY: leaf artifacts have no polls, heap access, or VM callouts.
-        // Their fixed ABI arguments stay live through this bounded call.
-        return unsafe { entry(context, base, length, arguments, out) };
-    }
     match guard_trampoline() {
         Some(trampoline) => {
             let outer = ACTIVE_CONTEXT.with(|active| active.replace(context));
@@ -12364,6 +11885,26 @@ unsafe fn enter_native(
         // SAFETY: as the caller promises.
         None => unsafe { entry(context, base, length, arguments, out) },
     }
+}
+
+/// Runs public JS function `entry` through the host trampoline: its ABI is the Wasm entry's,
+/// typed with the opaque context pointer the AOT driver passes.
+///
+/// # Safety
+/// As `enter_wasm`, for compiled code of the `NativeJsFunctionEntry` signature.
+unsafe fn enter_js_native(
+    context: &mut CallContext,
+    locals: u64,
+    local_count: u64,
+    registers: *const u64,
+    out: *mut u64,
+    entry: super::native_program::NativeJsFunctionEntry,
+) -> u32 {
+    // SAFETY: both entry types are the one `native_entry_signature` ABI, so the pointer the
+    // trampoline calls is the same machine-code address under either type.
+    let entry = unsafe { std::mem::transmute::<super::native_program::NativeJsFunctionEntry, WasmEntry>(entry) };
+    // SAFETY: as the caller promises.
+    unsafe { enter_wasm(context, locals, local_count, registers, out, entry) }
 }
 
 /// The poll page compiled code faults on to stop for `interrupt`: only where the guard
@@ -12380,65 +11921,23 @@ fn native_stack_limit() -> usize {
     stack_pointer.saturating_sub(COMPILED_STACK_BUDGET)
 }
 
-thread_local! {
-    /// The context every leaf entry (`NativeEntryMode::Leaf`) runs with. A leaf makes no
-    /// calls, polls or callouts, so it reads only the stack limit its entry checks and the
-    /// adapter payload, which each leaf call sets before it enters (`run_leaf`); the rest
-    /// stays the empty adapter context.
-    static LEAF_CONTEXT: std::cell::UnsafeCell<CallContext> =
-        std::cell::UnsafeCell::new(CallContext::native_adapter(std::ptr::null_mut(), std::ptr::null(), None));
-}
-
-/// Runs leaf `entry` through the shared ABI on `arguments` and the adapter `payload`.
-fn run_leaf(payload: *mut (), arguments: *const u64, entry: Entry) -> (u32, u64) {
-    LEAF_CONTEXT.with(|context| {
-        // SAFETY: a leaf makes no calls, so no other use of this thread's leaf context
-        // overlaps this one.
-        let context = unsafe { &mut *context.get() };
-        context.stack_limit = native_stack_limit();
-        context.adapter_payload = payload;
-        let mut result = 0u64;
-        // SAFETY: the payload, arguments and result outlive the leaf call.
-        let status = unsafe {
-            enter_native(context, 0, 0, arguments, &mut result, NativeEntryMode::Leaf, entry)
-        };
-        (status, result)
-    })
-}
-
-/// Runs a JS scalar artifact whose machine code already implements the common `Entry` ABI.
-/// Its Number arguments are raw f64 words and its result is written to the shared result word.
-fn run_native_entry(
-    entry: Entry,
-    arguments: &[f64],
+/// Runs numeric body `entry` on `arguments`, the window whose first slots are the call's
+/// Values, under `interrupt`; the body proves each a Number once.
+fn run_numeric_entry(
+    entry: BodyEntry,
+    arguments: *const u64,
     interrupt: &crate::ExecutionInterrupt,
     poll_page: Option<(usize, usize)>,
-    mode: NativeEntryMode,
-) -> (u32, u64) {
-    if mode == NativeEntryMode::Leaf {
-        return run_leaf(std::ptr::null_mut(), arguments.as_ptr().cast::<u64>(), entry);
-    }
+) -> BodyReturn {
     let flag = poll_page.map_or_else(
         || std::ptr::from_ref(interrupt.atomic_flag()),
         |(start, _)| start as *const std::sync::atomic::AtomicBool,
     );
     let mut context = CallContext::native_adapter(std::ptr::null_mut(), flag, poll_page);
     context.interrupt_owner = interrupt;
-    let mut result = 0u64;
-    // SAFETY: the scalar region is guarded before entry, reads only `arguments`, writes one
-    // result word, and its common ABI does not inspect the adapter payload.
-    let status = unsafe {
-        enter_native(
-            &mut context,
-            0,
-            0,
-            arguments.as_ptr().cast::<u64>(),
-            &mut result,
-            mode,
-            entry,
-        )
-    };
-    (status, result)
+    // SAFETY: the region reads only its parameter slots, which `arguments` holds for the
+    // call, and its ABI does not inspect the adapter payload.
+    unsafe { enter_body(&mut context, 0, 0, arguments, entry) }
 }
 
 /// A fault inside the running compiled call's guard reservation resumes at
@@ -13021,10 +12520,8 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let params = usize::from(function.params);
-        let mut arguments: smallvec::SmallVec<[f64; 8]> = smallvec::SmallVec::new();
-        let numeric = entry.parameters.get(..params)?.iter().all(|value| {
-            value.as_number().map(|number| arguments.push(number)).is_some()
-        });
+        let arguments = entry.parameters.get(..params)?;
+        let numeric = arguments.iter().all(|value| value.as_number().is_some());
         if let Some((entries, reason)) = rejected_entry {
             self.programs.record_js_jit_entry(program_id, function_id, numeric, function.params);
             self.programs.record_js_jit_rejection(program_id, function_id, reason, entries);
@@ -13079,7 +12576,7 @@ impl<H: Host> Vm<H> {
             self.programs.record_js_jit_native_entry(program_id, function_id);
         }
         let poll_page = self.compiled_poll_page();
-        let value = compiled.call(&arguments, &self.execution_interrupt, poll_page)?;
+        let value = compiled.call(arguments, &self.execution_interrupt, poll_page)?;
         let last_pc = function.code.len().checked_sub(1)?;
         let terminal = function.code.get(last_pc)?.as_wide();
         (terminal.op().class().eq(Class::Return)).then_some((last_pc, terminal.register_a(), value))
@@ -13597,9 +13094,9 @@ impl<H: Host> Vm<H> {
             .enumerate()
             .map(|(position, (index, plan, entry))| {
                 positions[index] = position as u32;
-                // SAFETY: the entry was compiled with the `Entry` signature in
+                // SAFETY: the entry was compiled with the `WasmEntry` signature in
                 // the host's default calling convention.
-                let entry = unsafe { std::mem::transmute::<usize, Entry>(base + entry) };
+                let entry = unsafe { std::mem::transmute::<usize, WasmEntry>(base + entry) };
                 CompiledFunction {
                     entry,
                     params: plan.params,
@@ -14109,13 +13606,12 @@ impl<H: Host> Vm<H> {
             // and the memory view stays valid because compiled code never
             // grows memory.
             let status = unsafe {
-                enter_native(
+                enter_wasm(
                     &mut context,
                     base,
                     length,
                     raw.as_ptr(),
                     &mut out,
-                    NativeEntryMode::Resumable,
                     function.entry,
                 )
             };
@@ -14408,9 +13904,6 @@ impl<H: Host> Vm<H> {
             dispatch.stop_pc = stop_pc.unwrap_or(JS_NO_STOP_PC);
             vm.frames[frame].pc = start_pc;
             vm.frames[frame].pc_is_resume = false;
-            // SAFETY: NativeJsProgram's constructor binds this function to H and the
-            // shared ABI; the opaque and internal context pointers have the same ABI.
-            let entry = unsafe { std::mem::transmute::<super::native_program::NativeJsFunctionEntry, Entry>(entry) };
             let interrupt = vm.execution_interrupt.atomic_flag() as *const _;
             let poll_page = vm.compiled_poll_page();
             let exited = run_js_native_entry(entry, vm as *mut Self, program,
@@ -14479,72 +13972,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
-    #[test]
-    fn bound_packed_reference_stores_preserve_identity() {
-        for typescript in [false, true] {
-            let source = r#"(function() {
-                function walk(s,n){while(n>0){s.current=s.current.next;n=(n-1)|0;}}
-                const a={next:null},b={next:a};a.next=b;
-                const s={current:a};
-                walk(s,10001);
-                if(s.current!==b || a.next!==b || b.next!==a)throw 'identity';
-                throw 42;
-            })();"#;
-            let program = if typescript { crate::Engine::specialize_typescript(source, "packed-reference.cts") }
-                else { crate::Engine::specialize(source, "packed-reference.cjs") }.unwrap();
-            let native = linked_optimized_test_program(program);
-            FIELD_HELPER_CALLS.with(|counts| counts.set([0; 2]));
-            let mut vm = Vm::new(crate::test_host::TestHost::default());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let error = vm.execute_native_program(&native, true).unwrap_err();
-            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
-            let writes = FIELD_HELPER_CALLS.with(std::cell::Cell::get)[1];
-            assert!(writes < 10, "packed references must stay native after admission: {writes}");
-        }
-    }
-
-    #[test]
-    #[cfg(feature = "aot")]
-    fn packed_reference_stores_preserve_collection_and_effects() {
-        let source = r#"(function() {
-            function replace(s,value,n){while(n>0){s.current=value;n=(n-1)|0;}}
-            const s={current:{id:0}};
-            replace(s,s.current,10000);
-            $262.gc();
-            let young={id:42};
-            replace(s,young,64);
-            young=null;
-            $262.gc();
-            if(s.current.id!==42)throw 'collected reference';
-            replace(s,-0,64);
-            if(!Object.is(s.current,-0))throw 'widening';
-            replace(s,null,64);
-            if(s.current!==null)throw 'null';
-            const marker={};let calls=0;
-            Object.defineProperty(s,'current',{set(value){calls++;if(value!==marker)throw 'argument';throw marker;}});
-            try{replace(s,marker,1);throw 'missing throw';}catch(e){if(e!==marker)throw e;}
-            if(calls!==1)throw 'replayed setter';
-            throw 42;
-        })();"#;
-        for (typescript, mode) in [false, true].into_iter().flat_map(|typescript|
-            [ExecutionMode::Compiled, ExecutionMode::NativeOnly].map(move |mode| (typescript, mode))) {
-            let program = if typescript { crate::Engine::specialize_typescript(source, "packed-reference-effects.cts") }
-                else { crate::Engine::specialize(source, "packed-reference-effects.cjs") }.unwrap();
-            let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
-            vm.set_execution_mode(mode);
-            let error = match mode {
-                ExecutionMode::Compiled => vm.execute(&program).unwrap_err(),
-                ExecutionMode::NativeOnly => {
-                    let native = linked_optimized_test_program(program);
-                    vm.execute_native_program(&native, true).unwrap_err()
-                }
-                _ => unreachable!(),
-            };
-            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
-        }
-    }
-
     #[test]
     fn native_narrow_decoder_matches_value_bits() {
         use crate::value::NarrowLayout as N;
@@ -14580,38 +14007,6 @@ mod tests {
         for integer in [i32::MIN, -half, -half + 1, -1, 0, 1, half - 1, half, i32::MAX] {
             let narrow = ((integer as u32) << N::CODE_SHIFT) | N::INTEGER_FLAG;
             assert_eq!(unsafe { decode(narrow) }, Value::from_narrow(narrow).to_bits());
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn invariant_receiver_headers_dominate_native_loop_backedges() {
-        let program = crate::Engine::specialize(
-            "function scan(o,n,dead){let sum=0;while(n>0){sum=sum+o.left;n=n-1;}return sum;dead.left;}",
-            "invariant-header.js").unwrap();
-        let isa = super::super::jit_backend::target_isa_for("speed",
-            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default()).into_iter().next().unwrap();
-        let native = &region.function;
-        let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
-        let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
-        let mut headers = Vec::new();
-        for block in native.layout.blocks() {
-            if !dom.is_reachable(block) { continue; }
-            headers.extend(cfg.succ_iter(block).filter(|target| dom.is_reachable(*target)
-                && dom.dominates(*target, block, &native.layout)));
-        }
-        assert!(!headers.is_empty(), "the regression must contain a native backedge");
-        let families: Vec<_> = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
-            .filter(|instruction| matches!(native.dfg.insts[*instruction],
-                ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm }
-                    if i64::from(imm) as u64 == crate::value::ValueLayout::DIRECT_OBJECT_TAG)).collect();
-        assert_eq!(families.len(), 2, "one this admission and one invariant argument proof");
-        for proof in families {
-            for header in &headers {
-                assert!(dom.dominates(proof, *header, &native.layout),
-                    "invariant receiver proof {proof} must precede loop {header}:\n{native}");
-            }
         }
     }
 
@@ -14738,43 +14133,6 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
-    fn countdown_dependent_loops_keep_semantic_bounds_and_unchecked_entries() {
-        let source = r#"
-            function coupled(n){n=n|0;let i=0;for(;i<n;i=(i+1)|0){}let j=0;for(;j<i;j=(j+1)|0){}return(i+j)|0;}
-            function unchecked(n){n=n|0;let i=0;do{i=(i+1)|0;}while(i<n);return i;}
-            function reconverged(n){n=n|0;let i=0;if(!(i<n))globalThis.seen++;do{i=(i+1)|0;}while(i<n);return i;}
-            globalThis.seen=0;
-            for(const n of [-3,0,1,2,17,257]){
-                if(coupled(n)!==(n>0?n*2:0))throw 'dependent bound';
-                if(unchecked(n)!==(n>0?n:1))throw 'unchecked entry';
-                if(reconverged(n)!==(n>0?n:1))throw 'reconverged entry';
-            }
-            if(seen!==2)throw 'entry effects';
-            throw 42;
-        "#;
-        let program = crate::Engine::specialize(source, "countdown-dependencies.cjs").unwrap();
-        let module = crate::lower_native_js_module(&program, "countdown_dependencies").unwrap();
-        let isa = super::super::jit_backend::target_isa().unwrap();
-        let coupled = module.functions.into_iter().find_map(|function| match function {
-            super::super::native_object::NativeFunction::Definition { name, function }
-                if name == "countdown_dependencies_function_1" => Some(function), _ => None,
-        }).unwrap();
-        let mut context = cranelift_codegen::Context::for_function(coupled);
-        context.optimize(&*isa, &mut Default::default()).unwrap();
-        context.compute_loop_analysis();
-        assert!(context.func.layout.blocks().filter(|block| context.loop_analysis.innermost_loop(*block).is_some())
-            .flat_map(|block| context.func.layout.block_insts(block))
-            .any(|inst| context.func.dfg.insts[inst].opcode() == ir::Opcode::Isub),
-            "at least one independent counter must use the countdown path\n{}", context.func);
-        let native = linked_optimized_test_program(program);
-        let mut vm = Vm::new(crate::test_host::TestHost::default());
-        vm.set_execution_mode(ExecutionMode::NativeOnly);
-        let error = vm.execute_native_program(&native, true).unwrap_err();
-        assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
     fn private_store_commits_preserve_overlapping_bytes_and_zero_trips() {
         let isa = super::super::jit_backend::target_isa().unwrap();
         let mut signature = Signature::new(isa.default_call_conv());
@@ -14877,92 +14235,6 @@ mod tests {
                 }}}
             }}}}
         }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn conditional_integer_update_keeps_countdown_after_poll_unswitch() {
-        for body in [
-            "n|=0;x|=0;for(let i=0;i<n;i=(i+1)|0){if((x&1)===0)x=x>>1;else x=(x>>1)^feedback;}return x|0;",
-            "const state={count:n|0,control:x|0};while(state.count>0){state.count=(state.count-1)|0;if((state.control&1)===0)state.control=state.control>>1;else state.control=(state.control>>1)^feedback;}return state.control|0;",
-        ] {
-        let source = format!(r#"
-            const feedback=7;
-            function fold(n,x){{{body}}}
-            if(fold(0,-1)!==-1||fold(-1,17)!==17||fold(1,-1)!==-8||fold(3,3)!==6)throw 'integer fold';
-            throw 42;
-        "#);
-        let program = crate::Engine::specialize(&source, "conditional-countdown.cjs").unwrap();
-        let module = crate::lower_native_js_module(&program, "conditional_countdown").unwrap();
-        let isa = super::super::jit_backend::target_isa().unwrap();
-        let function = module.functions.into_iter().find_map(|function| match function {
-            super::super::native_object::NativeFunction::Definition { name, function }
-                if name == "conditional_countdown_function_1" => Some(function), _ => None,
-        }).unwrap();
-        let counters = super::super::jit_backend::compile_function(function, &*isa, None, |_, native| {
-            let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
-            let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
-            let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
-            loops.compute(native, &cfg, &dom);
-            Ok(loops.loops().filter(|&lp| {
-                let hot: Vec<_> = native.layout.blocks().filter(|block| loops.innermost_loop(*block) == Some(lp))
-                    .flat_map(|block| native.layout.block_insts(block)).collect();
-                // The countdown survives the poll's unswitching: the hot loop computes it
-                // with `Isub` and no longer polls. The merged general body also keeps the
-                // countdown's compare and a guard branch in the loop; folding those into the
-                // branch flags is a separate optimization, not this invariant.
-                hot.iter().any(|&inst| native.dfg.insts[inst].opcode() == ir::Opcode::Isub)
-                    && !hot.iter().any(|&inst| FAULT_POLL_SUPPORTED
-                        && native.dfg.insts[inst].opcode() == ir::Opcode::AtomicLoad)
-            }).count())
-        }).unwrap();
-        assert!(counters > 0, "conditional update must retain a countdown without polls after loop splitting: {body}");
-        let native = linked_optimized_test_program(program);
-        let mut vm = Vm::new(crate::test_host::TestHost::default());
-        vm.set_execution_mode(ExecutionMode::NativeOnly);
-        let error = vm.execute_native_program(&native, true).unwrap_err();
-        assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
-        }
-    }
-
-    #[test]
-    #[cfg(feature = "aot")]
-    fn invariant_fields_and_receiver_admission_leave_the_private_loop() {
-        let source = r#"
-            function fold(n,x){const state={count:n|0,control:x|0};while(state.count>0)advance(state);return state.control|0;}
-            function advance(state){state.count=(state.count-1)|0;state.control=(state.control>>1)^((state.control&1)?7:0);}
-            if(fold(0,-1)!==-1||fold(-1,17)!==17||fold(1,-1)!==-8||fold(3,3)!==6)throw 'inline receiver';
-            throw 42;
-        "#;
-        let program = crate::Engine::specialize(source, "inline-receiver.cjs").unwrap();
-        let module = crate::lower_native_js_module(&program, "inline_receiver").unwrap();
-        let isa = super::super::jit_backend::target_isa().unwrap();
-        let function = module.functions.into_iter().find_map(|function| match function {
-            super::super::native_object::NativeFunction::Definition { name, function }
-                if name == "inline_receiver_function_1" => Some(function), _ => None,
-        }).unwrap();
-        super::super::jit_backend::compile_function(function, &*isa, None, |_, native| {
-            let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
-            let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
-            let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
-            loops.compute(native, &cfg, &dom);
-            let admitted = loops.loops().any(|lp| {
-                let hot: Vec<_> = native.layout.blocks().filter(|block| loops.innermost_loop(*block) == Some(lp))
-                    .flat_map(|block| native.layout.block_insts(block)).collect();
-                // The loop counts down and no longer polls. The merged plan inlines the loop's
-                // single callee, so its field stores are part of this loop; the receiver
-                // admission and countdown are the invariant here.
-                hot.iter().any(|&inst| native.dfg.insts[inst].opcode() == ir::Opcode::Isub)
-                    && !hot.iter().any(|&inst| FAULT_POLL_SUPPORTED && native.dfg.insts[inst].opcode() == ir::Opcode::AtomicLoad)
-            });
-            assert!(admitted, "the private loop must keep its countdown and stop polling: {native}");
-            Ok(())
-        }).unwrap();
-        let native = linked_optimized_test_program(program);
-        let mut vm = Vm::new(crate::test_host::TestHost::default());
-        vm.set_execution_mode(ExecutionMode::NativeOnly);
-        let error = vm.execute_native_program(&native, true).unwrap_err();
-        assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
     }
 
     #[test]
@@ -15620,321 +14892,6 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
-    fn scalar_loop_rotation_preserves_trip_counts_and_exact_header_recovery() {
-        let source = r#"
-            function count(n){n=n|0;let result=0;for(let i=0;i<n;i=(i+1)|0)result=(result+1)|0;return result;}
-            function fractional(){let result=0;for(let i=0;i<2.5;i=(i+1)|0)result=(result+1)|0;return result;}
-            function notANumber(){let result=0;for(let i=0;i<(0/0);i=(i+1)|0)result=(result+1)|0;return result;}
-            function mutable(n,limit){let result=0;for(let i=0;i<n;i=(i+1)|0){result=(result+1)|0;if(i===2)n=limit;}return result;}
-            for(const n of [-1,0,1,2,17])if(count(n)!==(n>0?n:0))throw 'trip count';
-            if(fractional()!==3||notANumber()!==0)throw 'floating condition';
-            let probes=0,limit={valueOf(){probes++;return 3;}};
-            if(mutable(5,limit)!==3||probes!==1)throw 'header recovery';
-            throw 42;
-        "#;
-        let program = crate::Engine::specialize(source, "loop-rotation.cjs").unwrap();
-        let id = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "count")).unwrap();
-        let targets = static_call_targets(&program);
-        let isa = super::super::jit_backend::target_isa().unwrap();
-        let region = lower_static_typed_regions(&program, id as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default()).into_iter().next().unwrap();
-        let native = &region.function;
-        let comparisons = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
-            .filter(|instruction| matches!(native.dfg.insts[*instruction],
-                ir::InstructionData::IntCompare { cond: IntCC::SignedLessThan, .. })).count();
-        assert_eq!(comparisons, 2, "the zero-trip guard and rotated latch share the original comparison");
-        let entry = native.layout.entry_block().unwrap();
-        let context = native.dfg.block_params(entry)[0];
-        let interrupt_offset = if FAULT_POLL_SUPPORTED { std::mem::offset_of!(CallContext, poll_start) }
-            else { std::mem::offset_of!(CallContext, interrupt) };
-        let owners: Vec<_> = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
-            .filter(|instruction| matches!(native.dfg.insts[*instruction],
-                ir::InstructionData::Load { arg, offset, .. } if arg == context
-                    && i32::from(offset) == interrupt_offset as i32)).collect();
-        assert_eq!(owners.len(), 1, "resolve the stable interrupt owner once per region");
-        let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(native);
-        let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(native, &cfg);
-        for block in native.layout.blocks() {
-            if !dom.is_reachable(block) { continue; }
-            for header in cfg.succ_iter(block).filter(|target| dom.dominates(*target, block, &native.layout)) {
-                assert!(dom.dominates(owners[0], header, &native.layout), "interrupt owner must precede the loop");
-            }
-        }
-        let native = linked_optimized_test_program(program);
-        let mut vm = Vm::new(crate::test_host::TestHost::default());
-        vm.set_execution_mode(ExecutionMode::NativeOnly);
-        let error = vm.execute_native_program(&native, true).unwrap_err();
-        assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn scalar_rotated_loop_observes_termination_requested_after_entry() {
-        use std::{sync::mpsc, thread, time::Duration};
-        const WAIT_TIMEOUT: Duration = Duration::from_secs(5);
-        fn started(context: &mut crate::NativeContext<'_, crate::test_host::TestHost>,
-            _: crate::RootId, _: &[crate::RootId]) -> Result<crate::RootId, crate::RootedError> {
-            context.host_mut().state::<mpsc::Sender<()>>().send(()).unwrap();
-            Ok(context.undefined())
-        }
-        for source in [
-            "function spin(){started();let x=1;for(let i=0;i<1/0;i=(i+1)|0){x=x^(x<<13);}return x;}spin();",
-            "function run(){function spin(x){for(let i=0;i<1/0;i=(i+1)|0)x=x^(x<<13);return x;}started();for(let n=0;n<2;n++)spin(n);}run();",
-        ] {
-            let (ready, entered) = mpsc::channel::<()>();
-            let (handle_sender, handle_receiver) = mpsc::channel();
-            let (completed, completion) = mpsc::channel();
-            let worker = thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(move || {
-                let program = crate::Engine::specialize(source, "rotated-interrupt.cjs").unwrap();
-                let native = linked_optimized_test_program(program);
-                let host = crate::test_host::TestHost::default()
-                    .with_natives(crate::host_functions![global "started" (0) => started])
-                    .with_state(Rc::new(ready));
-                let mut vm = Vm::new(host);
-                vm.set_execution_mode(ExecutionMode::NativeOnly);
-                handle_sender.send(vm.execution_interrupt.clone()).unwrap();
-                let budget = crate::stack::GuestCallGuard::remaining();
-                let error = vm.execute_native_program(&native, true).unwrap_err();
-                assert!(error.is_execution_terminated(), "{error}");
-                assert_eq!(crate::stack::GuestCallGuard::remaining(), budget);
-                completed.send(()).unwrap();
-            }).unwrap();
-            let handle = handle_receiver.recv_timeout(WAIT_TIMEOUT).unwrap();
-            entered.recv_timeout(WAIT_TIMEOUT).unwrap();
-            thread::sleep(Duration::from_millis(20));
-            handle.request_termination();
-            completion.recv_timeout(WAIT_TIMEOUT).expect("native infinite loop must observe the live interrupt");
-            worker.join().unwrap();
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn scalar_word32_pairs_preserve_overflow_rounding_and_live_numbers() {
-        let source = r#"
-            function add(a,b){let out=0;for(let i=0;i<1;i++){out=(a+b)|0;}return out;}
-            function sub(a,b){let out=0;for(let i=0;i<1;i++){out=(a-b)|0;}return out;}
-            function mul(a,b){let out=0;for(let i=0;i<1;i++){out=(a*b)|0;}return out;}
-            function observed(a,b){let sum=0,bits=0;for(let i=0;i<1;i++){sum=a+b;bits=sum|0;}return sum;}
-            if(add(2147483647,1)!==-2147483648 || sub(-2147483648,1)!==2147483647)throw 'overflow';
-            if(mul(2147483647,2147483647)!==0)throw 'rounded multiply';
-            if(observed(2147483647,1)!==2147483648)throw 'live intermediate';
-            if(add(1.5,2)!==3 || add(NaN,1)!==0 || sub(Infinity,1)!==0 ||
-                add('1','2')!==12 || !Object.is(add(-0,-0),0))throw 'number fallback';
-            let conversions=0;
-            let object={valueOf(){conversions++;return 2147483647;}};
-            if(add(object,1)!==-2147483648 || conversions!==1)throw 'coercion replay';
-            throw 42;
-        "#;
-        let program = crate::Engine::specialize(source, "word32-pairs.cjs").unwrap();
-        let id = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "add")).unwrap();
-        let targets = static_call_targets(&program);
-        let isa = super::super::jit_backend::target_isa().unwrap();
-        let region = lower_static_typed_regions(&program, id as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default()).into_iter().next().unwrap();
-        assert_eq!(region.header, 0, "scalar preheader definitions must enter the same SSA graph");
-        assert!(!region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))
-            .any(|instruction| region.function.dfg.insts[instruction].opcode() == ir::Opcode::Fadd),
-            "the unobserved add/ToInt32 pair must stay Word32");
-        let native = linked_optimized_test_program(program);
-        let mut vm = Vm::new(crate::test_host::TestHost::default());
-        vm.set_execution_mode(ExecutionMode::NativeOnly);
-        let error = vm.execute_native_program(&native, true).unwrap_err();
-        assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn typed_owner_export_after_private_warmup_keeps_native_termination() {
-        use std::{sync::mpsc, thread, time::Duration};
-        const WAIT: Duration = Duration::from_secs(10);
-        fn expose(c: &mut crate::NativeContext<'_, crate::test_host::TestHost>, _: crate::RootId,
-            _: &[crate::RootId]) -> Result<crate::RootId, crate::RootedError> {
-            let handle = c.execution_interrupt_handle();
-            c.host_mut().state::<mpsc::Sender<crate::ExecutionInterrupt>>().send(handle).unwrap();
-            Ok(c.undefined())
-        }
-        for linked in [false, true] {
-            let (send_handle, receive_handle) = mpsc::channel::<crate::ExecutionInterrupt>();
-            let (send_done, receive_done) = mpsc::channel();
-            let worker = thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(move || {
-                let program = crate::Engine::specialize(
-                    "function spin(n,x){n=n|0;x=x|0;for(let i=0;i<n;i=(i+1)|0){x=x^(x<<13);x=x^(x>>>17);x=x^(x<<5);}return x|0;}let result=0;for(let warm=0;warm<64;warm++)result^=spin(2000,warm);expose();result=spin(2147483647,result);",
-                    "late-interrupt-owner.js").unwrap();
-                let host = crate::test_host::TestHost::default()
-                    .with_natives(crate::host_functions![global "expose" (0) => expose])
-                    .with_state(Rc::new(send_handle));
-                let mut vm = Vm::new(host);
-                vm.set_execution_mode(if linked { ExecutionMode::NativeOnly } else { ExecutionMode::Compiled });
-                let result = if linked { vm.execute_native_program(&linked_optimized_test_program(program), true) }
-                    else { vm.execute(&program) };
-                assert!(result.unwrap_err().is_execution_terminated());
-                send_done.send(()).unwrap();
-            }).unwrap();
-            let handle = receive_handle.recv_timeout(WAIT).expect("warmup must reach the exporting callback");
-            thread::sleep(Duration::from_millis(20));
-            handle.request_termination();
-            receive_done.recv_timeout(WAIT).expect("previously private code must poll after authority escapes");
-            worker.join().unwrap();
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn linked_integer_loop_preserves_call_results() {
-        let source = r#"
-            const feedback = 0xD008;
-            function state(n, seed) {
-                n |= 0; let x = seed | 0;
-                for (let i = 0; i < n; i = (i + 1) | 0) {
-                    if ((x & 1) === 0) x = x >> 1;
-                    else x = (x >> 1) ^ feedback;
-                }
-                return x | 0;
-            }
-            for (let warm = 0; warm < 64; warm++) state(1, warm);
-            print(state(0, 123456789));
-            print(state(17, 123456789));
-            print(state(-1, -2147483648));
-            print(state(1, -1));
-        "#;
-        for result in ["x | 0", "x >>> 0", "x + 0.5", "x < 0"] {
-            let body = source.replace("x | 0;", &format!("{result};"));
-            for source in [body.clone(), format!("(function () {{ {body} }})();")] {
-                let program = crate::Engine::specialize(&source, "integer-loop-result.js").unwrap();
-                let mut expected = Vm::new(crate::test_host::TestHost::default());
-                expected.set_execution_mode(ExecutionMode::Interpreted);
-                expected.execute(&program).unwrap();
-                let native = linked_optimized_test_program(program);
-                let mut vm = Vm::new(crate::test_host::TestHost::default());
-                vm.set_execution_mode(ExecutionMode::NativeOnly);
-                vm.execute_native_program(&native, true).unwrap();
-                assert_eq!(*vm.host.lines(), *expected.host.lines(), "{source}");
-            }
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn invariant_capture_reads_preserve_mutation_coercion_and_initialization() {
-        let source = r#"
-            function make(feedback) {
-                return {
-                    run(n, x) {
-                        n |= 0; x |= 0;
-                        for (let i = 0; i < n; i = (i + 1) | 0) x = (x >> 1) ^ feedback;
-                        return x | 0;
-                    },
-                    set(value) { feedback = value; }
-                };
-            }
-            const pipe = make(0xD008);
-            for (let warm = 0; warm < 64; warm++) pipe.run(2, warm);
-            for (const value of [0, -1, 1.5, 4294967295, '7', null, undefined]) {
-                pipe.set(value); print(pipe.run(17, 123456789));
-            }
-            let conversions = 0;
-            pipe.set({valueOf() { conversions++; pipe.set(3); return 7; }});
-            print(pipe.run(3, 123)); print(conversions);
-            pipe.set(1n);
-            print(pipe.run(0, 123));
-            try { pipe.run(1, 123); } catch (error) { print(error instanceof TypeError); }
-            {
-                function before(n) {
-                    let x = 0;
-                    for (let i = 0; i < n; i = (i + 1) | 0) x ^= later;
-                    return x | 0;
-                }
-                print(before(0));
-                try { before(1); } catch (error) { print(error instanceof ReferenceError); }
-                const later = 7;
-                print(before(1));
-            }
-            let changing = 1;
-            function update() { changing = (changing + 1) | 0; }
-            function calls(n) {
-                let x = 0;
-                for (let i = 0; i < n; i = (i + 1) | 0) { x ^= changing; update(); }
-                return x | 0;
-            }
-            function stores(n) {
-                let x = 0;
-                for (let i = 0; i < n; i = (i + 1) | 0) { x ^= changing; changing = i; }
-                return x | 0;
-            }
-            print(calls(17)); print(stores(17));
-        "#;
-        let program = crate::Engine::specialize(source, "capture-invariants.js").unwrap();
-        let mut expected = Vm::new(crate::test_host::TestHost::default());
-        expected.set_execution_mode(ExecutionMode::Interpreted);
-        expected.execute(&program).unwrap();
-        for mode in [ExecutionMode::Compiled, ExecutionMode::NativeOnly] {
-            let mut vm = Vm::new(crate::test_host::TestHost::default());
-            vm.set_execution_mode(mode);
-            if mode == ExecutionMode::NativeOnly {
-                vm.execute_native_program(&linked_optimized_test_program(program.clone()), true).unwrap();
-            } else { vm.execute(&program).unwrap(); }
-            assert_eq!(*vm.host.lines(), *expected.host.lines(), "{mode:?}");
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    fn bind_test_lane_symbols(function: &mut ir::Function, narrow_symbol: u32) {
-        let instructions: Vec<_> = function.layout.blocks()
-            .flat_map(|block| function.layout.block_insts(block)).collect();
-        for instruction in instructions {
-            if let ir::InstructionData::UnaryGlobalValue { opcode: ir::Opcode::SymbolValue, global_value } = function.dfg.insts[instruction] {
-                let ir::GlobalValueData::Symbol { name: ir::ExternalName::User(name), .. } = function.global_values[global_value] else { panic!("expected narrow table symbol") };
-                assert_eq!(function.params.user_named_funcs()[name], ir::UserExternalName::new(
-                    super::super::native_object::NATIVE_DATA_NAMESPACE, narrow_symbol));
-                function.dfg.insts[instruction] = ir::InstructionData::UnaryImm {
-                    opcode: ir::Opcode::Iconst,
-                    imm: ir::immediates::Imm64::new(crate::value::NarrowLayout::upper_words() as i64),
-                };
-            }
-            if let ir::InstructionData::Call { func_ref, .. } = function.dfg.insts[instruction] {
-                let ir::ExternalName::User(name) = function.dfg.ext_funcs[func_ref].name else { panic!("expected helper resolver") };
-                assert_eq!(function.params.user_named_funcs()[name], ir::UserExternalName::new(
-                    super::super::native_object::NATIVE_FUNCTION_NAMESPACE, 0));
-                function.dfg.insts[instruction] = ir::InstructionData::UnaryImm {
-                    opcode: ir::Opcode::Iconst,
-                    imm: ir::immediates::Imm64::new(native_js_lane_helpers::<crate::test_host::TestHost>() as usize as i64),
-                };
-            }
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    pub(super) fn linked_optimized_test_program(program: ResidualProgram) -> crate::NativeJsProgram<crate::test_host::TestHost> {
-        let targets = static_call_targets(&program);
-        let isa = super::super::jit_backend::target_isa().unwrap();
-        let mut owners = Vec::new();
-        let mut entries = Vec::new();
-        for id in 0..program.function_count() {
-            let mut regions = lower_static_typed_regions(&program, id as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default());
-            for region in &mut regions {
-                bind_test_lane_symbols(&mut region.function, program.function_count() as u32);
-            }
-            let typed: Vec<_> = regions.iter().map(|region|
-                StaticTypedRegionEntry {header:region.header,function:&region.function,gated:true}).collect();
-            let lowered = lower_js_general_dispatch(&program,id as u32,&*isa,
-                JsGeneralCallout::Address(fixed_test_semantic as *const () as usize),&typed);
-            let (memory,entry,operands)=match lowered {
-                Ok((body,_)) => {
-                    let (memory,entry)=compile_native_function(body, &*isa, usize::MAX, publish_entry).ok().unwrap();
-                    (memory,entry,Vec::new())
-                }
-                Err(_) => live_native_function(&program,id as u32,None),
-            };
-            entries.push(unsafe {std::mem::transmute::<Entry,crate::NativeJsFunctionEntry>(entry)});
-            owners.push((memory,operands));
-        }
-        // SAFETY: all entries use this exact program/host ABI and owner retains code.
-        unsafe {crate::NativeJsProgram::from_entries(program,entries,Rc::new(owners))}.unwrap()
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
     fn slot_widening_unlinks_compiled_readers_without_releasing_active_code() {
         let program = crate::Engine::specialize(
             "var receiver={edgeValue:1}; function read(){var n=0;for(var i=0;i<5;i++)n=(n+receiver.edgeValue)|0;return n;} read();",
@@ -15977,7 +14934,7 @@ mod tests {
                 let program = if typescript { crate::Engine::specialize_typescript(&source, "result-signature.ts") }
                     else { crate::Engine::specialize(&source, "result-signature.js") }.unwrap();
                 let artifact = compile_js_typed_numeric_region(&program, 1).expect("shared typed return region");
-                assert!(matches!(artifact.result, super::super::js_compiled::JsJitResultKind::SharedNumberEntry(_, actual) if actual == format));
+                assert!(matches!(artifact.result, super::super::js_compiled::JsJitResultKind::SharedNumberEntry(actual) if actual == format));
                 let compiled = CompiledJsFunction::from_artifact(artifact).unwrap();
                 let interrupt = crate::ExecutionInterrupt::default();
                 for n in [-1, 0, 3] { for x in [i32::MIN, -1, 0, i32::MAX] {
@@ -16054,355 +15011,6 @@ mod tests {
         }
     }
 
-    /// Whether the binding `helper` call's cached-target probe, the block that decides
-    /// admission (`Lowering::function_binding`), runs before every loop of `function` and its
-    /// cold helper inside none.
-    #[cfg(feature = "aot")]
-    fn assert_admission_precedes_loops(function: &ir::Function, helper: ir::Inst) {
-        let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(function);
-        let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(function, &cfg);
-        let helper = function.layout.inst_block(helper).unwrap();
-        let mut probes = cfg.pred_iter(helper);
-        let probe = probes.next().expect("the probe branches to its helper").block;
-        assert!(probes.next().is_none(), "only the probe reaches the helper");
-        for block in function.layout.blocks().filter(|block| dom.is_reachable(*block)) {
-            for header in cfg.succ_iter(block).filter(|target| dom.dominates(*target, block, &function.layout)) {
-                assert!(dom.dominates(probe, header, &function.layout) && !dom.dominates(header, helper, &function.layout),
-                    "callee admission must precede every loop");
-            }
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn independent_typed_loops_preserve_effect_boundaries_and_local_call_binding() {
-        let source = r#"
-            let effects='';
-            function pipe(count,seed,hook){
-                function step(x){x=x|0;for(let j=0;j<1;j=(j+1)|0)x=(x^(x<<3))|0;return x|0;}
-                for(let warm=0;warm<3;warm++)step(warm);
-                hook();
-                let rounds=count,value=seed;
-                for(let i=0;i<rounds;i=(i+1)|0)value=step(value);
-                return value;
-            }
-            function oracle(n,x){for(let i=0;i<n;i++)x=(x^(x<<3))|0;return x;}
-            let hook=()=>{effects+='h';};
-            if(pipe(8,17,hook)!==oracle(8,17)||effects!=='h')throw 'separated loops';
-            let coercions=0;
-            let input={valueOf(){effects+='v';coercions++;return 7;}};
-            if(pipe(3,input,hook)!==oracle(3,7)||effects!=='hhv'||coercions!==1)throw 'coercion replay';
-            for(let value of [1.5,-0,2147483648,Infinity,NaN]){
-                if(pipe(3,value,()=>{})!==oracle(3,value))throw 'numeric entry fallback';
-            }
-            if(pipe(3.25,7,()=>{})!==oracle(3.25,7))throw 'fractional loop bound';
-            let untouched={valueOf(){throw 'zero-trip coercion';}};
-            if(pipe(0,untouched,()=>{})!==untouched||pipe(NaN,untouched,()=>{})!==untouched)throw 'zero-trip identity';
-            for(let value of [1n,Symbol()]){
-                try{pipe(2,value,()=>{});throw 'missing type error';}
-                catch(e){if(!(e instanceof TypeError))throw e;}
-            }
-            let sentinel={};
-            let bad={valueOf(){throw sentinel;}};
-            try{pipe(2,bad,()=>{});throw 'missing coercion throw';}catch(e){if(e!==sentinel)throw e;}
-            try{pipe(2,3,()=>{effects+='t';throw sentinel;});throw 'missing throw';}
-            catch(e){if(e!==sentinel||effects!=='hhvt')throw 'opaque throw';}
-            function rebound(n){
-                function plus(x){for(let j=0;j<1;j++)x=(x+1)|0;return x;}
-                let x=0;
-                for(let i=0;i<n;i++){
-                    if(i===2)plus=function(x){return (x+10)|0;};
-                    x=plus(x);
-                }
-                return x;
-            }
-            if(rebound(4)!==22)throw 'rebound callee';
-            throw 42;
-        "#;
-        for typescript in [false, true] {
-            let annotated = source.replace("function pipe(count,seed,hook)",
-                "function pipe(count:number,seed:number,hook:()=>void)");
-            let program = if typescript { crate::Engine::specialize_typescript(&annotated, "separate.cts") }
-                else { crate::Engine::specialize(source, "separate.cjs") }.unwrap();
-            let id = program.functions.iter().position(|body|
-                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "pipe")).unwrap();
-            let targets = static_call_targets(&program);
-            let body = program.function(id);
-            let hinted = body.instructions().enumerate().filter(|(pc, instruction)|
-                instruction.op().class().eq(Class::Call) && !targets[id][*pc].is_empty()).count();
-            assert_eq!(hinted, 2, "local closure hints must reach both loops across the opaque call");
-            let unit = lane_unit::unit(&program, id as u32, body, &|caller, pc|
-                (caller == id as u32).then(|| &targets[id][pc as usize]).into_iter().flatten()
-                    .map(|&function| CallTarget { function, callee: CalleeBinding::Function }).collect(),
-                &|id| program.function_get(id as usize)).unwrap();
-            assert_eq!(unit.frames.len(), 2, "both numeric calls must inline: {}", program.disassemble());
-            let isa = super::super::jit_backend::target_isa().unwrap();
-            let regions = lower_static_typed_regions(&program, id as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default());
-            assert_eq!(regions.len(), 2, "each independent caller loop needs an entry");
-            assert_ne!(regions[0].function.name, regions[1].function.name, "inliner keys must be distinct");
-            for region in &regions {
-                let function = &region.function;
-                let bindings: Vec<_> = function.layout.blocks().flat_map(|block| function.layout.block_insts(block))
-                    .filter(|instruction| {
-                        if function.dfg.insts[*instruction].opcode() != ir::Opcode::CallIndirect { return false; }
-                        let target = function.dfg.resolve_aliases(function.dfg.inst_args(*instruction)[0]);
-                        let ir::ValueDef::Result(load, _) = function.dfg.value_def(target) else { return false; };
-                        matches!(function.dfg.insts[load], ir::InstructionData::Load { offset, .. }
-                            if [LaneHelper::FunctionBinding, LaneHelper::AdmittedFunctionBinding].into_iter()
-                                .any(|helper| i32::from(offset) == helper as i32 * std::mem::size_of::<usize>() as i32))
-                    }).collect();
-                assert_eq!(bindings.len(), 1, "one actual callee admission per region: {function}\n{}", program.disassemble());
-                assert_admission_precedes_loops(function, bindings[0]);
-            }
-            let native = linked_optimized_test_program(program);
-            let mut vm = Vm::new(crate::test_host::TestHost::default());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let error = vm.execute_native_program(&native, true).unwrap_err();
-            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn forwarded_fields_preserve_effects_aliases_and_immutable_values() {
-        let source = r#"
-            function pair(owner,n,reset) {let result=0; for(let i=0;i<n;i++) {if(reset)owner.value=0; const a=owner.value|0; const b=owner.value|0; result=a+b;} return result;}
-            function projected(owner,n,reset) {let result=0; for(let i=0;i<n;i++) {if(reset)owner.value=0; const value=owner.value; const a=value|0; const b=owner.value>>1; result=1/value+(a^b);} return result;}
-            function diamond(owner,other,n,write) {let result=0; for(let i=0;i<n;i++) {const first=owner.value|0; if(write)other.value=11; result=first+(owner.value|0);} return result;}
-            function pure(owner,n,choose,reset) {let result=0; for(let i=0;i<n;i++) {if(reset)owner.value=0; const first=owner.value|0; if(choose)result=first+1;else result=first-1; result+=owner.value|0;} return result;}
-            function moved(owner,other,n,choose) {let result=0; for(let i=0;i<n;i++) {const first=owner.value|0; if(choose)owner=other; result=first+(owner.value|0);} return result;}
-            function overwritten(owner) {let first=owner.value; first=100; return (owner.value|0)+first;}
-            function changed(a,b) {const first=a.value|0; b.value=9; return first+(a.value|0);}
-            function unrelated(owner,other,n) {let result=0; for(let i=0;i<n;i++) {const first=owner.value|0; other.other=11; result=first+(owner.value|0); owner=other;} return result;}
-            function liveUnrelated(owner,other,n) {let result=0; for(let i=0;i<n;i++) {const first=owner.value; other.other=11; result=(first|0)+(owner.value|0); owner=other;} return result;}
-            function chained(other,n) {let result=0; for(let i=0;i<n;i++) {const first=this.child; const value=this.child.value; other.other=11; if(first!==this.child)throw 'chain owner'; result=value;} return result;}
-            function anonymous(n) {let result=0; for(let i=0;i<n;i++) {const first=this.child.value; const second=this.child.value; result=first+second;} return result;}
-            function replaced(a,b) {const first=a.value|0; a=b; return first+(a.value|0);}
-            function callback(a,fn) {const first=a.value|0; fn(); return first+(a.value|0);}
-            let mask=2;
-            function mark(){this.value=this.value|mask;}
-            function marked(){const o={value:1}; o.mark=mark; return o;} function guarded(a){const first=a.value|0; const second=a.value|0; a.mark(); return first+second+(a.value|0);}
-            let owner={value:7};
-            for(let i=0;i<64;i++) {
-                if(pair(owner,1,false)!==14 || overwritten(owner)!==107) throw 'plain';
-                if(changed({value:7},{value:1})!==14) throw 'different owners';
-                const aliased={value:7,other:1};
-                if(unrelated(aliased,aliased,1,false)!==14 || aliased.other!==11) throw 'unrelated aliased field';
-                if(liveUnrelated(aliased,aliased,1)!==14) throw 'live unrelated aliased field';
-                const linked={child:{value:7.5},other:1};
-                if(chained.call(linked,linked,1)!==7.5) throw 'chain result';
-                if(anonymous.call(linked,1)!==15) throw 'anonymous chain result';
-                if(replaced({value:7},{value:19})!==26) throw 'replacement';
-                if(guarded(marked())!==5) throw 'guarded store';
-                const joined={value:7};
-                if(diamond(joined,joined,1,false)!==14 || diamond(joined,joined,1,true)!==18) throw 'join alias';
-                if(diamond({value:7},{value:1},1,true)!==14) throw 'join different owner';
-                if(pure(owner,1,true,false)!==15 || pure(owner,1,false,false)!==13) throw 'pure join';
-                if(moved({value:7},{value:19},1,true)!==26 || moved({value:7},{value:19},1,false)!==14) throw 'join receiver replacement';
-            }
-            if(changed(owner,owner)!==16 || owner.value!==9) throw 'aliased write';
-            let calls=0;
-            const accessor={get value(){return ++calls;}};
-            if(pair(accessor,1,false)!==3 || calls!==2) throw 'accessor reads';
-            calls=0;
-            const coercion={value:{valueOf(){calls++;coercion.value=9;return 3;}}};
-            if(pair(coercion,1,false)!==12 || calls!==1) throw 'coercion mutation';
-            for(const [value,expected] of [[7.75,1/7.75+4],[-3.25,1/-3.25+3],
-                [4294967303.5,1/4294967303.5+4],[-0,-Infinity],[NaN,NaN],[Infinity,0],[-Infinity,0]]) {
-                if(!Object.is(projected({value},1,false),expected)) throw 'projection changed source';
-            }
-            calls=0;
-            if(projected({value:{valueOf(){return ++calls;}}},1,false)!==1/3 || calls!==3) throw 'projection skipped coercion';
-            owner.value=7;
-            if(callback(owner,()=>{owner.value=19;})!==26) throw 'callback mutation';
-            const setter={value:7,set other(v){this.value=v;}};
-            if(unrelated(setter,setter,1,false)!==18) throw 'unrelated setter effect';
-            setter.value=7;
-            if(liveUnrelated(setter,setter,1)!==18) throw 'live unrelated setter effect';
-            const chainSetter={child:{value:7},set other(v){this.child={value:v};}};
-            try {chained.call(chainSetter,chainSetter,1); throw 'missing chain effect';} catch(e) {if(e!=='chain owner')throw e;}
-            let childReads=0;
-            const childGetter={get child(){childReads++;return {value:childReads};}};
-            if(anonymous.call(childGetter,1)!==3 || childReads!==2) throw 'chain getter effects';
-            let proto={value:7}, child=Object.create(proto);
-            if(changed(child,proto)!==16 || child.value!==9) throw 'prototype alias';
-            let marker={}, prefix={count:0,value:1};
-            function throwing(a) {a.count=(a.count+1)|0; const first=a.value|0; return first+(a.value|0);}
-            for(let i=0;i<64;i++) if(throwing(prefix)!==2) throw 'warm prefix';
-            calls=0;
-            Object.defineProperty(prefix,'value',{get(){if(++calls===2)throw marker;return 4;}});
-            try {throwing(prefix);throw 'missing throw';} catch(e) {if(e!==marker)throw e;}
-            if(prefix.count!==65 || calls!==2) throw 'replayed prefix';
-            throw 42;
-        "#;
-        for typescript in [false, true] {
-            let program = if typescript { crate::Engine::specialize_typescript(source, "field-values.cts") }
-                else { crate::Engine::specialize(source, "field-values.cjs") }.unwrap();
-            let pair = program.functions.iter().position(|function|
-                function.header().name.is_some_and(|name| &program.atoms[name as usize] == "pair")).unwrap();
-            let isa = super::super::jit_backend::target_isa().unwrap();
-            FIELD_VALUE_FORWARDS.with(|count| count.set(0));
-            let regions = lower_static_typed_regions(&program, pair as u32, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default());
-            assert!(!regions.is_empty() && FIELD_VALUE_FORWARDS.with(std::cell::Cell::get) > 0,
-                "exercise pair's native value forwarding ({} regions, {} forwards): {}",
-                regions.len(), FIELD_VALUE_FORWARDS.with(std::cell::Cell::get), program.disassemble());
-            let guarded = program.functions.iter().position(|function|
-                function.header().name.is_some_and(|name| &program.atoms[name as usize] == "guarded")).unwrap();
-            FIELD_VALUE_FORWARDS.with(|count| count.set(0));
-            let regions = lower_static_typed_regions(&program, guarded as u32, &static_call_targets(&program), &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default());
-            // One loop region inlines the hinted call; a bounded scalar range may cover the
-            // function's straight-line prefix (a static region reads its fields at their sites).
-            assert_eq!(regions.iter().filter(|region| !region.scalar).count(), 1,
-                "the hinted call inlines into a native region");
-            // Forward the pre-call read and the inlined store's value to the read after it;
-            // the straight-line prefix's scalar range forwards its own read too.
-            assert!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get) >= 2,
-                "forward the pre-call read, and the inlined store's value to the read after it");
-            for (name, forwards) in [("pure", true), ("unrelated", true), ("liveUnrelated", true), ("diamond", false), ("moved", false)] {
-                let id = program.functions.iter().position(|function|
-                    function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
-                let site = program.function_get(id).unwrap().instructions().filter(|instruction| instruction.op().class().eq(Class::GetField)).filter_map(|instruction|
-                    match instruction.field_lookup() {
-                        Some(FieldLookup::Atom { cache_site, .. }) => Some(cache_site),
-                        _ => None,
-                    }).last().unwrap();
-                FIELD_FORWARD_SITE.with(|counter| counter.set(Some((site, 0))));
-                let regions = lower_static_typed_regions(&program, id as u32, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default());
-                assert!(!regions.is_empty(), "native join regression: {name}");
-                assert_eq!(FIELD_FORWARD_SITE.with(|counter| counter.replace(None).unwrap().1) > 0,
-                    forwards, "only identical field values may cross {name}'s join");
-            }
-            let chained = program.functions.iter().position(|function|
-                function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "chained")).unwrap();
-            let site = program.function(chained).instructions().filter(|instruction| instruction.op().class().eq(Class::GetField))
-                .find_map(|instruction| match instruction.field_lookup() {
-                Some(FieldLookup::Site(index)) => Some(program.field_sites.get(index).unwrap().first.1),
-                _ => None,
-            }).unwrap_or_else(|| panic!("exercise the fused chain's first read: {}", program.disassemble()));
-            FIELD_FORWARD_SITE.with(|counter| counter.set(Some((site, 0))));
-            let regions = lower_static_typed_regions(&program, chained as u32, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default());
-            assert!(!regions.is_empty());
-            assert!(FIELD_FORWARD_SITE.with(|counter| counter.replace(None).unwrap().1) > 0,
-                "reuse the first field of a fused read without confusing the chain result");
-            let anonymous = program.functions.iter().position(|function|
-                function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "anonymous")).unwrap();
-            assert!(program.function(anonymous).instructions().filter(|instruction| instruction.op().class().eq(Class::GetField))
-                .any(|instruction| matches!(instruction.field_lookup(), Some(FieldLookup::Site(_)))));
-            FIELD_VALUE_FORWARDS.with(|counter| counter.set(0));
-            let regions = lower_static_typed_regions(&program, anonymous as u32, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default());
-            assert!(!regions.is_empty());
-            assert_eq!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get), 0,
-                "a fused read must not retain an anonymous intermediate solely for later forwarding");
-            let native = linked_optimized_test_program(program);
-            let mut vm = Vm::new(crate::test_host::TestHost::default());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let error = vm.execute_native_program(&native, true).unwrap_err();
-            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn bound_packed_integer_fields_avoid_per_iteration_helpers() {
-        const WARMUP_RUNS: usize = 64;
-        for (count, typescript) in [1000, 10000].into_iter()
-            .flat_map(|count| [false, true].map(move |typescript| (count, typescript))) {
-            let expected = (0..count).fold(123456789_i32, |value, _|
-                (value >> 1) ^ if value & 1 != 0 { 0xD008 } else { 0 });
-            let source = format!(r#"(function() {{
-                function advance(state) {{
-                    state.count = (state.count - 1) | 0;
-                    state.control = (state.control >> 1) ^ ((state.control & 1) ? 0xD008 : 0);
-                }}
-                function run(n, seed) {{
-                    const state = {{count: n | 0, control: seed | 0}};
-                    while(state.count > 0) advance(state);
-                    return state.control | 0;
-                }}
-                for(let i=0;i<{WARMUP_RUNS};i++) run(1,i);
-                if(run({count},123456789)!=={expected}) throw 'incorrect update';
-                throw 42;
-            }})();"#);
-            let program = if typescript { crate::Engine::specialize_typescript(&source, "packed-fields.cts") }
-                else { crate::Engine::specialize(&source, "packed-fields.cjs") }.unwrap();
-            let advance = program.functions.iter().position(|function|
-                function.header().name.is_some_and(|name| &program.atoms[name as usize] == "advance"))
-                .unwrap();
-            let control_read = program.function_get(advance).unwrap().instructions().filter(|instruction| instruction.op().class().eq(Class::GetField)).find_map(|instruction| match instruction.field_lookup() {
-                    Some(FieldLookup::Atom { atom, cache_site, .. }) if &program.atoms[atom as usize] == "control" => Some(cache_site),
-                    _ => None,
-                }).unwrap();
-            LOOP_INT32_READ_SITE.with(|site| site.set(Some((control_read, 0))));
-            let control_store = program.function_get(advance).unwrap().instructions().find_map(|instruction|
-                (instruction.op().is_set_field() && &program.atoms[instruction.atom_index() as usize] == "control")
-                    .then(|| instruction.cache_site_index())).unwrap();
-            PACKED_RANGE_SITE.with(|site| site.set(Some((control_store, 0))));
-            LOOP_INT32_PHIS.with(|count| count.set(0));
-            LOOP_SLOT_STORES.with(|count| count.set(0));
-            PACKED_RANGE_PROOFS.with(|count| count.set(0));
-            FIELD_VALUE_FORWARDS.with(|count| count.set(0));
-            let native = linked_optimized_test_program(program);
-            assert!(LOOP_SLOT_STORES.with(std::cell::Cell::get) > 0, "reuse an entry-proved writable slot");
-            assert!(PACKED_RANGE_PROOFS.with(std::cell::Cell::get) > 0,
-                "the admitted positive count closes its packed decrement without a store range check");
-            assert!(PACKED_RANGE_SITE.with(|site| site.replace(None).unwrap().1) > 0,
-                "control's shift/xor recurrence must independently close the packed interval");
-            assert!(FIELD_VALUE_FORWARDS.with(std::cell::Cell::get) > 0, "forward repeated control reads");
-            assert!(LOOP_INT32_PHIS.with(std::cell::Cell::get) >= 2, "carry both count and control unboxed across the loop backedge");
-            assert!(LOOP_INT32_READ_SITE.with(|site| site.replace(None).unwrap().1) > 0,
-                "forward the control field through the inline parameter copy and branch join");
-            FIELD_HELPER_CALLS.with(|counts| counts.set([0; 2]));
-            FIELD_WRITE_ADMISSIONS.with(|count| count.set(0));
-            FUNCTION_BINDING_CALLS.with(|count| count.set(0));
-            let mut vm = Vm::new(crate::test_host::TestHost::default());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let error = vm.execute_native_program(&native, true).unwrap_err();
-            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
-            assert!(FIELD_WRITE_ADMISSIONS.with(std::cell::Cell::get) > 0,
-                "optimized native bound stores must admit their write domains");
-            let [reads, writes] = FIELD_HELPER_CALLS.with(std::cell::Cell::get);
-            // A bounded scalar range covering the function's straight-line prefix reads its
-            // fields at their sites (the unified plan has no entry record for static regions);
-            // the loop body's own reads stay entry-bound.
-            assert!(reads <= 4, "only entry misses and a scalar prefix may call the read helper: {reads}");
-            assert_eq!(writes, 3, "only cold stores (and count's, retried once when its miss leaves frameless advance) may use the recording mutation");
-            let bindings = FUNCTION_BINDING_CALLS.with(std::cell::Cell::get);
-            assert!(bindings <= WARMUP_RUNS + 1, "callee admission belongs at loop entry: {bindings}");
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn packed_field_ranges_preserve_boundaries_aliases_and_reentry() {
-        let source = concat!(include_str!("../../tests/fixtures/packed-field-ranges.js"), "\nthrow 42;");
-        for typescript in [false, true] {
-            let program = if typescript { crate::Engine::specialize_typescript(source, "packed-field-ranges.cts") }
-                else { crate::Engine::specialize(source, "packed-field-ranges.cjs") }.unwrap();
-            let native = linked_optimized_test_program(program);
-            let mut vm = Vm::new(crate::test_host::TestHost::default());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let error = vm.execute_native_program(&native, true).unwrap_err();
-            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn loop_slot_proofs_expire_before_storage_migration() {
-        let source = concat!(include_str!("../../tests/fixtures/loop-slot-lifetime.js"), "\nthrow 42;");
-        for typescript in [false, true] {
-            let program = if typescript { crate::Engine::specialize_typescript(source, "loop-slot-lifetime.cts") }
-                else { crate::Engine::specialize(source, "loop-slot-lifetime.cjs") }.unwrap();
-            LOOP_SLOT_STORES.with(|count| count.set(0));
-            let native = linked_optimized_test_program(program);
-            assert!(LOOP_SLOT_STORES.with(std::cell::Cell::get) > 0, "exercise projected loop stores");
-            let mut vm = Vm::new(crate::test_host::TestHost::default());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let error = vm.execute_native_program(&native, true).unwrap_err();
-            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
-        }
-    }
-
     #[test]
     fn jit_loop_slots_preserve_widening_and_reentry() {
         let source = concat!("run({count:4096,value:0},1);\n",
@@ -16415,503 +15023,6 @@ mod tests {
             let error = vm.execute(&program).unwrap_err();
             assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
         }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn loop_field_phis_preserve_aliases_widening_and_effects() {
-        let source = r#"
-            function advance(s) { s.count = s.count - 1; }
-            function run(s) {
-                let iterations=0;
-                while(s.count>0) { advance(s); iterations++; }
-                return iterations;
-            }
-            function alias(s,other) {
-                let iterations=0;
-                while(s.count>0) {
-                    other.count=other.count-1;
-                    if(++iterations===4)break;
-                }
-                return iterations;
-            }
-            function replace(s,other) {
-                let iterations=0;
-                while(s.count>0) { s=other; s.count--; iterations++; }
-                return iterations;
-            }
-            function branchStep(s, other, choose) {
-                if(choose) s=other;
-                s.value=(s.value+1)|0;
-            }
-            function branchRun(s, other, choose) {
-                while(s.count>0) {
-                    s.count=(s.count-1)|0;
-                    branchStep(s,other,choose);
-                }
-                return s.value;
-            }
-            function writeBeforeRead(s) {
-                while(s.count>0) {
-                    s.count=(s.count-1)|0;
-                    s.value=7;
-                    s.value=(s.value+s.count)|0;
-                }
-                return s.value;
-            }
-            for(let i=0;i<64;i++) {
-                let left={count:3,value:10},right={count:0,value:20};
-                if(branchRun(left,right,false)!==13 || right.value!==20)throw 'branch original';
-                left={count:3,value:10};
-                if(branchRun(left,right,true)!==10 || right.value!==23)throw 'branch reassignment';
-                left={count:3,value:10};
-                if(branchRun(left,left,true)!==13)throw 'branch same alias';
-                if(writeBeforeRead({count:3,value:99})!==7)throw 'write before read';
-                if(run({count:3})!==3)throw 'integer';
-                let s={count:3};
-                if(alias(s,s)!==3 || s.count!==0)throw 'same alias';
-                s={count:2};let other={count:9};
-                if(alias(s,other)!==4 || s.count!==2 || other.count!==5)throw 'other alias';
-                if(replace({count:9},{count:2})!==2)throw 'replace';
-            }
-            let s={count:2.5};
-            if(run(s)!==3 || s.count!==-0.5)throw 'fraction';
-            if(run({count:NaN})!==0 || run({count:-0})!==0)throw 'zero trip';
-            let calls=0;
-            s={count:{valueOf(){calls++;return 2;}}};
-            if(run(s)!==2 || calls!==2 || s.count!==0)throw 'coercion';
-            let gets=0,sets=0,count=3;
-            s={get count(){gets++;return count;},set count(v){sets++;count=v;}};
-            if(run(s)!==3 || gets!==7 || sets!==3 || count!==0)throw 'accessor';
-            let marker={},observed=0;
-            s={get count(){if(++observed===3)throw marker;return 2;},set count(v){}};
-            try{run(s);throw 'missing throw';}catch(e){if(e!==marker)throw e;}
-            if(observed!==3)throw 'replayed effect';
-            throw 42;
-        "#;
-        for typescript in [false, true] {
-            let program = if typescript { crate::Engine::specialize_typescript(source, "loop-fields.cts") }
-                else { crate::Engine::specialize(source, "loop-fields.cjs") }.unwrap();
-            let native = linked_optimized_test_program(program);
-            let mut vm = Vm::new(crate::test_host::TestHost::default());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let error = vm.execute_native_program(&native, true).unwrap_err();
-            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn bound_packed_fields_preserve_widening_and_exact_effects() {
-        let half_range = 1_i64 << (crate::value::NarrowLayout::INTEGER_BITS - 1);
-        let source = format!(r#"
-            function step(state, delta) {{
-                state.count = (state.count + 1) | 0;
-                state.value = state.value + delta;
-                return state.value;
-            }}
-            let s = {{count: 0, value: 0}};
-            for(let i=0;i<64;i++) step(s,1);
-            for(const start of [{half_range}-1, -{half_range}, 0.5, -0, 'x']) for(const delta of [-1,1]) {{
-                s = {{count: 0, value: start}};
-                if(step(s,delta)!==start+delta || s.count!==1) throw 'widening';
-                if(step(s,-delta)!==(start+delta)+(-delta) || s.count!==2) throw 'second write';
-            }}
-            let calls=0, marker={{}};
-            s={{count:0,value:{{valueOf(){{calls++;throw marker;}}}}}};
-            try {{step(s,1);throw 'missing throw';}} catch(e) {{if(e!==marker)throw e;}}
-            if(calls!==1 || s.count!==1) throw 'replayed prefix';
-            s={{count:0,value:7}};
-            let stored;
-            Object.defineProperty(s,'value',{{get(){{calls++;return 7;}},set(v){{stored=v;}},configurable:true}});
-            if(step(s,2)!==7 || stored!==9 || calls!==3 || s.count!==1) throw 'accessor';
-            delete s.value;
-            Object.setPrototypeOf(s,{{value:5}});
-            if(step(s,3)!==8 || s.value!==8 || s.count!==2) throw 'inherited';
-            s={{count:0,value:7}};
-            step(s,0);
-            Object.defineProperty(s,'value',{{writable:false}});
-            if(step(s,2)!==7 || s.count!==2) throw 'sloppy readonly';
-            function strictStep(state) {{
-                'use strict';
-                state.count = (state.count + 1) | 0;
-                state.value = state.value + 1;
-            }}
-            s={{count:0,value:0}};
-            for(let i=0;i<64;i++) strictStep(s);
-            Object.defineProperty(s,'value',{{writable:false}});
-            try {{strictStep(s);throw 'missing readonly throw';}} catch(e) {{if(!(e instanceof TypeError))throw e;}}
-            if(s.count!==65 || s.value!==64) throw 'strict readonly prefix';
-            throw 42;
-        "#);
-        for typescript in [false, true] {
-            let program = if typescript { crate::Engine::specialize_typescript(&source, "packed-transitions.cts") }
-                else { crate::Engine::specialize(&source, "packed-transitions.cjs") }.unwrap();
-            let native = linked_optimized_test_program(program);
-            let mut vm = Vm::new(crate::test_host::TestHost::default());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let error = vm.execute_native_program(&native, true).unwrap_err();
-            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn captured_call_hints_share_native_inlining_and_exact_recovery() {
-        let source = r#"
-            function make(delta) {
-                let step = function step(state) {
-                    state.count = (state.count - 1) | 0;
-                    state.value = state.value + delta;
-                };
-                function run(seed) {
-                    const state = {count: 20, value: seed};
-                    globalThis.last = state;
-                    while (state.count > 0) step(state);
-                    return state.value;
-                }
-                return {run, replace(value) {step = value;}};
-            }
-            const a = make(2), b = make(5);
-            if (a.run(3) !== 43 || b.run(3) !== 103) throw 'closure environment';
-            a.replace(function replacement(state) {state.count--; state.value += 100;});
-            if (a.run(3) !== 2003 || b.run(3) !== 103) throw 'replacement';
-            let calls = 0;
-            const marker = {};
-            const failing = make({valueOf() {calls++; throw marker;}});
-            try {failing.run(3); throw 'missing throw';} catch (error) {if (error !== marker) throw error;}
-            if (calls !== 1 || last.count !== 19 || last.value !== 3) throw 'replayed prefix';
-            throw 42;
-        "#;
-        for typescript in [false, true] {
-            let program = if typescript { crate::Engine::specialize_typescript(source, "captured-target.cts") }
-                else { crate::Engine::specialize(source, "captured-target.cjs") }.unwrap();
-            let id = |name: &str| program.functions.iter().position(|body|
-                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
-            let (caller, callee) = (id("run"), id("step"));
-            let targets = static_call_targets(&program);
-            assert!(targets[caller].iter().any(|site| site.contains(&(callee as u32))), "capture must supply the shared inliner");
-            let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc|
-                targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
-                    .map(|function| CallTarget {function, callee: CalleeBinding::Function}).into_iter().collect(),
-                &|function| program.function_get(function as usize)).unwrap();
-            assert_eq!(unit.frames.len(), 1);
-            assert_eq!(unit.frames[0].recovery, lane_unit::CallRecovery::Materialize);
-            let isa = super::super::jit_backend::target_isa().unwrap();
-            assert!(!lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default()).is_empty());
-            let native = linked_optimized_test_program(program);
-            let mut vm = Vm::new(crate::test_host::TestHost::default());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let error = vm.execute_native_program(&native, true).unwrap_err();
-            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn guarded_captured_updates_keep_packed_fields_native() {
-        for typescript in [false, true] {
-            let source = r#"
-                (function(){
-                    let mask=4;
-                    function Node(link,state){this.link=link;this.state=state;}
-                    Node.prototype.mark=function(){'use strict';this.state=this.state|mask;};
-                    function Owner(node){this.count=0;this.current=node;}
-                    Owner.prototype.advance=function(){this.count++;this.current.mark();return this.current.link;};
-                    function walk(owner,count){for(let i=0;i<count;i=(i+1)|0)owner.current=owner.advance();}
-                    let a=new Node(null,0),b=new Node(a,1);a.link=b;
-                    let owner=new Owner(a);walk(owner,1000);
-                    if(owner.current!==a||owner.count!==1000||a.state!==4||b.state!==5)throw 'state';
-                    throw owner;
-                })();
-            "#;
-            let program = if typescript { crate::Engine::specialize_typescript(source, "packed-captured.cts") }
-                else { crate::Engine::specialize(source, "packed-captured.cjs") }.unwrap();
-            let caller = program.functions.iter().position(|body|
-                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "walk")).unwrap();
-            let targets = static_call_targets(&program);
-            let isa = super::super::jit_backend::target_isa().unwrap();
-            assert!(!lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default()).is_empty());
-            let native = linked_optimized_test_program(program);
-            let before = INLINE_MATERIALIZATIONS.with(std::cell::Cell::get);
-            let bindings = FUNCTION_BINDING_CALLS.with(std::cell::Cell::get);
-            let mut vm = Vm::new(crate::test_host::TestHost::default());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let owner = vm.execute_native_program(&native, true).unwrap_err().thrown_value().unwrap();
-            assert!(owner.direct_object_index().is_some(), "guest state checks must succeed");
-            assert!(FUNCTION_BINDING_CALLS.with(std::cell::Cell::get) > bindings, "the inlined prefix must execute");
-            assert_eq!(INLINE_MATERIALIZATIONS.with(std::cell::Cell::get), before,
-                "packed captured stores must not materialize a frame on every call");
-            let current = vm.intern_atom("current");
-            let node = vm.own_property(owner, current).unwrap();
-            assert!(vm.heap.object(node).unwrap().properties().has_inline_property_storage(),
-                "the shared operation must preserve packed storage");
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn nonleaf_inline_recovers_at_residual_call_without_replaying_effects() {
-        let source = r#"
-            let owner={count:0}, marker={}, keep={value:42};
-            owner.consume=function consume(input,callback){
-                this.count=this.count+1;
-                input=input.next;
-                let result=callback(input);
-                return result+this.count;
-            };
-            function run(owner,input,callback){let result=owner.consume(input,callback);return result+3;}
-            let leaf={value:7}, input={next:leaf};
-            function value(p){return p.value;}
-            for(let i=0;i<20;i++)run(owner,input,value);
-            function observe(p){
-                $262.gc();
-                if(p!==leaf||owner.consume.arguments[0]!==leaf||owner.consume.caller!==run)throw 'frame';
-                return keep.value;
-            }
-            if(run(owner,input,observe)!==66||owner.count!==21)throw 'prefix';
-            function fail(p){$262.gc();if(p!==leaf)throw 'argument';throw marker;}
-            try{run(owner,input,fail);throw 'missing throw';}catch(e){if(e!==marker)throw e;}
-            if(owner.count!==22)throw 'replay';
-            throw keep.value;
-        "#;
-        for (typescript, terminal) in [false, true].into_iter()
-            .flat_map(|typescript| [false, true].map(|terminal| (typescript, terminal))) {
-            let source = if terminal {
-                source.replace("let result=callback(input);\n                return result+this.count;", "return callback(input);")
-                    .replace("!==66", "!==45")
-            } else { source.to_owned() };
-            let program = if typescript { crate::Engine::specialize_typescript(&source, "nonleaf.cts") }
-                else { crate::Engine::specialize(&source, "nonleaf.cjs") }.unwrap();
-            let named = |name: &str| program.functions.iter().position(|body|
-                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
-            let (caller, consume) = (named("run"), named("consume"));
-            let call = program.function(consume).instructions().position(|instruction| instruction.op().class().eq(Class::Call)).unwrap();
-            let targets = static_call_targets(&program);
-            let isa = super::super::jit_backend::target_isa().unwrap();
-            let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default())
-                .into_iter().next().expect("non-leaf prefix has exact one-frame recovery");
-            assert!(!region.function.sized_stack_slots.is_empty(), "callee state must have recovery homes");
-            let native = linked_optimized_test_program(program);
-            let before = INLINE_MATERIALIZATIONS.with(std::cell::Cell::get);
-            let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let error = vm.execute_native_program(&native, true).unwrap_err();
-            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
-            assert!(INLINE_MATERIALIZATIONS.with(std::cell::Cell::get) > before);
-            assert_eq!(INLINE_LAST_MATERIALIZATION.with(std::cell::Cell::get), Some((consume as u32, call as u32)),
-                "the nested call must resume after the committed prefix and parameter update");
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn effectful_inline_recovery_materializes_exact_callee_state() {
-        let program = crate::Engine::specialize(
-            "let p={};p.consume=function(input){this.count=this.count+1;let value=input.value;return value+this.count;};function run(owner,input){let value=owner.consume(input);return value+3;}",
-            "exact-inline.js").unwrap();
-        let caller = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
-        let targets = static_call_targets(&program);
-        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-            .get(pc as usize).into_iter().flatten().copied().next()
-            .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
-            &|id| program.function_get(id as usize)).unwrap();
-        assert_eq!(unit.frames.len(), 1);
-        assert_eq!(unit.frames[0].recovery, lane_unit::CallRecovery::Materialize);
-        let isa = super::super::jit_backend::target_isa_for("speed",
-            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default()).into_iter().next()
-            .expect("a write followed by a fallible read has exact recovery");
-        let offset = LaneHelper::MaterializeInline as i32 * std::mem::size_of::<usize>() as i32;
-        assert!(region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))
-            .any(|instruction| matches!(region.function.dfg.insts[instruction],
-                ir::InstructionData::Load { offset: actual, .. } if i32::from(actual) == offset)));
-        assert!(!region.function.sized_stack_slots.is_empty(), "callee snapshots have native stack homes");
-        crate::lower_native_js_module(&program, "exact_inline").expect("materialized exits link and verify");
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn materialized_inline_parameter_survives_gc_reflection_and_throw() {
-        let source = r#"
-            let keep={value:42}, marker={}; let p={};
-            p.consume=function consume(input){this.count=this.count+1;input=input.next;return input.value+this.count;};
-            let runner={run:function run(owner,input){let result=owner.consume(input);return result+3;}};
-            let owner=Object.create(p);owner.count=0;
-            let leaf={value:7},input={next:leaf};
-            for(let i=0;i<20;i++)runner.run(owner,input);
-            Object.defineProperty(leaf,'value',{get(){
-                $262.gc();
-                if(p.consume.arguments[0]!==leaf||p.consume.caller!==runner.run)throw 'reflection';
-                return keep.value;
-            },configurable:true});
-            if(runner.run(owner,input)!==66||owner.count!==21)throw 'prefix';
-            Object.defineProperty(leaf,'value',{get(){$262.gc();throw marker;}});
-            try{runner.run(owner,input);throw 'missing throw';}catch(e){if(e!==marker)throw e;}
-            if(owner.count!==22)throw 'replay';throw keep.value;
-        "#;
-        for (typescript, terminal, nested) in [false, true].into_iter()
-            .flat_map(|typescript| [false, true].into_iter().flat_map(move |terminal|
-                [false, true].map(|nested| (typescript, terminal, nested)))) {
-            let source = if terminal {
-                source.replace("let result=owner.consume(input);return result+3;", "return owner.consume(input);")
-                    .replace("!==66", "!==63")
-            } else { source.to_owned() };
-            let source = if nested {
-                source.replace("owner.consume(input)", "owner.bridge(input)")
-                    .replace("let runner=", "p.bridge=function bridge(input){this.bridgeCount=this.bridgeCount+1;let result=this.consume(input);return result+5;};let runner=")
-                    .replace("owner.count=0;", "owner.count=0;owner.bridgeCount=0;")
-                    .replace("p.consume.caller!==runner.run", "p.consume.caller!==p.bridge||p.bridge.caller!==runner.run")
-                    .replace("!==66", "!==71").replace("!==63", "!==68")
-                    .replace("if(owner.count!==22)", "if(owner.count!==22||owner.bridgeCount!==22)")
-            } else { source };
-            let program = if typescript { crate::Engine::specialize_typescript(&source, "exact-gc.cts") }
-                else { crate::Engine::specialize(&source, "exact-gc.cjs") }.unwrap();
-            let caller = program.functions.iter().position(|body|
-                body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
-            let targets = static_call_targets(&program);
-            if nested {
-                let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|id, pc|
-                    targets[id as usize].get(pc as usize).into_iter().flatten().copied().next()
-                        .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
-                    &|id| program.function_get(id as usize)).unwrap();
-                assert!(unit.frames.iter().any(|frame| frame.parent.is_some()), "exercise nested recovery planning");
-
-            }
-            let isa = super::super::jit_backend::target_isa().unwrap();
-            let mut region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default()).into_iter().next().unwrap();
-            let consume = program.functions.iter().position(|body|
-                body.header().name.is_some_and(|name| &program.atoms[name as usize] == "consume")).unwrap();
-            let read = program.function(consume).instructions().position(|instruction|
-                instruction.op().class().eq(Class::GetField) && matches!(instruction.field_lookup(),
-                    Some(FieldLookup::Atom { atom, .. }) if &program.atoms[atom as usize] == "value")).unwrap();
-            bind_test_lane_symbols(&mut region.function, program.function_count() as u32);
-            let mut entries = Vec::new();
-            let mut owners = Vec::new();
-            for id in 0..program.function_count() {
-                let (memory, entry, operands) = if id == caller {
-                    let (body, _) = lower_js_general_dispatch(&program, id as u32, &*isa,
-                        JsGeneralCallout::Address(fixed_test_semantic as *const () as usize),
-                        &[StaticTypedRegionEntry { header: region.header, function: &region.function, gated: true }]).unwrap();
-                    let (memory, entry) = compile_native_function(body, &*isa, usize::MAX, publish_entry).ok().unwrap();
-                    (memory, entry, Vec::new())
-                } else { live_native_function(&program, id as u32, None) };
-                // SAFETY: entries are lowered for this exact host/program ABI.
-                entries.push(unsafe { std::mem::transmute::<Entry, crate::NativeJsFunctionEntry>(entry) });
-                owners.push((memory, operands));
-            }
-            // SAFETY: owner retains all code and operation operands above.
-            let native = unsafe { crate::NativeJsProgram::from_entries(program, entries, Rc::new(owners)) }.unwrap();
-            let before = INLINE_MATERIALIZATIONS.with(std::cell::Cell::get);
-            let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let error = vm.execute_native_program(&native, true).unwrap_err();
-            assert_eq!(error.thrown_value(), Some(Value::number(42.0)), "{error}");
-            assert!(INLINE_MATERIALIZATIONS.with(std::cell::Cell::get) > before,
-                "the exact callee materialization path must actually execute");
-            assert_eq!(INLINE_LAST_MATERIALIZATION.with(std::cell::Cell::get), Some((consume as u32, read as u32)),
-                "recovery must occur at the read after the native prefix store and parameter update");
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn nested_static_recovery_admits_budget_before_prefix_effects() {
-        for strict_tail in [false, true] {
-            let middle = if strict_tail {
-                "'use strict';this.outer=this.outer+1;return this.leaf(input);"
-            } else { "this.outer=this.outer+1;let result=this.leaf(input);return result+1;" };
-            let source = format!(r#"
-                let p={{outer:0,inner:0}};
-                p.leaf=function leaf(input){{this.inner=this.inner+1;return input.value;}};
-                p.middle=function middle(input){{{middle}}};
-                function run(owner,input){{let result=owner.middle(input);return result+1;}}
-                let input={{get value(){{$262.gc();return 40;}}}};
-                try{{print(run(p,input));}}catch(error){{print(error.name);}}
-                print(p.outer,p.inner);
-            "#);
-            let program = crate::Engine::specialize(&source, "nested-budget.cjs").unwrap();
-            let native = linked_optimized_test_program(program.clone());
-            for limit in 1..=6 {
-                let _limit = crate::stack::GuestCallLimitGuard::enter(limit);
-                let before = crate::stack::GuestCallGuard::remaining();
-                let mut expected = Vm::new(crate::test_host::TestHost::default().with_test262());
-                expected.set_execution_mode(ExecutionMode::Interpreted);
-                expected.execute(&program).unwrap();
-                assert_eq!(crate::stack::GuestCallGuard::remaining(), before);
-                let mut actual = Vm::new(crate::test_host::TestHost::default().with_test262());
-                actual.set_execution_mode(ExecutionMode::NativeOnly);
-                actual.execute_native_program(&native, true).unwrap();
-                assert_eq!(*actual.host.lines(), *expected.host.lines(), "limit={limit} strict_tail={strict_tail}");
-                assert_eq!(crate::stack::GuestCallGuard::remaining(), before, "recovered guards must unwind");
-            }
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn linked_typed_regions_share_register_ir_and_runtime_bound_helpers() {
-        let program = crate::Engine::specialize(
-            "function tail(node) { node.seen=1; while(node.next!==null) node=node.next; return node; }",
-            "typed-loop.js",
-        ).unwrap();
-        let isa = super::super::jit_backend::target_isa_for("speed",
-            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let residual = lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default()).into_iter().next().expect("call-free typed loop");
-        assert!(residual.header > 0, "loop admission must skip the effectful prefix");
-        let has_helper = |native: &ir::Function, resolver_symbol: u32, helper: LaneHelper| {
-            let load_base = |value: ir::Value, expected_offset: i32| {
-                let ir::ValueDef::Result(instruction, _) = native.dfg.value_def(native.dfg.resolve_aliases(value)) else { return None };
-                let ir::InstructionData::Load { offset, .. } = native.dfg.insts[instruction] else { return None };
-                (i32::from(offset) == expected_offset).then(|| native.dfg.inst_args(instruction)[0])
-            };
-            native.layout.blocks().flat_map(|block| native.layout.block_insts(block)).any(|instruction| {
-                if native.dfg.insts[instruction].opcode() != ir::Opcode::CallIndirect { return false; }
-                let target = native.dfg.inst_args(instruction)[0];
-                let Some(table) = load_base(target, helper as i32 * std::mem::size_of::<usize>() as i32) else { return false };
-                let ir::ValueDef::Result(resolver, _) = native.dfg.value_def(native.dfg.resolve_aliases(table)) else { return false };
-                let ir::InstructionData::Call { func_ref, .. } = native.dfg.insts[resolver] else { return false };
-                let ir::ExternalName::User(name) = native.dfg.ext_funcs[func_ref].name else { return false };
-                native.params.user_named_funcs()[name] == ir::UserExternalName::new(
-                    super::super::native_object::NATIVE_FUNCTION_NAMESPACE, resolver_symbol)
-            })
-        };
-        assert!(has_helper(&residual.function, 0, LaneHelper::FieldGet), "field misses use the shared helper before exact recovery");
-        assert!(has_helper(&residual.function, 0, LaneHelper::InterruptOwner), "required helpers use the runtime resolver");
-        let module = crate::lower_native_js_module(&program, "typed_loop_test").unwrap();
-        let caller = module.functions.iter().find_map(|function| match function {
-            super::super::native_object::NativeFunction::Definition { name, function }
-                if name == "typed_loop_test_function_1" => Some(function), _ => None,
-        }).unwrap();
-        let resolver = module.functions.iter().position(|function| matches!(function,
-            super::super::native_object::NativeFunction::Import { name, .. }
-                if name == crate::NATIVE_JS_LANE_HELPERS_SYMBOL)).unwrap() as u32;
-        assert!(has_helper(caller, resolver, LaneHelper::FieldGet), "field helper binding survives inlining");
-        assert!(has_helper(caller, resolver, LaneHelper::InterruptOwner), "required helper binding survives inlining");
-        let table = &module.data[program.function_count()];
-        assert!(!table.writable && table.function_addresses.is_empty());
-        assert_eq!(table.bytes, crate::value::NarrowLayout::decode_words().iter()
-            .flat_map(|word| word.to_ne_bytes()).collect::<Vec<_>>());
-        assert!(caller.global_values.values().any(|global| matches!(global,
-            ir::GlobalValueData::Symbol { name: ir::ExternalName::User(name), .. }
-                if caller.params.user_named_funcs()[*name] == ir::UserExternalName::new(
-                    super::super::native_object::NATIVE_DATA_NAMESPACE, program.function_count() as u32))),
-            "representation data relocation must survive inlining");
-
-        let dynamic_pc_tables = caller.layout.blocks().flat_map(|block| caller.layout.block_insts(block))
-            .filter(|instruction| caller.dfg.insts[*instruction].opcode() == ir::Opcode::BrTable).count();
-        assert!(dynamic_pc_tables <= 1, "only canonical source-PC admission may retain a dynamic dispatcher");
-        assert!(!module.functions.iter().any(|function| matches!(function,
-            super::super::native_object::NativeFunction::Definition { name, .. } if name.ends_with("_typed_region"))),
-            "the inlined residual must not retain a second native body");
-        super::super::native_object::emit_native_module("typed_loop_test", module.functions, module.data)
-            .expect("representation and fallback relocations must resolve together");
-        let leaf = crate::Engine::specialize("function id(x) { return x; } id(1);", "leaf.js").unwrap();
-        let leaf = crate::lower_native_js_module(&leaf, "leaf_test").unwrap();
-        assert!(!leaf.functions.iter().any(|function| matches!(function,
-            super::super::native_object::NativeFunction::Import { name, .. }
-                if name == crate::NATIVE_JS_LANE_HELPERS_SYMBOL)), "units alone own helper-resolver imports");
     }
 
     #[cfg(feature = "aot")]
@@ -16940,228 +15051,6 @@ mod tests {
         }
         vm.execution_interrupt.request_termination();
         assert_eq!(admitted(&vm, 1), 0, "termination must precede the inlined store");
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn closed_native_loop_binds_call_budget_outside_repeated_calls() {
-        for looping in [false, true] {
-            let source = "function Node(next){this.state=0;this.next=next;}Node.prototype.mark=function(){this.state=this.state|2;};function walk(node,n){while(n>0){node.mark();node=node.next;n=(n-1)|0;}return node.state;}let a=new Node(null);let b=new Node(a);a.next=b;for(let i=0;i<20;i++)walk(a,2);throw walk(a,100);";
-            let source = if looping { source.to_owned() } else {
-                source.replace("while(n>0){node.mark();node=node.next;n=(n-1)|0;}",
-                    "node.mark();node=node.next;node.mark();")
-            };
-            let program = crate::Engine::specialize(&source, "call-budget.js").unwrap();
-            let native = linked_optimized_test_program(program);
-            let mut vm = Vm::new(crate::test_host::TestHost::default());
-            FUNCTION_BINDING_CALLS.with(|count| count.set(0));
-            CALL_BUDGET_READS.with(|count| count.set(0));
-            let value = vm.execute_native_program(&native, true).unwrap_err().thrown_value().unwrap();
-            assert_eq!(value.as_int(), Some(2));
-            let bindings = FUNCTION_BINDING_CALLS.with(std::cell::Cell::get);
-            let budgets = CALL_BUDGET_READS.with(std::cell::Cell::get);
-            // Each `walk` makes two `mark` calls; the loop's last one makes a hundred.
-            let calls = if looping { 20 * 2 + 100 } else { 21 * 2 };
-            assert_eq!(bindings, 1, "only the cold binding asks its helper; later ones probe the warmed target inline");
-            assert!(budgets > 0 && budgets < calls,
-                "the call depth is read once per unit entry, not per call: {budgets} reads, {calls} calls");
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn typed_loop_reentry_keeps_prefix_effects_outside_inlined_frames() {
-        let program = crate::Engine::specialize(
-            "let mask=2;let proto={};proto.mark=function(){this.state=this.state|mask;};function walk(node){node.seen=node.seen+1;while(node.next!==null){node=node.next;node.mark();}return node;}",
-            "inline-loop-entry.js").unwrap();
-        let caller = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "walk")).unwrap();
-        let targets = static_call_targets(&program);
-        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-            .get(pc as usize).into_iter().flatten().copied().next()
-            .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
-            &|id| program.function_get(id as usize)).unwrap();
-        assert_eq!(unit.frames.len(), 1);
-        let isa = super::super::jit_backend::target_isa_for("speed",
-            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default()).into_iter().next()
-            .expect("closed loop with an inlined store");
-        assert!(region.header > 0, "prefix store cannot execute again on loop reentry");
-        assert!(program.function(caller).instructions().any(|instruction|
-            instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
-                && instruction.jump_target() as usize == region.header), "entry is an original source target");
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn typed_field_chains_commit_the_sink_before_the_destination() {
-        let program = crate::Engine::specialize(
-            "function route(base,n){for(let i=0;i<n;i++)this.current=base.next.value;return this.current;}",
-            "fused-typed.js").unwrap();
-        let function = program.function(1);
-        assert!(function.instructions().any(|instruction| instruction.op().class().eq(Class::GetField)
-            && instruction.writes_current_this() && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_)))),
-            "fixture must exercise a fused read/read/sink instruction");
-        let isa = super::super::jit_backend::target_isa_for("speed",
-            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        assert!(lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default()).into_iter().next().is_some(),
-            "fused field sites must use the shared typed region");
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn function_bound_pure_predicates_share_argument_mapping_and_restartable_recovery() {
-        let program = crate::Engine::specialize(
-            "function make(mask){let o={};o.pureProbe=function(n){return (this.state&mask)===n;};return o;} function run(o,n){o.stamp=o.stamp+1;let r=o.pureProbe(n);if(r)return 11;return 12;}",
-            "pure-binding.js").unwrap();
-        let caller = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
-        let targets = static_call_targets(&program);
-        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-            .get(pc as usize).into_iter().flatten().copied().next()
-            .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
-            &|id| program.function_get(id as usize)).unwrap();
-        assert_eq!(unit.frames.len(), 1);
-        assert_eq!(unit.frames[0].arguments, 1);
-        let isa = super::super::jit_backend::target_isa_for("speed",
-            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        assert!(lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default()).into_iter().next().is_some());
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn static_function_bindings_inline_captures_at_the_call_edge_without_scratch_frames() {
-        let program = crate::Engine::specialize(
-            "function make(mask){let o={};o.uniqueMark=function(){this.state=this.state|mask;};return o;} function run(o){o.stamp=o.stamp+1;o.uniqueMark();return o.state;}",
-            "function-binding.js").unwrap();
-        let caller = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
-        let targets = static_call_targets(&program);
-        let unit = lane_unit::unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
-            .get(pc as usize).into_iter().flatten().copied().next()
-            .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
-            &|id| program.function_get(id as usize)).unwrap();
-        assert_eq!(unit.frames.len(), 1, "the static method hint must reach the shared inliner");
-        assert_eq!(unit.frames[0].target.callee, CalleeBinding::Function);
-        let isa = super::super::jit_backend::target_isa_for("speed",
-            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_regions(&program, caller as u32, &targets, &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default()).into_iter().next()
-            .expect("restartable captured store inline region");
-        let scratch_offset = std::mem::offset_of!(JsStepDispatch, inlined) as i32;
-        assert!(!region.function.layout.blocks().flat_map(|block| region.function.layout.block_insts(block))
-            .any(|instruction| matches!(region.function.dfg.insts[instruction],
-                ir::InstructionData::Load { offset, .. } if i32::from(offset) == scratch_offset)),
-            "caller-PC recovery needs no materialized callee scratch frame");
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn linked_field_probes_share_a_dominating_object_header() {
-        let program = crate::Engine::specialize(
-            "function sum(o,n){let s=0;for(let i=0;i<n;i++)s=(s+o.left+o.right+o.mid)|0;return s;}",
-            "shared-header.js").unwrap();
-        let isa = super::super::jit_backend::target_isa_for("speed",
-            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default()).into_iter().next().expect("typed field/call region");
-        let families = region.function.layout.blocks()
-            .flat_map(|block| region.function.layout.block_insts(block))
-            .filter(|instruction| matches!(region.function.dfg.insts[*instruction],
-                ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm }
-                    if i64::from(imm) as u64 == crate::value::ValueLayout::DIRECT_OBJECT_TAG))
-            .count();
-        assert_eq!(families, 2,
-            "one receiver-entry probe and one argument-object proof serve all three fields");
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn nullish_latch_carries_direct_family_to_the_next_receiver() {
-        let program = crate::Engine::specialize(
-            "function last(queue){let p=queue,n;while((n=p.link)!=null)p=n;return p;}",
-            "family-latch.js").unwrap();
-        let isa = super::super::jit_backend::target_isa_for("speed",
-            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let region = lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default()).into_iter().next()
-            .expect("typed traversal loop");
-        let function = &region.function;
-        let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(function);
-        let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(function, &cfg);
-        let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
-        loops.compute(function, &cfg, &dom);
-        let mut families = [0, 0];
-        for block in function.layout.blocks() {
-            for inst in function.layout.block_insts(block) {
-                if matches!(function.dfg.insts[inst], ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm }
-                    if imm.bits() as u64 == crate::value::ValueLayout::DIRECT_OBJECT_TAG) {
-                    families[usize::from(loops.innermost_loop(block).is_some())] += 1;
-                }
-            }
-        }
-        assert_eq!(families[1], 1, "one classification per loaded link, none repeated at the header: {function}");
-        assert!(families[0] > 0, "initial receiver still needs admission");
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn nullish_latch_preserves_nonobjects_effects_and_changed_links() {
-        let source = r#"
-            function last(queue){let p=queue,n;while((n=p.link)!=null)p=n;return p;}
-            function diamond(p,flag){let n;while(true){n=p.link;if(flag)n=p.other;if(n==null)return p;p=n;}}
-            let effects=0;
-            let tail={link:null}, middle={link:tail}, root={link:middle};
-            let array=[], callable=function(){}, marker={};
-            for(let i=0;i<128;i++){
-                if(last(root)!==tail)throw 'chain';
-                tail.link=undefined;if(last(root)!==tail)throw 'undefined';tail.link=null;
-                if(last({link:7})!==7)throw 'number link';
-                if(last({link:'x'})!=='x'.link)throw 'string link';
-                if(last({link:array})!==array)throw 'array link';
-                if(last({link:callable})!==callable)throw 'function link';
-                let read={get link(){effects++;return root;}};
-                if(last(read)!==tail)throw 'getter';
-                let thrown={get link(){effects++;throw marker;}};
-                try{last(thrown);throw 'missing throw';}catch(error){if(error!==marker)throw error;}
-                if(diamond({link:root,other:7},false)!==tail)throw 'diamond object';
-                if(diamond({link:root,other:7},true)!==7)throw 'diamond number';
-                middle.link=null;if(last(root)!==middle)throw 'changed link';middle.link=tail;
-            }
-            if(effects!==256)throw 'duplicate effects';
-            throw 42;
-        "#;
-        for typescript in [false, true] {
-            let program = if typescript { crate::Engine::specialize_typescript(source, "family-latch.cts") }
-                else { crate::Engine::specialize(source, "family-latch.cjs") }.unwrap();
-            for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled] {
-                let mut vm = Vm::new(crate::test_host::TestHost::default());
-                vm.set_execution_mode(mode);
-                let error = vm.execute(&program).unwrap_err();
-                assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{mode:?}: {error}");
-            }
-            let native = linked_optimized_test_program(program);
-            let mut vm = Vm::new(crate::test_host::TestHost::default());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let error = vm.execute_native_program(&native, true).unwrap_err();
-            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "native: {error}");
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn typed_region_exits_before_terminal_calls_with_arguments() {
-        let program = crate::Engine::specialize(
-            "function pipe(object){object.seen=object.seen+1;return object.finish(3);}",
-            "terminal-call.js").unwrap();
-        let isa = super::super::jit_backend::target_isa_for("speed",
-            super::super::jit_backend::CodePublication::RelocatableObject).unwrap();
-        let body = program.function_get(1).unwrap();
-        assert!(body.instructions().any(|instruction| instruction.op().class().eq(Class::Call)
-            && instruction.returns_from_frame() && instruction.call_window().count == 1));
-        let region = lower_static_typed_regions(&program, 1, &[], &*isa, LaneHelpers::linked_for(0, &program), VmFacts::STATIC, &Default::default()).into_iter().next().expect("typed prefix before terminal call");
-        assert_eq!(region.header, 0);
-        let nonterminal = crate::Engine::specialize(
-            "function pipe(object){object.finish(3);return object.seen;}", "nonterminal-call.js").unwrap();
-        assert!(lower_static_typed_regions(&nonterminal, 1, &[], &*isa, LaneHelpers::linked_for(0, &nonterminal), VmFacts::STATIC, &Default::default()).into_iter().next().is_none(),
-            "unsupported nonterminal calls still require a full effect/recovery boundary");
     }
 
     #[cfg(feature = "aot")]
@@ -17213,52 +15102,6 @@ mod tests {
 
     #[cfg(feature = "aot")]
     #[test]
-    fn untyped_native_store_records_widening_before_mutation() {
-        let program = crate::Engine::specialize(
-            "var before=0,after=0; var receiver={value:0,a:1,b:2}; function write(x){before++;receiver.value=x;after++;} for(let i=0;i<200;i++)write(i); write(0.5);",
-            "untyped-native-write.js").unwrap();
-        let isa = super::super::jit_backend::target_isa().unwrap();
-        let mut owners = Vec::new();
-        let mut entries = Vec::new();
-        for id in 0..program.function_count() {
-            let (memory, entry, operands) = if id == 0 {
-                live_native_function(&program, id as u32, None)
-            } else {
-                let (native, _) = lower_js_general_dispatch(&program, id as u32, &*isa,
-                    JsGeneralCallout::Address(fixed_test_semantic as *const () as usize), &[]).unwrap();
-                let (memory, entry) = compile_native_function(native, &*isa, usize::MAX, publish_entry).ok().unwrap();
-                (memory, entry, Vec::new())
-            };
-            // SAFETY: the entries use this program and TestHost; owners retain code and operands.
-            entries.push(unsafe { std::mem::transmute::<Entry, crate::NativeJsFunctionEntry>(entry) });
-            owners.push((memory, operands));
-        }
-        let native = unsafe { crate::NativeJsProgram::<crate::test_host::TestHost>::from_entries(
-            program, entries, Rc::new(owners)) }.unwrap();
-        let mut vm = Vm::new(crate::test_host::TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(ExecutionMode::NativeOnly);
-        FIELD_HELPER_CALLS.with(|counts| counts.set([0; 2]));
-        vm.execute_native_program(&native, true).unwrap();
-        for name in ["before", "after"] {
-            let atom = vm.lookup_atom(name).unwrap();
-            assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(201)),
-                "native store fallback must not replay prefix or skip suffix effects");
-        }
-        let atom = vm.lookup_atom("receiver").unwrap();
-        let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
-        let atom = vm.lookup_atom("value").unwrap();
-        let shape = vm.heap.object(receiver).unwrap().shape();
-        let slot = vm.shape_slot(shape, atom).unwrap();
-        assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(Value::number(0.5)));
-        assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::NUMBER);
-        assert_eq!(vm.heap.unrepresented_slots(), 0);
-        assert!(FIELD_HELPER_CALLS.with(|counts| counts.get()[1]) > 0,
-            "ordinary native stores must use the recording mutation");
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
     fn nullable_slot_observations_keep_checks_across_execution_tiers() {
         let source = include_str!("../../tests/fixtures/nullable-slot-writes.js");
         let program = crate::Engine::specialize(source, "nullable-slot-writes.js").unwrap();
@@ -17272,37 +15115,6 @@ mod tests {
             let atom = vm.lookup_atom("answer").unwrap();
             // Local Node oracle: 3000 warm writes, 12 widening cases, 64 later writes.
             assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(3076)));
-        }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn native_holder_reads_preserve_prototype_identity_and_effects() {
-        let source = r#"(function() {
-            function make(delta){return function(){this.state=(this.state+delta)|0;};}
-            const p={tick:make(1)},q={tick:make(2)};
-            const a={next:null,state:0},b={next:a,state:0};a.next=b;
-            Object.setPrototypeOf(a,p);Object.setPrototypeOf(b,q);
-            const s={current:a};
-            function walk(s,n){while(n>0){s.current.tick();s.current=s.current.next;n=(n-1)|0;}}
-            walk(s,1000);
-            if(a.state!==500||b.state!==1000)throw 'prototype identity';
-            p.tick=make(4);walk(s,2);
-            if(a.state!==504||b.state!==1002)throw 'method replacement';
-            let reads=0;const marker={};
-            Object.defineProperty(p,'tick',{get(){reads++;$262.gc();throw marker;}});
-            try{walk(s,1);throw 'missing throw';}catch(e){if(e!==marker)throw e;}
-            if(reads!==1||a.state!==504||s.current!==a)throw 'replayed effect';
-            throw 42;
-        })();"#;
-        for typescript in [false, true] {
-            let program = if typescript { crate::Engine::specialize_typescript(source, "holder-address.cts") }
-                else { crate::Engine::specialize(source, "holder-address.cjs") }.unwrap();
-            let native = linked_optimized_test_program(program);
-            let mut vm = Vm::new(crate::test_host::TestHost::default().with_test262());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let error = vm.execute_native_program(&native, true).unwrap_err();
-            assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
         }
     }
 
@@ -17495,8 +15307,7 @@ mod tests {
         context.bind_native_adapter(context.adapter_payload,
             vm.execution_interrupt.atomic_flag(), Some(page));
         let mut out = 0;
-        let status = unsafe { enter_native(context, 0, 0, inputs.as_ptr(), &mut out,
-            NativeEntryMode::Resumable, outer) };
+        let status = unsafe { enter_wasm(context, 0, 0, inputs.as_ptr(), &mut out, outer) };
         assert_eq!(i64::from(status), TERMINATED_STATUS);
         assert_eq!(Value::from_bits(out), Value::number(7.0));
     }
@@ -17530,7 +15341,7 @@ mod tests {
             assert_eq!(crate::stack::GuestCallGuard::remaining(), budget);
             let Some(super::super::program_store::JsTierState::Compiled(native)) =
                 vm.programs.js_tier(ProgramId::MAIN, 1) else { panic!("numeric function must compile"); };
-            assert!(matches!(native.entry, CompiledJsEntry::SharedNumber { mode: NativeEntryMode::Resumable, .. }));
+            assert!(matches!(native.entry, CompiledJsEntry::SharedNumber { .. }));
             #[cfg(not(quench_profiled))]
             assert!(native.native_entries() > 0);
             complete.send(()).unwrap();
@@ -17645,28 +15456,35 @@ mod tests {
         }).unwrap()
     }
 
+    /// Publishes compiled `code` of a function lowered with `native_entry_signature` to
+    /// executable memory, and its entry.
     #[cfg(feature = "aot")]
-    fn live_native_graph(vm: &Vm<crate::test_host::TestHost>) -> (CodeMemory, Entry, Vec<super::super::specialize::InstructionSite>) {
+    fn publish_native_entry(code: &[u8]) -> Option<(CodeMemory, crate::NativeJsFunctionEntry)> {
+        let memory = publish_code(code)?;
+        // SAFETY: callers lower the function with `native_entry_signature`.
+        let entry = unsafe { std::mem::transmute::<*mut u8, crate::NativeJsFunctionEntry>(memory.pointer()) };
+        Some((memory, entry))
+    }
+
+    #[cfg(feature = "aot")]
+    fn live_native_graph(vm: &Vm<crate::test_host::TestHost>) -> (CodeMemory, crate::NativeJsFunctionEntry, Vec<super::super::specialize::InstructionSite>) {
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         live_native_function(&program, 0, None)
     }
 
     #[cfg(feature = "aot")]
-    fn partitioned_native_graph(vm: &Vm<crate::test_host::TestHost>) -> (crate::PreparedScript, Entry) {
+    fn partitioned_native_graph(vm: &Vm<crate::test_host::TestHost>) -> (crate::PreparedScript, crate::NativeJsFunctionEntry) {
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let options = crate::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(1).unwrap(), backend: crate::NativeJsBackend::Cranelift };
         let native = crate::NativeJsProgram::compile_eager_with_options((*program).clone(), options).unwrap();
         let prepared = vm.prepare_native_script(native).unwrap();
         let entry = prepared.native.as_ref().unwrap().entries()[0];
-        // SAFETY: only the opaque context pointer type differs; the entry is
-        // compiled for this exact program and H, and prepared owns all regions.
-        let entry = unsafe { std::mem::transmute::<crate::NativeJsFunctionEntry, Entry>(entry) };
         (prepared, entry)
     }
 
     #[cfg(feature = "aot")]
     pub(super) fn live_native_function(program: &ResidualProgram, function_id: u32, entries: Option<*mut u64>)
-        -> (CodeMemory, Entry, Vec<super::super::specialize::InstructionSite>)
+        -> (CodeMemory, crate::NativeJsFunctionEntry, Vec<super::super::specialize::InstructionSite>)
     {
         let sites = super::super::specialize::instruction_sites(super::super::specialize::Division::Offline, program.function(function_id as usize));
         let isa = super::super::jit_backend::target_isa().unwrap();
@@ -17689,7 +15507,7 @@ mod tests {
             }).unwrap();
         // No code size budget is needed by this focused publication check; the
         // production object backend handles relocations instead of live addresses.
-        let (memory, entry) = compile_native_function(native, &*isa, usize::MAX, publish_entry)
+        let (memory, entry) = compile_native_function(native, &*isa, usize::MAX, publish_native_entry)
             .expect("native semantic graph compiles");
         (memory, entry, sites)
     }
@@ -17772,10 +15590,10 @@ mod tests {
     #[test]
     fn native_entry_panic_transport_does_not_poison_the_next_entry() {
         unsafe extern "C" fn report_panic(
-            context: *mut CallContext, _: u64, _: u64, _: *const u64, _: *mut u64,
+            context: *mut std::ffi::c_void, _: u64, _: u64, _: *const u64, _: *mut u64,
         ) -> u32 {
             // Model a panic already caught by the semantic callback's FFI boundary.
-            unsafe { (*context).raised = Some(Raised::Panic(Box::new("native panic"))) };
+            unsafe { (*context.cast::<CallContext>()).raised = Some(Raised::Panic(Box::new("native panic"))) };
             u32::try_from(RAISED_STATUS).unwrap()
         }
         let mut vm = semantic_vm("throw 7;");
@@ -17839,9 +15657,7 @@ mod tests {
         let mut entries = Vec::new();
         for id in 0..program.function_count() {
             let (memory, entry, operands) = live_native_function(&program, id as u32, Some(counts[id].as_ptr()));
-            // SAFETY: the public and internal native entries differ only in the
-            // Rust spelling of their opaque first pointer parameter.
-            entries.push(unsafe { std::mem::transmute::<Entry, crate::NativeJsFunctionEntry>(entry) });
+            entries.push(entry);
             owners.push((memory, operands));
         }
         let owner: Rc<dyn std::any::Any> = Rc::new((owners, counts.clone()));
@@ -17850,78 +15666,6 @@ mod tests {
         // owner retains the code, operands and counter storage it addresses.
         let native = unsafe { crate::NativeJsProgram::from_entries(program, entries, owner) }.unwrap();
         (native, counts, weak)
-    }
-
-    #[cfg(feature = "aot")]
-    unsafe extern "C" fn fixed_test_semantic(
-        context: *mut CallContext, pc: u64, _: *const u64, result: *mut u64,
-    ) -> i64 {
-        // SAFETY: the test activation retains this body and the native graph
-        // checks its PC before selecting a fixed semantic operation.
-        let instruction = unsafe {
-            let dispatch = &*(*context).adapter_payload.cast::<JsStepDispatch>();
-            let body = &*dispatch.body;
-            super::super::dispatch_fast::decoded_instruction(body, body.code[pc as usize])
-        };
-        let operands = super::super::native_operands::NativeJsOperands::new(
-            instruction.a(), instruction.b(), instruction.c(), instruction.imm());
-        // The adapter supplies live addresses where production object emission
-        // supplies linker relocations; both select the same semantic entries.
-        unsafe { (instruction.op().native_semantic_entry::<crate::test_host::TestHost>())(
-            context.cast(), pc, operands.as_ptr(), result) }
-    }
-
-    #[cfg(feature = "aot")]
-    #[test]
-    fn linked_general_entry_divides_stop_control_once_and_preserves_generator_parameters() {
-        let sources = [
-            "let trace=''; function* values(x=(trace+='p',1)) { trace+='b'; yield x; trace+='r'; return 2; } const g=values(); if(trace!=='p') throw 'early body'; const first=g.next(); const last=g.next(); if(first.value!==1||first.done||last.value!==2||!last.done) throw 'bad yield'; throw trace;",
-            "let trace=''; function fail(){trace+='p';throw 7;} function* values(x=fail()){trace+='bad';yield x;} try{values();throw 'missed parameter error';}catch(e){if(e!==7)throw e;} throw trace;",
-        ];
-        for typescript in [false, true] {
-            for (source, expected) in sources.iter().zip(["pbr", "p"]) {
-                let program = if typescript { crate::Engine::specialize_typescript(source, "bounded.cts") }
-                    else { crate::Engine::specialize(source, "bounded.cjs") }.unwrap();
-                let isa = super::super::jit_backend::target_isa().unwrap();
-                let mut owners = Vec::new();
-                let mut entries = Vec::new();
-                for id in 0..program.function_count() {
-                    let (memory, entry, operands) = if id == 0 {
-                        live_native_function(&program, id as u32, None)
-                    } else {
-                        let (native, _) = lower_js_general_dispatch(&program, id as u32, &*isa,
-                            JsGeneralCallout::Address(fixed_test_semantic as *const () as usize), &[]).unwrap();
-                        let entry_block = native.layout.entry_block().unwrap();
-                        let context = native.dfg.block_params(entry_block)[0];
-                        let instructions: Vec<_> = native.layout.blocks().flat_map(|block| native.layout.block_insts(block)).collect();
-                        let payload = instructions.iter().find_map(|inst| match native.dfg.insts[*inst] {
-                            ir::InstructionData::Load { arg, offset, .. }
-                                if native.dfg.resolve_aliases(arg) == context
-                                    && i32::from(offset) == std::mem::offset_of!(CallContext, adapter_payload) as i32 =>
-                                Some(native.dfg.first_result(*inst)),
-                            _ => None,
-                        }).unwrap();
-                        assert_eq!(instructions.iter().filter(|inst| matches!(native.dfg.insts[**inst],
-                            ir::InstructionData::Load { arg, offset, .. }
-                                if native.dfg.resolve_aliases(arg) == payload
-                                    && i32::from(offset) == std::mem::offset_of!(JsStepDispatch, stop_pc) as i32)).count(), 1,
-                            "the activation stop fact is read once, never per instruction");
-                        let (memory, entry) = compile_native_function(native, &*isa, usize::MAX, publish_entry).ok().unwrap();
-                        (memory, entry, Vec::new())
-                    };
-                    // SAFETY: only the spelling of the opaque context differs.
-                    entries.push(unsafe { std::mem::transmute::<Entry, crate::NativeJsFunctionEntry>(entry) });
-                    owners.push((memory, operands));
-                }
-                let owner: Rc<dyn std::any::Any> = Rc::new(owners);
-                // SAFETY: this owner retains every entry lowered for this exact program/host.
-                let native = unsafe { crate::NativeJsProgram::from_entries(program, entries, owner) }.unwrap();
-                let mut vm = Vm::new(crate::test_host::TestHost::default());
-                vm.set_execution_mode(ExecutionMode::NativeOnly);
-                let error = vm.execute_native_program(&native, true).unwrap_err();
-                assert_eq!(vm.heap.string(error.thrown_value().unwrap()).unwrap().to_string(), expected);
-            }
-        }
     }
 
     #[cfg(feature = "aot")]

@@ -21,8 +21,8 @@ pub(super) struct JsJitArtifact {
 }
 
 pub(super) enum JsJitResultKind {
-    /// Numeric bytecode regions emit the common VM native-entry ABI.
-    SharedNumberEntry(super::compiled::NativeEntryMode, super::compiled::NativeNumberResult),
+    /// Numeric bytecode regions emit the lane body ABI.
+    SharedNumberEntry(super::compiled::NativeNumberResult),
     /// A full function CFG whose operation blocks call the shared VM step
     /// helper and branch directly to the next validated bytecode PC.
     GeneralDispatch,

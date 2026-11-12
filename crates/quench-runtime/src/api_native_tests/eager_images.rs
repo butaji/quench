@@ -1,4 +1,4 @@
-//! Eager native images: the publisher's tiers and the frozen whole-program facts it folds
+//! Eager native images: the publisher's lane bodies and the frozen whole-program facts it folds
 //! (method atoms, globals, prototype values, heap-string constants) with their retirement.
 use super::*;
 
@@ -11,10 +11,9 @@ impl<H: crate::Host> crate::Runtime<H> {
 
 #[cfg(feature = "aot")]
 #[test]
-fn eager_publication_reports_general_dispatch_and_typed_regions() {
-    // A loop the static typed lowering admits: the eager publisher must select
-    // the general-dispatch baseline and inline a typed region, not fall back to
-    // a per-PC call-threaded body for the hot function.
+fn eager_publication_reports_lane_bodies() {
+    // A loop the lane lowering admits: the eager publisher must enter the hot function
+    // through its lane body, not a per-PC call-threaded body.
     let source = r#"
         function sum(n) { let s = 0; for (let i = 0; i < n; i++) { s += i * 2; } return s; }
         globalThis.answer = sum(1000);
@@ -26,10 +25,8 @@ fn eager_publication_reports_general_dispatch_and_typed_regions() {
     let native = crate::NativeJsProgram::compile_eager_with_options(program.clone(), options).unwrap();
     let counts = native.publication_counts();
     assert!(counts.functions >= 2, "program functions: {counts:?}");
-    assert!(counts.general_dispatch >= 1, "no function used general dispatch: {counts:?}");
-    assert!(counts.typed_regions >= 1, "no typed region was inlined: {counts:?}");
-    assert!(counts.tier_specialized >= 1, "no function reached the specialized tier: {counts:?}");
-    assert!(counts.tier_call_threaded >= 1, "the root stays on tier zero: {counts:?}");
+    assert!(counts.lane_bodies >= 1, "no function entered a lane body: {counts:?}");
+    assert!(counts.call_threaded >= 1, "the root stays call-threaded: {counts:?}");
     assert!(counts.semantic_entry_sites > 0, "a fallback must still exist: {counts:?}");
     let mut runtime = Runtime::new(TestHost::default());
     runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
@@ -107,7 +104,7 @@ fn a_frozen_image_folds_whole_program_globals_and_guards_a_change() {
     let (program, native) = compile_frozen(source);
     let counts = native.publication_counts();
     assert!(counts.frozen_globals >= 1, "no whole-program global folded: {counts:?}");
-    assert!(counts.tier_specialized >= 1, "no specialized tier: {counts:?}");
+    assert!(counts.lane_bodies >= 1, "no lane body: {counts:?}");
     let scale = program.atoms.iter().position(|name| name == "SCALE").unwrap() as crate::bytecode::Atom;
     assert!(native.frozen_global_atoms_for_test().contains(&scale), "atoms: {:?}", native.frozen_global_atoms_for_test());
     let mut runtime = Runtime::new(TestHost::default());
@@ -135,7 +132,7 @@ fn a_frozen_image_folds_a_prototype_value_and_guards_a_redefinition() {
     let (program, native) = compile_frozen(source);
     let counts = native.publication_counts();
     assert!(counts.frozen_fields >= 1, "no prototype value folded: {counts:?}");
-    assert!(counts.tier_specialized >= 1, "no specialized tier: {counts:?}");
+    assert!(counts.lane_bodies >= 1, "no lane body: {counts:?}");
     let k = program.atoms.iter().position(|name| name == "k").unwrap() as crate::bytecode::Atom;
     assert!(native.frozen_field_atoms_for_test().contains(&k), "atoms: {:?}", native.frozen_field_atoms_for_test());
     let mut runtime = Runtime::new(TestHost::default());
@@ -146,11 +143,10 @@ fn a_frozen_image_folds_a_prototype_value_and_guards_a_redefinition() {
 
 #[cfg(feature = "aot")]
 #[test]
-fn the_aot_tier_ladder_selects_the_general_body_after_invalidation() {
-    // The loop function's entry is a dispatcher over T2 (typed), T1 (general) and T0
-    // (call-threaded), all resident. It reads the image's invalidation word: zero selects
-    // the specialized body; a retired image selects the general baseline. Guest results
-    // are identical either way.
+fn a_retired_image_leaves_its_lane_bodies_for_the_semantic_fallback() {
+    // The loop function's entry is a trampoline over its lane body, which reads the image's
+    // invalidation word and leaves at the first folded fact once it is set; the per-PC
+    // semantic entries then compute the same guest answer.
     let source = r#"
         var SCALE = 3;
         function scale(x) { let s = 0; for (let i = 0; i < 4; i++) { s = (s + x * SCALE) | 0; } return s; }
@@ -159,26 +155,25 @@ fn the_aot_tier_ladder_selects_the_general_body_after_invalidation() {
     "#;
     let (_program, native) = compile_frozen(source);
     let counts = native.publication_counts();
-    assert!(counts.tier_specialized >= 1, "no specialized tier: {counts:?}");
+    assert!(counts.lane_bodies >= 1, "no lane body: {counts:?}");
     let mut runtime = Runtime::new(TestHost::default());
     runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
-    assert_eq!(native.last_tier(), 2, "the specialized body must run first");
+    assert!(!native.frozen_invalidated());
     native.invalidate_frozen();
     assert!(native.frozen_invalidated());
     let mut runtime = Runtime::new(TestHost::default());
     runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
-    assert_eq!(native.last_tier(), 1, "a retired image must select the general body");
     assert_eq!(runtime.native_execution_rejections(), 0);
 }
 
 #[cfg(feature = "aot")]
 #[test]
 fn a_frozen_image_materializes_heap_string_constants_and_deopts_on_retirement() {
-    // The image allocates the literal once at load and the typed region reads the block
-    // behind the invalidation word; a retired image takes the general tier and still
-    // computes the same answer.
+    // The image allocates the literal once at load and the lane body reads the block
+    // behind the invalidation word; a retired image leaves for the semantic fallback and
+    // still computes the same answer.
     let source = r#"
         function read(n) { let s = 0; for (let i = 0; i < n; i++) { let k = "abc"; if (k.length === 3) s++; } return s; }
         globalThis.answer = read(4);
@@ -189,12 +184,10 @@ fn a_frozen_image_materializes_heap_string_constants_and_deopts_on_retirement() 
     let mut runtime = Runtime::new(TestHost::default());
     runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
-    assert_eq!(native.last_tier(), 2, "specialized tier first");
     native.invalidate_frozen();
     let mut runtime = Runtime::new(TestHost::default());
     runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
-    assert_eq!(native.last_tier(), 1, "general tier after retirement");
     assert_eq!(runtime.native_execution_rejections(), 0);
 }
 

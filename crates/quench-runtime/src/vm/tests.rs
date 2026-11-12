@@ -25485,18 +25485,14 @@ fn js_jit_interrupt_exits_through_the_shared_native_entry() {
     let artifact = super::js_compiled::compile(&program, 1).expect("numeric loop artifact");
     assert!(matches!(
         artifact.result,
-        super::js_compiled::JsJitResultKind::SharedNumberEntry(super::compiled::NativeEntryMode::Resumable, _)
+        super::js_compiled::JsJitResultKind::SharedNumberEntry(_)
     ));
     let compiled = super::compiled::CompiledJsFunction::from_artifact(artifact)
         .expect("shared executable mapping");
-    assert!(
-        !compiled.uses_leaf_entry(),
-        "an interruptible loop must retain the resumable native entry"
-    );
     let interrupt = crate::ExecutionInterrupt::default();
     interrupt.request_termination();
 
-    let result = compiled.call(&[1_000_000.0], &interrupt, None);
+    let result = compiled.call(&[Value::number(1_000_000.0)], &interrupt, None);
 
     assert!(result.is_none(), "interrupted native execution must not return a guest result");
     assert_eq!(compiled.native_entries(), 1, "the shared adapter must enter once");

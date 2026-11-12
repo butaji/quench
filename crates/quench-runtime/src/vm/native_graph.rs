@@ -14,6 +14,10 @@ use cranelift_codegen::{
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use std::{num::NonZeroUsize, ops::Range};
 
+#[path = "native_graph/object_parts.rs"]
+mod object_parts;
+use object_parts::{entry_table_data, import_operations, lower_lane_bodies, lower_object_entry, lower_object_regions};
+
 // Bounds the working CFG, not the source function. Large unpartitioned native
 // graphs exhausted 14 GiB on a 50 KiB input; callers may choose any nonzero budget.
 const DEFAULT_REGION_INSTRUCTION_BUDGET: NonZeroUsize = NonZeroUsize::new(1024).unwrap();
@@ -139,75 +143,37 @@ impl CallThreadedExtension for ObjectExtension<'_> {
             signature: ir::Signature::new(isa.default_call_conv()),
         });
         let lane_helpers = u32::try_from(functions.len()).map_err(|_| "native helper symbol count exceeds u32")?;
-        let inline_targets = super::compiled::static_call_targets(program);
-        // Whole-program facts the closed image can fold with a read-site guard. The
-        // expected value is embedded in the code and checked against the live cell or
-        // prototype, so no invalidation word or serialized assumption is needed.
-        let frozen_globals = super::compiled::frozen_globals(program);
-        let frozen_fields = super::compiled::frozen_fields(program);
-        let frozen_facts = super::compiled::VmFacts {
-            frozen_fields: Some(&frozen_fields),
-            ..super::compiled::VmFacts::STATIC
-        };
-        let typed_units: Vec<_> = (0..program.function_count()).map(|id|
-            if options.regions(program.function(id).code.len()).is_none() {
-                let reads = super::compiled::frozen_global_reads(program, program.function(id), &frozen_globals);
-                super::compiled::lower_static_typed_regions(program, id as u32, &inline_targets, &*isa,
-                    super::compiled::LaneHelpers::Linked(lane_helpers,
-                        u32::try_from(program.function_count()).expect("validated native namespace")),
-                    frozen_facts, &reads)
-            } else { Vec::new() }).collect();
-        if typed_units.iter().any(|units| !units.is_empty()) {
+        let lane_bodies = lower_lane_bodies(program, options, &*isa, lane_helpers);
+        if lane_bodies.iter().any(Option::is_some) {
             functions.push(NativeFunction::Import {
                 name: crate::NATIVE_JS_LANE_HELPERS_SYMBOL.into(),
                 signature: super::compiled::native_lane_helpers_signature(&*isa),
             });
         }
-        // General dispatch decodes packed inline fields through the table too, so every image
+        // Lane bodies decode packed inline fields through the narrow table, so every image
         // publishes it (`NarrowTable::Linked`).
         let has_narrow_table = true;
-        let mut operations = vec![None; OPCODE_COUNT];
-        for sites in &bodies {
-            // Fallback tables name an entry for every PC, so every op is collected.
-            for op in sites.iter().map(|site| site.op) {
-                if operations[op as usize].is_none() {
-                    let index = u32::try_from(functions.len())
-                        .map_err(|_| "native symbol count exceeds u32")?;
-                    operations[op as usize] = Some(index);
-                    functions.push(NativeFunction::Import {
-                        name: format!(
-                            "{}{}",
-                            crate::bytecode::NATIVE_JS_OPERATION_PREFIX,
-                            opcode_name(op as usize)
-                        ),
-                        signature: super::compiled::native_js_operation_signature(&*isa),
-                    });
-                }
-            }
-        }
+        let operations = import_operations(&mut functions, &bodies, &*isa)?;
         let first_definition =
             u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
         let region_count = (0..program.function_count())
             .try_fold(0usize, |count, id| count.checked_add(options.region_count(program.function(id).code.len())))
             .ok_or("native region count overflow")?;
-        // A function's static regions are its loop regions and its bounded scalar ranges
-        // (`lower_static_typed_regions`); each publishes under its own symbol.
-        let scalar_count = typed_units.iter().try_fold(0usize, |count, regions| count
-            .checked_add(regions.iter().filter(|region| region.scalar).count()))
-            .ok_or("native scalar symbol count overflow")?;
-        let scalar_base = (first_definition as usize)
+        // A function's lane body publishes under its own symbol, after the functions and
+        // the private regions; its fallback after the lane bodies.
+        let body_base = (first_definition as usize)
             .checked_add(program.function_count())
             .and_then(|base| base.checked_add(region_count))
-            .ok_or("native scalar symbol count overflow")?;
-        let fallback_base = scalar_base.checked_add(scalar_count)
+            .ok_or("native lane body symbol count overflow")?;
+        let fallback_base = body_base.checked_add(lane_bodies.iter().flatten().count())
             .ok_or("native fallback symbol count overflow")?;
-        u32::try_from(fallback_base).map_err(|_| "native scalar symbol count exceeds u32")?;
+        u32::try_from(fallback_base).map_err(|_| "native lane body symbol count exceeds u32")?;
         let mut data = Vec::with_capacity(program.function_count());
         let mut region_definitions = Vec::new();
+        let mut body_definitions = Vec::new();
         let mut fallback_definitions = Vec::new();
         let mut fallback_tables = Vec::new();
-        let mut scalar_definitions = Vec::new();
-        for (id, typed_units) in typed_units.into_iter().enumerate() {
+        for (id, lane_body) in lane_bodies.into_iter().enumerate() {
             let body = program.function(id);
             let function_id = u32::try_from(id).map_err(|_| "native function count exceeds u32")?;
             let sites = &bodies[id];
@@ -219,8 +185,6 @@ impl CallThreadedExtension for ObjectExtension<'_> {
             for site in sites {
                 site.operands.append_native_bytes(&mut bytes);
             }
-            let units: Vec<_> = typed_units.iter().map(|unit|
-                super::compiled::StaticTypedRegionEntry { header: unit.header, function: &unit.function, gated: !unit.scalar }).collect();
             let native = if let Some(regions) = options.regions(body.code.len()) {
                 let region_base = (first_definition as usize)
                     .checked_add(program.function_count())
@@ -242,65 +206,30 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                         )?,
                     });
                 }
-                let mut signature = None;
-                lower_region_dispatch(
-                    function_id,
-                    body.code.len(),
-                    options.region_instruction_budget.get(),
-                    regions.len(),
-                    &*isa,
-                    |builder, index, context, pc, result| {
-                        let signature = *signature.get_or_insert_with(|| {
-                            builder.import_signature(super::compiled::native_entry_signature(
-                                isa.pointer_type(),
-                                isa.default_call_conv(),
-                            ))
-                        });
-                        let symbol =
-                            u32::try_from(region_base + index).expect("validated native region symbol");
-                        let name =
-                            builder
-                                .func
-                                .declare_imported_user_function(ir::UserExternalName::new(
-                                    NATIVE_FUNCTION_NAMESPACE,
-                                    symbol,
-                                ));
-                        let callee = builder.import_function(ir::ExtFuncData {
-                            name: ir::ExternalName::user(name),
-                            signature,
-                            colocated: false,
-                            patchable: false,
-                        });
-                        let arguments = region_call_arguments(builder, &*isa, context, pc, result);
-                        let call = builder.ins().call(callee, &arguments);
-                        builder.inst_results(call)[0]
-                    },
-                )?
-            } else {
-                let fallback = fallback_base.checked_add(fallback_definitions.len())
+                lower_object_regions(function_id, body.code.len(), options, &*isa, (region_base, regions.len()))?
+            } else if let Some(lane_body) = lane_body {
+                let symbols = (
+                    u32::try_from(body_base + body_definitions.len()).map_err(|_| "native lane body symbol exceeds u32")?,
+                    u32::try_from(fallback_base + fallback_definitions.len()).map_err(|_| "native fallback symbol exceeds u32")?,
+                );
+                let table = program.function_count().checked_add(usize::from(has_narrow_table))
+                    .and_then(|index| index.checked_add(fallback_tables.len()))
                     .and_then(|index| u32::try_from(index).ok())
-                    .ok_or("native fallback symbol count exceeds u32")?;
-                match super::compiled::lower_js_general_dispatch(
-                    program, function_id, &*isa,
-                    super::compiled::JsGeneralCallout::Relocatable { fallback },
-                    &units,
-                ) {
-                    Ok((native, _)) => {
-                        let table = program.function_count().checked_add(usize::from(has_narrow_table))
-                            .and_then(|index| index.checked_add(fallback_tables.len()))
-                            .and_then(|index| u32::try_from(index).ok())
-                            .ok_or("native fallback table count exceeds u32")?;
-                        fallback_tables.push(object_fallback_table(
-                            body, &format!("{namespace}_function_{id}_fallback_table"), &*isa, &operations,
-                        )?);
-                        fallback_definitions.push(NativeFunction::Definition {
-                            name: format!("{namespace}_function_{id}_fallback"),
-                            function: lower_object_fallback(body, function_id, table, &*isa)?,
-                        });
-                        native
-                    }
-                    Err(_) => lower_object_body(sites, function_id, &*isa, &operations, None)?,
-                }
+                    .ok_or("native fallback table count exceeds u32")?;
+                fallback_tables.push(object_fallback_table(
+                    body, &format!("{namespace}_function_{id}_fallback_table"), &*isa, &operations,
+                )?);
+                fallback_definitions.push(NativeFunction::Definition {
+                    name: format!("{namespace}_function_{id}_fallback"),
+                    function: lower_object_fallback(body, function_id, table, &*isa)?,
+                });
+                body_definitions.push(NativeFunction::Definition {
+                    name: format!("{namespace}_function_{id}_body"),
+                    function: lane_body,
+                });
+                lower_object_entry(function_id, body.code.len(), &*isa, symbols)?
+            } else {
+                lower_object_body(sites, function_id, &*isa, &operations, None)?
             };
             data.push(NativeData {
                 name: format!("{namespace}_operands_{id}"),
@@ -313,12 +242,6 @@ impl CallThreadedExtension for ObjectExtension<'_> {
                 name: format!("{namespace}_function_{id}"),
                 function: native,
             });
-            for (index, region) in typed_units.into_iter().filter(|region| region.scalar).enumerate() {
-                scalar_definitions.push(NativeFunction::Definition {
-                    name: format!("{namespace}_function_{id}_scalar_{index}"),
-                    function: region.function,
-                });
-            }
         }
         if has_narrow_table {
             data.push(NativeData {
@@ -331,44 +254,12 @@ impl CallThreadedExtension for ObjectExtension<'_> {
             });
         }
         data.extend(fallback_tables);
-        let pointer_bytes = usize::from(isa.pointer_bytes());
-        if pointer_bytes != std::mem::size_of::<usize>() {
-            return Err("native image pointer width differs from host".into());
-        }
-        let words = program
-            .function_count()
-            .checked_add(crate::NATIVE_JS_IMAGE_HEADER_WORDS)
-            .ok_or("native entry table size overflow")?;
-        let bytes = words
-            .checked_mul(pointer_bytes)
-            .ok_or("native entry table size overflow")?;
-        let table = vec![0; bytes];
-        let mut addresses = Vec::with_capacity(words);
-        addresses.push(NativeFunctionAddress {
-            offset: 0,
-            function: abi_function,
-        });
-        for id in 0..program.function_count() {
-            let word = id + crate::NATIVE_JS_IMAGE_HEADER_WORDS;
-            let offset = u32::try_from(word * pointer_bytes)
-                .map_err(|_| "native entry table exceeds relocation offsets")?;
-            let function = first_definition
-                .checked_add(u32::try_from(id).map_err(|_| "native function count exceeds u32")?)
-                .ok_or("native function symbol count exceeds u32")?;
-            addresses.push(NativeFunctionAddress { offset, function });
-        }
         functions.extend(region_definitions);
-        functions.extend(scalar_definitions);
+        functions.extend(body_definitions);
         functions.extend(fallback_definitions);
         u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
         let entry_table = data.len();
-        data.push(NativeData {
-            name: format!("{namespace}_entries"),
-            bytes: table,
-            alignment: pointer_bytes as u64,
-            writable: false,
-            function_addresses: addresses,
-        });
+        data.push(entry_table_data(&*isa, namespace, program.function_count(), (abi_function, first_definition))?);
         Ok(NativeJsModule {
             functions,
             data,
