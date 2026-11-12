@@ -35,6 +35,23 @@ pub(super) enum Source {
     Constant(u64),
 }
 
+/// The receiver a folded prototype-held read stands on (`Heap::Held`): the exact shape and the
+/// prototype link the row proves of the receiver before it answers the value the holder held (the
+/// row's `hole`), and the holder's exact shape, whose values the code holds (a Stable fact).
+#[derive(Clone, Copy)]
+pub(super) struct Folded {
+    pub(super) shape: u32,
+    pub(super) link: u32,
+    pub(super) holder: u32,
+}
+
+impl Folded {
+    /// The row's receiver word: the shape, and the link above `HELD_LINK_AT` bits.
+    pub(super) fn word(self) -> u64 {
+        u64::from(self.shape) | u64::from(self.link) << numeric::library::HELD_LINK_AT
+    }
+}
+
 /// An instruction as a row: its kind, destination, operands and branch target.
 pub(super) struct Decoded {
     pub(super) kind: Kind,
@@ -49,6 +66,10 @@ pub(super) struct Decoded {
     pub(super) hole: u64,
     /// How an instruction no row takes runs (`steps`), in place of the numeric `kind`.
     pub(super) step: Option<Step>,
+    /// The atom a field store holds unnamed by method caches (`Known::stores`), a Stable fact.
+    pub(super) atom: Option<Atom>,
+    /// The receiver a folded prototype-held read stands on, with its value in `hole`.
+    pub(super) folded: Option<Folded>,
     /// A `ToNumeric` copy: its operand is no Number until the row proves it (a loop's entry guards
     /// prove the registers it names; a function's registers are not proved).
     pub(super) checked: bool,
@@ -56,7 +77,7 @@ pub(super) struct Decoded {
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, step: None, checked: false }
+        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -65,6 +86,19 @@ impl Decoded {
 
     pub(super) fn step(step: Step, dst: Option<Register>) -> Self {
         Self { step: Some(step), ..Self::number(Kind::Move, dst, None, None, None) }
+    }
+
+    /// Whether the row holds a Stable fact its code took: a folded prototype-held read, or a store in
+    /// place for an atom no method cache names. A change of the fact retires the code, and a run
+    /// already inside it learns that from the invalidation word (`Heap::Live`).
+    pub(super) fn holds_stable(&self) -> bool {
+        matches!(self.heap, Some(Heap::Held | Heap::ThisHeld | Heap::SiteStore | Heap::ThisStore))
+    }
+
+    /// Whether the row makes a call or a step the interpreter's operation runs, either of which may
+    /// run guest code that changes a Stable fact.
+    pub(super) fn makes_calls(&self) -> bool {
+        matches!(self.step, Some(Step::Call(_) | Step::Helper))
     }
 
     /// The registers the row names.
@@ -133,7 +167,10 @@ pub(super) fn inc_dec(instruction: WideInstruction) -> Result<Decoded, String> {
 /// by its tables (an array word's record, a field's cache entry).
 #[derive(Clone, Copy)]
 pub(super) enum Facts {
-    Entry { dense: bool },
+    /// A loop region: `dense` where its arrays' views are the entry record's, `writes` where it
+    /// stores a field through a row, which may stale a field value the entry record holds
+    /// (`stores_field`), so its field reads are the site's, live.
+    Entry { dense: bool, writes: bool },
     Site,
 }
 
@@ -142,34 +179,149 @@ pub(super) enum Facts {
 fn entry_array(region: &LoopRegion, facts: Facts, register: Register) -> u64 {
     // A row's hole is a u32 patch: an offset past it is looked up per access instead.
     match facts {
-        Facts::Entry { dense: true } => region.array_entry_offset(register).filter(|offset| u32::try_from(*offset).is_ok()).unwrap_or(0),
-        Facts::Entry { dense: false } | Facts::Site => 0,
+        Facts::Entry { dense: true, .. } => region.array_entry_offset(register).filter(|offset| u32::try_from(*offset).is_ok()).unwrap_or(0),
+        Facts::Entry { dense: false, .. } | Facts::Site => 0,
     }
 }
 
-/// The row of a field read: the value the loop's entry recorded, or the site's cache entry
-/// (a named field of a register, not of `this`, whose receiver arrives outside the registers).
-fn field_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
-    let result = Some(instruction.result_register());
-    if matches!(facts, Facts::Site) {
-        let FieldLookup::Atom { base, cache_site, .. } = instruction.field_lookup()? else { return None };
-        let site = u64::from(cache_site) * crate::vm::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64;
-        return Some(Decoded { hole: site, ..Decoded::heap(Heap::Site, result, Some(Source::Register(base.register_index()?)), None) });
-    }
+/// The byte offset of the field cache entry of `site` in the program's table.
+fn entry_offset(site: u16) -> u64 {
+    u64::from(site) * crate::vm::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64
+}
+
+/// The folded form of a field read at cache `site`: where the site proves exactly one load, held by
+/// the receiver's immediate prototype, whose value the holder holds now (`InheritedConstant`), the
+/// receiver it stands on and the value. A change of a value any prototype of the holder's shape holds
+/// retires the code (`Body::holders`).
+fn folded_read(known: Known, site: u16) -> Option<(Folded, u64)> {
+    let reads = known.reads?;
+    let loads = reads(site);
+    let [load] = loads.as_slice() else { return None };
+    let inherited = load.inherited?;
+    let [(link, value)] = inherited.values() else { return None };
+    (!load.function_shape).then_some((Folded { shape: load.shape, link: *link, holder: load.holder? }, value.to_bits()))
+}
+
+/// The row of a named field read of a register (or of the receiver, `this`, which the payload
+/// holds) through the site's cache entry, or a nested lookup's two (`FieldSite`: `base.first.second`,
+/// with no sink field); a read the prototype holds is folded to its value where the code may hold
+/// that (`folded_read`).
+fn site_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
+    let (base, first, second) = match instruction.field_lookup()? {
+        FieldLookup::Atom { base, cache_site, .. } => (base, cache_site, None),
+        FieldLookup::Site(index) => {
+            let site = known.program.field_sites.get(index).filter(|site| site.sink.is_none())?;
+            (site.base, site.first.1, site.second.map(|(_, cache_site)| cache_site))
+        }
+    };
+    let receiver = base == FieldBase::THIS;
+    let object = if receiver { None } else { Some(Source::Register(base.register_index()?)) };
+    let folded = second.is_none().then(|| folded_read(known, first)).flatten();
+    let heap = match (receiver, second.is_some(), folded.is_some()) {
+        (false, false, false) => Heap::Site,
+        (false, true, _) => Heap::SiteChain,
+        (true, false, false) => Heap::ThisSite,
+        (true, true, _) => Heap::ThisChain,
+        (false, false, true) => Heap::Held,
+        (true, false, true) => Heap::ThisHeld,
+    };
+    let hole = entry_offset(first) | second.map_or(0, |second| entry_offset(second) << numeric::library::CHAIN_SECOND_AT);
+    let row = Decoded::heap(heap, Some(instruction.result_register()), object, None);
+    Some(match folded {
+        Some((folded, value)) => Decoded { hole: value, folded: Some(folded), ..row },
+        None => Decoded { hole, ..row },
+    })
+}
+
+/// The row of a field the loop's entry recorded: its value, which the loop does not write (`Facts::Entry`).
+fn recorded_field(region: &LoopRegion, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     let index = *region.field_reads().get(&(pc - region.header))?;
-    let word = super::super::osr_loop::field_word(region, index);
-    let row = Decoded::heap(Heap::Field, result, None, None);
-    (!region.is_dynamic_field(index) && u32::try_from(word as u64 * SLOT).is_ok()).then_some(Decoded { hole: word as u64 * SLOT, ..row })
+    let hole = super::super::osr_loop::field_word(region, index) as u64 * SLOT;
+    let row = Decoded::heap(Heap::Field, Some(instruction.result_register()), None, None);
+    (!region.is_dynamic_field(index) && u32::try_from(hole).is_ok()).then_some(Decoded { hole, ..row })
 }
 
-/// The heap instructions: a capture, a dense element read or store, a recorded or cached field,
-/// the proof that a base is an array, the activation's `this` and its local slots.
-pub(super) fn heap_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
-    let register = |register| Some(Source::Register(register));
+/// The row of a field read: an array's `length`, the value a loop's entry recorded, or the site's
+/// cache entry (`site_row`), which also answers a loop's read its entry did not record, or that
+/// reads through a register the loop redefines.
+fn field_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+    if let Some(FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup()
+        && known.names_length(atom)
+    {
+        let array = Some(Source::Register(base.register_index()?));
+        return Some(Decoded::heap(Heap::Length, Some(instruction.result_register()), array, None));
+    }
+    match facts {
+        Facts::Entry { writes: false, .. } => recorded_field(region, pc, instruction).or_else(|| site_row(known, instruction)),
+        Facts::Entry { writes: true, .. } | Facts::Site => site_row(known, instruction),
+    }
+}
+
+/// The row of a named field store to a register's object, or to `this`, through the site's cache
+/// entry (`entry::site_store`), where the store may run in place (`Known::stores_in_place`).
+fn field_store_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
+    let atom = instruction.atom_index();
+    if !known.stores_in_place(atom) || instruction.returns_from_frame() || instruction.writes_current_this() {
+        return None;
+    }
+    let (heap, base) = match instruction.field_store_register() {
+        Some(register) => (Heap::SiteStore, Some(register)),
+        None => (Heap::ThisStore, None),
+    };
+    let value = Some(Source::Register(instruction.register_a()));
+    Some(Decoded { base, hole: entry_offset(instruction.cache_site_index()), atom: Some(atom), ..Decoded::heap(heap, None, value, None) })
+}
+
+/// Whether `instruction` is a field store a row makes (`field_store_row`).
+pub(super) fn stores_field(known: Known, instruction: WideInstruction) -> bool {
+    instruction.result_flags() == 0 && instruction.op().is_field_store() && field_store_row(known, instruction).is_some()
+}
+
+/// The facts rows hold, each once, in order.
+pub(super) fn distinct<T: Ord>(facts: impl Iterator<Item = T>) -> Box<[T]> {
+    let mut facts: Vec<T> = facts.collect();
+    facts.sort_unstable();
+    facts.dedup();
+    facts.into()
+}
+
+/// The exact shapes of the holders whose values the rows hold folded (`Decoded::folded`): the Stable
+/// facts the code takes, which a change of a value a prototype of that shape holds retires it.
+pub(super) fn held_holders(decoded: &[Decoded]) -> Box<[u32]> {
+    distinct(decoded.iter().filter_map(|row| row.folded.map(|folded| folded.holder)))
+}
+
+/// The atoms the rows hold unnamed by method caches (`Decoded::atom`): the Stable facts the code
+/// takes, which a cache naming one retires it.
+pub(super) fn held_atoms(decoded: &[Decoded]) -> Box<[Atom]> {
+    distinct(decoded.iter().filter_map(|row| row.atom))
+}
+
+/// Whether `instruction` stores to a depth-0 capture and nothing else (`general_capture::lower_capture`'s
+/// conditions): it completes no activation, sets no `this`, and is no numeric local's update.
+fn own_capture_store(instruction: WideInstruction) -> bool {
+    instruction.capture_depth() == 0 && !instruction.returns_from_frame() && !instruction.writes_current_this() && instruction.numeric_local_target().is_none()
+}
+
+/// The row of a depth-0 capture access: a read, or a store, which the row makes where the run's
+/// slots admit every direct store (`JS_STEP_CAPTURE_STORES`) and leaves for the interpreter where
+/// they do not or the slot holds a marker (a loop's snapshot of a stored slot).
+fn capture_row(instruction: WideInstruction) -> Option<Decoded> {
     match instruction.op().class() {
         Class::LoadCapture if instruction.capture_depth() == 0 => {
             Some(Decoded::heap(Heap::Capture(instruction.capture_slot()), Some(instruction.result_register()), None, None))
         }
+        Class::StoreCapture if own_capture_store(instruction) => {
+            Some(Decoded::heap(Heap::CaptureSet(instruction.capture_slot()), None, Some(Source::Register(instruction.register_a())), None))
+        }
+        _ => None,
+    }
+}
+
+/// The row of a dense element read or store, or of the proof that a base is an array.
+fn array_row(region: &LoopRegion, facts: Facts, instruction: WideInstruction) -> Option<Decoded> {
+    let register = |register| Some(Source::Register(register));
+    match instruction.op().class() {
         Class::GetIndex if !instruction.returns_from_frame() => {
             let base = instruction.operand_b().register_index()?;
             let index = source(&|index| region.number_constant(index), instruction.operand_c()).ok()?;
@@ -182,6 +334,14 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: 
             Some(Decoded { base: Some(instruction.register_b()), hole: entry_array(region, facts, instruction.register_b()), ..row })
         }
         Class::RequireObjectCoercible => Some(Decoded::heap(Heap::Array, None, register(instruction.register_b()), None)),
+        _ => None,
+    }
+}
+
+/// The row of the activation's `this` and its local slots, which every run reads live.
+fn activation_row(instruction: WideInstruction) -> Option<Decoded> {
+    let register = |register| Some(Source::Register(register));
+    match instruction.op().class() {
         Class::LoadThis if !instruction.writes_current_this() => Some(Decoded::heap(Heap::This, Some(instruction.result_register()), None, None)),
         Class::LoadLocalPlain => {
             let slot = u16::try_from(instruction.local_slot()).ok()?;
@@ -192,17 +352,29 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: 
             let slot = u16::try_from(instruction.local_slot()).ok()?;
             Some(Decoded::heap(Heap::StoreLocal(slot), None, register(instruction.register_a()), None))
         }
-        Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, pc, instruction),
+        _ => None,
+    }
+}
+
+/// The heap instructions: a capture, a dense element read or store, a recorded or cached field
+/// read or store, the proof that a base is an array, the activation's `this` and its local slots.
+pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+    match instruction.op().class() {
+        Class::LoadCapture | Class::StoreCapture => capture_row(instruction),
+        Class::GetIndex | Class::SetIndex | Class::RequireObjectCoercible => array_row(region, facts, instruction),
+        Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
+        Class::LoadThis | Class::LoadLocalPlain | Class::StoreLocalPlain => activation_row(instruction),
+        _ if instruction.op().is_field_store() => field_store_row(known, instruction),
         _ => None,
     }
 }
 
 /// The row of `instruction` at `pc`: a numeric or heap row where one takes it, else the step the
 /// interpreter's own operation makes (`steps`), so no instruction is refused.
-pub(super) fn decode(region: &LoopRegion, facts: Facts, pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
+pub(super) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
     numeric_row(&|index| region.number_constant(index), instruction)
         .flatten()
-        .or_else(|| heap_row(region, facts, pc, instruction).filter(|_| instruction.result_flags() == 0))
+        .or_else(|| heap_row(region, facts, known, pc, instruction).filter(|_| instruction.result_flags() == 0))
         .unwrap_or_else(|| decode_step(pc, instruction, helpers))
 }
 

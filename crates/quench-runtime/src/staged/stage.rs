@@ -25,6 +25,8 @@ pub(crate) trait Stage {
     fn constant(&mut self, bits: u64) -> Self::Word;
     fn load_u32(&mut self, base: Self::Word, offset: i32) -> Self::Word;
     fn load_u64(&mut self, base: Self::Word, offset: i32) -> Self::Word;
+    /// An 8-bit load, zero-extended (a string record's form tag, a short string's length).
+    fn load_u8(&mut self, base: Self::Word, offset: i32) -> Self::Word;
     /// A 64-bit load at the per-site offset `offset` (`site`).
     fn load_site(&mut self, base: Self::Word, offset: Self::Imm) -> Self::Word;
     /// A load from a table that never changes while the process runs.

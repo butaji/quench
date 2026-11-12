@@ -98,6 +98,9 @@ pub(super) struct Layout<'a> {
     /// Per inlined frame, the (parameter register, argument register) copies a leave inside it runs
     /// first: a parameter the callee never writes lives in the caller's argument register.
     pub(super) copies: &'a [Vec<(Register, Register)>],
+    /// The address of the invalidation word the code reads before each row that holds a Stable fact a
+    /// call may have changed (`Decoded::holds_stable`): a body that folds one and makes a call.
+    pub(super) invalidation: Option<usize>,
 }
 
 impl Layout<'_> {

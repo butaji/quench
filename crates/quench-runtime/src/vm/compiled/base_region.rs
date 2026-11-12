@@ -12,10 +12,11 @@
 
 use super::lane_unit::{Frame as InlinedCall, Origin};
 use super::osr_loop::LoopRegion;
-use crate::bytecode::{Class, FieldLookup, OperandKind, Register, WideInstruction};
+use crate::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
 use crate::value::Value;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 use super::base_rows::{self, Heap, HeapRow};
+use super::NativeFieldLoad;
 use quench_bjit::numeric::{self, Kind, Place};
 use quench_bjit::{PINNED, PINNED_F, Row as Placed, Stencil};
 use super::LaneHelpers;
@@ -41,6 +42,37 @@ use span::*;
 use steps::*;
 use stitch::*;
 use webs::*;
+
+/// What a row reads of the running program rather than of the registers: the names its
+/// instructions' atoms are, and whether a store may run in place.
+#[derive(Clone, Copy)]
+pub(in crate::vm::compiled) struct Known<'a> {
+    pub(in crate::vm::compiled) program: &'a ResidualProgram,
+    /// The names method caches hold now, where the VM and the program run specialized, so a
+    /// store of an unnamed atom may run in place; `None` where none may. Code that stores holds
+    /// each such atom unnamed as a Stable fact (`Body::atoms`), which a cache naming it retires.
+    pub(in crate::vm::compiled) stores: Option<&'a crate::vm::method_cache::AtomBits>,
+    /// The loads a cache site proves for a read (`Vm::native_field_read_descriptors`), where the VM and
+    /// the program run specialized and the code may hold Stable facts: a read of a field its receiver's
+    /// prototype holds folds to the value the holder holds now (`folded_read`), which a change of the
+    /// holder's values retires the code over (`Body::holders`). `None` where no fact may be held.
+    pub(in crate::vm::compiled) reads: Option<&'a dyn Fn(u16) -> Vec<NativeFieldLoad>>,
+    /// The address of the code's invalidation word (`code_dependencies::Invalidation`), which a body that
+    /// holds a Stable fact and makes a call reads before the rows that hold it. `None` for a region.
+    pub(in crate::vm::compiled) invalidation: Option<usize>,
+}
+
+impl Known<'_> {
+    /// Whether a store of `atom` may run in place: no method cache names it.
+    fn stores_in_place(&self, atom: Atom) -> bool {
+        self.stores.is_some_and(|names| !names.contains(atom as usize))
+    }
+
+    /// Whether `atom` names `length`.
+    fn names_length(&self, atom: Atom) -> bool {
+        super::names_length(self.program, atom)
+    }
+}
 
 /// Bytes of a register slot in the activation's register file.
 const SLOT: u64 = std::mem::size_of::<Value>() as u64;
@@ -171,12 +203,12 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
 
 /// The machine code of `region`, entered at the shared native entry ABI, or the stencil it lacks.
 /// `seen` are the registers that held an int32 and a double as the compile began; `widened` lists the PCs whose int32 speculation failed: they take general rows.
-pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], helpers: LaneHelpers) -> Result<(Vec<u8>, bool), String> {
+pub(super) fn build(region: &LoopRegion, dense: bool, known: Known, widened: &[usize], seen: [&[Register]; SEEN], helpers: LaneHelpers) -> Result<Built, String> {
     let started = std::time::Instant::now();
-    let built = assemble(region, dense, widened, seen, helpers);
+    let built = assemble(region, (dense, known), widened, seen, helpers);
     let nanos = started.elapsed().as_nanos() as u64;
     note(|totals, rejects| match &built {
-        Ok((code, _)) => {
+        Ok(Built { code, .. }) => {
             totals.regions += 1;
             totals.ops += u64::from(region.backedge - region.header) + 1;
             totals.bytes += code.len() as u64;
@@ -209,21 +241,29 @@ fn analyze(span: &Span, decoded: &[Decoded], widened: &[usize], seen: [&[Registe
     }
 }
 
-/// The code, and whether it reads no heap row and makes no step: such a region needs from its
-/// payload only the entry record's address (`Crossing::Bare`).
-fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], helpers: LaneHelpers) -> Result<(Vec<u8>, bool), String> {
+/// A loop region's code, whether it reads no heap row and makes no step (such a region needs from
+/// its payload only the entry record's address, `Crossing::Bare`), and the atoms its stores hold
+/// unnamed by method caches (a Stable fact: a cache naming one retires it, `OsrFacts::atoms`).
+pub(in crate::vm::compiled) struct Built {
+    pub(in crate::vm::compiled) code: Vec<u8>,
+    pub(in crate::vm::compiled) bare: bool,
+    pub(in crate::vm::compiled) atoms: Box<[Atom]>,
+}
+
+fn assemble(region: &LoopRegion, (dense, known): (bool, Known), widened: &[usize], seen: [&[Register]; SEEN], helpers: LaneHelpers) -> Result<Built, String> {
     let (header, backedge) = (region.header, region.backedge);
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
-    let facts = Facts::Entry { dense };
+    let writes = instructions.iter().any(|instruction| stores_field(known, *instruction));
+    let facts = (Facts::Entry { dense, writes }, known);
     let mut decoded: Vec<Decoded> = instructions.iter().enumerate().map(|(k, instruction)| decode(region, facts, header + k as u32, *instruction, helpers)).collect();
     settle(&mut decoded);
     let span = Span::of(region);
     let (reprs, homes, webs, decoded) = analyze(&span, &decoded, widened, seen);
-    let layout = Layout { span, homes, webs, ending: Ending::Region, callees: &[], origins: &[], copies: &[] };
+    let layout = Layout { span, homes, webs, ending: Ending::Region, callees: &[], origins: &[], copies: &[], invalidation: None };
     let body = decoded.iter().enumerate().map(|(k, row)| plan(row, &layout, header + k as u32, is_general(row, &reprs), helpers)).collect::<Result<Vec<_>, _>>()?;
     let bare = decoded.iter().all(|row| row.heap.is_none() && row.step != Some(Step::Helper));
-    Ok((link(&layout, &body)?, bare))
+    Ok(Built { code: link(&layout, &body)?, bare, atoms: held_atoms(&decoded) })
 }
 
 impl<H: crate::Host> crate::vm::Vm<H> {

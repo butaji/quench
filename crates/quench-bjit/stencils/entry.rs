@@ -17,11 +17,15 @@
 //! the status), `leave_stop_pop` (the word an exit stub pushed) and `leave_returned` (the
 //! activation completes with the register slot at hole 0; hole 1 the status, hole 2 the
 //! record that completes it, which the lane reads from the dispatch payload). A body's captures
-//! word is unpacked into the payload's capture words for its run, as a loop region's entry
-//! leaves them, and the caller's put back when it returns (a body calls bodies: a callee's
-//! entry replaces the capture words its caller's rows read).
+//! word is unpacked into the payload's capture words for its run (the slots, their count and whether
+//! they admit every direct store), as a loop region's entry leaves them, and its receiver (rsi) is
+//! published as the payload's receiver; the caller's capture and receiver words are put back when it
+//! returns (a body calls bodies: a callee's entry replaces the words its caller's rows read).
 
-use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, CAPTURE_ADDRESS_BITS, CAPTURE_ADDRESS_PAD, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_VALUES, JS_STEP_RECEIVER, JS_STEP_RETURNED_PC};
+use crate::layout::{
+    CALL_CONTEXT_ADAPTER_PAYLOAD, CAPTURE_ADDRESS_BITS, CAPTURE_ADDRESS_PAD, CAPTURE_STORES_BIT, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES,
+    JS_STEP_RECEIVER, JS_STEP_RETURNED_PC,
+};
 use crate::staged::frame;
 use crate::words::HOLE_V0;
 
@@ -76,12 +80,13 @@ pub unsafe extern "C" fn leave_pop() {
 }
 
 /// The body entry: saves the callee-saved registers, takes the context in r13 and the register
-/// file in r12, saves the payload's receiver and capture words (those of the body that entered
-/// this one, if a body did) and publishes in their place the receiver it is entered with and its
-/// captures word (the dense slots' address below `CAPTURE_ADDRESS_BITS`, their count above),
-/// calls the first row, puts the saved words back, and returns (status, word) as the chain left
-/// them in (rdx, rax). The six pushes, the three saved words and the return address leave the
-/// stack 16-byte aligned at the call.
+/// file in r12, saves the payload's capture and receiver words (those of the body that entered
+/// this one, if a body did) and publishes in their place its captures word (the dense slots'
+/// address below `CAPTURE_ADDRESS_BITS`, whose low bit says they admit every direct store, and
+/// their count above) and the receiver it is entered with (rsi), calls the first row, puts the
+/// saved words back, and returns (status, word) as the chain left them in (rdx, rax). The pad
+/// keeps the stack 16-byte aligned at the call, as the six pushes, the four saved words and the
+/// return address leave it 8 off.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_body() {
@@ -95,21 +100,29 @@ pub unsafe extern "C" fn entry_body() {
         "mov r13, rdi",
         "mov r12, rcx",
         "mov rax, [rdi + {payload}]",
+        "push qword ptr [rax + {stores}]",
         "push qword ptr [rax + {values}]",
         "push qword ptr [rax + {len}]",
         "push qword ptr [rax + {receiver}]",
+        "sub rsp, 8",
         "mov [rax + {receiver}], rsi",
         "mov r8, rdx",
         "shl r8, {pad}",
         "shr r8, {pad}",
+        "mov r9, r8",
+        "and r9, {stores_bit}",
+        "mov [rax + {stores}], r9",
+        "xor r8, r9",
         "mov [rax + {values}], r8",
         "shr rdx, {bits}",
         "mov [rax + {len}], rdx",
         "call {first}",
         "mov rcx, [r13 + {payload}]",
+        "add rsp, 8",
         "pop qword ptr [rcx + {receiver}]",
         "pop qword ptr [rcx + {len}]",
         "pop qword ptr [rcx + {values}]",
+        "pop qword ptr [rcx + {stores}]",
         "pop r15",
         "pop r14",
         "pop r13",
@@ -122,6 +135,8 @@ pub unsafe extern "C" fn entry_body() {
         payload = const CALL_CONTEXT_ADAPTER_PAYLOAD,
         values = const JS_STEP_CAPTURE_VALUES,
         len = const JS_STEP_CAPTURE_LEN,
+        stores = const JS_STEP_CAPTURE_STORES,
+        stores_bit = const CAPTURE_STORES_BIT,
         receiver = const JS_STEP_RECEIVER,
         bits = const CAPTURE_ADDRESS_BITS,
         pad = const CAPTURE_ADDRESS_PAD,

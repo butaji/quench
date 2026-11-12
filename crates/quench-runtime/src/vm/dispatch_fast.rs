@@ -2337,13 +2337,27 @@ const NO_OUTER_WALK: OuterWalk = OuterWalk { env: Value::DELETED, depth: 0, slot
 /// its environment admits every direct store (`Vm::admits_every_direct_store`) and is in the
 /// remembered set already, so a write needs no barrier until the next collection, which
 /// retires the target that tagged it.
-const CAPTURE_STORES: usize = 1;
+pub(super) const CAPTURE_STORES: usize = 1;
 const _: () = assert!(std::mem::align_of::<usize>() > CAPTURE_STORES);
 
 /// The slots a `LaneContext::capture` reads, its tag cleared.
 #[inline(always)]
 pub(super) fn capture_reads(capture: *const usize) -> *const usize {
     capture.map_addr(|address| address & !CAPTURE_STORES)
+}
+
+/// The local slots (address and count) of the VM frame the lane context `cx` runs, where a body's
+/// `LoadLocalPlain` and `StoreLocalPlain` rows read and write them, as the lane's handlers do
+/// (`lane_frame::staged_load_local_plain`); none where there is no context (a test's entry).
+///
+/// # Safety
+/// `cx` is null or a live `LaneContext<H>`.
+pub(super) unsafe fn frame_locals<H: Host>(cx: *mut ()) -> (*mut Value, usize) {
+    std::ptr::NonNull::new(cx.cast::<LaneContext<H>>()).map_or((std::ptr::null_mut(), 0), |cx| {
+        // SAFETY: the caller's contract; the VM and its frame outlive the lane run.
+        let frame = unsafe { &mut vm(cx.as_ptr()).frames[(*cx.as_ptr()).frame] };
+        (frame.locals.as_mut_ptr(), frame.locals.len())
+    })
 }
 
 /// The slots a `LaneContext::capture` tagged `CAPTURE_STORES` lets a store write.
@@ -5290,19 +5304,20 @@ script_handler! {
 }
 
 /// The running lane activation's dense capture slots, the view a lane body's reads take
-/// (`EnvironmentSlots::native_storage_view`): a frame run finds them as its first store does
-/// (`lane_capture_store`).
+/// (`EnvironmentSlots::native_storage_view`), and whether they admit every direct store
+/// (`capture_stores`): a frame run finds them as its first store does (`lane_capture_store`).
 ///
 /// # Safety
 /// `context` is the running lane's context.
-pub(super) unsafe fn lane_context_captures<H: Host>(context: usize) -> Option<(*const Value, usize)> {
+pub(super) unsafe fn lane_context_captures<H: Host>(context: usize) -> Option<((*const Value, usize), bool)> {
     let cx = context as *mut LaneContext<H>;
     unsafe {
         if capture_reads((*cx).capture).is_null() && (*cx).env.is_deleted() {
             (*cx).capture = lane_frame_capture(cx)?;
         }
         // SAFETY: the context's slots stay live while the lane runs, which collects nothing.
-        crate::heap::EnvironmentSlots::native_storage_view(capture_reads((*cx).capture))
+        let view = crate::heap::EnvironmentSlots::native_storage_view(capture_reads((*cx).capture))?;
+        Some((view, capture_stores((*cx).capture).is_some()))
     }
 }
 
@@ -6399,16 +6414,30 @@ pub(super) fn nested_own_field_hit<H: Host>(
     site: &crate::bytecode::FieldSite,
     base: Value,
 ) -> Option<Value> {
+    // Two ordinary field reads are one chain row, which proves the tables once
+    // (`Vm::primary_own_chain_hit`); a single read or a `length` step is `nested_last_step`'s.
+    let Some((_, second)) = site.second.filter(|(atom, _)| *atom != vm.length_atom) else {
+        let first = vm.primary_own_field_hit(code, base, site.first.1)?;
+        return nested_last_step(vm, code, site, first);
+    };
+    let value = vm.primary_own_chain_hit(code, base, (site.first.1, second));
     #[cfg(feature = "profile-field-primitives")]
-    if site.second.is_some_and(|(atom, _)| atom != vm.length_atom) {
-        vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::NestedOwnPairAttempt);
+    pair_census(vm, code, (site.first.1, base), value.is_some());
+    value
+}
+
+/// The census of a nested pair read: its attempt, whether its first step hit (a miss of the chain
+/// reads the first step alone to attribute it) and whether both did.
+#[cfg(feature = "profile-field-primitives")]
+fn pair_census<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, (first, base): (u16, Value), hit: bool) {
+    use crate::profile::field_primitives::Path;
+    vm.profile.field_primitives.hit(Path::NestedOwnPairAttempt);
+    if hit || vm.primary_own_field_hit(code, base, first).is_some() {
+        vm.profile.field_primitives.hit(Path::NestedOwnPairFirstHit);
     }
-    let first = vm.primary_own_field_hit(code, base, site.first.1)?;
-    #[cfg(feature = "profile-field-primitives")]
-    if site.second.is_some_and(|(atom, _)| atom != vm.length_atom) {
-        vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::NestedOwnPairFirstHit);
+    if hit {
+        vm.profile.field_primitives.hit(Path::NestedOwnPairHit);
     }
-    nested_last_step(vm, code, site, first)
 }
 
 /// A nested site's last step from `first`, the first step's value: none, an array's or a
@@ -6436,12 +6465,12 @@ fn nested_last_step<H: Host>(
 /// read's last step reads it (`nested_own_field_hit`, `lane_nested_polymorphic_value`).
 #[inline(always)]
 fn own_length<H: Host>(vm: &Vm<H>, object: Value) -> Option<Value> {
-    // A string first: its test is the value's tag alone, where the array lookup's miss for a
-    // string reads heap cells.
-    match vm.heap.string(object) {
+    // The staged row answers either by the value's tag; a form it leaves is read through the
+    // string's units, or the array's record.
+    vm.length_value(object).or_else(|| match vm.heap.string(object) {
         Some(text) => Some(Value::length(text.len())),
         None => vm.array_length_field(object, vm.length_atom),
-    }
+    })
 }
 
 script_handler! {
@@ -6710,9 +6739,9 @@ fn lane_cached_field<H: Host>(
         // `this.input.length` reads: no cache records a primitive's, and the probes below
         // all decline it (`Vm::cached_string_field_hit`).
         if atom == vm.length_atom
-            && let Some(text) = vm.heap.string(object)
+            && let Some(length) = vm.string_length_value(object)
         {
-            return Some(Value::length(text.len()));
+            return Some(length);
         }
         // A typed array's geometry, which no field cache records (`AtomClass::VIRTUAL_FIELD`).
         if vm.atom_class(atom).contains(super::object::AtomClass::VIRTUAL_FIELD)
@@ -14786,8 +14815,8 @@ script_handler! {
         // one stays `DELETED`, at which the body's `LoadThis` leaves for the general path.
         // SAFETY: the activation just set the context to its own receiver and frame.
         let receiver = if i.b != 0 { unsafe { lane_this(cx) }.unwrap_or(Value::DELETED) } else { Value::DELETED };
-        // SAFETY: the activation just set the context to its own captures.
-        let captures = capture_reads(unsafe { (*cx).capture });
+        // SAFETY: the activation just set the context to its own captures, tagged where they admit stores.
+        let captures = unsafe { (*cx).capture };
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let exit = vm.run_lane_method(&method, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
@@ -15356,7 +15385,20 @@ unsafe fn lane_body_record<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> (R
     }
 }
 
-pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+/// The helper a body's call row runs (`LaneHelper::Call`): `lane_body_call_record`, then the
+/// heap bases the body's rows read through the payload reloaded (`Vm::refresh_body_bases`), which the
+/// callee's run or an allocation may have moved.
+///
+/// # Safety
+/// As `lane_body_call_record`.
+pub(super) unsafe extern "C" fn lane_body_call<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+    // SAFETY: the caller's contract.
+    let status = unsafe { lane_body_call_record::<H>(vm, residual, context, call_pc) };
+    unsafe { self::vm(context as usize as *mut LaneContext<H>) }.refresh_body_bases();
+    status
+}
+
+unsafe fn lane_body_call_record<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     // Static regions recover ordinary calls through their linked semantic operation.
     // Binding this JIT-only helper to a miss removes its interpreter closure entirely.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return super::compiled::LANE_CALL_MISSED; }
@@ -15413,7 +15455,14 @@ unsafe fn lane_body_read_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip
 /// callee's plan, else the receiver its target allocates and, where its body does more
 /// than store fields, its activation, whose completion yields its returned object or the
 /// receiver. A returned construction takes the plan only. Its results are `lane_body_call`'s.
-pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+    // SAFETY: the caller's contract.
+    let status = unsafe { lane_body_construct_record::<H>(vm, residual, context, call_pc) };
+    unsafe { self::vm(context as usize as *mut LaneContext<H>) }.refresh_body_bases();
+    status
+}
+
+unsafe fn lane_body_construct_record<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     // As `lane_body_call`: static regions recover constructions through their semantic operation.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return super::compiled::LANE_CALL_MISSED; }
     use super::compiled::LANE_CALL_COMPLETED;
@@ -15603,7 +15652,7 @@ fn lane_body_activate<H: Host>(
     };
     let receiver = if target.this_binding == ThisBinding::Lexical || this.is_deleted() { Value::DELETED } else { this };
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
-    let captures = capture_reads(unsafe { (*cx).capture });
+    let captures = unsafe { (*cx).capture };
     let exit = vm.run_nested_lane_method(&method, program, code, registers.0, receiver, captures, cx.cast());
     let (resumed, feedback) = lane_body_left(cx, registers, own, &method, exit);
     drop(method);

@@ -28,9 +28,27 @@ pub(super) enum Heap {
     Field,
     /// The array word at hole 1 is a direct array (what `RequireObjectCoercible` of one proves).
     Array,
-    /// The own data field the site's field cache entry names, read from the object register
-    /// whose frame offset sits above the destination's in hole 0 (hole 2: the entry's byte offset).
+    /// The data field the site's field cache entry names, own or held by the receiver's prototype
+    /// (`entry::site_read`), read from the object register whose frame offset sits above the
+    /// destination's in hole 0 (hole 2: the entry's byte offset).
     Site,
+    /// A chain of two such reads, `object.first.second` (a nested field lookup), whose entry offsets
+    /// share hole 2: the first below `CHAIN_SECOND_AT` bits, the second above them.
+    SiteChain,
+    /// `Site` and `SiteChain` of the activation's receiver, which the payload holds: hole 0 is the
+    /// destination alone.
+    ThisSite,
+    ThisChain,
+    /// The `length` of the direct array at hole 1, an int32 (what the array's record counts).
+    Length,
+    /// Stores the value operand (hole 1) into the own data field the site's cache entry (hole 2) names
+    /// of the object register whose frame offset is hole 0, where the store gate admits it.
+    SiteStore,
+    /// `SiteStore` into the activation's receiver: hole 0 is unused.
+    ThisStore,
+    /// Stores the value operand (hole 0) into depth-0 capture `slot` of an activation whose slots
+    /// admit every direct store; the slot is hole 1 and its byte offset hole 2.
+    CaptureSet(u16),
     /// The running activation's `this`.
     This,
     /// The activation's local slot `slot`, whose number is hole 1.
@@ -39,8 +57,16 @@ pub(super) enum Heap {
     StoreLocal(u16),
     /// The register at the frame offset of hole 1 holds exactly the word of hole 2.
     Identity,
-    /// The invalidation word at the address of hole 2 is unset.
+    /// A prototype-held field folded to the value its holder held when the code was compiled (hole 2):
+    /// the object register whose frame offset sits above the destination's in hole 0 is a direct object
+    /// of the exact shape in hole 1's low half and the prototype link in its high half, else the row
+    /// leaves. A Stable fact holds the value (`entry::held_receiver`).
     Held,
+    /// `Held` of the activation's receiver, which the payload holds: hole 0 is the destination alone.
+    ThisHeld,
+    /// Leaves unless the invalidation word at the address in hole 1 is zero (`code_dependencies::Invalidation`):
+    /// the check before a row that holds a Stable fact where a call may have changed it.
+    Live,
 }
 
 /// A heap row: its operation and where its operands and destination live.
@@ -50,7 +76,8 @@ pub(super) struct HeapRow {
     pub(super) dst: Place,
     pub(super) a: Place,
     pub(super) b: Place,
-    /// The array's backing is the entry record's (the offset at the array hole), not looked up per access.
+    /// The row's variant: an array's backing is the entry record's (the offset at the array hole), not
+    /// looked up per access (`Index`, `Store`); a site read is a chain of two reads (`SiteChain`).
     pub(super) entry: bool,
 }
 
@@ -63,12 +90,18 @@ impl Heap {
             Heap::Store => library::STORE_ROW,
             Heap::Field => library::FIELD_ROW,
             Heap::Array => library::ARRAY_ROW,
-            Heap::Site => library::SITE_ROW,
+            Heap::Site | Heap::SiteChain => library::SITE_ROW,
+            Heap::ThisSite | Heap::ThisChain => library::THIS_SITE_ROW,
+            Heap::Length => library::LENGTH_ROW,
+            Heap::CaptureSet(_) => library::CAPTURE_SET_ROW,
+            Heap::SiteStore => library::SITE_STORE_ROW,
+            Heap::ThisStore => library::THIS_STORE_ROW,
             Heap::This => library::THIS_ROW,
             Heap::LoadLocal(_) => library::LOAD_LOCAL_ROW,
             Heap::StoreLocal(_) => library::STORE_LOCAL_ROW,
             Heap::Identity => library::IDENTITY_ROW,
-            Heap::Held => library::HELD_ROW,
+            Heap::Held | Heap::ThisHeld => library::HELD_ROW,
+            Heap::Live => library::LIVE_ROW,
         }
     }
 
@@ -76,7 +109,7 @@ impl Heap {
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
     /// slots, which every run reads live.
     pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Held)
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Live)
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value
@@ -136,6 +169,10 @@ mod tests {
             [w::TAG_MASK, w::INT_TAG, w::INTERNAL_TAG, w::HEAP_TAG, w::DIRECT_ARRAY_TAG, w::DIRECT_OBJECT_TAG, w::DIRECT_FUNCTION_TAG, w::HEAP_FAMILY_MASK, w::DIRECT_STRING_TAG, u64::from(w::TAG_SHIFT), w::FIRST_TAG_FIELD, w::TAG_FIELD_SPAN, w::CANONICAL_NAN, w::NULL, w::UNDEFINED, w::DELETED, w::FALSE, w::TRUE]
         );
         assert_eq!(
+            [crate::value::LOWER_WORD, crate::value::HEAP_FAMILY_BITS, u64::from(crate::value::HEAP_FAMILY_SHIFT), crate::value::NARROW_HEAP_FAMILIES as u64, crate::value::TAG_UNDEFINED, crate::value::TAG_NULL, crate::value::TAG_BOOL, crate::value::TAG_DELETED],
+            [w::LOWER_WORD, w::HEAP_FAMILY_BITS, u64::from(w::HEAP_FAMILY_SHIFT), w::NARROW_HEAP_FAMILIES as u64, w::UNDEFINED, w::NULL, w::FALSE, w::DELETED]
+        );
+        assert_eq!(
             [u64::from(NarrowLayout::INTEGER_FLAG), u64::from(NarrowLayout::INTEGER_BITS), u64::from(NarrowLayout::CODE_SHIFT), u64::from(NarrowLayout::CODE_MASK), u64::from(NarrowLayout::INDEX_SHIFT), u64::from(NarrowLayout::INDEX_BITS), NarrowLayout::DIRECT_OBJECT_UPPER, u64::from(NarrowLayout::DIRECT_OBJECT_CODE)],
             [u64::from(w::NARROW_INT_FLAG), u64::from(w::NARROW_INTEGER_BITS), u64::from(w::NARROW_CODE_SHIFT), u64::from(w::NARROW_CODE_MASK), u64::from(w::NARROW_INDEX_SHIFT), u64::from(w::NARROW_INDEX_BITS), w::DIRECT_OBJECT_UPPER, u64::from(w::DIRECT_OBJECT_NARROW_CODE)]
         );
@@ -144,8 +181,15 @@ mod tests {
             [mirror::CALL_CONTEXT_ADAPTER_PAYLOAD, mirror::JS_STEP_LOOP_ENTRY, mirror::JS_STEP_CAPTURE_VALUES, mirror::JS_STEP_CAPTURE_LEN, mirror::JS_STEP_ARRAY_RECORD_BASE, mirror::JS_STEP_RETURNED_PC]
         );
         assert_eq!(
-            [std::mem::offset_of!(JsStepDispatch, object_record_base), std::mem::offset_of!(JsStepDispatch, property_buffer), std::mem::offset_of!(JsStepDispatch, field_entries), crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, super::super::entry_cell::CAPTURE_ADDRESS_BITS as usize, std::mem::offset_of!(JsStepDispatch, receiver), std::mem::offset_of!(JsStepDispatch, native_locals), std::mem::offset_of!(JsStepDispatch, local_count)],
-            [mirror::JS_STEP_OBJECT_RECORD_BASE, mirror::JS_STEP_PROPERTY_BUFFER, mirror::JS_STEP_FIELD_ENTRIES, mirror::PROPERTY_BUFFER_BASE, mirror::CAPTURE_ADDRESS_BITS as usize, mirror::JS_STEP_RECEIVER, mirror::JS_STEP_NATIVE_LOCALS, mirror::JS_STEP_LOCAL_COUNT]
+            [std::mem::offset_of!(JsStepDispatch, object_record_base), std::mem::offset_of!(JsStepDispatch, property_buffer), std::mem::offset_of!(JsStepDispatch, field_entries), crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, super::super::entry_cell::CAPTURE_ADDRESS_BITS as usize, std::mem::offset_of!(JsStepDispatch, capture_stores), super::super::super::dispatch_fast::CAPTURE_STORES,
+             std::mem::offset_of!(JsStepDispatch, object_mark_blocks), std::mem::offset_of!(JsStepDispatch, object_mark_block_count), std::mem::offset_of!(JsStepDispatch, slots_tracked), std::mem::offset_of!(JsStepDispatch, string_record_base), std::mem::offset_of!(JsStepDispatch, receiver), std::mem::offset_of!(JsStepDispatch, native_locals), std::mem::offset_of!(JsStepDispatch, local_count)],
+            [mirror::JS_STEP_OBJECT_RECORD_BASE, mirror::JS_STEP_PROPERTY_BUFFER, mirror::JS_STEP_FIELD_ENTRIES, mirror::PROPERTY_BUFFER_BASE, mirror::CAPTURE_ADDRESS_BITS as usize, mirror::JS_STEP_CAPTURE_STORES, mirror::CAPTURE_STORES_BIT as usize,
+             mirror::JS_STEP_OBJECT_MARK_BLOCKS, mirror::JS_STEP_OBJECT_MARK_BLOCK_COUNT, mirror::JS_STEP_SLOTS_TRACKED, mirror::JS_STEP_STRING_RECORD_BASE, mirror::JS_STEP_RECEIVER, mirror::JS_STEP_NATIVE_LOCALS, mirror::JS_STEP_LOCAL_COUNT]
+        );
+        use crate::vm::wtf16::native_string as form;
+        assert_eq!(
+            [form::RECORD_SIZE as i32, form::TAG_OFFSET, i32::from(form::TAG_SHORT), i32::from(form::TAG_ASCII), i32::from(form::TAG_WIDE), form::SHORT_LENGTH_OFFSET, form::SHARED_LENGTH_OFFSET],
+            [mirror::string_form::RECORD_SIZE as i32, mirror::string_form::TAG_OFFSET, i32::from(mirror::string_form::TAG_SHORT), i32::from(mirror::string_form::TAG_ASCII), i32::from(mirror::string_form::TAG_WIDE), mirror::string_form::SHORT_LENGTH_OFFSET, mirror::string_form::SHARED_LENGTH_OFFSET]
         );
     }
 }

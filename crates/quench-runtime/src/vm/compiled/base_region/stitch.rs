@@ -26,7 +26,7 @@ impl What {
     /// Whether it makes a call or a step the interpreter's operation runs, either of which may
     /// change a global a folded fact holds.
     fn changes_globals(&self) -> bool {
-        matches!(self, Self::Row(row) if matches!(row.step, Some(Step::Call(_) | Step::Helper)))
+        matches!(self, Self::Row(row) if row.makes_calls())
     }
 
     /// The rows it places: a site's are its callee's behind the callee's proof, which is a row
@@ -78,7 +78,7 @@ fn callers(region: &LoopRegion, pc: u32, registers: u16) -> impl Iterator<Item =
 
 /// The parts laid out as one program over the function `region` holds, which has `registers`
 /// registers, folding facts under the invalidation word at `invalidation`.
-pub(super) fn stitch(region: &LoopRegion, parts: Vec<Part>, registers: u16, invalidation: usize) -> Stitched {
+pub(super) fn stitch(region: &LoopRegion, parts: Vec<Part>, registers: u16, invalidation: Option<usize>) -> Stitched {
     let changed = parts.iter().any(|part| part.what.changes_globals());
     let starts = starts(region.instructions().len(), &parts, changed);
     let tops = parts.iter().filter_map(|part| if let What::Site(site) = &part.what { Some(site.top as usize) } else { None });
@@ -90,7 +90,7 @@ pub(super) fn stitch(region: &LoopRegion, parts: Vec<Part>, registers: u16, inva
                 let row = Decoded { target: row.target.map(|target| starts[target as usize]), ..row };
                 stitched.push(row, Origin::Caller(part.pc), callers(region, part.pc, registers));
             }
-            What::Site(site) => stitched.site(region, part.pc, registers, site, changed.then_some(invalidation)),
+            What::Site(site) => stitched.site(region, part.pc, registers, site, invalidation.filter(|_| changed)),
         }
     }
     stitched
@@ -117,7 +117,7 @@ impl Stitched {
             Proof::Guard(callee, word) => Some(Decoded { hole: word, ..Decoded::heap(Heap::Identity, None, Some(Source::Register(callee)), None) }),
             Proof::Held(fact) => {
                 self.facts.push(fact);
-                held.map(|address| Decoded { hole: address as u64, ..Decoded::heap(Heap::Held, None, None, None) })
+                held.map(|address| Decoded { hole: address as u64, ..Decoded::heap(Heap::Live, None, None, None) })
             }
         };
         if let Some(proof) = proof {

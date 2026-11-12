@@ -70,6 +70,20 @@ pub(crate) fn writable_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word
     stage.guard(plain, miss)
 }
 
+/// The `length` of the direct array `base` as the int32 word it reads as: its dense backing's
+/// count, which an array without extras (an arguments object, sparse elements) has as its
+/// length. `None` (leaving at `miss`) for any other value, an array with extras, or a length
+/// past int32.
+#[inline(always)]
+pub(crate) fn array_length<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<S::Word> {
+    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
+    let backing = array_backing(stage, record_base, base, miss)?;
+    let payload = stage.load_u64(backing.record, (ARRAY.object_offset + OBJECT.payload_offset) as i32);
+    let plain = super::object::plain_payload(stage, payload);
+    stage.guard(plain, miss)?;
+    super::value::length_value(stage, backing.length, miss)
+}
+
 /// Replaces the present element at `address` of the dense backing at `values`, which held
 /// `old`, with `value`: the backing's count of values that are no int32 (its others) follows
 /// the write, and a count native code made unknown (`OTHERS_UNKNOWN`) stays unknown. The
@@ -179,6 +193,14 @@ pub(crate) fn concrete_record_element(record_base: *const crate::heap::ArrayObje
     let backing = array_backing(&mut stage, record_base as u64, base.to_bits(), ())?;
     dense_element(&mut stage, backing.values, backing.length, index as u64, ())
         .map(|(_, value)| crate::Value::from_bits(value))
+}
+
+/// The interpreter's reading of `array_length`: the `length` of the direct array `base` among the
+/// array records at `record_base`, as the int32 it reads as.
+#[inline(always)]
+pub(crate) fn concrete_array_length(record_base: *const crate::heap::ArrayObject, base: crate::Value) -> Option<crate::Value> {
+    let mut stage = Concrete::new(std::ptr::null());
+    array_length(&mut stage, record_base as u64, base.to_bits(), ()).map(crate::Value::from_bits)
 }
 
 #[cfg(test)]

@@ -33,6 +33,14 @@ pub(crate) mod typed_ir {
 
 pub(crate) mod value {
     use crate::layout::words;
+    pub(crate) const LOWER_WORD: u64 = words::LOWER_WORD;
+    pub(crate) const HEAP_FAMILY_BITS: u64 = words::HEAP_FAMILY_BITS;
+    pub(crate) const HEAP_FAMILY_SHIFT: u32 = words::HEAP_FAMILY_SHIFT;
+    pub(crate) const NARROW_HEAP_FAMILIES: usize = words::NARROW_HEAP_FAMILIES;
+    pub(crate) const TAG_UNDEFINED: u64 = words::UNDEFINED;
+    pub(crate) const TAG_NULL: u64 = words::NULL;
+    pub(crate) const TAG_BOOL: u64 = words::FALSE;
+    pub(crate) const TAG_DELETED: u64 = words::DELETED;
     pub(crate) struct ValueLayout;
     impl ValueLayout {
         pub(crate) const TAG_MASK: u64 = words::TAG_MASK;
@@ -93,6 +101,10 @@ pub(crate) mod operations;
 pub(crate) mod vm {
     pub(crate) use super::operations;
     pub(crate) use crate::layout::NATIVE_FIELD_CACHE_LAYOUT;
+    pub(crate) mod wtf16 {
+        pub(crate) struct JsString;
+        pub(crate) use crate::layout::string_form as native_string;
+    }
 }
 
 /// The register and operand names the staged numeric rows take. Only a register operand exists

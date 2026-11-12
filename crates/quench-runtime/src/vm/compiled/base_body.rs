@@ -8,9 +8,10 @@
 use super::*;
 use super::base_region::callees::{Callees, InlineBody};
 use super::base_region::function::{build_body, Body, BodySpec};
+use super::base_region::Known;
 use super::lane_facts::bind_callees;
-use crate::bytecode::Register;
 use crate::code_dependencies::Invalidation;
+use crate::bytecode::Register;
 use super::lane_region::StableFacts;
 use crate::compile::liveness::RegisterMasks;
 
@@ -29,8 +30,10 @@ fn widened(generic: &[LaneExit]) -> Vec<usize> {
 impl LaneMethod {
     /// The lane body `body`'s code makes of `function`, published to executable memory. It names
     /// no shapes or slots, so it depends on nothing but its own entry guards, the callees it calls
-    /// by their entries (`direct`, which it owns, and whose records it keeps) and the Stable
-    /// facts that hold the callees it inlines, whose change sets `invalidation`.
+    /// by their entries (`direct`, which it owns, and whose records it keeps) and its Stable facts
+    /// (the globals that hold the callees it inlines, the atoms its stores hold unnamed by method
+    /// caches and the values its folded reads hold of prototypes), whose change retires it and
+    /// sets `invalidation`: the word its rows read, whose address its code names.
     fn of_base_body(body: Body, function: u32, registers: u16, direct: Box<[DirectCallee]>, closed: bool, invalidation: Invalidation) -> Option<Self> {
         // Each inlined callee's registers are the frame slots from the caller's end (`Frame::base`).
         let scratch_width = body.frames.iter().map(|frame| usize::from(frame.base - registers) + usize::from(frame.registers)).max().unwrap_or(0);
@@ -38,7 +41,7 @@ impl LaneMethod {
         // SAFETY: `base_region::function` links its code behind `entry_body`, of the lane body ABI.
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
         Some(Self {
-            dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, ..Default::default() }, invalidation, _code: memory, entry,
+            dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, atoms: body.atoms, ..Default::default() }, invalidation, _code: memory, entry,
             recovery_space: super::super::dispatch_fast::LaneRecoverySpace::inlined(&body.frames), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: !direct.is_empty(), scratch_width, framed: true,
             caller_registers: registers, amortizes: body.loops || body.covered >= TIERS.lane_body.min_instructions || !direct.is_empty(),
@@ -64,8 +67,18 @@ impl<H: Host> Vm<H> {
         let stable = self.stable_callees(program, function, &code, &Callees::recorded(&code, &candidates));
         let callees = Callees::of(&code, &candidates, &inline_body, stable);
         let helpers = super::process_lane_helpers::<H>();
-        let (speculated, invalidation) = (widened(generic), Invalidation::default());
-        let spec = BodySpec { function, registers: body.registers, invalidation: invalidation.address(), widened: &speculated, seen: [&ints, &doubles] };
+        let invalidation = Invalidation::default();
+        // Where the VM and the program run specialized, the code holds Stable facts: its stores run in
+        // place for the atoms no method cache names, and its prototype-held reads fold to their values.
+        let folds = self.specialized && program.specialized;
+        let reads = |site: u16| self.native_field_read_descriptors(site);
+        let known = Known {
+            program, stores: folds.then(|| self.method_cache_atoms.bits()),
+            reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
+            invalidation: Some(invalidation.address()),
+        };
+        let speculated = widened(generic);
+        let spec = BodySpec { function, registers: body.registers, known, widened: &speculated, seen: [&ints, &doubles] };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, helpers) }) else { return LaneBodyOutcome::Declined };
         let closed = callees.closed(&code);

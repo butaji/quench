@@ -6122,8 +6122,11 @@ impl CompiledOsrRegion {
                 }
                 captures
             };
-            if let Some((values, len)) = live {
+            if let Some(((values, len), stores)) = live {
                 (native.dispatch.capture_values, native.dispatch.capture_len) = (values, len);
+                // The slots admit direct stores where their environment does (`lane_frame_capture` took
+                // its barrier once), which a region's capture store rows require.
+                native.dispatch.capture_stores = usize::from(stores);
             } else if !captures.is_empty() {
                 native.dispatch.capture_values = captures.as_ptr();
                 native.dispatch.capture_len = captures.len();
@@ -6146,6 +6149,7 @@ impl CompiledOsrRegion {
                 native.dispatch.residual = Rc::as_ptr(&program) as usize;
             }
             native.dispatch.refresh_object_bases(vm);
+            native.dispatch.field_entries = vm.program_field_entries(program).unwrap_or(0);
             let mut context = CallContext::interrupt_only(&*interrupt);
             context.vm = std::ptr::from_mut(vm).cast();
             context.program = program;
@@ -6609,6 +6613,12 @@ struct JsStepDispatch {
     /// safepoint (`emit_js_safepoint_due`). The runtime derives them from its own layout.
     allocated: usize,
     collect_at: usize,
+    /// Whether the property arena records its slots' value classes (`Heap::tracks_slot_values`),
+    /// which a native store's barrier (`Stage::store_gate`) requires clear.
+    slots_tracked: usize,
+    /// The string record range's base (`Heap::string_record_base`), which a string `length` row
+    /// reads. Last among the words stencil rows read, so the words before it keep their offsets.
+    string_record_base: usize,
     #[cfg(test)]
     island_steps: u64,
     #[cfg(test)]
@@ -7146,8 +7156,9 @@ impl<H: Host> Vm<H> {
     ) -> LaneExit {
         let frame = lane_frame();
         // SAFETY: the activation's capture slots outlive its body's run, which collects nothing.
-        let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(captures) }
+        let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(super::dispatch_fast::capture_reads(captures)) }
             .unwrap_or((std::ptr::null(), 0));
+        let stores = super::dispatch_fast::capture_stores(captures).is_some();
         // SAFETY: the frame lives for the thread and is never moved once made; no reference
         // into it is held across the body's run, which may enter it again
         // (`run_nested_lane_method`).
@@ -7161,12 +7172,14 @@ impl<H: Host> Vm<H> {
                 field_entries: self.program_field_entries(program).unwrap_or(0),
                 lane_context: lane_context.addr(),
                 native_registers: registers,
+                native_locals: super::dispatch_fast::frame_locals::<H>(lane_context),
                 residual: residual as *const ResidualProgram as usize,
             }
             .install(&mut *dispatch);
             (*dispatch).inlined = (*frame).scratch.as_mut_ptr().addr();
             (*dispatch).refresh_object_bases_at_entry(self);
             (*dispatch).stores_specialized = usize::from(self.specialized && residual.specialized);
+            (*dispatch).slots_tracked = usize::from(self.heap.tracks_slot_values());
             let vm = self as *mut Self;
             (*dispatch).bind_lane_storage(vm);
             // A run starts with no native frames; its direct calls place their callees past
@@ -7192,9 +7205,9 @@ impl<H: Host> Vm<H> {
             let context = unsafe { &mut *context };
             context.bind_native_adapter(context.adapter_payload,
                 self.execution_interrupt.atomic_flag() as *const _, poll);
-            unsafe { enter_body(context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast(), method.entry) }
+            unsafe { enter_body(context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len, stores), registers.cast_const().cast(), method.entry) }
         } else {
-            unsafe { (method.entry)(&mut *context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len), registers.cast_const().cast()) }
+            unsafe { (method.entry)(&mut *context, receiver.to_bits(), entry_cell::capture_word(capture_values, capture_len, stores), registers.cast_const().cast()) }
         };
         #[cfg(test)]
         LANE_BODY_RUNS.with(|runs| { let [all, returned] = runs.get(); runs.set([all + 1, returned + usize::from(status == LANE_BODY_RETURNED)]); });
@@ -7299,6 +7312,16 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Reloads the heap bases a running body's rows read through the payload
+    /// (`JsStepDispatch::refresh_object_bases`): a helper that allocated or ran guest code may
+    /// have moved the record tables or the barrier's mark blocks. Every call, construct and step
+    /// helper ends with it, so a row after one reads current bases and checks none.
+    pub(super) fn refresh_body_bases(&self) {
+        let frame = lane_frame();
+        // SAFETY: the frame lives for the thread; the running body's helper is the payload's only user.
+        unsafe { (*frame).dispatch.refresh_object_bases(self) }
+    }
+
     /// Hands `write` each of the `count` registers an inlined callee its lane body left
     /// inside held, as the body wrote them to the scratch window (`LaneFrame::scratch`).
     pub(super) fn lane_scratch(start: usize, count: usize, mut write: impl FnMut(u16, Value)) {
@@ -7346,6 +7369,9 @@ struct LaneEntry {
     field_entries: usize,
     lane_context: usize,
     native_registers: *mut Value,
+    /// The activation's local slots and their count (`dispatch_fast::frame_locals`), which a
+    /// body's local rows read through the payload.
+    native_locals: (*mut Value, usize),
     residual: usize,
 }
 
@@ -7356,6 +7382,7 @@ impl LaneEntry {
             field_entries: dispatch.field_entries,
             lane_context: dispatch.lane_context,
             native_registers: dispatch.native_registers,
+            native_locals: (dispatch.native_locals, dispatch.local_count),
             residual: dispatch.residual,
         }
     }
@@ -7365,6 +7392,7 @@ impl LaneEntry {
         dispatch.field_entries = self.field_entries;
         dispatch.lane_context = self.lane_context;
         dispatch.native_registers = self.native_registers;
+        (dispatch.native_locals, dispatch.local_count) = self.native_locals;
         dispatch.residual = self.residual;
     }
 }
@@ -7416,6 +7444,8 @@ impl LaneFrame {
                 method_cache_atoms: 0,
                 method_cache_atom_words: 0,
                 stores_specialized: 0,
+                slots_tracked: 0,
+                string_record_base: 0,
                 receiver: Value::DELETED.to_bits(),
                 vm: 0,
                 residual: 0,
@@ -7562,6 +7592,8 @@ impl JsNativeActivation {
             object_mark_block_count: 0, property_buffer: 0,
             field_entries: 0, field_store: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
             stores_specialized: 0,
+            slots_tracked: 0,
+            string_record_base: 0,
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
             residual: Rc::as_ptr(&program) as usize,
@@ -7622,6 +7654,8 @@ impl JsStepDispatch {
         self.epoch = vm.heap.collection_epoch();
         let (blocks, count) = vm.heap.native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
+        self.slots_tracked = usize::from(vm.heap.tracks_slot_values());
+        self.string_record_base = vm.heap.string_record_base().map_or(0, |base| base as usize);
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
     }

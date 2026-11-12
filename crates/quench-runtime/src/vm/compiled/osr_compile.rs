@@ -21,6 +21,9 @@ pub(in crate::vm) struct OsrFacts {
     /// departure discards the compile.
     departure_shapes: Vec<u32>,
     slot_dependencies: Vec<crate::code_dependencies::SlotDependency>,
+    /// Atoms its stores run in place for, which no method cache names (a Stable fact): a cache
+    /// naming one retires it (`MethodCacheAtoms::name`).
+    atoms: Box<[crate::bytecode::Atom]>,
 }
 
 impl OsrFacts {
@@ -28,9 +31,11 @@ impl OsrFacts {
     /// Subscribes `code` to the facts; whether all hold. A receiver shape is guarded at each
     /// field use, so only a holder shape's departure discards it; a receiver shape ID still
     /// retires it at compaction (`shape_dependencies`).
-    pub(in crate::vm) fn subscribe(&self, code: &Rc<dyn crate::code_dependencies::DependentCode>, heap: &mut crate::heap::Heap) -> bool {
+    pub(in crate::vm) fn subscribe(&self, code: &Rc<dyn crate::code_dependencies::DependentCode>, heap: &mut crate::heap::Heap,
+        method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
         self.departure_shapes.iter().all(|shape| heap.subscribe_shape(*shape, code))
             && self.slot_dependencies.iter().all(|dependency| heap.subscribe_slot_observation(*dependency, code))
+            && self.atoms.iter().all(|atom| method_atoms.subscribe(*atom, code))
     }
 }
 
@@ -239,7 +244,7 @@ impl OsrFacts {
         let mut slot_dependencies: Vec<_> = loads().filter_map(|field| field.slot_dependency()).collect();
         slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
         slot_dependencies.dedup();
-        Self { shape_dependencies, departure_shapes, slot_dependencies }
+        Self { shape_dependencies, departure_shapes, slot_dependencies, atoms: Box::new([]) }
     }
 }
 
@@ -305,22 +310,22 @@ const REGION_CODE_BUDGET: usize = 2 * osr_loop::MAX_CODE_BYTES;
 
 /// The BaseJIT tier's answer for `region`: `Some(code)` where it builds or (under `--b-jit`) declines the
 /// region, `None` where Cranelift compiles it. A region BaseJIT builds skips Cranelift: every instruction has a lowering (`base_region::steps`).
-fn fast_pending(region: &LoopRegion, views: super::ElementViews, widened: &[usize], observation: &Observation<'_>, helpers: LaneHelpers)
+fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::base_region::Known, widened: &[usize], observation: &Observation<'_>, helpers: LaneHelpers)
     -> Option<Option<PendingOsrRegion>> {
     let base_only = crate::jit_mode::base_only();
     if !crate::jit_mode::base_regions() || region.inlining.is_some() {
         return base_only.then_some(None);
     }
-    let built = super::base_region::build(region, views == super::ElementViews::Dense, widened,
+    let built = super::base_region::build(region, views == super::ElementViews::Dense, known, widened,
         [observation.int_registers, observation.double_registers], helpers);
-    let Ok((code, bare)) = built else { return base_only.then_some(None) };
+    let Ok(super::base_region::Built { code, bare, atoms }) = built else { return base_only.then_some(None) };
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, region.header, &code, None, "");
     }
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
     let code = super::super::jit_backend::run_in_background(move || Ok(code));
     Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean },
-        facts: OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new() } }))
+        facts: OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new(), atoms } }))
 }
 
 /// Starts compiling `region`'s code over its entry's element `views` from `observation`, or
@@ -333,10 +338,10 @@ pub(in crate::vm) fn start_osr_region(
     function_id: u32,
     helpers: LaneHelpers,
     global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads,
-    widened: &[usize],
+    (widened, stores): (&[usize], Option<&crate::vm::method_cache::AtomBits>),
 ) -> Option<PendingOsrRegion> {
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
-    if let Some(decided) = fast_pending(region, views, widened, observation, helpers) {
+    if let Some(decided) = fast_pending(region, views, super::base_region::Known { program, stores, reads: None, invalidation: None }, widened, observation, helpers) {
         return decided;
     }
     let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views };
@@ -367,9 +372,9 @@ pub(in crate::vm) fn start_osr_region(
 impl PendingOsrRegion {
 
     /// Subscribes its watch to the facts its code names; whether they hold.
-    pub(in crate::vm) fn watch(&self, heap: &mut crate::heap::Heap) -> bool {
+    pub(in crate::vm) fn watch(&self, heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
         let watch: Rc<dyn crate::code_dependencies::DependentCode> = self.watch.clone();
-        self.facts.subscribe(&watch, heap)
+        self.facts.subscribe(&watch, heap, method_atoms)
     }
 
     /// Makes it stale where its code names shape ids, which a compaction renumbers.

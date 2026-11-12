@@ -3070,16 +3070,18 @@ impl EnvironmentSlots {
         unsafe { let (values, len) = Self::borrow_storage(storage)?.0.run(); crate::staged::environment::concrete_dense_capture(values.cast(), len, slot) }
     }
 
-    /// Write through a cache whose caller has already admitted the store and taken its barrier.
+    /// Write through a cache whose caller has already admitted the store and taken its barrier:
+    /// `staged::environment::dense_capture_store`, as the native tiers store a capture.
     /// # Safety
     /// As `read_storage`, with exclusive access to the element for this operation and the
     /// environment's write authorization/barrier satisfied. No reference escapes the write.
     #[inline(always)]
     pub(crate) unsafe fn write_storage(storage: *const usize, slot: usize, value: Value) -> Option<()> {
-        // SAFETY: as guaranteed by the caller, for this write only.
-        let mut slots = unsafe { Self::borrow_storage(storage) }?;
-        *slots.dense_plain_mut(slot)? = value;
-        Some(())
+        // SAFETY: as guaranteed by the caller; the view's values are live for this write only.
+        let (values, len) = unsafe { Self::native_storage_view(storage) }?;
+        // SAFETY: the caller's exclusive access and authorization, over the view's `len` values.
+        unsafe { crate::staged::environment::concrete_dense_capture_store(values.cast_mut(), len, u16::try_from(slot).ok()?, value) }
+            .then_some(())
     }
 
     /// `read_storage` and `write_storage` of one slot under one borrow and bounds test: `update`
