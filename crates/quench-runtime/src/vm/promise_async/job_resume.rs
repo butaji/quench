@@ -109,6 +109,7 @@ impl<H: Host> Vm<H> {
                 }
                 (None, None) => unreachable!("an async function resumes from the reaction of its await"),
             },
+            JobEnd::Threw(error) => self.fail_resumed(code, resume, error),
             JobEnd::Frames(result) => self.settle_resumed_frame(code, resume, result),
         }
     }

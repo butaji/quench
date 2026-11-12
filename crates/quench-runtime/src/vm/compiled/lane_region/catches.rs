@@ -46,9 +46,10 @@ fn is_own_record(unit: &Unit, pc: usize) -> bool {
     unit.origins.get(pc) == Some(&Origin::Caller(pc as u32))
 }
 
-/// Whether an exception no handler of `function` covers unwinds through native code alone: a
-/// generator or async function ends in its promise or generator state, and a dynamic scope in
-/// the `with` scopes of its frame, which only the interpreter's unwinding settles.
+/// Whether an exception no handler of a body covers unwinds through its native callers alone: a
+/// generator or async function ends in its promise or generator state, and a dynamic scope in the
+/// `with` scopes of its frame, which only the lane's own unwinding settles. A loop region's
+/// exception leaves to the lane, which settles any function's (`dispatch_fast::lane_raised_exit`).
 fn unwinds_natively(function: &Function) -> bool {
     !(function.is_generator || function.is_async || function.has_dynamic_scope_access())
 }
@@ -171,10 +172,10 @@ impl Lowering<'_, '_> {
         let function = self.program.function(self.function_id as usize);
         let admitted = match self.completion {
             Completion::StatusAndPc => true,
-            Completion::Body => function.handler_at(record).is_none(),
+            Completion::Body => function.handler_at(record).is_none() && unwinds_natively(function),
             Completion::SourcePc | Completion::Number => false,
         };
-        (admitted && unwinds_natively(function)).then_some(record)
+        admitted.then_some(record)
     }
 
     /// Whether native code routes an exception raised at `pc`: a handler of its own catches it

@@ -13424,6 +13424,7 @@ mod scoped_names;
 use lane_roots::{LaneRoot, LaneStart};
 pub(in crate::vm) use lane_roots::JobEnd;
 mod generator_windows; use generator_windows::{lane_generator_returned, lane_resume_generator_step};
+mod raised_windows;
 mod array_steps;
 mod value_steps;
 pub(in crate::vm) use value_steps::lane_body_value_step;
@@ -15755,6 +15756,9 @@ fn lane_raised_exit<H: Host>(cx: *mut LaneContext<H>, record: Ip) -> Ip {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     if let Some(error) = vm.lane_raised.as_mut() { error.capture_source_location(code, function, throw_pc); }
+    if let Some(settled) = raised_windows::settle_raised_window(cx, record) {
+        return settled;
+    }
     if !vm.lane_stack.activations.is_empty() {
         // SAFETY: `record` is one of the running function's records.
         let call_pc = unsafe { record.offset_from((*cx).base) } as usize;

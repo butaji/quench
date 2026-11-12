@@ -72,6 +72,9 @@ pub(in crate::vm) enum JobEnd {
     /// The activation awaited the value in the lane: its owner holds the frame, and the await's
     /// reactions are the job's to attach.
     Awaited(Value),
+    /// The activation raised an exception no handler of it covers, which ended it in its owner
+    /// (`raised_windows`): the promise or request the job settles rejects with the error.
+    Threw(JsError),
     /// The lane left the activation to the general path, or did not admit the run
     /// (`Vm::run_job`), which ran the VM frame the activation became: the bottom one stays on
     /// the frame stack, with this outcome.
@@ -293,6 +296,12 @@ impl<H: Host> Vm<H> {
         }
         if let Some(value) = self.lane_awaited.take() {
             return JobEnd::Awaited(value);
+        }
+        // A raise the lane settled left the job's root in place: no activation became a frame.
+        if matches!(context.root, LaneRoot::Job(_))
+            && let Some(error) = self.lane_raised.take()
+        {
+            return JobEnd::Threw(error);
         }
         // SAFETY: handlers only return records of the active view, which is the innermost
         // frame's, the lane's activations having become frames.

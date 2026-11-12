@@ -25,7 +25,7 @@ impl<H: Host> Vm<H> {
 
     /// An async activation of `resume` threw: its generator fails the request it was running, or
     /// its function's promise rejects with the error.
-    fn fail_resumed(&mut self, p: &ResidualProgram, resume: AwaitResume, error: JsError) -> Result<(), JsError> {
+    pub(super) fn fail_resumed(&mut self, p: &ResidualProgram, resume: AwaitResume, error: JsError) -> Result<(), JsError> {
         if let Some(generator) = resume.role.generator() {
             return self.fail_async_generator(p, generator, resume.promise, error);
         }
