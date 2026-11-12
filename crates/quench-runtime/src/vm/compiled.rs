@@ -7278,6 +7278,10 @@ impl<H: Host> Vm<H> {
 /// machine stack each costs a frame; the bound keeps a native recursion within it.
 const SHADOW_FRAMES: usize = 64;
 
+/// `shadow_base` before any lane body ran on the frame: no frame word equals it, so a helper
+/// a loop region calls then sees native frames (`lane_shadow_active`) and its call leaves.
+const NO_LANE_RUN: usize = usize::MAX;
+
 /// The stride of the native frames a run pushes: an activation record, whose first words they are.
 pub(super) const FRAME_BYTES: usize = std::mem::size_of::<Activation>();
 
@@ -7372,7 +7376,7 @@ impl LaneFrame {
                 native_top: 0,
                 native_end: 0,
                 shadow_top: 0,
-                shadow_end: 0, shadow_base: 0,
+                shadow_end: 0, shadow_base: NO_LANE_RUN,
                 #[cfg(test)]
                 island_steps: 0,
                 #[cfg(test)]
