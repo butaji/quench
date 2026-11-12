@@ -2277,13 +2277,6 @@ impl Function {
             && !(self.is_arrow && self.instructions().any(|instruction| instruction.op() == Op::LoadThis))
     }
 
-    /// Whether some instruction makes a closure or copies the environment for an iteration: the
-    /// function then makes an environment its closures capture, which a lane window builds
-    /// without the implicit bindings a frame holds.
-    fn makes_environments(&self) -> bool {
-        self.instructions().any(|instruction| matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv))
-    }
-
     /// Whether its locals and the environment its closures capture can live in a window past
     /// its registers: the layout an environment activation (`CallPlan::environment_activation`)
     /// and a suspended generator's window (`CallPlan::suspended_environment`) share. Each local
@@ -2298,9 +2291,10 @@ impl Function {
             && self.initial_register == InitialRegister::Undefined
             && (self.names_resolve_in_window() || scoped && self.suspends_scoped())
             // The implicit bindings `activation_binding_reads` names, but for clones, are a frame's:
-            // a suspended function's record keeps them, and the opcodes that read them exit the
-            // lane to the frame it becomes, unless a closure would capture them in the window.
-            && (!self.body_binding_reads_beside_clones(tables) || (self.suspends_in_record() && !self.makes_environments()))
+            // a suspended function's record keeps them (and gives them to the environment its
+            // window makes, `Vm::promote_record_environment`), and the opcodes that read them
+            // exit the lane to the frame it becomes.
+            && (!self.body_binding_reads_beside_clones(tables) || self.suspends_in_record())
             && self.instructions().all(|instruction| {
                 let op = instruction.op();
                 // An iteration's `CloneEnv` copies the window's environment, once a closure
@@ -2349,19 +2343,16 @@ impl Function {
 
     /// Whether the `arguments` object a suspending function made on entry rides its window as
     /// the local it was stored in, which the lane reads in place (`lane_frame_arguments`): no
-    /// closure captures the binding, and a mapped object (`arguments_alias_parameters`) aliases
-    /// parameters that nothing else reads, so the object holds each element's one value: no
-    /// instruction addresses a parameter and no closure captures one.
+    /// closure captures the binding. A mapped object (`arguments_alias_parameters`) aliases
+    /// parameters that live in the window's locals as well, none of them captured: the window's
+    /// parameter reads and writes go through the object (`lane_load_mapped_parameter`), whose
+    /// element writes reach the local (`LaneStack::window_locals`).
     pub(crate) fn arguments_ride_window(&self) -> bool {
-        let parameters = usize::from(self.params);
         self.arguments_slot.is_some_and(|slot| {
             self.suspends_in_record()
                 && !self.local_slot_uses_environment(usize::from(slot))
                 && (!self.arguments_alias_parameters()
-                    || ((0..parameters).all(|parameter| !self.local_slot_uses_environment(parameter))
-                        && self.instructions().all(|instruction| {
-                            instruction.addressed_local_slots().all(|addressed| usize::from(addressed) >= parameters)
-                        })))
+                    || (0..usize::from(self.params)).all(|parameter| !self.local_slot_uses_environment(parameter)))
         })
     }
 
@@ -2436,7 +2427,6 @@ impl Function {
             let suspendable = self.suspends_in_record();
             let suspended_registers = suspendable
                 && registers_layout_of_any_kind
-                && !self.makes_environments()
                 && !self.rest
                 && self.arguments_slot.is_none()
                 && self.initial_register == InitialRegister::Undefined

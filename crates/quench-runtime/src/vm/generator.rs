@@ -14,6 +14,8 @@ mod async_await_tests;
 #[cfg(test)]
 mod hidden_name_tests;
 #[cfg(test)]
+mod iteration_environment_tests;
+#[cfg(test)]
 mod with_scope_tests;
 
 /// How a generator's resumption stopped (`Vm::resume_generator_step`).

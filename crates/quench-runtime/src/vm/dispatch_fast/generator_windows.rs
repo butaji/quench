@@ -143,7 +143,7 @@ fn lane_resume_generator<H: Host>(
     let capture = vm.target_capture(code, program, parent);
     let frame = vm.resume_generator_window(method, generator, sent, depth)?;
     if let Some(locals) = locals {
-        open_window_locals(vm, frame, env, &locals);
+        open_window_locals(vm, frame, locals);
     }
     // SAFETY: the record keeps the frame, and so its registers, until the activation ends.
     let (prefix, window) = unsafe { ((*frame).prefix(), (*frame).registers.as_mut_ptr()) };
@@ -163,15 +163,20 @@ fn lane_resume_generator<H: Host>(
 }
 
 /// Lays `frame`'s environment window after its registers (`GeneratorFrame::open_environment_window`).
-/// An environment the frame made already is written through the window's stores without the
-/// barrier a heap write takes, so it joins the remembered set once, as a capture store's target
-/// does (`Vm::target_capture`).
-pub(super) fn open_window_locals<H: Host>(vm: &mut Vm<H>, frame: *mut GeneratorFrame, env: Value, locals: &WindowLocals) {
-    if locals.own_slots.is_some() {
-        vm.heap.remember_cell(env);
-    }
+/// A frame holding implicit bindings makes its environment first, which owns them for the
+/// closures the window makes (`Vm::promote_record_environment`). An environment the frame made
+/// already is written through the window's stores without the barrier a heap write takes, so it
+/// joins the remembered set once, as a capture store's target does (`Vm::target_capture`).
+pub(super) fn open_window_locals<H: Host>(vm: &mut Vm<H>, frame: *mut GeneratorFrame, locals: WindowLocals) {
     // SAFETY: the record owns the box, which nothing moves or drops until the run ends.
-    unsafe { (*frame).open_environment_window(locals.captured, locals.own_slots) };
+    let frame = unsafe { &mut *frame };
+    let own_slots = locals
+        .own_slots
+        .or_else(|| (!frame.dynamic_bindings.is_empty()).then(|| vm.promote_record_environment(frame)));
+    if own_slots.is_some() {
+        vm.heap.remember_cell(frame.env);
+    }
+    frame.open_environment_window(locals.captured, own_slots);
 }
 
 /// What the activation of a resumed generator runs (`generator_activation`): its frame's
