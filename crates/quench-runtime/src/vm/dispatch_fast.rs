@@ -14785,7 +14785,9 @@ script_handler! {
         let captures = capture_reads(unsafe { (*cx).capture });
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
+        let timed = match body_calls::audited(cx, own, function, base) { Ok(timed) => timed.map(|_| std::time::Instant::now()), Err(next) => return next };
         let exit = vm.run_lane_method(&method, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
+        if let (Some(started), super::compiled::LaneExit::Returned { .. }) = (timed, exit) { own.audit_record(lane_body_tier::Timed::Body, u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)); }
         lane_body_conclude!(cx, r, ip, own, method, exit, function)
     }
 }

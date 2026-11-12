@@ -11,7 +11,7 @@ use quench_runtime::MemoryPolicy;
 /// threshold, peak VmHWM within 1-4 MB). Freed memory below it stays in the arena for reuse.
 /// The memory-first policy keeps the default, which returns it.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
-const TRIM_THRESHOLD_BYTES: libc::c_int = 16 * 1024 * 1024;
+pub(crate) const TRIM_THRESHOLD_BYTES: libc::c_int = 16 * 1024 * 1024;
 /// The glibc variable that sets the trim threshold instead.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 const TRIM_THRESHOLD_VARIABLE: &str = "MALLOC_TRIM_THRESHOLD_";

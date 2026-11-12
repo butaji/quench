@@ -4,6 +4,7 @@
 //! callers return into compiled code whatever tier the callee ran in).
 use super::*;
 use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT};
+use super::lane_body_tier::Timed;
 
 /// The end of a nested run at the return with `value` of `activation`, popped with its
 /// caller's state restored: a native's callback's (`Completion::ReturnsToNative`), whose
@@ -91,4 +92,39 @@ pub(super) fn finish<H: Host>(cx: *mut LaneContext<H>, depth: usize, resume: Ip,
         return LANE_CALL_COMPLETED;
     }
     leave(cx, exit(left), Value::UNDEFINED)
+}
+
+/// An entry of the function `own` views while its body's audit runs (`LaneView::audit_entry`):
+/// `Ok` with the side the body's own run is timed on, if any, or `Err` with the record the lane
+/// continues at after the entry ran interpreted and timed: the activation, run from its first
+/// record `start` nested to its return, completed (its caller continues after the call), or
+/// left the lane (the exit record). An interpreted side runs only for the innermost activation
+/// of a plain call or construction of this function whose call keeps its result; any other
+/// entry runs its body untimed.
+pub(super) fn audited<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u32, start: Ip) -> Result<Option<Timed>, Ip> {
+    let timed = own.audit_entry();
+    if timed != Some(Timed::Interpreter) {
+        return Ok(timed);
+    }
+    let vm = unsafe { vm(cx) };
+    let Some(depth) = vm.lane_stack.activations.len().checked_sub(1) else { return Ok(None) };
+    let top = &vm.lane_stack.activations[depth];
+    let constructs = match top.script().map(|script| script.completion) {
+        Some(Completion::Plain) => false,
+        Some(Completion::Constructs) => true,
+        _ => return Ok(None),
+    };
+    let call = top.call;
+    // SAFETY: the call record belongs to the caller's live view.
+    if top.function != function || unsafe { (*call).a } & crate::bytecode::RETURN_REGISTER != 0 {
+        return Ok(None);
+    }
+    let started = std::time::Instant::now();
+    if finish(cx, depth, start, Value::UNDEFINED, constructs) == LANE_CALL_COMPLETED {
+        own.audit_record(Timed::Interpreter, u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX));
+        return Err(following(call));
+    }
+    // SAFETY: `finish` set it before it left.
+    let resume = unsafe { (*cx).callee_resume };
+    if left_lane(resume) { Err(resume) } else { Ok(None) }
 }

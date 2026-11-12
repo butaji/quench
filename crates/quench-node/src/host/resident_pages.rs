@@ -173,8 +173,10 @@ pub fn release_at_collection(returns_pages: bool) {
         *last = Some(std::time::Instant::now());
         if returns_pages {
             release_read_only_pages();
+            release_free_heap_pages();
+        } else {
+            release_free_heap_pages_beyond(crate::allocator_policy::TRIM_THRESHOLD_BYTES as usize);
         }
-        release_free_heap_pages();
     }
 }
 
@@ -869,6 +871,7 @@ pub fn around_output<R>(output: impl FnOnce() -> R) -> R {
 /// and passes, whose pages would otherwise stay resident beside the program.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 pub fn release_free_heap_pages() {
+    if std::env::var_os("QDBG_NOTRIM").is_some() { return; }
     // SAFETY: `malloc_trim` only advises the kernel about free allocator memory.
     unsafe {
         libc::malloc_trim(0);
@@ -877,6 +880,18 @@ pub fn release_free_heap_pages() {
 
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
 pub fn release_free_heap_pages() {}
+
+/// `release_free_heap_pages` once the allocator holds `floor` free bytes or more, as its own
+/// trim threshold would: a trim walks every arena and advises each free run apart, and while
+/// the code generator's thread runs each advice interrupts it to flush its TLB (V8-v7 earley,
+/// default mode, 2026-11-12: 5,727 calls at collections against 385 without the JIT).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn release_free_heap_pages_beyond(floor: usize) {
+    // SAFETY: `mallinfo2` only reads the allocator's statistics.
+    if unsafe { libc::mallinfo2() }.fordblks >= floor {
+        release_free_heap_pages();
+    }
+}
 
 /// The address ranges of the process's file mappings (not the kernel's bracketed ones) whose
 /// permissions are one of `permissions`.

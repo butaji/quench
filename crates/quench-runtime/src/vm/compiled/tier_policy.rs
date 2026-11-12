@@ -119,6 +119,15 @@ pub(in crate::vm) struct LaneBody {
     pub(in crate::vm) saved_share: (u64, u64),
     /// How many times the compile's cost the saved work must reach before the body compiles.
     pub(in crate::vm) benefit_over_cost: u64,
+    /// The entries between timed runs of a published body's function, which alternate the body
+    /// and the interpreter (`LaneView::audit_entry`): one in this many entries pays a clock
+    /// read pair, and half of those run interpreted.
+    pub(in crate::vm) audit_period: u32,
+    /// The timed runs each side needs before the verdict (`LaneView::audit_verdict`).
+    pub(in crate::vm) audit_samples: u16,
+    /// How much faster, per thousand, the body's mean timed run must be than the interpreter's
+    /// for the body to stay: a body only as fast pays its compile and its entry for nothing.
+    pub(in crate::vm) audit_margin_permille: u64,
 }
 
 /// The per-function JavaScript tiers: the numeric optimizing tier and the general
@@ -202,7 +211,7 @@ pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
     loops: Loops { threshold: 2, ..MEASURED.loops },
-    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, ..MEASURED.lane_body },
+    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, audit_period: u32::MAX, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
     priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },
@@ -230,6 +239,9 @@ const MEASURED: Tiers = Tiers {
         compile_cost_per_ir: 5,
         saved_share: (1, 2),
         benefit_over_cost: 1,
+        audit_period: 16,
+        audit_samples: 16,
+        audit_margin_permille: 50,
     },
     js_function: JsFunction {
         promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)],
