@@ -35,6 +35,7 @@ mod wasm_table;
 use crate::Value;
 use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
     NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
+use crate::staged::add_plan::{Transition, concrete_add_property};
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
@@ -967,6 +968,11 @@ impl FieldAddCache {
     };
     fn prototype_shapes(&self) -> &[u32] {
         &self.prototype_shapes[..usize::from(self.prototype_depth)]
+    }
+    /// The shape transition the entry caches, as the staged add row takes it.
+    #[inline(always)]
+    fn transition(&self) -> Transition {
+        Transition { before: self.source_shape, after: self.target_shape, slot: self.slot }
     }
     /// Whether the chain proof (`proved_epoch`, `proved_prototype`) holds for a receiver
     /// whose prototype `link` names: then the chain needs no walk.

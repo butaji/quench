@@ -149,6 +149,8 @@ pub(crate) struct NativeObjectLayout {
     pub(crate) array_mask: u32,
     pub(crate) storage_start_mask: u32,
     pub(crate) dictionary_mask: u32,
+    /// The meta bits of an object that is not extensible or is frozen (`VALUE_VEC_INTEGRITY_BITS`).
+    pub(crate) integrity_mask: u32,
     pub(crate) inline_property_count: usize,
     pub(crate) extras_tag: u64,
     pub(crate) extras_tag_mask: u64,
@@ -177,6 +179,7 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     array_mask: cell::NATIVE_OBJECT_ARRAY_MASK,
     storage_start_mask: crate::value_vec::START_MASK,
     dictionary_mask: crate::value_vec::DICTIONARY_STORAGE,
+    integrity_mask: crate::value_vec::VALUE_VEC_INTEGRITY_BITS,
     inline_property_count: INLINE_PROPERTY_COUNT,
     extras_tag: cell::NATIVE_OBJECT_EXTRAS_TAG,
     extras_tag_mask: cell::NATIVE_OBJECT_EXTRAS_TAG_MASK,
@@ -4004,7 +4007,7 @@ impl Heap {
     }
 
     #[cfg(feature = "profile-memory")]
-    fn note_object_slots(&mut self, object: Value, slots: usize) {
+    pub(crate) fn note_object_slots(&mut self, object: Value, slots: usize) {
         self.memory_profile.object_slots_changed(object, slots);
     }
     /// Push the values `object` keeps alive. Objects that share a prototype push it once:

@@ -1964,20 +1964,36 @@ impl<H: Host> Vm<H> {
         else {
             return false;
         };
-        let (target_shape, slot) = (cache.target_shape, usize::from(cache.slot));
+        let transition = cache.transition();
         if !cache.proof_holds(receiver.proto_link())
             || !receiver.admits_cached_add()
             || self.method_caches_may_name(atom)
         {
             return false;
         }
-        if !(receiver.admits_plain_append(slot, value)
-            && self.heap.record_property_append_plain(record_id, slot, value, target_shape))
-        {
-            self.heap.record_property_add_moving(object, slot, value, target_shape);
-        }
+        self.add_by_transition(object, record_id, transition, value);
         self.profile.field_cache_hit(0, 0);
         true
+    }
+
+    /// The add of `value` to `object`, the direct object record `record_id` the caller admitted
+    /// (`Object::admits_cached_add`), along the cached `transition`: the staged add row first
+    /// (`staged::add`, which proves the before-shape and plain storage and needs no call), then,
+    /// where the store gate is closed (slot representations are tracked, or the barrier would log
+    /// the value), the plain append that observes the write, else the add that moves storage or
+    /// allocates (`Heap::record_property_add_moving`).
+    #[inline(always)]
+    fn add_by_transition(&mut self, object: Value, record_id: u32, transition: Transition, value: Value) {
+        // SAFETY: `record_id` names the live record of `object`; the row proves the rest.
+        if unsafe { concrete_add_property(&mut self.heap, record_id, transition, value) } {
+            return;
+        }
+        let (slot, shape) = (usize::from(transition.slot), transition.after);
+        if !(self.heap.object_record_by_id(record_id).admits_plain_append(slot, value)
+            && self.heap.record_property_append_plain(record_id, slot, value, shape))
+        {
+            self.heap.record_property_add_moving(object, slot, value, shape);
+        }
     }
 
     /// `define_field_cached`'s hit inline, for an object record: the site's add entry for its
@@ -2002,15 +2018,11 @@ impl<H: Host> Vm<H> {
         let Some((_, cache)) = self.field_add_entry(self.field_cache_index(site), receiver.exact_shape(), atom) else {
             return false;
         };
-        let (target_shape, slot) = (cache.target_shape, usize::from(cache.slot));
+        let transition = cache.transition();
         if self.method_caches_may_name(atom) {
             return false;
         }
-        if !(receiver.admits_plain_append(slot, value)
-            && self.heap.record_property_append_plain(record_id, slot, value, target_shape))
-        {
-            self.heap.record_property_add_moving(object, slot, value, target_shape);
-        }
+        self.add_by_transition(object, record_id, transition, value);
         self.profile.field_cache_hit(0, 0);
         true
     }

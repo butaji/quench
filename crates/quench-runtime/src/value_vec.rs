@@ -43,6 +43,12 @@ const BUCKETS: usize = 64;
     let step = power / 2 + power / 4;
     if len <= step { step } else { power }
 }
+/// Whether the arena range of `len` values has room for one more without moving: its capacity is a
+/// class of its length alone (`ordered_capacity`), so for a range that exists (`len` above zero)
+/// the room is a fact of the shape's length, which a staged add reads as a layout fact.
+pub(crate) const fn range_has_room(len: usize) -> bool {
+    len > 0 && len < capacity_class(len)
+}
 /// Released values on the free lists, as a share (`1 / divisor`) of the arena's length, that
 /// make a full collection compact the arena. Freed ranges are reused within their size class,
 /// so compaction recovers only what other classes leave idle; rewriting every live object's

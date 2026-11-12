@@ -8,6 +8,9 @@ use crate::value::{
     HEAP_FAMILY_BITS, HEAP_FAMILY_SHIFT, LOWER_WORD, NARROW_HEAP_FAMILIES, NarrowLayout, TAG_BOOL, TAG_DELETED, TAG_NULL, TAG_UNDEFINED, ValueLayout,
 };
 
+/// Bytes in one half of a packed payload word, the stride of a packed slot.
+pub(crate) const HALF_BYTES: u64 = std::mem::size_of::<u32>() as u64;
+
 /// What a site proved about where an object of an exact shape keeps its values. It is a
 /// static input: a specializer reads no word to learn it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -293,6 +296,40 @@ pub(crate) fn packed_form<S: Stage>(stage: &mut S, inline: S::Cond, value: S::Wo
     let storable = stage.ne_imm(narrow, NOT_NARROW);
     stage.guard(storable, miss)?;
     Some(narrow)
+}
+
+/// `value` written at `slot`, a word (the shapes' storage length or a cache entry's slot), of the plain
+/// object at `record` whose `payload` word the caller read and proved plain, with its values in `form`:
+/// a half of the payload word for a packed object, which needs the value's narrow form, or the arena
+/// run's slot. A form the site proved is guarded, not decoded; `None` (leaving at `miss`, nothing
+/// written) where the object is in the other form or a packed slot cannot hold the value.
+#[inline(always)]
+pub(crate) fn store_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::Word, slot: S::Word, form: Form, value: S::Word,
+    miss: S::Miss) -> Option<()> {
+    let inline = inline_storage(stage, record);
+    match form {
+        Form::Packed => stage.guard(inline, miss)?,
+        Form::Arena => {
+            let flat = stage.not(inline);
+            stage.guard(flat, miss)?;
+        }
+        Form::Either => {}
+    }
+    // A packed slot needs the value's narrow form; a flat one takes any value.
+    let narrow = if form == Form::Arena { stage.constant(0) } else { packed_form(stage, inline, value, miss)? };
+    stage.choose(inline, |stage| {
+        let half = stage.mul_imm(slot, HALF_BYTES);
+        let address = stage.add(record, half);
+        stage.store_u32(address, OBJECT.payload_offset as i32, narrow);
+        stage.constant(0)
+    }, |stage| {
+        let run = arena_run(stage, payload);
+        let offset = stage.mul_imm(slot, OBJECT.property_value_size as u64);
+        let address = stage.add(run, offset);
+        stage.store_u64(address, 0, value);
+        stage.constant(0)
+    });
+    Some(())
 }
 
 /// `narrow_form` of a value that is no integer: its code is its family bits, a constant's
