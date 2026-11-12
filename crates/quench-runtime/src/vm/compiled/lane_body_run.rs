@@ -63,13 +63,14 @@ impl<H: Host> Vm<H> {
             debug_assert!((*frame).scratch.len() >= run.method.scratch_width, "a body's publication sized the scratch window");
             let dispatch = &raw mut (*frame).dispatch;
             let bound = LaneRun {
+                vm: std::ptr::from_ref(self).addr(),
                 program_id: run.program,
                 lane_context: run.lane_context.addr(),
                 residual: std::ptr::from_ref(run.residual).addr(),
                 stores_specialized: usize::from(self.specialized && run.residual.specialized),
             };
-            (*frame).bind_run(bound, &self.execution_interrupt);
-            (*dispatch).field_entries = self.program_field_entries(run.program).unwrap_or(0);
+            (*frame).bind_run(bound, &self.execution_interrupt, || self.program_field_entries(run.program).unwrap_or(0));
+            debug_assert_eq!((*dispatch).field_entries, self.program_field_entries(run.program).unwrap_or(0), "the run's field cache entries stand");
             (*dispatch).native_registers = run.registers;
             (*dispatch).refresh_object_bases_at_entry(self);
             let vm = self as *mut Self;

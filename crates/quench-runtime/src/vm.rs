@@ -199,6 +199,7 @@ mod object_keys;
 mod object_static;
 mod object_symbols;
 #[cfg(test)] mod lane_loop_tests;
+#[cfg(test)] mod lane_entry_tests;
 #[cfg(test)] mod object_tests;
 mod property_key;
 use call_arguments::CallArguments;
@@ -2048,6 +2049,9 @@ pub(crate) struct Vm<H> {
     /// `field_base`), re-derived by `refresh_active_field_entries` whenever the active program
     /// changes or the table grows: a site's entry is then one load from it.
     active_field_entries: *const <FieldCache as site_table::SiteEntry>::Stored,
+    /// The number of times the field cache table's mapping moved (`field_caches_moved`): a run
+    /// that kept a pointer into it across code that may install a program compares it.
+    field_entries_epoch: u64,
     active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
@@ -3157,7 +3161,7 @@ impl<H: Host> Vm<H> {
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
         };
         self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
-        self.refresh_active_field_entries();
+        self.field_caches_moved();
         self.field_cache_writes = Some(Vec::new());
         program.prime_loop_decoding();
         self.heap.dependencies_mut().clear_inherited();
@@ -3336,7 +3340,7 @@ impl<H: Host> Vm<H> {
         });
         let fields = usize::from(sites.fields);
         self.field_caches.extend_empty(fields);
-        self.refresh_active_field_entries();
+        self.field_caches_moved();
         self.megamorphic_field_indices.extend_empty(fields);
         self.field_add_indices.extend_empty(fields);
         self.inherited_field_indices.extend_empty(fields);
@@ -3401,6 +3405,17 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn refresh_active_field_entries(&mut self) {
         self.active_field_entries = self.field_caches.entries_from(self.active_layout.field_base);
+    }
+
+    /// The field cache table grew or was replaced: the only events that move its mapping, and so
+    /// every pointer into it. The ones the VM keeps re-derive here, once, so no reader checks
+    /// them: the active program's (`active_field_entries`), the lane frame's payload word
+    /// generated code reads (`rebind_lane_field_entries`), and the epoch a run that kept one
+    /// across a program install compares (`run_nested_lane_method`).
+    fn field_caches_moved(&mut self) {
+        self.field_entries_epoch += 1;
+        self.refresh_active_field_entries();
+        self.rebind_lane_field_entries();
     }
 
     /// Constant `index` of the active program.

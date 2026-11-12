@@ -7155,6 +7155,18 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// Points the lane frame's field cache entries at the table's current mapping, where the
+    /// frame is this VM's: its payload word is what generated code reads, and it was bound
+    /// before the table moved (`Vm::field_caches_moved`).
+    pub(super) fn rebind_lane_field_entries(&self) {
+        // SAFETY: the frame is reached only through this pointer, on its thread; the table
+        // moves in the VM's own code, never inside a payload access.
+        let frame = unsafe { &mut *LANE_FRAME.with(std::cell::UnsafeCell::get) };
+        if let Some(frame) = frame.as_mut().filter(|frame| frame.dispatch.vm == std::ptr::from_ref(self).addr()) {
+            frame.dispatch.field_entries = self.program_field_entries(frame.dispatch.program_id).unwrap_or(0);
+        }
+    }
+
     /// The native frames the last run left inside, outermost first, which the lane now
     /// materializes (`ShadowFrame`); none once taken.
     pub(super) fn take_shadow_frames() -> ShadowFrames {
@@ -7215,6 +7227,7 @@ impl<H: Host> Vm<H> {
         let frame = lane_frame();
         // SAFETY: as `run_lane_method`; the caller's entry made the frame.
         let saved = unsafe { LaneEntry::of(&(*frame).dispatch) };
+        let moved_from = self.field_entries_epoch;
         // Reentrant entries lend the same TLS context. Preserve the outer
         // recovery landing and its binding before the inner entry overwrites them.
         let binding = unsafe {
@@ -7226,6 +7239,7 @@ impl<H: Host> Vm<H> {
         // SAFETY: as above.
         unsafe {
             saved.install(&mut (*frame).dispatch);
+            if self.field_entries_epoch != moved_from { self.rebind_lane_field_entries(); }
             let context = &mut (*frame).context;
             (context.stack_limit, context.entry_stack, context.interrupt,
                 context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner) = binding;
@@ -7304,11 +7318,13 @@ impl LaneEntry {
 }
 
 /// The words of the dispatch payload and context that stay as they are for every entry of one
-/// lane run: its program, residual, lane context and store specialization (`LaneFrame::bind_run`).
-/// An entry writes them only where its run is not the one that bound them; the words it writes
-/// per entry are its registers and the stack's room.
+/// lane run: its VM, program, residual, lane context and store specialization, and what follows
+/// from them, the program's field cache entries (`LaneFrame::bind_run`). An entry writes them
+/// only where its run is not the one that bound them; the words it writes per entry are its
+/// registers and the stack's room.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct LaneRun {
+    vm: usize,
     program_id: ProgramId,
     lane_context: usize,
     residual: usize,
@@ -7317,7 +7333,7 @@ struct LaneRun {
 
 impl LaneRun {
     fn of(dispatch: &JsStepDispatch) -> Self {
-        Self { program_id: dispatch.program_id, lane_context: dispatch.lane_context, residual: dispatch.residual, stores_specialized: dispatch.stores_specialized }
+        Self { vm: dispatch.vm, program_id: dispatch.program_id, lane_context: dispatch.lane_context, residual: dispatch.residual, stores_specialized: dispatch.stores_specialized }
     }
 }
 
@@ -7333,13 +7349,17 @@ struct LaneFrame {
 impl LaneFrame {
     /// Binds the payload and context to `run`'s words, written once per run: a nested entry
     /// of the same run (`Vm::run_nested_lane_method`) and each next entry of the lane's calls
-    /// find them standing.
+    /// find them standing. `field_entries` derives the program's field cache entries, which
+    /// stand until the table moves (`Vm::rebind_lane_field_entries`). The run's VM is bound
+    /// after it (`JsStepDispatch::bind_lane_storage`), so a VM that is not the last entry's
+    /// makes a new run.
     #[inline(always)]
-    fn bind_run(&mut self, run: LaneRun, interrupt: &crate::ExecutionInterrupt) {
+    fn bind_run(&mut self, run: LaneRun, interrupt: &crate::ExecutionInterrupt, field_entries: impl FnOnce() -> usize) {
         let owner = std::ptr::from_ref(interrupt);
         if LaneRun::of(&self.dispatch) != run {
             #[cfg(test)]
             LANE_ENTRIES.with(|counts| counts.set((counts.get().0, counts.get().1 + 1)));
+            self.dispatch.field_entries = field_entries();
             self.dispatch.program_id = run.program_id;
             self.dispatch.lane_context = run.lane_context;
             self.dispatch.residual = run.residual;
