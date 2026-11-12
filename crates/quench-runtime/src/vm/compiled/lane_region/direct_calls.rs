@@ -2,7 +2,7 @@
 //! it admits, the window and frame it pushes, and where each status goes.
 
 use super::*;
-use super::super::entry_cell::{EntryCell, LANE_BODY_NOT_ENTERED};
+use super::super::entry_cell::LANE_BODY_NOT_ENTERED;
 use super::direct_admission::dispatch_offset;
 
 impl Lowering<'_, '_> {
@@ -19,7 +19,7 @@ impl Lowering<'_, '_> {
         admitted.extend([fits, room]);
         self.direct_admit(&admitted, helper);
         let status = self.direct_enter(instruction, callee, cell, (this, top, next, shadow));
-        self.direct_finish(instruction, status, (shadow, cell), helper, completed, None);
+        self.direct_finish(instruction, status, shadow, helper, completed, None);
     }
 
     /// The construction through forwarding constructor `callee.callee` whose forwarded
@@ -39,12 +39,12 @@ impl Lowering<'_, '_> {
         let (top, next, shadow, [fits, room]) = self.direct_room(callee, cell);
         self.direct_admit(&[built, fits, room], helper);
         let status = self.direct_enter(instruction, callee, cell, (receiver, top, next, shadow));
-        self.direct_finish(instruction, status, (shadow, cell), helper, completed, Some(receiver));
+        self.direct_finish(instruction, status, shadow, helper, completed, Some(receiver));
     }
 
     /// Where each status of a native call goes: a completion stores its value, or the
     /// construction's `receiver`, to the call's register and continues at `completed`.
-    fn direct_finish(&mut self, instruction: WideInstruction, (status, word): (ir::Value, ir::Value), (shadow, cell): (ir::Value, ir::Value), helper: ir::Block, completed: ir::Block, receiver: Option<ir::Value>) {
+    fn direct_finish(&mut self, instruction: WideInstruction, (status, word): (ir::Value, ir::Value), shadow: ir::Value, helper: ir::Block, completed: ir::Block, receiver: Option<ir::Value>) {
         let (base, payload) = (self.registers_base, self.payload);
         let returned = self.word_cmp_imm(IntCC::Equal, status, i64::from(LANE_BODY_RETURNED));
         let (back, check, left, missed) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
@@ -63,10 +63,6 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(left);
         self.leave_with(status, Some(word));
         self.builder.switch_to_block(back);
-        let offset = dispatch_offset(std::mem::offset_of!(EntryCell, completions));
-        let done = self.word_load(cell, offset);
-        let done = self.word_add_imm(done, 1);
-        self.word_store(done, cell, offset);
         self.word_store(shadow, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
         let value = match receiver { Some(receiver) => receiver, None => word };
         self.word_store(value, base, register_offset(instruction.result_register()));
