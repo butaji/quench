@@ -135,6 +135,8 @@ impl PropertyFrame<Concrete> for ConcreteFrame<'_> {
     fn plans(&self) -> NoPlans { NoPlans }
 }
 
+impl ElementFrame<Concrete> for ConcreteFrame<'_> {}
+
 impl NumericFrame<Concrete> for ConcreteFrame<'_> {
     fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
         let register = operand.register_index().expect("a numeric operand is a register");

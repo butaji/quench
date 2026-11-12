@@ -14,7 +14,7 @@
 //! (`docs/v2/specialization.md`). `staged_coverage` in this module's tests keeps hand-written
 //! decodes of the same layouts from reappearing elsewhere.
 
-use crate::bytecode::{FieldBase, FieldLookup, Op, Register, WideInstruction};
+use crate::bytecode::{FieldBase, FieldLookup, Op, Operand, Register, WideInstruction};
 use crate::typed_ir::Type;
 
 mod concrete;
@@ -30,6 +30,9 @@ pub(crate) use callout::CallOut;
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
+pub(crate) mod element_rows;
+mod element_frame;
+pub(crate) use element_frame::ElementFrame;
 pub(crate) mod entry;
 pub(crate) mod environment;
 pub(crate) mod ic;
@@ -331,6 +334,12 @@ pub(crate) enum Operation<W, P> {
     Delete { base: Register, key: Register, strict: bool },
     /// `base[key]` past the dense and typed element reads (`PropertyFrame::index_get_host`).
     IndexGetHost { base: W, key: W },
+    /// The value `base[key]` reads, a present dense element where the array and the key's int32
+    /// are proved (`element_rows`), else the VM's read; the tier defines the result register.
+    ElementRead { base: Register, key: Operand },
+    /// `base[key] = value`, replacing a present dense element in place where the array owns its
+    /// backing alone and the value needs no barrier log, else the VM's store.
+    ElementWrite { value: Register, base: Register, key: Register },
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes.
@@ -355,6 +364,7 @@ impl<W, P> Operation<W, P> {
             Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::IncDec => return Self::decode_value(instruction),
             Op::GetField | Op::Delete => return Self::decode_property(instruction),
             op if op.is_field_store() => return Self::decode_property(instruction),
+            Op::GetIndex | Op::SetIndex => return Self::decode_element(instruction),
             _ => return names::decode(instruction),
         })
     }
@@ -448,3 +458,5 @@ mod property_tests;
 mod coverage_tests;
 #[cfg(test)]
 mod generic_tests;
+#[cfg(test)]
+mod element_tests;

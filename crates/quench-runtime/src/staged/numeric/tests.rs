@@ -72,6 +72,8 @@ impl crate::staged::PropertyFrame<Concrete> for NumberFrame {
     fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
 }
 
+impl crate::staged::ElementFrame<Concrete> for NumberFrame {}
+
 impl NumericFrame<Concrete> for NumberFrame {
     fn int_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
         match self.values[usize::from(operand.register_index().expect("a register operand"))] {
