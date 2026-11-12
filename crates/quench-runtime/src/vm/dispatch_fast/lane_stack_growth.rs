@@ -15,7 +15,7 @@ impl LaneStack {
     pub(super) fn full(&self, room: usize) -> LaneStackFull {
         LaneStackFull(
             self.values.room() < room,
-            self.activations.len() == self.activations.capacity(),
+            self.activations.is_full(),
         )
     }
 
@@ -25,7 +25,7 @@ impl LaneStack {
         let before = self.values.as_ptr().addr();
         if !self.values.reserve(additional) { return; }
         let after = self.values.as_ptr().addr();
-        for activation in &mut self.activations {
+        for activation in self.activations.iter_mut() {
             activation.native.window = activation.native.window.wrapping_sub(before).wrapping_add(after);
         }
     }
