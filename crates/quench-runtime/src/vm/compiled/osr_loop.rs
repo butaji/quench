@@ -2360,6 +2360,9 @@ fn admit(
     defined_registers: &std::collections::BTreeSet<Register>,
     dynamic_arrays: &std::collections::BTreeSet<Register>,
 ) -> Option<()> {
+    // An instruction the tier does not lower leaves at its exact PC before its effects; the
+    // interpreter runs its own definition and the region's state is written back.
+    if exits_before_effects(instruction) { return Some(()); }
     match instruction.op().class() {
         Class::LoadConst => {
             let index = instruction.constant_index();
@@ -2487,9 +2490,6 @@ fn admit(
             }
             admit_loaded(admission, instruction, tagged)?;
         }
-        // The interpreter runs every other instruction at its exact PC, with the whole state
-        // written back (binding lookup, calls, allocation, GC, throws).
-        _ if exits_before_effects(instruction) => {}
         // A return leaves the loop: the lane resumes at it with the state written back, and
         // runs it.
         Class::Return | Class::Jump => {}
@@ -2530,6 +2530,17 @@ fn admit(
                 for register in [left, right] {
                     if !matches!(admission.roles.get(&register), Some(Role::Number)) {
                         admission.tagged(register)?;
+                    }
+                }
+            } else if super::super::operations::equality_operator(instruction.binary_operator_field()).is_some()
+                || instruction.binary_operator_field() == oxc_ast::ast::BinaryOperator::Instanceof as u32
+            {
+                // An equality or `instanceof` compares values: the lowering boxes a Number
+                // operand and reads each side as a value, so a register without a role takes
+                // the tagged one (the entry loads it, and a leave writes it back).
+                for operand in [instruction.operand_b(), instruction.operand_c()] {
+                    if let Some(register) = operand.register_index() {
+                        if !admission.roles.contains_key(&register) { admission.tagged(register)?; }
                     }
                 }
             } else {
@@ -2710,10 +2721,15 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
 fn lowered_natively(instruction: WideInstruction) -> bool {
     let op = instruction.op();
     admitted_store(op) || allocates(op) || match op.class() {
-        // A conditional jump only on a relation or a bitwise and, so one on `in` or
-        // `instanceof` is an exit.
+        // A conditional jump on a relation, a bitwise and, an (in)equality of values, or
+        // `instanceof` by the VM's steady case; one on `in` is the interpreter's.
         Class::JumpBinaryFalse => super::super::operations::NumberRelation::from_operator(instruction.binary_operator_field())
-            .is_some() || bitwise_condition(instruction).is_some(),
+            .is_some() || bitwise_condition(instruction).is_some()
+            || super::super::operations::equality_operator(instruction.binary_operator_field()).is_some()
+            || instruction.binary_operator_field() == oxc_ast::ast::BinaryOperator::Instanceof as u32,
+        // A capture read at depth 0 is the activation's own slot; a deeper one takes the
+        // lane's environment lookup, so the region leaves at it.
+        Class::LoadCapture => instruction.capture_depth() == 0,
         class => matches!(class,
             Class::LoadConst | Class::Move | Class::LoadCapture | Class::StoreCapture | Class::LoadName
             | Class::Binary | Class::NumericAdd
