@@ -12,6 +12,7 @@ path = "src/main.rs"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 libc = "0.2"
+quench-tier-corpus = { path = "../crates/quench-tier-corpus" }
 
 [lints]
 workspace = true

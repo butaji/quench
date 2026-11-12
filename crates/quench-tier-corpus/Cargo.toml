@@ -1,0 +1,12 @@
+[package]
+name = "quench-tier-corpus"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Seeded random JavaScript programs for cross-tier differential and forced-deopt checks"
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
