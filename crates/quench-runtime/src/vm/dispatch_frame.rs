@@ -239,7 +239,7 @@ impl<H: Host> Vm<H> {
         source_pc: usize,
         target_pc: usize,
     ) {
-        if !self.js_tier_runs()
+        if !self.tier_may_run(crate::jit_mode::Tier::ANY)
             || !self.programs.js_jit_general_dispatch_enabled()
             || program.kind == crate::bytecode::ProgramKind::Wasm
         {
@@ -543,7 +543,7 @@ impl<H: Host> Vm<H> {
     fn entered_lane_view(&self, p: &ResidualProgram, id: u32) -> *const super::dispatch_fast::LaneView {
         let program = self.active_program;
         let lane_runs = Self::FRAME_ENTRY_LANE_RUNS
-            && !self.js_tier_runs()
+            && !self.tier_may_run(crate::jit_mode::Tier::ANY)
             && !self.programs.js_jit_general_dispatch_enabled();
         #[cfg(feature = "native-execution")]
         let lane_runs = lane_runs && self.programs.native_js_code(program).is_none();
@@ -1561,7 +1561,7 @@ impl<H: Host> Vm<H> {
         // With JS tiers or JIT general dispatch the loop may run the resumed frame in a tier
         // instead of the lane, so only the tier-free loop's lane entry is mirrored here.
         let lane_runs = Self::FRAME_ENTRY_LANE_RUNS
-            && !self.js_tier_runs()
+            && !self.tier_may_run(crate::jit_mode::Tier::ANY)
             && !self.programs.js_jit_general_dispatch_enabled();
         let cursor = self.general_cursor(program, p, function, lane_runs);
         if !Self::lane_runs(cursor.lane, pc) {
@@ -1906,7 +1906,7 @@ impl<H: Host> Vm<H> {
                     let resumed = &self.frames[frame];
                     (resumed.program, resumed.function)
                 };
-                let general_due = self.js_tier_runs()
+                let general_due = self.tier_may_run(crate::jit_mode::Tier::ANY)
                     && self.js_tier_needs_general_entry(resumed_program_id, resumed_function);
                 if general_due {
                     // A lane loop reported enough backward-edge work for the
