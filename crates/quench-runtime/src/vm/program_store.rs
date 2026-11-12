@@ -6,9 +6,11 @@ use std::rc::{Rc, Weak};
 use crate::heap::{PromotionAge, WeakHandle};
 use rustc_hash::FxHashMap;
 use std::io::Write as _;
+use residual::{EncodedResidual, Residual};
 
 pub(in crate::vm) mod lane_publication;
 mod eval_cache;
+mod residual;
 mod snapshot;
 mod wasm_tier;
 pub(super) use wasm_tier::WasmTierState;
@@ -713,66 +715,6 @@ impl JitTierManager {
 
     fn is_wasm(&self) -> bool {
         matches!(self, Self::Wasm(_))
-    }
-}
-
-/// A program's residual: decoded, or a restored snapshot's encoding that its first use
-/// decodes. A snapshot holds every builtin a preload loaded, and a process runs few of
-/// them, so a restore decodes none: their checksums held when the snapshot was read.
-struct Residual {
-    /// The program's cache site counts, known before it is decoded.
-    sites: crate::bytecode::CacheSiteCounts,
-    decoded: std::cell::OnceCell<Rc<ResidualProgram>>,
-    encoded: std::cell::Cell<Option<Box<EncodedResidual>>>,
-}
-
-/// What decoding a restored program needs (`ResidualProgram::decode_snapshot`).
-struct EncodedResidual {
-    bytes: crate::KeptBytes,
-    text: Option<crate::bytecode::SourceText>,
-    atoms: Rc<crate::bytecode::AtomSequence>,
-}
-
-impl Residual {
-    fn decoded(program: Rc<ResidualProgram>) -> Self {
-        Self {
-            sites: program.cache_site_counts(),
-            decoded: std::cell::OnceCell::from(program),
-            encoded: std::cell::Cell::new(None),
-        }
-    }
-
-    fn encoded(sites: crate::bytecode::CacheSiteCounts, encoded: EncodedResidual) -> Self {
-        Self { sites, decoded: std::cell::OnceCell::new(), encoded: std::cell::Cell::new(Some(Box::new(encoded))) }
-    }
-}
-
-impl std::ops::Deref for Residual {
-    type Target = Rc<ResidualProgram>;
-
-    #[inline(always)]
-    fn deref(&self) -> &Rc<ResidualProgram> {
-        match self.decoded.get() {
-            Some(program) => program,
-            None => self.decode(),
-        }
-    }
-}
-
-impl Residual {
-    /// The first use of a restored snapshot's program: decodes it.
-    #[cold]
-    #[inline(never)]
-    fn decode(&self) -> &Rc<ResidualProgram> {
-        self.decoded.get_or_init(|| {
-            let EncodedResidual { bytes, text, atoms } =
-                *self.encoded.take().expect("a residual is decoded or holds its encoding");
-            let program = ResidualProgram::decode_snapshot(bytes, text, &atoms)
-                .expect("a snapshot program whose checksum held decodes");
-            debug_assert_eq!(program.cache_site_counts(), self.sites);
-            program.prime_loop_decoding();
-            Rc::new(program)
-        })
     }
 }
 
@@ -3775,14 +3717,10 @@ impl LaneViews {
     /// the lane context's pointer to it requires.
     #[inline(always)]
     fn of(&self, residual: &ResidualProgram) -> &[LaneViewCell] {
-        match self.table.get() {
-            Some(table) => table,
-            None => self.make_table(residual),
-        }
+        self.table.get().map_or_else(|| self.make_table(residual), |table| table)
     }
 
     #[cold]
-    #[inline(never)]
     fn make_table(&self, residual: &ResidualProgram) -> &[LaneViewCell] {
         self.table.get_or_init(|| residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect())
     }

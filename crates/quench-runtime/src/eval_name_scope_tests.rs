@@ -128,7 +128,7 @@ function callNames() {
 }
 say(callNames());
 
-print(log.join('\n'));
+log.forEach(function (line) { print(line); });
 "####;
 
 #[test]

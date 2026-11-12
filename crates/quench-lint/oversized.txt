@@ -742,7 +742,6 @@ complexity crates/quench-runtime/src/vm/embedding.rs::Vm<H>::embedding_collectio
 complexity crates/quench-runtime/src/vm/embedding.rs::Vm<H>::embedding_filtered_own_keys 14
 complexity crates/quench-runtime/src/vm/embedding.rs::Vm<H>::embedding_has_builtin_brand 30
 complexity crates/quench-runtime/src/vm/environment.rs::Vm<H>::delete_environment_binding 12
-complexity crates/quench-runtime/src/vm/environment.rs::Vm<H>::load_name_without_with 22
 complexity crates/quench-runtime/src/vm/environment.rs::Vm<H>::name_binding 13
 complexity crates/quench-runtime/src/vm/environment.rs::Vm<H>::resolve_name_reference 11
 complexity crates/quench-runtime/src/vm/environment.rs::Vm<H>::store_environment_binding 21
@@ -3027,7 +3026,6 @@ function-lines crates/quench-runtime/src/vm/embedding.rs::Vm<H>::embedding_has_b
 function-lines crates/quench-runtime/src/vm/embedding.rs::Vm<H>::embedding_own_property_fields 46
 function-lines crates/quench-runtime/src/vm/environment.rs::Vm<H>::delete_environment_binding 51
 function-lines crates/quench-runtime/src/vm/environment.rs::Vm<H>::initialize_this_binding 55
-function-lines crates/quench-runtime/src/vm/environment.rs::Vm<H>::load_name_without_with 66
 function-lines crates/quench-runtime/src/vm/environment.rs::Vm<H>::load_projected_environment_binding 66
 function-lines crates/quench-runtime/src/vm/environment.rs::Vm<H>::name_binding 81
 function-lines crates/quench-runtime/src/vm/environment.rs::Vm<H>::outer_dynamic_binding_in 42
@@ -4128,7 +4126,6 @@ hot-hash crates/quench-runtime/src/vm/shape_transitions.rs::ShapeTransitionIndex
 hot-scan crates/quench-runtime/src/vm/dispatch.rs::Vm<H>::dense_apply_arguments 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::LaneStack::forwarded_method_index 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::specialize_leaf_returns 1
-hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::cross_call_entry 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::deferred_activations_run 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 2
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::closes_loop 1

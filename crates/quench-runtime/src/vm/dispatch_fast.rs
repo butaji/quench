@@ -11459,7 +11459,12 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn cross_call_index(&self, callee: Value) -> Option<usize> {
         let set = self.lane_stack.cross_targets.set(callee)?;
-        [set, set | 1].into_iter().find(|&index| self.cross_call_holds(index, callee))
+        // The set's two ways, tested in turn, as `script_call_index` does.
+        if self.cross_call_holds(set, callee) {
+            Some(set)
+        } else {
+            self.cross_call_holds(set | 1, callee).then_some(set | 1)
+        }
     }
 
     /// Whether `LaneStack::cross_targets` entry `index` holds `callee`'s target for this
@@ -12675,15 +12680,6 @@ script_handler! {
     }
 }
 
-/// The by-name read a lane record handed to the general path to settle
-/// (`Vm::settle_name_probe`): where it is, in the running activation's frame.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct NameProbe {
-    program: ProgramId,
-    function: u32,
-    pc: u32,
-}
-
 script_handler! {
     /// A `LoadName` whose scope the compiler left open (an eval's code, which runs in its
     /// caller's scope, or a function with an eval of its own): the lane cannot search the
@@ -12694,7 +12690,7 @@ script_handler! {
     fn lane_load_name_probe<KIND: u8>(cx, r, ip, i, view) {
         lane_materialize_running_leaf(cx);
         let vm = unsafe { vm(cx) };
-        vm.name_probe = Some(NameProbe {
+        vm.scope_names.probe = Some(super::name_scope::NameProbe {
             program: unsafe { (*cx).program },
             function: lane_running_function(cx),
             pc: unsafe { ip.offset_from((*cx).base) } as u32,
@@ -12703,33 +12699,17 @@ script_handler! {
     }
 }
 
-impl<H: Host> Vm<H> {
-    /// The general path's by-name read of `atom` at `pc` of the running frame, when the lane
-    /// left it as a probe: if the name lands on the global object (`name_lands_on_global_object`)
-    /// the record becomes a hinted global read, which an event that could move the name retires
-    /// (`note_dynamic_scope_name`); else the record exits. The probe's record is the one that
-    /// still holds the probe handler; any other read drops it, the record probing again.
-    pub(super) fn settle_name_probe(&mut self, p: &ResidualProgram, pc: usize, atom: Atom, op: Op) {
-        let Some(probe) = self.name_probe.take() else { return };
-        let Some(frame) = self.frames.last() else { return };
-        if (probe.program, probe.function, probe.pc as usize) != (frame.program, frame.function, pc) {
-            return;
-        }
-        let lands = self.name_lands_on_global_object(p, atom);
-        let Some(view) = self.programs.lane_views(probe.program)
-            .and_then(|views| views.get(probe.function as usize))
-            .and_then(|cell| super::program_store::derived_lane_view(cell)) else { return };
-        let (probing, scoped) = match op {
-            Op::LoadName => (lane_load_name_probe::<H, LOAD_NAME> as Handler, lane_load_global_name::<H, LOAD_NAME, true> as Handler),
-            Op::LoadNameCall => (lane_load_name_probe::<H, LOAD_NAME_CALL> as Handler, lane_load_global_name::<H, LOAD_NAME_CALL, true> as Handler),
-            _ => (lane_load_name_probe::<H, LOAD_NAME_TYPEOF> as Handler, lane_load_global_name::<H, LOAD_NAME_TYPEOF, true> as Handler),
-        };
-        // SAFETY: `pc` is a record of the view, whose records live while its program does.
-        let record = unsafe { view.records().add(pc) };
-        if unsafe { (*record).handler } == probing as *const () {
-            requicken::<H>(record, if lands { scoped } else { lane_exit::<H> });
-        }
-    }
+/// Quickens the record of the by-name read at `pc` of `view`, which `Vm::settle_name_probe`
+/// settled: a hinted global read where the name lands on the global object, else an exit.
+pub(super) fn settle_name_record<H: Host>(view: &LaneView, pc: usize, op: Op, lands: bool) {
+    let handler = match (lands, op) {
+        (false, _) => lane_exit::<H> as Handler,
+        (true, Op::LoadName) => lane_load_global_name::<H, LOAD_NAME, true> as Handler,
+        (true, Op::LoadNameCall) => lane_load_global_name::<H, LOAD_NAME_CALL, true> as Handler,
+        (true, _) => lane_load_global_name::<H, LOAD_NAME_TYPEOF, true> as Handler,
+    };
+    // SAFETY: `pc` is a record of the view, whose records live while its program does.
+    requicken::<H>(unsafe { view.records().add(pc) }, handler);
 }
 
 script_handler! {
@@ -12889,7 +12869,7 @@ script_handler! {
         let atom = i.imm();
         // A read the general path found past a scope that could declare the name holds only
         // until some scope does (`Vm::note_dynamic_scope_name`).
-        if SCOPED && vm.dynamic_scope_atoms.contains(atom as usize) {
+        if SCOPED && vm.scope_names.declared(atom) {
             requicken::<H>(ip, lane_exit::<H>);
             return exit(ip);
         }
