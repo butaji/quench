@@ -60,6 +60,8 @@ const FAMILIES: &[(&str, &str)] = &[
     ("append-array-non-dense-spread", "var sp = i % 40 === 0 ? [1, , 3] : i % 40 === 1 ? 'ab' : arr; t = [0, ...sp, 9]; acc += t.length;"),
     ("append-array-element-after-spread-hits-and-misses", "t = [...arr, i, i / 4, i & 1 ? 'x' : i, {a: i}]; acc += t.length + t[4] + (typeof t[6] === 'string' ? 1 : 0);"),
     ("append-array-grows-past-capacity", "t = [...arr, ...arr, ...arr, i, i, i, i, i]; acc += t.length + t[12];"),
+    ("append-array-in-region-with-field-reads", "t = [o.p, o.q, i, i / 4]; acc += t.length + t[3] + o.p;"),
+    ("append-array-miss-after-field-read", "t = [o.p, i & 1 ? 'x' : i, {a: o.q}, ...arr, i]; acc += t.length + o.q;"),
     ("for-in-mutated-object", "var m = {a: 1, b: 2, c: 3}; for (var key in m) { if (key === 'a') { delete m.b; m.d = 4; } acc += key.length; }"),
     ("for-of-break", "for (var v of arr) { if (v > 2) break; acc += v; }"),
     ("array-spread", "t = [...arr, i]; acc += t.length;"),

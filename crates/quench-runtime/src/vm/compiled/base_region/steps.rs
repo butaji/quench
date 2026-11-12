@@ -47,6 +47,9 @@ pub(super) enum Step {
     /// The heap row is the record's fast arm over its operand's frame slot, with `Helper` behind it
     /// as the slow arm.
     Fast(Heap),
+    /// `Fast` in a region whose heap rows read snapshots (`settle`): a helper's effects would not
+    /// reach them, so the slow arm is the leave at the record, which the interpreter runs.
+    Guard(Heap),
     /// The region leaves at the record.
     Leave,
     /// The activation completes with the register the row reads (a body's `Return`).
@@ -60,6 +63,12 @@ impl Step {
     /// helper may allocate or run guest code, which no heap snapshot a region took sees.
     pub(super) fn runs_helper(self) -> bool {
         matches!(self, Self::Helper | Self::Fast(_))
+    }
+
+    /// Whether the run reads the dispatch payload: a helper step calls through it, and a guarded
+    /// fast row reads the tables its heap row names.
+    pub(super) fn reads_payload(self) -> bool {
+        self.runs_helper() || matches!(self, Self::Guard(_))
     }
 
     /// Whether control continues at the next instruction: a leave and a return end the run.
@@ -161,10 +170,17 @@ pub(super) fn decode_step(pc: u32, instruction: WideInstruction, helpers: LaneHe
 
 /// A helper step, alone or behind a fast arm, may write any heap value, which the snapshots a heap row reads (the entry
 /// record's captures, fields and array views) would not see: where the region has a heap row its
-/// helper steps leave instead.
+/// helper steps leave instead. A fast arm stays: its hit stores as a `Store` row does, in the
+/// backing the views read live, and only its slow arm becomes the leave (`Step::Guard`).
 pub(super) fn settle(decoded: &mut [Decoded]) {
     if decoded.iter().any(|row| row.heap.is_some_and(Heap::reads_snapshot)) {
-        decoded.iter_mut().filter(|row| row.step.is_some_and(Step::runs_helper)).for_each(|row| row.step = Some(Step::Leave));
+        for row in decoded.iter_mut() {
+            row.step = match row.step {
+                Some(Step::Fast(fast)) => Some(Step::Guard(fast)),
+                Some(step) if step.runs_helper() => Some(Step::Leave),
+                step => step,
+            };
+        }
     }
 }
 
@@ -197,15 +213,21 @@ fn chained(parts: Vec<CallPart>, spills: usize, owned: Option<Box<quench_bjit::c
 /// the activation or the call's chain.
 pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     match decoded.step.ok_or("plan_step: no step")? {
-        Step::Leave => Ok(Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, Some(pc))),
+        Step::Leave => leave(pc),
         Step::Helper => plan_helper(layout, pc, decoded.target, helpers),
-        Step::Fast(fast) => plan_fast(decoded, fast, layout, pc, helpers),
+        Step::Fast(fast) => plan_fast(decoded, fast, layout, pc, Some(plan_helper(layout, pc, None, helpers)?)),
+        Step::Guard(fast) => plan_fast(decoded, fast, layout, pc, None),
         Step::Return => {
             let slot = operand(&layout.homes, decoded.a).1;
             Ok(Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) })
         }
         Step::Call(shape) => plan_call(layout, shape, helpers),
     }
+}
+
+/// The row that ends the region at `pc`, where the interpreter runs the instruction.
+fn leave(pc: u32) -> Result<Planned, String> {
+    Ok(Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, Some(pc)))
 }
 
 /// The chain of a helper step at `pc`, which also branches to `target` where its instruction jumps.
@@ -222,25 +244,30 @@ fn plan_helper(layout: &Layout, pc: u32, target: Option<u32>, helpers: LaneHelpe
 }
 
 /// The run of a fast arm at `pc`: the heap row `fast` over the operand's frame slot, whose hit hops
-/// past the rest of the run to the next instruction, and behind it the helper step the row leaves
-/// into where its proof fails. An operand or result held outside its frame slot (a pinned register
-/// holds a Number, which no fast arm takes but an append's element) has the helper step alone. An
-/// append's frame slot is its array's, a Number element read from wherever it lives; any other arm
-/// writes its destination's.
-fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
-    let slow = plan_helper(layout, pc, None, helpers)?;
+/// past the rest of the run to the next instruction, and behind it the slow arm (`slow`: the helper
+/// step) the row leaves into where its proof fails, or, with none (`Step::Guard`), the leave at `pc`
+/// the row's own miss makes. An operand or result held outside
+/// its frame slot (a pinned register holds a Number, which no fast arm takes but an append's
+/// element) has the slow arm alone, or the leave. An append's frame slot is its array's, a Number element read
+/// from wherever it lives; any other arm writes its destination's.
+fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, slow: Option<Planned>) -> Result<Planned, String> {
     let homes = &layout.homes;
     let appends = fast == Heap::Append;
     let (read, read_hole) = operand(homes, decoded.a);
     let slot = if appends { decoded.base } else { decoded.dst };
     let (written, written_hole) = operand(homes, slot.map(Source::Register));
     if written != Place::Mem || (read != Place::Mem && !appends) {
-        return Ok(slow);
+        return slow.map_or_else(|| leave(pc), Ok);
     }
     let row = HeapRow { heap: fast, dst: written, a: read, b: Place::Mem, entry: false };
-    let mut run = Planned::single(base_rows::stencil(row)?, [written_hole, read_hole, 0], Some(pc + 1), None);
-    run.exits = vec![Exit::Ahead(1)];
-    Ok(behind(run, slow))
+    let mut run = Planned::single(base_rows::stencil(row)?, [written_hole, read_hole, 0], Some(pc + 1), slow.is_none().then_some(pc));
+    Ok(match slow {
+        Some(slow) => {
+            run.exits = vec![Exit::Ahead(1)];
+            behind(run, slow)
+        }
+        None => run,
+    })
 }
 
 /// `fast` with the run `slow` laid out behind it: the slow run's parts follow the fast row, so the
@@ -414,6 +441,23 @@ mod tests {
         assert_eq!(append(None, 0, 2), Step::Helper);
         let row = decode_step(0, WideInstruction::new(Op::AppendArray, 1, encode_optional_register(Some(2)), 0, 0), process);
         assert!(matches!(row.a, Some(Source::Register(2))) && row.base == Some(1) && row.dst.is_none());
+    }
+
+    /// Where a region's heap rows read snapshots a helper's effects would not reach, a fast arm stays
+    /// and its slow arm becomes the leave, while a helper step leaves; elsewhere both are kept.
+    #[test]
+    fn a_snapshot_region_keeps_its_fast_arms_and_leaves_its_helper_steps() {
+        let rows = |reader: bool| {
+            let mut rows = vec![Decoded::step(Step::Fast(Heap::Append), None), Decoded::step(Step::Helper, None)];
+            if reader {
+                rows.push(Decoded::heap(Heap::Field, Some(0), None, None));
+            }
+            settle(&mut rows);
+            [rows[0].step, rows[1].step]
+        };
+        assert_eq!(rows(true), [Some(Step::Guard(Heap::Append)), Some(Step::Leave)]);
+        assert_eq!(rows(false), [Some(Step::Fast(Heap::Append)), Some(Step::Helper)]);
+        assert!(Step::Guard(Heap::Append).reads_payload() && !Step::Guard(Heap::Append).runs_helper());
     }
 
     /// A function holding a Wasm opcode is no b-jit body; the catalog's other opcodes are covered.
