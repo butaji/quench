@@ -1,4 +1,4 @@
-//! FastJIT: stencils built by Cranelift from the same row definitions UltraJIT lowers, copied and
+//! BaseJIT: stencils built by Cranelift from the same row definitions UltraJIT lowers, copied and
 //! patched at run time (copy-and-patch). A row is emitted once through [`Flow`]: here every static
 //! operand is a *hole* and every successor is a relocated `return_call`; UltraJIT implements
 //! `Flow` with constants and blocks instead. Stencils use the `tail` calling convention with

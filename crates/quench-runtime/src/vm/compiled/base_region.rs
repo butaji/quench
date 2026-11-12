@@ -1,4 +1,4 @@
-//! A Number loop region built from BaseJIT stencils (`quench-fastjit`) instead of Cranelift IR,
+//! A Number loop region built from BaseJIT stencils (`quench-bjit`) instead of Cranelift IR,
 //! behind `QUENCH_DEV=bjit`. The registers the region touches most live in pinned machine
 //! registers through the whole chain of stencils and the rest stay tagged `Value` words in the
 //! activation's register file; every exit writes the pinned registers back first, so it leaves
@@ -14,9 +14,9 @@ use super::osr_loop::LoopRegion;
 use crate::bytecode::{Class, OperandKind, Register, WideInstruction};
 use crate::value::Value;
 use oxc_ast::ast::BinaryOperator;
-use super::fast_rows::{self, Heap, HeapRow};
-use quench_fastjit::numeric::{self, Kind, Place};
-use quench_fastjit::{PINNED, PINNED_F, Row as Placed, Stencil};
+use super::base_rows::{self, Heap, HeapRow};
+use quench_bjit::numeric::{self, Kind, Place};
+use quench_bjit::{PINNED, PINNED_F, Row as Placed, Stencil};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 

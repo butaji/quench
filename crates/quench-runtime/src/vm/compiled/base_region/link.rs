@@ -1,5 +1,5 @@
 use super::*;
-use quench_fastjit::HOLES;
+use quench_bjit::HOLES;
 
 /// `mov r11d, reg32` for the pinned registers rdx, rcx, r8 and r9: the raw int32 to tag.
 pub(super) const PIN_TO_R11: [[u8; 3]; PINNED] = [[0x41, 0x89, 0xd3], [0x41, 0x89, 0xcb], [0x45, 0x89, 0xc3], [0x45, 0x89, 0xcb]];
@@ -62,12 +62,12 @@ pub(super) fn stub(pins: &[Pin], word: u64) -> Vec<u8> {
             code.extend(word.to_le_bytes());
         }
     }
-    code.push(quench_fastjit::RET);
+    code.push(quench_bjit::RET);
     code
 }
 
 /// `pop rax; ret`: the shared exit routine returns the PC its stub pushed.
-pub(super) const POP_RET: [u8; 2] = [0x58, quench_fastjit::RET];
+pub(super) const POP_RET: [u8; 2] = [0x58, quench_bjit::RET];
 /// `push imm32` and `jmp rel32`: a row's exit stub, which names its PC and the routine that
 /// writes the live registers back.
 pub(super) const PUSH_IMM32: u8 = 0x68;
@@ -132,7 +132,7 @@ impl Layout<'_> {
             .collect();
         let mut code = vec![0u8; rows.iter().map(|row| row.stencil.code.len()).sum()];
         // SAFETY: `code` has room for every stencil's full length, which bounds the chain.
-        let (len, _) = unsafe { quench_fastjit::copy_patch(&rows, code.as_mut_ptr(), |_, _| 0) };
+        let (len, _) = unsafe { quench_bjit::copy_patch(&rows, code.as_mut_ptr(), |_, _| 0) };
         code.truncate(len);
         Ok(code)
     }
@@ -259,7 +259,7 @@ pub(super) fn place_rows(rows: &[Placed], exits: &[(usize, u32, usize)], routine
     let mut code = vec![0u8; head + bound + tail];
     let base = code.as_mut_ptr();
     // SAFETY: `base + head` has room for every stencil's full length, which bounds the rows.
-    let (len, _) = unsafe { quench_fastjit::copy_patch(rows, base.add(head), |_, _| base as usize) };
+    let (len, _) = unsafe { quench_bjit::copy_patch(rows, base.add(head), |_, _| base as usize) };
     let mut at = head + len;
     let mut routine_at = Vec::with_capacity(routines.len());
     for routine in routines {
@@ -276,7 +276,7 @@ pub(super) fn place_rows(rows: &[Placed], exits: &[(usize, u32, usize)], routine
         at += EXIT_STUB_LEN;
     }
     // SAFETY: as above; the stubs lie after the copied code inside `code`.
-    unsafe { quench_fastjit::copy_patch(rows, base.add(head), |row, _| addresses[row]) };
+    unsafe { quench_bjit::copy_patch(rows, base.add(head), |row, _| addresses[row]) };
     let thunk_bytes = thunk(head);
     code[..head].copy_from_slice(&thunk_bytes);
     code.truncate(at);

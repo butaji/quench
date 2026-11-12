@@ -1,6 +1,6 @@
 //! Stencil rows that read the heap: a captured value, a dense array element read or replaced, an
 //! entry-record field. Each row is the existing staged / emit helpers lowered into a stencil
-//! (`quench_fastjit::generate`) beside the Cranelift specializer, so a row has one definition of
+//! (`quench_bjit::generate`) beside the Cranelift specializer, so a row has one definition of
 //! its layout reads; the stencils are generated on first use and shared for the process.
 //!
 //! Operands are holes: 0 is the destination frame offset (the array's, for a store), 1 and 2 the
@@ -11,9 +11,9 @@ use super::{emit_dense_array_view, DenseArrayView, emit_dense_element, emit_dens
 use super::object_slots::EmitImm;
 use crate::staged::{self, Stage};
 use cranelift_codegen::ir;
-use quench_fastjit::numeric::{self, Place};
-use quench_fastjit::row::{Operand, RowBuilder, Source, Ty};
-use quench_fastjit::{Stencil, StencilBuilder, generate};
+use quench_bjit::numeric::{self, Place};
+use quench_bjit::row::{Operand, RowBuilder, Source, Ty};
+use quench_bjit::{Stencil, StencilBuilder, generate};
 use std::collections::HashMap;
 use std::sync::Mutex;
 

@@ -1,5 +1,5 @@
 //! The row-builder interface of the handler table (handler-table-schema.md, "RowBuilder trait"):
-//! one generic row body lowers through UltraJIT, FastJIT (`StencilBuilder`) and the interpreter.
+//! one generic row body lowers through UltraJIT, BaseJIT (`StencilBuilder`) and the interpreter.
 //! The vocabulary types below mirror the schema; they move to the shared crate when the table
 //! lands.
 

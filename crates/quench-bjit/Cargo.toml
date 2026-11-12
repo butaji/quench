@@ -1,9 +1,9 @@
 [package]
-name = "quench-fastjit"
+name = "quench-bjit"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "FastJIT: Cranelift-built stencils copied and patched at run time"
+description = "BaseJIT: Cranelift-built stencils copied and patched at run time"
 
 [lib]
 doctest = false

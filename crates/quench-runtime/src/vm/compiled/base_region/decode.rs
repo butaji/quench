@@ -42,7 +42,7 @@ pub(super) struct Decoded {
     pub(super) a: Option<Source>,
     pub(super) b: Option<Source>,
     pub(super) target: Option<u32>,
-    /// A heap row (`fast_rows`) in place of the numeric `kind`, with the array register a store
+    /// A heap row (`base_rows`) in place of the numeric `kind`, with the array register a store
     /// writes through and the entry-record byte offset a field read loads.
     pub(super) heap: Option<Heap>,
     pub(super) base: Option<Register>,

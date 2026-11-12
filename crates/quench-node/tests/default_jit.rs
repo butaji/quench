@@ -51,7 +51,8 @@ fn the_jit_mode_flags_select_one_mode_and_the_old_flag_is_gone() {
     assert!(!run_flags(&["--no-jit", "--b-jit"]).0, "two modes are an error");
     assert!(!run_flags(&["--b-jit", "--u-jit"]).0, "two modes are an error");
     assert!(!run_flags(&["--jit"]).0, "--jit is removed");
-    assert!(!run_flags(&["--f-jit"]).0, "--f-jit is reserved for the Cranelift fast mode and rejected");
+    assert!(!run_flags(&["--q-jit"]).0, "--q-jit is reserved for the Cranelift quick mode and rejected");
+    assert!(!run_flags(&["--f-jit"]).0, "--f-jit is an unknown flag");
     assert!(compiles(&["--b-jit"]) > 0, "--b-jit: the hot number loop runs from stencils");
     assert!(compiles(&["--u-jit"]) > 0, "--u-jit: the hot loop runs compiled code");
 }
@@ -67,7 +68,7 @@ fn run_fixture(flag: &str, fixture: &str) -> (bool, String) {
 /// recompiles, element and tag exits) leave the lane exactly as the interpreter has it.
 #[test]
 fn b_jit_exits_leave_the_interpreters_state() {
-    for fixture in ["fast_jit_webs.js", "fast_jit_exit_state.js"] {
+    for fixture in ["base_jit_webs.js", "base_jit_exit_state.js"] {
         let expected = run_fixture("--no-jit", fixture);
         assert!(expected.0, "{fixture} under --no-jit");
         for _ in 0..3 {

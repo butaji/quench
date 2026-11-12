@@ -1,5 +1,5 @@
 use super::*;
-use quench_fastjit::HOLES;
+use quench_bjit::HOLES;
 
 /// Where the registers of the region live: pinned (int32 or double), int slots, or tagged
 /// frame slots.
@@ -88,7 +88,7 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
         _ => [dst_hole, a_hole, b_hole],
     };
     // The row's stencil reads pinned operands and delivers a pinned result itself.
-    Ok(Planned::single(fast_rows::stencil(HeapRow { heap, dst, a, b, entry })?, holes, None, Some(pc)))
+    Ok(Planned::single(base_rows::stencil(HeapRow { heap, dst, a, b, entry })?, holes, None, Some(pc)))
 }
 
 pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> Result<Planned, String> {

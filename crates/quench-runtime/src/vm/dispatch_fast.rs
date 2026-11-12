@@ -8083,10 +8083,10 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
         let body = program.function(site.function() as usize);
         body.code.get(pc as usize).and_then(|packed| {
             let op = decoded_instruction(body, *packed).op();
-            super::compiled::fast_region::leave(site.function(), pc, op);
+            super::compiled::base_region::leave(site.function(), pc, op);
             (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
                 || matches!(op.class(), Class::LoadCapture)
-                // A FastJIT region also holds a loaded field as an int32 until it leaves there.
+                // A BaseJIT region also holds a loaded field as an int32 until it leaves there.
                 || (crate::jit_mode::base_regions() && matches!(op.class(), Class::GetField))).then(|| op.is_get_index())
         })
     });
@@ -8251,7 +8251,7 @@ enum LoopContinuation {
 
 /// Counts what a loop run came to (`QUENCH_TRACE=js-jit`).
 fn count_continuation(continuation: &LoopContinuation) {
-    use super::compiled::fast_region::{count, Event};
+    use super::compiled::base_region::{count, Event};
     count(match continuation {
         LoopContinuation::Jump | LoopContinuation::Compiling => Event::Declined,
         LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Safepoint | LoopContinuation::Callee => Event::Left,

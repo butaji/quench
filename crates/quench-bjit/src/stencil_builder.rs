@@ -1,4 +1,4 @@
-//! The FastJIT back-end of [`RowBuilder`]: operands are holes, successors are relocated
+//! The BaseJIT back-end of [`RowBuilder`]: operands are holes, successors are relocated
 //! `return_call`s, and every dynamic value lives in the frame or a pinned register.
 use super::row::{Effects, MemKind, Op, Operand, Region, RowBuilder, Source, Ty};
 use super::{HOLE_VALUE, NEXT, TAKEN, EXIT, Mode, successor};

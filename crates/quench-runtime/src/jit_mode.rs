@@ -1,5 +1,5 @@
 //! The JIT modes a process can run in, and the tiers each one enables: the one place the flags
-//! `--no-jit`, `--b-jit` and `--u-jit` are defined (`--f-jit` is reserved for the Cranelift fast mode and rejected).
+//! `--no-jit`, `--b-jit` and `--u-jit` are defined (`--q-jit` is reserved for the Cranelift quick mode and rejected until it lands).
 use crate::ExecutionMode;
 
 /// Which tiers run: the interpreter alone, BaseJIT (stencils) alone, UltraJIT alone, or both (the default).
@@ -31,10 +31,11 @@ impl JitMode {
     /// chosen or the flag is the removed `--jit`.
     pub fn select(chosen: &mut Option<Self>, flag: &str) -> Result<(), &'static str> {
         match (chosen.is_some(), Self::from_flag(flag)) {
-            (_, None) if flag == "--f-jit" => Err("--f-jit (Cranelift fast mode) is not available yet; --b-jit selects the stencil tier"),
+            (_, None) if flag == "--q-jit" => Err("--q-jit (Cranelift quick mode) is not available yet; --b-jit selects the stencil tier"),
             (true, _) => Err("only one of --no-jit, --b-jit and --u-jit can be used"),
             (false, Some(mode)) => Ok(*chosen = Some(mode)),
-            (false, None) => Err("--jit was removed: JIT is the default, and --no-jit selects the interpreter"),
+            (false, None) if flag == "--jit" => Err("--jit was removed: JIT is the default, and --no-jit selects the interpreter"),
+            (false, None) => Err("unknown JIT flag: use --no-jit, --b-jit or --u-jit"),
         }
     }
 
@@ -97,6 +98,7 @@ mod tests {
         let tiers = |flag| JitMode::from_flag(flag).map(JitMode::tiers_enabled);
         assert_eq!(tiers("--no-jit"), Some((false, false)));
         assert_eq!(tiers("--b-jit"), Some((true, false)));
+        assert_eq!(tiers("--q-jit"), None);
         assert_eq!(tiers("--f-jit"), None);
         assert_eq!(tiers("--u-jit"), Some((false, true)));
         assert_eq!(tiers("--jit"), None);

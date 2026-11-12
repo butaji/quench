@@ -143,7 +143,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     int_captures: &[u16],
 ) {
     tier.compilations += 1;
-    super::super::compiled::fast_region::count(super::super::compiled::fast_region::Event::Compiled);
+    super::super::compiled::base_region::count(super::super::compiled::base_region::Event::Compiled);
     if site.diagnostics {
         site.compile_attempts.set(site.compile_attempts.get().saturating_add(1));
     }
