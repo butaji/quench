@@ -91,7 +91,10 @@ function shellSurface(global, evaluate) {
   global.load = (file) => evaluate(readFile(file), resolve(file));
   global.loadString = (source) => evaluate(source, resolve("loadString"));
   global.runString = (source) => {
-    const context = vm.createContext({});
+    // A context whose global is a real object: V8's contextified global proxy makes a
+    // benchmark whose hot code reads globals ~27x slower (earley-boyer: 152 vs 5.4 ms per
+    // iteration), which measured Node against a sandbox rather than the engine.
+    const context = vm.constants.DONT_CONTEXTIFY === undefined ? vm.createContext({}) : vm.createContext(vm.constants.DONT_CONTEXTIFY);
     const realm = vm.runInContext("globalThis", context);
     shellSurface(realm, (code, filename) => vm.runInContext(code, context, { filename, importModuleDynamically }));
     for (const name of ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "queueMicrotask"])
