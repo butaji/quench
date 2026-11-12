@@ -1,4 +1,5 @@
 use super::*;
+use quench_bjit::numeric::supernodes::Node;
 use quench_bjit::HOLES;
 
 /// Where the registers of the region live: pinned (int32 or double), int slots, or tagged
@@ -60,6 +61,9 @@ pub(super) fn operand(homes: &Homes, source: Option<Source>) -> (Place, u64) {
 /// A row placed in the program: its stencil, hole values and branch target.
 pub(super) struct Planned {
     pub(super) stencil: &'static Stencil,
+    /// The row's library code, which a tile of this row and its neighbour is looked up by; none
+    /// for a tile itself.
+    pub(super) node: Option<Node>,
     pub(super) holes: [u64; HOLES],
     pub(super) target: Option<u32>,
     /// The PC a guard of the row exits at.
@@ -71,8 +75,8 @@ pub(super) struct Planned {
 }
 
 impl Planned {
-    fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
-        Self { stencil, holes, target, exit_pc, pre: Vec::new(), post: Vec::new() }
+    fn single(stencil: &'static Stencil, node: Node, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
+        Self { stencil, node: Some(node), holes, target, exit_pc, pre: Vec::new(), post: Vec::new() }
     }
 }
 
@@ -89,7 +93,8 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
         _ => [dst_hole, a_hole, b_hole],
     };
     // The row's stencil reads pinned operands and delivers a pinned result itself.
-    Ok(Planned::single(base_rows::stencil(HeapRow { heap, dst, a, b, entry })?, holes, None, Some(pc)))
+    let row = HeapRow { heap, dst, a, b, entry };
+    Ok(Planned::single(base_rows::stencil(row)?, Node::Heap(row.code()), holes, None, Some(pc)))
 }
 
 pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> Result<Planned, String> {
@@ -105,13 +110,14 @@ pub(super) fn plan(decoded: &Decoded, homes: &Homes, pc: u32, general: bool) -> 
     }
     let polls = decoded.target.is_some_and(|target| target <= pc) && decoded.kind == Kind::Jump;
     let kind = if polls { Kind::JumpPoll } else { decoded.kind };
-    let stencil = numeric::stencil(numeric::Row { kind, dst, a, b, speculate: !general })?;
+    let row = numeric::Row { kind, dst, a, b, speculate: !general };
+    let stencil = numeric::stencil(row)?;
     let interrupt = std::mem::offset_of!(super::super::CallContext, interrupt) as u64;
     let exits = polls || !matches!(kind, Kind::Jump | Kind::Move) || matches!(dst, Place::Pin(_) | Place::PinF(_) | Place::MemInt);
     // A poll row also names where the run's backward-edge counter lives (`jump_row`).
     let counter = [std::mem::offset_of!(super::super::CallContext, adapter_payload) as u64, std::mem::offset_of!(super::super::JsStepDispatch, loop_entry) as u64];
     let holes = if polls { [interrupt, counter[0], counter[1]] } else { [dst_hole, a_hole, b_hole] };
-    Ok(Planned::single(stencil, holes, decoded.target, exits.then_some(pc)))
+    Ok(Planned::single(stencil, Node::Number(numeric::library::canonical(row.code())), holes, decoded.target, exits.then_some(pc)))
 }
 
 /// A leave row: the stub that tags the pinned registers back and returns `word`.

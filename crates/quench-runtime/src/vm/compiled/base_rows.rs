@@ -53,10 +53,17 @@ impl Heap {
     }
 }
 
+impl HeapRow {
+    /// The row's canonical code in `quench_bjit::numeric::library`.
+    pub(super) fn code(self) -> library::HeapCode {
+        library::heap_canonical((self.heap.code(), self.entry, self.dst.code(), self.a.code(), self.b.code()))
+    }
+}
+
 /// The stencil of `row`, built at compile time by rustc; a row the library lacks declines the region.
 pub(super) fn stencil(row: HeapRow) -> Result<&'static Stencil, String> {
     static TABLE: Mutex<Option<HashMap<library::HeapCode, &'static Stencil>>> = Mutex::new(None);
-    let code = library::heap_canonical((row.heap.code(), row.entry, row.dst.code(), row.a.code(), row.b.code()));
+    let code = row.code();
     let mut table = TABLE.lock().map_err(|e| e.to_string())?;
     let table = table.get_or_insert_with(HashMap::new);
     if let Some(found) = table.get(&code) {

@@ -5,6 +5,8 @@
 //! rows chain by `become` only, and only the `leave_*` rows return.
 #[path = "stencils/library.rs"]
 mod library;
+#[path = "stencils/supernodes.rs"]
+mod supernodes;
 
 use std::{env, fs, path::PathBuf, process::Command};
 
@@ -142,7 +144,8 @@ fn main() {
     }
     let instances: String = library::library().into_iter().map(|c| format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4)).collect();
     let heap: String = library::heap_library().into_iter().map(|c| format!("heap_row!({}, {}, {}, {}, {}, {});\n", library::heap_name(c), c.0, c.1, c.2, c.3, c.4)).collect();
-    fs::write(out.join("instances.rs"), instances + &heap).unwrap();
+    let supers: String = supernodes::instances().iter().map(|nodes| format!("supernode_row!({}, {});\n", supernodes::name(nodes), supernodes::macro_args(nodes))).collect();
+    fs::write(out.join("instances.rs"), instances + &heap + &supers).unwrap();
     let object = compile(&out);
     fs::write(&table, stencil_table(&fs::read(&object).unwrap())).unwrap();
 }

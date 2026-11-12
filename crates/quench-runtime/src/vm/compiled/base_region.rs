@@ -24,6 +24,7 @@ mod decode;
 mod link;
 mod plan;
 mod repr;
+mod tile;
 mod webs;
 use decode::*;
 use link::*;
@@ -177,10 +178,8 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
         merged.extend(split);
     };
     let layout = Layout { header, backedge, homes, webs, region };
-    let mut body = Vec::with_capacity(count);
-    for (k, row) in decoded.iter().enumerate() {
-        body.push(plan(row, &layout.homes, header + k as u32, is_general(row, &reprs))?);
-    }
+    let general: Vec<bool> = decoded.iter().map(|row| is_general(row, &reprs)).collect();
+    let body = tile::plan_all(&layout, &decoded, &general)?;
     let bare = decoded.iter().all(|row| row.heap.is_none());
     Ok((link(&layout, &body)?, bare))
 }
