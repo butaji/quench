@@ -83,6 +83,9 @@ pub(crate) enum Memory {
     Store(Access),
     /// `a = memory.size b`, in pages.
     Size,
+    /// `a = memory.grow b by c pages`: the size in pages before, or -1 where the memory cannot
+    /// grow. Trap-free.
+    Grow,
     /// `memory.fill`: the memory in `a`, the byte in `b`, the length in `c`, the destination
     /// in the register pair.
     Fill,
@@ -101,6 +104,7 @@ impl Memory {
         }
         match op.class() {
             Class::WasmMemorySize => Some(Self::Size),
+            Class::WasmMemoryGrow => Some(Self::Grow),
             Class::WasmMemoryFill => Some(Self::Fill),
             Class::WasmMemoryCopy => Some(Self::Copy),
             _ => None,
@@ -110,7 +114,13 @@ impl Memory {
     /// Whether the operation runs a native bulk or size operation, which needs the memory's
     /// representation to be the one compiled code supports.
     pub(crate) const fn needs_compiled_memory(self) -> bool {
-        matches!(self, Self::Size | Self::Fill | Self::Copy)
+        matches!(self, Self::Size | Self::Grow | Self::Fill | Self::Copy)
+    }
+
+    /// Whether the operation calls out to the VM, which changes the memory's length: the
+    /// program's callouts must be available, and the tier reads the length again after it.
+    pub(crate) const fn needs_callouts(self) -> bool {
+        matches!(self, Self::Grow)
     }
 }
 
@@ -145,6 +155,16 @@ pub(crate) trait WasmMemoryWrite: WasmMemory {
     /// `length` bytes from `source` to `destination`, both in range; overlapping ranges copy
     /// as if through a temporary buffer.
     fn memory_copy(&mut self, destination: Self::Word, source: Self::Word, length: Self::Word);
+}
+
+/// The linear memory a function grows: the machine grows it, as the VM does for the
+/// interpreter (`LinearBytes::grow_pages`), and the length every later access reads is the new
+/// one.
+pub(crate) trait WasmMemoryGrow: WasmStage {
+    /// Grows the memory by the `I32` word `pages` of pages: the `I32` word of its size in
+    /// pages before, or -1 where it cannot grow (past its maximum, or refused by the host).
+    /// Trap-free; a failed growth changes nothing.
+    fn memory_grow(&mut self, pages: Self::Word) -> Self::Word;
 }
 
 /// A trap where the `extent` bytes from `index` pass the end of the memory.
@@ -261,7 +281,9 @@ impl Memory {
     /// The registers naming the memory the operation reads: its binding register.
     pub(crate) fn memories(self, instruction: WideInstruction) -> [Option<u16>; 2] {
         match self {
-            Self::Load(_) | Self::Store(_) | Self::Size => [Some(instruction.b()), None],
+            Self::Load(_) | Self::Store(_) | Self::Size | Self::Grow => {
+                [Some(instruction.b()), None]
+            }
             Self::Fill => [Some(instruction.a()), None],
             Self::Copy => [Some(instruction.a()), Some(instruction.b())],
         }
@@ -270,7 +292,7 @@ impl Memory {
     /// The registers holding 32-bit addresses, lengths and bytes the operation reads.
     pub(crate) fn operands(self, instruction: WideInstruction) -> [Option<u16>; 3] {
         match self {
-            Self::Load(_) | Self::Store(_) => [Some(instruction.c()), None, None],
+            Self::Load(_) | Self::Store(_) | Self::Grow => [Some(instruction.c()), None, None],
             Self::Size => [None, None, None],
             Self::Fill => {
                 let (destination, _) = instruction.register_pair();

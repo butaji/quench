@@ -544,8 +544,8 @@ lane_accesses! {
 }
 
 /// The Memory32 binding `operator` shares with the body's other loads and stores,
-/// `memory.size` and `memory.fill`, by memory index: one register loaded once per call
-/// serves vector and lane accesses as it serves the direct ones.
+/// `memory.size`, `memory.grow` and `memory.fill`, by memory index: one register loaded once
+/// per call serves vector and lane accesses as it serves the direct ones.
 pub(super) fn direct_access_memory(
     memories: &[WasmMemory],
     operator: &wasmparser::Operator<'_>,
@@ -556,9 +556,9 @@ pub(super) fn direct_access_memory(
         .or_else(|| lane_access(operator).map(|(_, _, memarg, _, _)| memarg))
         .map(|memarg| memarg.memory)
         .or(match operator {
-            wasmparser::Operator::MemorySize { mem } | wasmparser::Operator::MemoryFill { mem } => {
-                Some(*mem)
-            }
+            wasmparser::Operator::MemorySize { mem }
+            | wasmparser::Operator::MemoryGrow { mem }
+            | wasmparser::Operator::MemoryFill { mem } => Some(*mem),
             _ => None,
         })? as usize;
     memories

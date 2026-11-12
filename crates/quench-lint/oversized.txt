@@ -1514,7 +1514,7 @@ file-lines crates/quench-runtime/src/vm/typed_array.rs 1139
 file-lines crates/quench-runtime/src/vm/typed_array_access.rs 959
 file-lines crates/quench-runtime/src/vm/value_serializer.rs 1957
 file-lines crates/quench-runtime/src/vm/vector_region.rs 950
-file-lines crates/quench-runtime/src/vm/wasm.rs 6501
+file-lines crates/quench-runtime/src/vm/wasm.rs 6492
 file-lines crates/quench-runtime/src/vm/wasm_host.rs 1418
 file-lines crates/quench-runtime/src/vm/wasm_js.rs 1976
 file-lines crates/quench-runtime/src/vm/wasm_table.rs 1004

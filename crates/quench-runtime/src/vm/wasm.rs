@@ -1292,24 +1292,15 @@ impl<H: Host> Vm<H> {
         let _order = crate::shared_backing::memory_order();
         let page_size = self.wasm_memory_type(memory)?.page_size() as usize;
         let (mut bytes, max_byte_length) = self.wasm_memory_mut(memory)?;
-        let old_pages = bytes.len() / page_size;
-        let Some(length) = usize::try_from(delta)
-            .ok()
-            .and_then(|delta| delta.checked_mul(page_size))
-            .and_then(|extra| bytes.len().checked_add(extra))
-            .filter(|length| *length <= max_byte_length)
-        else {
+        let before = bytes.capacity();
+        let Some(old_pages) = bytes.grow_pages(delta, page_size, max_byte_length) else {
             return Ok(None);
         };
-        let before = bytes.capacity();
-        if !bytes.grow_to(length) {
-            return Ok(None);
-        }
         let after = bytes.capacity();
         drop(bytes);
         self.heap.adjust_external_bytes(before, after);
         self.refresh_wasm_memory_buffer(memory);
-        Ok(Some(old_pages as u64))
+        Ok(Some(old_pages))
     }
 
     /// The buffer viewing the memory's bytes, created on first request. Shared

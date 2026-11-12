@@ -5,13 +5,14 @@
 use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
 use super::{
-    Analysis, AnalysisState, CONTEXT_MEMORY_LENGTH, Emitter, Host, Kind, Region, Slot,
-    compiled_memory_copy, compiled_memory_fill, scalar_ir,
+    Analysis, AnalysisState, CONTEXT_MEMORY_LENGTH, CallContext, Emitter, Host, Kind, Region, Slot,
+    Vm, compiled_memory_copy, compiled_memory_fill, refresh_memory_length, scalar_ir,
 };
 use crate::bytecode::{Function, WideInstruction};
 use crate::staged::wasm_memory::{
-    Access, Memory, WasmMemory, WasmMemoryWrite, copy, fill, load, size, store,
+    Access, Memory, WasmMemory, WasmMemoryGrow, WasmMemoryWrite, copy, fill, load, size, store,
 };
+use crate::wasm::INDEX_GROW_FAILURE;
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, Signature, types};
 
 /// The byte widths of the narrow accesses.
@@ -95,6 +96,30 @@ impl<H: Host> WasmMemoryWrite for Emitter<'_, '_, H> {
     }
 }
 
+/// The VM's growth of the context's memory by `pages` pages (`Vm::wasm_memory_grow`): its size
+/// in pages before, or the failure word where it cannot grow. The memory's length in the
+/// context is read again after it, the event that changes it; its base never moves, the bytes
+/// being a reservation (`Analysis::callouts` is off for any other memory).
+unsafe extern "C" fn memory_grow_callout<H: Host>(context: *mut CallContext, pages: u64) -> u64 {
+    // SAFETY: compiled code passes the context `run_compiled` made, whose VM is suspended in
+    // that call.
+    let context = unsafe { &mut *context };
+    let vm = unsafe { &mut *context.vm.cast::<Vm<H>>() };
+    // Only the growth itself fails: the analysis admitted the context's memory binding.
+    let grown = vm.wasm_memory_grow(context.memory, pages);
+    refresh_memory_length(context, vm);
+    grown.ok().flatten().unwrap_or(INDEX_GROW_FAILURE as u64)
+}
+
+impl<H: Host> WasmMemoryGrow for Emitter<'_, '_, H> {
+    fn memory_grow(&mut self, pages: ir::Value) -> ir::Value {
+        let delta = self.memory_index(pages);
+        let context = self.body.core.context;
+        let before = self.call_leaf(memory_grow_callout::<H> as *const () as usize, [context, delta]);
+        self.body.core.builder.ins().ireduce(types::I32, before)
+    }
+}
+
 impl<H: Host> Emitter<'_, '_, H> {
     /// The host address of the memory's byte at `index + offset`.
     fn host_address(&mut self, index: ir::Value, offset: u32) -> ir::Value {
@@ -106,8 +131,13 @@ impl<H: Host> Emitter<'_, '_, H> {
             .iadd_imm_s(host, i64::from(offset))
     }
 
-    /// A call of a memory leaf: three words in, a status out that a checked range never fails.
-    fn call_leaf(&mut self, leaf: usize, arguments: [ir::Value; 3]) {
+    /// A call of a memory leaf: words in, a word out (the status of a checked range, which
+    /// never fails, or a growth's result).
+    fn call_leaf<const WORDS: usize>(
+        &mut self,
+        leaf: usize,
+        arguments: [ir::Value; WORDS],
+    ) -> ir::Value {
         let mut signature = Signature::new(self.call_conv);
         for _ in &arguments {
             signature.params.push(AbiParam::new(types::I64));
@@ -115,11 +145,13 @@ impl<H: Host> Emitter<'_, '_, H> {
         signature.returns.push(AbiParam::new(types::I64));
         let signature = self.body.core.builder.import_signature(signature);
         let target = self.body.core.builder.ins().iconst(types::I64, leaf as i64);
-        self.body
+        let call = self
+            .body
             .core
             .builder
             .ins()
             .call_indirect(signature, target, &arguments);
+        self.body.core.builder.inst_results(call)[0]
     }
 
     /// Lowers a linear-memory step. An access's address is a 32-bit index plus an offset plus
@@ -142,6 +174,11 @@ impl<H: Host> Emitter<'_, '_, H> {
             Memory::Size => {
                 let pages = size(self);
                 self.write(a, Kind::I32, pages);
+            }
+            Memory::Grow => {
+                let pages = self.read(c, Kind::I32);
+                let before = self.memory_grow(pages);
+                self.write(a, Kind::I32, before);
             }
             Memory::Fill => {
                 let (destination, _) = instruction.register_pair();
@@ -182,6 +219,7 @@ impl<H: Host> Analysis<'_, H> {
         (!step.needs_compiled_memory()
             || memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot)))
         .then_some(())?;
+        (!step.needs_callouts() || self.callouts).then_some(())?;
         for operand in step.operands(instruction).into_iter().flatten() {
             (value_kind(state.get(operand, registers)?)? == Kind::I32).then_some(())?;
         }
@@ -194,7 +232,9 @@ impl<H: Host> Analysis<'_, H> {
             Memory::Store(access) => (value_kind(state.get(instruction.a(), registers)?)?
                 == Kind::of(access.ty)?)
             .then_some(()),
-            Memory::Size => state.set(instruction.a(), registers, Slot::Value(Kind::I32)),
+            Memory::Size | Memory::Grow => {
+                state.set(instruction.a(), registers, Slot::Value(Kind::I32))
+            }
             Memory::Fill | Memory::Copy => Some(()),
         }
     }

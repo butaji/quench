@@ -8,8 +8,8 @@ use super::wasm_memory::{
 };
 use super::wasm_step::Step;
 use super::wasm_tests::Probe;
-use crate::bytecode::Op;
-use crate::wasm::memory::{MemoryLoad, MemoryStore, WASM_PAGE_BYTES, checked_range};
+use crate::bytecode::{Op, WideInstruction};
+use crate::wasm::memory::{LinearBytes, MemoryLoad, MemoryStore, WASM_PAGE_BYTES, checked_range};
 use crate::{WasmTrap, WasmType, WasmValue};
 
 const MEMORY_BYTES: usize = 24;
@@ -324,4 +324,31 @@ fn an_address_that_wraps_the_word_is_out_of_bounds() {
         Err(WasmTrap::OutOfBoundsMemory)
     );
     assert_eq!(written, bytes);
+}
+
+#[test]
+fn a_growth_names_its_memory_and_page_count_and_calls_out() {
+    assert_eq!(Memory::of(Op::WasmMemoryGrow), Some(Memory::Grow));
+    let grow = WideInstruction::new(Op::WasmMemoryGrow, 1, 2, 3, 0);
+    assert_eq!(Memory::Grow.memories(grow), [Some(2), None]);
+    assert_eq!(Memory::Grow.operands(grow), [Some(3), None, None]);
+    assert!(Memory::Grow.needs_compiled_memory());
+    let callouts: Vec<_> = [Memory::Size, Memory::Fill, Memory::Copy, Memory::Grow]
+        .into_iter()
+        .filter(|step| step.needs_callouts())
+        .collect();
+    assert_eq!(callouts, [Memory::Grow]);
+}
+
+#[test]
+fn a_growth_returns_the_pages_before_and_a_failed_one_changes_nothing() {
+    let (page, maximum) = (WASM_PAGE_BYTES, 4 * WASM_PAGE_BYTES);
+    let mut bytes = LinearBytes::heap(vec![0; 2 * page]);
+    assert_eq!(bytes.grow_pages(1, page, maximum), Some(2));
+    assert_eq!(bytes.len(), 3 * page);
+    assert_eq!(bytes.grow_pages(2, page, maximum), None);
+    assert_eq!(bytes.len(), 3 * page);
+    assert_eq!(bytes.grow_pages(0, page, maximum), Some(3));
+    assert_eq!(bytes.grow_pages(u64::MAX, page, usize::MAX), None);
+    assert_eq!(bytes.len(), 3 * page);
 }
