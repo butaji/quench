@@ -6149,7 +6149,10 @@ impl CompiledOsrRegion {
             let mut word = 0u64;
             // SAFETY: as the caller promises; the code reads the register file and writes
             // the result word.
-            let status = enter_native(&mut context, 0, 0, registers.cast::<u64>(),
+            // A stencil region (`Lean`) takes the frame, whose window is the register file; Cranelift code takes the file.
+            let mut shadow = ShadowFrame { window: registers as usize, ..ShadowFrame::EMPTY };
+            let arguments = if self.crossing == Crossing::Lean { (&raw mut shadow).cast::<u64>().cast_const() } else { registers.cast::<u64>().cast_const() };
+            let status = enter_native(&mut context, 0, 0, arguments,
                 &mut word, NativeEntryMode::Resumable, self.entry);
 
             if let Some(Raised::Panic(panic)) = context.raised.take() {
