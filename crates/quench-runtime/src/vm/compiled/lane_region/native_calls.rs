@@ -92,7 +92,7 @@ pub(super) type Intrinsics = Vec<Option<(Value, Inline)>>;
 /// direct callee is bound to it. Each with the function it held, whose identity the call guards.
 pub(super) fn intrinsic_calls(unit: &super::super::lane_unit::Unit, global_reads: &crate::vm::global_facts::GlobalReads,
     direct: impl Fn(usize) -> bool) -> Intrinsics {
-    unit.instructions.iter().enumerate().map(|(pc, instruction)| Some((pc, instruction)).filter(|(pc, instruction)| instruction.op().class().eq(Class::Call)
+    unit.instructions.iter().enumerate().map(|(pc, instruction)| Some((pc, instruction)).filter(|(pc, instruction)| instruction.op().is_call()
         && !direct(*pc) && !instruction.returns_from_frame()
         && !instruction.direct_eval() && !instruction.parameter_eval() && instruction.result_flags() == 0)
         .and_then(|(pc, instruction)| {

@@ -17,9 +17,9 @@ fn scalar(instruction: WideInstruction, constants: &[Value]) -> bool {
     {
         return false;
     }
-    match instruction.op().class() {
-        Class::Move | Class::IncDec | Class::ToNumeric | Class::GetField => true,
-        Class::LoadConst => constants
+    match instruction.op() {
+        opcode if opcode.is_move() || opcode.is_inc_dec() || opcode.is_to_numeric() || opcode.is_get_field() => true,
+        opcode if opcode.is_load_const() => constants
             .get(instruction.constant_index())
             .is_some_and(|v| v.as_number().is_some()),
         _ if instruction.op().js_denotation() == JsDenotation::NumericUnary => {
@@ -70,10 +70,7 @@ pub(super) fn ranges(program: &ResidualProgram, function_id: u32) -> Vec<std::op
     let admits = |range: &std::ops::Range<usize>| {
         let arithmetic = decoded[range.clone()]
             .iter()
-            .filter(|instruction| !matches!(
-                instruction.op().class(),
-                Class::Move | Class::LoadConst | Class::ToNumeric | Class::GetField
-            ))
+            .filter(|instruction| !instruction.op().copies_or_loads_scalar())
             .count();
         let mut produced = std::collections::BTreeSet::new();
         let mut removes_roundtrip = false;
@@ -88,7 +85,7 @@ pub(super) fn ranges(program: &ResidualProgram, function_id: u32) -> Vec<std::op
         }
         let fields = decoded[range.clone()]
             .iter()
-            .filter(|instruction| instruction.op().class().eq(Class::GetField))
+            .filter(|instruction| instruction.op().is_get_field())
             .count();
         // Retain a region when it removes a boxed producer/consumer roundtrip or an IncDec
         // semantic callout; isolated already-native math needs no wrapper. One field plus
@@ -118,7 +115,7 @@ pub(super) fn ranges(program: &ResidualProgram, function_id: u32) -> Vec<std::op
             // side of field reads rather than letting an inadmissible read erase them.
             let mut scalar_start = start;
             for (pc, instruction) in decoded.iter().enumerate().take(end).skip(start) {
-                if instruction.op().class().eq(Class::GetField) {
+                if instruction.op().is_get_field() {
                     let run = scalar_start..pc;
                     if scalar_start < pc && admits(&run) {
                         ranges.push(run);
