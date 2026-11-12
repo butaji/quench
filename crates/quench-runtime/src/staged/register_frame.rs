@@ -39,6 +39,37 @@ pub(crate) enum Protocol {
     AppendArray { length: usize, spread: bool },
 }
 
+/// The VM operations a staged row calls out for when its own words do not decide it, named as
+/// data. A frame answers one in place (`Frame::vm_step`): the interpreter's frame calls the VM
+/// method, the lane specializer's frame calls the lane helper that decodes the record and makes
+/// the same step (`dispatch_fast::lane_vm_step`), and a frame with no host declines.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum CallOut {
+    /// `left == right`, or `===` where `strict`, negated for `!=` and `!==`, by the VM's full
+    /// equality: strings and BigInts compare by contents, a conversion may run guest code.
+    Equality { left: Register, right: Register, strict: bool, negated: bool },
+    /// ToPropertyKey of `source` (`Vm::to_property_key`): a Number allocates, an object runs
+    /// guest code.
+    PropertyKey { source: Register },
+    /// An iteration or spread step over its operand registers (`Protocol`).
+    Protocol { step: Protocol, operands: [Option<Register>; 2] },
+    /// The next key of the for-in state in `state`; `Value::DELETED`, which no key is, once
+    /// none is left.
+    ForInNext { state: Register },
+}
+
+impl CallOut {
+    /// The registers the VM reads, in the order its operation takes them: the first operand
+    /// then the second, which is the only one an operation of a single operand has.
+    pub(crate) fn operands(self) -> [Option<Register>; 2] {
+        match self {
+            Self::Equality { left, right, .. } => [Some(left), Some(right)],
+            Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
+            Self::Protocol { operands, .. } => operands,
+        }
+    }
+}
+
 /// A register frame: each register's word and the static fact the stage keeps about it. A
 /// stage with no register facts uses `()`.
 pub(crate) trait Frame<S: Stage> {
@@ -168,17 +199,13 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn arguments_length(&mut self, _stage: &mut S, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
 
-    /// The iteration or spread `step` over its operand words (`Protocol`), which may run guest
-    /// code: the word it defines, `Some(None)` where it defines none, `None` where it raised
-    /// or the frame has no host, leaving the instruction to the interpreter.
+    /// The VM's own operation `operation` (`CallOut`), run in place where a row's words do not
+    /// decide it, defining `result` where the operation has one: the word it defined with the
+    /// fact the frame keeps of it, or a placeholder word where it defines none. `None` where the
+    /// frame has no host, or the operation raised, leaving the instruction to the interpreter.
     #[inline(always)]
-    fn protocol(&mut self, _stage: &mut S, _step: Protocol, _operands: [Option<S::Word>; 2])
-        -> Option<Option<(S::Word, Self::Fact)>> { None }
-
-    /// Define `destination` with the next key of the for-in state `state` unless none is
-    /// left; the condition that none is. `None` where the frame has no host.
-    #[inline(always)]
-    fn for_in_next(&mut self, _stage: &mut S, _destination: Register, _state: S::Word) -> Option<S::Cond> { None }
+    fn vm_step(&mut self, _stage: &mut S, _operation: CallOut, _result: Option<Register>)
+        -> Option<(S::Word, Self::Fact)> { None }
 
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.

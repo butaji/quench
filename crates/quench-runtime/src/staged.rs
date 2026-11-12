@@ -22,7 +22,9 @@ pub(crate) mod numeric;
 mod heap;
 mod global;
 mod names;
+mod callout;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
+pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
 pub(crate) mod entry;
@@ -53,7 +55,7 @@ mod stage;
 pub(crate) use stage::{Stage, Table};
 
 mod register_frame;
-pub(crate) use register_frame::{Constant, Frame, Protocol, Step, jump_if, load_this, logical_not, read_local, write_local};
+pub(crate) use register_frame::{CallOut, Constant, Frame, Protocol, Step, jump_if, load_this, logical_not, read_local, write_local};
 
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]

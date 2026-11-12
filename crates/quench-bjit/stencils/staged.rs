@@ -3,7 +3,7 @@ pub(crate) use stage::{Stage, Table};
 pub(crate) type Concrete = crate::stage::StencilStage;
 #[path = "../../quench-runtime/src/staged/effects.rs"] pub(crate) mod effects;
 #[path = "../../quench-runtime/src/staged/register_frame.rs"] mod register_frame;
-pub(crate) use register_frame::{Constant, Frame, Protocol, Step, jump_if, load_this, logical_not, read_local, write_local};
+pub(crate) use register_frame::{CallOut, Constant, Frame, Protocol, Step, jump_if, load_this, logical_not, read_local, write_local};
 pub(crate) use crate::bytecode::Register;
 #[path = "../../quench-runtime/src/staged/global.rs"] mod global;
 pub(crate) use global::GlobalFrame;
