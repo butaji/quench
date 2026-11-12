@@ -306,30 +306,8 @@ impl<H: Host> Vm<H> {
             return self.run_global_eval_instance(p, id, cache_source);
         }
         self.require_source_compilation(p)?;
-        let context = self.direct_eval_context(p).unwrap_or_default();
-        let private_names = if self.direct_eval {
-            self.direct_eval_private_names(p)
-                .map_or_else(Vec::new, |(_, names)| names)
-        } else {
-            Vec::new()
-        };
-        let caller_has_global_variables = self.frames.is_empty() || self.running_global_code();
-        // Annex B only concerns function declarations, which the text then names.
-        let annex_b_forbidden_names = if source.contains("function") {
-            self.annex_b_forbidden_names(caller_has_global_variables)
-        } else {
-            Vec::new()
-        };
-        let direct_key = self.direct_eval.then(|| {
-            cache_source.clone().map(|source| eval_source::DirectEvalKey {
-                source,
-                strict,
-                context,
-                private_names: private_names.clone(),
-                annex_b_forbidden_names: annex_b_forbidden_names.clone(),
-            })
-        }).flatten();
-        let cached = match &direct_key {
+        let mut facts = self.eval_caller_facts(p, source, strict, cache_source.as_ref());
+        let cached = match &facts.key {
             Some(key) => self.programs.cached_direct_eval(key),
             None => cache_source.as_ref().and_then(|source| self.programs.cached_global_eval(source)),
         };
@@ -354,9 +332,9 @@ impl<H: Host> Vm<H> {
             source_name,
             &*self,
             strict,
-            context,
-            &private_names,
-            &annex_b_forbidden_names,
+            facts.context,
+            &facts.private_names,
+            &facts.annex_b_forbidden_names,
         ),
         }
         .map_err(|diagnostics| {
@@ -375,8 +353,8 @@ impl<H: Host> Vm<H> {
         eval_source::keep_shared_text(&mut residual, shared_text);
         let cacheable = residual.functions.first().is_some_and(|root| !root.strict)
             && residual.replay.as_ref().map_or_else(|| !crate::Engine::eval_has_tagged_template(source), |replay| replay.template_sites == 0);
-        let cache_source = cache_source.filter(|_| cacheable && direct_key.is_none());
-        let direct_key = direct_key.filter(|_| cacheable);
+        let cache_source = cache_source.filter(|_| cacheable && facts.key.is_none());
+        let direct_key = facts.key.take().filter(|_| cacheable);
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
         };

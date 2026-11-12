@@ -23,7 +23,41 @@ pub(super) fn keep_shared_text(residual: &mut ResidualProgram, shared: Option<st
     }
 }
 
+/// What an eval's compilation reads of its caller, and the direct-eval cache key it makes.
+pub(super) struct CallerFacts {
+    pub(super) context: crate::compile::EvalContext,
+    pub(super) private_names: Vec<(String, String)>,
+    pub(super) annex_b_forbidden_names: Vec<String>,
+    pub(super) key: Option<DirectEvalKey>,
+}
+
 impl<H: Host> Vm<H> {
+    /// The caller facts of the eval of `source`; a direct eval of a cached text also gets its
+    /// cache key.
+    pub(super) fn eval_caller_facts(&mut self, p: &ResidualProgram, source: &str, strict: bool, text: Option<&EvalSource>) -> CallerFacts {
+        let context = self.direct_eval_context(p).unwrap_or_default();
+        let private_names = if self.direct_eval {
+            self.direct_eval_private_names(p).map_or_else(Vec::new, |(_, names)| names)
+        } else {
+            Vec::new()
+        };
+        let caller_has_global_variables = self.frames.is_empty() || self.running_global_code();
+        // Annex B only concerns function declarations, which the text then names.
+        let annex_b_forbidden_names = if source.contains("function") {
+            self.annex_b_forbidden_names(caller_has_global_variables)
+        } else {
+            Vec::new()
+        };
+        let key = text.filter(|_| self.direct_eval).map(|source| DirectEvalKey {
+            source: source.clone(),
+            strict,
+            context,
+            private_names: private_names.clone(),
+            annex_b_forbidden_names: annex_b_forbidden_names.clone(),
+        });
+        CallerFacts { context, private_names, annex_b_forbidden_names, key }
+    }
+
     /// The names a direct eval's Annex B function declarations may not bind: the caller's
     /// global lexical declarations (when it may declare globals) and the bindings a `var`
     /// would conflict with. Indirect eval has none.
