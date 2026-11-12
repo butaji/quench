@@ -123,7 +123,7 @@ fn leaves(function: &ir::Function, block: ir::Block, outside: impl Fn(ir::Block)
 }
 
 /// Adds the register-file and stack traffic of `inst`: a store of a word to the file is a box, a
-/// load from it or any stack access a spill.
+/// load from it or any access through a stack slot's address a spill.
 fn count_memory(
     function: &ir::Function,
     inst: ir::Inst,
@@ -137,8 +137,18 @@ fn count_memory(
             .zip(registers)
             .is_some_and(|(address, file)| function.dfg.resolve_aliases(*address) == file)
     };
+    let on_stack = |address: Option<&ir::Value>| {
+        address.is_some_and(|address| {
+            function
+                .dfg
+                .value_def(*address)
+                .inst()
+                .is_some_and(|def| function.dfg.insts[def].opcode() == ir::Opcode::StackAddr)
+        })
+    };
+    let address = if opcode.can_store() { args.get(1) } else { args.first() };
     match opcode {
-        ir::Opcode::StackLoad | ir::Opcode::StackStore => residual.spills += 1,
+        _ if (opcode.can_store() || opcode.can_load()) && on_stack(address) => residual.spills += 1,
         _ if opcode.can_store() && in_file(args.get(1)) => residual.boxes += 1,
         _ if opcode.can_load() && in_file(args.first()) => residual.spills += 1,
         _ => {}
