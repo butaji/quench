@@ -60,7 +60,7 @@ impl Op {
                 | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof | Op::ResolveName | Op::LoadResolvedName | Op::DeleteName | Op::StoreName | Op::StoreResolvedName
                 | Op::LoadCallee | Op::LoadImportMeta | Op::LoadCapture | Op::StoreCapture
                 | Op::MakeClosure | Op::MakeArray | Op::MakeConstArray | Op::MakeObject | Op::MakeObject2 | Op::MakeObjectLiteral
-                | Op::MakeLiteralTemplate | Op::CreateRegExpLiteral | Op::CacheTemplateObject | Op::LoadCachedTemplateObject
+                | Op::MakeLiteralTemplate | Op::SuperConstArrayObject2 | Op::CreateRegExpLiteral | Op::CacheTemplateObject | Op::LoadCachedTemplateObject
                 | Op::StringCaseIndex | Op::StringConcat | Op::Delete | Op::GetAsyncIterator
                 | Op::GetField | Op::GetIndex | Op::SetIndex | Op::SetField | Op::SetThisField | Op::SetFieldStrict | Op::SetThisFieldStrict
                 | Op::ValidateClassHeritage | Op::SuperCallCheck

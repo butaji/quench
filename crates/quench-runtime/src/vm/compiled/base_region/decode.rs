@@ -379,8 +379,10 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32,
 /// string, a BigInt): the tagged word the compiling VM holds for it, written as it is
 /// (`Source::Value`), where the VM has the program's constants (`Known::constants`).
 fn value_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
-    let loads = instruction.op().class() == Class::LoadConst && instruction.result_flags() == 0;
-    let value = known.constants.get(instruction.constant_index()).filter(|_| loads)?;
+    if instruction.op().class() != Class::LoadConst || instruction.result_flags() != 0 {
+        return None;
+    }
+    let value = known.constants.get(instruction.constant_index())?;
     Some(Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Value(value.to_bits())), None, None))
 }
 

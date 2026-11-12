@@ -48,7 +48,9 @@ unsafe fn lane_body_value_step_record<H: Host>(_vm: u64, _residual: u64, context
 
 /// The record at `call_pc`, an instruction whose general step only continues, jumps or throws
 /// (`Op::steps_in_body`: the lane's own in-place steps and those that may replace the frame's
-/// environment), made by that step on the running frame as
+/// environment), or a call form that is not a plain call or a construction over registers
+/// (`Op::makes_script_call`: the callee runs as it does for any call a helper makes, the body's
+/// activation not pushed, so its result is the step's), made by that step on the running frame as
 /// `lane_general_step` makes it: `LANE_CALL_COMPLETED` with its effects in the frame,
 /// `LANE_CALL_BRANCHED` where it also took its conditional jump (`ForInNext` past its last key),
 /// or `LANE_CALL_MISSED` where it raised (the error stashed for the general path to raise at the

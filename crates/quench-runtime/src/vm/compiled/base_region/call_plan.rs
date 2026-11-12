@@ -18,7 +18,8 @@
 //!    across a call row).
 //!
 //! `plan_step` is the same chain for any instruction the helper runs in place (`steps`): spills,
-//! the helper row, reloads.
+//! the helper row, reloads. The calls of the other forms (`CallForm`) are this chain with their own
+//! helper row and no direct row; a returning call has no reloads, the completion following it.
 //!
 //! Successors are chain-local: a part's `taken` is the index of the part it branches to, and
 //! `parts.len()` means the part after the chain (the next instruction). A part's `exits`, by
@@ -337,6 +338,20 @@ mod tests {
     fn facts(registers: u16, params: u16) -> DirectFacts {
         let cell = CellFacts { registers, room: registers, params, entry: ENTRY_ACTIVATES as u8 };
         DirectFacts { callee: 7, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, registers, construction: false, frame_bytes: 32 }
+    }
+
+    /// Each call opcode has its form, and an instruction that is no call, or carries a result flag, has none.
+    #[test]
+    fn each_call_opcode_has_its_form() {
+        use crate::bytecode::{Op, RETURN_REGISTER};
+        let form = |op| CallForm::of(WideInstruction::new(op, 1, 2, 3, 0));
+        assert_eq!((form(Op::Call), form(Op::Construct)), (Some(CallForm::Plain), Some(CallForm::Construct)));
+        for op in [Op::CallMethod, Op::CallThisMethod, Op::CallKnown, Op::CallArray, Op::CallSpread, Op::CallForwardingArguments] {
+            assert_eq!(form(op), Some(CallForm::Stepped), "{op:?}");
+        }
+        assert_eq!(form(Op::Move), None);
+        assert_eq!(CallForm::of(WideInstruction::new(Op::Call, 1 | RETURN_REGISTER, 2, 3, 0)), None);
+        assert_eq!([CallForm::Plain, CallForm::Construct, CallForm::Stepped].map(CallForm::helper).map(|helper| helper as usize).len(), 3);
     }
 
     #[test]

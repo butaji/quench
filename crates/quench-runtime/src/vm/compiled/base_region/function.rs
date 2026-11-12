@@ -1,8 +1,10 @@
 //! A whole function as one stitched body: every instruction is a row the base-region decode
 //! covers (the numeric rows, the heap rows read through the heap's own tables: an array
-//! word's record, a field's cache entry, the activation's captures, a helper step, a `Call`
-//! the call planner chains, a `Return` of a register, or a `throw`: the catch's jump where a handler
-//! of the function covers it, else the raising step) or a leave row at its PC, where the
+//! word's record, a field's cache entry, the activation's captures, a fast arm over the activation's
+//! locals or a value's tag with the interpreter's step behind it, a helper step, a call of any form the
+//! call planner chains, a `Return` of a register, or a `throw`: the catch's jump where a handler
+//! of the function covers it, else the raising step), followed by the completion with its result where
+//! the instruction carries the return flag, or a leave row at its PC, where the
 //! interpreter resumes exactly (`steps` lists which instructions are those). The rows, webs and homes are the loop regions' (`analyze`,
 //! `plan`, `link`); the body is entered and left as a lane body is (`Ending::Body`), and polls
 //! the interrupt flag at every branch back (`Ending::poll`).
@@ -196,9 +198,8 @@ fn plan_row(layout: &Layout, reprs: &Reprs, reached: bool, pc: u32, row: &Decode
     if leaves(layout, row) {
         return plan_step(&Decoded::step(Step::Leave, None), layout, pc, helpers);
     }
-    let mut planned = plan(row, layout, pc, is_general(row, reprs), helpers)?;
     // The preludes come before the row's own run (a chain's spills): their leaves write the pinned registers back themselves.
-    planned.pre.splice(0..0, preludes(layout, row, pc)?);
+    let mut planned = plan(row, layout, pc, is_general(row, reprs), helpers)?.after(preludes(layout, row, pc)?);
     if row.completes {
         planned = completing(planned, layout, pc, row.dst)?;
     }

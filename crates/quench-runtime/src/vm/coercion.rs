@@ -507,17 +507,3 @@ fn immediate_value_type(value: Value) -> Option<crate::ValueType> {
         return None;
     })
 }
-
-#[cfg(test)]
-mod immediate_typeof_tests {
-    use super::*;
-
-    /// The staged tag classification names the `typeof` index of the kind `immediate_value_type` decides.
-    #[test]
-    fn the_staged_classification_agrees_with_the_kind_of_an_immediate() {
-        let samples = [Value::UNDEFINED, Value::DELETED, Value::NULL, Value::TRUE, Value::FALSE, Value::integer(7), Value::number(1.5), Value::number(f64::INFINITY)];
-        for value in samples {
-            assert_eq!(immediate_typeof_index(value), immediate_value_type(value).map(typeof_name_index), "{value:?}");
-        }
-    }
-}

@@ -108,6 +108,22 @@ pub(super) struct Planned {
 }
 
 impl Planned {
+    /// The run with the rows `before` laid out ahead of it at the same PC: the parts the run names by
+    /// index (`Branch::Part`) are `before.len()` parts later.
+    pub(super) fn after(mut self, before: Vec<Planned>) -> Self {
+        let shift = before.len();
+        let later = |part: &mut Planned| {
+            if let Some(Branch::Part(index)) = &mut part.branch {
+                *index += shift;
+            }
+        };
+        self.pre.iter_mut().for_each(later);
+        later(&mut self);
+        self.post.iter_mut().for_each(later);
+        self.pre.splice(0..0, before);
+        self
+    }
+
     pub(super) fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
         Self { stencil, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: None }
     }
