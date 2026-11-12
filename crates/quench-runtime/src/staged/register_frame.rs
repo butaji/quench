@@ -23,6 +23,22 @@ impl Constant {
     }
 }
 
+/// An iteration or spread step the host makes by the interpreter's own definition
+/// (`Vm::value_step`): the protocol runs guest code (`@@iterator`, `next`, `return`), so a
+/// frame answers it with a callout.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Protocol {
+    /// The iterator of the operand (`GetIterator`).
+    GetIterator,
+    /// The for-in state over the operand's key snapshot (`ForInStart`).
+    ForInStart,
+    /// Close the iterator in the operand (`IteratorClose`).
+    IteratorClose,
+    /// Append `length` holes to the array operand, then the optional element operand, spread
+    /// where `spread` (`AppendArray`).
+    AppendArray { length: usize, spread: bool },
+}
+
 /// A register frame: each register's word and the static fact the stage keeps about it. A
 /// stage with no register facts uses `()`.
 pub(crate) trait Frame<S: Stage> {
@@ -136,6 +152,33 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     #[allow(dead_code)]
     fn ret(&mut self, _stage: &mut S, _value: S::Word) -> Option<Self::Control> { None }
+
+    /// The activation's environment storage word and the fact its slot reads carry
+    /// (`environment::environment_slot`); `None` where the frame holds no environment.
+    #[inline(always)]
+    fn environment(&mut self, _stage: &mut S) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// Store `value` to environment slot `slot`; `None` where the frame cannot, leaving the
+    /// binding rules (an uninitialized or constant binding, a `with` scope) to the host.
+    #[inline(always)]
+    fn environment_write(&mut self, _stage: &mut S, _slot: u16, _value: S::Word) -> Option<()> { None }
+
+    /// The count of the arguments binding in local `slot`, an int32 word; `None` where the
+    /// binding is not one only kept values answer.
+    #[inline(always)]
+    fn arguments_length(&mut self, _stage: &mut S, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// The iteration or spread `step` over its operand words (`Protocol`), which may run guest
+    /// code: the word it defines, `Some(None)` where it defines none, `None` where it raised
+    /// or the frame has no host, leaving the instruction to the interpreter.
+    #[inline(always)]
+    fn protocol(&mut self, _stage: &mut S, _step: Protocol, _operands: [Option<S::Word>; 2])
+        -> Option<Option<(S::Word, Self::Fact)>> { None }
+
+    /// Define `destination` with the next key of the for-in state `state` unless none is
+    /// left; the condition that none is. `None` where the frame has no host.
+    #[inline(always)]
+    fn for_in_next(&mut self, _stage: &mut S, _destination: Register, _state: S::Word) -> Option<S::Cond> { None }
 
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.

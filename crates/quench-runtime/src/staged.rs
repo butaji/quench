@@ -21,8 +21,8 @@ mod concrete;
 pub(crate) mod numeric;
 mod heap;
 mod global;
+mod names;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
-pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod elements;
 pub(crate) mod entry;
@@ -53,7 +53,7 @@ mod stage;
 pub(crate) use stage::{Stage, Table};
 
 mod register_frame;
-pub(crate) use register_frame::{Constant, Frame, Step, jump_if, load_this, logical_not, read_local, write_local};
+pub(crate) use register_frame::{Constant, Frame, Protocol, Step, jump_if, load_this, logical_not, read_local, write_local};
 
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]
@@ -122,6 +122,25 @@ pub(crate) enum Operation<W, P> {
     /// same word, two int32s, or `null` and `undefined` under `==`. Any other pair leaves at the
     /// miss edge, where the VM compares (strings, BigInts, conversions that run guest code).
     Equality { destination: Register, left: Register, right: Register, strict: bool, negated: bool },
+    /// Define `destination` from environment slot `slot` (`environment::environment_slot`); a
+    /// sparse storage or an internal marker leaves at the frame's miss edge.
+    LoadEnvLocal { destination: Register, slot: u16 },
+    /// Write `source` to environment slot `slot`, and to `result` where the instruction has one.
+    StoreEnvLocal { source: Register, slot: u16, result: Option<Register> },
+    /// Define `destination` with the length of the arguments binding in local `slot`.
+    ArgumentsLength { destination: Register, slot: u16 },
+    /// Define `destination` with the `typeof` name of the global `atom` through cache `site`
+    /// (the lane's own read); an unresolvable name is `undefined`, not an error.
+    GlobalTypeof { destination: Register, atom: u32, site: u16 },
+    /// The global-name store of `source` to `atom` through cache `site`, an initialization
+    /// where `initialize`; a binding the lane's store does not take leaves at the miss edge.
+    GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool },
+    /// An iteration or spread step (`Protocol`) over the `operands` registers, defining
+    /// `destination` where it has one; the generic protocol runs guest code, a callout.
+    Protocol { step: Protocol, destination: Option<Register>, operands: [Option<Register>; 2] },
+    /// Define `destination` with the next key of the for-in state in register `state`; continue
+    /// at the jump target once none is left.
+    ForInNext { destination: Register, state: Register },
     /// The VM field-store helper for `object.atom = value` through cache `site`.
     FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
 }
@@ -146,7 +165,7 @@ impl<W, P> Operation<W, P> {
                 register: instruction.register_a(), taken: true },
             Op::Binary | Op::ToPropertyKey => return Self::decode_generic(instruction),
             Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary => return Self::decode_value(instruction),
-            _ => return None,
+            _ => return names::decode(instruction),
         })
     }
 

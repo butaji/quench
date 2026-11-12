@@ -198,10 +198,11 @@ fn every_staged_opcode_decodes_to_one_operation() {
     let constants = [Constant::untyped(Value::number(1.0))];
     let staged = [Op::Move, Op::LoadConst, Op::LoadLocalPlain, Op::StoreLocalPlain,
         Op::Jump, Op::JumpFalse, Op::JumpTrue, Op::LoadThis, Op::RequireObjectCoercible,
-        Op::ToNumeric, Op::ToPropertyKey];
+        Op::ToNumeric, Op::ToPropertyKey, Op::LoadEnvLocal, Op::StoreEnvLocal, Op::ArgumentsLength, Op::LoadNameTypeof,
+        Op::StoreName, Op::ForInNext, Op::ForInStart, Op::GetIterator, Op::IteratorClose, Op::AppendArray];
     for op in staged {
         assert_eq!(op.semantics(), Semantics::Staged, "{op:?}");
-        let instruction = WideInstruction::new(op, 1, 2, 3, 0);
+        let instruction = WideInstruction::new(op, 1, 1, 1, 0);
         assert!(Operation::<u64, ()>::decode(instruction, |index| constants.get(index).copied()).is_some(),
             "{op:?} must decode to a staged operation");
     }
