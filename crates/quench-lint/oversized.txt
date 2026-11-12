@@ -5309,7 +5309,6 @@ magic quench-bench/src/contention.rs::percentile 1
 magic quench-bench/src/main.rs::corpus_record 1
 magic quench-bench/src/main.rs::fail 1
 magic quench-bench/src/main.rs::host_memory_bytes 1
-magic quench-bench/src/main.rs::main 1
 magic quench-bench/src/main.rs::materialize_with_runner 1
 magic quench-bench/src/main.rs::median_f64 1
 magic quench-bench/src/main.rs::median_u128 1

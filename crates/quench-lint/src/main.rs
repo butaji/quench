@@ -6,8 +6,10 @@
 //! (`magic`), when data is laid out against data-oriented design (`data_layout`), or when
 //! code tests a function's address for identity (`fn_identity`).
 //!
-//! usage: quench-lint [--update] [ROOT...]   (default: crates quench-bench/src tools)
+//! usage: quench-lint [--update] [ROOT...]   |   quench-lint --census [--update-census]   (default: crates quench-bench/src tools)
 
+mod census;
+mod census_metrics;
 mod data_layout;
 mod decision_trees;
 mod duplicates;
@@ -75,6 +77,10 @@ fn scan(files: &[PathBuf]) -> Result<(duplicates::Duplicates, shape::Measures, d
 }
 
 fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == census::CENSUS_FLAG) {
+        return census::run(&args);
+    }
     let (update, roots): (Vec<String>, Vec<String>) = std::env::args().skip(1).partition(|arg| arg == UPDATE_FLAG);
     let roots = if roots.is_empty() { DEFAULT_ROOTS.iter().map(|root| root.to_string()).collect() } else { roots };
     let mut files = Vec::new();

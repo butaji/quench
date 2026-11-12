@@ -18,7 +18,6 @@ pub(in crate::vm::compiled) struct Emit<'a, 'b> {
 #[derive(Clone, Copy)]
 pub(in crate::vm::compiled) enum EmitImm {
     Const(u64),
-    Value(ir::Value),
 }
 
 impl From<u64> for EmitImm { fn from(bits: u64) -> Self { Self::Const(bits) } }
@@ -27,7 +26,7 @@ impl From<u32> for EmitImm { fn from(bits: u32) -> Self { Self::Const(u64::from(
 impl Emit<'_, '_> {
     /// `imm` as an operand: Cranelift folds a constant operand back into the instruction's immediate.
     fn word(&mut self, imm: EmitImm) -> ir::Value {
-        match imm { EmitImm::Const(bits) => self.constant(bits), EmitImm::Value(value) => value }
+        match imm { EmitImm::Const(bits) => self.constant(bits) }
     }
 }
 
@@ -43,7 +42,6 @@ impl Stage for Emit<'_, '_> {
     fn load_site(&mut self, base: ir::Value, offset: EmitImm) -> ir::Value {
         match offset {
             EmitImm::Const(bits) => self.load_u64(base, bits as i32),
-            EmitImm::Value(value) => { let address = self.add(base, value); self.load_u64(address, 0) }
         }
     }
     fn shape_in_site(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value { self.shape_in(shape, shapes) }

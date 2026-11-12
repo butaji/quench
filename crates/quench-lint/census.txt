@@ -1,0 +1,9 @@
+opcodes 268
+opcodes_with_staged_operation 11
+hand_semantics_lines 0
+tier_opcode_arms 162
+frame_structs 10
+exit_mechanisms 11
+tier_policy_constants 50
+entry_kinds 26
+stencil_opcodes 0

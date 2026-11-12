@@ -1,19 +1,15 @@
 //! Stencil rows that read the heap: a captured value, a dense array element read or replaced, an
-//! entry-record field. Each row is the existing staged / emit helpers lowered into a stencil
-//! (`quench_bjit::generate`) beside the Cranelift specializer, so a row has one definition of
-//! its layout reads; the stencils are generated on first use and shared for the process.
+//! entry-record field. Each row is the staged row (`staged/{environment,elements,entry,value}.rs`)
+//! run on the stencil stage and compiled by rustc at build time (`quench-bjit/stencils`), so a row
+//! has one definition of its layout reads across the interpreter, the specializers and here.
 //!
 //! Operands are holes: 0 is the destination frame offset (the array's, for a store), 1 and 2 the
-//! operands' (a field row's entry-record byte offset in 1). Every failed proof leaves through exit
-//! 0 with nothing written, so the interpreter runs the instruction.
+//! operands' (a field row's entry-record byte offset in 1; a capture's slot and the slot's byte
+//! offset). Every failed proof leaves through exit 0 with nothing written, so the interpreter
+//! runs the instruction.
 
-use super::{emit_dense_array_view, DenseArrayView, emit_dense_element, emit_dense_element_replace, emit_js_payload_word, CallContext, JsStepDispatch};
-use super::object_slots::EmitImm;
-use crate::staged::{self, Stage};
-use cranelift_codegen::ir;
-use quench_bjit::numeric::{self, Place};
-use quench_bjit::row::{Operand, RowBuilder, Source, Ty};
-use quench_bjit::{Stencil, StencilBuilder, generate};
+use quench_bjit::numeric::{library, Place};
+use quench_bjit::Stencil;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -44,105 +40,75 @@ pub(super) struct HeapRow {
     pub(super) entry: bool,
 }
 
-/// The activation's dispatch payload: the context's adapter pointer, which never changes during a run (so the load may merge).
-fn payload(b: &mut StencilBuilder) -> ir::Value {
-    let mut stage = super::object_slots::emit(b.b);
-    let address = stage.add_imm(b.context, std::mem::offset_of!(CallContext, adapter_payload) as u64);
-    stage.load_table(address)
-}
-
-fn capture(b: &mut StencilBuilder, payload: ir::Value, slot: u16, miss: ir::Block) -> ir::Value {
-    let values = emit_js_payload_word(b.b, payload, std::mem::offset_of!(JsStepDispatch, capture_values));
-    let len = emit_js_payload_word(b.b, payload, std::mem::offset_of!(JsStepDispatch, capture_len));
-    let mut stage = super::object_slots::emit(b.b);
-    staged::environment::dense_capture(&mut stage, values, len, slot, miss).expect("the emit stage continues past its guards")
-}
-
-/// The view of the array whose entry-record element pointer sits at `hole` (`staged::entry::entry_backing`).
-fn entry_view(b: &mut StencilBuilder, payload: ir::Value, hole: u32, writable: bool) -> DenseArrayView {
-    let entry = emit_js_payload_word(b.b, payload, std::mem::offset_of!(JsStepDispatch, loop_entry));
-    let at = b.operand(Operand::Hole(hole), Ty::I64);
-    let (values, length) = staged::entry::entry_backing(&mut super::object_slots::emit(b.b), entry, EmitImm::Value(at));
-    DenseArrayView { values, length, writable, uncounted: false }
-}
-
-fn element(b: &mut StencilBuilder, payload: ir::Value, row: HeapRow, miss: ir::Block) -> ir::Value {
-    let index = numeric::index_of(b, row.b, numeric::SECOND);
-    let view = if row.entry {
-        entry_view(b, payload, 1, false)
-    } else {
-        let base = b.read(Source::Frame(Operand::Hole(1)), Ty::Word);
-        emit_dense_array_view(b.b, payload, base, false, miss)
-    };
-    emit_dense_element(b.b, view, index, miss).1
-}
-
-fn store(b: &mut StencilBuilder, payload: ir::Value, row: HeapRow, miss: ir::Block) {
-    let index = numeric::index_of(b, row.b, numeric::SECOND);
-    let value = numeric::number_word(b, row.a, 1);
-    let view = if row.entry {
-        entry_view(b, payload, 0, true)
-    } else {
-        let base = b.read(Source::Frame(Operand::Hole(0)), Ty::Word);
-        emit_dense_array_view(b.b, payload, base, true, miss)
-    };
-    let (address, old) = emit_dense_element(b.b, view, index, miss);
-    emit_dense_element_replace(b.b, view, address, old, value);
-    b.next();
-}
-
-fn field(b: &mut StencilBuilder, payload: ir::Value) -> ir::Value {
-    let entry = emit_js_payload_word(b.b, payload, std::mem::offset_of!(JsStepDispatch, loop_entry));
-    let at = b.operand(Operand::Hole(1), Ty::I64);
-    staged::entry::entry_word(&mut super::object_slots::emit(b.b), entry, EmitImm::Value(at))
-}
-
-fn emit(b: &mut StencilBuilder, row: HeapRow) {
-    let miss = b.exit_block(0);
-    let payload = payload(b);
-    let word = match row.heap {
-        Heap::Capture(slot) => capture(b, payload, slot, miss),
-        Heap::Index => element(b, payload, row, miss),
-        Heap::Field => field(b, payload),
-        Heap::Store => return store(b, payload, row, miss),
-        Heap::Array => {
-            let base = b.read(Source::Frame(Operand::Hole(1)), Ty::Word);
-            let is_array = staged::value::is_direct_array(&mut super::object_slots::emit(b.b), base);
-            b.guard(is_array, 0);
-            return b.next();
+impl Heap {
+    /// The row's code in `quench_bjit::numeric::library`.
+    pub(super) fn code(self) -> u8 {
+        match self {
+            Heap::Capture(_) => library::CAPTURE_ROW,
+            Heap::Index => library::INDEX_ROW,
+            Heap::Store => library::STORE_ROW,
+            Heap::Field => library::FIELD_ROW,
+            Heap::Array => library::ARRAY_ROW,
         }
-    };
-    numeric::deliver(b, row.dst, word);
+    }
 }
 
-/// The stencil of `row`: generated on first use, then shared for the process.
+/// The stencil of `row`, built at compile time by rustc; a row the library lacks declines the region.
 pub(super) fn stencil(row: HeapRow) -> Result<&'static Stencil, String> {
-    static TABLE: Mutex<Option<HashMap<HeapRow, &'static Stencil>>> = Mutex::new(None);
+    static TABLE: Mutex<Option<HashMap<library::HeapCode, &'static Stencil>>> = Mutex::new(None);
+    let code = library::heap_canonical((row.heap.code(), row.entry, row.dst.code(), row.a.code(), row.b.code()));
     let mut table = TABLE.lock().map_err(|e| e.to_string())?;
     let table = table.get_or_insert_with(HashMap::new);
-    if let Some(found) = table.get(&row) {
+    if let Some(found) = table.get(&code) {
         return Ok(found);
     }
-    let started = std::time::Instant::now();
-    let made = numeric::isa().and_then(|isa| generate(isa, |b| emit(b, row)));
-    numeric::add_generation_ns(started.elapsed().as_nanos() as u64);
-    let made = made?;
-    let stencil: &'static Stencil = Box::leak(Box::new(made));
-    table.insert(row, stencil);
+    let found = quench_bjit::rustc::stencil(&library::heap_name(code)).ok_or_else(|| format!("no stencil row {row:?}"))?;
+    let stencil: &'static Stencil = Box::leak(Box::new(found));
+    table.insert(code, stencil);
     Ok(stencil)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
-    /// The field-read row's code size and relocations; with `STENCIL_DUMP=dir` its bytes are written there.
+    /// The numbers the stencil rows are compiled with (`quench-bjit/stencils/layout.rs`) are
+    /// the runtime's own.
+    use super::super::{CallContext, JsStepDispatch};
+    #[allow(dead_code)]
+    mod stencil_layout {
+        include!("../../../../quench-bjit/stencils/layout.rs");
+    }
+
     #[test]
-    fn field_read_row_generates() {
-        let stencil = stencil(HeapRow { heap: Heap::Field, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false }).unwrap();
-        eprintln!("field-read: {} bytes, relocs {:?}, imm32 {:?}", stencil.code.len(), stencil.relocs, stencil.imm32);
-        if let Ok(dir) = std::env::var("STENCIL_DUMP") {
-            std::fs::write(format!("{dir}/field_read_cranelift.bin"), &stencil.code).unwrap();
-        }
+    fn stencil_layout_matches() {
+        use crate::value::{NarrowLayout, ValueLayout};
+        use stencil_layout as mirror;
+        eprintln!("OFFSETS {} {} {} {} {}", std::mem::offset_of!(CallContext, adapter_payload), std::mem::offset_of!(JsStepDispatch, loop_entry), std::mem::offset_of!(JsStepDispatch, capture_values), std::mem::offset_of!(JsStepDispatch, capture_len), std::mem::offset_of!(JsStepDispatch, array_record_base));
+        assert_eq!(format!("{:?}", crate::heap::NATIVE_OBJECT_LAYOUT), format!("{:?}", mirror::NATIVE_OBJECT_LAYOUT));
+        assert_eq!(format!("{:?}", crate::heap::NATIVE_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_ARRAY_LAYOUT));
+        assert_eq!(format!("{:?}", crate::heap::NATIVE_ENVIRONMENT_LAYOUT), format!("{:?}", mirror::NATIVE_ENVIRONMENT_LAYOUT));
+        let (cache, copy) = (crate::vm::NATIVE_FIELD_CACHE_LAYOUT, mirror::NATIVE_FIELD_CACHE_LAYOUT);
+        assert_eq!([cache.entry_size, cache.receiver_offset, cache.holder_offset, cache.slot_offset], [copy.entry_size, copy.receiver_offset, copy.holder_offset, copy.slot_offset]);
+        assert_eq!(
+            [cache.receiver_complement, cache.holder_complement, cache.slot_complement, cache.own_holder],
+            [copy.receiver_complement, copy.holder_complement, copy.slot_complement, copy.own_holder]
+        );
+        assert_eq!(
+            [crate::heap::OTHERS_UNKNOWN as u64, crate::heap::LENGTH_FROM_VALUES as i64 as u64, crate::heap::OTHERS_FROM_VALUES as i64 as u64, crate::value_vec::INLINE_PROPERTY_COUNT as u64],
+            [mirror::OTHERS_UNKNOWN as u64, mirror::LENGTH_FROM_VALUES as i64 as u64, mirror::OTHERS_FROM_VALUES as i64 as u64, mirror::INLINE_PROPERTIES as u64]
+        );
+        use mirror::words as w;
+        assert_eq!(
+            [ValueLayout::TAG_MASK, ValueLayout::INT_TAG, ValueLayout::INTERNAL_TAG, ValueLayout::HEAP_TAG, ValueLayout::DIRECT_ARRAY_TAG, ValueLayout::DIRECT_OBJECT_TAG, ValueLayout::DIRECT_FUNCTION_TAG, ValueLayout::HEAP_FAMILY_MASK, ValueLayout::DIRECT_STRING_TAG, u64::from(ValueLayout::TAG_SHIFT), ValueLayout::FIRST_TAG_FIELD, ValueLayout::TAG_FIELD_SPAN, ValueLayout::CANONICAL_NAN, crate::Value::NULL.to_bits(), crate::Value::UNDEFINED.to_bits(), crate::Value::DELETED.to_bits(), crate::Value::FALSE.to_bits()],
+            [w::TAG_MASK, w::INT_TAG, w::INTERNAL_TAG, w::HEAP_TAG, w::DIRECT_ARRAY_TAG, w::DIRECT_OBJECT_TAG, w::DIRECT_FUNCTION_TAG, w::HEAP_FAMILY_MASK, w::DIRECT_STRING_TAG, u64::from(w::TAG_SHIFT), w::FIRST_TAG_FIELD, w::TAG_FIELD_SPAN, w::CANONICAL_NAN, w::NULL, w::UNDEFINED, w::DELETED, w::FALSE]
+        );
+        assert_eq!(
+            [u64::from(NarrowLayout::INTEGER_FLAG), u64::from(NarrowLayout::INTEGER_BITS), u64::from(NarrowLayout::CODE_SHIFT), u64::from(NarrowLayout::CODE_MASK), u64::from(NarrowLayout::INDEX_SHIFT), u64::from(NarrowLayout::INDEX_BITS), NarrowLayout::DIRECT_OBJECT_UPPER, u64::from(NarrowLayout::DIRECT_OBJECT_CODE)],
+            [u64::from(w::NARROW_INT_FLAG), u64::from(w::NARROW_INTEGER_BITS), u64::from(w::NARROW_CODE_SHIFT), u64::from(w::NARROW_CODE_MASK), u64::from(w::NARROW_INDEX_SHIFT), u64::from(w::NARROW_INDEX_BITS), w::DIRECT_OBJECT_UPPER, u64::from(w::DIRECT_OBJECT_NARROW_CODE)]
+        );
+        assert_eq!(
+            [std::mem::offset_of!(CallContext, adapter_payload), std::mem::offset_of!(JsStepDispatch, loop_entry), std::mem::offset_of!(JsStepDispatch, capture_values), std::mem::offset_of!(JsStepDispatch, capture_len), std::mem::offset_of!(JsStepDispatch, array_record_base)],
+            [mirror::CALL_CONTEXT_ADAPTER_PAYLOAD, mirror::JS_STEP_LOOP_ENTRY, mirror::JS_STEP_CAPTURE_VALUES, mirror::JS_STEP_CAPTURE_LEN, mirror::JS_STEP_ARRAY_RECORD_BASE]
+        );
     }
 }

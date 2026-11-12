@@ -1,6 +1,6 @@
-//! Hand-written stencil rows for Number loops over tagged `Value` words. A row names where each
-//! operand lives: a frame slot holding a tagged word (hole: byte offset), a pinned register
-//! holding a raw int32 (rdx, rcx, r8, r9 through the whole chain of stencils: no tag, no
+//! Number rows for loops over tagged `Value` words, the vocabulary the planner names them in
+//! (the semantics are `stencils/numeric.rs`). A row names where each operand lives: a frame slot holding a tagged word (hole: byte offset), a pinned register
+//! holding a raw int32 (r14, r15, rdi, rsi through the whole chain of stencils: no tag, no
 //! store-forwarding), an immediate int32 (hole) or a constant tagged word (hole). A row applies
 //! the interpreter's Number semantics (`Value::number` canonicalization) and continues at the
 //! next row. Speculating rows take int32 operands only: anything else, an overflow, or a result
@@ -10,34 +10,9 @@
 //!
 //! Holes: 0 is the destination offset, 1 and 2 the operands; a jump polls the interrupt flag
 //! pointer at the context offset in hole 0.
-use crate::row::{Operand, RowBuilder, Source, Ty};
-use crate::{Pins, Stencil, StencilBuilder, generate, stencil_isa};
-use cranelift_codegen::ir::{self, InstBuilder, condcodes::{CondCode, FloatCC, IntCC}, types};
-use cranelift_codegen::isa::OwnedTargetIsa;
+use crate::Stencil;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
-
-mod control;
-mod float;
-mod int;
-mod word;
-use control::*;
-use float::*;
-use int::*;
-pub use word::{canonical, f64_to_i32, int_of, int_word, is_double, is_int, to_f64, word_of};
-use word::*;
-pub use float::{deliver, f64_of, index_of, number_word};
-
-const TAG_INT: i64 = 0x7ffd_0000_0000_0000;
-const FIRST_TAG: i64 = 0x7ff9_0000_0000_0000;
-const TAG_SPAN: i64 = 6 << 48;
-const CANONICAL_NAN: i64 = 0x7ff8_0000_0000_0000;
-const TAG_SHIFT: i64 = 48;
-const WORD_SHIFT: i64 = 32;
-/// The high 32 bits of an int word.
-const INT_HIGH: i64 = TAG_INT >> WORD_SHIFT;
-/// Doubles below this magnitude convert to an i64 exactly.
-const I64_LIMIT: f64 = 9.0e18;
 
 /// The holes of an operand: the first and the second operand's frame offset or value.
 pub const FIRST: u32 = 1;
@@ -120,94 +95,42 @@ pub struct Row {
     pub speculate: bool,
 }
 
-impl Row {
-    /// Whether a double register is read or written: the row computes in `f64`.
-    fn floats(self) -> bool {
-        [self.dst, self.a, self.b].iter().any(|place| matches!(place, Place::PinF(_)))
-    }
-}
+#[path = "../stencils/library.rs"]
+pub mod library;
 
-fn emit(b: &mut StencilBuilder, row: Row) {
-    if row.floats() && row.kind.has_float_form() {
-        return float_row(b, row);
-    }
-    match row.kind {
-        Kind::Move | Kind::Const => copy_row(b, row),
-        Kind::Add | Kind::Sub | Kind::Mul | Kind::Div => arith_row(b, row),
-        Kind::And | Kind::Or | Kind::Xor | Kind::Shl | Kind::Shr | Kind::UShr => bitwise_row(b, row),
-        Kind::Lt | Kind::Le | Kind::Gt | Kind::Ge | Kind::Eq | Kind::Ne => compare_row(b, row),
-        Kind::Jump | Kind::JumpPoll => jump_row(b, row.kind == Kind::JumpPoll),
-        Kind::Guard | Kind::TagInit | Kind::Spill => bookkeeping_row(b, row),
-    }
-}
-
-/// The rows that compute nothing: an entry guard, the tag initialisation, a spill.
-fn bookkeeping_row(b: &mut StencilBuilder, row: Row) {
-    match row.kind {
-        Kind::Guard => guard_row(b, row),
-        Kind::TagInit => tag_init_row(b),
-        _ => spill_row(b, row),
-    }
-}
-
-pub fn isa() -> Result<&'static OwnedTargetIsa, String> {
-    static ISA: OnceLock<Result<OwnedTargetIsa, String>> = OnceLock::new();
-    ISA.get_or_init(stencil_isa).as_ref().map_err(Clone::clone)
-}
-
-static GENERATION_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// Nanoseconds spent generating stencils so far.
-pub fn generation_ns() -> u64 {
-    GENERATION_NS.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// Counts `nanos` of stencil generation done outside this module.
-pub fn add_generation_ns(nanos: u64) {
-    GENERATION_NS.fetch_add(nanos, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// The stencil of `row`: generated on first use, then shared for the life of the process.
-pub fn stencil(row: Row) -> Result<&'static Stencil, String> {
-    static TABLE: Mutex<Option<HashMap<Row, &'static Stencil>>> = Mutex::new(None);
-    let mut table = TABLE.lock().map_err(|e| e.to_string())?;
-    let table = table.get_or_insert_with(HashMap::new);
-    if let Some(found) = table.get(&row) {
-        return Ok(found);
-    }
-    let started = std::time::Instant::now();
-    let made = isa().and_then(|isa| generate(isa, |b| emit(b, row)));
-    GENERATION_NS.fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-    let made = made?;
-    let stencil: &'static Stencil = Box::leak(Box::new(made));
-    table.insert(row, stencil);
-    Ok(stencil)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A row of every kind generates, with its operands in each kind of place; with
-    /// `STENCIL_DUMP=dir`, each row's bytes are written there.
-    #[test]
-    fn every_kind_generates() {
-        let kinds = [
-            Kind::Move, Kind::Const, Kind::Add, Kind::Sub, Kind::Mul, Kind::Div, Kind::And, Kind::Or, Kind::Xor,
-            Kind::Shl, Kind::Shr, Kind::UShr, Kind::Lt, Kind::Le, Kind::Gt, Kind::Ge, Kind::Eq, Kind::Ne, Kind::Jump,
-            Kind::JumpPoll, Kind::Guard, Kind::TagInit, Kind::Spill,
-        ];
-        for kind in kinds {
-            for (dst, a, b) in [(Place::Mem, Place::Mem, Place::Const), (Place::Pin(0), Place::Pin(1), Place::Pin(2)), (Place::Pin(2), Place::Pin(2), Place::Mem), (Place::PinF(0), Place::PinF(1), Place::Const), (Place::Mem, Place::PinF(3), Place::Pin(0)), (Place::PinF(2), Place::Mem, Place::Imm)] {
-                for speculate in [true, false] {
-                    let row = Row { kind, dst, a, b, speculate };
-                    let stencil = stencil(row).unwrap();
-                    if let Ok(dir) = std::env::var("STENCIL_DUMP") {
-                        let name = format!("{kind:?}-{:?}-{:?}-{:?}-{speculate}", row.dst, row.a, row.b);
-                        std::fs::write(format!("{dir}/{name}.bin"), &stencil.code).unwrap();
-                    }
-                }
-            }
+impl Place {
+    /// The code of this place in `library` and the stencil rows.
+    pub fn code(self) -> u8 {
+        match self {
+            Place::Mem => library::MEM,
+            Place::MemInt => library::MEMINT,
+            Place::Const => library::CONST,
+            Place::Imm => library::IMM,
+            Place::Pin(i) => library::PIN + i,
+            Place::PinF(i) => library::PINF + i,
         }
     }
+}
+
+impl Row {
+    /// The library's code of this row.
+    pub fn code(self) -> library::Code {
+        (self.kind as u8, self.dst.code(), self.a.code(), self.b.code(), self.speculate)
+    }
+}
+
+/// The stencil of `row`, built at compile time by rustc and shared for the life of the process;
+/// a row the library does not hold is an error, which declines the region that needs it.
+pub fn stencil(row: Row) -> Result<&'static Stencil, String> {
+    type Table = Mutex<HashMap<library::Code, &'static Stencil>>;
+    static TABLE: OnceLock<Table> = OnceLock::new();
+    let code = library::canonical(row.code());
+    let mut table = TABLE.get_or_init(Default::default).lock().map_err(|e| e.to_string())?;
+    if let Some(found) = table.get(&code) {
+        return Ok(found);
+    }
+    let found = crate::rustc::stencil(&library::name(code)).ok_or_else(|| format!("no stencil row {row:?}"))?;
+    let stencil: &'static Stencil = Box::leak(Box::new(found));
+    table.insert(code, stencil);
+    Ok(stencil)
 }
