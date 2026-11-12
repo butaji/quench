@@ -48,6 +48,8 @@ pub(crate) trait NumericStage: Stage {
     fn float_unary(&mut self, operation: super::math::FloatUnary, value: Self::Word) -> Self::Word;
     /// `Math.max` (`maximum`) or `Math.min` of two binary64 words (`staged::math::float_extreme`).
     fn float_extreme(&mut self, maximum: bool, left: Self::Word, right: Self::Word) -> Self::Word;
+    /// The wrapping product of two int32 words (`Math.imul`; `staged::math::int_multiply`).
+    fn int_multiply(&mut self, left: Self::Word, right: Self::Word) -> Self::Word;
     /// The int32 word holding `value`.
     fn i32_constant(&mut self, value: i32) -> Self::Word;
     fn i32_to_f64(&mut self, value: Self::Word) -> Self::Word;
@@ -347,6 +349,9 @@ impl NumericStage for super::Concrete {
     }
     fn float_extreme(&mut self, maximum: bool, left: u64, right: u64) -> u64 {
         super::math::float_extreme(maximum, f64::from_bits(left), f64::from_bits(right)).to_bits()
+    }
+    fn int_multiply(&mut self, left: u64, right: u64) -> u64 {
+        u64::from(super::math::int_multiply(int32(left), int32(right)) as u32)
     }
     fn i32_constant(&mut self, value: i32) -> u64 { u64::from(value as u32) }
     fn i32_to_f64(&mut self, value: u64) -> u64 { f64::from(int32(value)).to_bits() }

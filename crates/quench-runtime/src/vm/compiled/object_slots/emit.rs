@@ -191,6 +191,9 @@ impl NumericStage for Emit<'_, '_> {
     fn float_unary(&mut self, operation: crate::staged::math::FloatUnary, value: ir::Value) -> ir::Value {
         crate::vm::compiled::lane_region::emit_float_unary(self.builder, operation, value)
     }
+    fn int_multiply(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
+        crate::vm::compiled::lane_region::emit_int_multiply(self.builder, left, right)
+    }
     fn float_extreme(&mut self, maximum: bool, left: ir::Value, right: ir::Value) -> ir::Value {
         crate::vm::compiled::lane_region::emit_float_extreme(self.builder, maximum, left, right)
     }
