@@ -70,6 +70,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
+    #[inline(always)]
     fn hosted<H: Host>(registers: Registers, view: Carried, cx: *mut LaneContext<H>) -> Self {
         let host = LaneHost { cx: cx.cast(), allocate: lane_allocation::<H>, delete: lane_delete_value::<H>,
             read_name: lane_name_value::<H>, name: None };
@@ -77,6 +78,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     }
 
     /// This frame running a by-name load whose record resolved its name to `binding`.
+    #[inline(always)]
     fn named(mut self, binding: NameBinding) -> Self {
         if let Some(host) = self.host.as_mut() {
             host.name = Some(binding);
@@ -175,6 +177,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 /// The by-name load's binding as the row asks for it: the global `undefined` is a constant; any
 /// other is the lane's own read (`GlobalFrame::global_read`) of what its record resolved.
 impl<const ACC: u8> crate::staged::GlobalFrame<Concrete> for LaneFrame<ACC> {
+    #[inline(always)]
     fn global_binding(&mut self, _proof: ()) -> GlobalBinding {
         match self.host.and_then(|host| host.name) {
             Some(NameBinding::Undefined) => GlobalBinding::Constant(Value::UNDEFINED),
@@ -389,7 +392,8 @@ unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Alloca
 /// an intrinsic name the VM cannot evaluate, a hint the global object's shape no longer fits).
 ///
 /// # Safety
-/// `cx` is the running lane's context.
+/// `cx` is the running lane's context. Called through `LaneHost::read_name`, a constant
+/// function pointer in the inlined frame `staged_load_name` builds, so the call is direct.
 #[inline(never)]
 unsafe fn lane_name_value<H: Host>(cx: *mut (), read: NameRead, atom: u32) -> Option<Value> {
     let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
