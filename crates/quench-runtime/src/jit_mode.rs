@@ -1,5 +1,5 @@
 //! The JIT modes a process can run in, and the tiers each one enables: the one place the flags
-//! `--no-jit`, `--b-jit` and `--u-jit` are defined (`--q-jit` is reserved for the Cranelift quick mode and rejected until it lands).
+//! `--no-jit`, `--b-jit`, `--q-jit` and `--u-jit` are defined.
 use crate::ExecutionMode;
 
 /// Which tiers run: the interpreter alone, BaseJIT (stencils) alone, UltraJIT alone, or both (the default).
@@ -104,7 +104,7 @@ mod tests {
         let tiers = |flag| JitMode::from_flag(flag).map(JitMode::tiers_enabled);
         assert_eq!(tiers("--no-jit"), Some((false, false)));
         assert_eq!(tiers("--b-jit"), Some((true, false)));
-        assert_eq!(tiers("--q-jit"), None);
+        assert_eq!(tiers("--q-jit"), Some((false, true)));
         assert_eq!(tiers("--u-jit"), Some((false, true)));
         assert_eq!(tiers("--jit"), None);
         assert_eq!(JitMode::default().tiers_enabled(), (true, true));
