@@ -46,6 +46,10 @@ mod stable;
 mod polls;
 #[path = "lane_region/literals.rs"] mod literals;
 #[path = "lane_region/edges.rs"] mod edges;
+#[path = "lane_region/demand.rs"] mod demand;
+#[path = "lane_region/exits.rs"] mod exits;
+#[cfg(all(test, feature = "aot"))] #[path = "lane_region/exit_tests.rs"] mod exit_tests;
+#[cfg(all(test, feature = "aot"))] #[path = "lane_region/home_tests.rs"] mod home_tests;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
@@ -184,6 +188,9 @@ struct LocalProofs {
     stable: bool,
     /// Whether this block proved the realm its global reads were compiled against active (`Lowering::hold_global`).
     realm: bool,
+    /// Registers whose lane-frame slot holds their current tagged value (`Lowering::home_written`): a
+    /// definition retires one, so a call writes back only what changed since the last write-back.
+    homed: CompoundBitSet,
 }
 
 impl LocalProofs {
@@ -195,6 +202,12 @@ impl LocalProofs {
     fn write_field(&mut self, atom: Atom) {
         self.fields.retain(|field| field.atom != atom);
     }
+
+    /// Keeps the homes `other` also holds, for a state both arrivals reach.
+    fn meet_homed(&mut self, other: &CompoundBitSet) {
+        let dropped: Vec<usize> = self.homed.iter().filter(|register| !other.contains(*register)).collect();
+        for register in dropped { self.homed.remove(register); }
+    }
 }
 
 impl State {
@@ -203,7 +216,7 @@ impl State {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), stable: false, realm: false,
-            arrays: smallvec::SmallVec::new() } }
+            arrays: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
     }
 
     /// The `headers` index of an owner: a register, or fixed `this` (`None`).
@@ -450,6 +463,16 @@ pub(super) struct LoweredRegion {
     pub(super) stable: StableFacts,
 }
 
+/// A guard's failure block and the state it leaves from: the registers' facts, and which frame slots
+/// already held their value (`LocalProofs::homed`), at the guard.
+struct GuardExit {
+    block: ir::Block,
+    values: Vec<RegisterFact>,
+    homed: CompoundBitSet,
+    pc: u32,
+    line: u32,
+}
+
 struct Lowering<'a, 'f> {
     builder: FunctionBuilder<'f>,
     program: &'a ResidualProgram,
@@ -510,7 +533,10 @@ struct Lowering<'a, 'f> {
     /// Source operations already consumed by an exact, unobservable scalar pair.
     consumed: CompoundBitSet,
     blocks: Vec<Option<ir::Block>>,
-    exits: Vec<Option<ir::Block>>,
+    /// Per resume PC, its leave blocks, one per set of registers stored (`exits.rs`).
+    exits: Vec<Vec<exits::ExitBlock>>,
+    /// Each block leader's register use demand (`demand::analyze`).
+    demands: demand::Demands,
     entry: Option<Entry>,
     native: usize,
     /// Whether this entry's caller loop reaches its native latch.
@@ -519,7 +545,7 @@ struct Lowering<'a, 'f> {
     // Recovery boxes register values; object/layout proofs authorize forward execution
     // only and must not be retained in every guard's snapshot. With the lowering line that
     // made each guard, which a diagnostics build records.
-    pending: Vec<(ir::Block, Vec<RegisterFact>, u32, u32)>,
+    pending: Vec<GuardExit>,
     /// Whether the unit makes native calls (`Lowering::call`): a callee may change `this`,
     /// so no read or store folds the receiver facts its entry proved.
     native_calls: bool,
@@ -809,7 +835,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
         self.leave(state, pc);
     }
 
-    /// Leave at `pc` with the interpreter's state: every written register back in the file.
+    /// Leave at `pc` with the interpreter's state: every written register back in the lane's file, but those it already holds.
     fn leave(&mut self, state: &mut State, pc: u32) {
         if self.completion == Completion::Number {
             self.return_at(0);
@@ -822,16 +848,9 @@ impl<'a, 'f> Lowering<'a, 'f> {
             if self.unit.frames[frame].recovery != super::lane_unit::CallRecovery::RestartCall { break; }
             pc = self.unit.markers[frame];
         }
-        self.canonicalize(state, pc);
-        let block = match self.exits[pc] {
-            Some(block) => block,
-            None => {
-                let block = self.builder.create_block();
-                self.builder.set_cold_block(block);
-                self.exits[pc] = Some(block);
-                block
-            }
-        };
+        let stored = self.stored_at(state, pc);
+        self.materialize_inlined(state, pc);
+        let block = self.exit_block(pc, stored);
         self.ins().jump(block, &[]);
     }
 
@@ -845,7 +864,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
         }
         let block = self.builder.create_block();
         self.builder.set_cold_block(block);
-        self.pending.push((block, state.values.clone(), pc, std::panic::Location::caller().line()));
+        self.pending.push(GuardExit { block, values: state.values.clone(), homed: state.proofs.homed.clone(),
+            pc, line: std::panic::Location::caller().line() });
         block
     }
 
@@ -910,6 +930,11 @@ impl<'a, 'f> Lowering<'a, 'f> {
             .all(|other| other.arrays.contains(view))).collect();
         state.proofs.stable = first.stable && rest.iter().all(|other| other.stable);
         state.proofs.realm = first.realm && rest.iter().all(|other| other.realm);
+        // A block a rotated latch also enters has an edge `rest` does not hold: only a sealable block keeps the homes.
+        if self.sealable.contains(pc) {
+            state.proofs.homed.clone_from(&first.homed);
+            for other in rest { state.proofs.meet_homed(&other.homed); }
+        }
     }
 
     /// Conform the machine view and discharge the target's semantic requirements.
@@ -934,15 +959,20 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// One live register conformed to `target`'s fact `ty`; whether the edge still reaches it.
     fn conform_register(&mut self, state: &mut State, target: usize, register: Register, ty: Type) -> bool {
         let index = usize::from(register);
-        if ty == Type::INT32 && state.values[index].value.representation != Representation::Int32 {
-            let exit = self.guard_exit(state, target as u32);
-            self.int(state, register, exit);
-        } else if ty == Type::NUMBER && state.values[index].value.representation != Representation::Float64 {
-            let exit = self.guard_exit(state, target as u32);
-            let number = self.number(state, register, exit);
-            { let variable = self.float_var(index); self.builder.def_var(variable, number); }
-        } else if ty != Type::INT32 && ty != Type::NUMBER {
-            self.tagged(state, register);
+        let held = state.values[index].value.representation;
+        match number_domains::target_representation(ty) {
+            Representation::Int32 if held != Representation::Int32 => {
+                let exit = self.guard_exit(state, target as u32);
+                self.int(state, register, exit);
+            }
+            Representation::Float64 if held != Representation::Float64 => {
+                let exit = self.guard_exit(state, target as u32);
+                let number = self.number(state, register, exit);
+                let variable = self.float_var(index);
+                self.builder.def_var(variable, number);
+            }
+            Representation::Tagged => { self.tagged(state, register); }
+            Representation::Int32 | Representation::Float64 => {}
         }
         self.conform_object(state, target, register, ty);
         // A fact this edge does not prove and cannot guard leaves at the target, exactly:
@@ -978,12 +1008,17 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     fn entry_state(&mut self, pc: usize, registers: usize) -> State {
         let mut state = State::canonical(registers);
+        if pc == self.coverage.entry() && self.completion != Completion::Number
+            && edges::entered_once(&self.unit.instructions, pc, |at| self.coverage.lowered(at)) {
+            // The entry loaded each live caller register from its frame slot.
+            for register in (0..self.unit.caller_registers).filter(|register| self.is_live(pc, *register)) {
+                state.proofs.homed.insert(usize::from(register));
+            }
+        }
         if let Some(types) = self.facts.at(pc) {
             for (index, ty) in types.iter().copied().enumerate() {
                 if !self.is_live(pc, index as Register) { continue; }
-                let representation = if ty == Type::INT32 { Representation::Int32 }
-                    else if ty == Type::NUMBER { Representation::Float64 }
-                    else { Representation::Tagged };
+                let representation = number_domains::target_representation(ty);
                 let Some(fact) = RegisterFact::admit(Fact { ty, representation,
                     binding: if pc == self.coverage.entry() { BindingTime::Location } else { BindingTime::Dynamic },
                     proof: if pc != self.coverage.entry() { Proof::Definition }
@@ -1592,7 +1627,8 @@ pub(super) fn lower(
         written: CompoundBitSet::with_capacity(count),
         consumed: CompoundBitSet::with_capacity(unit.instructions.len()),
         blocks,
-        exits: vec![None; unit.instructions.len() + 1],
+        exits: std::iter::repeat_with(Vec::new).take(unit.instructions.len() + 1).collect(),
+        demands: demand::analyze(program, unit, &leaders, &live),
         entry: None,
         native: 0,
         backedge: false,
@@ -1849,109 +1885,16 @@ pub(super) fn lower(
     }
     // A prefix pays for its entry with a loop, or with the calls it runs inlined.
     if matches!(coverage, Coverage::PrefixFrom(_)) && !lowering.backedge && unit.frames.is_empty() { return None; }
-    for (block, values, pc, line) in lowering.take_leaves() {
+    for GuardExit { block, values, homed, pc, line } in lowering.take_leaves() {
         lowering.switch_to(block, true);
-        let mut leaving = State { values, proofs: LocalProofs::default() };
+        let mut leaving = State { values, proofs: LocalProofs { homed, ..LocalProofs::default() } };
         if lowering.vm.diagnostics {
             let line = lowering.builder.ins().iconst(types::I64, i64::from(line));
             lowering.builder.ins().store(regions::dispatch(), line, lowering.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
         }
         lowering.leave(&mut leaving, pc);
     }
-    // The exit blocks: write back every caller register the unit writes, and an inlined
-    // callee's registers to the window its recovery makes the activation from, then leave
-    // at the origin.
-    let recovery_slots = if lowering.completion == Completion::SourcePc && !unit.frames.is_empty() {
-        let word = types::I64.bytes();
-        let snapshot = lowering.builder.create_sized_stack_slot(ir::StackSlotData::new(
-            ir::StackSlotKind::ExplicitSlot, u32::from(unit.registers - unit.caller_registers) * word,
-            word.trailing_zeros() as u8));
-        let depth = unit.recovery_depth();
-        let descriptors = lowering.builder.create_sized_stack_slot(ir::StackSlotData::new(
-            ir::StackSlotKind::ExplicitSlot,
-            u32::try_from(depth.checked_mul(size_of::<InlineRecoveryFrame>())?).ok()?,
-            align_of::<InlineRecoveryFrame>().trailing_zeros() as u8));
-        Some((snapshot, descriptors))
-    } else { None };
-    for pc in 0..lowering.exits.len() {
-        let Some(block) = lowering.exits[pc] else { continue };
-        lowering.switch_to(block, true);
-        for register in lowering.written.iter().map(|register| register as Register)
-            .take_while(|register| *register < unit.caller_registers) {
-            if !lowering.is_live(pc, register) { continue; }
-            let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(register)]);
-            lowering.builder.ins().store(regions::frame(), bits, lowering.registers_base, register_offset(register));
-        }
-        let word = match unit.origins.get(pc).copied().unwrap_or(super::lane_unit::Origin::Caller(unit.end)) {
-            super::lane_unit::Origin::Caller(record) => LaneExit::At(record as usize).word(),
-            super::lane_unit::Origin::Inlined { frame, pc: record } if lowering.completion == Completion::SourcePc => {
-                let (snapshot, descriptors) = recovery_slots.expect("materialized chain homes");
-                let scratch = lowering.builder.ins().stack_addr(types::I64, snapshot, 0);
-                let entries = lowering.builder.ins().stack_addr(types::I64, descriptors, 0);
-                let chain = unit.chain(frame);
-                for (depth, index) in chain.iter().copied().enumerate() {
-                    let inlined = unit.frames[index];
-                    for register in inlined.base..inlined.base + inlined.registers {
-                        let bits = if lowering.is_live(pc, register) {
-                            lowering.builder.use_var(lowering.registers.tagged[usize::from(register)])
-                        } else {
-                            lowering.builder.ins().iconst(types::I64, Value::UNDEFINED.to_bits() as i64)
-                        };
-                        lowering.builder.ins().store(regions::frame(), bits, scratch,
-                            register_offset(register - unit.caller_registers));
-                    }
-                    // Ancestors are suspended at the next child's call; the innermost
-                    // activation resumes at the exact operation whose admission failed.
-                    let source = chain.get(depth + 1).map_or(record, |child| unit.frames[*child].call);
-                    for (offset, value) in [
-                        (std::mem::offset_of!(InlineRecoveryFrame, function), inlined.target.function),
-                        (std::mem::offset_of!(InlineRecoveryFrame, call_pc), inlined.call),
-                        (std::mem::offset_of!(InlineRecoveryFrame, source_pc), source),
-                        (std::mem::offset_of!(InlineRecoveryFrame, registers), u32::from(inlined.base - unit.caller_registers)),
-                    ] {
-                        let bits = lowering.builder.ins().iconst(types::I32, i64::from(value));
-                        lowering.builder.ins().store(MemFlagsData::trusted(), bits, entries,
-                            i32::try_from(depth * size_of::<InlineRecoveryFrame>() + offset).ok()?);
-                    }
-                }
-                if chain.len() == 1 {
-                    let inlined = unit.frames[frame];
-                    let function = lowering.builder.ins().iconst(types::I64, i64::from(inlined.target.function));
-                    let call = lowering.builder.ins().iconst(types::I64, i64::from(inlined.call));
-                    let source = lowering.builder.ins().iconst(types::I64, i64::from(record));
-                    let scratch = lowering.builder.ins().iadd_imm_u(scratch,
-                        i64::from(register_offset(inlined.base - unit.caller_registers)));
-                    let helper = lowering.helpers.address(&mut lowering.builder, LaneHelper::MaterializeInline);
-                    emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper,
-                        &[lowering.payload, function, call, source, scratch]);
-                } else {
-                    let count = lowering.builder.ins().iconst(types::I64, i64::try_from(chain.len()).ok()?);
-                    let helper = lowering.helpers.address(&mut lowering.builder, LaneHelper::MaterializeInlineChain);
-                    emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper,
-                        &[lowering.payload, entries, count, scratch]);
-                }
-                lowering.return_at(LaneExit::At(JS_INLINE_MATERIALIZED_PC as usize).word());
-                continue;
-            }
-            super::lane_unit::Origin::Inlined { frame, pc: record } => {
-                // Each register of the frame and the frames around it, at its unit register
-                // past the caller's (`LaneMethod::scratch_width`).
-                let scratch = emit_js_payload_word(&mut lowering.builder, lowering.payload, std::mem::offset_of!(JsStepDispatch, inlined));
-                // Only the live ones: the activation reads no other (`dispatch_fast::
-                // lane_body_inlined_activation`).
-                for index in unit.chain(frame) {
-                    let inlined = unit.frames[index];
-                    for register in inlined.base..inlined.base + inlined.registers {
-                        if !lowering.is_live(pc, register) { continue; }
-                        let bits = lowering.builder.use_var(lowering.registers.tagged[usize::from(register)]);
-                        lowering.builder.ins().store(regions::frame(), bits, scratch, register_offset(register - unit.caller_registers));
-                    }
-                }
-                LaneExit::Inlined { frame, pc: record }.word()
-            }
-        };
-        lowering.return_at(word);
-    }
+    lowering.fill_exits()?;
     lowering.builder.switch_to_block(stop);
     let word = lowering.builder.block_params(stop)[0];
     let status = lowering.builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
@@ -2057,10 +2000,11 @@ impl Lowering<'_, '_> {
 
     /// `state` past a join with `incoming`: each register's facts as both paths prove them.
     /// A join no verified fact describes invalidates the region.
-    fn join_states(&mut self, state: &mut State, incoming: &State) {
+    fn join_states(&mut self, state: &mut State, incoming: &State, pc: usize) {
         // Only the same pre-branch SSA definition can survive both numeric arms.
         state.proofs.fields.retain(|field| incoming.proofs.fields.contains(field));
         state.proofs.int32_projections.retain(|projection| incoming.proofs.int32_projections.contains(projection));
+        state.proofs.meet_homed(&incoming.proofs.homed);
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
             let current = state.values[index];
             if current != incoming {
@@ -2075,8 +2019,10 @@ impl Lowering<'_, '_> {
                     binding: BindingTime::Dynamic, proof: Proof::Definition,
                     projection: Projection::Exact,
                 }) else { self.valid = false; return; };
+                // A tagged view no later use reads is dropped (`demand`): a leave rebuilds it from the unboxed view.
                 fact.tagged = if current.tagged == incoming.tagged { current.tagged }
-                    else if current.tagged.current() && incoming.tagged.current() { TaggedView::Variable }
+                    else if current.tagged.current() && incoming.tagged.current()
+                        && (representation == Representation::Tagged || self.demand_from(pc + 1, index).tagged()) { TaggedView::Variable }
                     else { TaggedView::Unavailable };
                 state.values[index] = fact;
             }
@@ -2535,7 +2481,7 @@ impl Lowering<'_, '_> {
 
     /// The guards' leaves to fill, once the entry's shared leave (`entry_conform`) is filled:
     /// it leaves with the plan's entry leave, with no register written yet to write back.
-    fn take_leaves(&mut self) -> Vec<(ir::Block, Vec<RegisterFact>, u32, u32)> {
+    fn take_leaves(&mut self) -> Vec<GuardExit> {
         if let Some(block) = self.entry_exit.take() {
             self.switch_to(block, true);
             self.return_entry();
@@ -2885,8 +2831,7 @@ impl Lowering<'_, '_> {
             return false;
         };
         let missed = self.guard_exit(state, pc as u32);
-        self.canonicalize(state, pc);
-        self.spill_written(pc);
+        self.home_written(state, pc);
         let completed = self.builder.create_block();
         let status = self.record_helper(LaneHelper::ValueStep, call_pc);
         self.helper_status(status, completed, missed);
@@ -2909,18 +2854,22 @@ impl Lowering<'_, '_> {
         let base = self.registers_base;
         let bits = self.ins().load(types::I64, regions::frame(), base, register_offset(destination));
         self.set_tagged(state, destination, bits);
+        state.proofs.homed.insert(usize::from(destination));
     }
 
-    /// The live registers the body wrote, stored to the lane's registers for a helper to read.
-    fn spill_written(&mut self, pc: usize) {
+    /// The live registers the body wrote since their last write-back, stored to the lane's registers for a
+    /// helper to read. A register whose slot is current (`LocalProofs::homed`) is neither boxed nor stored.
+    fn home_written(&mut self, state: &mut State, pc: usize) {
         let caller_registers = self.unit.caller_registers;
         let written: Vec<Register> = self.written.iter().map(|register| register as Register)
             .take_while(|register| *register < caller_registers).collect();
         for register in written {
-            if !self.is_live(pc, register) { continue; }
-            let bits = self.builder.use_var(self.registers.tagged[usize::from(register)]);
+            let index = usize::from(register);
+            if !self.is_live(pc, register) || state.proofs.homed.contains(index) { continue; }
+            let bits = self.tagged(state, register);
             let base = self.registers_base;
             self.ins().store(regions::frame(), bits, base, register_offset(register));
+            state.proofs.homed.insert(index);
         }
     }
 
@@ -3387,8 +3336,7 @@ impl Lowering<'_, '_> {
             return false;
         };
         let missed = self.guard_exit(state, pc as u32);
-        self.canonicalize(state, pc);
-        self.spill_written(pc);
+        self.home_written(state, pc);
         let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
         self.reentries.push(completed);
         let site = match crate::staged::Operation::<ir::Value, EmitProof>::decode(instruction, |_| None) {
@@ -5192,7 +5140,7 @@ impl Lowering<'_, '_> {
                     let truncated = self.number_to_int32(number, exit);
                     self.ins().jump(join, &[ir::BlockArg::Value(truncated)]);
                     self.builder.switch_to_block(join);
-                    self.join_states(state, &float_state);
+                    self.join_states(state, &float_state, pc);
                     self.set_int(state, destination, int);
                 } else {
                     let float = self.builder.create_block();
@@ -5221,7 +5169,7 @@ impl Lowering<'_, '_> {
                     let result = emit_number_arithmetic_operation(&mut self.builder, arithmetic, left_number, right_number);
                     self.ins().jump(join, &[ir::BlockArg::Value(result)]);
                     self.builder.switch_to_block(join);
-                    self.join_states(state, &float_state);
+                    self.join_states(state, &float_state, pc);
                     self.set_number(state, destination, number);
                 }
             }
