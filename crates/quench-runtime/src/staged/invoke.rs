@@ -7,8 +7,7 @@
 //!   of a published body or a native, whose callee kind the frame folds under the dependency that
 //!   retires the caller when it changes and whose identity is checked once per call
 //!   (`Identity::Guarded`) or folded the same way (`Identity::Folded`: a known function, a Stable
-//!   callee, a Stable bound function unwrapped to its target); the callee's body in the caller
-//!   (`CallEntry::Inline`, `CallFrame::inline`); or the VM's own call (`CallFrame::call_helper`) for
+//!   callee, a Stable bound function unwrapped to its target); or the VM's own call (`CallFrame::call_helper`) for
 //!   any callee a site is not bound to;
 //! - what the call's form reads (`Invocation`): the callee's register, a function the record names,
 //!   or a method its receiver's property rows load; a receiver register, `this` or none; a window
@@ -133,13 +132,6 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
-    /// The callee's body in the caller, where the frame can inline it; `false` leaves the call to
-    /// its direct entry. The interpreter never inlines.
-    #[inline(always)]
-    fn inline(&mut self, _site: &Invocation) -> bool {
-        false
-    }
-
     /// The VM's own call of `site`, which a call that took no direct entry runs; `direct` is the
     /// word a direct entry produced, which the VM's call does not run again.
     #[inline(always)]
@@ -148,13 +140,13 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
     }
 }
 
-/// The call of `site`: inlined or by the frame's direct entry where it has one, else by the VM. A
+/// The call of `site`: by the frame's direct entry where it has one (a unit's inlined callee is a
+/// `CallEntry::Inline` the unit spliced, whose entry stays the fallback), else by the VM. A
 /// guard that fails leaves at `miss`, where the VM's call runs.
 #[inline(always)]
 pub(crate) fn invoke<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss, site: Invocation)
     -> Step<S::Word, F::Control> {
     let direct = match frame.call_entry(&site) {
-        CallEntry::Inline(_) if frame.inline(&site) => return Step::Value(stage.constant(0)),
         CallEntry::Direct(plan) | CallEntry::Inline(plan) => match plan.kind {
             CalleeKind::Native(native) => super::native_call::enter_native(stage, frame, miss, &site, (plan, native)),
             CalleeKind::Script | CalleeKind::Class => enter_direct(stage, frame, miss, &site, plan),

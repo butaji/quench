@@ -12,6 +12,8 @@
 
 use crate::bytecode::{Class, FieldLookup, ImmediateLayout, Op, Register, Traits, WideInstruction};
 use crate::bytecode::Function;
+use crate::staged::{plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Resolved};
+use crate::typed_ir::BindingTime;
 use crate::value::Value;
 #[cfg(feature = "aot")] #[path = "lane_unit/static_hints.rs"] mod static_hints;
 #[cfg(feature = "aot")] pub(crate) use static_hints::{static_call_targets, StaticTargets};
@@ -444,11 +446,24 @@ impl Planner<'_, '_> {
         (alternatives, ran)
     }
 
+    /// The entry the call's callee takes, which the staged planner decides (`staged::plan_entry`): a
+    /// linked identity is Stable, a function binding Static, and the callee's body inlines within
+    /// the unit's remaining budget, capped by the policy's longest inlined body.
+    fn entry(&self, target: CallTarget, callee: &Function, size: usize) -> CallEntry {
+        let binding = match target.callee {
+            CalleeBinding::Function => BindingTime::Static,
+            CalleeBinding::Identity(_) | CalleeBinding::Forwarded { .. } => BindingTime::Stable,
+        };
+        let plan = DirectPlan { kind: CalleeKind::Script, identity: Identity::Guarded(target.identity().map_or(0, Value::to_bits)),
+            sloppy: None, registers: callee.registers, returned: super::LANE_BODY_RETURNED, bound: None };
+        let budget = self.budget.min(super::tier_policy::TIERS.lane_body.max_inlined_instructions);
+        plan_entry(Some(Resolved { plan, binding, body: Some(size) }), budget)
+    }
+
     fn inline_target(&mut self, target: CallTarget, instruction: WideInstruction, depth: usize) -> Option<InlinedPlan> {
         let callee = (self.body)(target.function)?;
         let code = decoded(callee);
-        if code.len() > super::tier_policy::TIERS.lane_body.max_inlined_instructions
-            || code.len() > self.budget
+        if !matches!(self.entry(target, callee, code.len()), CallEntry::Inline(_))
             || ImmediateLayout::argument_count(instruction.imm()) > callee.registers
             || !code.iter().all(|instruction| inlinable(*instruction) && renamable(*instruction))
             || !code.iter().any(|instruction| completion_length(*instruction) > 1

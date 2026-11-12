@@ -23,7 +23,6 @@ pub(super) struct Probe {
     pub(super) natives: Vec<(NativeId, u64, Vec<u64>)>,
     pub(super) native_status: u32,
     pub(super) linked: bool,
-    pub(super) inlines: bool,
     pub(super) entered: Vec<u64>,
     pub(super) helper: Option<u64>,
     pub(super) settled: Option<u64>,
@@ -33,7 +32,7 @@ pub(super) struct Probe {
 impl Probe {
     pub(super) fn new(entry: CallEntry) -> Self {
         Self { file: [0; 8], stack: [0; 8], entry, this: Value::DELETED.to_bits(), records: None, method: None, loaded: None,
-            field: None, constants: Vec::new(), natives: Vec::new(), native_status: RETURNED, linked: false, inlines: false,
+            field: None, constants: Vec::new(), natives: Vec::new(), native_status: RETURNED, linked: false,
             entered: Vec::new(), helper: None, settled: None, returned: None }
     }
 }
@@ -87,7 +86,6 @@ impl CallFrame<Concrete> for Probe {
         self.settled = Some(value);
         Some(())
     }
-    fn inline(&mut self, _site: &Invocation) -> bool { self.inlines }
     fn call_method(&mut self, _stage: &mut Concrete, receiver: u64, atom: u32, site: u32, _miss: ()) -> Option<u64> {
         self.loaded = Some((receiver, atom, site));
         self.method
@@ -318,13 +316,9 @@ fn a_bound_function_enters_its_target_with_its_this_and_its_arguments_before_the
 }
 
 #[test]
-fn a_call_the_frame_inlines_enters_nothing_and_one_it_declines_takes_its_direct_entry() {
+fn a_call_planned_inline_keeps_its_direct_entry_where_the_unit_did_not_splice_it() {
     let plan = DirectPlan { kind: CalleeKind::Script, identity: Identity::Folded(IDENTITY), sloppy: None, registers: 3,
         returned: RETURNED, bound: None };
-    let mut inlined = Probe::new(CallEntry::Inline(plan));
-    inlined.inlines = true;
-    assert_eq!(call(&mut inlined, site(Receiver::Register(1))), Some(0));
-    assert_eq!((inlined.entered.len(), inlined.helper, inlined.settled), (0, None, None), "the body is the frame's to emit");
     let mut declined = Probe::new(CallEntry::Inline(plan));
     declined.file[..4].copy_from_slice(&[0, Value::integer(1).to_bits(), 10, 20]);
     assert_eq!(call(&mut declined, site(Receiver::Register(1))), Some(Value::integer(1).to_bits()));

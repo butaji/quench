@@ -83,28 +83,6 @@ pub(super) enum Site<'a> {
     Return(ReturnSite),
 }
 
-/// The lowering's side of an inlined call, lent to the frame for the step (`CallFrame::inline`): the
-/// frame asks whether the lowering inlines the call's callee, and the lowering emits the body after
-/// the step where it said so. The lowering cannot be lent whole: its builder is the step's stage.
-pub(super) trait Inliner {
-    fn inline(&mut self, site: &Invocation) -> bool;
-}
-
-/// The lowering's inlining of the call at one record: the inlined frame its unit holds for it, and
-/// whether the frame took it.
-#[derive(Default)]
-pub(super) struct InlineRequest {
-    pub(super) frame: Option<usize>,
-    pub(super) taken: bool,
-}
-
-impl Inliner for InlineRequest {
-    fn inline(&mut self, _site: &Invocation) -> bool {
-        self.taken = self.frame.is_some();
-        self.taken
-    }
-}
-
 /// A dispatch or cell field's offset as the loads take it.
 fn field(offset: usize) -> i32 {
     i32::try_from(offset).expect("dispatch offset fits i32")
@@ -176,11 +154,6 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
             registers: callee.registers, returned: LANE_BODY_RETURNED, bound: None };
         // The callee is the one the site linked, which the call guards: a Site fact, never inlined by the plan.
         plan_entry(Some(Resolved { plan, binding: BindingTime::Site, body: None }), super::super::tier_policy::TIERS.lane_body.max_inlined_instructions)
-    }
-
-    /// The callee's body in the lane body, where the lowering inlines the call (`Inliner`).
-    fn inline(&mut self, site: &Invocation) -> bool {
-        self.inliner.as_mut().is_some_and(|inliner| inliner.inline(site))
     }
 
     fn call_registers(&mut self, _stage: &mut Emit<'_, '_>) -> Option<ir::Value> {

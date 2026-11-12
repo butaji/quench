@@ -46,8 +46,6 @@ pub(super) struct EmitFrame<'a> {
     pub(super) call_out: Option<&'a call_out::CallOutSite>,
     /// The call or return a step of the call family runs for (`call_frames`).
     pub(super) site: Option<super::call_frames::Site<'a>>,
-    /// The lowering's answer to a call it may inline, lent for the step (`call_frames::Inliner`).
-    pub(super) inliner: Option<&'a mut dyn super::call_frames::Inliner>,
 }
 
 impl EmitFrame<'_> {
