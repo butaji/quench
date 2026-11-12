@@ -2069,15 +2069,6 @@ impl Heap {
     #[inline] pub fn should_collect(&self) -> bool {
         self.allocated >= self.collect_at
     }
-    /// Holds collections off: nothing is due until `release_collection` gives back the threshold
-    /// this returns. For a run that must not collect, as a parked lane stack holds raw Wasm payload no collection traces (`LaneStack::traces_every_window`).
-    pub(crate) fn hold_collection(&mut self) -> usize {
-        std::mem::replace(&mut self.collect_at, usize::MAX)
-    }
-    /// Ends a `hold_collection` that returned `held`.
-    pub(crate) fn release_collection(&mut self, held: usize) {
-        self.collect_at = held;
-    }
     /// The weight charged since the last collection.
     fn allocated_since_collection(&self) -> usize {
         self.allocated - self.allocated_at_collection

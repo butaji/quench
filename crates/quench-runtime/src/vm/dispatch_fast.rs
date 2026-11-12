@@ -1319,6 +1319,13 @@ impl Activation {
         }
     }
 
+    /// The pc of the call record this activation was entered from, in its caller's body
+    /// (`caller_base`); `None` for a native frame, which keeps no link state.
+    fn caller_pc(&self) -> Option<usize> {
+        // SAFETY: a linked activation's call record lies in its caller's body.
+        (!matches!(self.kind, ActivationKind::Native)).then(|| unsafe { self.call.offset_from(self.caller_base) } as usize)
+    }
+
     /// The memory view its caller runs with: a JavaScript activation's caller is JavaScript,
     /// whose view carries the context (`MemoryView::script`).
     fn caller_memory<H: Host>(&self, cx: *mut LaneContext<H>) -> MemoryView {

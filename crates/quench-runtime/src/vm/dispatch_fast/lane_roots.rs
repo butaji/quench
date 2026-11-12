@@ -92,8 +92,8 @@ pub(in crate::vm) struct ParkedLane {
 
 impl ParkedLane {
     /// Appends to `out` every value the parked run holds.
-    pub(in crate::vm) fn extend_roots(&self, out: &mut Vec<Value>) {
-        self.stack.extend_roots(out);
+    pub(in crate::vm) fn extend_roots(&self, programs: &crate::vm::program_store::ProgramStore, out: &mut Vec<Value>) {
+        self.stack.extend_roots(programs, out);
         out.extend(self.innermost);
     }
 }
@@ -117,20 +117,15 @@ impl<H: Host> Vm<H> {
     /// (`Vm::lane_roots`) with the `innermost` receiver and environment of its context, its
     /// deferred native call and the native it called, while `run` starts over a fresh one, so
     /// every run's materialization takes its own activations alone. A collection `run` makes
-    /// traces the parked stacks as the live one (`LaneStack::extend_roots`), except one whose
-    /// Wasm payload no walk reads (`traces_every_window`), which holds collections off. The
-    /// parked run's call targets name the objects of the generation it left, which a collection
-    /// retires (`enter_generation`). A job run (`run_job`) and the code of a direct eval
-    /// (`lane_eval`) start nested runs.
+    /// traces the parked stacks as the live one (`LaneStack::extend_roots`). The parked run's
+    /// call targets name the objects of the generation it left, which a collection retires
+    /// (`enter_generation`). A job run (`run_job`) and the code of a direct eval (`lane_eval`)
+    /// start nested runs.
     pub(in crate::vm) fn nested_lane_run<T>(&mut self, innermost: [Value; 2], run: impl FnOnce(&mut Self) -> T) -> T {
         let stack = std::mem::take(&mut self.lane_stack);
-        let held = (!stack.traces_every_window()).then(|| self.heap.hold_collection());
         self.lane_roots.push(ParkedLane { stack, innermost });
         let (deferred, native) = (self.lane_deferred.take(), self.lane_native.take());
         let result = run(self);
-        if let Some(held) = held {
-            self.heap.release_collection(held);
-        }
         (self.lane_deferred, self.lane_native) = (deferred, native);
         self.lane_stack = self.lane_roots.pop().expect("the lane stack this run parked").stack;
         self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));

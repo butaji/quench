@@ -738,8 +738,8 @@ impl<H: Host> Vm<H> {
                 .flat_map(|((global, _), template)| [*global, template.anchor]),
         );
         roots.extend(self.with_stack.iter().copied());
-        self.lane_stack.extend_roots(&mut roots);
-        self.lane_roots.iter().for_each(|parked| parked.extend_roots(&mut roots));
+        self.lane_stack.extend_roots(&self.programs, &mut roots);
+        self.lane_roots.iter().for_each(|parked| parked.extend_roots(&self.programs, &mut roots));
         roots.extend(std::iter::once(self.instanceof_has_instance_holder));
         roots.extend(self.active_call_roots.iter().copied());
         roots.extend(self.symbol_registry.values().copied());
