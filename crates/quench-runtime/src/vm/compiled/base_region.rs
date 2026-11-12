@@ -15,6 +15,7 @@ use crate::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register
 use crate::value::Value;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 use super::base_rows::{self, Heap, HeapRow};
+use super::NativeFieldLoad;
 use quench_bjit::numeric::{self, Kind, Place};
 use quench_bjit::{PINNED, PINNED_F, Row as Placed, Stencil};
 use super::LaneHelpers;
@@ -46,6 +47,14 @@ pub(in crate::vm::compiled) struct Known<'a> {
     /// store of an unnamed atom may run in place; `None` where none may. Code that stores holds
     /// each such atom unnamed as a Stable fact (`Body::atoms`), which a cache naming it retires.
     pub(in crate::vm::compiled) stores: Option<&'a crate::vm::method_cache::AtomBits>,
+    /// The loads a cache site proves for a read (`Vm::native_field_read_descriptors`), where the VM and
+    /// the program run specialized and the code may hold Stable facts: a read of a field its receiver's
+    /// prototype holds folds to the value the holder holds now (`folded_read`), which a change of the
+    /// holder's values retires the code over (`Body::holders`). `None` where no fact may be held.
+    pub(in crate::vm::compiled) reads: Option<&'a dyn Fn(u16) -> Vec<NativeFieldLoad>>,
+    /// The address of the code's invalidation word (`code_dependencies::Invalidation`), which a body that
+    /// holds a Stable fact and makes a call reads before the rows that hold it. `None` for a region.
+    pub(in crate::vm::compiled) invalidation: Option<usize>,
 }
 
 impl Known<'_> {
@@ -245,7 +254,7 @@ fn assemble(region: &LoopRegion, (dense, known): (bool, Known), widened: &[usize
     let mut decoded: Vec<Decoded> = instructions.iter().enumerate().map(|(k, instruction)| decode(region, facts, header + k as u32, *instruction, helpers)).collect();
     settle(&mut decoded);
     let (reprs, homes, webs, decoded) = analyze(region, &decoded, widened, seen);
-    let layout = Layout { header, backedge, homes, webs, region, ending: Ending::Region, callees: &[] };
+    let layout = Layout { header, backedge, homes, webs, region, ending: Ending::Region, callees: &[], invalidation: None };
     let body = decoded.iter().enumerate().map(|(k, row)| plan(row, &layout, header + k as u32, is_general(row, &reprs), helpers)).collect::<Result<Vec<_>, _>>()?;
     let bare = decoded.iter().all(|row| row.heap.is_none() && row.step != Some(Step::Helper));
     Ok(Built { code: link(&layout, &body)?, bare, atoms: held_atoms(&decoded) })

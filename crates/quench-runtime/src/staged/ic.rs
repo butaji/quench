@@ -177,6 +177,18 @@ pub(crate) unsafe fn concrete_site_store(heap: &crate::heap::Heap, (entries, rec
     super::entry::site_store(&mut stage, (entries, records), object.to_bits(), offset, value.to_bits(), ()).is_some()
 }
 
+/// Whether `object`, among the object records at `records`, is a direct object of exact shape `shape`
+/// whose prototype link is `link`: `held_receiver` through `Concrete`, the receiver proof of a folded
+/// prototype-held read.
+///
+/// # Safety
+/// `records` is the object record reservation (or null before the first record).
+#[inline(always)]
+pub(crate) unsafe fn concrete_held_receiver(records: *const crate::heap::Object, object: crate::Value, shape: u32, link: u32) -> bool {
+    let mut stage = super::Concrete::new(std::ptr::null());
+    super::entry::held_receiver(&mut stage, records as u64, object.to_bits(), (u64::from(shape), u64::from(link)), ()).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

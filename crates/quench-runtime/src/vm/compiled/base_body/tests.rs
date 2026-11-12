@@ -319,3 +319,19 @@ fn loop_regions_store_fields_and_captures_without_a_stale_snapshot() {
     );
     assert_eq!(interpreted, compiled);
 }
+
+/// A field the receiver's prototype holds folds to the value the holder holds when the body is
+/// compiled, under a dependency on the holder's values: a change a call inside the body makes is
+/// seen by the read after the call (the body reads its invalidation word there), and a change
+/// between runs retires the body.
+#[test]
+fn folded_prototype_reads_see_changes_a_call_in_the_body_makes() {
+    let (interpreted, compiled, _) = run_both(
+        "const proto = { scale: 3 }; const o = Object.create(proto); o.x = 2;
+         function bump() { proto.scale = proto.scale + 1; }
+         function area(p) { const a = p.x * p.scale; bump(); return a + p.x * p.scale; }
+         let t = 0; for (let k = 0; k < 300; k++) { proto.scale = 3; t = (t + area(o)) | 0; }
+         print(t); print(area(o)); proto.scale = 10; print(area(o));",
+    );
+    assert_eq!(interpreted, compiled);
+}

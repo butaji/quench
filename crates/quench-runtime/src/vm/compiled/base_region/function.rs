@@ -26,6 +26,9 @@ pub(in crate::vm::compiled) struct Body {
     /// The atoms its stores run in place for, held unnamed by method caches (a Stable fact): a
     /// cache naming one retires the body (`StableFacts::atoms`).
     pub(in crate::vm::compiled) atoms: Box<[Atom]>,
+    /// The exact shapes of the holders whose values its folded reads hold (a Stable fact): a change
+    /// of a value a prototype of one holds retires the body (`StableFacts::holders`).
+    pub(in crate::vm::compiled) holders: Box<[u32]>,
 }
 
 /// What a body decides its call sites by: the callees they recorded and the stitch's budget, and
@@ -93,13 +96,21 @@ fn identity_guard(homes: &Homes, pc: u32, register: Register, word: u64) -> Resu
     Ok(Planned::single(base_rows::stencil(row)?, [0, slot, word], None, Some(pc)))
 }
 
+/// A row that leaves at `pc` once the invalidation word at `address` is set (`Heap::Live`): a Stable
+/// fact the code holds changed under a call, so the interpreter makes the instruction.
+fn live_guard(pc: u32, address: usize) -> Result<Planned, String> {
+    let row = HeapRow { heap: Heap::Live, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
+    Ok(Planned::single(base_rows::stencil(row)?, [0, address as u64, 0], None, Some(pc)))
+}
+
 /// A row that leaves at `pc` when an interrupt is requested, and continues.
 fn poll_row(pc: u32) -> Result<Planned, String> {
     let interrupt = std::mem::offset_of!(super::super::CallContext, interrupt) as u64;
     Ok(Planned::single(control(Kind::Poll)?, [interrupt, 0, 0], None, Some(pc)))
 }
 
-/// The rows that run before the row at `pc`, at the same PC: the proof that an inlined call's callee
+/// The rows that run before the row at `pc`, at the same PC: the check that a Stable fact the row
+/// holds still holds, the proof that an inlined call's callee
 /// is the one stitched, the proof a `ToNumeric` operand
 /// held in a frame slot is a Number (a loop's entry guards prove its registers; a function's are
 /// not proved), and the poll a conditional branch back takes (an unconditional one is its own
@@ -107,6 +118,9 @@ fn poll_row(pc: u32) -> Result<Planned, String> {
 fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Planned>, String> {
     let (place, slot) = operand(&layout.homes, row.a);
     let mut before = Vec::new();
+    if let Some(address) = layout.invalidation.filter(|_| row.holds_stable()) {
+        before.push(live_guard(pc, address)?);
+    }
     if let Some((register, word)) = row.identity {
         before.push(identity_guard(&layout.homes, pc, register, word)?);
     }
@@ -125,7 +139,7 @@ fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Planned>, Str
 fn framed(homes: &Homes, row: &Decoded) -> bool {
     let through = match row.heap {
         Some(Heap::Store | Heap::SiteStore) => row.base,
-        Some(Heap::Index | Heap::Array | Heap::Site | Heap::SiteChain | Heap::Length) => row.a.and_then(register_of),
+        Some(Heap::Index | Heap::Array | Heap::Site | Heap::SiteChain | Heap::Length | Heap::Held) => row.a.and_then(register_of),
         _ => None,
     };
     through.into_iter().chain(row.identity.map(|(register, _)| register)).all(|register| homes.place(register) == Place::Mem)
@@ -171,6 +185,11 @@ pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, (function,
     built
 }
 
+/// Whether the row runs a call or a helper step, which may run guest code that changes a Stable fact.
+fn makes_calls(row: &Decoded) -> bool {
+    matches!(row.step, Some(Step::Call(_) | Step::Helper))
+}
+
 fn assemble_body(region: &LoopRegion, widened: &[usize], seen: [&[Register]; SEEN], mut sites: Sites, helpers: LaneHelpers) -> Result<Body, String> {
     let covers: Vec<Decoded> = region.instructions().iter().enumerate().map(|(pc, instruction)| cover(region, pc as u32, &mut sites, *instruction, helpers)).collect();
     let reached = reachable(region, &covers)?;
@@ -180,12 +199,13 @@ fn assemble_body(region: &LoopRegion, widened: &[usize], seen: [&[Register]; SEE
     let unreached = |k: usize| !reached[k];
     let decoded: Vec<Decoded> = covers.into_iter().enumerate().map(|(k, row)| if unreached(k) { Decoded::step(Step::Leave, None) } else { row }).collect();
     let (reprs, homes, webs, decoded) = analyze(region, &decoded, widened, seen);
-    let layout = Layout { header: region.header, backedge: region.backedge, homes, webs, region, ending: Ending::Body, callees: sites.facts };
+    let invalidation = sites.known.invalidation.filter(|_| decoded.iter().any(Decoded::holds_stable) && decoded.iter().any(makes_calls));
+    let layout = Layout { header: region.header, backedge: region.backedge, homes, webs, region, ending: Ending::Body, callees: sites.facts, invalidation };
     let mut planned = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, &reprs, reached[k], k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let code = link(&layout, &planned)?;
     let exits = decoded.iter().enumerate().filter(|(k, row)| reached[*k] && leaves(&layout, row)).count();
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
     let covered = reached.iter().filter(|reached| **reached).count() - exits;
     let records = planned.iter_mut().filter_map(|row| row.owned.take()).collect();
-    Ok(Body { code, covered, exits, loops, records, atoms: held_atoms(&decoded) })
+    Ok(Body { code, covered, exits, loops, records, atoms: held_atoms(&decoded), holders: held_holders(&decoded) })
 }

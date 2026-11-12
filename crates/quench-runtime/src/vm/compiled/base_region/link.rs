@@ -88,6 +88,9 @@ pub(super) struct Layout<'a> {
     /// Per PC, what the call there recorded of its callee: a whole function's call sites (a loop
     /// region has none, its calls being leaves).
     pub(super) callees: &'a [Option<DirectFacts>],
+    /// The address of the invalidation word the code reads before each row that holds a Stable fact a
+    /// call may have changed (`Decoded::holds_stable`): a body that folds one and makes a call.
+    pub(super) invalidation: Option<usize>,
 }
 
 impl Layout<'_> {

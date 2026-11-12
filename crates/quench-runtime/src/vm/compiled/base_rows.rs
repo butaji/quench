@@ -57,6 +57,16 @@ pub(super) enum Heap {
     StoreLocal(u16),
     /// The register at the frame offset of hole 1 holds exactly the word of hole 2.
     Identity,
+    /// A prototype-held field folded to the value its holder held when the code was compiled (hole 2):
+    /// the object register whose frame offset sits above the destination's in hole 0 is a direct object
+    /// of the exact shape in hole 1's low half and the prototype link in its high half, else the row
+    /// leaves. A Stable fact holds the value (`entry::held_receiver`).
+    Held,
+    /// `Held` of the activation's receiver, which the payload holds: hole 0 is the destination alone.
+    ThisHeld,
+    /// Leaves unless the invalidation word at the address in hole 1 is zero (`code_dependencies::Invalidation`):
+    /// the check before a row that holds a Stable fact where a call may have changed it.
+    Live,
 }
 
 /// A heap row: its operation and where its operands and destination live.
@@ -90,6 +100,8 @@ impl Heap {
             Heap::LoadLocal(_) => library::LOAD_LOCAL_ROW,
             Heap::StoreLocal(_) => library::STORE_LOCAL_ROW,
             Heap::Identity => library::IDENTITY_ROW,
+            Heap::Held | Heap::ThisHeld => library::HELD_ROW,
+            Heap::Live => library::LIVE_ROW,
         }
     }
 
@@ -97,7 +109,7 @@ impl Heap {
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
     /// slots, which every run reads live.
     pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity)
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::Identity | Heap::Live)
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value

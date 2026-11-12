@@ -126,18 +126,43 @@ fn site_tables<S: Stage>(stage: &mut S, (entries, records): (S::Word, S::Word), 
     Some(())
 }
 
+/// The id and object record that `object` names in the record table at `records`, whose presence
+/// the caller proved: `None` (leaving at `miss`) where the word is no direct object.
+#[inline(always)]
+fn direct_record<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, miss: S::Miss) -> Option<(S::Word, S::Word)> {
+    let direct = super::value::is_direct_object(stage, object);
+    stage.guard(direct, miss)?;
+    let id = stage.and_imm(object, u64::from(u32::MAX));
+    Some((id, super::object::object_record_at(stage, records, id)))
+}
+
 /// The record, its id and the cache entry `offset` bytes into the table `entries` that a site
 /// access of `object` names, whose presence the caller proved (`site_tables`): `None` (leaving at
 /// `miss`) where the word is no direct object.
 #[inline(always)]
 fn site_record<S: Stage>(stage: &mut S, (entries, records): (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss)
     -> Option<(S::Word, S::Word, S::Word)> {
-    let direct = super::value::is_direct_object(stage, object);
-    stage.guard(direct, miss)?;
-    let id = stage.and_imm(object, u64::from(u32::MAX));
-    let record = super::object::object_record_at(stage, records, id);
+    let (id, record) = direct_record(stage, records, object, miss)?;
     let entry = stage.add_imm(entries, offset);
     Some((id, record, entry))
+}
+
+/// The receiver a folded prototype-held read stands on: `object` is a direct object of the record
+/// table at `records` whose exact shape is `shape` and whose prototype link is `link`, so the holder
+/// is the one the read was folded against and its value is the folded constant (a Stable fact, held
+/// while no prototype of the holder's shape changes a value). `None` (leaving at `miss`) for any
+/// other receiver or where the table is absent. Both are per-site operands.
+#[inline(always)]
+pub(crate) fn held_receiver<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, (shape, link): (S::Imm, S::Imm), miss: S::Miss) -> Option<()> {
+    let present = stage.ne_imm(records, 0u32);
+    stage.guard(present, miss)?;
+    let (_, record) = direct_record(stage, records, object, miss)?;
+    let exact = stage.load_u32(record, OBJECT.auxiliary_offset as i32);
+    let same = stage.eq_imm(exact, shape);
+    stage.guard(same, miss)?;
+    let prototype = super::object::proto_link(stage, record);
+    let same = stage.eq_imm(prototype, link);
+    stage.guard(same, miss)
 }
 
 /// A field read through the cache entry `offset` bytes into the table `entries`, of the object

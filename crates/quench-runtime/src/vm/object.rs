@@ -2173,15 +2173,20 @@ impl<H: Host> Vm<H> {
         let (receiver, kind) = self.inherited_receiver(object)?;
         let function_receiver = kind == super::field_cache::InheritedReceiver::Function;
         self.inherited_entry_answers(kind, index).then_some(())?;
-        let (shape, link) = (receiver.shape(), receiver.proto_link());
         // SAFETY: a site's index names a recorded entry (`record_inherited_field`), and a
         // hint's was found in the cache.
         let cache = unsafe { self.heap.dependencies().inherited_unchecked(index) };
-        if cache.receiver != shape
-            || function_receiver && !cache.function_links
-            || !cache.proved
-            || cache.proved_prototype != link
-        {
+        // An object record's receiver is the staged proof a folded read takes (`entry::held_receiver`);
+        // any other receiver's shape and link are read from its object.
+        let receiver_holds = match kind {
+            super::field_cache::InheritedReceiver::Record => {
+                let records = self.heap.object_record_base().unwrap_or(std::ptr::null());
+                // SAFETY: the heap's own object record reservation.
+                unsafe { crate::staged::concrete_held_receiver(records, object, cache.receiver, cache.proved_prototype.bits()) }
+            }
+            _ => cache.receiver == receiver.shape() && cache.proved_prototype == receiver.proto_link(),
+        };
+        if !receiver_holds || function_receiver && !cache.function_links || !cache.proved {
             return None;
         }
         let depth = u16::from(cache.depth);

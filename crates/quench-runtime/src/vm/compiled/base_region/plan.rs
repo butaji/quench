@@ -111,35 +111,49 @@ impl Planned {
 }
 
 /// Whether a heap row is the variant its decode's `hole` selects: an array the entry record holds
-/// is named by its record offset, else by its slot; a site read is a chain of two reads.
+/// is named by its record offset, else by its slot; a site read is a chain of two reads, and a
+/// folded read of the receiver stands on the receiver.
 fn heap_variant(heap: Heap, hole: u64) -> bool {
     match heap {
         Heap::Store | Heap::Index => hole != 0,
-        Heap::SiteChain | Heap::ThisChain => true,
+        Heap::SiteChain | Heap::ThisChain | Heap::ThisHeld => true,
         _ => false,
     }
 }
 
-/// The hole values of a heap row of `decoded`, given its holes of destination, first and second operand.
-fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bool, [dst_hole, a_hole, b_hole]: [u64; 3]) -> [u64; HOLES] {
+/// The hole values of the rows that read or store through a field cache entry, read a folded
+/// prototype-held field, or take the receiver: `None` for any other row. `base` is the frame offset of
+/// the object register a store writes through.
+fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [u64; 3]) -> Option<[u64; HOLES]> {
     let upper = crate::value::NarrowLayout::upper_words() as u64;
-    let base = if entry { decoded.hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
-    match heap {
-        Heap::Store => [base, a_hole, b_hole],
+    let folded = decoded.folded.map_or(0, Folded::word);
+    let object = dst_hole | a_hole << numeric::library::SITE_OBJECT_AT;
+    Some(match heap {
         Heap::SiteStore => [base, a_hole, decoded.hole],
         Heap::ThisStore => [0, a_hole, decoded.hole],
         Heap::ThisSite | Heap::ThisChain => [dst_hole, upper, decoded.hole],
+        Heap::Site | Heap::SiteChain => [object, upper, decoded.hole],
+        Heap::Held => [object, folded, decoded.hole],
+        Heap::ThisHeld => [dst_hole, folded, decoded.hole],
+        _ => return None,
+    })
+}
+
+/// The hole values of a heap row of `decoded`, given its holes of destination, first and second operand.
+fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bool, holes @ [dst_hole, a_hole, b_hole]: [u64; 3]) -> [u64; HOLES] {
+    let base = if entry { decoded.hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
+    site_holes(decoded, heap, base, holes).unwrap_or_else(|| match heap {
+        Heap::Store => [base, a_hole, b_hole],
         Heap::This => [dst_hole, 0, 0],
         Heap::Index if entry => [dst_hole, decoded.hole, b_hole],
         Heap::Field => [dst_hole, decoded.hole, 0],
-        Heap::Site | Heap::SiteChain => [dst_hole | a_hole << numeric::library::SITE_OBJECT_AT, upper, decoded.hole],
         Heap::Capture(slot) => [dst_hole, u64::from(slot), u64::from(slot) * SLOT],
         Heap::LoadLocal(slot) => [dst_hole, u64::from(slot), 0],
         Heap::StoreLocal(slot) => [0, a_hole, u64::from(slot)],
         Heap::Identity => [0, a_hole, decoded.hole],
         Heap::CaptureSet(slot) => [a_hole, u64::from(slot), u64::from(slot) * SLOT],
         _ => [dst_hole, a_hole, b_hole],
-    }
+    })
 }
 
 /// The plan of a heap row, given its (place, hole) of destination, first and second operand.

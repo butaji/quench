@@ -68,6 +68,13 @@ pub const SITE_STORE_ROW: u8 = 12;
 /// The site rows of the activation's receiver (`this`), which the payload holds.
 pub const THIS_SITE_ROW: u8 = 13;
 pub const THIS_STORE_ROW: u8 = 14;
+/// A prototype-held field folded to the value its holder held when the code was compiled, over the
+/// receiver (shape and prototype link) it stands on; the receiver's variant (`entry`) takes it from the payload.
+pub const HELD_ROW: u8 = 15;
+/// Leaves unless the invalidation word at the address in hole 1 is zero.
+pub const LIVE_ROW: u8 = 16;
+/// Bits below the prototype link in a folded read's hole 1, which carries the receiver's exact shape beneath it.
+pub const HELD_LINK_AT: u32 = 32;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries
 /// the destination's frame offset beneath it.
 pub const SITE_OBJECT_AT: u32 = 32;

@@ -30,7 +30,7 @@ use crate::staged::{Stage, Step, elements, entry, environment, load_this, read_l
 
 pub(crate) use crate::codes::{
     ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, FIELD_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
-    STORE_LOCAL_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW,
+    STORE_LOCAL_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW,
 };
 
 unsafe extern "C" {
@@ -175,6 +175,24 @@ fn register_object(s: &S) -> u64 {
     word_at(s.frame, (hole64::<0>() >> SITE_OBJECT_AT) as usize)
 }
 
+/// A prototype-held field folded to its value (hole 2): `object` is a direct object of the exact shape in
+/// hole 1's low half whose prototype link is its high half (`entry::held_receiver`), else the row leaves.
+#[inline(always)]
+fn held_row<const D: u8>(s: S, payload: usize, object: u64) -> Out {
+    let mut stage = StencilStage::from_hole(HOLE_B);
+    let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
+    let receiver = hole64::<HOLE_A>();
+    need!(s, entry::held_receiver(&mut stage, records, object, (receiver & u64::from(u32::MAX), receiver >> HELD_LINK_AT), ()));
+    deliver::<D>(s, hole64::<HOLE_B>())
+}
+
+/// Continues while the invalidation word at the address in hole 1 is zero: a Stable fact the code holds
+/// changed where it is set (`code_dependencies::Invalidation`).
+#[inline(always)]
+fn live_row(s: S) -> Out {
+    if word_at(hole64::<HOLE_A>() as usize, 0) == 0 { Out::Next(s) } else { Out::Exit(s) }
+}
+
 /// The `length` of the array or string word at hole 1 (`strings::length_of`).
 #[inline(always)]
 fn length_row<const D: u8>(s: S, payload: usize) -> Out {
@@ -260,6 +278,8 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         SITE_STORE_ROW => site_store_row::<A>(s, payload, word_at(s.frame, hole::<0>())),
         THIS_SITE_ROW => site_row::<D, ENTRY>(s, payload, word_at(payload, JS_STEP_RECEIVER)),
         THIS_STORE_ROW => site_store_row::<A>(s, payload, word_at(payload, JS_STEP_RECEIVER)),
+        HELD_ROW => held_row::<D>(s, payload, if ENTRY { word_at(payload, JS_STEP_RECEIVER) } else { register_object(&s) }),
+        LIVE_ROW => live_row(s),
         ARRAY_ROW => array_row(s),
         IDENTITY_ROW => identity_row(s),
         THIS_ROW => this_row::<D>(s),
