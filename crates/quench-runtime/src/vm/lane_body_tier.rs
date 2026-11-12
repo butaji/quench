@@ -26,6 +26,12 @@ pub(super) struct LaneBodyHistory {
     short: bool,
     /// Whether a caller's compile asked for its body (`LaneView::demand_body`).
     demanded: bool,
+    /// Whether its Quick body repaid an Optimized compile, which its next compile is.
+    promoted: bool,
+    /// Whether its last compile was Quick, and the field sites its plan relied on (`LaneView::compile_level`).
+    quick: bool,
+    planned_sites: u16,
+    held_noted: bool,
 }
 
 /// The entries and the milliseconds of warming past which a function specializes by its
@@ -80,6 +86,9 @@ fn name_leave(leaves_at: &std::cell::Cell<LaneLeaves>, exit: LaneExit, method: &
     if leaves_at.get() != LaneLeaves::Scattered && let Some(place) = leave_place(exit, method) { left_new(place); }
 }
 
+#[path = "lane_body_evidence.rs"]
+mod evidence;
+
 impl LaneView {
     /// Counts how a run of the specialized body ended, at `exit`; at
     /// `TIERS.lane_body.reoptimize_exits` leaves, doubled per recompile, it takes its
@@ -91,6 +100,8 @@ impl LaneView {
         if completed_region || matches!(exit, LaneExit::Returned { .. }) {
             completed.set(true);
             completions.set(completions.get().saturating_add(1));
+            if completions.get() % evidence::NATIVE_CREDIT_RUNS == 0 { evidence::consider_native_callees(method); }
+            self.consider_promotion(body);
             return;
         }
         exits.set(exits.get().saturating_add(1));
@@ -109,12 +120,14 @@ impl LaneView {
             // run, gains nothing from its entry: its function runs in the lane again.
             let costly = runs >= u64::from(TIERS.lane_body.retire_after_runs) && leaves * PERCENT > runs * u64::from(TIERS.lane_body.retire_share);
             if !completed.get() || costly {
+                self.note_failed();
                 self.retire_body(body, LaneBody::Declined);
                 self.release_from_tier();
             }
             return;
         };
         let next = LaneBody::Unspecialized { entries: 0, recompiles: *recompiles + 1, stuck };
+        self.note_failed();
         self.retire_body(body, next);
     }
 
@@ -124,28 +137,6 @@ impl LaneView {
         // SAFETY: as `lane_body`; the leave being recovered has finished with the body's counters.
         if let LaneBody::Specialized { native_leaves, .. } = unsafe { &*self.tier_lane.get() } {
             native_leaves.set(native_leaves.get().saturating_add(1));
-        }
-    }
-
-    /// What the runs of this body have shown the tier machine: its completions, its leaves,
-    /// and whether the completions are exact (natively called runs are counted at each
-    /// completion: `EntryCell::completions`). `None` unless it is specialized.
-    pub(in crate::vm) fn body_completion_evidence(&self) -> Option<(u64, u64, bool)> {
-        // SAFETY: as `note_native_leave`.
-        match unsafe { &*self.tier_lane.get() } {
-            LaneBody::Specialized { native_leaves, completions, exits, .. } => Some((
-                self.entry.completions.get() + u64::from(completions.get()),
-                u64::from(native_leaves.get()) + u64::from(exits.get()),
-                true,
-            )),
-            _ => None,
-        }
-    }
-
-    /// The diagnostics line of what `body_completion_evidence` holds.
-    pub(in crate::vm) fn report_completion_evidence(&self, program: usize, function: u32) {
-        if let Some((completions, leaves, _)) = self.body_completion_evidence() {
-            eprintln!("QUENCH_LANE_EVIDENCE {{\"program\":{program},\"function\":{function},\"completions\":{completions},\"leaves\":{leaves}}}");
         }
     }
 
@@ -316,7 +307,8 @@ impl LaneView {
             self.entry.publish(&method);
         }
         LaneBody::Specialized { method, tier_prologue, completions: Cell::new(0), exits: Cell::new(0),
-            leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), native_leaves: Cell::new(0), recompiles, stuck }
+            leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), native_leaves: Cell::new(0), recompiles, stuck,
+            promote_at: if self.history.get().quick && !crate::jit_mode::quick_only() { super::compiled::promotion_completions() } else { 0 } }
     }
 
     /// `--b-jit` compiles no function body: the view's body is declined, once.

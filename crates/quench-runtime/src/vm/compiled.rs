@@ -81,6 +81,7 @@ mod lane_compile;
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
+pub(super) use lane_facts::{level_for_plan, note_site_outcome, promotion_completions};
 #[path = "compiled/static_loops.rs"]
 mod static_loops;
 #[path = "compiled/wasm_callable.rs"]

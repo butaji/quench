@@ -32,6 +32,16 @@ pub(in crate::vm) struct Priors {
     /// The part per thousand of a compile's time that waits on the running program: compiles run
     /// on the code generator's thread, so most of their time overlaps it (two cores).
     pub(in crate::vm) compile_wall_permille: u64,
+    /// The part per thousand of a Quick body's run time an Optimized body saves (richards 7.1%, navier 4.7%,
+    /// crypto 4.7%, deltablue 5.5%, raytrace 0: run-only Ir, `qjit-vs-ujit-callgrind`), and the
+    /// thousandths of a ns one IR instruction of a body takes per completed run.
+    pub(in crate::vm) ultra_saving_permille: u64,
+    pub(in crate::vm) body_ns_per_ir_permille: u64,
+    /// The Beta prior (held, failed) of a planned field site holding after its body published.
+    pub(in crate::vm) site_prior: (u32, u32),
+    /// Whether a first body compiles Quick where its plan is unlikely to hold: measured a run-only
+    /// loss on richards and deltablue (`selective-quick-fixed-work-site-model`), so off.
+    pub(in crate::vm) selective_quick: bool,
     /// Nanoseconds entering a loop region from the lane costs per call, and a body's entry.
     pub(in crate::vm) region_entry_ns: u64,
     pub(in crate::vm) body_entry_ns: u64,
@@ -205,7 +215,7 @@ const FLOOR: Tiers = Tiers {
     lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
-    priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },
+    priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1, ultra_saving_permille: 150, body_ns_per_ir_permille: 150, site_prior: (30, 1), selective_quick: false },
 };
 
 /// The base a share in percent is a share of.
@@ -241,7 +251,7 @@ const MEASURED: Tiers = Tiers {
         general_entry_overhead: 32,
     },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
-    priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },
+    priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1, ultra_saving_permille: 150, body_ns_per_ir_permille: 150, site_prior: (30, 1), selective_quick: false },
 };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)

@@ -866,6 +866,8 @@ enum LaneBody {
         recompiles: u8,
         /// Its predecessor's few leaves, where it left only there.
         stuck: LaneLeaves,
+        /// The completions after which it is compiled again, Optimized (0: it is one).
+        promote_at: u32,
     },
     Declined,
 }
