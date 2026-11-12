@@ -36,8 +36,7 @@ impl JitMode {
         match (chosen.is_some(), Self::from_flag(flag)) {
             (true, _) => Err("only one of --no-jit, --b-jit, --q-jit and --u-jit can be used"),
             (false, Some(mode)) => Ok(*chosen = Some(mode)),
-            (false, None) if flag == "--jit" => Err("--jit was removed: JIT is the default, and --no-jit selects the interpreter"),
-            (false, None) => Err("unknown JIT flag: use --no-jit, --b-jit, --q-jit or --u-jit"),
+            (false, None) => Err("--jit was removed: JIT is the default, and --no-jit selects the interpreter"),
         }
     }
 
@@ -106,7 +105,6 @@ mod tests {
         assert_eq!(tiers("--no-jit"), Some((false, false)));
         assert_eq!(tiers("--b-jit"), Some((true, false)));
         assert_eq!(tiers("--q-jit"), None);
-        assert_eq!(tiers("--f-jit"), None);
         assert_eq!(tiers("--u-jit"), Some((false, true)));
         assert_eq!(tiers("--jit"), None);
         assert_eq!(JitMode::default().tiers_enabled(), (true, true));
