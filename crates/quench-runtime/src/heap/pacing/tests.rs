@@ -251,7 +251,7 @@ fn high_young_survival_switches_to_full_collections_and_probes_back_under(pacing
     let next = pacing.plan(&mut state, minor(2 * live, 3 * live / 2, live / 2));
     assert_eq!(state.regime(&pacing), Regime::FullOnly);
     // The next full collection keeps the interval measured from the last full one.
-    let interval = pacing.full_only_headroom.of(3 * live / 2) - live / 2;
+    let interval = pacing.old_sizing.headroom(&state.old_generation).of(3 * live / 2) - live / 2;
     assert_eq!(next, NextCollection { threshold: interval.max(pacing.minimum_young), full: true });
     // After `probe_interval` full collections, a minor probes survival again.
     let full = CollectionOutcome { full: true, since_full: 0, ..minor(live, live, 4 * live) };

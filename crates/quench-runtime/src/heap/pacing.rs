@@ -77,9 +77,8 @@ pub(super) struct GenerationalPacing {
     pub(super) maximum_cap_backoff: u32,
     /// Smoothed young survival, in `SURVIVAL_SCALE` parts, above which minor collections
     /// stop paying: they would mark nearly everything they were meant to skip. The heap
-    /// then collects fully, with `full_only_headroom` between collections.
+    /// then collects fully, with the old sizing's headroom between collections.
     pub(super) survival_limit: u32,
-    pub(super) full_only_headroom: Ratio,
     /// Full collections between minor collections that probe survival again.
     pub(super) probe_interval: u32,
     /// Growth of live weight (cells, records and payload) since the last full collection, as
@@ -269,7 +268,7 @@ const AGED_DEATH_TO_KEEP_AGING: u32 = SURVIVAL_SCALE / 2;
 mod aging;
 mod old_sizing;
 use aging::Aging;
-use old_sizing::{OldGenerationSizing, OldGenerationState};
+use old_sizing::{MEMORY_FIRST_OLD_SIZING, OldGenerationSizing, OldGenerationState, THROUGHPUT_OLD_SIZING};
 
 const FULLS_FINDING_PROMOTED_GARBAGE_TO_AGE: u32 = 2;
 
@@ -357,7 +356,7 @@ impl GenerationalPacing {
                 }
                 // A probe runs inside the interval between full collections; it does not
                 // lengthen it.
-                let interval = self.full_only_headroom.of(outcome.live_after_full);
+                let interval = self.old_sizing.headroom(&state.old_generation).of(outcome.live_after_full);
                 NextCollection {
                     threshold: interval
                         .saturating_sub(outcome.since_full)
@@ -528,7 +527,6 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     productive_full: Ratio::new(1, 8),
     maximum_cap_backoff: 2,
     survival_limit: THROUGHPUT_SURVIVAL_LIMIT,
-    full_only_headroom: THROUGHPUT_FULL_ONLY_HEADROOM,
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
     minimum_external_budget: THROUGHPUT_MINIMUM_EXTERNAL_BUDGET,
@@ -574,7 +572,6 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
     // collection's back-off trades max RSS for fewer collections (v2-cloud-jet 551f170f7).
     maximum_cap_backoff: 0,
     survival_limit: SURVIVAL_SCALE / 2,
-    full_only_headroom: MEMORY_FIRST_FULL_ONLY_HEADROOM,
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
     minimum_external_budget: MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET,
@@ -601,24 +598,6 @@ const THROUGHPUT_MINIMUM_EXTERNAL_BUDGET: usize = 4 << 20;
 /// 1 MiB and 39.4-43.1 at 8 MiB); 256 KiB gave no lower peak. Memory-first trades the extra
 /// collections for it.
 const MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET: usize = 512 << 10;
-
-/// Allocation between full collections, as a share of the live set, once most of each young
-/// generation survives (`Regime::FullOnly`) under throughput: three live sets. A heap whose
-/// survivors fill each young generation, as V8-v7 Splay's tree does, collects only fully, and
-/// each full collection marks the whole live set: at one live set Splay ran 26 full
-/// collections a run (2026-11-01: Score 5140-5204 at 31.8 MB; 3/2: 5960-6124 at 39.3 MB). With
-/// strings of parts (2026-11-11, experiment profile, 8 interleaved runs): 3/2 5613 at 56 MB, 3: 5934 at 82 MB (kept), 4: 6131 at 100 MB (JIT adds 15-25 MB, bar 113).
-const THROUGHPUT_FULL_ONLY_HEADROOM: Ratio = Ratio::new(3, 1);
-
-/// Memory-first lets half a live set of allocation pass between full collections once most of
-/// each young generation survives, not a whole one, which let the heap reach twice its live
-/// set. V8-v7 MemoryFirst, static x86_64 production build, 3 interleaved runs, worst max RSS /
-/// Score (2026-10-27): Splay 31668 -> 24792 KiB / 5388 -> 4617, EarleyBoyer 6704 -> 6072 /
-/// 4437 -> 3951, the six rows that stay generational unchanged; within the Score this table
-/// already trades for RSS (`YOUNG_MINIMUM_ALLOCATION`). A quarter cut Splay to 21596 KiB but
-/// its Score to 3411, and the TypeScript compiler on `@types/node` (live set about 70 MB)
-/// is within 1% either way at a half.
-const MEMORY_FIRST_FULL_ONLY_HEADROOM: Ratio = Ratio::new(1, 2);
 
 /// The fewest allocations between collections under memory-first, whatever survived: the
 /// pre-generational minimum headroom.
@@ -712,27 +691,6 @@ const SURVIVING_YOUNG_FROM: u32 = SURVIVAL_SCALE / 4;
 /// full collection moves within 6-10K weight in both directions; a loading jsdom grows
 /// 121K -> 188K between its two.
 const STEADY_LIVE_GROWTH: Ratio = Ratio::new(1, 8);
-/// Throughput's old-generation sizing: a full collection once the old generation has grown
-/// by what the last one kept (two live sets, the fixed table before) while full collections
-/// take `THROUGHPUT_FULL_TIME_TARGET` of the time or more, tightening an eighth at a time to
-/// half of what it kept while they take less.
-const THROUGHPUT_OLD_SIZING: OldGenerationSizing = OldGenerationSizing {
-    tightest_eighths: 4,
-    widest_eighths: 8,
-    widen_from: THROUGHPUT_FULL_TIME_TARGET,
-    tighten_below: THROUGHPUT_FULL_TIME_TARGET,
-};
-/// The share of time full collections may take before the old generation widens: G1's
-/// default `GCTimeRatio` of 12, one part in thirteen.
-const THROUGHPUT_FULL_TIME_TARGET: Ratio = Ratio::new(1, 13);
-/// Memory-first's old-generation sizing: fixed at what the last full collection kept, its
-/// table's growth before sizing adapted.
-const MEMORY_FIRST_OLD_SIZING: OldGenerationSizing = OldGenerationSizing {
-    tightest_eighths: 8,
-    widest_eighths: 8,
-    widen_from: THROUGHPUT_FULL_TIME_TARGET,
-    tighten_below: THROUGHPUT_FULL_TIME_TARGET,
-};
 /// The young budget's factor past `SURVIVING_YOUNG_FROM` under throughput, on a steady heap
 /// only (`PacingState::steady`): two. Eight gave EarleyBoyer Score x1.025 at max RSS
 /// 11.1 -> 15.1 MB (pinned, 11 runs, 2026-10-26; ungated x1.047), and on npm's heaviest rows
