@@ -29,12 +29,13 @@ pub struct AheadImages {
 const MAGIC: &[u8; 8] = b"QAHEAD\0\x02";
 
 /// What names a program: a hash of its source text and every function's registers and opcodes
-/// (atom numbers are per VM, so no operand), which an image is valid for and no other (it is a validity key, never a reason to treat a program specially).
+/// (atom numbers are per VM, so no operand), which an image is valid for and no other (plus the helper count the code was linked against; it is a validity key, never a reason to treat a program specially).
 fn fingerprint(program: &ResidualProgram) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
     let mix = |hash: u64, bytes: &[u8]| bytes.iter().fold(hash, |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME));
-    let mut hash = mix(FNV_OFFSET, program.source_text().unwrap_or_default().as_bytes());
+    let mut hash = mix(FNV_OFFSET, &(super::LaneHelper::COUNT as u32).to_le_bytes());
+    hash = mix(hash, program.source_text().unwrap_or_default().as_bytes());
     for index in 0..program.function_count() {
         let function = program.function(index);
         hash = mix(hash, &function.registers.to_le_bytes());

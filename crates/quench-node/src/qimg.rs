@@ -23,6 +23,7 @@ pub fn compile(arguments: Vec<String>) -> Result<ExitCode, String> {
     let entry_args = before.iter().chain(after).cloned();
     let entry = std::fs::canonicalize(entry).map_err(|error| format!("{entry}: {error}"))?;
     let entry = entry.to_string_lossy().into_owned();
+    eprintln!("quench-node compile: running {entry} to record its images; the program executes with its side effects");
     AheadImages::start_recording();
     let status = crate::shared_run::run_shared_cli(std::iter::once(entry.clone()).chain(entry_args));
     let images = AheadImages::finish_recording();
