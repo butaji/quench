@@ -6668,6 +6668,13 @@ impl LaneMethod {
     pub(super) fn calls_only_natively(&self) -> bool {
         self.closed
     }
+
+    /// Sizes this thread's scratch window for it (`LaneFrame::scratch`): the one event that
+    /// grows the window, so a run never checks it. Its publication does it
+    /// (`ProgramStore::publish_lane_method`), on the thread that runs it.
+    pub(super) fn reserve_scratch(&self) {
+        entry_cell::reserve_lane_scratch(self.scratch_width);
+    }
 }
 
 /// Publication owns future entry; active runs and direct callers own code leases.
@@ -7216,13 +7223,12 @@ impl<H: Host> Vm<H> {
                 context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner)
         };
         let exit = self.run_lane_method(method, true, program, residual, registers, receiver, captures, lane_context);
-        // SAFETY: as above; the callee's run may have grown the scratch window.
+        // SAFETY: as above.
         unsafe {
             saved.install(&mut (*frame).dispatch);
             let context = &mut (*frame).context;
             (context.stack_limit, context.entry_stack, context.interrupt,
                 context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner) = binding;
-            (*frame).dispatch.inlined = (*frame).scratch.as_mut_ptr().addr();
         }
         exit
     }

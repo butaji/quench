@@ -60,9 +60,7 @@ impl<H: Host> Vm<H> {
     unsafe fn bind_body_entry(&mut self, frame: *mut LaneFrame, run: &BodyRun) -> *mut CallContext {
         // SAFETY: as the caller promises.
         unsafe {
-            if (*frame).scratch.len() < run.method.scratch_width {
-                (*frame).scratch.resize(run.method.scratch_width, Value::UNDEFINED);
-            }
+            debug_assert!((*frame).scratch.len() >= run.method.scratch_width, "a body's publication sized the scratch window");
             let dispatch = &raw mut (*frame).dispatch;
             let bound = LaneRun {
                 program_id: run.program,
@@ -73,7 +71,6 @@ impl<H: Host> Vm<H> {
             (*frame).bind_run(bound, &self.execution_interrupt);
             (*dispatch).field_entries = self.program_field_entries(run.program).unwrap_or(0);
             (*dispatch).native_registers = run.registers;
-            (*dispatch).inlined = (*frame).scratch.as_mut_ptr().addr();
             (*dispatch).refresh_object_bases_at_entry(self);
             let vm = self as *mut Self;
             (*dispatch).bind_lane_storage(vm);

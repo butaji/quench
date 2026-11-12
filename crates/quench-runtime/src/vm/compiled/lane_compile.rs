@@ -225,7 +225,7 @@ impl<H: Host> Vm<H> {
             }
         };
         self.host.after_native_compilation();
-        method
+        method.inspect(LaneMethod::reserve_scratch)
     }
 
     /// Plans `function`'s lane body at `budget`, again with less inlined where its IR would make
