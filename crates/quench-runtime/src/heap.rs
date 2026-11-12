@@ -3591,6 +3591,22 @@ impl Heap {
         }
         elements.length = length;
     }
+    /// Makes every index from the dense length up to the array's length hold `value`, as a
+    /// run of stores would, in dense storage taking the whole length at once: the sparse
+    /// elements all lie in the range being overwritten, so none survive.
+    pub(crate) fn fill_array_tail(&mut self, array: Value, value: Value) {
+        self.note_prototype_elements(array);
+        self.write_barrier(array);
+        let length = self.sparse_length(array).or_else(|| self.array_elements(array).map(|dense| dense.len()));
+        if let Some(arrays) = &mut self.sparse_arrays {
+            arrays.remove(&array);
+            if arrays.is_empty() {
+                self.sparse_arrays = None;
+            }
+        }
+        self.grow_array_elements(array, |elements| elements.resize(length.unwrap_or(0), value));
+    }
+
     fn materialize_sparse_array(&mut self, array: Value, length: usize) {
         let sparse = self
             .sparse_arrays

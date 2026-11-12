@@ -500,6 +500,14 @@ impl<H: Host> Vm<H> {
             };
             super::index::mutable_array_elements(array_object.elements_mut()).fill(in_dense, value);
         }
+        // A fill of everything from the dense length to the end replaces the whole sparse tail.
+        let whole_tail = indices.start <= dense
+            && indices.end == self.heap.sparse_length(array).unwrap_or(dense)
+            && indices.end > dense;
+        if whole_tail {
+            self.heap.fill_array_tail(array, value);
+            return true;
+        }
         for index in dense.max(indices.start)..indices.end {
             self.store_validated_array_element(array, index, value);
         }
