@@ -2,6 +2,7 @@ use super::property_key::PropertyKey;
 use std::ops::ControlFlow;
 use super::*;
 use crate::heap::PrivateBrand;
+mod ordinary_chain;
 mod plain_key_set;
 mod proxy_get;
 
@@ -792,11 +793,6 @@ impl<H: Host> Vm<H> {
             ControlFlow::Break(builtin) => return Ok(builtin),
             ControlFlow::Continue(holder) => holder,
         };
-        self.evaluate_deferred_namespace_for_key(
-            p,
-            object,
-            Some(super::property_key::PropertyKey::string(atom)),
-        )?;
         if private_name {
             self.check_private_brand_for_read(p, private_target, atom)?;
             if let Some(value) = self.private_field_value(p, private_target, atom) {
@@ -804,6 +800,16 @@ impl<H: Host> Vm<H> {
             }
         }
         loop {
+            if !private_name {
+                match self.ordinary_chain_read(object, atom) {
+                    Some(ordinary_chain::ChainRead::Value(value)) => return Ok(value),
+                    Some(ordinary_chain::ChainRead::Getter(getter)) => {
+                        return getter.map_or(Ok(Value::UNDEFINED), |getter| self.call_value(p, getter, receiver, &[]));
+                    }
+                    Some(ordinary_chain::ChainRead::Exotic(link)) => object = link,
+                    None => {}
+                }
+            }
             self.evaluate_deferred_namespace_for_key(
                 p,
                 object,

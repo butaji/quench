@@ -12896,7 +12896,7 @@ script_handler! {
             vm.note_site_callee(&i.call_link, super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Forwarded { through: r.get(i.b), callee }, function });
         }
         if let Some(FunctionKind::Native(native)) = kind {
-            if i.a & crate::bytecode::RETURN_REGISTER != 0 {
+            if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
                 return exit(ip);
             }
             let value = lane_native_value(cx, ip, i, native, callee, receiver, args);
