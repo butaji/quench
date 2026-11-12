@@ -9,6 +9,9 @@
 #[path = "stencils/library.rs"]
 mod library;
 
+#[path = "build/checks.rs"]
+mod checks;
+
 use std::{env, fs, path::PathBuf, process::Command};
 
 const SOURCE: &str = "stencils/rows.rs";
@@ -64,6 +67,12 @@ const EXIT_BASE: u32 = 2;
 const ABS32: u8 = 0;
 const SUCCESSOR: u8 = 1;
 const ABS64: u8 = 2;
+/// The successor hole indexes (`quench_bjit::NEXT`, `TAKEN`, `EXIT`).
+const NEXT: u32 = 0;
+const TAKEN: u32 = 1;
+/// The routines around the rows (`stencils/entry.rs`).
+const ENTRY_PREFIX: &str = "entry_";
+const LEAVE_PREFIX: &str = "leave_";
 /// The rows that may make a call (`stencils/call_rows.rs`).
 const CALL_ROW_PREFIX: &str = "call_";
 /// `movabs r64, imm64`: REX.W (REX.B for r8-r15) then `B8 + register`; the immediate follows.
@@ -138,7 +147,7 @@ fn check_transfer(row: &str, code: &[u8], at: usize) {
     let before = &code[..at];
     let jmp = matches!(before, [.., 0xe9]);
     let jcc = matches!(before, [.., 0x0f, 0x80..=0x8f]);
-    let call = row.starts_with("entry_") && matches!(before, [.., 0xe8]);
+    let call = row.starts_with(ENTRY_PREFIX) && matches!(before, [.., 0xe8]);
     assert!(jmp || jcc || call, "stencil {row}: relocation at {at} is not a jmp or jcc (a `call`?)");
 }
 
@@ -173,7 +182,7 @@ fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let table = out.join("rustc_stencils.rs");
     if env::var("CARGO_CFG_TARGET_ARCH").as_deref() != Ok("x86_64") || env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
-        fs::write(&table, VARIANTS.map(|(name, _)| format!("pub(crate) static {name}: &[RawStencil] = &[];\n")).concat()).unwrap();
+        fs::write(&table, VARIANTS.map(|(name, _)| library_source(name, 0, 0, "")).concat()).unwrap();
         return;
     }
     let instances: String = library::library().into_iter().map(|c| format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4)).collect();
@@ -203,19 +212,27 @@ fn stencil_table(table: &str, data: &[u8]) -> String {
     let elf = Elf::parse(data);
     let symbols = elf.symbols();
     let mut rows: Vec<(String, String)> = Vec::new();
+    let (mut framed, mut unchained) = (0, 0);
     for (name, section, value, _) in symbols.iter().filter(|s| s.3 & SYMBOL_KIND_MASK == SYMBOL_FUNCTION && s.3 >> SYMBOL_BIND_SHIFT == SYMBOL_GLOBAL && s.1 != 0 && !s.0.starts_with("_R")) {
         assert_eq!(*value, 0, "{name}: one function per section");
         let section_data = &elf.sections[*section];
         let code = &data[section_data.offset..section_data.offset + section_data.size];
-        let returns = name.starts_with("leave_") || name.starts_with("entry_");
+        let returns = name.starts_with(LEAVE_PREFIX) || name.starts_with(ENTRY_PREFIX);
         assert!(returns || !ends_with_ret(code), "stencil {name} ends with `ret`");
         check_call(name, code);
         let relocs = relocations(&elf, &symbols, data, name, *section, code);
+        framed += usize::from(checks::is_row(name) && checks::has_stack_frame(code));
+        unchained += usize::from(checks::is_row(name) && !checks::ends_in_continuation(code, &relocs));
         rows.push((name.clone(), format!("    RawStencil {{ name: {name:?}, code: &{code:?}, relocs: &{relocs:?} }},\n")));
     }
     rows.sort();
     let body: String = rows.into_iter().map(|(_, row)| row).collect();
-    format!("pub(crate) static {table}: &[RawStencil] = &[\n{body}];\n")
+    library_source(table, framed, unchained, &body)
+}
+
+/// The static `RawLibrary` named `table`: its rows and what `checks` counted over them.
+fn library_source(table: &str, stencils_with_stack_frame: usize, stencils_not_ending_in_continuation: usize, rows: &str) -> String {
+    format!("pub(crate) static {table}: RawLibrary = RawLibrary {{ stencils_with_stack_frame: {stencils_with_stack_frame}, stencils_not_ending_in_continuation: {stencils_not_ending_in_continuation}, rows: &[\n{rows}] }};\n")
 }
 
 /// The relocations of one row as (offset, class, index, addend).
@@ -257,8 +274,8 @@ fn hole_of(row: &str, symbol: &str, kind: u32) -> (u8, u32) {
     };
     let number = |digits: &str| digits.parse::<u32>().unwrap_or_else(|_| panic!("stencil {row}: bad hole {symbol}"));
     match (class, rest) {
-        (SUCCESSOR, "NEXT") => (SUCCESSOR, 0),
-        (SUCCESSOR, "TAKEN") => (SUCCESSOR, 1),
+        (SUCCESSOR, "NEXT") => (SUCCESSOR, NEXT),
+        (SUCCESSOR, "TAKEN") => (SUCCESSOR, TAKEN),
         (SUCCESSOR, exit) if exit.starts_with("EXIT") => (SUCCESSOR, EXIT_BASE + number(&exit[EXIT_PREFIX..])),
         (_, value) if value.starts_with('V') && class != SUCCESSOR => (class, number(&value[1..])),
         _ => panic!("stencil {row}: hole {symbol} used in the wrong way"),

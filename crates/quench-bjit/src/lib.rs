@@ -133,6 +133,15 @@ pub mod rustc {
         pub(crate) relocs: &'static [(u16, u8, u8, i32)],
     }
 
+    /// One CPU variant's stencils, and what `build.rs` counted over them (`build/checks.rs`).
+    pub(crate) struct RawLibrary {
+        /// Rows that adjust or use the stack, where a pinned register would spill.
+        pub(crate) stencils_with_stack_frame: usize,
+        /// Rows whose hot path does not end with the continuation jump the stitcher drops.
+        pub(crate) stencils_not_ending_in_continuation: usize,
+        pub(crate) rows: &'static [RawStencil],
+    }
+
     include!(concat!(env!("OUT_DIR"), "/rustc_stencils.rs"));
 
     /// Whether this CPU runs the x86-64-v3 build: its AVX2 and BMI2 baseline with the rest of the
@@ -149,15 +158,25 @@ pub mod rustc {
         }
     }
 
-    /// The table this process's stencils come from, chosen once at first use.
-    fn table() -> &'static [RawStencil] {
-        static CHOSEN: std::sync::OnceLock<&'static [RawStencil]> = std::sync::OnceLock::new();
-        CHOSEN.get_or_init(|| if runs_v3() { V3 } else { BASELINE })
+    /// The library this process's stencils come from, chosen once at first use.
+    fn library() -> &'static RawLibrary {
+        static CHOSEN: std::sync::OnceLock<&'static RawLibrary> = std::sync::OnceLock::new();
+        CHOSEN.get_or_init(|| if runs_v3() { &V3 } else { &BASELINE })
+    }
+
+    /// Rows of the chosen library that keep a stack frame.
+    pub fn stencils_with_stack_frame() -> usize {
+        library().stencils_with_stack_frame
+    }
+
+    /// Rows of the chosen library whose hot path does not end with the continuation jump.
+    pub fn stencils_not_ending_in_continuation() -> usize {
+        library().stencils_not_ending_in_continuation
     }
 
     /// The stencil of the row function `name`, if the object has it.
     pub fn stencil(name: &str) -> Option<Stencil> {
-        let rows = table();
+        let rows = library().rows;
         let raw = &rows[rows.binary_search_by(|raw| raw.name.cmp(name)).ok()?];
         let (mut relocs, mut imm32) = (Vec::new(), Vec::new());
         for &(offset, class, index, addend) in raw.relocs {
@@ -179,6 +198,11 @@ pub mod rustc {
 #[cfg(test)]
 mod rustc_tests {
     use super::{numeric::library, rustc};
+
+    /// Rows whose hot path may still end in something other than the continuation jump: LLVM
+    /// lays a cold exit tail after it. It may only shrink; a row that gains a stack frame
+    /// fails `no_row_has_a_stack_frame` instead.
+    const NOT_ENDING_IN_CONTINUATION_RATCHET: usize = 3200;
 
     /// The routines around the rows (`stencils/entry.rs`).
     const ROUTINES: [&str; 7] = ["entry_thunk", "entry_body", "leave_word", "leave_pop", "leave_stop", "leave_stop_pop", "leave_returned"];
@@ -215,5 +239,23 @@ mod rustc_tests {
                 assert!(reloc.pc_relative || (reloc.index as usize) < crate::HOLES, "{name}: {reloc:?}");
             }
         }
+    }
+
+    /// No row keeps a stack frame, so no pinned register is spilled, in either CPU variant.
+    #[test]
+    fn no_row_has_a_stack_frame() {
+        for library in [&rustc::BASELINE, &rustc::V3] {
+            assert_eq!(library.stencils_with_stack_frame, 0);
+        }
+        assert_eq!(rustc::stencils_with_stack_frame(), 0);
+    }
+
+    /// The rows whose hot path misses the continuation jump do not grow in number.
+    #[test]
+    fn rows_end_in_the_continuation_jump() {
+        for library in [&rustc::BASELINE, &rustc::V3] {
+            assert!(library.stencils_not_ending_in_continuation <= NOT_ENDING_IN_CONTINUATION_RATCHET, "{}", library.stencils_not_ending_in_continuation);
+        }
+        assert!(rustc::stencils_not_ending_in_continuation() <= NOT_ENDING_IN_CONTINUATION_RATCHET);
     }
 }
