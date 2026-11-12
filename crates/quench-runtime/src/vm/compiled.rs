@@ -7372,8 +7372,7 @@ impl LaneFrame {
                 native_top: 0,
                 native_end: 0,
                 shadow_top: 0,
-                shadow_end: 0,
-                shadow_base: 0,
+                shadow_end: 0, shadow_base: 0,
                 #[cfg(test)]
                 island_steps: 0,
                 #[cfg(test)]
@@ -7520,8 +7519,7 @@ impl JsNativeActivation {
             native_top: 0,
             native_end: 0,
             shadow_top: 0,
-            shadow_end: 0,
-            shadow_base: 0,
+            shadow_end: 0, shadow_base: 0,
             #[cfg(test)]
             island_steps: 0,
             #[cfg(test)]

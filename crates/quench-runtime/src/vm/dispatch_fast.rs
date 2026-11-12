@@ -12014,8 +12014,7 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
         (leaf.caller_env, leaf.caller_capture)
     };
     let activation = Activation {
-        native: crate::vm::compiled::ShadowFrame::EMPTY,
-        function: target.function,
+        native: crate::vm::compiled::ShadowFrame::EMPTY, function: target.function,
         call: leaf.call,
         caller_base: leaf.caller_base,
         caller_registers: leaf.caller_registers,
@@ -15764,8 +15763,7 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     // Only a plain call activates another program's callee (`Vm::resolve_script_call_target`).
     let cross = lane_crosses::<H, GENERAL>(cx, target);
     let activation = Activation {
-        native: crate::vm::compiled::ShadowFrame::EMPTY,
-        function: target.function,
+        native: crate::vm::compiled::ShadowFrame::EMPTY, function: target.function,
         call: ip,
         caller_base: unsafe { (*cx).base },
         caller_registers: r,
@@ -15935,8 +15933,7 @@ fn lane_activate_environment<H: Host>(
         Registers(registers)
     };
     let activation = Activation {
-        native: crate::vm::compiled::ShadowFrame::EMPTY,
-        function: target.function,
+        native: crate::vm::compiled::ShadowFrame::EMPTY, function: target.function,
         call: ip,
         caller_base: unsafe { (*cx).base },
         caller_registers: r,
@@ -16196,8 +16193,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         Registers(registers)
     };
     let activation = Activation {
-        native: crate::vm::compiled::ShadowFrame::EMPTY,
-        function: target.function,
+        native: crate::vm::compiled::ShadowFrame::EMPTY, function: target.function,
         call: ip,
         caller_base: unsafe { (*cx).base },
         caller_registers: r,
@@ -21670,8 +21666,7 @@ impl PreparedShape {
         let keeps = target.forwards() || argc > params && !target.drops_extra_arguments();
         let size = if keeps { registers + argc } else { registers };
         let activation = Activation {
-            native: crate::vm::compiled::ShadowFrame::EMPTY,
-            function: target.function,
+            native: crate::vm::compiled::ShadowFrame::EMPTY, function: target.function,
             call,
             caller_base: caller.base,
             caller_registers: caller.registers,
