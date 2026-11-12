@@ -1781,6 +1781,9 @@ lane_helper_inventory! { H;
     VmStep => super::dispatch_fast::lane_vm_step::<H>,
     /// ToBoolean of a value its cell decides (`lane_truthy`).
     Truthy => lane_truthy::<H>,
+    /// A decision of two words the call-out carries, which needs no VM record
+    /// (`dispatch_fast::lane_decide`).
+    Decide => super::dispatch_fast::lane_decide::<H>,
 }
 
 /// One entry in an outer-to-inner recovery chain. Register offsets are Value indices.

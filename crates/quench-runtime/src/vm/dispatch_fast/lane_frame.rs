@@ -32,19 +32,7 @@ impl Decisions {
     /// The decisions of the running lane's `cx`.
     fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
         Self { context: cx.cast(), decide: |context, operator, left, right|
-            lane_decision(context.cast::<LaneContext<H>>(), operator, left, right) }
-    }
-}
-
-/// The decision of `left operator right` that runs no guest code: a strict equality
-/// (`Vm::strict_equal`) and `instanceof` by the remembered constructor layout
-/// (`Vm::steady_instanceof`); `None` for any other pair, which the general path decides.
-fn lane_decision<H: Host>(cx: *mut LaneContext<H>, operator: u32, left: Value, right: Value) -> Option<bool> {
-    let vm = unsafe { vm(cx) };
-    match crate::vm::operations::equality_operator(operator) {
-        Some((true, negated)) => Some(vm.strict_equal(left, right) != negated),
-        _ if operator == INSTANCEOF_OPERATOR => vm.steady_instanceof(left, right),
-        _ => None,
+            super::vm_steps::lane_decision(unsafe { vm(context.cast::<LaneContext<H>>()) }, operator, left, right) }
     }
 }
 
@@ -338,7 +326,7 @@ pub(super) fn staged_compare_jump<H: Host>(cx: *mut LaneContext<H>, r: Registers
 /// which the handler's cold path decides.
 #[inline(always)]
 fn observed(operator: u32, [left, right]: [Value; 2]) -> Comparison {
-    match Comparison::of_operator(operator) {
+    match Comparison::of_operator(operator).by_vm() {
         Comparison::Relation { .. } if left.as_number().is_none() || right.as_number().is_none() => Comparison::Operator(operator),
         comparison => comparison,
     }

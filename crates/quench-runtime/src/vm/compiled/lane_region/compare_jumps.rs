@@ -1,7 +1,8 @@
 //! The conditional jump on two values (`Operation::CompareJump`, the `JumpBinaryFalse` row),
 //! lowered by its comparison and by what the facts prove of its operands: a test against `null`
-//! or `undefined`, a bitwise test, an ordering, an equality or `instanceof` by the staged step
-//! (whose answer picks the edge through `Frame::branch`), and any other by the lane's own relation.
+//! or `undefined`, a bitwise test, an ordering, an equality, `instanceof` or `in`, all by the
+//! staged step (whose answer picks the edge through `Frame::branch`). An operator the step does
+//! not name leaves the jump to the exact path.
 use super::*;
 use crate::staged::{Comparison, Domain, Nullish, Operation};
 use crate::vm::operations::NumberRelation;
@@ -42,12 +43,6 @@ impl Lowering<'_, '_> {
         Some((Comparison::Nullish { expected: Nullish::of(expected)?, strict, negated }, [Operand::register(source), other]))
     }
 
-    /// `taken` jumps to `target` or falls through; a backward jump polls for an interrupt first.
-    fn polled_branch(&mut self, state: &mut State, pc: usize, target: usize, taken: ir::Value) {
-        if target <= pc { self.interrupt_check(state, pc as u32); }
-        self.branch(state, pc, target, taken);
-    }
-
     /// Whether neither constant operand is anything but a Number: a register's type is for the
     /// facts to prove, a constant's is known.
     pub(super) fn numbers_supported(&self, left: Operand, right: Operand) -> bool {
@@ -68,21 +63,22 @@ impl Lowering<'_, '_> {
     }
 
     /// The comparison the facts and the operands settle on for the staged step: an ordering of
-    /// operands proved Numbers in the domain they prove, an equality of operands both typed Numbers
-    /// as that relation, a bitwise test of Numbers, and an equality or `instanceof` of registers
-    /// where the VM can decide a pair the words leave. `None` where the lane's own relation lowers
-    /// it (operands only their tags type, a region with no VM helper, any other operator).
-    fn specialized(&self, state: &State, pc: usize, comparison: Comparison, operands: [Operand; 2]) -> Option<Comparison> {
+    /// operands proved Numbers in the domain they prove, binary64 where only their tags type them
+    /// (the step tests the tags once), an equality of operands both typed Numbers as that relation,
+    /// a bitwise test of Numbers, and an equality, `instanceof` or `in` of registers in a body with
+    /// the VM's helpers, whose decision runs on the operands the call-out carries. `None` where no
+    /// step names it (a region with no VM helper, any other operator).
+    fn specialized(&self, state: &State, comparison: Comparison, operands: [Operand; 2]) -> Option<Comparison> {
         let [left, right] = operands;
         if !(self.operand_supported(left) && self.operand_supported(right)) { return None; }
-        let domain = self.number_domain(state, left, right);
-        let by_vm = self.decide_record(pc, operands).is_some();
-        match comparison {
+        let domain = self.number_domain(state, left, right).unwrap_or(Domain::Float64);
+        let helpers = !self.helpers.is_numeric();
+        match comparison.by_vm() {
             Comparison::Relation { relation, .. } if self.numbers_supported(left, right) =>
-                domain.map(|domain| Comparison::Relation { relation, domain }),
-            Comparison::Equality { negated, .. } if self.numbers_typed(state, left, right) => domain.map(|domain|
-                Comparison::Relation { relation: if negated { NumberRelation::NotEqual } else { NumberRelation::Equal }, domain }),
-            Comparison::Equality { .. } | Comparison::Instanceof if by_vm => Some(comparison),
+                Some(Comparison::Relation { relation, domain }),
+            Comparison::Equality { negated, .. } if self.numbers_typed(state, left, right) => Some(Comparison::Relation {
+                relation: if negated { NumberRelation::NotEqual } else { NumberRelation::Equal }, domain }),
+            decided @ (Comparison::Equality { .. } | Comparison::Instanceof | Comparison::Membership) if helpers => Some(decided),
             Comparison::Bitwise(_) if self.numbers_supported(left, right) => Some(comparison),
             _ => None,
         }
@@ -94,18 +90,12 @@ impl Lowering<'_, '_> {
             |register| state.values[usize::from(register)].value.ty).is_subtype(Type::NUMBER))
     }
 
-    /// A relation jump: the staged step of the comparison its operands settle on, else the lane's
-    /// own relation (`Lowering::relation`). Whether it lowered.
+    /// A relation jump: the staged step of the comparison its operands settle on. Whether it
+    /// lowered.
     fn relation_jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, comparison: Comparison) -> bool {
-        let (left, right) = (instruction.operand_b(), instruction.operand_c());
-        if let Some(comparison) = self.specialized(state, pc, comparison, [left, right]) {
-            self.staged_jump(state, pc, instruction, comparison, [left, right]);
-            return true;
-        }
-        let operator = instruction.binary_operator_field();
-        let Some(holds) = self.relation(state, pc as u32, operator, left, right) else { return false };
-        let taken = self.ins().icmp_imm_u(IntCC::Equal, holds, 0);
-        self.polled_branch(state, pc, instruction.jump_target() as usize, taken);
+        let operands = [instruction.operand_b(), instruction.operand_c()];
+        let Some(comparison) = self.specialized(state, comparison, operands) else { return false };
+        self.staged_jump(state, pc, instruction, comparison, operands);
         true
     }
 

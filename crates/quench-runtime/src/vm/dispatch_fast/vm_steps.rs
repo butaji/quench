@@ -48,3 +48,26 @@ pub(in crate::vm) unsafe extern "C" fn lane_vm_step<H: Host>(_vm: u64, _residual
     unsafe { (*cx).callee_resume = resume; (*cx).callee_acc = Value::UNDEFINED; }
     LANE_CALL_LEFT
 }
+
+/// The decision of `left operator right` that runs no guest code and allocates nothing: a strict
+/// equality (`Vm::strict_equal`), `instanceof` by the remembered constructor layout
+/// (`Vm::steady_instanceof`) and `in` of a string key in an ordinary object (`Vm::plain_in`);
+/// `None` for any other pair, which the full algorithm decides. The one rule of the interpreter's
+/// staged frame and of the lane's decide helper.
+pub(super) fn lane_decision<H: Host>(vm: &mut Vm<H>, operator: u32, left: Value, right: Value) -> Option<bool> {
+    match crate::vm::operations::equality_operator(operator) {
+        Some((strict, negated)) => strict.then(|| vm.strict_equal(left, right) != negated),
+        None if operator == INSTANCEOF_OPERATOR => vm.steady_instanceof(left, right),
+        None => vm.plain_in(operator, left, right),
+    }
+}
+
+/// A lane body's decision of `left operator right` by the words a `CallOut::Decide` carries, which
+/// needs no record of the VM's: `Value::TRUE` or `Value::FALSE`, or `Value::DELETED` where only
+/// the full algorithm decides, which leaves the body at the test (`lane_decision`).
+pub(in crate::vm) unsafe extern "C" fn lane_decide<H: Host>(vm: u64, _residual: u64, left: u64, right: u64, operator: u64) -> u64 {
+    // SAFETY: as `lane_field_set`; the decision reads the heap, runs no guest code and allocates nothing.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    lane_decision(vm, operator as u32, Value::from_bits(left), Value::from_bits(right))
+        .map_or_else(|| Value::DELETED.to_bits(), |holds| Value::boolean(holds).to_bits())
+}

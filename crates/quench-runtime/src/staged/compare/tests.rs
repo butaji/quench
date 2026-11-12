@@ -403,3 +403,31 @@ fn a_boolean_test_is_identity_with_its_constant() {
         }
     }
 }
+
+/// `in` is the VM's decision of its two registers by its own operator, as `instanceof` is: the
+/// decode leaves it an operator, and a tier with the VM's residual names it (`Comparison::by_vm`).
+#[test]
+fn a_membership_jump_is_the_vms_decision() {
+    let membership = Comparison::Operator(BinaryOperator::In as u32).by_vm();
+    assert_eq!((membership, membership.operator()), (Comparison::Membership, Some(BinaryOperator::In as u32)));
+    for comparison in [Comparison::Instanceof, Comparison::Operator(BinaryOperator::LessThan as u32),
+        Comparison::Equality { strict: true, negated: false }] {
+        assert_eq!(comparison.by_vm(), comparison, "only `in` is the VM's membership");
+    }
+    for answer in [true, false] {
+        let mut frame = Probe::of(&[Value::UNDEFINED, Value::NULL]);
+        frame.answer = Some(answer);
+        let step = run(&mut frame, Comparison::Membership, true);
+        assert!(matches!(step, Step::Control(edge) if edge == if answer { Edge::Following } else { Edge::Target }));
+        assert_eq!(frame.calls, [CallOut::Decide { left: 0, right: 1, operator: BinaryOperator::In as u32 }]);
+    }
+    let mut frame = Probe::of(&[Value::UNDEFINED, Value::NULL]);
+    assert!(matches!(run(&mut frame, Comparison::Membership, true), Step::Unresolved), "no VM leaves the row");
+    let mut stage = Concrete::new(std::ptr::null());
+    frame.answer = Some(true);
+    frame.calls.clear();
+    let operation = Operation::CompareJump { comparison: Comparison::Membership, left: Operand::constant(0).expect("a constant operand"),
+        right: Operand::register(1), negate: true };
+    assert!(matches!(crate::staged::step(&mut stage, &mut frame, operation), Step::Unresolved));
+    assert!(frame.calls.is_empty(), "a constant operand is no register the call-out can carry");
+}

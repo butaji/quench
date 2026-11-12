@@ -2,7 +2,7 @@
 //! the lane's helper (`Frame::vm_step`).
 
 use super::{Edges, EmitFrame};
-use super::super::{emit_js_payload_word, emit_js_property_values, emit_lane_helper_call, register_offset,
+use super::super::{emit_js_guard, emit_js_payload_word, emit_js_property_values, emit_lane_helper_call, register_offset,
     Emit, JsStepDispatch, LaneHelper, LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_MISSED};
 use super::{RegisterFact, Representation, Type};
 use crate::bytecode::Register;
@@ -30,11 +30,16 @@ pub(in super::super) struct CallOutSite {
 /// VM's operation, and its completion continues with the register it defined, the property arena
 /// reloaded; a raised error leaves at the miss edge, and a leave in a callee, or a termination, stops
 /// the body. A decision (`CallOut::Decide`) defines no register: its word is the boolean the helper's
-/// status names. Where the lowering made no record for this step, it leaves at the miss edge.
+/// status names. Where the lowering made no record for this step, a decision still carries its
+/// operands (`decide_words`) and any other step leaves at the miss edge.
 pub(super) fn vm_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, operation: CallOut, result: Option<Register>)
     -> Option<(ir::Value, RegisterFact)> {
     let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = frame.edges else { return None };
-    let Some(site) = frame.call_out else { return Some(leave(stage, miss)) };
+    let site = match (frame.call_out, operation) {
+        (Some(site), _) => site,
+        (None, CallOut::Decide { left, right, operator }) => return Some(decide_words(frame, stage, [left, right], operator, miss)),
+        (None, _) => return Some(leave(stage, miss)),
+    };
     let status = call_helper(frame, stage, site);
     let decides = matches!(operation, CallOut::Decide { .. });
     let holds = decides.then(|| stage.builder.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_HOLDS as i64));
@@ -49,6 +54,23 @@ pub(super) fn vm_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, opera
     let (arena, _) = emit_js_property_values(stage.builder, frame.payload);
     stage.builder.def_var(site.properties, arena);
     Some(completion(stage, site, result, holds))
+}
+
+/// A decision of two registers no record names (`CallOut::Decide` carries its operands): the
+/// lane's `Decide` helper takes their tagged words, made on a copy of the facts so only this slow
+/// path pays for boxing, and the operator, and answers by the interpreter's own rule
+/// (`lane_decision`) the boolean it decides or `DELETED`, which leaves at the miss edge. It runs
+/// no guest code and allocates nothing, so no register is spilled and the arena stays.
+fn decide_words(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, operands: [Register; 2], operator: u32,
+    miss: ir::Block) -> (ir::Value, RegisterFact) {
+    let mut scratch = frame.state.clone();
+    let [left, right] = operands.map(|register| super::register_tagged(stage.builder, frame.registers, &mut scratch, register));
+    let helper = frame.helpers.address(&mut stage.builder, LaneHelper::Decide);
+    let operator = stage.builder.ins().iconst(types::I64, i64::from(operator));
+    let answer = emit_lane_helper_call(stage.builder, frame.payload, helper, &[left, right, operator]);
+    let decided = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, answer, Value::DELETED.to_bits() as i64);
+    emit_js_guard(stage.builder, decided, miss);
+    (answer, RegisterFact::definition(Type::language(crate::ValueType::Boolean), Representation::Tagged))
 }
 
 /// The helper's call: the registers the body wrote go to the lane's file first, each in its

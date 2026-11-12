@@ -37,6 +37,9 @@ impl Nullish {
 /// The `instanceof` operator.
 const INSTANCEOF_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::Instanceof as u32;
 
+/// The `in` operator.
+const IN_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::In as u32;
+
 /// What a `CompareJump` compares.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Comparison {
@@ -61,8 +64,12 @@ pub(crate) enum Comparison {
     /// `value instanceof constructor` of two registers: its prototype-chain walk is no word test,
     /// so the VM decides it (`CallOut::Decide`), guest code (`@@hasInstance`, a proxy) included.
     Instanceof,
-    /// Any other operator (`in`): no Number relation names it, so a tier decides it by the
-    /// operator, and the step is `Unresolved` for the interpreter's exact path.
+    /// `key in object` of two registers: no word decides it, so the VM does (`CallOut::Decide`,
+    /// `Vm::plain_in` for an ordinary object). The decode leaves `in` as `Operator`; a tier that
+    /// has the VM's residual names it (`Comparison::by_vm`).
+    Membership,
+    /// Any other operator (`in` to a tier with no VM): no Number relation names it, so a tier
+    /// decides it by the operator, and the step is `Unresolved` for the interpreter's exact path.
     Operator(u32),
 }
 
@@ -74,6 +81,7 @@ impl Comparison {
             Self::Relation { .. } | Self::Nullish { .. } | Self::Boolean { .. } | Self::Bitwise(_) => None,
             Self::Equality { strict, negated } => Some(equality_binary_operator(strict, negated)),
             Self::Instanceof => Some(INSTANCEOF_OPERATOR),
+            Self::Membership => Some(IN_OPERATOR),
             Self::Operator(operator) => Some(operator),
         }
     }
@@ -89,6 +97,15 @@ impl Comparison {
             .or_else(|| NumberBitwise::from_operator(operator).map(Self::Bitwise))
             .or_else(|| (operator == INSTANCEOF_OPERATOR).then_some(Self::Instanceof))
             .unwrap_or(Self::Operator(operator))
+    }
+
+    /// The comparison where the VM's residual decides what no word does: `in`, which the decode
+    /// leaves as an operator, is `Membership`; every other comparison is itself.
+    pub(crate) const fn by_vm(self) -> Self {
+        match self {
+            Self::Operator(IN_OPERATOR) => Self::Membership,
+            comparison => comparison,
+        }
     }
 
     /// Whether deciding it may run guest code (a conversion, a trap), which retires what a
@@ -135,6 +152,7 @@ fn outcome<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, co
         Comparison::Boolean { expected, negated } => identity(stage, frame, left, Value::boolean(expected), negated),
         Comparison::Bitwise(operation) => bitwise(stage, frame, [left, right], operation),
         Comparison::Instanceof => instanceof(stage, frame, [left, right]),
+        Comparison::Membership => decided_by_vm(stage, frame, [left, right], IN_OPERATOR),
         Comparison::Operator(_) => None,
     }
 }
@@ -173,14 +191,20 @@ fn identity<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, t
     Some(if negated { stage.not(same) } else { same })
 }
 
-/// Whether `value instanceof constructor` holds, as the VM decides it; `None` where an operand is
-/// no register (the VM reads registers) or the frame has no VM to ask.
+/// Whether `left operator right` holds, as the VM decides it; `None` where an operand is no
+/// register (the call-out carries registers) or the frame has no VM to ask.
 #[inline(always)]
-fn instanceof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [value, constructor]: [Operand; 2])
-    -> Option<S::Cond> {
-    let call = CallOut::Decide { left: value.register_index()?, right: constructor.register_index()?, operator: INSTANCEOF_OPERATOR };
+fn decided_by_vm<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [left, right]: [Operand; 2],
+    operator: u32) -> Option<S::Cond> {
+    let call = CallOut::Decide { left: left.register_index()?, right: right.register_index()?, operator };
     let (decision, _) = frame.vm_step(stage, call, None)?;
     Some(stage.eq_imm(decision, Value::TRUE.to_bits()))
+}
+
+/// Whether `value instanceof constructor` holds, as the VM decides it.
+#[inline(always)]
+fn instanceof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operands: [Operand; 2]) -> Option<S::Cond> {
+    decided_by_vm(stage, frame, operands, INSTANCEOF_OPERATOR)
 }
 
 /// Whether the bits `operation` makes of the operands' ToInt32 are nonzero (`if (flags & MASK)`).
