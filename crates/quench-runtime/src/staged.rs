@@ -190,3 +190,5 @@ pub(crate) enum Edge {
 mod tests;
 #[cfg(test)]
 mod coverage_tests;
+#[cfg(test)]
+mod instanceof_tests;

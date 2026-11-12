@@ -132,7 +132,7 @@ fn site_tables<S: Stage>(stage: &mut S, (entries, records): (S::Word, S::Word), 
 fn direct_record<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let direct = super::value::is_direct_object(stage, object);
     stage.guard(direct, miss)?;
-    let id = stage.and_imm(object, u64::from(u32::MAX));
+    let id = super::value::direct_object_id(stage, object);
     Some((id, super::object::object_record_at(stage, records, id)))
 }
 

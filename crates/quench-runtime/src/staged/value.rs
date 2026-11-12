@@ -21,6 +21,12 @@ pub(crate) fn is_direct_object<S: Stage>(stage: &mut S, bits: S::Word) -> S::Con
     family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG)
 }
 
+/// The id of the object record a direct object reference names, its low half (`Value::direct_object_index`).
+#[inline(always)]
+pub(crate) fn direct_object_id<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
+    stage.and_imm(bits, u64::from(u32::MAX))
+}
+
 /// Whether `bits` is a direct string reference (`Value::as_direct_string`).
 #[inline(always)]
 pub(crate) fn is_direct_string<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {

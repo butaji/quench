@@ -261,6 +261,9 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let target = ProtoLink::object_record(prototype.direct_object_index()?);
+        if let Some(holds) = self.instanceof_by_words(value, target) {
+            return Some(holds);
+        }
         let mut object = match value.direct_object_index() {
             Some(record) => self.heap.object_record_by_id(record),
             // Another object kind (an array, a function, a typed array, a Buffer) starts from
@@ -281,6 +284,41 @@ impl<H: Host> Vm<H> {
                 None => self.ordinary_link_holder(object.proto())?,
             };
         }
+    }
+
+    /// Whether `value instanceof` the constructor whose `prototype` is `target` holds by the words of a
+    /// direct object's chain (`staged::object::instanceof_by_words`, which the b-jit's row runs too);
+    /// `None` leaves any other cell and any longer chain to the walk below it.
+    #[inline(always)]
+    fn instanceof_by_words(&self, value: Value, target: ProtoLink) -> Option<bool> {
+        let records = self.heap.object_record_base()? as u64;
+        let mut stage = crate::staged::Concrete::new(std::ptr::null());
+        crate::staged::object::instanceof_by_words(&mut stage, records, value.to_bits(), u64::from(target.bits()), ())
+    }
+
+    /// The facts a lowering may take of `instanceof constructor` as Stable, from what the steady case
+    /// remembers of the constructor (its layout, its prototype slot, the holder it inherits the native
+    /// `@@hasInstance` from): `None` where the steady case has not proved them.
+    pub(super) fn instanceof_fact(&self, constructor: Value) -> Option<crate::code_dependencies::InstanceofFact> {
+        let FunctionRecord { kind, object, .. } = self.heap.function(constructor)?;
+        if matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) {
+            return None;
+        }
+        let (shape, slot) = self.instanceof_constructor_layouts[instanceof_layout_index(object.shape())]?;
+        let holder = object.proto();
+        if shape != object.shape()
+            || object.proto_link() != self.instanceof_has_instance_link && !self.remembers_inheriting_holder(holder)
+        {
+            return None;
+        }
+        // SAFETY: as `steady_instanceof`: the memo names the slot of `prototype` in the shape it holds.
+        let prototype = unsafe { self.heap.property_get_shaped(object, slot) }?;
+        Some(crate::code_dependencies::InstanceofFact {
+            link: ProtoLink::object_record(prototype.direct_object_index()?).bits(),
+            shape: object.exact_shape(),
+            slot: u16::try_from(slot).ok()?,
+            holder: self.heap.object(holder)?.exact_shape(),
+        })
     }
 
     /// The object of `value`, a heap object other than a proxy, whose prototype link

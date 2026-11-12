@@ -190,6 +190,50 @@ pub(crate) fn walk_prototypes_loop<S: Stage<Word = u64, Cond = bool>>(stage: &mu
     (false, false)
 }
 
+/// The longest prototype chain an `instanceof` walk follows by words: an instance, its class chain and
+/// `Object.prototype` end well within it, and a longer chain is the VM's to decide.
+pub(crate) const INSTANCEOF_WALK_LINKS: u32 = 16;
+
+/// Whether `value instanceof` a constructor whose `prototype` is the encoded link `target` holds, by the
+/// words of `value` alone (`records` is the object record table's base; that the constructor is steady
+/// and its `prototype` is `target` is the caller's proof): a primitive, an immediate or a string, is no
+/// instance, as the algorithm decides it before it reads `prototype`; a direct object's record is walked
+/// (`Stage::walk_prototypes`). Any other cell (an array, a function, a proxy), a chain the walk does not
+/// decide, or an absent record table leaves at `miss`.
+#[inline(always)]
+pub(crate) fn instanceof_by_words<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, target: S::Word,
+    miss: S::Miss) -> Option<S::Cond> {
+    let present = stage.ne_imm(records, 0u32);
+    stage.guard(present, miss)?;
+    let answer = instance_answer(stage, records, value, target);
+    let undecided = stage.eq_imm(answer, WALK_UNDECIDED);
+    let decided = stage.not(undecided);
+    stage.guard(decided, miss)?;
+    Some(stage.eq_imm(answer, WALK_HOLDS))
+}
+
+/// The walk's answer for `value`: a direct object's chain, `fails` for a primitive, else undecided.
+#[inline(always)]
+fn instance_answer<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, target: S::Word) -> S::Word {
+    let direct = super::value::is_direct_object(stage, value);
+    stage.choose(direct, |stage| {
+        let id = super::value::direct_object_id(stage, value);
+        let record = object_record_at(stage, records, id);
+        let (decided, holds) = stage.walk_prototypes(records, record, target, INSTANCEOF_WALK_LINKS);
+        let [fails, holding, undecided] = [WALK_FAILS, WALK_HOLDS, WALK_UNDECIDED].map(|answer| stage.constant(answer));
+        let answer = stage.select(holds, holding, fails);
+        stage.select(decided, answer, undecided)
+    }, |stage| {
+        let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
+        let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
+        let immediate = stage.not(heap);
+        let string = super::value::is_direct_string(stage, value);
+        let primitive = stage.any(immediate, string);
+        let [fails, undecided] = [WALK_FAILS, WALK_UNDECIDED].map(|answer| stage.constant(answer));
+        stage.select(primitive, fails, undecided)
+    })
+}
+
 /// The address of object record `id` in the record table at `records`.
 #[inline(always)]
 pub(crate) fn object_record_at<S: Stage>(stage: &mut S, records: S::Word, id: S::Word) -> S::Word {
