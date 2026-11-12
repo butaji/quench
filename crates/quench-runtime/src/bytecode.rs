@@ -2354,16 +2354,14 @@ impl Function {
     /// Whether the `arguments` object a suspending function made on entry rides its window as
     /// the local it was stored in, which the lane reads in place (`lane_frame_arguments`): no
     /// closure captures the binding. A mapped object (`arguments_alias_parameters`) aliases
-    /// parameters that live in the window's locals as well, none of them captured: the window's
-    /// parameter reads and writes go through the object (`lane_load_mapped_parameter`), whose
-    /// element writes reach the local (`LaneStack::window_locals`).
+    /// parameters that live in the window as well, the captured ones among them, which ride the
+    /// window's locals until a closure makes its environment and its slots after
+    /// (`ParameterHome`): the window's parameter reads and writes go through the object
+    /// (`lane_load_mapped_parameter`), whose element writes reach the binding
+    /// (`LaneStack::window_parameter`).
     pub(crate) fn arguments_ride_window(&self) -> bool {
-        self.arguments_slot.is_some_and(|slot| {
-            self.suspends_in_record()
-                && !self.local_slot_uses_environment(usize::from(slot))
-                && (!self.arguments_alias_parameters()
-                    || (0..usize::from(self.params)).all(|parameter| !self.local_slot_uses_environment(parameter)))
-        })
+        self.arguments_slot
+            .is_some_and(|slot| self.suspends_in_record() && !self.local_slot_uses_environment(usize::from(slot)))
     }
 
     /// The function's `CallPlan`, derived on first use.
