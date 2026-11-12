@@ -36,15 +36,25 @@ const MAX_PARAMETERS: usize = 8;
 
 /// Compile `function_id` as a numeric function through the shared semantic SSA specializer;
 /// any function it does not cover stays with the interpreter and the general tier.
+#[cfg(test)]
 pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJitArtifact> {
+    admitted(program, function_id)?;
+    super::compiled::compile_js_typed_numeric_region(program, function_id)
+}
+
+/// The numeric function's image, compiling on the code generator's thread (`NumericImage::start`);
+/// `None` where `compile` would decline before compiling.
+pub(super) fn start(program: &ResidualProgram, function_id: u32) -> Option<super::jit_backend::Pending<Option<super::compiled::NumericImage>>> {
+    admitted(program, function_id)?;
+    super::compiled::NumericImage::start(program, function_id)
+}
+
+fn admitted(program: &ResidualProgram, function_id: u32) -> Option<()> {
     if program.kind == ProgramKind::Wasm || function_id == 0 {
         return None;
     }
     let function = program.function_get(function_id as usize)?;
-    if !function_candidate(function, program) || function.code.iter().any(|instruction| instruction.is_wide()) {
-        return None;
-    }
-    super::compiled::compile_js_typed_numeric_region(program, function_id)
+    (function_candidate(function, program) && !function.code.iter().any(|instruction| instruction.is_wide())).then_some(())
 }
 
 pub(super) fn candidate_rejection_reason(program: &ResidualProgram, function_id: u32) -> &'static str {
