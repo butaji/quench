@@ -183,6 +183,7 @@ impl<H: Host> Vm<H> {
         let view = self.heap.alloc(Cell::TypedArray {
             kind: TypedArrayKind::Uint8,
             object: Box::new(crate::heap::BufferViewObject {
+                native: Default::default(),
                 object: Self::empty_object(self.typed_array_proto(TypedArrayKind::Uint8)),
                 offset: 0,
             }),

@@ -1,0 +1,219 @@
+//! A typed array's native record: the prefix of its view record (`NativeView`) that generated
+//! code reads in place, and the table (`TypedViewTable`) that names each live prefix by its
+//! legacy slot, so a typed array's value reaches its record with one load, as a direct array's
+//! does through its record table.
+//!
+//! The prefix is the one home of what native code needs of a view: the kind, the first
+//! element's address and the element count. The address and count are published by the VM
+//! (`Vm::publish_typed_view`) for the buffer as it is, and stay true until a buffer event
+//! (`buffer_relocations`) changes where its bytes are or who shares them; the stamp is the
+//! count of such events at publication, so a stale prefix is one the proof refuses.
+
+use super::MAX_HEAP_CELLS;
+use super::buffer_bytes::buffer_relocations;
+use super::cell::TypedArrayKind;
+use std::alloc::{Layout, alloc_zeroed, dealloc};
+use std::ptr::NonNull;
+
+/// The kind byte of a view that is no typed array (a DataView): no native element has it.
+pub(crate) const NO_KIND: u8 = u8::MAX;
+const _: () = assert!(TypedArrayKind::COUNT < NO_KIND as usize);
+
+/// What native code reads of a view record, first in `BufferViewObject` (`#[repr(C)]`), so a
+/// table entry addresses it. `detached` is set while the view cannot be addressed in place:
+/// before its first publication, when its buffer is detached, shrank below it, is shared
+/// atomically or holds no native element.
+#[repr(C)]
+#[derive(Debug)]
+pub(crate) struct NativeView {
+    /// The first element's address.
+    data: usize,
+    /// `buffer_relocations` when `data` and `length` were published.
+    stamp: u64,
+    /// The element count, below 2^31 so an int32 index below zero is no index.
+    length: u32,
+    /// The `TypedArrayKind` discriminant, or `NO_KIND`.
+    kind: u8,
+    detached: u8,
+    /// Whether the buffer's bytes belonged to this view's buffer alone when published
+    /// (`BufferBytes::lane_mut`), so a store through `data` writes no other buffer.
+    unshared: u8,
+    /// The table entry that holds this record's address, null while it has none.
+    home: *mut usize,
+}
+
+impl Default for NativeView {
+    fn default() -> Self {
+        Self::unpublished(NO_KIND)
+    }
+}
+
+/// A copy is a record no table names: it is published again when it is allocated.
+impl Clone for NativeView {
+    fn clone(&self) -> Self {
+        Self::unpublished(self.kind)
+    }
+}
+
+impl NativeView {
+    fn unpublished(kind: u8) -> Self {
+        Self { data: 0, stamp: 0, length: 0, kind, detached: 1, unshared: 0, home: std::ptr::null_mut() }
+    }
+
+    /// Publishes the view's elements: `length` of them from `data`, over bytes `unshared` or not.
+    pub(crate) fn publish(&mut self, data: *mut u8, length: u32, unshared: bool) {
+        (self.data, self.length, self.unshared) = (data.addr(), length, u8::from(unshared));
+        self.detached = 0;
+        self.stamp = buffer_relocations();
+    }
+
+    /// Withdraws the view's elements: native code leaves for the VM until it is published again.
+    pub(crate) fn retract(&mut self) {
+        self.detached = 1;
+        self.stamp = buffer_relocations();
+    }
+
+    /// Names this record by `kind` and by the table entry that holds it.
+    fn bind(&mut self, kind: TypedArrayKind, entry: *mut usize) {
+        (self.kind, self.home) = (kind as u8, entry);
+    }
+}
+
+/// A prefix leaves its table entry when its record goes, unless the slot's next typed array
+/// already took the entry.
+impl Drop for NativeView {
+    fn drop(&mut self) {
+        let record = std::ptr::from_mut(self).addr();
+        // SAFETY: `home` is an entry of the heap's table, which outlives the heap's slots.
+        if !self.home.is_null() && unsafe { *self.home } == record {
+            unsafe { *self.home = 0 };
+        }
+    }
+}
+
+/// The view records of a heap's typed arrays, by legacy slot: one word per slot the heap may
+/// hold, zero where the slot is no typed array. Reserved zeroed and in place on the first
+/// typed array, so its base is fixed for the heap's life; a failed reservation leaves every
+/// typed array to the VM.
+#[derive(Default)]
+pub(super) struct TypedViewTable {
+    entries: Option<NonNull<usize>>,
+    reserved: bool,
+}
+
+impl TypedViewTable {
+    fn layout() -> Layout {
+        Layout::array::<usize>(MAX_HEAP_CELLS).expect("a slot-count table is a valid layout")
+    }
+
+    /// The table's base, null before the first typed array.
+    pub(super) fn base(&self) -> *const usize {
+        self.entries.map_or(std::ptr::null(), |entries| entries.as_ptr().cast_const())
+    }
+
+    fn reserve(&mut self) -> Option<NonNull<usize>> {
+        if !self.reserved {
+            self.reserved = true;
+            // SAFETY: the layout has a nonzero size.
+            self.entries = NonNull::new(unsafe { alloc_zeroed(Self::layout()) }.cast());
+        }
+        self.entries
+    }
+
+    /// Names the record `view` of the typed array of `kind` in legacy slot `slot`.
+    pub(super) fn register(&mut self, slot: u32, kind: TypedArrayKind, view: &mut NativeView) {
+        let Some(entries) = self.reserve() else { return };
+        // SAFETY: a legacy slot index is below `MAX_HEAP_CELLS`, the entries' count.
+        let entry = unsafe { entries.as_ptr().add(slot as usize) };
+        view.bind(kind, entry);
+        // SAFETY: as above; the record is in its final place, a boxed view.
+        unsafe { entry.write(std::ptr::from_mut(view).addr()) };
+    }
+}
+
+impl Drop for TypedViewTable {
+    fn drop(&mut self) {
+        if let Some(entries) = self.entries {
+            // SAFETY: allocated with this layout by `reserve`.
+            unsafe { dealloc(entries.as_ptr().cast(), Self::layout()) };
+        }
+    }
+}
+
+/// The native reader's view of a typed array's record: the table entry holds the record's
+/// address (`entry_size` bytes), and these are the byte offsets of the prefix's fields from it.
+/// A consumer resolves a typed array's value to its entry by the slot index, proves the
+/// record's kind, that its `stamp` is the current `buffer_relocations` and that it is not
+/// `detached`, and reads `data` and `length`; a store also requires the bytes `unshared`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeTypedArrayLayout {
+    pub(crate) entry_size: usize,
+    pub(crate) kind_offset: usize,
+    pub(crate) detached_offset: usize,
+    pub(crate) unshared_offset: usize,
+    pub(crate) data_offset: usize,
+    pub(crate) length_offset: usize,
+    pub(crate) stamp_offset: usize,
+}
+
+/// Layout facts for code generators which read a typed array's elements in place.
+pub(crate) const NATIVE_TYPED_ARRAY_LAYOUT: NativeTypedArrayLayout = NativeTypedArrayLayout {
+    entry_size: std::mem::size_of::<usize>(),
+    kind_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, kind),
+    detached_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, detached),
+    unshared_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, unshared),
+    data_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, data),
+    length_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, length),
+    stamp_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, stamp),
+};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_layout_names_the_prefix_fields_of_a_boxed_view_record() {
+        let record = super::super::cell::BufferViewObject {
+            native: NativeView::default(),
+            object: super::super::Object::new(crate::value::Value::NULL),
+            offset: 0,
+        };
+        let layout = NATIVE_TYPED_ARRAY_LAYOUT;
+        let at = |offset: usize| (std::ptr::from_ref(&record).addr() + offset) as *const u8;
+        assert_eq!(std::ptr::from_ref(&record.native).addr(), std::ptr::from_ref(&record).addr(), "the prefix is first");
+        assert_eq!(at(layout.kind_offset), std::ptr::from_ref(&record.native.kind));
+        assert_eq!(at(layout.detached_offset), std::ptr::from_ref(&record.native.detached));
+        assert_eq!(at(layout.unshared_offset), std::ptr::from_ref(&record.native.unshared));
+        assert_eq!(at(layout.data_offset), std::ptr::from_ref(&record.native.data).cast());
+        assert_eq!(at(layout.length_offset), std::ptr::from_ref(&record.native.length).cast());
+        assert_eq!(at(layout.stamp_offset), std::ptr::from_ref(&record.native.stamp).cast());
+    }
+
+    #[test]
+    fn a_typed_array_registered_by_slot_leaves_its_entry_when_its_record_goes() {
+        let mut table = TypedViewTable::default();
+        assert!(table.base().is_null());
+        let mut view = Box::new(NativeView::default());
+        table.register(7, TypedArrayKind::Float64, &mut view);
+        let entry = || unsafe { table.base().add(7).read() };
+        assert_eq!(entry(), std::ptr::from_ref(&*view).addr());
+        assert_eq!(view.kind, TypedArrayKind::Float64 as u8);
+        let copy = view.clone();
+        drop(copy);
+        assert_ne!(entry(), 0, "an unregistered copy leaves the entry");
+        drop(view);
+        assert_eq!(entry(), 0);
+    }
+
+    #[test]
+    fn a_view_is_addressable_only_from_its_publication_until_it_is_retracted() {
+        let mut bytes = [0_u8; 16];
+        let mut view = NativeView::default();
+        assert_eq!(view.detached, 1, "a new view is unpublished");
+        view.publish(bytes.as_mut_ptr(), 2, true);
+        assert_eq!((view.detached, view.unshared, view.length, view.data), (0, 1, 2, bytes.as_ptr().addr()));
+        assert_eq!(view.stamp, buffer_relocations());
+        view.retract();
+        assert_eq!(view.detached, 1);
+    }
+}

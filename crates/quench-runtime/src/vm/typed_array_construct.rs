@@ -164,6 +164,7 @@ impl<H: Host> Vm<H> {
                     return Ok(self.heap.alloc(Cell::TypedArray {
                         kind,
                         object: Box::new(crate::heap::BufferViewObject {
+                            native: Default::default(),
                             object: Self::empty_object(
                                 self.heap.root_value(prototype_root.unwrap()).unwrap(),
                             ),
@@ -204,6 +205,7 @@ impl<H: Host> Vm<H> {
                 let typed_array = self.heap.alloc(Cell::TypedArray {
                     kind,
                     object: Box::new(crate::heap::BufferViewObject {
+                        native: Default::default(),
                         object: Self::empty_object(
                             self.heap.root_value(prototype_root.unwrap()).unwrap(),
                         ),

@@ -767,13 +767,13 @@ impl Cell {
                 let kind = typed_array_kind::read(reader)?;
                 Self::TypedArray {
                     kind,
-                    object: Box::new(BufferViewObject { object: read_object(reader)?, offset: reader.u64()? as usize }),
+                    object: Box::new(BufferViewObject { native: Default::default(), object: read_object(reader)?, offset: reader.u64()? as usize }),
                     buffer: reader.value()?,
                     length: read_view_length(reader)?,
                 }
             }
             tag::DATA_VIEW => Self::DataView {
-                object: Box::new(BufferViewObject { object: read_object(reader)?, offset: reader.u64()? as usize }),
+                object: Box::new(BufferViewObject { native: Default::default(), object: read_object(reader)?, offset: reader.u64()? as usize }),
                 buffer: reader.value()?,
                 length: read_view_length(reader)?,
             },

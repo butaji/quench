@@ -220,6 +220,7 @@ impl<H: Host> Vm<H> {
                     let proto = self.intrinsic_builtin_prototype(Native::DataView);
                     self.heap.alloc(Cell::DataView {
                         object: Box::new(crate::heap::BufferViewObject {
+                            native: Default::default(),
                             object: Self::empty_object(proto),
                             offset: *offset,
                         }),
@@ -258,6 +259,7 @@ impl<H: Host> Vm<H> {
                     self.heap.alloc(Cell::TypedArray {
                         kind,
                         object: Box::new(crate::heap::BufferViewObject {
+                            native: Default::default(),
                             object: Self::empty_object(proto),
                             offset: *offset,
                         }),

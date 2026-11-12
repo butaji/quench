@@ -9,7 +9,30 @@
 use crate::shared_backing::{SharedBacking, State};
 use crate::wasm::memory::MemoryStorage;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, MutexGuard};
+
+/// The count of events that move, free or share a buffer's bytes: a copy before a write, a
+/// resize, a detach or replacement, a second handle on the store. A typed array view
+/// published for native code (`NativeView`) names the count it was published at, and is
+/// stale once it moves: the one invalidation of every published address, for the process
+/// (an event of another heap only sends a view back to its publication).
+static BUFFER_RELOCATIONS: AtomicU64 = AtomicU64::new(0);
+
+/// The current `BUFFER_RELOCATIONS`.
+#[inline(always)]
+pub(crate) fn buffer_relocations() -> u64 {
+    BUFFER_RELOCATIONS.load(Ordering::Relaxed)
+}
+
+/// Where native code reads `BUFFER_RELOCATIONS`.
+pub(crate) fn buffer_relocations_address() -> *const u64 {
+    BUFFER_RELOCATIONS.as_ptr().cast_const()
+}
+
+fn note_relocation() {
+    BUFFER_RELOCATIONS.fetch_add(1, Ordering::Relaxed);
+}
 
 /// One word, so an ArrayBuffer cell stays within the heap's cell size.
 #[derive(Debug, Default)]
@@ -37,7 +60,18 @@ impl Clone for BufferBytes {
         if matches!(*self.0, BufferStore::AddressPinned(_)) {
             Self::from(self.to_vec())
         } else {
+            // A store two handles share is copied before either writes.
+            note_relocation();
             Self(self.0.clone())
+        }
+    }
+}
+
+/// The last handle on a store frees it: a view published over it points at nothing.
+impl Drop for BufferBytes {
+    fn drop(&mut self) {
+        if Rc::strong_count(&self.0) == 1 {
+            note_relocation();
         }
     }
 }
@@ -156,7 +190,7 @@ impl BufferBytes {
 
     /// Preserve this fixed allocation when future cell snapshots are cloned.
     pub(crate) fn pin_address(&mut self) -> usize {
-        let store = Rc::make_mut(&mut self.0);
+        let store = self.unshared_store();
         match store {
             BufferStore::Owned(bytes) => {
                 let bytes = std::mem::take(bytes);
@@ -164,6 +198,7 @@ impl BufferBytes {
             }
             BufferStore::Shared(bytes) => {
                 *store = BufferStore::AddressPinned(bytes.to_vec());
+                note_relocation();
             }
             BufferStore::AddressPinned(_) | BufferStore::Wasm(_) => {}
             BufferStore::AtomicShared(_) => {
@@ -182,11 +217,20 @@ impl BufferBytes {
         }
     }
 
+    /// The store for writing, copied first where another handle shares it.
+    fn unshared_store(&mut self) -> &mut BufferStore {
+        if Rc::strong_count(&self.0) > 1 {
+            note_relocation();
+        }
+        Rc::make_mut(&mut self.0)
+    }
+
     /// The bytes for writing; an owned store is unshared from other cells first.
     pub(crate) fn make_mut(&mut self) -> BufferWrite<'_> {
-        let store = Rc::make_mut(&mut self.0);
+        let store = self.unshared_store();
         if let BufferStore::Shared(bytes) = store {
             *store = BufferStore::Owned(bytes.to_vec());
+            note_relocation();
         }
         match store {
             BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes) => {
@@ -251,8 +295,8 @@ impl BufferBytes {
     }
 
     /// The bytes as one owned vector, without a copy when this is their only owner.
-    pub(crate) fn into_vec(self) -> Vec<u8> {
-        match Rc::try_unwrap(self.0) {
+    pub(crate) fn into_vec(mut self) -> Vec<u8> {
+        match Rc::try_unwrap(std::mem::take(&mut self.0)) {
             Ok(BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes)) => bytes,
             Ok(store) => Self(Rc::new(store)).to_vec(),
             Err(shared) => Self(shared).to_vec(),
@@ -261,7 +305,9 @@ impl BufferBytes {
 
     /// The owned bytes for resizing. Views are never resizable buffers.
     pub(crate) fn owned_mut(&mut self) -> &mut Vec<u8> {
-        let store = Rc::make_mut(&mut self.0);
+        // The caller resizes the vector, which may move it.
+        note_relocation();
+        let store = self.unshared_store();
         if let BufferStore::Shared(bytes) = store {
             *store = BufferStore::Owned(bytes.to_vec());
         }

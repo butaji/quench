@@ -3527,12 +3527,18 @@ impl FunctionRecord {
 }
 
 /// A typed array's or DataView's ordinary object and byte offset into its buffer, boxed
-/// together so the view cell keeps four words.
+/// together so the view cell keeps four words. The native prefix comes first: a typed array's
+/// table entry (`TypedViewTable`) addresses it, and `NATIVE_TYPED_ARRAY_LAYOUT` names its fields.
 #[derive(Clone, Debug)]
+#[repr(C)]
 pub(crate) struct BufferViewObject {
+    pub(crate) native: super::typed_view::NativeView,
     pub(crate) object: Object,
     pub(crate) offset: usize,
 }
+
+/// Where the native prefix starts in a view record: the record's address itself.
+pub(super) const NATIVE_VIEW_OFFSET: usize = std::mem::offset_of!(BufferViewObject, native);
 
 impl std::ops::Deref for BufferViewObject {
     type Target = Object;

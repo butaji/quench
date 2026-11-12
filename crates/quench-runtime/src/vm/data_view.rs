@@ -167,6 +167,7 @@ impl<H: Host> Vm<H> {
             .unwrap_or(self.data_view_proto);
         Ok(self.heap.alloc(Cell::DataView {
             object: Box::new(crate::heap::BufferViewObject {
+                native: Default::default(),
                 object: Self::empty_object(prototype),
                 offset,
             }),
