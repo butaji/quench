@@ -2,13 +2,16 @@
 //!
 //! One backward pass over the unit, before lowering, gives each block leader a row; a query
 //! at any PC scans forward to the next leader and meets its row. A register whose remaining
-//! uses read only unboxed views needs no tagged view kept for them: leaves rebuild the
-//! tagged bits from the unboxed view in their cold blocks (`exits.rs`). The demand is a
-//! hint, never a proof: a tagged read the demand missed still materializes the view
-//! (`frame::register_tagged`).
+//! uses read only unboxed views needs no tagged view kept for them. The demand is exact over
+//! `reads`, the one table of what reads a register: every read of a tagged view is in it,
+//! so a view the table does not demand is never read. A leave of a caller register rebuilds
+//! the tagged bits from the unboxed view in its cold block (`exits.rs`); any other tagged
+//! read that finds the view unavailable boxes it there from the unboxed view
+//! (`frame::register_tagged`), which costs a box and never reads garbage.
 
 use super::*;
-use crate::compile::liveness::{transfer, ROOT_MAP_REGISTERS};
+use crate::bytecode::Traits;
+use crate::compile::liveness::transfer;
 use std::num::NonZeroUsize;
 
 /// The views the next uses of a register read; empty when none does before a redefinition.
@@ -44,6 +47,26 @@ fn read_demand(instruction: WideInstruction) -> Demand {
     }
 }
 
+/// Whether the lane writes the live caller registers back to its frame at `instruction`, for
+/// the helper of a call, a construction or a value step to read.
+fn homes_registers(instruction: WideInstruction) -> bool {
+    instruction.op().traits().has(Traits::LANE_RESULT_STEP)
+        || matches!(instruction.op().class(), Class::Call | Class::Construct)
+}
+
+/// The one table of reads: the views the instruction at `pc` reads of `register`.
+/// - an operand (`used`, from `transfer`): the view `read_demand` names;
+/// - the write-back of a live caller register at a call, a construction or a value step: tagged;
+/// - the recovery of a live register of an inlined frame at any leave: tagged, since the
+///   activation it builds reads the variables (`exits::materialize_inlined`);
+/// - the leave of a live caller register: none, its cold block boxes the unboxed view.
+fn reads(unit: &super::super::lane_unit::Unit, pc: usize, instruction: WideInstruction, used: bool,
+    register: usize, live: &impl Fn(usize, Register) -> bool) -> Demand {
+    let operand = if used { read_demand(instruction) } else { Demand::default() };
+    let recovered = register >= usize::from(unit.caller_registers) || homes_registers(instruction);
+    if recovered && live(pc, register as Register) { operand.union(Demand::TAGGED) } else { operand }
+}
+
 /// The rows of every block leader, in one flat buffer; empty for a unit wider than the
 /// liveness sets, whose every register is taken to be read tagged.
 #[derive(Default)]
@@ -75,7 +98,7 @@ impl Demands {
     /// The row on entry to the block `start..end`: its successors' rows, past each instruction
     /// from the last, a definition retiring the register's demand and a use adding its own.
     fn block_entry(&self, program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
-        start: usize, end: usize) -> Vec<Demand> {
+        start: usize, end: usize, live: &impl Fn(usize, Register) -> bool) -> Vec<Demand> {
         let mut row = vec![Demand::default(); self.registers];
         let last = unit.instructions[end - 1];
         for successor in successors(end - 1, last).into_iter().flatten().filter_map(|pc| self.row(pc)) {
@@ -84,10 +107,9 @@ impl Demands {
         for pc in (start..end).rev() {
             let instruction = unit.instructions[pc];
             let (uses, defs) = transfer(instruction, program, &program.field_sites, &program.superinstructions);
-            let read = read_demand(instruction);
             for (register, demand) in row.iter_mut().enumerate() {
                 if defs.contains(register) { *demand = Demand::default(); }
-                if uses.contains(register) { *demand = demand.union(read); }
+                *demand = demand.union(reads(unit, pc, instruction, uses.contains(register), register, live));
             }
         }
         row
@@ -96,8 +118,9 @@ impl Demands {
 
 /// Each block leader's use demand, solved backward to a fixed point over the unit's CFG.
 pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
-    leaders: &CompoundBitSet) -> Demands {
-    if unit.registers > ROOT_MAP_REGISTERS { return Demands::default(); }
+    leaders: &CompoundBitSet, liveness: &Liveness) -> Demands {
+    let Liveness::Unit(masks) = liveness else { return Demands::default() };
+    let live = |pc: usize, register: Register| masks.as_deref().is_none_or(|masks| masks.is_live(pc, register));
     let mut demands = Demands { offsets: vec![None; unit.instructions.len()], rows: Vec::new(),
         registers: usize::from(unit.registers) };
     let mut blocks: Vec<(usize, usize)> = leaders.iter().filter(|pc| *pc < unit.instructions.len())
@@ -109,7 +132,7 @@ pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit:
     while changed {
         changed = false;
         for (start, end) in &blocks {
-            let entry = demands.block_entry(program, unit, *start, *end);
+            let entry = demands.block_entry(program, unit, *start, *end, &live);
             changed |= demands.set(*start, &entry);
         }
     }
@@ -125,7 +148,8 @@ impl Lowering<'_, '_> {
         for (at, instruction) in self.unit.instructions.iter().copied().enumerate().skip(pc) {
             if at != pc && let Some(row) = self.demands.row(at) { return demand.union(row[register]); }
             let (uses, defs) = transfer(instruction, self.program, &self.program.field_sites, &self.program.superinstructions);
-            if uses.contains(register) { demand = demand.union(read_demand(instruction)); }
+            demand = demand.union(reads(self.unit, at, instruction, uses.contains(register), register,
+                &|pc, register| self.is_live(pc, register)));
             if defs.contains(register) { return demand; }
             if !instruction.op().control_flow_layout().falls_through() || instruction.op().control_flow_layout().jumps() {
                 return successors(at, instruction).into_iter().flatten().filter_map(|target| self.demands.row(target))

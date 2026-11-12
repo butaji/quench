@@ -1615,7 +1615,7 @@ pub(super) fn lower(
         consumed: CompoundBitSet::with_capacity(unit.instructions.len()),
         blocks,
         exits: std::iter::repeat_with(Vec::new).take(unit.instructions.len() + 1).collect(),
-        demands: demand::analyze(program, unit, &leaders),
+        demands: demand::analyze(program, unit, &leaders, &live),
         entry: None,
         native: 0,
         backedge: false,
