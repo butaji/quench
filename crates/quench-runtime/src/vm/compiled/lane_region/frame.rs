@@ -302,17 +302,7 @@ pub(super) fn register_tagged(builder: &mut FunctionBuilder<'_>, registers: &mut
     let fact = state.values[index];
     if let TaggedView::Value(value) = fact.tagged { return value; }
     if !fact.tagged.current() {
-        let bits = match fact.value.representation {
-            Representation::Int32 => {
-                let int = { let variable = register_int(builder, registers, index); builder.use_var(variable) };
-                int_tagged(builder, int)
-            }
-            Representation::Float64 => {
-                let number = { let variable = register_float(builder, registers, index); builder.use_var(variable) };
-                emit_js_box_number(builder, number)
-            }
-            Representation::Tagged => unreachable!("tagged view is current"),
-        };
+        let bits = super::number_domains::box_unboxed(builder, registers, fact.value.representation, index);
         builder.def_var(registers.tagged[index], bits);
         state.values[index].tagged = TaggedView::Value(bits);
         return bits;

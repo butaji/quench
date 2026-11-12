@@ -836,8 +836,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
             if self.unit.frames[frame].recovery != super::lane_unit::CallRecovery::RestartCall { break; }
             pc = self.unit.markers[frame];
         }
-        let stored = self.stored_at(pc, &state.proofs.homed);
-        self.materialize_stored(state, pc, &stored);
+        let stored = self.stored_at(state, pc);
+        self.materialize_inlined(state, pc);
         let block = self.exit_block(pc, stored);
         self.ins().jump(block, &[]);
     }

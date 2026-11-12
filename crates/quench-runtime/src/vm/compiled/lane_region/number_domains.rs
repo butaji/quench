@@ -12,6 +12,25 @@ pub(super) fn target_representation(ty: Type) -> Representation {
     else { Representation::Tagged }
 }
 
+/// `index`'s tagged bits boxed from its unboxed view in `representation`: the one boxing of a
+/// numeric register, for a tagged read (`frame::register_tagged`) and for a leave (`exits.rs`).
+pub(super) fn box_unboxed(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+    representation: Representation, index: usize) -> ir::Value {
+    match representation {
+        Representation::Int32 => {
+            let variable = frame::register_int(builder, registers, index);
+            let int = builder.use_var(variable);
+            int_tagged(builder, int)
+        }
+        Representation::Float64 => {
+            let variable = frame::register_float(builder, registers, index);
+            let number = builder.use_var(variable);
+            emit_js_box_number(builder, number)
+        }
+        Representation::Tagged => unreachable!("a tagged register's bits are current"),
+    }
+}
+
 impl Lowering<'_, '_> {
     /// Whether every operand is proved int32: a register by its type, a constant by its value.
     pub(super) fn proved_int(&self, state: &State, operands: [Operand; 2]) -> bool {
