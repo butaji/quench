@@ -1,5 +1,5 @@
 use super::*;
-use quench_bjit::HOLES;
+use quench_bjit::{padded_holes, HOLES};
 
 /// `push imm32` and `jmp rel32`: a row's exit stub, which names its PC and the routine that
 /// writes the live registers back.
@@ -92,7 +92,7 @@ pub(super) fn entry_rows(layout: &Layout) -> Result<Vec<(&'static Stencil, [u64;
     let region = layout.region;
     let guard = |kind, dst, offset: u64| {
         numeric::stencil(numeric::Row { kind, dst, a: Place::Mem, b: Place::Mem, speculate: true }).map(|stencil| {
-            (stencil, if kind == Kind::TagInit { [offset, 0, 0] } else { [0, offset, 0] })
+            (stencil, padded_holes(if kind == Kind::TagInit { [offset, 0, 0] } else { [0, offset, 0] }))
         })
     };
     let mut rows = Vec::new();

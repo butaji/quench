@@ -10,7 +10,8 @@
 //! jump when an interrupt is requested so the interpreter's safepoint runs, and an entry guard
 //! that finds a register that is no Number returns `LaneExit::Entry`.
 
-use super::osr_loop::LoopRegion;
+use super::osr_loop::{FieldReceiver, LoopRegion};
+use super::NativeFieldLoad;
 use crate::bytecode::{Class, OperandKind, Register, WideInstruction};
 use crate::value::Value;
 use oxc_ast::ast::BinaryOperator;
@@ -20,11 +21,13 @@ use quench_bjit::{PINNED, PINNED_F, Row as Placed, Stencil};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+mod cache;
 mod decode;
 mod link;
 mod plan;
 mod repr;
 mod webs;
+use cache::*;
 use decode::*;
 use link::*;
 use plan::*;
@@ -137,12 +140,12 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
 
 /// The machine code of `region`, entered at the shared native entry ABI, or the instruction that
 /// has no row. `ints` are the registers that held an int32 as the compile began; `widened` lists the PCs whose int32 speculation failed: they take general rows.
-pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<(Vec<u8>, bool), String> {
+pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], loads: &[Vec<NativeFieldLoad>]) -> Result<Built, String> {
     let started = std::time::Instant::now();
-    let built = assemble(region, dense, widened, seen);
+    let built = assemble(region, dense, widened, seen, loads);
     let nanos = started.elapsed().as_nanos() as u64;
     note(|totals, rejects| match &built {
-        Ok((code, _)) => {
+        Ok(Built { code, .. }) => {
             totals.regions += 1;
             totals.ops += u64::from(region.backedge - region.header) + 1;
             totals.bytes += code.len() as u64;
@@ -156,13 +159,20 @@ pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [
     built
 }
 
-/// The code, and whether it reads no heap row: such a region needs from its payload only the entry
-/// record's address (`Crossing::Bare`).
-fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<(Vec<u8>, bool), String> {
+/// A built region: its code, whether it reads no heap row (such a region needs from its payload
+/// only the entry record's address, `Crossing::Bare`), and the inline-cache entries its code
+/// embeds, whose shapes and slots it depends on (`OsrFacts::of_loads`).
+pub(super) struct Built {
+    pub(super) code: Vec<u8>,
+    pub(super) bare: bool,
+    pub(super) embedded: Vec<NativeFieldLoad>,
+}
+
+fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], loads: &[Vec<NativeFieldLoad>]) -> Result<Built, String> {
     let (header, backedge) = (region.header, region.backedge);
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
-    let decoded = instructions.iter().enumerate().map(|(k, instruction)| decode(region, dense, header + k as u32, *instruction)).collect::<Result<Vec<_>, _>>()?;
+    let decoded = instructions.iter().enumerate().map(|(k, instruction)| decode(region, dense, header + k as u32, *instruction, loads)).collect::<Result<Vec<_>, _>>()?;
     // A register with several webs may not have a web in an int slot, whose writes keep a
     // tagged word's high half; such a register is left whole.
     let mut merged: std::collections::BTreeSet<Register> = Default::default();
@@ -182,7 +192,8 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
         body.push(plan(row, &layout.homes, header + k as u32, is_general(row, &reprs))?);
     }
     let bare = decoded.iter().all(|row| row.heap.is_none());
-    Ok((link(&layout, &body)?, bare))
+    let embedded = decoded.iter().filter_map(|row| row.cache.as_ref()).flat_map(|cache| cache.loads.iter().copied()).collect();
+    Ok(Built { code: link(&layout, &body)?, bare, embedded })
 }
 
 impl<H: crate::Host> crate::vm::Vm<H> {

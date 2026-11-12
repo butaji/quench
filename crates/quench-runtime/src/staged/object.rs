@@ -121,6 +121,20 @@ pub(crate) fn object_record_at<S: Stage>(stage: &mut S, records: S::Word, id: S:
     stage.add(records, offset)
 }
 
+/// The id and address of the object record the direct object reference `bits` names, in the
+/// record table at `records`; `miss` for any other word, or where the VM has no table (zero).
+/// The Cranelift projection of the same read is `ObjectRecord::prove`.
+#[inline(always)]
+pub(crate) fn direct_object_record<S: Stage>(stage: &mut S, bits: S::Word, records: S::Word, miss: S::Miss)
+    -> Option<(S::Word, S::Word)> {
+    let object = super::value::is_direct_object(stage, bits);
+    stage.guard(object, miss)?;
+    let present = stage.ne_imm(records, 0u32);
+    stage.guard(present, miss)?;
+    let id = stage.and_imm(bits, u64::from(u32::MAX));
+    Some((id, object_record_at(stage, records, id)))
+}
+
 /// The address of the first arena value of the run starting at `start`.
 #[inline(always)]
 pub(crate) fn arena_run<S: Stage>(stage: &mut S, start: S::Word) -> S::Word {

@@ -7,7 +7,7 @@
 
 mod patch;
 pub mod numeric;
-pub use patch::{HOLES, Imm32};
+pub use patch::{padded_holes, HOLES, Imm32};
 
 /// Pinned int registers a stencil takes, and the double registers (xmm0 to xmm7) after them.
 pub const PINNED: usize = 4;
@@ -188,6 +188,31 @@ mod rustc_tests {
                 assert!(reloc.offset as usize + width <= stencil.code.len(), "{name}: {reloc:?}");
                 assert!(reloc.pc_relative || (reloc.index as usize) < crate::HOLES, "{name}: {reloc:?}");
             }
+        }
+    }
+
+    /// The cache rows (`stencils/ic_rows.rs`) patch the holes `base_rows` fills: a get its
+    /// destination, receiver, shape and slot offset (a holder read also the holder's shape), a
+    /// store its receiver, value, atom, shape and slot offset; a chained row's hit takes the
+    /// branch target and the last entry's miss takes the exit.
+    #[test]
+    fn cache_rows_patch_their_entry_holes_and_take_their_successors() {
+        use super::numeric::library::{heap_canonical, heap_name, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_ROW, MEM};
+        let row = |heap, chained| {
+            let stencil = rustc::stencil(&heap_name(heap_canonical((heap, chained, MEM, MEM, MEM)))).expect("a cache row");
+            let mut values: Vec<u32> = stencil.imm32.iter().map(|field| field.index).collect();
+            values.sort_unstable();
+            values.dedup();
+            let successors: Vec<u32> = stencil.relocs.iter().filter(|reloc| reloc.pc_relative).map(|reloc| reloc.index).collect();
+            (values, successors)
+        };
+        assert_eq!(row(IC_GET_ROW, false).0, [0, 1, 2, 3]);
+        assert_eq!(row(IC_GET_HOLDER_ROW, false).0, [0, 1, 2, 3, 4]);
+        assert_eq!(row(IC_SET_ROW, false).0, [0, 1, 2, 3, 4]);
+        for heap in [IC_GET_ROW, IC_GET_HOLDER_ROW, IC_SET_ROW] {
+            let (last, chained) = (row(heap, false).1, row(heap, true).1);
+            assert!(last.contains(&crate::EXIT) && !last.contains(&crate::TAKEN), "{heap}: {last:?}");
+            assert!(chained.contains(&crate::TAKEN) && chained.contains(&crate::NEXT), "{heap}: {chained:?}");
         }
     }
 }
