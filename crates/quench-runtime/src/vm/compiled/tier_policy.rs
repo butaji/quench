@@ -181,10 +181,27 @@ pub(in crate::vm) struct Wasm {
 /// the generic case: the width of every polymorphic cache and of each guarded switch a tier
 /// specializes a site into. One bound for every lattice of site feedback.
 pub(in crate::vm) const POLYMORPHISM: usize = 4;
-/// The bodies a field site's leaves may have named (`Vm::field_site_leaves`) before a plan reads
-/// it as a probed read rather than a shape proof: a site that left in one body may have met its
-/// second shape by chance.
-pub(in crate::vm) const UNSTABLE_SITE_LEAVES: u8 = 2;
+/// What a speculated fact costs and saves, in nanoseconds, from which a site's break-even rate
+/// derives (`site_posterior::break_even`) with the posterior's quantile (`tier-decision-rule-v1`
+/// section 4). Per execution a speculating read pays `guard_read_ns` when the fact holds and
+/// `guard_exit_ns` (the leave, the interpreter's replay and the re-entry) when it does not; the
+/// in-place generic read (`field_probe`) pays `probe_read_ns` either way. Speculation wins when
+/// `p (probe - guard) > (1 - p) (exit - probe)`, so the break-even rate is
+/// `(exit - probe) / (exit - guard)`.
+pub(in crate::vm) struct Speculation {
+    pub(in crate::vm) guard_read_ns: u32,
+    pub(in crate::vm) probe_read_ns: u32,
+    pub(in crate::vm) guard_exit_ns: u32,
+    /// The standard-normal deviate of the posterior's lower 5% quantile: the Beta's quantile is
+    /// taken as mean minus this many standard deviations (conservative for a skewed Beta).
+    pub(in crate::vm) lower_quantile_z: f64,
+}
+
+/// A guarded read is a load and a compare; the probe is the VM cache's hit path; an exit costs
+/// the region entry and exit plumbing (`Priors::region_entry_ns`, 140 ns) and the replayed
+/// instructions of the leave.
+pub(in crate::vm) const SPECULATION: Speculation =
+    Speculation { guard_read_ns: 1, probe_read_ns: 6, guard_exit_ns: 200, lower_quantile_z: 1.645 };
 
 /// A `tier-stress` build: the floor row, and every JavaScript compilation arm on, so its
 /// Test262 run and `tests/tier_differential.rs` check each tier against the interpreter.

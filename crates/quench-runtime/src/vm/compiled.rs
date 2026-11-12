@@ -75,6 +75,8 @@ mod lane_sites;
 use lane_allocations::{lane_binary, lane_new_array, lane_new_const_array, lane_new_object, lane_new_object_pair};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
+#[path = "compiled/site_posterior.rs"]
+mod site_posterior;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
 #[path = "compiled/numeric_image.rs"] mod numeric_image; pub(super) use numeric_image::compile_js_typed_numeric_region;
 #[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages;
@@ -7108,9 +7110,9 @@ impl<H: Host> Vm<H> {
         unit.instructions
             .iter()
             .flat_map(|instruction| Self::instruction_field_sites(program, instruction))
-            .filter(|(site, _)| !generic.contains(site) && self.field_site_leaves(self.field_cache_index(*site)) < tier_policy::UNSTABLE_SITE_LEAVES)
+            .filter(|(site, _)| !generic.contains(site))
             .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }.into_iter().map(|load| NativeFieldLoad { function_shape: functions.contains(load.shape as usize), ..load }).collect::<Vec<_>>()))
-            .filter(|(_, shapes)| !shapes.is_empty())
+            .filter(|(site, shapes)| !shapes.is_empty() && site_posterior::SiteEvidence::of(self.field_site_leaves(self.field_cache_index(*site)), shapes.len()).speculates())
             .collect()
     }
 
