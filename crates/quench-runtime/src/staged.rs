@@ -47,6 +47,10 @@ mod steps;
 mod generic;
 pub(crate) use steps::step;
 pub(crate) mod effects;
+pub(crate) mod wasm;
+mod wasm_concrete;
+pub(crate) mod wasm_operation;
+pub(crate) use wasm_concrete::ConcreteWasm;
 #[cfg(test)]
 pub(crate) mod trace;
 #[allow(unused_imports)] // the Stage v2 vocabulary: stencil and UltraJIT stages use the rest
@@ -448,3 +452,5 @@ mod property_tests;
 mod coverage_tests;
 #[cfg(test)]
 mod generic_tests;
+#[cfg(test)]
+mod wasm_tests;

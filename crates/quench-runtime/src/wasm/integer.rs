@@ -4,6 +4,8 @@
 use super::{WasmTrap, WasmValue};
 
 use super::numeric::{NumericResult, selectors};
+use crate::staged::ConcreteWasm;
+use crate::staged::wasm::{WasmStage, Width, binary_result, integer_binary, unary_result};
 
 macro_rules! binary_family {
     ($enum:ident, $signed:ty, $unsigned:ty, $variant:ident,
@@ -211,18 +213,73 @@ impl super::Lowering<'_> {
 }
 
 impl I32BinaryOperator {
-    /// The `apply` result as a raw i32 payload: comparisons yield 0 or 1.
+    /// `apply` as a raw i32 payload, comparisons yielding 0 or 1: the interpreter's execution
+    /// of the operator, through the staged rules (`staged::wasm`).
     #[inline(always)]
     pub(crate) fn evaluate(self, left: i32, right: i32) -> Result<i32, WasmTrap> {
-        self.result(left, right).map(|value| match value {
-            NumericResult::Value(value) => value,
-            NumericResult::Comparison(holds) => i32::from(holds),
+        integer_binary(
+            &mut ConcreteWasm,
+            self.widen(),
+            Width::I32,
+            u64::from(left as u32),
+            u64::from(right as u32),
+        )
+        .map(|word| word as i32)
+    }
+}
+
+impl I64BinaryOperator {
+    /// `apply` through the staged rules (`staged::wasm`).
+    #[inline(always)]
+    pub(crate) fn evaluate(self, left: i64, right: i64) -> Result<WasmValue, WasmTrap> {
+        let word = integer_binary(
+            &mut ConcreteWasm,
+            self,
+            Width::I64,
+            left as u64,
+            right as u64,
+        )?;
+        Ok(match binary_result(self, Width::I64) {
+            Width::I32 => WasmValue::I32(word as i32),
+            Width::I64 => WasmValue::I64(word as i64),
         })
     }
 }
 
+impl I32UnaryOperator {
+    /// `apply` as a raw i32 payload, through the staged rules (`staged::wasm`).
+    #[inline(always)]
+    pub(crate) fn evaluate(self, value: i32) -> i32 {
+        ConcreteWasm.operate_unary(self.widen(), Width::I32, u64::from(value as u32)) as i32
+    }
+
+    /// The i64 operator of the same name: the i64 selectors extend the i32 ones.
+    pub(crate) const fn widen(self) -> I64UnaryOperator {
+        match self {
+            Self::EqualZero => I64UnaryOperator::EqualZero,
+            Self::LeadingZeros => I64UnaryOperator::LeadingZeros,
+            Self::TrailingZeros => I64UnaryOperator::TrailingZeros,
+            Self::PopulationCount => I64UnaryOperator::PopulationCount,
+            Self::ExtendSigned8 => I64UnaryOperator::ExtendSigned8,
+            Self::ExtendSigned16 => I64UnaryOperator::ExtendSigned16,
+        }
+    }
+}
+
+impl I64UnaryOperator {
+    /// `apply` through the staged rules (`staged::wasm`).
+    #[inline(always)]
+    pub(crate) fn evaluate(self, value: i64) -> WasmValue {
+        let word = ConcreteWasm.operate_unary(self, Width::I64, value as u64);
+        match unary_result(self, Width::I64) {
+            Width::I32 => WasmValue::I32(word as i32),
+            Width::I64 => WasmValue::I64(word as i64),
+        }
+    }
+}
+
 // First-class i32 opcodes name their operator so dispatch decodes no selector.
-// `I32BinaryOperator::evaluate` remains the single semantic authority.
+// `I32BinaryOperator::evaluate` executes them through `staged::wasm::integer_binary`.
 macro_rules! i32_direct_operators {
     ($($name:ident => $register:ident, $immediate:ident;)+) => {
         impl I32BinaryOperator {
@@ -231,6 +288,10 @@ macro_rules! i32_direct_operators {
             }
             pub(crate) const fn immediate_op(self) -> crate::bytecode::Op {
                 match self { $(Self::$name => crate::bytecode::Op::$immediate,)+ }
+            }
+            /// The i64 operator of the same name: the i64 selectors extend the i32 ones.
+            pub(crate) const fn widen(self) -> I64BinaryOperator {
+                match self { $(Self::$name => I64BinaryOperator::$name,)+ }
             }
             pub(crate) const fn from_register_op(op: crate::bytecode::Op) -> Option<Self> {
                 match op { $(crate::bytecode::Op::$register => Some(Self::$name),)+ _ => None }

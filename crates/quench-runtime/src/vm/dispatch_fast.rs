@@ -8915,9 +8915,7 @@ lane_handler! {
         let Some(operator) = I32UnaryOperator::from_tag(i.imm()) else {
             return exit(ip);
         };
-        let crate::WasmValue::I32(value) = operator.apply(read_i32::<ACC, ACC_B>(r, i.b, view)) else {
-            return exit(ip);
-        };
+        let value = operator.evaluate(read_i32::<ACC, ACC_B>(r, i.b, view));
         produce!(cx, r, ip, i.a, view.integers.encode(value), view)
     }
 }
@@ -9459,7 +9457,7 @@ lane_handler! {
         ) else {
             return exit(ip);
         };
-        let Ok(value) = operator.apply(left as i64, right as i64) else {
+        let Ok(value) = operator.evaluate(left as i64, right as i64) else {
             return exit(ip);
         };
         let Some(value) = lane_encode(view, value) else {
@@ -9477,7 +9475,7 @@ lane_handler! {
         ) else {
             return exit(ip);
         };
-        let Some(value) = lane_encode(view, operator.apply(input as i64)) else {
+        let Some(value) = lane_encode(view, operator.evaluate(input as i64)) else {
             return exit(ip);
         };
         produce!(cx, r, ip, i.a, value, view)
