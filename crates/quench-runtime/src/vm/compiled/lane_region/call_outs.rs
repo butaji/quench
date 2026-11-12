@@ -11,7 +11,7 @@ impl Lowering<'_, '_> {
         let row = crate::staged::Operation::decode(instruction, crate::staged::DecodeContext::of(self.program))?;
         let (call, result) = row.call_out()?;
         (self.completion.status_and_pc() && instruction.result_flags() == 0
-            && call.operands().into_iter().flatten().chain(result).all(|register| register < self.unit.registers))
+            && call.operands().registers(&[]).chain(result).all(|register| register < self.unit.registers))
             .then_some(row)
     }
 

@@ -23,11 +23,13 @@ mod heap;
 mod global;
 mod names;
 mod callout;
+mod spread;
 mod admission;
 mod decode;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
-pub(crate) use callout::CallOut;
+pub(crate) use callout::{CallOut, OperandValues, Operands};
+pub(crate) use spread::Passing;
 pub(crate) use decode::DecodeContext;
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
@@ -334,14 +336,20 @@ pub(crate) enum Operation<W, P> {
     /// A step of the call protocol: admission, `this` binding, the callee's window, completion
     /// (`protocol`).
     Call(CallOperation<W>),
+    /// A call whose one argument register holds an iterable to spread or an array to apply
+    /// (`CallSpread`, `CallArray`): the VM's call, a callout (`spread`).
+    SpreadCall { destination: Register, callee: Register, receiver: Register, arguments: Arguments, passing: Passing },
+    /// `super(...)`: the VM's construction with the activation's `new.target`, a callout (`spread`).
+    SuperCall { destination: Register, callee: Register, arguments: Arguments, passing: Passing },
     /// Complete the activation with the value of `source` (`invoke::ret`).
     Return { source: Register },
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes and the
     /// tables of `context` its operands index. `None` where the opcode has no staged operation,
-    /// or where its constant or method site is not available to this tier: the caller then takes its own exact path. The heap
-    /// operations are the frame's (`Frame::field_read`); a tier decodes those itself.
+    /// or where its constant or method site is not available to this tier: the caller then takes
+    /// its own exact path. The heap operations are the frame's (`Frame::field_read`); a tier
+    /// decodes those itself.
     pub(crate) fn decode(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         Some(match instruction.op() {
             Op::Move => Self::Move {
@@ -359,6 +367,7 @@ impl<W, P> Operation<W, P> {
             Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::IncDec => return Self::decode_value(instruction),
             Op::GetField | Op::Delete => return Self::decode_property(instruction),
             op if op.is_field_store() => return Self::decode_property(instruction),
+            Op::Construct if instruction.is_super_construct() => return spread::decode(instruction),
             Op::Call | Op::CallForwardingArguments | Op::Construct | Op::CallKnown | Op::CallMethod | Op::CallThisMethod =>
                 Self::Call(CallOperation::Site(Invocation::of(instruction, context)?)),
             Op::Return => Self::Return { source: instruction.register_a() },

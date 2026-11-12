@@ -49,6 +49,15 @@ impl Arguments {
         }
     }
 
+    /// The registers the arguments name: a window's consecutive ones, or the list's in `records`.
+    pub(crate) fn registers(self, records: &[Register]) -> impl Iterator<Item = Register> + '_ {
+        let (window, listed) = match self {
+            Self::Window { first, count } => (first..first + count, &[][..]),
+            Self::List(list) => (0..0, list.registers(records)),
+        };
+        window.chain(listed.iter().copied())
+    }
+
     /// The first register past a window; a list's registers are the call records' to name.
     pub(crate) const fn window_end(self) -> u32 {
         match self {

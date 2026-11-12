@@ -53,7 +53,7 @@ fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>
         Op::GetIterator => (Protocol::GetIterator, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::ForInStart => (Protocol::ForInStart, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::IteratorClose => (Protocol::IteratorClose, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
-        _ => return None,
+        _ => return super::spread::decode(instruction),
     };
     Some(Operation::Protocol { step, destination, operands })
 }

@@ -140,3 +140,18 @@ fn global_names_environment_locals_and_arguments_match_the_interpreter() {
     "#);
     assert_eq!(output, ["804", "numberundefined"]);
 }
+
+#[test]
+fn spread_and_super_calls_match_the_interpreter() {
+    let output = in_both_modes(r#"
+      class Base { constructor(...parts) { this.total = parts.reduce((sum, part) => sum + part, 0); } }
+      class Derived extends Base { constructor(first, ...rest) { super(first, ...rest); this.count = rest.length + 1; } }
+      function sum() { let total = 0; for (let i = 0; i < arguments.length; i++) total += arguments[i]; return total; }
+      function spread(values) { return sum(...values) + new Derived(...values).total; }
+      let last = 0;
+      for (let repeat = 0; repeat < 400; repeat++) last = spread([repeat, 2, 3]);
+      const lazy = { *[Symbol.iterator]() { yield 4; yield 5; } };
+      print(last + " " + spread(lazy) + " " + new Derived(1, 2, 3).count);
+    "#);
+    assert_eq!(output[0], "808 18 3", "a spread of an array, of a generator, and a super call with a spread");
+}

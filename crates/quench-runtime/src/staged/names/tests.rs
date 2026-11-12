@@ -179,7 +179,7 @@ fn a_row_that_calls_out_names_the_call_its_frame_receives() {
         let (call, result) = row.call_out().expect("a calling row");
         assert_eq!(frame.calls.last(), Some(&(call, result)));
     }
-    assert_eq!(CallOut::ForInNext { state: 1 }.operands(), [None, Some(1)]);
+    assert_eq!(CallOut::ForInNext { state: 1 }.operands().fixed, [None, Some(1)]);
     assert!(Row::<u64, ()>::Jump.call_out().is_none());
 }
 
@@ -219,4 +219,23 @@ fn the_catalog_decodes_each_name_environment_and_iteration_opcode() {
         Some(Row::Protocol { step: Protocol::GetIterator, destination: Some(1), operands: [None, Some(1)] })));
     assert!(matches!(decode(Op::AppendArray, 2),
         Some(Row::Protocol { step: Protocol::AppendArray { length: 2, spread: true }, destination: None, .. })));
+}
+
+#[test]
+fn a_spread_call_and_a_super_construction_call_out_with_their_registers_and_define_the_result() {
+    use crate::staged::{Arguments, Passing};
+    let mut frame = Probe::new(8);
+    let one = Arguments::Window { first: 6, count: 1 };
+    let spread = Row::SpreadCall { destination: 4, callee: 1, receiver: 2, arguments: one, passing: Passing::Iterable };
+    assert!(matches!(run(&mut frame, spread), Step::Value(_)));
+    let window = Arguments::Window { first: 3, count: 2 };
+    let construct = Row::SuperCall { destination: 5, callee: 1, arguments: window, passing: Passing::Values };
+    assert!(matches!(run(&mut frame, construct), Step::Value(_)));
+    assert_eq!(frame.calls, [
+        (CallOut::Spread { callee: 1, receiver: 2, arguments: one, passing: Passing::Iterable }, Some(4)),
+        (CallOut::SuperCall { callee: 1, arguments: window, passing: Passing::Values }, Some(5)),
+    ]);
+    assert_eq!((Value::from_bits(frame.registers[4]), Value::from_bits(frame.registers[5])), (Value::number(9.0), Value::number(9.0)));
+    frame.declines = true;
+    assert!(matches!(run(&mut frame, spread), Step::Unresolved), "a frame with no host leaves the call to the interpreter");
 }

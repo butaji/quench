@@ -3,7 +3,8 @@
 //! method, the lane specializer's frame calls the lane helper that decodes the record and makes
 //! the same step (`dispatch_fast::lane_vm_step`), and a frame with no host declines.
 
-use super::{NumericFrame, NumericStage, Operation, Protocol, Register, Step};
+use super::spread::Passing;
+use super::{Arguments, NumericFrame, NumericStage, Operation, Protocol, Register, Step};
 
 /// The tag byte of each `CallOut`, which a helper-call row passes as its immediate.
 pub(crate) const TAG_EQUALITY: u8 = 0;
@@ -16,6 +17,8 @@ pub(crate) const TAG_STORE_ENV_LOCAL: u8 = 6;
 pub(crate) const TAG_ARGUMENTS_LENGTH: u8 = 7;
 pub(crate) const TAG_GLOBAL_WRITE: u8 = 8;
 pub(crate) const TAG_GLOBAL_TYPEOF: u8 = 9;
+pub(crate) const TAG_SPREAD: u8 = 10;
+pub(crate) const TAG_SUPER_CALL: u8 = 11;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -47,19 +50,63 @@ pub(crate) enum CallOut {
     GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool } = TAG_GLOBAL_WRITE,
     /// The `typeof` name of the global `atom` through cache `site`.
     GlobalTypeof { atom: u32, site: u16 } = TAG_GLOBAL_TYPEOF,
+    /// `callee` called with `receiver` and the arguments a spread makes of the registers in
+    /// `arguments` (`Passing`), by the VM's call: the argument iteration runs guest code.
+    Spread { callee: Register, receiver: Register, arguments: Arguments, passing: Passing } = TAG_SPREAD,
+    /// `callee` constructed by `super(...)` with the arguments in `arguments`, by the VM's
+    /// construction with the running activation's `new.target`.
+    SuperCall { callee: Register, arguments: Arguments, passing: Passing } = TAG_SUPER_CALL,
+}
+
+/// The registers the VM reads for a `CallOut`: up to two of fixed place, and a list a call
+/// passes (`Arguments`), which a handle names without copying it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct Operands {
+    pub(crate) fixed: [Option<Register>; 2],
+    pub(crate) list: Option<Arguments>,
+}
+
+/// The values of a `CallOut`'s operands, read by the tier from its own registers.
+pub(crate) struct OperandValues<V> {
+    pub(crate) fixed: [Option<V>; 2],
+    pub(crate) list: Vec<V>,
+}
+
+impl Operands {
+    /// Operands of fixed place alone.
+    const fn of_fixed(fixed: [Option<Register>; 2]) -> Self {
+        Self { fixed, list: None }
+    }
+
+    /// Every register the operands name, with the list's resolved by `records` (the call records
+    /// of a method site; a window needs none).
+    pub(crate) fn registers<'a>(self, records: &'a [Register]) -> impl Iterator<Item = Register> + 'a {
+        self.fixed.into_iter().flatten().chain(self.list.into_iter().flat_map(move |list| list.registers(records)))
+    }
+
+    /// The operands' values, each register read by `read` in the order `registers` names them.
+    pub(crate) fn read<V>(self, records: &[Register], mut read: impl FnMut(Register) -> V) -> OperandValues<V> {
+        let fixed = self.fixed.map(|register| register.map(&mut read));
+        let list = self.list.map_or_else(Vec::new, |list| list.registers(records).map(&mut read).collect());
+        OperandValues { fixed, list }
+    }
 }
 
 impl CallOut {
     /// The registers the VM reads, in the order its operation takes them: the first operand
-    /// then the second, which is the only one an operation of a single operand has.
-    pub(crate) fn operands(self) -> [Option<Register>; 2] {
-        match self {
+    /// then the second, which is the only one an operation of a single operand has, then the
+    /// list of arguments a call passes.
+    pub(crate) fn operands(self) -> Operands {
+        Operands::of_fixed(match self {
             Self::Equality { left, right, .. } | Self::Binary { left, right, .. } => [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
             Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
             Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } => [None, None],
             Self::Protocol { operands, .. } => operands,
-        }
+            Self::Spread { callee, receiver, arguments, .. } =>
+                return Operands { fixed: [Some(callee), Some(receiver)], list: Some(arguments) },
+            Self::SuperCall { callee, arguments, .. } => return Operands { fixed: [Some(callee), None], list: Some(arguments) },
+        })
     }
 }
 
@@ -82,6 +129,10 @@ impl<W, P> Operation<W, P> {
             Self::GlobalWrite { source, atom, site, initialize } =>
                 (CallOut::GlobalWrite { source, atom, site, initialize }, None),
             Self::GlobalTypeof { destination, atom, site } => (CallOut::GlobalTypeof { atom, site }, Some(destination)),
+            Self::SpreadCall { destination, callee, receiver, arguments, passing } =>
+                (CallOut::Spread { callee, receiver, arguments, passing }, Some(destination)),
+            Self::SuperCall { destination, callee, arguments, passing } =>
+                (CallOut::SuperCall { callee, arguments, passing }, Some(destination)),
             _ => return None,
         })
     }

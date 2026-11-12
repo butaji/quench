@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::bytecode::{Operand, Register, WideInstruction};
-use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NumericFrame, Operation, Protocol, Step};
+use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NumericFrame, OperandValues, Operation, Protocol, Step};
 
 /// Where a call-out runs: the running frame, and the PC after its instruction, which the
 /// binding rules of a name read for their error site.
@@ -18,7 +18,8 @@ impl<H: Host> Vm<H> {
     /// The VM's operation `operation` at `site` of its operand values (`CallOut::operands`): the
     /// value it defines, if any. A for-in step defines `Value::DELETED` once no key is left.
     pub(super) fn call_out(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut,
-        [first, second]: [Option<Value>; 2]) -> Result<Option<Value>, JsError> {
+        operands: OperandValues<Value>) -> Result<Option<Value>, JsError> {
+        let OperandValues { fixed: [first, second], list } = operands;
         let operand = second.unwrap_or(Value::UNDEFINED);
         match operation {
             CallOut::PropertyKey { .. } => self.to_property_key(p, operand).map(Some),
@@ -31,6 +32,8 @@ impl<H: Host> Vm<H> {
                 self.binary(p, operator, first.expect("a binary names its left operand"), operand).map(Some),
             CallOut::ForInNext { .. } => Ok(Some(self.for_in_next(p, operand)?.unwrap_or(Value::DELETED))),
             CallOut::Protocol { step, .. } => self.protocol_step(p, step, first, second),
+            CallOut::Spread { passing, .. } => self.spread_call(p, passing, [first, second], &list).map(Some),
+            CallOut::SuperCall { passing, .. } => self.super_call(p, passing, first, &list).map(Some),
             _ => self.name_step(p, site, operation, first),
         }
     }
@@ -189,7 +192,8 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
     }
 
     fn vm_step(&mut self, _stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, ())> {
-        let operands = operation.operands().map(|register| register.map(|register| self.vm.read(self.site.frame, register)));
+        let (vm, frame) = (&*self.vm, self.site.frame);
+        let operands = operation.operands().read(&self.program.method_arguments, |register| vm.read(frame, register));
         match self.vm.call_out(self.program, self.site, operation, operands) {
             Ok(value) => Some((value.map_or(0, Value::to_bits), ())),
             Err(error) => {

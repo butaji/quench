@@ -3378,7 +3378,7 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     }
     let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::of(code))
         .and_then(|row| row.call_out()).expect("a result step is a call-out row");
-    let operands = operation.operands().map(|register| register.map(|register| r.get(register)));
+    let operands = operation.operands().read(&code.method_arguments, |register| r.get(register));
     let Some(value) = lane_in_place(cx, ip, |vm, code| {
         let site = super::call_out::CallSite { frame: vm.frames.len() - 1, resume: pc + 1 };
         vm.call_out(code, site, operation, operands)
