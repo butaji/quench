@@ -42,8 +42,8 @@ mod polls;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
-#[path = "lane_region/relocs.rs"] mod relocs;
-use relocs::RelocKind;
+#[path = "lane_region/relocs.rs"] pub(super) mod relocs;
+use relocs::RelocKind; pub(super) use relocs::{helper_symbol, numeric_symbol};
 use captures::RootedRead;
 #[path = "lane_region/constructions.rs"] mod constructions;
 #[path = "lane_region/dense_elements.rs"] mod dense_elements;
@@ -1677,7 +1677,7 @@ pub(super) fn lower(
     // One entry query of the call depth replaces each binding's helper with its cached
     // target probe (`cached_call_target`). A completed call leaves the depth it found.
     if !numeric && unit.frames.iter().any(|frame| frame.target.callee == CalleeBinding::Function) {
-        let helper = lowering.helpers.address(lowering.builder.ins(), LaneHelper::CallBudget);
+        let helper = lowering.helpers.address(&mut lowering.builder, LaneHelper::CallBudget);
         lowering.call_budget = Some(emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper, &[]));
     }
     if coverage.selected_entry() {
@@ -1914,12 +1914,12 @@ pub(super) fn lower(
                     let source = lowering.builder.ins().iconst(types::I64, i64::from(record));
                     let scratch = lowering.builder.ins().iadd_imm_u(scratch,
                         i64::from(register_offset(inlined.base - unit.caller_registers)));
-                    let helper = lowering.helpers.address(lowering.builder.ins(), LaneHelper::MaterializeInline);
+                    let helper = lowering.helpers.address(&mut lowering.builder, LaneHelper::MaterializeInline);
                     emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper,
                         &[lowering.payload, function, call, source, scratch]);
                 } else {
                     let count = lowering.builder.ins().iconst(types::I64, i64::try_from(chain.len()).ok()?);
-                    let helper = lowering.helpers.address(lowering.builder.ins(), LaneHelper::MaterializeInlineChain);
+                    let helper = lowering.helpers.address(&mut lowering.builder, LaneHelper::MaterializeInlineChain);
                     emit_lane_helper_call(&mut lowering.builder, lowering.payload, helper,
                         &[lowering.payload, entries, count, scratch]);
                 }
@@ -2243,11 +2243,11 @@ impl Lowering<'_, '_> {
     fn entry_facts(&mut self, instructions: &[WideInstruction], _loops: &[(usize, usize)], _leaders: &CompoundBitSet) -> Entry {
         let this_bits = match self.helpers {
             LaneHelpers::Numeric => unreachable!("Number signatures have no receiver"),
-            LaneHelpers::Process(_) => self.entry_receiver_bits(),
             #[cfg(feature = "aot")]
             LaneHelpers::Bound(..) => self.fixed_this(),
             #[cfg(feature = "aot")]
             LaneHelpers::Linked(..) => unreachable!("helper table bound before entry facts"),
+            _ => self.entry_receiver_bits(),
         };
         let accesses_fields = self.accesses_fields(instructions);
         let receiver = if accesses_fields { emit_lane_receiver(&mut self.builder, self.payload, this_bits) } else { self.absent_receiver() };
@@ -2539,7 +2539,7 @@ impl Lowering<'_, '_> {
     fn slot_writes_admitted(&mut self, shape: ir::Value, slot: ir::Value, writes: Type) -> (ir::Value, Type) {
         let domain = crate::typed_ir::SlotType::from_type(writes);
         let encoded = self.builder.ins().iconst(types::I64, domain as i64);
-        let helper = self.helpers.address(self.builder.ins(), LaneHelper::FieldWriteAdmission);
+        let helper = self.helpers.address(&mut self.builder, LaneHelper::FieldWriteAdmission);
         let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[shape, slot, encoded]);
         (self.builder.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0), domain.ty())
     }
@@ -2548,7 +2548,7 @@ impl Lowering<'_, '_> {
         let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
         let specialized = self.builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
         if let Some(held) = self.store_held_unnamed(atom, specialized) { return held; }
-        let free = super::general_store::emit_atom_unnamed(&mut self.builder, self.payload, atom);
+        let free = self.atom_unnamed(atom);
         self.builder.ins().band(specialized, free)
     }
 
@@ -2703,7 +2703,7 @@ impl Lowering<'_, '_> {
             Class::Unary if plain && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
                 && instruction.register_b() < self.unit.registers => self.typeof_index(state, pc, instruction),
             Class::Unary if crate::bytecode::typeof_test(instruction.unary_operator()).is_some()
-                && !matches!(self.helpers, LaneHelpers::Numeric) => self.typeof_test(state, pc, instruction),
+                && !self.helpers.is_numeric() => self.typeof_test(state, pc, instruction),
             _ if plain && instruction.op().js_denotation() == JsDenotation::NumericUnary
                 && instruction.register_b() < self.unit.registers => self.unary(state, pc, instruction),
             // A literal's allocation, by the lane's own (`compiled::lane_new_object`); a due
@@ -2960,7 +2960,7 @@ impl Lowering<'_, '_> {
             &self.program.constants, *operand, |register| state.values[usize::from(register)].value.ty)
             .is_subtype(Type::NUMBER));
         // A frameless Number region has no VM helper capability (`LaneHelpers::Numeric`).
-        let helpers = !matches!(self.helpers, LaneHelpers::Numeric);
+        let helpers = !self.helpers.is_numeric();
         if operator == oxc_ast::ast::BinaryOperator::Instanceof as u32 {
             return helpers.then(|| self.instance_of(state, pc, left, right)).flatten();
         }
@@ -2975,7 +2975,7 @@ impl Lowering<'_, '_> {
 
     /// A helper's call, by its address in the running image's table (`LaneHelpers::address`).
     fn helper_call(&mut self, helper: LaneHelper, arguments: &[ir::Value]) -> ir::Value {
-        let address = self.helpers.address(self.builder.ins(), helper);
+        let address = self.helpers.address(&mut self.builder, helper);
         emit_lane_helper_call(&mut self.builder, self.payload, address, arguments)
     }
 
@@ -4745,7 +4745,7 @@ impl Lowering<'_, '_> {
     /// whose miss leaves through `exit`.
     fn field_probe_unbound(&mut self, object: ir::Value, read: (Atom, u16), exit: ir::Block) -> ir::Value {
         let (atom, site) = read;
-        let packed = self.ins().iconst(types::I64, (u64::from(atom) << u16::BITS | u64::from(site)) as i64);
+        let packed = self.atom_site_word(atom, site);
         let value = self.helper_call(LaneHelper::FieldGet, &[object, packed]);
         let hit = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, hit, exit);

@@ -76,6 +76,8 @@ use lane_allocations::{lane_binary, lane_new_array, lane_new_const_array, lane_n
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
+#[path = "compiled/numeric_image.rs"] mod numeric_image; pub(super) use numeric_image::compile_js_typed_numeric_region;
+#[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages;
 #[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{enter_body, lane_body_signature, BodyEntry, BodyReturn};
 #[path = "compiled/general_tier_queries.rs"] mod general_tier_queries;
 #[path = "compiled/lane_facts.rs"]
@@ -452,35 +454,6 @@ fn emit_number_truthiness(builder: &mut FunctionBuilder<'_>, number: ir::Value) 
     }
 
     crate::vm::operations::number_truthiness(&mut Emit { builder }, number)
-}
-
-/// Bind the numeric JIT ABI to the same semantic SSA specializer used by
-/// frameless JIT bodies and linked AOT regions, without a canonical VM frame.
-pub(super) fn compile_js_typed_numeric_region(program: &ResidualProgram, function_id: u32)
-    -> Option<super::js_compiled::JsJitArtifact> {
-    use super::specializer::Specializer;
-    let function = program.function_get(function_id as usize)?;
-    let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
-    let isa = super::jit_backend::target_isa()?;
-    let region = lane_region::RegionSpecializer { function_id, unit: &unit,
-        helpers: LaneHelpers::Numeric, fields: &std::collections::BTreeMap::new(),
-        global_reads: &Default::default(), facts: VmFacts::STATIC, generic: &[],
-        direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa: &*isa,
-        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
-        plan: lane_region::RegionPlan { coverage: lane_region::Coverage::Full,
-            completion: lane_region::Completion::Number, views: lane_region::ElementViews::Dense } }
-        .specialize(program).ok()?;
-    let dump = native_dump_directory().map(|_| region.function.to_string());
-    let code = compile_native_function(region.function, &*isa, super::js_compiled::MAX_CODE_BYTES,
-        |code| Some(code.to_vec())).ok()?;
-    if let (Some(directory), Some(clif)) = (native_dump_directory(), dump) {
-        dump_native_bytes(directory, function_id, &code, None, &clif);
-    }
-    Some(super::js_compiled::JsJitArtifact {
-        code, params: usize::from(function.params),
-        result: super::js_compiled::JsJitResultKind::SharedNumberEntry(NativeEntryMode::Resumable, region.number_result?),
-        general_dispatch_native_pcs: Vec::new(),
-    })
 }
 
 const MAX_JS_GENERAL_DISPATCH_BLOCKS: usize = 2048;
@@ -1984,8 +1957,11 @@ thread_local! {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LaneHelpers {
+    /// A frameless Number region: no VM helper capability, helpers named by symbol.
     Numeric,
     Process(&'static [*const (); LaneHelper::COUNT]),
+    /// The compile target "ahead": every run-time address `RelocKind` names is a symbol (`Process`, "live", embeds them).
+    Ahead,
     #[cfg(feature = "aot")]
     Linked(u32, u32),
     #[cfg(feature = "aot")]
@@ -2004,12 +1980,33 @@ impl LaneHelpers {
         Self::Linked(helper_symbol, u32::try_from(program.function_count()).unwrap_or_default())
     }
 
-    fn address<'f>(self, builder: impl ir::InstBuilder<'f>, helper: LaneHelper) -> ir::Value {
+    /// Whether this is a frameless Number region, which has no VM helper capability.
+    fn is_numeric(self) -> bool {
+        matches!(self, Self::Numeric)
+    }
+
+    /// Whether helper addresses are symbols a loader resolves, not addresses of this process.
+    pub(super) fn links(self) -> bool {
+        !matches!(self, Self::Process(_))
+    }
+
+    /// The address of `helper`: a symbol, or the table's entry (a symbol per use in live lane
+    /// bodies costs raytrace compile Ir +17.5%, run-only +0.6%).
+    fn address(self, builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
+        if self.names_symbols() { return lane_region::helper_symbol(builder, helper); }
+        self.table_address(builder.ins(), helper)
+    }
+
+    /// Whether helpers are symbols a loader resolves, not table entries.
+    fn names_symbols(self) -> bool {
+        matches!(self, Self::Numeric | Self::Ahead)
+    }
+
+    /// The address of `helper` in this process's table, embedded, or loaded from the bound one.
+    fn table_address<'f>(self, builder: impl ir::InstBuilder<'f>, helper: LaneHelper) -> ir::Value {
         match self {
-            Self::Numeric => match helper {
-                LaneHelper::InterruptOwner => builder.iconst(types::I64, lane_interrupt_owner as *const () as usize as i64),
-                _ => unreachable!("frameless Number regions have no VM helper capability"),
-            },
+            Self::Numeric => unreachable!("a frameless Number region names its helper by symbol"),
+            Self::Ahead => unreachable!("an ahead region names its helper by symbol"),
             Self::Process(addresses) => builder.iconst(types::I64, addresses[helper as usize] as i64),
             #[cfg(feature = "aot")]
             Self::Bound(table, _) => {
