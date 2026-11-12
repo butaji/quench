@@ -9,9 +9,10 @@ use super::*;
 /// `LANE_CALL_COMPLETED` with the result written to its register, `LANE_CALL_MISSED` where it
 /// raised (the error stashed for the general path, which re-runs the record and raises it), or
 /// `LANE_CALL_LEFT` where guest code it ran made the lane's activations frames, which leave the
-/// body at the next record.
+/// body at the next record. A decision (`CallOut::Decide`) completes with `LANE_CALL_HOLDS` where
+/// the comparison held.
 pub(in crate::vm) unsafe extern "C" fn lane_vm_step<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
+    use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_LEFT, LANE_CALL_MISSED};
     let cx = context as usize as *mut LaneContext<H>;
     let vm = unsafe { vm(cx) };
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
@@ -34,7 +35,16 @@ pub(in crate::vm) unsafe extern "C" fn lane_vm_step<H: Host>(_vm: u64, _residual
     if let (Some(value), Some(register)) = (value, result) {
         after.set(register, value);
     }
-    if after.0 == r.0 { return LANE_CALL_COMPLETED; }
-    unsafe { (*cx).callee_resume = following(ip); (*cx).callee_acc = Value::UNDEFINED; }
+    if after.0 == r.0 {
+        let holds = matches!(operation, crate::staged::CallOut::Decide { .. }) && value == Some(Value::TRUE);
+        return if holds { LANE_CALL_HOLDS } else { LANE_CALL_COMPLETED };
+    }
+    // A decision that failed took its jump (`JumpBinaryFalse`), which the activations resume at.
+    let resume = match operation {
+        crate::staged::CallOut::Decide { .. } if value != Some(Value::TRUE) =>
+            unsafe { (*cx).base.add(instruction.jump_target() as usize) },
+        _ => following(ip),
+    };
+    unsafe { (*cx).callee_resume = resume; (*cx).callee_acc = Value::UNDEFINED; }
     LANE_CALL_LEFT
 }

@@ -6669,6 +6669,9 @@ pub(super) const LANE_CALL_MISSED: u64 = 1;
 pub(super) const LANE_CALL_LEFT: u64 = 2;
 /// Termination is terminal: the outer native body must not reconstruct or replay a call.
 pub(super) const LANE_CALL_TERMINATED: u64 = 3;
+/// A call-out that decides a comparison (`CallOut::Decide`) completed, and the comparison held;
+/// `LANE_CALL_COMPLETED` is that it did not.
+pub(super) const LANE_CALL_HOLDS: u64 = 4;
 
 impl LaneExit {
     /// The caller PC a leave or completion is at, with a completion's value written to the

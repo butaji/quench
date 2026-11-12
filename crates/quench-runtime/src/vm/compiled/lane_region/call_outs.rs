@@ -10,7 +10,9 @@ impl Lowering<'_, '_> {
     fn call_out_row(&self, instruction: WideInstruction) -> Option<crate::staged::Operation<ir::Value, EmitProof>> {
         let row = crate::staged::Operation::decode(instruction, |_| None)?;
         let (call, result) = row.call_out()?;
-        (self.completion.status_and_pc() && instruction.result_flags() == 0
+        // A comparison jump decides by its own lowering (`compare_jumps`).
+        (!matches!(row, crate::staged::Operation::CompareJump { .. })
+            && self.completion.status_and_pc() && instruction.result_flags() == 0
             && call.operands().into_iter().flatten().chain(result).all(|register| register < self.unit.registers))
             .then_some(row)
     }
@@ -40,8 +42,7 @@ impl Lowering<'_, '_> {
         let row = crate::staged::Operation::decode(instruction, |_| None).expect("a call-out record decodes");
         let miss = self.guard_exit(state, pc as u32);
         self.canonicalize(state, pc);
-        let site = frame::call_out::CallOutSite { record, stop: self.call_out_stop(), registers: self.registers_base,
-            properties: self.entry.as_ref().expect("entry facts").receiver.properties, spill: self.spilled(pc) };
+        let site = self.call_out_site(pc, record);
         if !matches!(row, crate::staged::Operation::ForInNext { .. }) {
             self.step_with(state, frame::Edges::ValueGuarded { miss }, row, None, sites(&site));
             state.call_effect();
@@ -52,6 +53,24 @@ impl Lowering<'_, '_> {
         state.call_effect();
         self.continue_branch(state, pc, instruction.jump_target() as usize, taken, fall);
         false
+    }
+
+    /// The site of the call-out record at `pc`: where the helper decodes it, the registers the body
+    /// wrote, and where a status other than completion or a miss ends the body.
+    fn call_out_site(&mut self, pc: usize, record: u32) -> frame::call_out::CallOutSite {
+        frame::call_out::CallOutSite { record, stop: self.call_out_stop(), registers: self.registers_base,
+            properties: self.entry.as_ref().expect("entry facts").receiver.properties, spill: self.spilled(pc) }
+    }
+
+    /// The site of the comparison jump `row` at `pc` where the VM can decide it in place: a body
+    /// with the helper, a record of its own, and registers of the unit for operands. A comparison
+    /// with no such site leaves at the jump where its words do not decide it.
+    pub(super) fn decide_site(&mut self, pc: usize, row: &crate::staged::Operation<ir::Value, EmitProof>)
+        -> Option<frame::call_out::CallOutSite> {
+        let (call, _) = row.call_out()?;
+        let Some(Origin::Caller(record)) = self.unit.origins.get(pc).copied() else { return None };
+        (self.completion.status_and_pc() && call.operands().into_iter().flatten().all(|register| register < self.unit.registers))
+            .then(|| self.call_out_site(pc, record))
     }
 
     /// The block the call-outs' statuses of a leave in a callee, or a termination, reach with the

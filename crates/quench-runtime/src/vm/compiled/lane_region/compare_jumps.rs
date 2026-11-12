@@ -1,8 +1,8 @@
 //! The conditional jump on two values (`Operation::CompareJump`, the `JumpBinaryFalse` row),
 //! lowered by its comparison and by what the facts prove of its operands: a test against
-//! `null` or `undefined` by the value's tag, a bitwise test by its bits, an ordering relation of
-//! operands proved Numbers by the staged step (whose answer picks the edge through
-//! `Frame::branch`), and any other by the lane's own relation.
+//! `null` or `undefined` by the value's tag, a bitwise test by its bits, an ordering or an
+//! equality by the staged step (whose answer picks the edge through `Frame::branch`), and any
+//! other by the lane's own relation.
 use super::*;
 use crate::staged::{Comparison, Domain, Operation};
 use crate::vm::operations::NumberRelation;
@@ -138,16 +138,35 @@ impl Lowering<'_, '_> {
         (!(tagged(&left) && tagged(&right))).then_some(Domain::Float64)
     }
 
-    /// A relation jump: an ordering of operands proved Numbers is the staged step; an equality,
-    /// `instanceof` and the rest the lane's own relation (`Lowering::relation`). Whether it lowered.
+    /// The comparison the facts and the operands settle on for the staged step: an ordering of
+    /// operands proved Numbers in the domain they prove, an equality of operands both typed Numbers
+    /// as that relation, any other equality as it is. `None` where the lane's own relation
+    /// lowers it (operands only their tags type, any other operator).
+    fn specialized(&self, state: &State, comparison: Comparison, [left, right]: [Operand; 2]) -> Option<Comparison> {
+        if !(self.operand_supported(left) && self.operand_supported(right)) { return None; }
+        let domain = self.number_domain(state, left, right);
+        match comparison {
+            Comparison::Relation { relation, .. } if self.numbers_supported(left, right) =>
+                domain.map(|domain| Comparison::Relation { relation, domain }),
+            Comparison::Equality { negated, .. } if self.numbers_typed(state, left, right) => domain.map(|domain|
+                Comparison::Relation { relation: if negated { NumberRelation::NotEqual } else { NumberRelation::Equal }, domain }),
+            Comparison::Equality { .. } => Some(comparison),
+            _ => None,
+        }
+    }
+
+    /// Whether both operands are typed Numbers: a register by its facts, a constant by its value.
+    fn numbers_typed(&self, state: &State, left: Operand, right: Operand) -> bool {
+        [left, right].iter().all(|operand| super::super::facts::operand_type(&self.program.constants, *operand,
+            |register| state.values[usize::from(register)].value.ty).is_subtype(Type::NUMBER))
+    }
+
+    /// A relation jump: the staged step of the comparison its operands settle on, else the lane's
+    /// own relation (`Lowering::relation`). Whether it lowered.
     fn relation_jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, comparison: Comparison) -> bool {
         let (left, right) = (instruction.operand_b(), instruction.operand_c());
-        if let Comparison::Relation { relation, .. } = comparison
-            && !matches!(relation, NumberRelation::Equal | NumberRelation::NotEqual)
-            && self.numbers_supported(left, right) && self.operand_supported(left) && self.operand_supported(right)
-            && let Some(domain) = self.number_domain(state, left, right)
-        {
-            self.staged_jump(state, pc, instruction, Comparison::Relation { relation, domain });
+        if let Some(comparison) = self.specialized(state, comparison, [left, right]) {
+            self.staged_jump(state, pc, instruction, comparison);
             return true;
         }
         let operator = instruction.binary_operator_field();
@@ -158,14 +177,18 @@ impl Lowering<'_, '_> {
     }
 
     /// The staged jump on `comparison` of the instruction's operands: it jumps where the
-    /// comparison fails, and its edges continue the lowering.
+    /// comparison fails, and its edges continue the lowering. Where the VM decides a pair the words
+    /// leave, the guest code it may run retires what was proved of objects.
     fn staged_jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, comparison: Comparison) {
         let (target, pc32) = (instruction.jump_target() as usize, pc as u32);
         if target <= pc { self.interrupt_check(state, pc32); }
         let exit = self.guard_exit(state, pc32);
         let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
         let row = Operation::CompareJump { comparison, left: instruction.operand_b(), right: instruction.operand_c(), negate: true };
-        self.step(state, frame::Edges::Branch { target: taken, following: fall, miss: exit }, row);
+        let site = self.decide_site(pc, &row);
+        let sites = frame::Sites { call_out: site.as_ref(), ..frame::Sites::default() };
+        self.step_with(state, frame::Edges::Branch { target: taken, following: fall, miss: exit }, row, None, sites);
+        if comparison.runs_guest_code() { state.call_effect(); }
         self.continue_branch(state, pc, target, taken, fall);
     }
 }

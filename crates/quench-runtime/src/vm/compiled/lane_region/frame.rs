@@ -141,9 +141,9 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
 
     /// A row's slow case: the lane's own helper makes the VM's operation in place (`call_out::vm_step`).
     #[inline(always)]
-    fn vm_step(&mut self, stage: &mut Emit<'_, '_>, _operation: crate::staged::CallOut, result: Option<Register>)
+    fn vm_step(&mut self, stage: &mut Emit<'_, '_>, operation: crate::staged::CallOut, result: Option<Register>)
         -> Option<(ir::Value, RegisterFact)> {
-        call_out::vm_step(self, stage, result)
+        call_out::vm_step(self, stage, operation, result)
     }
 
     /// A capture read: the site's fast and slow cases (`captures::read_capture`); a miss leaves
@@ -411,6 +411,19 @@ pub(super) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
 }
 
 impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
+    /// A register's tagged bits, or an immediate constant's.
+    fn operand_word(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand) -> Option<ir::Value> {
+        use crate::bytecode::OperandKind;
+        match operand.kind()? {
+            OperandKind::Register => Some(register_tagged(stage.builder, self.registers, self.state, operand.register_index()?)),
+            OperandKind::Constant => {
+                let value = self.constants.get(usize::from(operand.payload())).and_then(super::super::facts::immediate)?;
+                Some(stage.builder.ins().iconst(types::I64, value.to_bits() as i64))
+            }
+            OperandKind::Field | OperandKind::Local => None,
+        }
+    }
+
     fn int_operand(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand,
         miss: ir::Block) -> ir::Value {
         operand_int(stage.builder, self.registers, self.state, self.constants, operand, miss)

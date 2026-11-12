@@ -16,6 +16,7 @@ pub(crate) const TAG_STORE_ENV_LOCAL: u8 = 6;
 pub(crate) const TAG_ARGUMENTS_LENGTH: u8 = 7;
 pub(crate) const TAG_GLOBAL_WRITE: u8 = 8;
 pub(crate) const TAG_GLOBAL_TYPEOF: u8 = 9;
+pub(crate) const TAG_DECIDE: u8 = 10;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -47,6 +48,10 @@ pub(crate) enum CallOut {
     GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool } = TAG_GLOBAL_WRITE,
     /// The `typeof` name of the global `atom` through cache `site`.
     GlobalTypeof { atom: u32, site: u16 } = TAG_GLOBAL_TYPEOF,
+    /// `left operator right` decided by the VM (`Vm::binary_truthy`): a comparison jump's slow
+    /// case. It defines no register; its answer is a canonical boolean, which a lane's helper
+    /// reports as its status (`LANE_CALL_HOLDS`).
+    Decide { left: Register, right: Register, operator: u32 } = TAG_DECIDE,
 }
 
 impl CallOut {
@@ -54,7 +59,8 @@ impl CallOut {
     /// then the second, which is the only one an operation of a single operand has.
     pub(crate) fn operands(self) -> [Option<Register>; 2] {
         match self {
-            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } => [Some(left), Some(right)],
+            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } | Self::Decide { left, right, .. } =>
+                [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
             Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
             Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } => [None, None],
@@ -82,6 +88,8 @@ impl<W, P> Operation<W, P> {
             Self::GlobalWrite { source, atom, site, initialize } =>
                 (CallOut::GlobalWrite { source, atom, site, initialize }, None),
             Self::GlobalTypeof { destination, atom, site } => (CallOut::GlobalTypeof { atom, site }, Some(destination)),
+            Self::CompareJump { comparison, left, right, .. } => (CallOut::Decide { left: left.register_index()?,
+                right: right.register_index()?, operator: comparison.operator()? }, None),
             _ => return None,
         })
     }

@@ -67,6 +67,13 @@ pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + supe
     fn prove_number(&mut self, stage: &mut S, register: Register, miss: S::Miss) -> Option<()>;
     fn miss(&self) -> S::Miss;
 
+    /// The tagged word of `operand`: a register's, or a constant the frame holds; `None` for any
+    /// other operand, which leaves the row to the interpreter.
+    #[inline(always)]
+    fn operand_word(&mut self, stage: &mut S, operand: Operand) -> Option<S::Word> {
+        operand.register_index().map(|register| self.tagged(stage, register))
+    }
+
     /// The miss edge a local access uses, where this frame guards it. A frame whose locals
     /// are plain storage reads and writes them without a guard returns `None`, and its
     /// `load_local`/`store_local` then ignore the edge.

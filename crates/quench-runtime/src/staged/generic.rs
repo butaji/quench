@@ -93,7 +93,7 @@ fn nullish<S: NumericStage>(stage: &mut S, bits: S::Word) -> S::Cond {
 /// equal unless it is NaN; two distinct int32 words are unequal; `null` and `undefined` are
 /// equal under `==` only.
 #[inline(always)]
-fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2], strict: bool) -> (S::Cond, S::Cond) {
+pub(super) fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2], strict: bool) -> (S::Cond, S::Cond) {
     let gap = stage.sub(left, right);
     let identical = stage.eq_imm(gap, 0u64);
     let ordered = stage.ne_imm(left, ValueLayout::CANONICAL_NAN);

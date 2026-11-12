@@ -2554,6 +2554,16 @@ pub(crate) fn equality_operator(op: u32) -> Option<(bool, bool)> {
     (offset <= STRICT | NEGATED).then_some((offset & STRICT != 0, offset & NEGATED != 0))
 }
 
+/// The equality operator that is `strict` and `negated`: the inverse of `equality_operator`.
+pub(crate) fn equality_binary_operator(strict: bool, negated: bool) -> u32 {
+    match (strict, negated) {
+        (false, false) => BinaryOperator::Equality as u32,
+        (false, true) => BinaryOperator::Inequality as u32,
+        (true, false) => BinaryOperator::StrictEquality as u32,
+        (true, true) => BinaryOperator::StrictInequality as u32,
+    }
+}
+
 /// The entry that runs a native's call (`Vm::call_native_dispatch`), one per family of
 /// natives that share an implementation; `Table` for the natives no family claims.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
