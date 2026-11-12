@@ -134,6 +134,8 @@ impl Frame<Concrete> for ConcreteFrame<'_> {
     }
 }
 
+impl GlobalFrame<Concrete> for ConcreteFrame<'_> {}
+
 impl NumericFrame<Concrete> for ConcreteFrame<'_> {
     fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
         let register = operand.register_index().expect("a numeric operand is a register");
@@ -390,7 +392,7 @@ fn a_global_name_read_is_the_host_callout_boundary() {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = ConcreteFrame { registers: vec![0], heap: None };
     let step = step(&mut stage, &mut frame,
-        Operation::GlobalRead { destination: 0, atom: 0, site: 0, proof: () });
+        Operation::GlobalRead { destination: 0, atom: 0, site: 0, binding: GlobalBinding::Dynamic, proof: () });
     assert!(matches!(step, Step::Unresolved));
 }
 
@@ -414,7 +416,7 @@ fn every_host_callout_operation_has_a_concrete_reading() {
         Operation::MakeObject { destination: 0, proof: () },
         Operation::MakeArray { destination: 0, length: 0, elements: 0, proof: () },
         Operation::IndexSetHelper { base: 0, key: 1, value: 2, proof: () },
-        Operation::GlobalRead { destination: 0, atom: 0, site: 0, proof: () },
+        Operation::GlobalRead { destination: 0, atom: 0, site: 0, binding: GlobalBinding::Dynamic, proof: () },
         Operation::FieldStoreMiss { object: 0, atom: 0, site: 0, value: 1, proof: () },
     ];
     for operation in declines {

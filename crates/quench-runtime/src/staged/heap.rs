@@ -58,6 +58,18 @@ fn allocation_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
     }
 }
 
+/// The global-name read, by what its binding time leaves known.
+#[inline(always)]
+fn global_row<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
+    (atom, site): (u32, u16), binding: GlobalBinding, proof: S::Proof) -> Option<()> {
+    match binding {
+        GlobalBinding::Constant(value) => frame.global_constant(stage, destination, value),
+        GlobalBinding::Held { value, ty } => frame.global_held(stage, destination, value, ty),
+        GlobalBinding::Frozen { value, ty } => frame.global_frozen(stage, destination, atom, site, value, ty, proof),
+        GlobalBinding::Dynamic => frame.global_read(stage, destination, atom, site, proof),
+    }
+}
+
 /// A host helper callout (the element store's helper) over the frame's proof.
 #[inline(always)]
 fn helper_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
@@ -68,8 +80,8 @@ fn helper_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F
                 Some(()) => Step::Value(value),
                 None => Step::Unresolved,
             },
-        Operation::GlobalRead { destination, atom, site, proof } =>
-            match frame.global_read(stage, destination, atom, site, proof) {
+        Operation::GlobalRead { destination, atom, site, binding, proof } =>
+            match global_row(stage, frame, destination, (atom, site), binding, proof) {
                 Some(()) => Step::Value(stage.constant(0)),
                 None => Step::Unresolved,
             },

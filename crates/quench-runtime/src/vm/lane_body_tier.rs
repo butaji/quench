@@ -127,6 +127,12 @@ impl LaneView {
         TIERS.lane_body.warmup_entries << self.history.get().lifetimes.min(7)
     }
 
+    /// The bytecodes one entry runs inside its loops: each loop's iteration span times the mean
+    /// trip count its region's runs took (loops without a native run count one iteration).
+    pub(in crate::vm) fn loop_work(&self) -> u64 {
+        self.loops.iter().map(|site| u64::from(site.backedge - site.header + 1) * site.tier.borrow().mean_trip().unwrap_or(1)).sum()
+    }
+
     /// Whether a closed loop of the function runs in a region that still enters native code:
     /// its calls pay that region's entry, which the function's own body would not.
     pub(in crate::vm) fn enters_region(&self) -> bool {
