@@ -2626,6 +2626,17 @@ macro_rules! resume {
     }};
 }
 
+/// Continue as a comparison jump's `edge` says: the target through `lane_jump`, whose backward
+/// poll every jump shares, or the record after it.
+macro_rules! jump_on_edge {
+    ($cx:expr, $r:expr, $ip:expr, $backward:expr, $edge:expr) => {{
+        match $edge {
+            crate::staged::Edge::Target => resume!($cx, lane_jump::<H>($r, $ip, $backward, Carried::script($cx), None)),
+            crate::staged::Edge::Following => next!($cx, $r, following($ip), Carried::script($cx)),
+        }
+    }};
+}
+
 /// Define a handler with the shared signature. `$i` is the record and
 /// `$view` the current memory view.
 macro_rules! lane_handler {
@@ -4891,14 +4902,10 @@ script_handler! {
         let imm = i.imm();
         // Deeper reads take `lane_load_outer_capture` (`specialize_captures`).
         debug_assert_eq!(ImmediateLayout::capture_depth(imm), 0);
-        let slots = capture_reads(unsafe { (*cx).capture });
-        // SAFETY: null or the running function's dense storage, found this run
-        // (`LaneContext::capture`). The scoped read retains bounds/marker checks.
-        let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, ImmediateLayout::capture_slot(imm)) };
-        let Some(value) = value else {
+        let at = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
+        if !lane_frame::staged_load_capture::<H>(cx, r, view, i.a, at) {
             sibling!(lane_load_capture_walk::<H>, r, ip, view)
-        };
-        r.set(i.a, value);
+        }
         next!(cx, r, following(ip), view)
     }
 }
@@ -7498,14 +7505,12 @@ script_handler! {
     /// `lane_jump_binary_false` of `instanceof` with register operands, decoded when the view
     /// was derived (`specialize_register_operands`), as `lane_instanceof_value` decides it.
     fn lane_jump_instanceof_false<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some(holds) = (unsafe { vm(cx) }).steady_instanceof(r.get(i.b), r.get(i.c)) else {
+        // `instanceof` is a JavaScript record, which carries the script state. The steady
+        // decision is the frame's; the walk is the VM's residual.
+        let Some(edge) = lane_frame::staged_compare_jump::<H>(cx, r, view, crate::staged::Comparison::Instanceof, [i.b, i.c]) else {
             sibling!(lane_jump_instanceof_false_walk::<H, BACKWARD>, r, ip, Carried::script(cx))
         };
-        // `instanceof` is a JavaScript record, which carries the script state.
-        if !holds {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
-        }
-        next!(cx, r, following(ip), Carried::script(cx))
+        jump_on_edge!(cx, r, ip, BACKWARD, edge)
     }
 }
 
@@ -7529,14 +7534,11 @@ script_handler! {
     /// (`specialize_register_operands`): Number comparison of two integers
     /// (`integer_relation`); any other pair takes `lane_jump_binary_false_registers_other`.
     fn lane_jump_binary_false_registers<BACKWARD: bool, OP: u32>(cx, r, ip, i, view) {
-        let (left, right) = (r.get(i.b), r.get(i.c));
-        let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(i), left, right) else {
+        let Some(comparison) = lane_integer_comparison(relation_operator::<OP>(i), r.get(i.b), r.get(i.c)) else {
             sibling!(lane_jump_binary_false_registers_other::<H, BACKWARD, OP>, r, ip, Carried::script(cx))
         };
-        if !holds {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
-        }
-        next!(cx, r, following(ip), Carried::script(cx))
+        let edge = lane_frame::staged_compare_jump::<H>(cx, r, view, comparison, [i.b, i.c]).expect("two integers decide a relation");
+        jump_on_edge!(cx, r, ip, BACKWARD, edge)
     }
 }
 
@@ -7565,9 +7567,7 @@ script_handler! {
             unsafe { vm(cx).read_validated_local((*cx).frame, i.imm() as usize) }
         };
         r.set(i.a, value);
-        let (left, right) = (r.get(branch.b), r.get(branch.c));
-        let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(branch), left, right)
-        else {
+        let Some(comparison) = lane_integer_comparison(relation_operator::<OP>(branch), r.get(branch.b), r.get(branch.c)) else {
             sibling!(
                 lane_jump_binary_false_registers_other::<H, BACKWARD, OP>,
                 r,
@@ -7575,10 +7575,9 @@ script_handler! {
                 Carried::script(cx)
             )
         };
-        if !holds {
-            resume!(cx, lane_jump::<H>(r, branch_ip, BACKWARD, Carried::script(cx), None));
-        }
-        next!(cx, r, following(branch_ip), Carried::script(cx))
+        let edge = lane_frame::staged_compare_jump::<H>(cx, r, view, comparison, [branch.b, branch.c])
+            .expect("two integers decide a relation");
+        jump_on_edge!(cx, r, branch_ip, BACKWARD, edge)
     }
 }
 
@@ -7717,23 +7716,17 @@ script_handler! {
     /// `undefined`, and among other values only for [[IsHTMLDDA]] objects
     /// (`Vm::identity_equality`).
     fn lane_jump_nullish_false<BACKWARD: bool, NEGATED: bool, NULLISH: u16>(cx, r, ip, i, view) {
-        let value = r.get(i.b);
-        let equal = match NULLISH {
-            NULLISH_NULL => value == Value::NULL,
-            NULLISH_UNDEFINED => value == Value::UNDEFINED,
-            // A record is an ordinary object: never `null`, `undefined` or [[IsHTMLDDA]].
-            _ if value.is_heap() => {
-                if !value.is_record() {
-                    sibling!(lane_jump_nullish_cell::<H, BACKWARD, NEGATED>, r, ip, Carried::script(cx))
-                }
-                false
-            }
-            _ => value.is_null() || value.is_undefined(),
+        let (expected, strict) = match NULLISH {
+            NULLISH_NULL => (crate::staged::Nullish::Null, true),
+            NULLISH_UNDEFINED => (crate::staged::Nullish::Undefined, true),
+            _ => (crate::staged::Nullish::Null, false),
         };
-        if equal == NEGATED {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
-        }
-        next!(cx, r, following(ip), Carried::script(cx))
+        let comparison = crate::staged::Comparison::Nullish { expected, strict, negated: NEGATED };
+        // A heap cell outside the records may be the [[IsHTMLDDA]] object, which the step leaves.
+        let Some(edge) = lane_frame::staged_compare_jump::<H>(cx, r, view, comparison, [i.b, i.b]) else {
+            sibling!(lane_jump_nullish_cell::<H, BACKWARD, NEGATED>, r, ip, Carried::script(cx))
+        };
+        jump_on_edge!(cx, r, ip, BACKWARD, edge)
     }
 }
 
@@ -7754,38 +7747,21 @@ script_handler! {
 script_handler! {
     /// `lane_jump_binary_false` of two registers under `===` (`!==` where `NEGATED`)
     /// (`specialize_register_operands`): strict equality runs no guest code, so the lane
-    /// decides every pair (`Vm::strict_equal`) without the general relation chain. Values
-    /// outside the heap compare as numbers or by identity, and a heap value equals only
-    /// itself among them, inline; two distinct heap values, which may be equal strings or
-    /// BigInts, take `lane_jump_strict_equal_cells`.
+    /// decides every pair without the general relation chain: two Numbers as Numbers, other
+    /// pairs by the staged equality, whose words decide identity and integers and whose
+    /// residual is the frame's strict decision (`Vm::strict_equal`).
     fn lane_jump_strict_equal_false<BACKWARD: bool, NEGATED: bool>(cx, r, ip, i, view) {
-        let is_record = |value: Value| value.direct_object_index().is_some() || value.direct_array_index().is_some();
-        let (left, right) = (r.get(i.b), r.get(i.c));
-        let equal = match (left.as_number(), right.as_number()) {
-            (Some(left), Some(right)) => left == right,
-            _ if left == right => true,
-            // An object or array record equals only itself, which `left == right` decided.
-            _ if left.is_heap() && right.is_heap() && !(is_record(left) || is_record(right)) => {
-                sibling!(lane_jump_strict_equal_cells::<H, BACKWARD, NEGATED>, r, ip, Carried::script(cx))
-            }
-            _ => false,
+        // Two Numbers, observed, compare as Numbers; any other pair is the equality the words
+        // decide, else the frame's strict decision (`Vm::strict_equal`).
+        let comparison = if r.get(i.b).as_number().is_some() && r.get(i.c).as_number().is_some() {
+            let relation = if NEGATED { crate::vm::operations::NumberRelation::NotEqual } else { crate::vm::operations::NumberRelation::Equal };
+            crate::staged::Comparison::Relation { relation, domain: crate::staged::Domain::Float64 }
+        } else {
+            crate::staged::Comparison::Equality { strict: true, negated: NEGATED }
         };
-        if equal == NEGATED {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
-        }
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-script_handler! {
-    /// `lane_jump_strict_equal_false` of two distinct heap values (`Vm::strict_equal`); out
-    /// of line, so the common tests make no call.
-    #[inline(never)]
-    fn lane_jump_strict_equal_cells<BACKWARD: bool, NEGATED: bool>(cx, r, ip, i, view) {
-        if unsafe { vm(cx) }.strict_equal(r.get(i.b), r.get(i.c)) == NEGATED {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
-        }
-        next!(cx, r, following(ip), Carried::script(cx))
+        let edge = lane_frame::staged_compare_jump::<H>(cx, r, view, comparison, [i.b, i.c])
+            .expect("a strict equality is always decided");
+        jump_on_edge!(cx, r, ip, BACKWARD, edge)
     }
 }
 
@@ -20865,6 +20841,15 @@ macro_rules! relation_operators {
 #[inline(always)]
 fn relation_operator<const OP: u32>(i: &LaneInstruction) -> u32 {
     if OP == RECORD_RELATION { u32::from(i.a) } else { OP }
+}
+
+/// The staged comparison of two integers under `operator`, the Int32 arm a handler proves by
+/// observing both operands: `None` for any other pair or operator, which the general chain decides.
+#[inline(always)]
+fn lane_integer_comparison(operator: u32, left: Value, right: Value) -> Option<crate::staged::Comparison> {
+    let relation = crate::vm::operations::NumberRelation::from_operator(operator)?;
+    (left.as_int().is_some() && right.as_int().is_some())
+        .then_some(crate::staged::Comparison::Relation { relation, domain: crate::staged::Domain::Int32 })
 }
 
 /// The integer jump test handler of `operator` (`SMALL`: against a small constant, else two

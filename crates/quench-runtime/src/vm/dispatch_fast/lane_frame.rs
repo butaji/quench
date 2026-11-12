@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::bytecode::{Operand, Register};
-use crate::staged::{Concrete, Constant, Edge, Frame, NumberOperation, NumericFrame, Operation, Step};
+use crate::staged::{CallOut, Comparison, Concrete, Constant, Edge, Frame, NumberOperation, NumericFrame, Operation, Step};
 
 /// The lane context's capture stores, erased of its host so the frame names no `H`
 /// (`lane_capture_store`).
@@ -19,6 +19,34 @@ impl CaptureStores {
     }
 }
 
+/// The lane context's steady decisions of a pair the words leave, erased of its host so the frame
+/// names no `H` (`lane_decision`).
+#[derive(Clone, Copy)]
+struct Decisions {
+    context: *mut (),
+    decide: fn(*mut (), u32, Value, Value) -> Option<bool>,
+}
+
+impl Decisions {
+    /// The decisions of the running lane's `cx`.
+    fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
+        Self { context: cx.cast(), decide: |context, operator, left, right|
+            lane_decision(context.cast::<LaneContext<H>>(), operator, left, right) }
+    }
+}
+
+/// The decision of `left operator right` that runs no guest code: a strict equality
+/// (`Vm::strict_equal`) and `instanceof` by the remembered constructor layout
+/// (`Vm::steady_instanceof`); `None` for any other pair, which the general path decides.
+fn lane_decision<H: Host>(cx: *mut LaneContext<H>, operator: u32, left: Value, right: Value) -> Option<bool> {
+    let vm = unsafe { vm(cx) };
+    match crate::vm::operations::equality_operator(operator) {
+        Some((true, negated)) => Some(vm.strict_equal(left, right) != negated),
+        _ if operator == INSTANCEOF_OPERATOR => vm.steady_instanceof(left, right),
+        _ => None,
+    }
+}
+
 /// The interpreter's frame: the live register file and the accumulator view a producer
 /// carries. `ACC` names the record's accumulator field (`read`).
 struct LaneFrame<const ACC: u8> {
@@ -31,19 +59,23 @@ struct LaneFrame<const ACC: u8> {
     locals: Option<(*mut Value, usize)>,
     /// The capture stores of the running lane, for a staged capture store.
     captures: Option<CaptureStores>,
+    /// The running lane's steady decisions, for a staged comparison jump.
+    decisions: Option<Decisions>,
+    /// The slots the running function's captures read from (`capture_reads`), for a staged capture read.
+    capture_slots: Option<*const usize>,
 }
 
 impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame for an operation that reads no `this`.
     #[inline(always)]
     fn new(registers: Registers, view: Carried) -> Self {
-        Self { registers, view, this: Value::DELETED, locals: None, captures: None }
+        Self { registers, view, this: Value::DELETED, locals: None, captures: None, decisions: None, capture_slots: None }
     }
 
     /// A frame that may read and write the activation's local slots.
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
-        Self { registers, view, this, locals: Some((locals, len)), captures: None }
+        Self { registers, view, this, locals: Some((locals, len)), captures: None, decisions: None, capture_slots: None }
     }
 }
 
@@ -116,6 +148,22 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         // SAFETY: `slot` is inside the activation's live local slots.
         unsafe { *locals.add(usize::from(slot)) = Value::from_bits(value) };
         true
+    }
+
+    #[inline(always)]
+    fn vm_step(&mut self, stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, ())> {
+        let CallOut::Decide { left, right, operator } = operation else { return None };
+        let Decisions { context, decide } = self.decisions?;
+        let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
+        decide(context, operator, left, right).map(|holds| (Value::boolean(holds).to_bits(), ()))
+    }
+
+    #[inline(always)]
+    fn capture_slot(&mut self, _stage: &mut Concrete, depth: u16, slot: u16) -> Option<(u64, ())> {
+        let slots = self.capture_slots.filter(|_| depth == 0)?;
+        // SAFETY: null or the running function's dense storage, found this run
+        // (`LaneContext::capture`); the scoped read retains the bounds and marker checks.
+        unsafe { crate::heap::EnvironmentSlots::read_storage(slots, slot) }.map(|value| (value.to_bits(), ()))
     }
 
     #[inline(always)]
@@ -205,7 +253,8 @@ pub(super) fn staged_property_key(r: Registers, view: Carried, destination: u16,
 #[inline(always)]
 pub(super) fn staged_load_this(r: Registers, view: Carried, this: Value, destination: u16) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE> { registers: r, view, this, locals: None, captures: None };
+    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
+    frame.this = this;
     match crate::staged::step(&mut stage, &mut frame, Operation::LoadThis { destination }) {
         Step::Value(_) => true,
         Step::Unresolved => false,
@@ -251,6 +300,34 @@ pub(super) fn staged_store_capture<H: Host>(cx: *mut LaneContext<H>, r: Register
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     frame.captures = Some(CaptureStores::of(cx));
     matches!(crate::staged::step(&mut stage, &mut frame, Operation::StoreCapture { source, depth, slot }), Step::Value(_))
+}
+
+/// The edge the staged comparison jump of registers `left` and `right` takes, or `None` where the
+/// interpreter's own path decides it. The jump's backward poll is `lane_jump`'s, the one copy
+/// every jump takes through `jump_on_edge!`.
+#[inline(always)]
+pub(super) fn staged_compare_jump<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried,
+    comparison: Comparison, [left, right]: [u16; 2]) -> Option<Edge> {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
+    frame.decisions = Some(Decisions::of(cx));
+    let operation = Operation::CompareJump { comparison, left: Operand::register(left), right: Operand::register(right), negate: true };
+    match crate::staged::step(&mut stage, &mut frame, operation) {
+        Step::Control(edge) => Some(edge),
+        Step::Unresolved => None,
+        Step::Value(_) => unreachable!("a jump produces no value"),
+    }
+}
+
+/// `LoadCapture` of the capture at `depth` and `slot` of the running function's own slots into
+/// `destination`, by the staged operation; false, writing nothing, where they hold no such value.
+#[inline(always)]
+pub(super) fn staged_load_capture<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried,
+    destination: u16, (depth, slot): (u16, u16)) -> bool {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
+    frame.capture_slots = Some(capture_reads(unsafe { (*cx).capture }));
+    matches!(crate::staged::step(&mut stage, &mut frame, Operation::LoadCapture { destination, depth, slot }), Step::Value(_))
 }
 
 /// The edge a staged unconditional jump takes.
