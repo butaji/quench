@@ -33,6 +33,8 @@ const FAMILIES: &[(&str, &str)] = &[
     ("equality", "acc += (i === 5) + (i !== 6) + (i == '7') + (i != 8) + (null == undefined);"),
     ("increment-decrement", "acc++; --acc; t = i; t++; t--; acc += i & 1 ? 1 : -1;"),
     ("unary", "acc += -i + ~i + +true + (!i ? 1 : 0);"),
+    ("truthiness-jumps", "if (acc) acc += 1; if (!t) acc ^= 3; else acc -= 1; t = o.p ? i : 0; if (i % 2 && s) acc += 5;"),
+    ("number-negation-not", "acc = (acc + -i + (!acc ? 7 : 0) + -(i / 2)) | 0; t = !i;"),
     ("typeof-void-comma", "s = typeof i + typeof o + typeof s + (void i) + (i, 1);"),
     ("string-concat-compare", "s = (s + i).slice(-12); acc += s < '5' ? 1 : 2;"),
     ("bigint", "t = 5n; t += BigInt(i & 7); t *= 3n; acc += Number(t);"),

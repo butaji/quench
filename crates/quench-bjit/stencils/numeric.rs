@@ -12,8 +12,8 @@
 
 use crate::bytecode::Operand;
 use crate::places::{DEST, LEFT, Places, RIGHT, Rep};
-use crate::staged::{Concrete, Domain, Frame, NumberOperation, NumericFrame, Overflow, Step, numeric};
-use crate::vm::operations::{I32BitwiseStage, NumberArithmetic, NumberBitwise, NumberRelation, number_bitwise_f64_result};
+use crate::staged::{Concrete, Domain, Frame, NumberOperation, NumericFrame, Overflow, Step, jump_if as branch_on_truth, logical_not, numeric};
+use crate::vm::operations::{I32BitwiseStage, NumberArithmetic, NumberBitwise, NumberRelation, NumberUnary, number_bitwise_f64_result};
 pub(crate) use crate::words::*;
 
 pub(crate) use crate::codes::*;
@@ -212,6 +212,34 @@ fn poll(s: S) -> Out {
     if interrupted(&s) { Out::Exit(s) } else { Out::Next(s) }
 }
 
+/// A conditional jump on the first operand's truthiness (`staged::jump_if`): to the taken
+/// successor where it is `WHEN`; a value whose heap cell decides it leaves.
+#[inline(always)]
+fn truth_row<const WHEN: bool, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    match branch_on_truth(&mut Concrete::from_hole(0), &mut frame, LEFT, WHEN) {
+        Step::Control(()) if frame.taken => Out::Taken(frame.s),
+        Step::Control(()) => Out::Next(frame.s),
+        _ => Out::Exit(frame.s),
+    }
+}
+
+/// The logical negation of the first operand's truthiness into the destination
+/// (`staged::logical_not`).
+#[inline(always)]
+fn not_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    let done = matches!(logical_not(&mut Concrete::from_hole(0), &mut frame, DEST, LEFT), Step::Value(_));
+    finish(frame, done)
+}
+
+/// The Number negation of the first operand, through doubles (`-0` is a double, which an int32
+/// zero negates to): the staged `NumberOperation::Unary`.
+#[inline(always)]
+fn neg_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    let operation = NumberOperation::Unary { destination: DEST, source: Operand::register(LEFT), operation: NumberUnary::Negate, domain: Domain::Float64 };
+    let done = staged(&mut frame, operation).is_some();
+    finish(frame, done)
+}
+
 /// The tag of a fresh int slot: the upper half of its word.
 #[inline(always)]
 fn tag_init(s: S) -> Out {
@@ -234,6 +262,10 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
         JUMP_WATCH => jump::<true, false>(frame.s),
         POLL => poll(frame.s),
         GUARD => guard_row(frame),
+        JUMP_TRUE => truth_row::<true, D, A, B>(frame),
+        JUMP_FALSE => truth_row::<false, D, A, B>(frame),
+        NOT => not_row(frame),
+        NEG => neg_row(frame),
         _ => tag_init(frame.s),
     }
 }

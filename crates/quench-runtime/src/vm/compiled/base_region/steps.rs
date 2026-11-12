@@ -65,19 +65,21 @@ pub(super) fn lowering(instruction: WideInstruction, helpers: LaneHelpers) -> St
 /// The row of an instruction at `pc` that has no numeric or heap row: a `Nop` is the jump to the
 /// next instruction, the rest their step. A helper step names the register it writes.
 pub(super) fn decode_step(pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
-    if instruction.op().class() == Class::Nop {
-        return Decoded::number(Kind::Jump, None, None, None, Some(pc + 1));
+    match instruction.op().class() {
+        Class::Nop => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
+        _ => {
+            let step = lowering(instruction, helpers);
+            let written = if step == Step::Helper { instruction.written_registers().next() } else { None };
+            Decoded::step(step, written)
+        }
     }
-    let step = lowering(instruction, helpers);
-    let written = if step == Step::Helper { instruction.written_registers().next() } else { None };
-    Decoded::step(step, written)
 }
 
 /// A helper step may write any heap value, which the snapshots a heap row reads (the entry
 /// record's captures, fields and array views) would not see: where the region has a heap row its
 /// helper steps leave instead.
 pub(super) fn settle(decoded: &mut [Decoded]) {
-    if decoded.iter().any(|row| row.heap.is_some()) {
+    if decoded.iter().any(|row| row.heap.is_some_and(Heap::reads_snapshot)) {
         decoded.iter_mut().filter(|row| row.step == Some(Step::Helper)).for_each(|row| row.step = Some(Step::Leave));
     }
 }

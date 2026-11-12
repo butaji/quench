@@ -10,7 +10,9 @@
 
 use crate::bytecode::{Operand, Register};
 use crate::codes::*;
-use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage};
+use crate::heap_rows::{payload, word_at};
+use crate::layout::{JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_RECEIVER};
+use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, value};
 use crate::words::*;
 
 pub(crate) const DEST: Register = 0;
@@ -190,13 +192,30 @@ fn put<const D: u8>(s: &mut S, value: u64, rep: Rep) -> bool {
     true
 }
 
+/// ToBoolean of an operand: an int32 by its value, a double by its number, a tagged word by the
+/// staged rule (`value::tagged_truthiness`); `None` where a heap cell decides, which leaves.
+#[inline(always)]
+fn truthy<const P: u8, const H: u8>(s: &S) -> Option<bool> {
+    let word = read_place::<P, H>(s);
+    match rep_of(P) {
+        Rep::Int32 => Some(word as u32 != 0),
+        Rep::Float64 => Some(stage().number_truthy(word)),
+        Rep::Tagged => {
+            let (undecided, truthy) = value::tagged_truthiness(&mut stage(), word);
+            (!undecided).then_some(truthy)
+        }
+    }
+}
+
 /// A row's three places over the machine state. `proved` records that a dispatch already
 /// tested both operands for int words, so a frame slot is read as an int without a second
-/// test; `refused` that a result did not fit its place, so the row leaves.
+/// test; `refused` that a result did not fit its place, so the row leaves; `taken` that a
+/// branch the row decided goes to its taken successor.
 pub(crate) struct Places<const D: u8, const A: u8, const B: u8> {
     pub(crate) s: S,
     pub(crate) proved: bool,
     pub(crate) refused: bool,
+    pub(crate) taken: bool,
 }
 
 /// `f::<place, hole>` of the place `register` names.
@@ -213,7 +232,7 @@ macro_rules! by_place {
 impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
     #[inline(always)]
     pub(crate) fn new(s: S) -> Self {
-        Self { s, proved: false, refused: false }
+        Self { s, proved: false, refused: false, taken: false }
     }
 
     /// Records that a dispatch proved both operand words int words.
@@ -269,21 +288,54 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
         self.refused |= !put::<D>(&mut self.s, value, fact);
     }
 
-    fn this(&mut self, _stage: &mut Concrete) -> u64 { unreachable!("a Number row reads no this") }
-    fn define_this(&mut self, _stage: &mut Concrete, _destination: Register, _this: u64) {
-        unreachable!("a Number row reads no this")
+    #[inline(always)]
+    fn this(&mut self, _stage: &mut Concrete) -> u64 {
+        word_at(payload(&self.s), JS_STEP_RECEIVER)
+    }
+    #[inline(always)]
+    fn define_this(&mut self, _stage: &mut Concrete, _destination: Register, this: u64) {
+        self.refused |= !put::<D>(&mut self.s, this, Rep::Tagged);
     }
     fn constant(&mut self, _stage: &mut Concrete, _constant: Constant) -> (u64, Rep) {
         unreachable!("a Number row's constants are its places")
     }
-    fn truthiness(&mut self, _stage: &mut Concrete, _register: Register) -> Option<bool> {
-        unreachable!("a Number row decides no truthiness")
+    #[inline(always)]
+    fn truthiness(&mut self, _stage: &mut Concrete, register: Register) -> Option<bool> {
+        by_place!(register, truthy(&self.s))
     }
-    fn branch(&mut self, _stage: &mut Concrete, _condition: bool) { unreachable!("a Number row branches by its outcome") }
-    fn jump(&mut self, _stage: &mut Concrete) { unreachable!("a Number row jumps by its outcome") }
-    fn boolean(&mut self, _stage: &mut Concrete, _condition: bool) -> (u64, Rep) {
-        unreachable!("a Number row makes no boolean")
+    #[inline(always)]
+    fn branch(&mut self, _stage: &mut Concrete, condition: bool) {
+        self.taken = condition;
     }
+    fn jump(&mut self, _stage: &mut Concrete) { unreachable!("a row jumps by its kind") }
+    #[inline(always)]
+    fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, Rep) {
+        (if condition { crate::Value::TRUE } else { crate::Value::FALSE }.to_bits(), Rep::Tagged)
+    }
+
+    /// The activation's local slot `slot`, where it has locals and the slot is inside them.
+    #[inline(always)]
+    fn load_local(&mut self, _stage: &mut Concrete, slot: u16, _miss: Option<()>) -> Option<(u64, Rep)> {
+        let locals = local_slot(&self.s, slot)?;
+        Some((word_at(locals, 0), Rep::Tagged))
+    }
+
+    #[inline(always)]
+    fn store_local(&mut self, _stage: &mut Concrete, slot: u16, value: u64, _miss: Option<()>) -> bool {
+        let Some(locals) = local_slot(&self.s, slot) else { return false };
+        // SAFETY: the slot is inside the activation's live local slots (`local_slot`).
+        unsafe { (locals as *mut u64).write(value) };
+        true
+    }
+}
+
+/// The address of local slot `slot` of the activation, where the payload holds locals and the
+/// slot is inside them.
+#[inline(always)]
+fn local_slot(s: &S, slot: u16) -> Option<usize> {
+    let payload = payload(s);
+    let (locals, count) = (word_at(payload, JS_STEP_NATIVE_LOCALS) as usize, word_at(payload, JS_STEP_LOCAL_COUNT));
+    (locals != 0 && u64::from(slot) < count).then(|| locals + usize::from(slot) * core::mem::size_of::<u64>())
 }
 
 impl<const D: u8, const A: u8, const B: u8> GlobalFrame<Concrete> for Places<D, A, B> {}

@@ -121,6 +121,9 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
         Heap::Field => [dst_hole, decoded.hole, 0],
         Heap::Site => [dst_hole | a_hole << numeric::library::SITE_OBJECT_AT, crate::value::NarrowLayout::upper_words() as u64, decoded.hole],
         Heap::Capture(slot) => [dst_hole, u64::from(slot), u64::from(slot) * SLOT],
+        Heap::This => [dst_hole, 0, 0],
+        Heap::LoadLocal(slot) => [dst_hole, u64::from(slot), 0],
+        Heap::StoreLocal(slot) => [0, a_hole, u64::from(slot)],
         _ => [dst_hole, a_hole, b_hole],
     };
     // The row's stencil reads pinned operands and delivers a pinned result itself.

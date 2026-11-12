@@ -7,10 +7,10 @@ use super::*;
 pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::Jump => Step::Control(frame.jump(stage)),
-        Operation::JumpIf { register, taken } => super::heap::jump_if(stage, frame, register, taken),
+        Operation::JumpIf { register, taken } => jump_if(stage, frame, register, taken),
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
-        Operation::LoadThis { destination } => load_this(stage, frame, destination),
+        Operation::LoadThis { destination } => load_this(stage, frame, destination, frame.miss()),
         Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
             | Operation::LogicalNot { .. } | Operation::Safepoint { .. } => register_step(stage, frame, operation),
         heap => super::heap::heap_step(stage, frame, heap),
@@ -28,15 +28,7 @@ fn register_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
             Step::Value(value)
         }
         Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. } => local_step(stage, frame, operation),
-        Operation::LogicalNot { destination, source } => match frame.truthiness(stage, source) {
-            Some(truthy) => {
-                let falsy = stage.not(truthy);
-                let (value, fact) = frame.boolean(stage, falsy);
-                frame.write(stage, destination, value, fact);
-                Step::Value(value)
-            }
-            None => Step::Unresolved,
-        },
+        Operation::LogicalNot { destination, source } => logical_not(stage, frame, destination, source),
         Operation::Safepoint { proof } => match frame.safepoint(stage, proof) {
             Some(()) => Step::Value(stage.constant(0)),
             None => Step::Unresolved,
@@ -49,18 +41,12 @@ fn register_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
 #[inline(always)]
 fn local_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
-        Operation::LoadLocalPlain { destination, slot } => {
-            match frame.load_local(stage, slot, frame.local_miss()) {
-                Some((value, fact)) => {
-                    frame.write(stage, destination, value, fact);
-                    Step::Value(value)
-                }
-                None => Step::Unresolved,
-            }
-        }
+        Operation::LoadLocalPlain { destination, slot } => match read_local(stage, frame, destination, slot, frame.local_miss()) {
+            Some(value) => Step::Value(value),
+            None => Step::Unresolved,
+        },
         Operation::StoreLocalPlain { source, slot, result } => {
-            let value = frame.tagged(stage, source);
-            if !frame.store_local(stage, slot, value, frame.local_miss()) { return Step::Unresolved; }
+            let Some(value) = write_local(stage, frame, source, slot, frame.local_miss()) else { return Step::Unresolved };
             if let Some(result) = result {
                 let fact = frame.fact(source);
                 frame.write(stage, result, value, fact);
@@ -68,22 +54,6 @@ fn local_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             Step::Value(value)
         }
         _ => Step::Unresolved,
-    }
-}
-
-/// The activation's `this` into `destination`, where the activation holds it.
-#[inline(always)]
-fn load_this<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    destination: Register) -> Step<S::Word, F::Control> {
-    let miss = frame.miss();
-    let this = frame.this(stage);
-    let bound = stage.ne_imm(this, crate::Value::DELETED.to_bits());
-    match stage.guard(bound, miss) {
-        Some(()) => {
-            frame.define_this(stage, destination, this);
-            Step::Value(this)
-        }
-        None => Step::Unresolved,
     }
 }
 

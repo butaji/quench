@@ -148,6 +148,7 @@ pub(crate) mod words {
     pub(crate) const UNDEFINED: u64 = 0x7ff9000000000000;
     pub(crate) const DELETED: u64 = 0x7ffe000000000000;
     pub(crate) const FALSE: u64 = 0x7ffb000000000000;
+    pub(crate) const TRUE: u64 = FALSE | 1;
     pub(crate) const NARROW_INT_FLAG: u32 = 1;
     pub(crate) const NARROW_INTEGER_BITS: u32 = 30;
     pub(crate) const NARROW_CODE_SHIFT: u32 = 1;
@@ -167,6 +168,9 @@ pub(crate) const JS_STEP_CAPTURE_LEN: usize = 104;
 pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = 112;
 /// The running lane body's receiver (`this`): a body's entry stores the one it is entered with.
 pub(crate) const JS_STEP_RECEIVER: usize = 200;
+/// The activation's local slots and their count (`native_locals`, `local_count`).
+pub(crate) const JS_STEP_NATIVE_LOCALS: usize = 56;
+pub(crate) const JS_STEP_LOCAL_COUNT: usize = 64;
 /// The heap bases a field read through a site's cache entry reads: the object record
 /// reservation, the allocator header of the property values (whose base is at
 /// `PROPERTY_BUFFER_BASE`) and the field cache entries of the running program.

@@ -163,7 +163,7 @@ fn field_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: WideInstru
 }
 
 /// The heap instructions: a capture, a dense element read or store, a recorded or cached field,
-/// the proof that a base is an array.
+/// the proof that a base is an array, the activation's `this` and its local slots.
 pub(super) fn heap_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     let register = |register| Some(Source::Register(register));
     match instruction.op().class() {
@@ -182,6 +182,16 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, pc: u32, instruction: 
             Some(Decoded { base: Some(instruction.register_b()), hole: entry_array(region, facts, instruction.register_b()), ..row })
         }
         Class::RequireObjectCoercible => Some(Decoded::heap(Heap::Array, None, register(instruction.register_b()), None)),
+        Class::LoadThis if !instruction.writes_current_this() => Some(Decoded::heap(Heap::This, Some(instruction.result_register()), None, None)),
+        Class::LoadLocalPlain => {
+            let slot = u16::try_from(instruction.local_slot()).ok()?;
+            Some(Decoded::heap(Heap::LoadLocal(slot), Some(instruction.result_register()), None, None))
+        }
+        // A store that also defines a register (`optional_register_b`) is the interpreter's.
+        Class::StoreLocalPlain if instruction.optional_register_b().is_none() => {
+            let slot = u16::try_from(instruction.local_slot()).ok()?;
+            Some(Decoded::heap(Heap::StoreLocal(slot), None, register(instruction.register_a()), None))
+        }
         Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, pc, instruction),
         _ => None,
     }
@@ -211,8 +221,30 @@ pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
         Class::IncDec => inc_dec(instruction).ok().filter(|_| plain),
         Class::JumpBinaryFalse => jump_binary(numbers, instruction).ok(),
         Class::Jump => Some(Decoded::number(Kind::Jump, None, None, None, Some(instruction.jump_target()))),
+        Class::JumpTrue | Class::JumpFalse => Some(truthiness_jump(instruction)),
+        Class::Unary => unary_row(instruction).filter(|_| plain),
         _ => return None,
     })
+}
+
+/// A jump on a register's truthiness: taken where it is truthy (`JumpTrue`) or falsy.
+fn truthiness_jump(instruction: WideInstruction) -> Decoded {
+    let kind = if instruction.op().class() == Class::JumpTrue { Kind::JumpTrue } else { Kind::JumpFalse };
+    Decoded::number(kind, None, Some(Source::Register(instruction.register_a())), None, Some(instruction.jump_target()))
+}
+
+/// The row of a unary operator over a register: `!` is the boolean of its truthiness, `-` the
+/// negation of a Number, `+` a Number as it is (proved, as `ToNumeric` is); any other operator is
+/// the interpreter's.
+fn unary_row(instruction: WideInstruction) -> Option<Decoded> {
+    let (result, operand) = (instruction.result_register(), Some(Source::Register(instruction.register_b())));
+    let operator = instruction.unary_operator();
+    let row = |kind| Decoded::number(kind, Some(result), operand, None, None);
+    [
+        (UnaryOperator::LogicalNot, row(Kind::Not)),
+        (UnaryOperator::UnaryNegation, row(Kind::Neg)),
+        (UnaryOperator::UnaryPlus, Decoded { checked: true, ..row(Kind::Move) }),
+    ].into_iter().find(|(candidate, _)| *candidate as u32 == operator).map(|(_, decoded)| decoded)
 }
 
 /// Bits in a word's high half.

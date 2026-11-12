@@ -13,6 +13,7 @@ impl Value {
     pub(crate) const UNDEFINED: Self = Self(words::UNDEFINED);
     pub(crate) const DELETED: Self = Self(words::DELETED);
     pub(crate) const FALSE: Self = Self(words::FALSE);
+    pub(crate) const TRUE: Self = Self(words::TRUE);
     pub(crate) const fn to_bits(self) -> u64 {
         self.0
     }

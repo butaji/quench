@@ -33,18 +33,21 @@ fn heap_repr(numbers: bool, widened: bool) -> Repr {
 }
 
 /// The representation a row's result needs: a step's result is whatever the interpreter's
-/// operation wrote, a tagged word; a division, a double operand or a `widened` row (its int32
+/// operation wrote, a tagged word, as is a logical negation's boolean; a Number negation gives a
+/// double (an int32 zero negates to `-0`); a division, a double operand or a `widened` row (its int32
 /// speculation failed) gives a double; a bitwise row an int32 unless widened.
 pub(super) fn result_repr(row: &Decoded, reprs: &[Repr], widened: bool, numbers: bool) -> Repr {
     if row.step.is_some() {
         return Repr::Tagged;
     }
-    if row.heap.is_some() {
-        return heap_repr(numbers, widened);
+    if let Some(heap) = row.heap {
+        return if heap.yields_tagged() { Repr::Tagged } else { heap_repr(numbers, widened) };
     }
     let operands = operand_repr(reprs, row.a).max(operand_repr(reprs, row.b));
     match row.kind {
+        Kind::Not => Repr::Tagged,
         _ if operands == Repr::Tagged => Repr::Tagged,
+        Kind::Neg => Repr::Double,
         Kind::Move | Kind::Const => operands,
         Kind::Div => Repr::Double,
         Kind::Add | Kind::Sub | Kind::Mul => if widened || operands == Repr::Double { Repr::Double } else { Repr::Int },

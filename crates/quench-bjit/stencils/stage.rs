@@ -15,7 +15,6 @@ unsafe extern "C" {
     fn UNSUPPORTED_store_gate(a: u64, b: u64) -> u64;
     fn UNSUPPORTED_assumption(a: u64) -> u64;
     fn UNSUPPORTED_number_operator(a: u64, b: u64, c: u64) -> u64;
-    fn UNSUPPORTED_number_truthy(a: u64) -> u64;
     fn UNSUPPORTED_shape_in(a: u64) -> u64;
     fn UNSUPPORTED_site(a: u64) -> u64;
 }
@@ -155,8 +154,9 @@ impl Stage for StencilStage {
     fn pick(&mut self, cond: bool, then: bool, otherwise: bool) -> bool { if cond { then } else { otherwise } }
     #[inline(always)]
     fn number_truthy(&mut self, bits: u64) -> bool {
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_number_truthy(bits) != 0 }
+        let number = f64::from_bits(bits);
+        // Neither zero (of either sign) nor NaN, which no other double equals.
+        number != 0.0 && number == number
     }
     #[inline(always)]
     fn shape_in(&mut self, shape: u64, _shapes: &[u32]) -> bool {

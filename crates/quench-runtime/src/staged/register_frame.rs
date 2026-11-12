@@ -167,6 +167,55 @@ pub(crate) trait Frame<S: Stage> {
 }
 
 
+/// A conditional jump on the register's truthiness, taken when it is `taken`; unresolved where
+/// the frame cannot tell its truthiness.
+#[inline(always)]
+pub(crate) fn jump_if<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, register: Register, taken: bool) -> Step<S::Word, F::Control> {
+    let Some(condition) = frame.truthiness(stage, register) else { return Step::Unresolved };
+    let condition = if taken { condition } else { stage.not(condition) };
+    Step::Control(frame.branch(stage, condition))
+}
+
+/// `destination` defined with the logical negation of `source`'s truthiness.
+#[inline(always)]
+pub(crate) fn logical_not<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, source: Register) -> Step<S::Word, F::Control> {
+    let Some(truthy) = frame.truthiness(stage, source) else { return Step::Unresolved };
+    let falsy = stage.not(truthy);
+    let (value, fact) = frame.boolean(stage, falsy);
+    frame.write(stage, destination, value, fact);
+    Step::Value(value)
+}
+
+/// `destination` defined with the activation's `this`, where it holds one (not the deleted
+/// marker); `miss` where it does not.
+#[inline(always)]
+pub(crate) fn load_this<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, miss: S::Miss) -> Step<S::Word, F::Control> {
+    let this = frame.this(stage);
+    let bound = stage.ne_imm(this, crate::Value::DELETED.to_bits());
+    match stage.guard(bound, miss) {
+        Some(()) => {
+            frame.define_this(stage, destination, this);
+            Step::Value(this)
+        }
+        None => Step::Unresolved,
+    }
+}
+
+/// `destination` defined from local slot `slot`; `None` where the frame cannot read it.
+#[inline(always)]
+pub(crate) fn read_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, slot: u16, miss: Option<S::Miss>) -> Option<S::Word> {
+    let (value, fact) = frame.load_local(stage, slot, miss)?;
+    frame.write(stage, destination, value, fact);
+    Some(value)
+}
+
+/// `source`'s tagged word written to local slot `slot`; `None` where the frame cannot write it.
+#[inline(always)]
+pub(crate) fn write_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, source: Register, slot: u16, miss: Option<S::Miss>) -> Option<S::Word> {
+    let value = frame.tagged(stage, source);
+    frame.store_local(stage, slot, value, miss).then_some(value)
+}
+
 /// A staged instruction's outcome: the word it produced, or where control goes.
 pub(crate) enum Step<W, C> {
     /// The operation produced `W`; control falls through.

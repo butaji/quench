@@ -18,8 +18,8 @@ fn read_operands(kind: u8, dst: u8, a: u8, b: u8) -> (u8, u8, u8) {
         _ if is_copy(kind) => (dst, a, MEM),
         _ if is_compare(kind) => (MEM, a, b),
         JUMP | JUMP_POLL | JUMP_WATCH | POLL | TAG_INIT => (MEM, MEM, MEM),
-        GUARD => (dst, a, MEM),
-        SPILL => (MEM, a, MEM),
+        GUARD | NOT | NEG => (dst, a, MEM),
+        JUMP_TRUE | JUMP_FALSE | SPILL => (MEM, a, MEM),
         _ => (dst, a, b),
     }
 }
@@ -134,6 +134,19 @@ fn control(places: &Places, rows: &mut BTreeSet<Code>) {
     }
 }
 
+/// The truthiness jumps over every operand a truthiness is read from, the logical negation into
+/// a frame slot, and the Number negation over every destination.
+fn truthiness(places: &Places, rows: &mut BTreeSet<Code>) {
+    let tested: Vec<u8> = [MEM, MEMINT].into_iter().chain(int_pins()).chain(double_pins()).collect();
+    for &a in &tested {
+        rows.extend([JUMP_TRUE, JUMP_FALSE].map(|kind| canonical((kind, MEM, a, MEM, true))));
+        rows.insert(canonical((NOT, MEM, a, MEM, true)));
+    }
+    let dsts: Vec<u8> = places.ints_dst.iter().chain(&places.floats_dst).copied().collect();
+    let srcs: Vec<u8> = places.ints_src.iter().copied().chain(double_pins()).collect();
+    product(rows, &[NEG], &dsts, &srcs, &[true]);
+}
+
 /// Every row the library holds, canonical, once.
 pub fn library() -> Vec<Code> {
     let places = Places::all();
@@ -141,6 +154,7 @@ pub fn library() -> Vec<Code> {
     bitwise_over_doubles(&places, &mut rows);
     products(&places, &mut rows);
     control(&places, &mut rows);
+    truthiness(&places, &mut rows);
     rows.into_iter().collect()
 }
 
@@ -151,7 +165,8 @@ pub type HeapCode = (u8, bool, u8, u8, u8);
 /// The heap row whose stencil computes `code`: the places a row ignores are fixed.
 pub fn heap_canonical((heap, entry, dst, a, b): HeapCode) -> HeapCode {
     match heap {
-        CAPTURE_ROW | FIELD_ROW | SITE_ROW => (heap, false, dst, MEM, MEM),
+        CAPTURE_ROW | FIELD_ROW | SITE_ROW | THIS_ROW | LOAD_LOCAL_ROW => (heap, false, dst, MEM, MEM),
+        STORE_LOCAL_ROW => (heap, false, MEM, a, MEM),
         INDEX_ROW => (heap, entry, dst, MEM, b),
         STORE_ROW => (heap, entry, MEM, a, b),
         _ => (heap, false, MEM, MEM, MEM),
@@ -179,6 +194,10 @@ pub fn heap_library() -> Vec<HeapCode> {
             rows.insert(heap_canonical((STORE_ROW, entry, MEM, a, b)));
         }
     }
+    for &dst in &dsts {
+        rows.extend([THIS_ROW, LOAD_LOCAL_ROW].map(|heap| heap_canonical((heap, false, dst, MEM, MEM))));
+    }
+    rows.extend(srcs.iter().map(|&a| heap_canonical((STORE_LOCAL_ROW, false, MEM, a, MEM))));
     rows.insert(heap_canonical((ARRAY_ROW, false, MEM, MEM, MEM)));
     rows.into_iter().collect()
 }

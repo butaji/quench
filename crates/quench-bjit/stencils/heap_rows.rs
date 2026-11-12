@@ -14,11 +14,12 @@ use crate::layout::{
     CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_VALUES, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
     JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE,
 };
-use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole64, index_of, number_word};
+use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole, hole64, index_of, number_word};
+use crate::places::{DEST, LEFT, Places};
 use crate::stage::StencilStage;
-use crate::staged::{elements, entry, environment, value};
+use crate::staged::{Step, elements, entry, environment, load_this, read_local, value, write_local};
 
-pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, FIELD_ROW, INDEX_ROW, SITE_OBJECT_AT, SITE_ROW, STORE_ROW};
+pub(crate) use crate::codes::{ARRAY_ROW, CAPTURE_ROW, FIELD_ROW, INDEX_ROW, LOAD_LOCAL_ROW, MEM, SITE_OBJECT_AT, SITE_ROW, STORE_LOCAL_ROW, STORE_ROW, THIS_ROW};
 
 unsafe extern "C" {
     static HOLE_V0: u8;
@@ -111,6 +112,36 @@ fn site_row<const D: u8>(s: S, payload: usize) -> Out {
     deliver::<D>(s, need!(s, entry::site_read(&mut stage, (entries, records), object, offset, ())))
 }
 
+/// Whether the row's staged work was done and fit its place: it continues, else it leaves.
+#[inline(always)]
+fn finish<const D: u8, const A: u8>(frame: Places<D, A, MEM>, done: bool) -> Out {
+    if frame.writes_fit(done) { Out::Next(frame.s) } else { Out::Exit(frame.s) }
+}
+
+/// The activation's `this` into the destination (`staged::load_this`).
+#[inline(always)]
+fn this_row<const D: u8>(s: S) -> Out {
+    let mut frame = Places::<D, MEM, MEM>::new(s);
+    let done = matches!(load_this(&mut StencilStage::from_hole(0), &mut frame, DEST, ()), Step::Value(_));
+    finish(frame, done)
+}
+
+/// A local slot read: the slot number is hole 1 (`staged::read_local`).
+#[inline(always)]
+fn load_local_row<const D: u8>(s: S) -> Out {
+    let mut frame = Places::<D, MEM, MEM>::new(s);
+    let done = read_local(&mut StencilStage::from_hole(0), &mut frame, DEST, hole::<HOLE_A>() as u16, Some(())).is_some();
+    finish(frame, done)
+}
+
+/// A local slot write of the first operand: the slot number is hole 2 (`staged::write_local`).
+#[inline(always)]
+fn store_local_row<const A: u8>(s: S) -> Out {
+    let mut frame = Places::<MEM, A, MEM>::new(s);
+    let done = write_local(&mut StencilStage::from_hole(0), &mut frame, LEFT, hole::<HOLE_B>() as u16, Some(())).is_some();
+    finish(frame, done)
+}
+
 #[inline(always)]
 fn array_row(s: S) -> Out {
     let mut stage = StencilStage::from_hole(0);
@@ -148,6 +179,9 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         FIELD_ROW => field_row::<D>(s, payload),
         SITE_ROW => site_row::<D>(s, payload),
         ARRAY_ROW => array_row(s),
+        THIS_ROW => this_row::<D>(s),
+        LOAD_LOCAL_ROW => load_local_row::<D>(s),
+        STORE_LOCAL_ROW => store_local_row::<A>(s),
         INDEX_ROW => index_row::<ENTRY, D, B>(s, payload),
         _ => store_row::<ENTRY, A, B>(s, payload),
     }

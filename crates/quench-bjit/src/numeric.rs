@@ -76,6 +76,14 @@ pub enum Kind {
     /// Poll the interrupt flag, then continue at the next row: a conditional branch back is
     /// preceded by it, as an unconditional one is by its own poll.
     Poll,
+    /// Go to `taken` when the operand is truthy (`JumpTrue`) or falsy (`JumpFalse`); a heap value
+    /// whose cell decides its truthiness leaves.
+    JumpTrue,
+    JumpFalse,
+    /// The destination takes the logical negation of the operand's truthiness (`Not`), or the
+    /// Number negation of a Number operand (`Neg`).
+    Not,
+    Neg,
 }
 
 impl Kind {

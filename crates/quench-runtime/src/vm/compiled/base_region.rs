@@ -13,7 +13,7 @@
 use super::osr_loop::LoopRegion;
 use crate::bytecode::{Class, FieldLookup, OperandKind, Register, WideInstruction};
 use crate::value::Value;
-use oxc_ast::ast::BinaryOperator;
+use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 use super::base_rows::{self, Heap, HeapRow};
 use quench_bjit::numeric::{self, Kind, Place};
 use quench_bjit::{PINNED, PINNED_F, Row as Placed, Stencil};

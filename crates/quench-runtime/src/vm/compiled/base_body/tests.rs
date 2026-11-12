@@ -165,3 +165,16 @@ fn a_dead_parameter_is_not_guarded_at_entry() {
          print(t);",
     );
 }
+
+/// `this`, the truthiness of a value (a branch and a negation) and a number's negation run as
+/// rows in the body, and print what the interpreter prints for every kind of value.
+#[test]
+fn this_truthiness_and_negation_print_what_the_interpreter_prints() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function f(a, b) { let c = this ? 1 : 0; if (!a) c = c + 10; if (b) c = c + 100; return c + -a + (!b ? 1000 : 0); }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + f(k % 5, k % 3)) | 0;
+         print(t); print(f(0, 0)); print(f(2.5, '')); print(f(-0, 'x')); print(f(NaN, null)); print(f('7', 1)); print(f.call(null, 1, 2));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the body ran {runs} times");
+}

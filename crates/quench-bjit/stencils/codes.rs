@@ -41,6 +41,13 @@ pub const SPILL: u8 = 22;
 pub const JUMP_WATCH: u8 = 23;
 /// Polls the interrupt flag and continues: the guard a conditional branch back passes first.
 pub const POLL: u8 = 24;
+/// Branches to the taken successor when the first operand is truthy, or falsy (`JUMP_FALSE`).
+pub const JUMP_TRUE: u8 = 25;
+pub const JUMP_FALSE: u8 = 26;
+/// The destination takes the logical negation of the first operand's truthiness, or the Number
+/// negation of the first operand.
+pub const NOT: u8 = 27;
+pub const NEG: u8 = 28;
 
 pub const CAPTURE_ROW: u8 = 0;
 pub const INDEX_ROW: u8 = 1;
@@ -48,6 +55,10 @@ pub const STORE_ROW: u8 = 2;
 pub const FIELD_ROW: u8 = 3;
 pub const ARRAY_ROW: u8 = 4;
 pub const SITE_ROW: u8 = 5;
+/// The running activation's `this`, a local slot read, a local slot written.
+pub const THIS_ROW: u8 = 6;
+pub const LOAD_LOCAL_ROW: u8 = 7;
+pub const STORE_LOCAL_ROW: u8 = 8;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries
 /// the destination's frame offset beneath it.
 pub const SITE_OBJECT_AT: u32 = 32;
