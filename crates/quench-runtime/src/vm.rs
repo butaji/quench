@@ -141,6 +141,7 @@ mod embedding;
 mod provenance;
 mod inspection;
 mod environment;
+mod handler_entry;
 mod equality;
 mod error;
 mod eval;
