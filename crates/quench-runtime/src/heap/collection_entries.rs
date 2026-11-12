@@ -165,6 +165,16 @@ impl<T: CollectionEntry> CollectionEntries<T> {
         collection
     }
 
+    /// The live entries as a new collection, slots and hashes copied as they are: no key is
+    /// looked up or hashed again, and no iterator is registered with the copy.
+    pub(crate) fn duplicate(&self) -> Self {
+        let live = (self.head..self.slots.len()).filter(|&slot| self.slots[slot].key() != HOLE);
+        let slots: Vec<T> = live.clone().map(|slot| self.slots[slot]).collect();
+        let hashes: SmallVec<[u32; LINEAR_SCAN_ENTRIES]> = live.map(|slot| self.hashes[slot]).collect();
+        let index = (slots.len() > LINEAR_SCAN_ENTRIES).then(|| index::KeyIndex::of(&hashes));
+        Self { live: slots.len(), slots, hashes, head: 0, index, iterators: Vec::new(), walks: 0 }
+    }
+
     /// The number of live entries.
     pub(crate) fn len(&self) -> usize {
         self.live

@@ -1,7 +1,7 @@
 use super::*;
 
-const MAP_ENTRY_KEY_INDEX: usize = 0;
-const MAP_ENTRY_VALUE_INDEX: usize = 1;
+pub(super) const MAP_ENTRY_KEY_INDEX: usize = 0;
+pub(super) const MAP_ENTRY_VALUE_INDEX: usize = 1;
 #[derive(Clone, Copy)]
 enum CollectionEntries {
     Pairs,
@@ -1262,55 +1262,6 @@ impl<H: Host> Vm<H> {
                     entries.push(value, value_hash);
                 }
             });
-        }
-        true
-    }
-
-    /// AddEntriesFromIterable when no step can run guest code: the adder is the intrinsic
-    /// `Set.prototype.add` or `Map.prototype.set`, the iterable iterates intact
-    /// (`intact_iteration_values`), and for a Map every entry is an array whose indices 0 and
-    /// 1 are present own data elements, so each Get reads an element. `false` (nothing added)
-    /// leaves every other case to the protocol.
-    fn add_intact_entries(&mut self, native: Native, collection: Value, adder: Value, iterable: Value) -> bool {
-        let adds = match native {
-            Native::Set => self.is_current_realm_native(adder, Native::SetAdd),
-            Native::Map => self.is_current_realm_native(adder, Native::MapSet),
-            _ => false,
-        };
-        let Some(values) = adds.then(|| self.intact_iteration_values(iterable)).flatten() else {
-            return false;
-        };
-        if native == Native::Set {
-            // A Set's values are already distinct under SameValueZero, so filling an empty Set
-            // from one appends without looking any up.
-            let distinct = matches!(self.heap.get(iterable), Some(Cell::Set { .. }))
-                && matches!(self.heap.get(collection), Some(Cell::Set { entries, .. }) if entries.len() == 0);
-            for value in values {
-                if distinct {
-                    let hash = self.same_value_zero_hash(value);
-                    self.heap.grow_cell_payload(collection, |cell| {
-                        if let Cell::Set { entries, .. } = cell {
-                            entries.push(value, hash);
-                        }
-                    });
-                } else {
-                    self.set_add(collection, value);
-                }
-            }
-            return true;
-        }
-        let Some(pairs) = values
-            .iter()
-            .map(|&entry| {
-                let pair = self.present_dense_elements(entry, MAP_ENTRY_KEY_INDEX..MAP_ENTRY_VALUE_INDEX + 1)?;
-                Some([pair[MAP_ENTRY_KEY_INDEX], pair[MAP_ENTRY_VALUE_INDEX]])
-            })
-            .collect::<Option<Vec<_>>>()
-        else {
-            return false;
-        };
-        for pair in pairs {
-            self.map_set(collection, &pair);
         }
         true
     }

@@ -60,18 +60,25 @@ impl<H: Host> Vm<H> {
                 break;
             };
             let index = range.start + offset;
-            if !slice[offset].is_deleted() {
-                return Search::Found(index);
-            }
-            if !self.inherited_index_absent(array, index) {
-                return Search::Resume(index);
-            }
-            if mode == Match::SameValueZero && search.is_undefined() {
-                return Search::Found(index);
+            if let Some(settled) = self.settle_stop(array, index, slice[offset].is_deleted(), search, mode) {
+                return settled;
             }
             range = if reverse { range.start..index } else { index + 1..range.end };
         }
         Search::Missing
+    }
+
+    /// What the walk does at `index`, where it stopped on a match or a hole: a match is found;
+    /// a hole a prototype may hold is the generic algorithm's; any other hole is `undefined`
+    /// for `includes` and absent for the rest. `None` goes on past the hole.
+    fn settle_stop(&self, array: Value, index: usize, hole: bool, search: Value, mode: Match) -> Option<Search> {
+        if !hole {
+            return Some(Search::Found(index));
+        }
+        if !self.inherited_index_absent(array, index) {
+            return Some(Search::Resume(index));
+        }
+        (mode == Match::SameValueZero && search.is_undefined()).then_some(Search::Found(index))
     }
 
     /// `Array.prototype.indexOf` or `includes` (`native`) of an array from an integer or absent

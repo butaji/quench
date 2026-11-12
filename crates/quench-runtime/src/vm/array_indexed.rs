@@ -93,13 +93,28 @@ impl<H: Host> Vm<H> {
             return Ok(Value::number(-1.0));
         }
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let mut top = from as usize;
-        match self.search_dense(object, 0..top + 1, true, search, Match::Strict) {
+        self.strict_search(p, object, 0..from as usize + 1, true, search)
+    }
+
+    /// The index in `range` of the first element of `object` (the last when `reverse`) that
+    /// strictly equals `search`, or -1: the dense view decides what it can, and HasProperty
+    /// and Get the rest (`indexOf` and `lastIndexOf`).
+    fn strict_search(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        range: std::ops::Range<usize>,
+        reverse: bool,
+        search: Value,
+    ) -> Result<Value, JsError> {
+        let first = match self.search_dense(object, range.clone(), reverse, search, Match::Strict) {
             Search::Found(index) => return Ok(Value::number(index as f64)),
             Search::Missing => return Ok(Value::number(-1.0)),
-            Search::Resume(index) => top = index,
-        }
-        for index in (0..=top).rev() {
+            Search::Resume(index) => index,
+        };
+        let remaining = if reverse { first + 1 - range.start } else { range.end - first };
+        for step in 0..remaining {
+            let index = if reverse { first - step } else { first + step };
             let key = Value::number(index as f64);
             if self.has_property(p, object, key)? {
                 let value = self.get_index(p, object, key)?;
@@ -133,22 +148,7 @@ impl<H: Host> Vm<H> {
             }
         };
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let mut start = start;
-        match self.search_dense(object, start..length, false, search, Match::Strict) {
-            Search::Found(index) => return Ok(Value::number(index as f64)),
-            Search::Missing => return Ok(Value::number(-1.0)),
-            Search::Resume(index) => start = index,
-        }
-        for index in start..length {
-            let key = Value::number(index as f64);
-            if self.has_property(p, object, key)? {
-                let value = self.get_index(p, object, key)?;
-                if self.strict_equal(value, search) {
-                    return Ok(Value::number(index as f64));
-                }
-            }
-        }
-        Ok(Value::number(-1.0))
+        self.strict_search(p, object, start..length, false, search)
     }
 
     pub(super) fn array_copy_within_native(

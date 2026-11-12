@@ -12401,7 +12401,8 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_iterator_step` of a for-of step (`lane_for_of_step`) over a plain array: the
+    /// `lane_iterator_step` of a for-of step (`lane_for_of_step`) over a plain array or a
+    /// String, Map or Set iterator (`Vm::step_collection`): the
     /// step's `done` and `value` go to the registers its reads of `done` and `value` write,
     /// and the step goes on where they would, into the body or out of the loop. The result
     /// object only those reads observe is not written. Any other step runs as
@@ -12413,15 +12414,23 @@ script_handler! {
         // SAFETY: the view checked the step's records (`lane_for_of_step`).
         let (done_read, value_read) = unsafe { (&*ip.add(FOR_OF_DONE_READ), &*ip.add(form.value_read())) };
         let reads_step = done_read.imm() == vm.runtime_atoms.done && value_read.imm() == vm.runtime_atoms.value;
-        match vm.iteration_step(iterator, method) {
-            super::iterators::IterationStep::Array if reads_step => {}
+        let kind = vm.iteration_step(iterator, method);
+        match kind {
+            super::iterators::IterationStep::Array | super::iterators::IterationStep::Collection if reads_step => {}
             // A generator's step resumes it in place, as `lane_iterator_step` makes it.
             super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
                 sibling!(lane_generator_step::<H>, r, ip, Carried::script(cx))
             }
             _ => sibling!(lane_iterator_step::<H>, r, ip, Carried::script(cx)),
         }
-        let Some(step) = vm.step_present_array_value(iterator) else {
+        let step = if kind == super::iterators::IterationStep::Array {
+            vm.step_present_array_value(iterator)
+        } else {
+            let step = vm.step_collection(iterator);
+            note_allocation(vm);
+            step
+        };
+        let Some(step) = step else {
             sibling!(lane_iterator_step::<H>, r, ip, Carried::script(cx))
         };
         match step {
