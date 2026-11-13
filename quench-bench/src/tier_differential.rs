@@ -7,7 +7,7 @@
 //! and an AOT executable when `BIN compile` works. Forced deopt (R26) is a test-only runtime
 //! hook: `cargo test -p quench-runtime --lib forced_deopt_corpus` runs the same corpus through it.
 
-use super::{fail, usage};
+use super::{fail, usage, TIER_RUN_TIMEOUT_MS};
 use quench_tier_corpus::{generate, program_seed, Options, Program, Sink, DEFAULT_ITERATIONS};
 use std::{
     fs,
@@ -21,7 +21,6 @@ pub(crate) const FLAG: &str = "--tier-differential";
 
 const DEFAULT_SEED: u64 = 1;
 const DEFAULT_COUNT: u64 = 20;
-const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 const STDERR_TAIL_BYTES: usize = 400;
 const REFERENCE: &str = "no-jit";
 const AOT_LABEL: &str = "aot";
@@ -67,7 +66,7 @@ fn parse(args: &[String]) -> Config {
         seed: DEFAULT_SEED,
         count: DEFAULT_COUNT,
         quench: PathBuf::new(),
-        timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
+        timeout: Duration::from_millis(TIER_RUN_TIMEOUT_MS),
         iterations: DEFAULT_ITERATIONS,
         out_dir: std::env::temp_dir().join("quench-tier-differential"),
     };

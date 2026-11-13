@@ -5,7 +5,7 @@
 //! counts with the kernel's spec (the target, reported) and the shrink-only ratchet (the gate:
 //! only a count above its recorded entry fails).
 
-use super::{fail, usage};
+use super::{fail, usage, TIER_RUN_TIMEOUT_MS};
 use quench_tier_corpus::residuals::{
     Counts, Kernel, Ratchet, Tier, CATEGORIES, CATEGORY_COUNT, KERNELS,
 };
@@ -26,7 +26,6 @@ const UPDATE_FLAG: &str = "--update-ratchet";
 const TIMEOUT_FLAG: &str = "--timeout-ms";
 
 const DEFAULT_QUENCH: &str = "target/release/quench-node";
-const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 /// The engine's report line (`vm/compiled/residuals.rs`) and its fields.
@@ -54,7 +53,7 @@ impl Config {
             ratchet: Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../tests/fixtures/residuals/ratchet.txt"),
             update: false,
-            timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
+            timeout: Duration::from_millis(TIER_RUN_TIMEOUT_MS),
         };
         let mut args = args.iter();
         while let Some(arg) = args.next() {

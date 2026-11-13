@@ -400,6 +400,13 @@ impl QuenchAlloc {
         class_of(layout.size())
     }
 
+    /// Whether a block this allocator does not own stays the system allocator's when resized to
+    /// `new_layout`: no small class takes it and no scratch region does.
+    fn system_keeps(block: *mut u8, new_layout: Layout) -> bool {
+        let moves_here = ENABLED.load(Ordering::Relaxed) && Self::small_class(new_layout).is_some();
+        !moves_here && !scratch::owns(block) && !scratch::applies(new_layout)
+    }
+
     /// `alloc` once the switch is on: a small request from its class, any other (or one no
     /// page can serve) from the system allocator, which then frees it (`owns`).
     #[inline(never)]
@@ -768,15 +775,13 @@ unsafe impl GlobalAlloc for QuenchAlloc {
             // SAFETY: the system allocator's block, and it serves every request.
             return unsafe { System.realloc(block, layout, new_size) };
         }
-        let new_layout = match Layout::from_size_align(new_size, layout.align()) {
-            Ok(new_layout) => new_layout,
-            Err(_) => return ptr::null_mut(),
+        let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
+            return ptr::null_mut();
         };
-        let stays_here = ENABLED.load(Ordering::Relaxed) && Self::small_class(new_layout).is_some();
         if owned && Self::small_class(layout) == Self::small_class(new_layout) {
             return block;
         }
-        if !owned && !stays_here && !scratch::owns(block) && !scratch::applies(new_layout) {
+        if !owned && Self::system_keeps(block, new_layout) {
             // SAFETY: both sides are the system allocator's.
             return unsafe { System.realloc(block, layout, new_size) };
         }

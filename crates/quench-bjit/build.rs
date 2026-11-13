@@ -29,7 +29,7 @@ mod supernodes;
 mod transfer;
 
 use bytes::{ObjectReloc, ObjectRow};
-use class::{MOVW, MOVW_GROUPS, is_successor};
+use class::{EXIT as EXIT_BASE, MOVW, MOVW_GROUPS, NEXT, TAKEN, is_successor};
 use std::{
     collections::BTreeMap,
     env, fs,
@@ -48,10 +48,6 @@ const INSTANCES_VAR: &str = "QUENCH_STENCIL_INSTANCES";
 /// `fixed_rows`), so no name is defined twice.
 const FIXED_ROWS_SHARD: usize = 0;
 const EXIT_PREFIX: usize = 4;
-/// Successor hole indexes (`quench_bjit::NEXT`, `TAKEN`, `EXIT`).
-const NEXT: u32 = 0;
-const TAKEN: u32 = 1;
-const EXIT_BASE: u32 = 2;
 
 /// Every file whose change must recompile the stencils: the stencil sources and the runtime's
 /// staged rows they include, and nothing else.

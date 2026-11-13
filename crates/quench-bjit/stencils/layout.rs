@@ -163,8 +163,10 @@ pub(crate) mod words {
 /// Byte offsets of the fields of the compiled-code context (`CallContext`) and the dispatch
 /// payload (`JsStepDispatch`, behind the context's `adapter_payload`) the rows read.
 pub(crate) const CALL_CONTEXT_ADAPTER_PAYLOAD: usize = 248;
-/// The status of a run that leaves with a word (`vm::compiled::NATIVE_JS_STOPPED`).
-pub(crate) const NATIVE_JS_STOPPED: u32 = 1;
+/// The lane-call protocol, shared with the host (`quench_bjit::call_record`).
+#[path = "../src/call_record.rs"]
+pub(crate) mod call_record;
+pub(crate) use call_record::NATIVE_JS_STOPPED;
 pub(crate) const JS_STEP_LOOP_ENTRY: usize = 0;
 pub(crate) const JS_STEP_CAPTURE_VALUES: usize = 80;
 pub(crate) const JS_STEP_CAPTURE_LEN: usize = 88;

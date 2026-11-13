@@ -7,7 +7,7 @@
 use crate::layout::words::{HEAP_TAG, TAG_MASK};
 use crate::layout::{JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE};
 use crate::staged::{Stage, Table};
-use crate::words::hole;
+use crate::words::{hole, HOLE_FOURTH, HOLE_THIRD, LAST_HOLE};
 use crate::typed_ir::Type;
 use crate::staged::region::{Access, Region};
 
@@ -66,9 +66,9 @@ impl Stage for StencilStage {
             match n {
                 0 => hole::<0>() as u64,
                 1 => hole::<1>() as u64,
-                2 => hole::<2>() as u64,
-                3 => hole::<3>() as u64,
-                4 => hole::<4>() as u64,
+                HOLE_THIRD => hole::<HOLE_THIRD>() as u64,
+                HOLE_FOURTH => hole::<HOLE_FOURTH>() as u64,
+                LAST_HOLE => hole::<LAST_HOLE>() as u64,
                 _ => UNSUPPORTED_site(n as u64),
             }
         }

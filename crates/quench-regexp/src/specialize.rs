@@ -111,10 +111,18 @@ fn set<S: Stage>(stage: &mut S, register: u32, value: usize) {
     stage.assign(register, value);
 }
 
+/// A capture's registers: its start, then its end.
+const CAPTURE_REGISTERS: u32 = 2;
+
+#[inline(always)]
+fn start_register(capture: u32) -> u32 {
+    capture * CAPTURE_REGISTERS
+}
+
 /// Writes both bounds of `capture`, keeping the old pair on the stack.
 #[inline(always)]
 fn set_capture<S: Stage>(stage: &mut S, capture: u32, (start, end): (usize, usize)) {
-    let bound = 2 * capture;
+    let bound = start_register(capture);
     let (old_start, old_end) = (stage.register(bound), stage.register(bound + 1));
     stage.push(Frame::RestoreCapture { capture, start: old_start, end: old_end });
     stage.assign(bound, start);
@@ -127,8 +135,8 @@ fn undo<S: Stage>(stage: &mut S, frame: Frame) {
     match frame {
         Frame::Restore { register, value } => stage.assign(register, value),
         Frame::RestoreCapture { capture, start, end } => {
-            stage.assign(2 * capture, start);
-            stage.assign(2 * capture + 1, end);
+            stage.assign(start_register(capture), start);
+            stage.assign(start_register(capture) + 1, end);
         }
         _ => {}
     }
@@ -177,7 +185,7 @@ pub(super) fn replay<S: Stage>(stage: &mut S) -> Replay {
     }
 }
 
-/// The meaning of `inst` at `at`.
+/// The meaning of `inst` at `at`: control flow here, the registers' bookkeeping in `registers`.
 #[inline(always)]
 pub(super) fn step<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
     match inst {
@@ -189,15 +197,19 @@ pub(super) fn step<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
             Step::Continue(at.next())
         }
         Inst::GuardedSplit { alternative, guard } => guarded_split(stage, (alternative, guard), at),
-        Inst::Dispatch { table } => match stage.dispatch(table, at.position) {
-            Some(target) => Step::Continue(at.jump(target)),
-            None => Step::Fail,
-        },
+        Inst::Dispatch { table } => dispatch(stage, table, at),
         Inst::Jump(target) => Step::Continue(at.jump(target)),
-        Inst::CaptureOpen { temporary, restores } => {
-            if restores { set(stage, temporary, at.position) } else { stage.assign(temporary, at.position) }
-            Step::Continue(at.next())
-        }
+        Inst::Look { negative, end } => Step::when(stage.look(at.next(), negative), at.jump(end)),
+        Inst::LookSucceed | Inst::Match => Step::Accept,
+        inst => registers(stage, inst, at),
+    }
+}
+
+/// The instructions that read and write the register file: captures, loop counters, backreferences.
+#[inline(always)]
+fn registers<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
+    match inst {
+        Inst::CaptureOpen { temporary, restores } => capture_open(stage, (temporary, restores), at),
         Inst::CaptureClose { capture, temporary } => {
             let start = stage.register(temporary);
             set_capture(stage, capture, (start, at.position));
@@ -216,9 +228,23 @@ pub(super) fn step<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
         Inst::EmptyCheck { start } => Step::when(at.position != stage.register(start), at.next()),
         Inst::LoopTail { counter, start, min, head } => loop_tail(stage, (counter, start, min, head), at),
         Inst::Backreference { first, count, ignore_case, unicode } => backreference(stage, (first, count, ignore_case, unicode), at),
-        Inst::Look { negative, end } => Step::when(stage.look(at.next(), negative), at.jump(end)),
-        Inst::LookSucceed | Inst::Match => Step::Accept,
+        _ => unreachable!("`step` handles the control instructions"),
     }
+}
+
+#[inline(always)]
+fn dispatch<S: Stage>(stage: &mut S, table: u32, at: Cursor) -> Step {
+    match stage.dispatch(table, at.position) {
+        Some(target) => Step::Continue(at.jump(target)),
+        None => Step::Fail,
+    }
+}
+
+/// Records where a capture opens, keeping the old value on the stack when backtracking must undo it.
+#[inline(always)]
+fn capture_open<S: Stage>(stage: &mut S, (temporary, restores): (u32, bool), at: Cursor) -> Step {
+    if restores { set(stage, temporary, at.position) } else { stage.assign(temporary, at.position) }
+    Step::Continue(at.next())
 }
 
 #[inline(always)]
@@ -263,7 +289,7 @@ fn guarded_split<S: Stage>(stage: &mut S, (alternative, guard): (u32, u32), at: 
 fn reset_captures<S: Stage>(stage: &mut S, (first, count): (u32, u32), at: Cursor) -> Step {
     for index in first..first + count {
         let capture = stage.listed(index);
-        if stage.register(2 * capture) != UNSET {
+        if stage.register(start_register(capture)) != UNSET {
             set_capture(stage, capture, (UNSET, UNSET));
         }
     }
@@ -303,7 +329,7 @@ fn loop_tail<S: Stage>(stage: &mut S, (counter, start, min, head): (u32, u32, u3
 /// position, and trivially where no listed capture is set.
 #[inline(always)]
 fn backreference<S: Stage>(stage: &mut S, (first, count, ignore_case, unicode): (u32, u32, bool, bool), at: Cursor) -> Step {
-    let set_bound = (first..first + count).map(|index| 2 * stage.listed(index)).find(|bound| stage.register(*bound) != UNSET);
+    let set_bound = (first..first + count).map(|index| start_register(stage.listed(index))).find(|bound| stage.register(*bound) != UNSET);
     let Some(bound) = set_bound else { return Step::Continue(at.next()) };
     let (from, to) = (stage.register(bound), stage.register(bound + 1));
     let width = to - from;

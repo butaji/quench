@@ -93,12 +93,12 @@ impl Operand {
 }
 
 /// The places each operand of a row may take (library codes), and for a heap row whether its
-/// array is the entry record's.
+/// array is the entry record's (`entry`: bit `false` and bit `true`, set where the row may be that).
 pub struct NodePlaces {
     pub dst: &'static [u8],
     pub a: &'static [u8],
     pub b: &'static [u8],
-    pub entry: &'static [bool],
+    pub entry: u8,
 }
 
 pub struct Supernode {
@@ -117,16 +117,20 @@ pub struct Supernode {
 const PINS: [u8; INT_PINS as usize] = [PIN, PIN + 1, PIN + 2, LAST_INT_PIN];
 const PINS_OR_IMM: [u8; INT_PINS as usize + 1] = [PIN, PIN + 1, PIN + 2, LAST_INT_PIN, IMM];
 const IGNORED: [u8; 1] = [MEM];
-const NO_ENTRY: [bool; 1] = [false];
-const BOTH_ENTRIES: [bool; 2] = [false, true];
+/// The `entry` bit of a row whose array is not (`0`) or is (`1`) the entry record's.
+const fn entry_bit(entry: bool) -> u8 {
+    1 << entry as u8
+}
+const NO_ENTRY: u8 = entry_bit(false);
+const BOTH_ENTRIES: u8 = entry_bit(false) | entry_bit(true);
 
 /// An int32 arithmetic or bitwise row over pins, its second operand maybe an immediate.
-const VALUE_FIRST: NodePlaces = NodePlaces { dst: &PINS, a: &PINS, b: &PINS_OR_IMM, entry: &NO_ENTRY };
+const VALUE_FIRST: NodePlaces = NodePlaces { dst: &PINS, a: &PINS, b: &PINS_OR_IMM, entry: NO_ENTRY };
 /// A dense element read: the array's place is the library's, the index a pin.
-const INDEX_FIRST: NodePlaces = NodePlaces { dst: &PINS, a: &IGNORED, b: &PINS, entry: &BOTH_ENTRIES };
-const VALUE_SECOND: NodePlaces = NodePlaces { dst: &PINS, a: &PINS, b: &PINS, entry: &NO_ENTRY };
+const INDEX_FIRST: NodePlaces = NodePlaces { dst: &PINS, a: &IGNORED, b: &PINS, entry: BOTH_ENTRIES };
+const VALUE_SECOND: NodePlaces = NodePlaces { dst: &PINS, a: &PINS, b: &PINS, entry: NO_ENTRY };
 /// A compare-and-branch writes nothing.
-const BRANCH_SECOND: NodePlaces = NodePlaces { dst: &IGNORED, a: &PINS, b: &PINS, entry: &NO_ENTRY };
+const BRANCH_SECOND: NodePlaces = NodePlaces { dst: &IGNORED, a: &PINS, b: &PINS, entry: NO_ENTRY };
 
 const FEED_B: [Operand; 1] = [Operand::B];
 const FEED_EITHER: [Operand; 2] = [Operand::A, Operand::B];
@@ -228,7 +232,7 @@ pub fn variants(supernode: &Supernode) -> BTreeSet<[Node; NODES]> {
     let mut found = BTreeSet::new();
     for &feed in supernode.feeds {
         let other = if feed == Operand::A { second.b } else { second.a };
-        for &entry in first.entry {
+        for entry in [false, true].into_iter().filter(|&entry| first.entry & entry_bit(entry) != 0) {
             for choice in product(&[first.dst, first.a, first.b, other, second.dst]) {
                 found.extend(rows_of(&shape, feed, entry, &choice));
             }

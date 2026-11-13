@@ -33,6 +33,8 @@ const FIXTURES: &[&str] = &[
 ];
 use analysis::{MIN_QUALIFYING_ROUNDS, SELECTIVE_HANDOFF_CONFIG};
 const DEFAULT_TIMEOUT_MS: u64 = 300_000;
+/// How long one engine run forced to a tier may take (`--residuals`, `--tier-differential`).
+const TIER_RUN_TIMEOUT_MS: u64 = 60_000;
 /// The development-experiment setting (`quench_runtime::trace::Dev`).
 const QUENCH_DEV: &str = "QUENCH_DEV";
 const MEASUREMENT_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"];

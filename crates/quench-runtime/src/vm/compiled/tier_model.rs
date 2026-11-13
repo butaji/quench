@@ -95,9 +95,8 @@ fn shadow_log(observed: &Observed, net: i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::tier_policy::TEST_PRIORS as PRIORS;
 
-    const PRIORS: Priors = Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
-        region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800 };
 
     fn observed(length: u64, loop_work: u64, entries: u32, region: bool, ir: usize) -> Observed { Observed { length, loop_work, entries, region, ir } }
     fn net(observed: &Observed) -> i64 { net_ns(&PRIORS, PRIORS.body_share, PRIORS.compile_ns_per_ir, PER_MILLE, observed) }

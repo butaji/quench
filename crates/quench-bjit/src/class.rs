@@ -24,3 +24,10 @@ pub const MOVW_GROUPS: u8 = 4;
 pub const fn is_successor(class: u8) -> bool {
     matches!(class, REL32 | BRANCH26 | BRANCH19 | BRANCH14)
 }
+
+/// Successor hole indexes.
+pub const NEXT: u32 = 0;
+pub const TAKEN: u32 = 1;
+/// Exit hole indexes start here: exit `kind` is hole `EXIT + kind`, so each guard kind reaches
+/// its own exit stub (an `ExitSite` id), not one shared hole.
+pub const EXIT: u32 = 2;

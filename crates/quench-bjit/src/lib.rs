@@ -15,20 +15,13 @@ pub mod numeric;
 pub mod call;
 pub mod call_record;
 pub mod stub;
-pub use class::{ABS64, BRANCH14, BRANCH19, BRANCH26, MOVW, REL32};
+pub use class::{EXIT, NEXT, TAKEN, ABS64, BRANCH14, BRANCH19, BRANCH26, MOVW, REL32};
 pub use patch::{HOLES, Imm32, padded_holes, PatchError, patch_successor, patch_value};
 pub use stub::{EXIT_STUB_LEN, exit_stub};
 
 /// Pinned int registers a stencil takes, and the double registers (xmm0 to xmm7) after them.
 pub const PINNED: usize = 4;
 pub const PINNED_F: usize = 8;
-
-/// Successor hole indexes.
-pub const NEXT: u32 = 0;
-pub const TAKEN: u32 = 1;
-/// Exit hole indexes start here: exit `kind` is hole `EXIT + kind`, so each guard kind reaches
-/// its own exit stub (an `ExitSite` id), not one shared hole.
-pub const EXIT: u32 = 2;
 
 /// `jmp rel32`: the opcode byte, then the displacement a relocation patches.
 const JMP_REL32_LEN: usize = 5;

@@ -34,8 +34,8 @@ pub(super) enum Inline {
 }
 
 /// The argument counts of the inline operations.
-const UNARY: u16 = 1;
-const BINARY: u16 = 2;
+const UNARY_ARGUMENTS: u16 = 1;
+const BINARY_ARGUMENTS: u16 = 2;
 
 /// `operation` of the binary64 value, as machine code (`staged::math::float_unary`).
 pub(in crate::vm::compiled) fn emit_float_unary(builder: &mut FunctionBuilder<'_>, operation: FloatUnary, value: ir::Value) -> ir::Value {
@@ -93,7 +93,7 @@ impl Inline {
 
     /// The arguments the inline operation reads; a call passing another count takes the native.
     const fn arguments(self) -> u16 {
-        match self { Self::Imul | Self::Extreme(_) => BINARY, Self::Unary(_) => UNARY, Self::Builtin(builtin) => builtin.arguments() }
+        match self { Self::Imul | Self::Extreme(_) => BINARY_ARGUMENTS, Self::Unary(_) => UNARY_ARGUMENTS, Self::Builtin(builtin) => builtin.arguments() }
     }
 
     /// Whether the operation may change an array's elements, which a loop's hoisted views

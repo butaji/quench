@@ -62,9 +62,8 @@ pub(in crate::vm) fn repays(span: u64, entries: u64, iterations: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::tier_policy::TEST_PRIORS as PRIORS;
 
-    const PRIORS: Priors = Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
-        region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800 };
     const LOOPS: Loops = Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 100, widen_after_leaves: 4, max_compilations: 8 };
     const COST: u64 = PRIORS.compile_ns_per_ir;
 

@@ -4536,11 +4536,10 @@ pub(super) const LANE_BODY_RETURNED: u32 = RETURN_STATUS_BASE - 1;
 /// What a lane body's native call (`dispatch_fast::lane_body_call`) did: completed, with its
 /// result in the call's register; missed before any effect, so the body leaves at the call;
 /// or left the lane in the callee's activation it made.
-pub(super) const LANE_CALL_COMPLETED: u64 = 0;
-pub(super) const LANE_CALL_MISSED: u64 = 1;
-pub(super) const LANE_CALL_LEFT: u64 = 2;
 /// Termination is terminal: the outer native body must not reconstruct or replay a call.
-pub(super) const LANE_CALL_TERMINATED: u64 = 3;
+pub(super) use quench_bjit::call_record::{
+    LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_TERMINATED,
+};
 
 impl LaneExit {
     /// The caller PC a leave or completion is at, with a completion's value written to the
@@ -5461,7 +5460,7 @@ pub(super) fn native_js_operation_signature(
     signature
 }
 
-pub(super) const NATIVE_JS_STOPPED: u32 = 1;
+pub(super) use quench_bjit::call_record::NATIVE_JS_STOPPED;
 #[cfg(feature = "aot")]
 pub(super) const NATIVE_JS_INVALID_PC: u32 = 2;
 #[cfg(feature = "native-execution")]
