@@ -70,6 +70,7 @@ use captures::RootedRead;
 #[path = "lane_region/direct_admission.rs"] mod direct_admission;
 #[path = "lane_region/direct_enter.rs"] mod direct_enter;
 #[path = "lane_region/call_outs.rs"] mod call_outs;
+#[path = "lane_region/jumps.rs"] mod jumps;
 use loop_arrays::{ArraySource, LoopArray};
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
@@ -483,9 +484,9 @@ struct Lowering<'a, 'f> {
     params: usize,
     helpers: LaneHelpers,
     /// The proved shapes and slots of each field cache site the unit reads or writes.
-    fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
+    fields: &'a FieldSites,
     /// An OSR region's field reads answered from the entry record, by unit PC.
-    entry_fields: &'a BTreeMap<usize, u32>,
+    entry_fields: &'a EntryWords,
     /// The element reads observed to hold Numbers (`RegionSpecializer::number_reads`).
     observed: super::facts::Observed<'a>,
     /// The registers observed to hold int32s at entry (`RegionSpecializer::int_entries`).
@@ -743,6 +744,10 @@ impl<'a, 'f> Lowering<'a, 'f> {
     fn word_add_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().iadd_imm_u(a, imm) }
     fn word_mul_imm(&mut self, a: ir::Value, imm: i64) -> ir::Value { self.ins().imul_imm_u(a, imm) }
     fn word_cmp_imm(&mut self, cc: IntCC, a: ir::Value, imm: i64) -> ir::Value { self.ins().icmp_imm_u(cc, a, imm) }
+    /// The low 32 bits of a word.
+    fn narrow_word(&mut self, word: ir::Value) -> ir::Value { self.ins().ireduce(types::I32, word) }
+    /// A word to the lane's register file at `base` plus `offset` (alias region `Frame`).
+    fn frame_store(&mut self, word: ir::Value, base: ir::Value, offset: i32) { self.ins().store(regions::frame(), word, base, offset); }
     fn word_brif(&mut self, test: ir::Value, then: ir::Block, then_args: &[ir::BlockArg], otherwise: ir::Block, otherwise_args: &[ir::BlockArg]) {
         self.ins().brif(test, then, then_args, otherwise, otherwise_args);
     }
@@ -988,27 +993,35 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     fn entry_state(&mut self, pc: usize, registers: usize) -> State {
         let mut state = State::canonical(registers);
+        self.home_entry_registers(&mut state, pc);
+        let Some(types) = self.facts.at(pc) else { return state };
+        for (index, ty) in types.iter().copied().enumerate() {
+            if !self.is_live(pc, index as Register) { continue; }
+            let Some(fact) = self.entry_fact(pc, ty) else { self.valid = false; return state; };
+            state.values[index] = fact;
+        }
+        state
+    }
+
+    /// The live caller registers a once-entered region entry loaded from their frame slots.
+    fn home_entry_registers(&self, state: &mut State, pc: usize) {
         if pc == self.coverage.entry() && self.completion != Completion::Number
             && edges::entered_once(&self.unit.instructions, pc, |at| self.coverage.lowered(at)) {
-            // The entry loaded each live caller register from its frame slot.
             for register in (0..self.unit.caller_registers).filter(|register| self.is_live(pc, *register)) {
                 state.proofs.homed.insert(usize::from(register));
             }
         }
-        if let Some(types) = self.facts.at(pc) {
-            for (index, ty) in types.iter().copied().enumerate() {
-                if !self.is_live(pc, index as Register) { continue; }
-                let representation = number_domains::target_representation(ty);
-                let Some(fact) = RegisterFact::admit(Fact { ty, representation,
-                    binding: if pc == self.coverage.entry() { BindingTime::Location } else { BindingTime::Dynamic },
-                    proof: if pc != self.coverage.entry() { Proof::Definition }
-                        else if ty == Type::ANY { Proof::CanonicalValue } else { Proof::EntryGuard },
-                    projection: Projection::Exact,
-                }) else { self.valid = false; return state; };
-                state.values[index] = fact;
-            }
-        }
-        state
+    }
+
+    /// The fact a register of type `ty` has at `pc`: guarded at the region entry, a definition after.
+    fn entry_fact(&self, pc: usize, ty: Type) -> Option<RegisterFact> {
+        let entry = pc == self.coverage.entry();
+        RegisterFact::admit(Fact { ty, representation: number_domains::target_representation(ty),
+            binding: if entry { BindingTime::Location } else { BindingTime::Dynamic },
+            proof: if !entry { Proof::Definition }
+                else if ty == Type::ANY { Proof::CanonicalValue } else { Proof::EntryGuard },
+            projection: Projection::Exact,
+        })
     }
 
     /// Whether unit `register` is live at unit `pc`. Without unit masks: the frame that owns
@@ -1091,7 +1104,7 @@ pub(super) fn leaders(instructions: &[WideInstruction]) -> CompoundBitSet {
 /// Whether `instruction` reads a field as an int32 (`Lowering::get_field`): a lookup with no
 /// sink or completion whose last read's slots have only held int32 values, its value's tag
 /// tested at the read.
-fn int32_read(program: &ResidualProgram, fields: &BTreeMap<u16, Vec<NativeFieldLoad>>, instruction: WideInstruction) -> bool {
+fn int32_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
     if !instruction.op().class().eq(Class::GetField) || instruction.returns_from_frame() || instruction.writes_current_this() {
         return false;
     }
@@ -1103,7 +1116,7 @@ fn int32_read(program: &ResidualProgram, fields: &BTreeMap<u16, Vec<NativeFieldL
         },
         None => return false,
     };
-    fields.get(&last).is_some_and(|shapes| !shapes.is_empty()
+    site_loads(fields, last).is_some_and(|shapes| !shapes.is_empty()
         && shapes.iter().all(|field| field.ty == Type::INT32))
 }
 
@@ -1383,13 +1396,33 @@ pub(super) struct RegionPlan {
 /// this specializer; only the plan and the `VmFacts` division differ.
 /// No entry-snapshot field reads: a lane body or a static typed region reads its fields
 /// from the registers and caches, not from an OSR entry record.
-pub(super) static NO_ENTRY_FIELDS: BTreeMap<usize, u32> = BTreeMap::new();
+pub(super) static NO_ENTRY_FIELDS: [Option<u32>; 0] = [];
+
+/// The proved loads of each field-cache site, flat and indexed by the site (`site_loads`).
+pub(super) type FieldSites = [Option<Vec<NativeFieldLoad>>];
+/// The entry-record word of each unit PC whose field read the record answers, flat and
+/// indexed by the PC.
+pub(super) type EntryWords = [Option<u32>];
+
+/// The loads of field-cache `site`, if it has any.
+pub(super) fn site_loads(fields: &FieldSites, site: u16) -> Option<&Vec<NativeFieldLoad>> {
+    fields.get(usize::from(site))?.as_ref()
+}
+
+/// The flat table holding each `(key, value)` at its key, sized to the largest key.
+pub(super) fn flat_table<T>(entries: impl IntoIterator<Item = (usize, T)>) -> Vec<Option<T>> {
+    let entries: Vec<(usize, T)> = entries.into_iter().collect();
+    let mut table: Vec<Option<T>> = Vec::new();
+    table.resize_with(entries.iter().map(|(key, _)| key + 1).max().unwrap_or(0), || None);
+    for (key, value) in entries { table[key] = Some(value); }
+    table
+}
 
 pub(super) struct RegionSpecializer<'p> {
     pub(super) function_id: u32,
     pub(super) unit: &'p super::lane_unit::Unit,
     pub(super) helpers: LaneHelpers,
-    pub(super) fields: &'p BTreeMap<u16, Vec<NativeFieldLoad>>,
+    pub(super) fields: &'p FieldSites,
     pub(super) global_reads: &'p crate::vm::global_facts::GlobalReads,
     pub(super) facts: VmFacts<'p>,
     pub(super) generic: &'p [usize],
@@ -1398,7 +1431,7 @@ pub(super) struct RegionSpecializer<'p> {
     pub(super) isa: &'p dyn cranelift_codegen::isa::TargetIsa,
     /// An OSR region's field reads answered from the entry record, by unit PC and entry
     /// word (`osr_loop::field_word`).
-    pub(super) entry_fields: &'p BTreeMap<usize, u32>,
+    pub(super) entry_fields: &'p EntryWords,
     /// The unit PCs of element reads observed to hold Numbers (sorted): each leaves where its
     /// element is not one, and its result is typed a Number.
     pub(super) number_reads: &'p [super::facts::ObservedRead],
@@ -1431,7 +1464,7 @@ pub(super) fn lower_body(
     function_id: u32,
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
-    fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
+    fields: &FieldSites,
     global_reads: &crate::vm::global_facts::GlobalReads,
     vm: VmFacts<'_>,
     generic: &[usize],
@@ -1464,14 +1497,14 @@ pub(super) fn lower(
     function_id: u32,
     unit: &super::lane_unit::Unit,
     helpers: LaneHelpers,
-    fields: &BTreeMap<u16, Vec<NativeFieldLoad>>,
+    fields: &FieldSites,
     global_reads: &crate::vm::global_facts::GlobalReads,
     vm: VmFacts<'_>,
     generic: &[usize],
     direct: &BTreeMap<usize, *const DirectCallee>,
     frame_captures: &[(usize, usize)],
     isa: &dyn cranelift_codegen::isa::TargetIsa,
-    entry_fields: &BTreeMap<usize, u32>,
+    entry_fields: &EntryWords,
     number_reads: &[super::facts::ObservedRead],
     int_entries: &[(Register, IntRange)],
     typed_captures: &[u16],
@@ -1491,7 +1524,7 @@ pub(super) fn lower(
     let numeric = completion == Completion::Number;
     if numeric && (!super::super::js_compiled::function_candidate(function, program)
         || !numeric_unit(program, unit) || function.params > unit.caller_registers) { return None; }
-    if fields.values().flatten().any(|field| !field.valid()) { return None; }
+    if fields.iter().flatten().flatten().any(|field| !field.valid()) { return None; }
     if unit.instructions.is_empty() || unit.instructions.len() > MAX_NATIVE_RECORDS {
         return None;
     }
@@ -1681,7 +1714,7 @@ pub(super) fn lower(
         let instruction = instructions[pc];
         if !instruction.op().class().eq(Class::GetField) || instruction.result_flags() != 0 { return None; }
         let FieldLookup::Atom { base, cache_site, .. } = instruction.field_lookup()? else { return None };
-        let [field] = fields.get(&cache_site)?.as_slice() else { return None };
+        let [field] = site_loads(fields, cache_site)?.as_slice() else { return None };
         field.own_direct().then_some((base.register_index()?, field.shape))
     };
     lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], observed);
@@ -2115,7 +2148,7 @@ impl Lowering<'_, '_> {
         let this = self.builder.declare_var(types::I64);
         self.builder.def_var(this, this_bits);
         let mut receiver_shapes = BTreeMap::new();
-        for field in self.fields.values().flatten() {
+        for field in self.fields.iter().flatten().flatten() {
             if receiver_shapes.contains_key(&field.shape) {
                 continue;
             }
@@ -2474,7 +2507,6 @@ impl Lowering<'_, '_> {
             self.hoisted_read(state, instruction, read);
             return true;
         }
-        let instructions = &self.unit.instructions;
         let pc32 = pc as u32;
         let plain = instruction.result_flags() == 0;
         let ran = match instruction.op().class() {
@@ -2612,28 +2644,7 @@ impl Lowering<'_, '_> {
                     true
                 })
             }
-            Class::Jump if plain => {
-                let target = instruction.jump_target() as usize;
-                if target <= pc {
-                    self.backedge |= target == self.coverage.entry();
-                    if target == self.coverage.entry() { self.count_backedge(); }
-                    if self.shared_backedge(state, target) { return false; }
-                    self.interrupt_check(state, pc32);
-                    if let Some(header) = instructions.get(target).copied()
-                        && header.op().is_js_conditional_jump()
-                        && header.result_flags() == 0
-                        && header.jump_target() as usize > pc
-                    {
-                        // Rotate only the pure header test. The first visit
-                        // keeps the zero-trip guard; each backedge keeps its
-                        // poll and exact source-header recovery state.
-                        return self.instruction(state, target, header);
-                    }
-                }
-                self.step(state, frame::Edges::Jump, crate::staged::Operation::Jump);
-                self.continue_at(state, target);
-                return false;
-            }
+            Class::Jump if plain => return self.jump(state, pc, instruction),
             _ if plain && instruction.op().is_truthiness_jump() => {
                 let target = instruction.jump_target() as usize;
                 let exit = self.guard_exit(state, pc32);
@@ -2644,83 +2655,7 @@ impl Lowering<'_, '_> {
                 self.continue_branch(state, pc, target, taken_block, fall_block);
                 return false;
             }
-            Class::JumpBinaryFalse if plain => {
-                let operator = instruction.binary_operator_field();
-                let (left, right) = (instruction.operand_b(), instruction.operand_c());
-                if let Some(comparison) = nullish_comparison(&self.program.constants, instruction,
-                    |register| state.values[usize::from(register)].value.ty) {
-                    let ty = state.values[usize::from(comparison.source)].value.ty;
-                    let target = instruction.jump_target() as usize;
-                    if let Some(taken) = comparison.known_outcome(ty) {
-                        let taken = self.ins().iconst(types::I8, i64::from(taken));
-                        if target <= pc { self.interrupt_check(state, pc32); }
-                        self.branch(state, pc, target, taken);
-                    } else if target > pc {
-                        let exit = self.guard_exit(state, pc32);
-                        let value = self.tagged(state, comparison.source);
-                        let taken = self.builder.create_block();
-                        let fall = self.builder.create_block();
-                        let unequal = if comparison.negated { pc + 1 } else { target };
-                        let identity = self.builder.func.dfg.resolve_aliases(value);
-                        let direct = (!comparison.strict && self.facts.at(unequal)
-                            .is_some_and(|types| types.iter().enumerate().any(|(index, ty)|
-                                *ty == Type::DIRECT_OBJECT_FAMILY && self.is_live(unequal, index as Register)
-                                && matches!(state.values[index].tagged, TaggedView::Value(alias)
-                                    if self.builder.func.dfg.resolve_aliases(alias) == identity))))
-                            .then(|| self.builder.create_block());
-                        emit_nullish_edges(&mut self.builder, value, comparison, self.vm.html_dda, exit, taken, fall, direct);
-                        if let Some(direct) = direct {
-                            self.builder.switch_to_block(direct);
-                            let mut direct_state = state.clone();
-                            self.refine_object_family(&mut direct_state, value);
-                            self.continue_at(&mut direct_state, unequal);
-                            // The other unequal arm has already excluded this family.
-                            // Resume before the latch's moves, with the original homes.
-                            self.builder.switch_to_block(if comparison.negated { fall } else { taken });
-                            self.exit(state, unequal as u32);
-                            self.builder.switch_to_block(if comparison.negated { taken } else { fall });
-                            self.continue_at(&mut state.clone(), if comparison.negated { target } else { pc + 1 });
-                        } else {
-                            self.continue_branch(state, pc, target, taken, fall);
-                        }
-                    } else {
-                        let exit = self.guard_exit(state, pc32);
-                        let value = self.tagged(state, comparison.source);
-                        let taken = emit_nullish_branch(&mut self.builder, value, comparison, self.vm.html_dda, exit);
-                        self.interrupt_check(state, pc32);
-                        self.branch(state, pc, target, taken);
-                    }
-                    return false;
-                }
-                if let Some(operation) = super::operations::NumberBitwise::from_operator(operator)
-                    && self.operand_supported(left) && self.operand_supported(right)
-                    && [left, right].iter().all(|operand| operand.kind() != Some(OperandKind::Constant)
-                        || super::facts::operand_type(&self.program.constants, *operand, |_| Type::ANY).is_subtype(Type::NUMBER))
-                {
-                    let exit = self.guard_exit(state, pc32);
-                    let left = self.operand_to_int32(state, left, exit).expect("supported numeric operand");
-                    let right = self.operand_to_int32(state, right, exit).expect("supported numeric operand");
-                    // Signed and unsigned bitwise results are false exactly when all bits
-                    // are zero. Reuse the value operation without boxing its branch result.
-                    let bits = emit_number_bitwise_bits(&mut self.builder, operation, left, right);
-                    let taken = self.ins().icmp_imm_u(IntCC::Equal, bits, 0);
-                    let target = instruction.jump_target() as usize;
-                    if target <= pc { self.interrupt_check(state, pc32); }
-                    self.branch(state, pc, target, taken);
-                    return false;
-                }
-                if let Some(holds) = self.relation(state, pc32, operator, left, right) {
-                    let taken = self.ins().icmp_imm_u(IntCC::Equal, holds, 0);
-                    let target = instruction.jump_target() as usize;
-                    if target <= pc {
-                        self.interrupt_check(state, pc32);
-                    }
-                    self.branch(state, pc, target, taken);
-                    return false;
-                } else {
-                    None
-                }
-            }
+            Class::JumpBinaryFalse if plain => self.jump_binary_false(state, pc, instruction),
             _ => None,
         };
         match ran {
@@ -3283,16 +3218,7 @@ impl Lowering<'_, '_> {
         self.home_written(state, pc);
         let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
         self.reentries.push(completed);
-        let site = match crate::staged::Operation::<ir::Value, EmitProof>::decode(instruction, |_| None) {
-            Some(crate::staged::Operation::Call(crate::staged::CallOperation::Site(site))) => Some(site),
-            _ => None,
-        };
-        match (self.direct.get(&pc).copied(), site) {
-            // SAFETY: the body owns the callee for as long as its code runs.
-            (Some(callee), Some(site)) if site.receiver.is_some() => self.direct_call(state, site, unsafe { &*callee }, generic, completed),
-            (Some(callee), Some(site)) => self.direct_construct(state, site, unsafe { &*callee }, generic, completed),
-            _ => { self.ins().jump(generic, &[]); }
-        }
+        self.direct_or_generic(state, pc, instruction, generic, completed);
         self.builder.switch_to_block(generic);
         let status = self.record_helper(helper, call_pc);
         self.helper_status(status, completed, missed);
@@ -3311,6 +3237,22 @@ impl Lowering<'_, '_> {
         self.reload_property_arena();
         self.reload_result(state, instruction.result_register());
         true
+    }
+
+    /// The direct call of the callee the body owns at `pc`, else a jump to the helper's `generic`
+    /// block; a direct call's completion continues at `completed`.
+    fn direct_or_generic(&mut self, state: &mut State, pc: usize, instruction: WideInstruction,
+        generic: ir::Block, completed: ir::Block) {
+        let site = match crate::staged::Operation::<ir::Value, EmitProof>::decode(instruction, |_| None) {
+            Some(crate::staged::Operation::Call(crate::staged::CallOperation::Site(site))) => Some(site),
+            _ => None,
+        };
+        match (self.direct.get(&pc).copied(), site) {
+            // SAFETY: the body owns the callee for as long as its code runs.
+            (Some(callee), Some(site)) if site.receiver.is_some() => self.direct_call(state, site, unsafe { &*callee }, generic, completed),
+            (Some(callee), Some(site)) => self.direct_construct(state, site, unsafe { &*callee }, generic, completed),
+            _ => { self.ins().jump(generic, &[]); }
+        }
     }
 
     /// The activation completes with `register`, which the record at `pc` names
@@ -4147,7 +4089,7 @@ impl Lowering<'_, '_> {
         // An OSR region's static field read answers from the entry record, as the verified
         // lowering's does: the value the field held at entry, which the loop does not write.
         if sink.is_none() && completes.is_none() && !instruction.writes_current_this()
-            && let Some(&word) = self.entry_fields.get(&pc)
+            && let Some(Some(word)) = self.entry_fields.get(pc).copied()
         {
             self.entry_field_read(state, destination, word);
             return Some(true);
@@ -4237,7 +4179,7 @@ impl Lowering<'_, '_> {
             Some(register) if !receiver => FieldOwner::Register(register),
             _ => FieldOwner::This,
         };
-        let shapes = self.fields.get(&site).cloned().unwrap_or_default();
+        let shapes = site_loads(self.fields, site).cloned().unwrap_or_default();
         if shapes.is_empty() {
             return self.field_probe(state, probe_owner, object_bits, read, exit);
         }
@@ -4273,7 +4215,7 @@ impl Lowering<'_, '_> {
     /// receiver would fail at every run, and asks the VM's entries on a guard miss instead.
     fn reads_own_field(&self, instruction: WideInstruction) -> bool {
         let Some(FieldLookup::Atom { cache_site, .. }) = instruction.field_lookup() else { return true };
-        self.fields.get(&cache_site).is_none_or(|loads| loads.iter().any(|load| load.holder.is_none()))
+        site_loads(self.fields, cache_site).is_none_or(|loads| loads.iter().any(|load| load.holder.is_none()))
     }
 
     /// Whether `register`, whose type no object proof covers, may hold a receiver the object
@@ -4300,7 +4242,7 @@ impl Lowering<'_, '_> {
     /// record nothing else names, so it is proved for this read alone.
     fn object_field_read(&mut self, state: &mut State, object_bits: ir::Value, read: (Atom, u16), exit: ir::Block) -> Option<ir::Value> {
         let site = read.1;
-        let shapes = self.fields.get(&site).cloned().unwrap_or_default();
+        let shapes = site_loads(self.fields, site).cloned().unwrap_or_default();
         if shapes.is_empty() {
             return Some(self.field_probe(state, FieldOwner::Temporary, object_bits, read, exit));
         }
@@ -4738,7 +4680,7 @@ impl Lowering<'_, '_> {
         // A bound slot's store needs a dominating proof of the object, for both its branches.
         let bound = self.entry.as_ref().is_some_and(|entry| entry.fields.iter().any(|(known, _)| *known == site));
         let dynamic_header = bound.then(|| self.object_header(state, register, false, exit));
-        let shapes: Vec<NativeFieldLoad> = self.fields.get(&site).map(|shapes| shapes.iter()
+        let shapes: Vec<NativeFieldLoad> = site_loads(self.fields, site).map(|shapes| shapes.iter()
             .filter(|field| field.holder.is_none()).copied().collect()).unwrap_or_default();
         let field = match shapes.as_slice() {
             [field] => *field,
@@ -5171,572 +5113,8 @@ fn emit_js_guard_not(builder: &mut FunctionBuilder<'_>, condition: ir::Value, fa
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn call_effect_retires_nullable_shapes_without_losing_null_alternatives() {
-        use super::*;
-        let null = Type::language(crate::ValueType::Null);
-        let mut state = State::canonical(1);
-        state.values[0] = RegisterFact::definition(Type::direct_object(3).join(null), Representation::Tagged);
-        state.call_effect();
-        assert_eq!(state.values[0].value.ty, Type::DIRECT_OBJECT_FAMILY.join(null));
-        assert_eq!(state.values[0].value.ty.direct_object_part(), Some(Type::DIRECT_OBJECT_FAMILY));
-    }
-
-    use super::*;
-    use crate::value::EXACT_I64_TRUNCATION_LIMIT;
-
-    #[test]
-    fn callback_edges_retire_only_reachable_interrupt_ownership_proofs() {
-        let isa = super::super::super::jit_backend::target_isa().unwrap();
-        for callback_returns_to_loop in [false, true] {
-            let mut function = ir::Function::new();
-            let mut context = FunctionBuilderContext::new();
-            let mut builder = FunctionBuilder::new(&mut function, &mut context);
-            let blocks = [(); 4].map(|_| builder.create_block());
-            let mut polls = smallvec::SmallVec::<[ir::Inst; INLINE_EFFECT_EDGES]>::new();
-            for (index, block) in blocks.into_iter().enumerate() {
-                builder.switch_to_block(block);
-                let value = builder.ins().iconst(types::I8, 1);
-                let ir::ValueDef::Result(inst, _) = builder.func.dfg.value_def(value) else { unreachable!() };
-                polls.push(inst);
-                match index {
-                    0 => { builder.ins().jump(blocks[1], &[]); }
-                    1 => { builder.ins().brif(value, blocks[1], &[], blocks[2], &[]); }
-                    2 if callback_returns_to_loop => { builder.ins().brif(value, blocks[1], &[], blocks[3], &[]); }
-                    2 => { builder.ins().jump(blocks[3], &[]); }
-                    _ => { builder.ins().return_(&[]); }
-                }
-            }
-            builder.seal_all_blocks();
-            builder.finalize(isa.frontend_config());
-            for (edge, kept) in [(blocks[0], 0), (blocks[2], if callback_returns_to_loop { 1 } else { 2 }), (blocks[3], 3)] {
-                let mut selected = polls.clone();
-                retain_closed_polls(&function, &[edge], &mut selected);
-                assert_eq!(selected.as_slice(), &polls[..kept]);
-            }
-        }
-    }
-
-    #[test]
-    #[cfg(feature = "aot")]
-    fn inlined_capture_reads_require_an_admitted_invariant_callee() {
-        let source = "let held=4,suspended=2;let prototype={};prototype.test=function(){return (this.state&held)!==0||this.state===suspended;};function other(){return this.state===held;}function run(task,count){const owner=task;let n=count|0,result=0;while(n>0){n=(n-1)|0;owner.state=(owner.state+1)|0;if(owner.test())result=(result+1)|0;}return result;}";
-        let program = crate::Engine::specialize(source, "capture-entry.js").unwrap();
-        let named = |name: &str| program.functions.iter().position(|body|
-            body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
-        let caller = named("run");
-        let other = named("other") as u32;
-        let targets = static_call_targets(&program);
-        let unit_for = |polymorphic| super::super::lane_unit::unit(&program, caller as u32,
-            program.function(caller), &|function, pc| {
-                let mut found: Vec<_> = targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
-                    .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
-                    .into_iter().collect();
-                if polymorphic && !found.is_empty() {
-                    found.push(super::super::lane_unit::CallTarget { function: other, callee: CalleeBinding::Function });
-                }
-                found
-            }, &|id| program.function_get(id as usize)).unwrap();
-        for polymorphic in [false, true] {
-            let unit = unit_for(polymorphic);
-            assert_eq!(unit.frames.len(), if polymorphic { 2 } else { 1 });
-            let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)|
-                instruction.op().control_flow_layout().jumps()
-                    .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)).min().unwrap();
-            let loops = local_loops(&unit, &program.constants, header, &vec![None; unit.instructions.len()]);
-            let reads = invariant_reads(&program, &unit, &loops);
-            let captures: Vec<_> = reads.values().flatten().map(|read| read.pc).filter(|&pc|
-                unit.instructions[pc].op().is_load_capture()
-                    && matches!(unit.origins[pc], super::super::lane_unit::Origin::Inlined { .. })).collect();
-            assert_eq!(captures.len(), if polymorphic { 0 } else { 2 }, "{source}\n{}", program.disassemble());
-            if polymorphic { continue; }
-            let isa = super::super::super::jit_backend::target_isa().unwrap();
-            let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
-            let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
-                &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::PrefixFrom(header), Completion::Body, ElementViews::Dense).expect("capture loop region");
-            let function = region.function;
-            let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&function);
-            let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(&function, &cfg);
-            let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
-            loops.compute(&function, &cfg, &dom);
-            let calls: Vec<_> = function.layout.blocks().flat_map(|block|
-                function.layout.block_insts(block).map(move |inst| (block, inst))).filter(|&(_, inst)| {
-                    if function.dfg.insts[inst].opcode() != ir::Opcode::CallIndirect { return false; }
-                    let target = function.dfg.resolve_aliases(function.dfg.inst_args(inst)[0]);
-                    let ir::ValueDef::Result(target, _) = function.dfg.value_def(target) else { return false };
-                    matches!(function.dfg.insts[target], ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm }
-                        if imm.bits() as usize == addresses[LaneHelper::FunctionCapture as usize] as usize)
-                }).collect();
-            assert_eq!(calls.len(), captures.len(), "one shared capture projection per entry read");
-            for (block, _) in calls {
-                assert!(loops.innermost_loop(block).is_none(), "capture admission must precede the loop");
-            }
-            let body: Vec<_> = function.layout.blocks().filter(|&block| loops.innermost_loop(block).is_some())
-                .flat_map(|block| function.layout.block_insts(block)).collect();
-            assert!(!body.iter().any(|&inst| matches!(function.dfg.insts[inst],
-                ir::InstructionData::FloatCompare { cond: FloatCC::Equal, .. })),
-                "the admitted equality capture must not decode or compare f64 in the loop: {function}");
-            let entry_projection = |value| {
-                let mut pending = vec![value];
-                let mut seen = BTreeSet::new();
-                let mut origin = None;
-                while let Some(value) = pending.pop() {
-                    let value = function.dfg.resolve_aliases(value);
-                    if !seen.insert(value) { continue; }
-                    match function.dfg.value_def(value) {
-                        ir::ValueDef::Param(block, index) => {
-                            let before = pending.len();
-                            for predecessor in cfg.pred_iter(block) {
-                                for branch in function.dfg.insts[predecessor.inst]
-                                    .branch_destination(&function.dfg.jump_tables, &function.dfg.exception_tables) {
-                                    if branch.block(&function.dfg.value_lists) == block {
-                                        let Some(value) = branch.args(&function.dfg.value_lists).nth(index)
-                                            .and_then(|arg| arg.as_value()) else { return false };
-                                        pending.push(value);
-                                    }
-                                }
-                            }
-                            if pending.len() == before { return false; }
-                        }
-                        ir::ValueDef::Result(inst, _) if function.dfg.insts[inst].opcode() == ir::Opcode::Ireduce
-                            && function.layout.inst_block(inst).is_some_and(|block| loops.innermost_loop(block).is_none()) => {
-                                if origin.is_some_and(|other| other != value) { return false; }
-                                origin = Some(value);
-                            }
-                        _ => return false,
-                    }
-                }
-                origin.is_some()
-            };
-            assert!(body.iter().any(|&inst| {
-                let ir::InstructionData::IntCompare { cond: IntCC::Equal, args, .. } = function.dfg.insts[inst]
-                    else { return false };
-                args.into_iter().any(|value| function.dfg.value_type(value) == types::I32 && entry_projection(value))
-            }), "an entry-projected I32 capture must feed the native equality: {function}");
-        }
-    }
-
-    #[test]
-    fn relation_capture_entry_preserves_noninteger_values_and_effects() {
-        for (operator, strict) in [("==", false), ("===", true)] {
-            for reversed in [false, true] {
-                let comparison = if reversed { format!("limit{operator}this.bits") }
-                    else { format!("this.bits{operator}limit") };
-                let source = format!(r#"
-                    (function(){{
-                        function make(limit){{class Entry{{constructor(){{this.bits=0;}}probe(){{return {comparison};}}}}
-                            return {{entry:new Entry(),set(value){{limit=value;}},read(){{return limit;}}}};}}
-                        function run(entry,count){{const owner=entry;let n=count|0,result=0;
-                            while(n>0){{n=(n-1)|0;owner.bits=(owner.bits+1)|0;if(owner.probe())result=(result+1)|0;}}return result;}}
-                        function expected(value){{let total=0;for(let i=1;i<=7;i++)if(i{operator}value)total++;return total;}}
-                        const bundle=make(2);
-                        for(let warm=0;warm<96;warm++){{bundle.entry.bits=0;if(run(bundle.entry,7)!==1)throw 'warm';}}
-                        for(const value of [0,-0,1,2,2.5,NaN,Infinity,-Infinity,2n,'2',true,null,undefined,Symbol()]){{
-                            bundle.set(value);bundle.entry.bits=0;
-                            if(run(bundle.entry,7)!==expected(value)||bundle.entry.bits!==7||!Object.is(bundle.read(),value))throw 'capture value';
-                        }}
-                        let effects=0;
-                        bundle.set({{valueOf(){{effects++;return 2;}}}});bundle.entry.bits=0;
-                        if(run(bundle.entry,7)!=={}||effects!=={}||bundle.entry.bits!==7)throw 'coercion';
-                        effects=0;bundle.set({{valueOf(){{effects++;bundle.set(3);return 2;}}}});bundle.entry.bits=0;
-                        if(run(bundle.entry,7)!=={}||effects!=={}||bundle.entry.bits!==7)throw 'coercion mutation';
-                        bundle.set({{valueOf(){{throw 'zero-trip coercion';}}}});bundle.entry.bits=0;
-                        if(run(bundle.entry,0)!==0||bundle.entry.bits!==0)throw 'zero-trip';
-                        bundle.set(2);bundle.entry.bits=0;if(run(bundle.entry,7)!==1)throw 'integer reentry';
-                        function cold(count){{class Entry{{constructor(){{this.bits=0;}}probe(){{return this.bits{operator}hidden;}}}}
-                            const result=run(new Entry(),count);let hidden=2;return result;}}
-                        if(cold(0)!==0)throw 'zero-trip tdz';let caught=false;
-                        try{{cold(1);}}catch(error){{caught=error instanceof ReferenceError;}}if(!caught)throw 'tdz';
-                        throw 42;
-                    }})();
-                "#, usize::from(!strict), if strict { 0 } else { 7 }, usize::from(!strict), usize::from(!strict));
-                for typescript in [false, true] {
-                    let program = if typescript { crate::Engine::specialize_typescript(&source, "relation-capture.cts") }
-                        else { crate::Engine::specialize(&source, "relation-capture.cjs") }.unwrap();
-                    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-                        let mut vm = Vm::new(crate::test_host::TestHost::default());
-                        vm.set_execution_mode(mode);
-                        vm.programs.enable_js_lane_methods();
-                        let error = vm.execute(&program).unwrap_err();
-                        assert_eq!(error.thrown_value(), Some(Value::integer(42)),
-                            "{operator}, reverse={reversed}, TS={typescript}, {mode:?}: {error}");
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    #[cfg(feature = "aot")]
-    fn capture_entry_does_not_follow_a_copy_across_a_diamond() {
-        let source = r#"
-            let held=4;const prototype={};prototype.test=function(){return held|0;};
-            function fieldChoice(a,b,flag,count){const first=a,second=b;let n=count|0,result=0;
-                while(n>0){n=(n-1)|0;let selected=first;if(flag)selected=second;
-                    if(selected.test())result=(result+1)|0;}return result;}
-            function calleeChoice(a,b,flag,count){const first=a,second=b;let n=count|0,result=0;
-                while(n>0){n=(n-1)|0;let selected=first.test;if(flag)selected=second.test;
-                    if(selected())result=(result+1)|0;}return result;}
-        "#;
-        let program = crate::Engine::specialize(source, "capture-diamond.js").unwrap();
-        let targets = static_call_targets(&program);
-        for name in ["fieldChoice", "calleeChoice"] {
-            let caller = program.functions.iter().position(|body|
-                body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
-            let unit = super::super::lane_unit::unit(&program, caller as u32, program.function(caller),
-                &|function, pc| targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
-                    .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
-                    .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
-            assert_eq!(unit.frames.len(), 1, "exercise an actual inline marker: {name}");
-            let loops = local_loops(&unit, &program.constants, 0, &vec![None; unit.instructions.len()]);
-            assert!(!loops.is_empty(), "exercise an eligible loop: {name}");
-            let reads = invariant_reads(&program, &unit, &loops);
-            assert!(!reads.values().flatten().any(|read|
-                unit.instructions[read.pc].op().is_load_capture()
-                    && matches!(unit.origins[read.pc], super::super::lane_unit::Origin::Inlined { .. })),
-                "a skipped copy cannot prove the closure environment: {name}\n{}", program.disassemble());
-        }
-    }
-
-    #[test]
-    fn capture_entry_preserves_distinct_environments_and_mutations() {
-        let source = r#"
-            function make(held,suspended){
-                class State {constructor(state){this.state=state;}
-                    test(){return (this.state&held)!==0||this.state===suspended;}}
-                return {task:new State(5),set(a,b){held=a;suspended=b;}};
-            }
-            function run(task,count){let result=0;while(count>0){count=(count-1)|0;
-                task.state=(task.state+1)|0;if(task.test())result=(result+1)|0;}return result;}
-            function expected(state,count,held,suspended){let result=0;for(let i=0;i<count;i++){
-                state=(state+1)|0;if((state&held)!==0||state===suspended)result++;}return result;}
-            const a=make(4,2),b=make(8,3);
-            for(let warm=0;warm<96;warm++){run(a.task,17);run(b.task,17);}
-            for(let mask=0;mask<16;mask++){a.set(mask,7);a.task.state=0;b.task.state=0;
-                if(run(a.task,257)!==expected(0,257,mask,7)||run(b.task,257)!==expected(0,257,8,3))throw 'environment';}
-            let effects=0;a.set({valueOf(){effects++;return 4;}},2);a.task.state=0;
-            if(run(a.task,17)!==expected(0,17,4,2)||effects!==17)throw 'coercion';
-            function tdz(count){const task={state:0,test(){return (this.state&held)!==0;}};
-                const result=run(task,count);let held=4;return result;}
-            if(tdz(0)!==0)throw 'zero-trip';
-            let caught=false;try{tdz(1);}catch(error){caught=error instanceof ReferenceError;}
-            if(!caught)throw 'tdz';throw 42;
-        "#;
-        // CommonJS admits this source inside a function environment. Keep that
-        // capture ownership/layout rather than testing only global bindings.
-        let source = format!("(function(exports,require,module,__filename,__dirname){{{source}}})(undefined,undefined,undefined,undefined,undefined);");
-        for typescript in [false, true] {
-            let program = if typescript { crate::Engine::specialize_typescript(&source, "capture-entry.cts") }
-                else { crate::Engine::specialize(&source, "capture-entry.cjs") }.unwrap();
-            #[cfg(feature = "aot")]
-            {
-                // Exercise the linked unit/inliner path too: execution through
-                // the dynamic VM alone need not select the same region entries.
-                let module = crate::lower_native_js_module(&program, "capture_entry").unwrap();
-                let isa = super::super::super::jit_backend::target_isa().unwrap();
-                for function in module.functions {
-                    if let super::super::super::native_object::NativeFunction::Definition { function, .. } = function {
-                        super::super::super::jit_backend::compile_function(function, &*isa, None, |_, _| Ok(())).unwrap();
-                    }
-                }
-            }
-            for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-                let mut vm = Vm::new(crate::test_host::TestHost::default());
-                vm.set_execution_mode(mode);
-                #[cfg(not(quench_profiled))]
-                vm.programs.enable_js_jit_diagnostics();
-                vm.programs.enable_js_lane_methods();
-                let error = vm.execute(&program).unwrap_err();
-                assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{mode:?}: {error}");
-            }
-        }
-    }
-
-    #[test]
-    fn comparison_boolean_proofs_survive_branch_joins() {
-        let program = crate::Engine::specialize(
-            "function predicate(x){let result;if(x<0)result=x===-1;else result=x===1;if(result)return 7;return 9;}",
-            "boolean-join.js").unwrap();
-        let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
-        let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
-        let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
-        // SAFETY: the lowered function uses the shared lane-entry ABI and only live frame/register storage.
-        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
-        let mut frame = super::super::LaneFrame::new();
-        let mut vm = Vm::new(crate::test_host::TestHost::default());
-        frame.dispatch.refresh_object_bases(&vm);
-        frame.dispatch.bind_native_storage(&mut vm);
-        frame.dispatch.receiver = Value::UNDEFINED.to_bits();
-        frame.context.adapter_payload = (&mut frame.dispatch as *mut JsStepDispatch).cast();
-        for input in [-2.0, -1.0, 0.0, 1.0, 2.0] {
-            let mut registers = vec![Value::UNDEFINED; usize::from(unit.caller_registers)];
-            registers[0] = Value::number(input);
-            let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast()) };
-            assert_eq!(status, LANE_BODY_RETURNED, "comparison result must continue natively: {input}, stopped at {word}");
-            assert_eq!(Value::from_bits(word), Value::number(if input == -1.0 || input == 1.0 { 7.0 } else { 9.0 }));
-        }
-        // This region selects an int32 entry view. Other Number representations
-        // must recover before any guest operation, preserving their exact bits.
-        for input in [-0.0, f64::NEG_INFINITY, f64::INFINITY, f64::NAN] {
-            let mut registers = vec![Value::UNDEFINED; usize::from(unit.caller_registers)];
-            registers[0] = Value::number(input);
-            let before = registers.clone();
-            let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast()) };
-            // The entry's proof failed: the leave names it (`LaneExit::Entry`, which resumes
-            // at the first record), not a PC the code would continue at.
-            assert_eq!((status, word), (NATIVE_JS_STOPPED, super::super::LaneExit::Entry.word()));
-            assert_eq!(registers, before);
-        }
-    }
-
-    #[test]
-    fn native_to_int32_keeps_number_inputs_unboxed_and_misses_exactly() {
-        let program = crate::Engine::specialize(
-            "function words(x){x=x|0;return x|0;}", "unboxed-word-input.js").unwrap();
-        let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
-        let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::Number, ElementViews::Dense).unwrap();
-        assert_eq!(region.number_result, Some(NativeNumberResult::Int32));
-        for instruction in region.function.layout.blocks()
-            .flat_map(|block| region.function.layout.block_insts(block)) {
-            if region.function.dfg.insts[instruction].opcode() == ir::Opcode::Bitcast {
-                let result = region.function.dfg.first_result(instruction);
-                assert_ne!(region.function.dfg.value_type(result), types::I64, "int32 result must not round trip through f64");
-            }
-        }
-        let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
-        // SAFETY: the region has the lane body ABI and borrows one tagged Number.
-        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
-        let interrupt = crate::ExecutionInterrupt::default();
-        let mut context = CallContext::interrupt_only(&interrupt);
-        let boundary = [0.0, -0.0, 1.0, -1.0, f64::from(i32::MIN), f64::from(i32::MAX),
-            f64::from(i32::MIN) - 1.0, f64::from(i32::MAX) + 1.0,
-            1.5, -1.5, f64::MIN_POSITIVE, f64::from_bits(1), -f64::from_bits(1),
-            f64::INFINITY, f64::NEG_INFINITY, f64::NAN, f64::MAX, -f64::MAX,
-            EXACT_I64_TRUNCATION_LIMIT, -EXACT_I64_TRUNCATION_LIMIT,
-            EXACT_I64_TRUNCATION_LIMIT.next_down(), -EXACT_I64_TRUNCATION_LIMIT.next_down()];
-        let mut random = 0x517c_c1b7_2722_0a95_u64;
-        let samples = boundary.into_iter().chain((0..256).map(|_| {
-            random ^= random << 13;
-            random ^= random >> 7;
-            random ^= random << 17;
-            f64::from_bits(random)
-        }));
-        for number in samples {
-            let input = [Value::number(number).to_bits()];
-            let BodyReturn { status, value: out } = unsafe { entry(&mut context, 0, 0, input.as_ptr()) };
-            if number.abs() < EXACT_I64_TRUNCATION_LIMIT {
-                    assert_eq!(status, 0, "{number:?}");
-                    assert_eq!(out, u64::from(crate::value::number_to_u32(number)), "{number:?}");
-            } else {
-                    assert_eq!(i64::from(status), NUMBER_ENTRY_MISS, "{number:?}");
-                    assert_eq!(out, 0, "miss may not publish a result");
-            }
-            assert_eq!(input[0], Value::number(number).to_bits(), "borrowed Number is never canonicalized in place");
-        }
-    }
-
-    #[test]
-    fn unavailable_fault_page_declines_before_changing_canonical_registers() {
-        if !super::super::FAULT_POLL_SUPPORTED { return; }
-        let program = crate::Engine::specialize(
-            "function count(n){n=n|0;let sum=0;for(let i=0;i<n;i=(i+1)|0)sum=(sum+1)|0;return sum;}",
-            "missing-poll.js").unwrap();
-        let function = program.function(1);
-        let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
-        let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let helpers = LaneHelpers::Process(LaneHelper::addresses::<crate::test_host::TestHost>());
-        let region = lower(&program, 1, &unit, helpers, &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
-        assert!(region.fault_poll);
-        let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
-        let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
-        let mut frame = super::super::LaneFrame::new();
-        let mut vm = Vm::new(crate::test_host::TestHost::default());
-        frame.dispatch.refresh_object_bases(&vm);
-        frame.dispatch.bind_native_storage(&mut vm);
-        frame.context.adapter_payload = (&mut frame.dispatch as *mut JsStepDispatch).cast();
-        assert_eq!(frame.context.poll_start, 0);
-        let before = vec![Value::number(7.0); usize::from(unit.caller_registers)];
-        let mut registers = before.clone();
-        // No resumable page is lent, so this entry must leave before touching a
-        // poll or executing any guest operation. The canonical inputs stay exact.
-        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast()) };
-        assert_eq!(status, NATIVE_JS_STOPPED);
-        assert_eq!(word, 0);
-        assert_eq!(registers, before);
-    }
-
-    #[test]
-    fn admitted_integer_stores_do_not_repeat_heap_barrier_checks() {
-        let program = crate::Engine::specialize(
-            "function write(o, value) { o.value=value; return value; }", "store-proof.js").unwrap();
-        let function = program.function(1);
-        let mut fields: BTreeMap<_, _> = function.instructions().filter(|instruction| instruction.op().is_set_field())
-            .map(|instruction| (instruction.cache_site_index(), vec![NativeFieldLoad {
-                shape: 0, holder: None, slot: 0, storage_len: 1, storage: None,
-                ty: Type::INT32, inherited: None, function_shape: false,
-            }])).collect();
-        assert_eq!(fields.len(), 1, "the test must exercise a profiled store");
-        let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
-        for ty in [Type::INT32, Type::ANY] {
-            fields.values_mut().next().unwrap()[0].ty = ty;
-            let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-                &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
-            let native = region.function;
-            let barrier = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
-                .any(|instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
-                    if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, object_mark_blocks) as i32));
-            assert_eq!(barrier, ty == Type::ANY,
-                "only the admitted integer excludes a heap edge:\n{native}");
-        }
-    }
-
-    #[test]
-    fn object_shape_proofs_survive_verified_control_flow_edges() {
-        let program = crate::Engine::specialize(
-            "function subject(o, flag) { let value=o.left; if(flag) value+=1; return value+o.right; }",
-            "shape-edges.js",
-        ).unwrap();
-        let function = program.function(1);
-        let fields: BTreeMap<u16, Vec<NativeFieldLoad>> = function.instructions().filter_map(|instruction| {
-            if instruction.op().class().eq(Class::GetField)
-                && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
-                && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
-                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, inherited: None, function_shape: false }]))
-            } else { None }
-        }).collect();
-        let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
-        let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense).unwrap();
-        let native = region.function;
-        let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
-            .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
-                if i32::from(offset) == crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset as i32
-                    && native.dfg.value_type(native.dfg.inst_results(instruction)[0]) == types::I32))
-            .count();
-        // The implicit receiver has its entry projection; o needs one shape
-        // proof, shared by both paths to its second field read.
-        assert_eq!(shapes, 2, "the CFG must carry the proven shape:\n{native}");
-    }
-
-    #[test]
-    fn own_field_reads_take_no_arena_bound() {
-        let program = crate::Engine::specialize(
-            include_str!("../../../tests/fixtures/own-slot-proofs.js"), "own-slot-proofs.js",
-        ).unwrap();
-        let id = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "readPair")).unwrap();
-        let fields: BTreeMap<u16, Vec<NativeFieldLoad>> = program.function(id).instructions().filter_map(|instruction| {
-            if instruction.op().class().eq(Class::GetField)
-                && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
-                && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
-                Some((cache_site, vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None,
-                    ty: Type::ANY, inherited: None, function_shape: false }]))
-            } else { None }
-        }).collect();
-        let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
-        let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense).unwrap();
-        let native = region.function;
-        let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
-            .filter(|&instruction| {
-                let ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThanOrEqual, args, .. }
-                    = native.dfg.insts[instruction] else { return false };
-                let ir::ValueDef::Result(length, _) = native.dfg.value_def(native.dfg.resolve_aliases(args[1]))
-                    else { return false };
-                matches!(native.dfg.insts[length], ir::InstructionData::Load { offset, .. }
-                    if i32::from(offset) == crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.length as i32)
-            }).count();
-        // A live object's run lies inside the arena (`object_slots::arena_range`): neither read
-        // compares it with the arena's length.
-        assert_eq!(bounds, 0, "own field reads take no arena bound:\n{native}");
-    }
-
-    #[test]
-    fn number_loops_keep_f64_values_and_proofs_across_the_backedge() {
-        let program = crate::Engine::specialize(
-            include_str!("../../../tests/fixtures/typed-lane-numbers.js"), "typed-lane-numbers.js",
-        ).unwrap();
-        let id = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap();
-        let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
-        let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &BTreeMap::new(), &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense).expect("typed Number residual");
-        assert!(region.native > 0);
-        let native = region.function;
-        let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
-        let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();
-        dominators.compute(&native, &cfg);
-        let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
-        loops.compute(&native, &cfg, &dominators);
-        assert_eq!(loops.loops().count(), 1, "{native}");
-        let mut arithmetic = 0;
-        for block in native.layout.blocks().filter(|block| loops.innermost_loop(*block).is_some()) {
-            for instruction in native.layout.block_insts(block) {
-                let opcode = native.dfg.insts[instruction].opcode();
-                assert!(!matches!(opcode, ir::Opcode::Bitcast | ir::Opcode::Band),
-                    "no boxing/unboxing or repeated tag check in the Number loop: {instruction}: {native}");
-                arithmetic += usize::from(matches!(opcode, ir::Opcode::Fadd | ir::Opcode::Fsub | ir::Opcode::Fmul));
-            }
-        }
-        assert_eq!(arithmetic, 3, "{native}");
-    }
-
-    /// A plain unit over the function's own code, without inlining: the shape the loop
-    /// tier hands the region specializer.
-    fn plain_unit(function: &crate::bytecode::Function) -> super::super::lane_unit::Unit {
-        let instructions: Vec<_> = function.instructions().collect();
-        let count = instructions.len();
-        super::super::lane_unit::Unit {
-            instructions,
-            origins: (0..count).map(|pc|
-                super::super::lane_unit::Origin::Caller(pc as u32)).collect(),
-            frames: Vec::new(), markers: Vec::new(),
-            caller_registers: function.registers, registers: function.registers,
-            end: count as u32,
-        }
-    }
-
-    /// `Coverage::Loop` lowers only the loop, treats its backedge as a native branch, and
-    /// leaves at the exact PC of every edge out of it.
-    #[test]
-    fn loop_coverage_lowers_only_the_loop() {
-        let program = crate::Engine::specialize(
-            "function accumulate(x) { let s = 0; for (let i = 0; i < x; i++) { s = (s + i) | 0; } return s; } accumulate(4);",
-            "loop-coverage.js").unwrap();
-        let id = program.functions.iter().position(|body|
-            body.header().name.is_some_and(|name| &program.atoms[name as usize] == "accumulate")).unwrap() as u32;
-        let function = program.function(id as usize);
-        let unit = plain_unit(function);
-        let (header, backedge) = unit.instructions.iter().enumerate().find_map(|(pc, instruction)| {
-            (instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
-                && (instruction.jump_target() as usize) <= pc)
-                .then(|| (instruction.jump_target() as usize, pc))
-        }).expect("the function has a loop");
-        let isa = super::super::super::jit_backend::target_isa().unwrap();
-        let region = RegionSpecializer { function_id: id, unit: &unit,
-            helpers: LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            fields: &BTreeMap::new(), global_reads: &Default::default(), facts: VmFacts::STATIC,
-            generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
-            entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
-            plan: RegionPlan { coverage: Coverage::Loop { header, backedge, poll: true },
-                completion: Completion::Body, views: ElementViews::Dense } }
-            .specialize(&program).expect("the loop lowers");
-        assert!(region.native > 0, "the loop runs natively");
-        let native = region.function;
-        let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
-        let mut dominators = cranelift_codegen::dominator_tree::DominatorTree::new();
-        dominators.compute(&native, &cfg);
-        let mut loops = cranelift_codegen::loop_analysis::LoopAnalysis::new();
-        loops.compute(&native, &cfg, &dominators);
-        assert_eq!(loops.loops().count(), 1, "one native loop: {native}");
-    }
-}
+#[path = "lane_region/tests.rs"]
+mod tests;
+#[cfg(test)]
+#[path = "lane_region/lowering_tests.rs"]
+mod lowering_tests;

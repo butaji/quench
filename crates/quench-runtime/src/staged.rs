@@ -398,16 +398,22 @@ impl<W, P> Operation<W, P> {
                 register: instruction.register_b() },
             Op::ToNumeric => Self::Number(NumberOperation::ToNumeric {
                 destination: instruction.result_register(), source: instruction.register_b() }),
-            Op::Unary if instruction.unary_operator()
-                == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot {
-                    destination: instruction.result_register(), source: instruction.register_b() },
-            Op::Unary if instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX => Self::TypeofIndex {
-                destination: instruction.result_register(), source: instruction.register_b() },
-            Op::Unary if instruction.unary_operator()
-                == oxc_ast::ast::UnaryOperator::BitwiseNot as u32 => Self::Number(NumberOperation::BitwiseNot {
-                    destination: instruction.result_register(), source: Operand::register(instruction.register_b()) }),
-            Op::Unary if instruction.unary_operator() == oxc_ast::ast::UnaryOperator::Void as u32
-                && !instruction.returns_from_frame() => Self::Void { destination: instruction.result_register() },
+            Op::Unary => return Self::decode_unary(instruction),
+            _ => return None,
+        })
+    }
+
+    /// The unary operators of `decode_value`.
+    fn decode_unary(instruction: WideInstruction) -> Option<Self> {
+        let (destination, source) = (instruction.result_register(), instruction.register_b());
+        let operator = instruction.unary_operator();
+        Some(match operator {
+            _ if operator == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot { destination, source },
+            _ if operator == crate::bytecode::UNARY_TYPEOF_INDEX => Self::TypeofIndex { destination, source },
+            _ if operator == oxc_ast::ast::UnaryOperator::BitwiseNot as u32 =>
+                Self::Number(NumberOperation::BitwiseNot { destination, source: Operand::register(source) }),
+            _ if operator == oxc_ast::ast::UnaryOperator::Void as u32 && !instruction.returns_from_frame() =>
+                Self::Void { destination },
             _ => return None,
         })
     }

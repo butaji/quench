@@ -4,7 +4,6 @@
 //! generator's thread (`jit_backend::run_in_background`) while the program runs on.
 
 use super::*;
-use std::collections::BTreeMap;
 use super::super::program_store::lane_publication::LaneKey;
 
 type LaneCode = Result<Vec<u8>, super::jit_backend::NativeCompileRejection>;
@@ -13,7 +12,7 @@ type LaneCode = Result<Vec<u8>, super::jit_backend::NativeCompileRejection>;
 pub(super) struct LanePlan {
     pub(super) unit: lane_unit::Unit,
     pub(super) lowered: lane_region::LoweredLane,
-    pub(super) fields: BTreeMap<u16, Vec<NativeFieldLoad>>,
+    pub(super) fields: Vec<Option<Vec<NativeFieldLoad>>>,
     pub(super) direct: Box<[DirectCallee]>,
     /// Whether every call of it that has run is inlined or direct (`LaneMethod::closed`).
     pub(super) closed: bool,
@@ -178,7 +177,7 @@ impl<H: Host> Vm<H> {
         let mut fields = self.lane_unit_fields(program, &unit, &left_at);
         // Admitting the stores' writes once, here, widens what they widen; the fields then
         // read the widened slots, and the body's entries admit nothing again.
-        if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| fields.get(&site).map(Vec::as_slice))) { fields = self.lane_unit_fields(program, &unit, &left_at); }
+        if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| lane_region::site_loads(&fields, site).map(Vec::as_slice))) { fields = self.lane_unit_fields(program, &unit, &left_at); }
         let global_reads = self.lane_global_reads(program, function, &unit);
         let (direct, direct_sites) = unit_direct_calls(&unit, direct);
         let closed = unit_closed(&unit, function, |pc| direct_sites.contains_key(&pc), targets);
@@ -407,7 +406,7 @@ impl LanePlan {
 
     /// The facts its code relies on, its direct callees' included.
     fn dependencies(&self) -> LaneDependencies {
-        LaneDependencies::of(self.fields.values().flatten().copied(), &self.direct)
+        LaneDependencies::of(self.fields.iter().flatten().flatten().copied(), &self.direct)
     }
 
     /// The method its compiled `code` makes, published to executable memory. The method

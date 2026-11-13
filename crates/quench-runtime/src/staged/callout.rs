@@ -80,6 +80,13 @@ impl<W, P> Operation<W, P> {
                 (CallOut::Binary { left, right, operator }, Some(destination)),
             Self::Protocol { step, destination, operands } => (CallOut::Protocol { step, operands }, destination),
             Self::ForInNext { destination, state } => (CallOut::ForInNext { state }, Some(destination)),
+            _ => return self.binding_call_out(),
+        })
+    }
+
+    /// The environment and global rows of `call_out`.
+    fn binding_call_out(&self) -> Option<(CallOut, Option<Register>)> {
+        Some(match *self {
             Self::LoadEnvLocal { destination, slot } => (CallOut::LoadEnvLocal { slot }, Some(destination)),
             Self::StoreEnvLocal { source, slot, result, initialize } =>
                 (CallOut::StoreEnvLocal { source, slot, initialize }, result),
