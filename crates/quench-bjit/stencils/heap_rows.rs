@@ -107,23 +107,25 @@ fn stage_site(stage: &mut StencilStage) -> u64 {
 /// The hole holding the site table an element access reads its shape facts from.
 const ELEMENT_SITES: u8 = 3;
 
+/// The depth-0 capture slot (holes 1 and 2) into the destination; a hit continues at TAKEN, as every row that may
+/// have a helper step behind it does (`hop`).
 #[inline(always)]
 fn capture_row<const D: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::from_hole(HOLE_A);
     let values = word_at(payload, JS_STEP_CAPTURE_VALUES);
     let len = word_at(payload, JS_STEP_CAPTURE_LEN);
     let word = need!(s, environment::dense_capture(&mut stage, values, len, 0, ()));
-    deliver::<D>(s, word)
+    hop(deliver::<D>(s, word))
 }
 
 /// A store of the value operand (hole 0) into the same capture slot (holes 1 and 2), where the
-/// run's slots admit every direct store (`environment::dense_capture_store`).
+/// run's slots admit every direct store (`environment::dense_capture_store`); a hit continues at TAKEN.
 #[inline(always)]
 fn capture_set_row<const A: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::from_hole(HOLE_A);
     let slots = (word_at(payload, JS_STEP_CAPTURE_VALUES), word_at(payload, JS_STEP_CAPTURE_LEN), word_at(payload, JS_STEP_CAPTURE_STORES));
     need!(s, environment::dense_capture_store(&mut stage, slots, 0, tagged_place::<A, 0>(&s), ()));
-    Out::Next(s)
+    Out::Taken(s)
 }
 
 #[inline(always)]
@@ -265,14 +267,21 @@ fn finish<const D: u8, const A: u8>(frame: Places<D, A, MEM>, done: bool) -> Out
     if frame.writes_fit(done) { Out::Next(frame.s) } else { Out::Exit(frame.s) }
 }
 
+/// A row's hit continues at TAKEN, past the helper step laid out after it where it is a fast arm; a miss
+/// leaves as it did.
+#[inline(always)]
+fn hop(out: Out) -> Out {
+    match out {
+        Out::Next(s) => Out::Taken(s),
+        left => left,
+    }
+}
+
 /// A fast arm's row: where its proof held and its places fit it continues at TAKEN, past the
 /// helper step laid out after it, else it leaves into that step.
 #[inline(always)]
 fn finish_fast<const D: u8, const A: u8>(frame: Places<D, A, MEM>, done: bool) -> Out {
-    match finish(frame, done) {
-        Out::Next(s) => Out::Taken(s),
-        left => left,
-    }
+    hop(finish(frame, done))
 }
 
 /// `RequireIteratorResult`'s fast arm: the operand (hole 1) is a direct object or array record

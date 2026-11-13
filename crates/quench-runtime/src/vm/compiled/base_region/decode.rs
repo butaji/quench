@@ -330,15 +330,20 @@ fn own_capture_store(instruction: WideInstruction) -> bool {
 }
 
 /// The row of a depth-0 capture access: a read, or a store, which the row makes where the run's
-/// slots admit every direct store (`JS_STEP_CAPTURE_STORES`) and leaves for the interpreter where
-/// they do not or the slot holds a marker (a loop's snapshot of a stored slot).
+/// slots admit every direct store (`JS_STEP_CAPTURE_STORES`). Where it does not, the slot holds a marker (a loop's
+/// snapshot of a stored slot) or the binding is a root one (a global `var`'s shared slot, which the activation's dense
+/// view omits), a body has the interpreter's step behind the row (`Step::Fast`) and a loop region leaves into it.
 fn capture_row(facts: Facts, instruction: WideInstruction) -> Option<Decoded> {
+    let arm = |heap, result, value| match facts {
+        Facts::Site => Decoded { a: value, ..Decoded::step(Step::Fast(heap), result) },
+        Facts::Entry { .. } => Decoded::heap(heap, result, value, None),
+    };
     match instruction.op().class() {
         Class::LoadCapture if instruction.capture_depth() == 0 && !matches!(facts, Facts::Entry { calls: true, .. }) => {
-            Some(Decoded::heap(Heap::Capture(instruction.capture_slot()), Some(instruction.result_register()), None, None))
+            Some(arm(Heap::Capture(instruction.capture_slot()), Some(instruction.result_register()), None))
         }
         Class::StoreCapture if own_capture_store(instruction) => {
-            Some(Decoded::heap(Heap::CaptureSet(instruction.capture_slot()), None, Some(Source::Register(instruction.register_a())), None))
+            Some(arm(Heap::CaptureSet(instruction.capture_slot()), None, Some(Source::Register(instruction.register_a()))))
         }
         _ => None,
     }
