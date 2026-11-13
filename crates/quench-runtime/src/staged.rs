@@ -100,176 +100,20 @@ pub(crate) mod wasm_simd;
 pub(crate) mod wasm_simd_concrete;
 pub(crate) mod wasm_step;
 pub(crate) use wasm_concrete::ConcreteWasm;
-mod operation_effects;
 #[cfg(test)]
 pub(crate) mod trace;
 #[allow(unused_imports)] // the Stage v2 vocabulary: stencil and UltraJIT stages use the rest
 pub(crate) use effects::{Effects, Region, RegionSet};
 #[allow(unused_imports)]
 pub(crate) use region::Access;
-pub(crate) use ic::concrete_own_field_hit;
+pub(crate) use ic::{concrete_held_receiver, concrete_own_field_hit, concrete_site_chain, concrete_site_read, concrete_site_store};
 pub(crate) use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
 
 mod stage;
-pub(crate) use stage::{fill_by_rows, Passed, Stage, Table, word_bytes, word_offset};
+pub(crate) use stage::{fill_by_rows, Passed, RecordSpace, Stage, Table, word_bytes, word_offset};
 
-/// A constant an instruction materializes: its value and the semantic type a stage that
-/// keeps type facts records for it.
-#[derive(Clone, Copy)]
-pub(crate) struct Constant {
-    pub(crate) value: crate::Value,
-    pub(crate) ty: Type,
-}
-
-impl Constant {
-    /// A constant whose type the stage does not keep.
-    #[inline(always)]
-    pub(crate) const fn untyped(value: crate::Value) -> Self {
-        Self { value, ty: Type::ANY }
-    }
-}
-
-/// A register frame: each register's word and the static fact the stage keeps about it. A
-/// stage with no register facts uses `()`.
-pub(crate) trait Frame<S: Stage> {
-    /// The static fact a stage keeps about a register.
-    type Fact: Copy;
-
-    /// The fact `register` currently carries.
-    fn fact(&self, register: Register) -> Self::Fact;
-
-    /// The semantic type `register` is proved to have; `None` where the stage keeps none, as the
-    /// interpreter does not.
-    #[inline(always)]
-    fn register_type(&self, _register: Register) -> Option<Type> { None }
-
-    /// `register` holds a value of type `ty` along `edge` of the jump the running step ends in:
-    /// a frame that keeps type facts narrows them for that edge's successor.
-    #[inline(always)]
-    fn refine(&mut self, _register: Register, _ty: Type, _edge: Edge) {}
-
-    /// `register`'s word in the representation its fact names; tagged where it is tagged.
-    fn read(&mut self, stage: &mut S, register: Register) -> S::Word;
-
-    /// `register`'s tagged word (`Value::to_bits`), boxing an unboxed representation.
-    #[inline(always)]
-    fn tagged(&mut self, stage: &mut S, register: Register) -> S::Word {
-        self.read(stage, register)
-    }
-
-    /// Define `register` with `value`, carrying `fact`.
-    fn write(&mut self, stage: &mut S, register: Register, value: S::Word, fact: Self::Fact);
-
-    /// Copy `source` into `destination` with its value and every fact derived from it; the
-    /// word copied.
-    #[inline(always)]
-    fn move_register(&mut self, stage: &mut S, destination: Register, source: Register) -> S::Word {
-        let fact = self.fact(source);
-        let value = self.read(stage, source);
-        self.write(stage, destination, value, fact);
-        value
-    }
-
-    /// The running activation's `this` word: the bound value, or `Value::DELETED` where the
-    /// activation does not hold it.
-    fn this(&mut self, stage: &mut S) -> S::Word;
-
-    /// Define `destination` with the activation's `this`, carrying every fact proved of it.
-    fn define_this(&mut self, stage: &mut S, destination: Register, this: S::Word);
-
-    /// `register`'s value from `constant`, with the fact the stage keeps of it.
-    fn constant(&mut self, stage: &mut S, constant: Constant) -> (S::Word, Self::Fact);
-
-    /// Store `value` at the dense array element `index`, under the proof.
-    #[inline(always)]
-    fn index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
-
-    /// The heap value `allocation` makes, defined into `destination`; `None` where the frame
-    /// has no allocator for it or the value is the general path's (a due collection).
-    #[inline(always)]
-    fn allocate_value(&mut self, _stage: &mut S, _destination: Register, _allocation: Allocation, _proof: S::Proof) -> Option<S::Word> { None }
-
-    /// Continue where no interrupt is requested; `None` leaves at the frame's miss edge.
-    #[inline(always)]
-    fn safepoint(&mut self, _stage: &mut S, _proof: S::Proof) -> Option<()> { Some(()) }
-
-    /// The element store's host helper; `None` where the frame has no helper table.
-    #[inline(always)]
-    fn index_set_helper(&mut self, _stage: &mut S, _base: S::Word, _key: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
-
-    /// The VM's field-store hit (`LaneHelper::FieldSet`).
-    #[inline(always)]
-    fn field_store_miss(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _site: u16, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
-
-    /// Leave the function with the Number register `register`, in the representation its fact
-    /// names; `None` where the frame has no numeric completion.
-    #[inline(always)]
-    fn ret(&mut self, _stage: &mut S, _register: Register) -> Option<Self::Control> { None }
-
-    /// The activation's environment storage word and the fact its slot reads carry
-    /// (`environment::environment_slot`); `None` where the frame holds no environment.
-    #[inline(always)]
-    fn environment(&mut self, _stage: &mut S) -> Option<(S::Word, Self::Fact)> { None }
-
-    /// Store `value` to environment slot `slot`; `None` where the frame cannot, leaving the
-    /// binding rules (an uninitialized or constant binding, a `with` scope) to the host.
-    #[inline(always)]
-    fn environment_write(&mut self, _stage: &mut S, _slot: u16, _value: S::Word) -> Option<()> { None }
-
-    /// The count of the arguments binding in local `slot`, an int32 word; `None` where the
-    /// binding is not one only kept values answer.
-    #[inline(always)]
-    fn arguments_length(&mut self, _stage: &mut S, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
-
-    /// The VM's own operation `operation` (`CallOut`), run in place where a row's words do not
-    /// decide it, defining `result` where the operation has one: the word it defined with the
-    /// fact the frame keeps of it, or a placeholder word where it defines none. `None` where the
-    /// frame has no host, or the operation raised, leaving the instruction to the interpreter.
-    #[inline(always)]
-    fn vm_step(&mut self, _stage: &mut S, _operation: CallOut, _result: Option<Register>)
-        -> Option<(S::Word, Self::Fact)> { None }
-
-    /// Read the capture `slot`, `depth` scopes out (a static operand: the walk's length), with the
-    /// fact the frame keeps of it; `root` reads the root environment's projected binding (a
-    /// script's global var or lexical) the walk ends at instead of a function's slots. `None`
-    /// where the frame cannot (an uninitialized or shared binding, no captures), leaving the
-    /// read to the interpreter.
-    #[inline(always)]
-    fn capture_slot(&mut self, _stage: &mut S, _depth: u16, _slot: u16, _root: bool) -> Option<(S::Word, Self::Fact)> { None }
-
-    /// Store `value` to the capture `slot`, `depth` scopes out; `None` where the binding does
-    /// not take the direct store (a `const`, an uninitialized `let`).
-    #[inline(always)]
-    fn store_capture(&mut self, _stage: &mut S, _depth: u16, _slot: u16, _value: S::Word) -> Option<()> { None }
-
-    /// Where control goes: the edge the interpreter returns, or the branch a specializer
-    /// emits.
-    type Control;
-
-    /// ToBoolean of `register` from the frame's facts; `None` where a value's heap cell
-    /// decides it, leaving the test to the interpreter's fallback.
-    fn truthiness(&mut self, stage: &mut S, register: Register) -> Option<S::Cond>;
-
-    /// Continue at the jump target when `condition` holds, else after this instruction.
-    fn branch(&mut self, stage: &mut S, condition: S::Cond) -> Self::Control;
-
-    /// Continue at the jump target.
-    fn jump(&mut self, stage: &mut S) -> Self::Control;
-
-    /// The canonical boolean `condition`, with the fact this stage keeps of it.
-    fn boolean(&mut self, stage: &mut S, condition: S::Cond) -> (S::Word, Self::Fact);
-
-    /// Read local slot `slot` with the fact this stage keeps of it; `None` where this
-    /// frame cannot read the activation's locals (the tier then leaves at its exact PC).
-    #[inline(always)]
-    fn load_local(&mut self, _stage: &mut S, _slot: u16, _miss: Option<S::Miss>)
-        -> Option<(S::Word, Self::Fact)> { None }
-
-    /// Write `value` to local slot `slot`; `false` where this frame cannot write them.
-    #[inline(always)]
-    fn store_local(&mut self, _stage: &mut S, _slot: u16, _value: S::Word, _miss: Option<S::Miss>)
-        -> bool { false }
-}
+mod register_frame;
+pub(crate) use register_frame::{Constant, Frame, Step, bound_this, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
 
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]
@@ -296,6 +140,13 @@ pub(crate) enum Operation<W, P> {
     /// the frame's miss edge, where the interpreter throws the TypeError
     /// (RequireObjectCoercible).
     RequireObjectCoercible { register: Register },
+    /// Continue where register `register` holds an object or array record, which
+    /// `RequireIteratorResult` accepts as it is; any other value leaves at the frame's miss edge,
+    /// where the VM raises or reads it.
+    RequireIteratorResult { register: Register },
+    /// ToPropertyKey of a string `source`, which is its own key, written to `destination`; any
+    /// other value leaves at the miss edge, where the VM converts it.
+    ToPropertyKey { destination: Register, source: Register },
     /// Define `destination` with the logical negation of register `source`'s truthiness.
     LogicalNot { destination: Register, source: Register },
     /// Define `destination` with the `typeof` name index (int32) of register `source`'s value

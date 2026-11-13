@@ -126,7 +126,7 @@ impl<W, P> Operation<W, P> {
             Self::StoreLocalPlain { .. } => Effects::writes(Region::Frame),
             Self::Jump | Self::JumpIf { .. } | Self::LogicalNot { .. } | Self::Number(_) | Self::Return { .. } => Effects::NONE,
             Self::CompareJump { comparison, .. } if !comparison.runs_guest_code() => Effects::NONE,
-            Self::RequireObjectCoercible { .. } => Effects { may_throw: true, ..Effects::NONE },
+            Self::RequireObjectCoercible { .. } | Self::RequireIteratorResult { .. } | Self::ToPropertyKey { .. } => Effects { may_throw: true, ..Effects::NONE },
             Self::Safepoint { .. } => Effects { may_collect: true, ..Effects::NONE },
             Self::Call(operation) => operation.effects(),
             // The memory operations answered in `memory_effects`; anything else is conservative.
