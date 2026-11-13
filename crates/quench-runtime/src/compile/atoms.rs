@@ -81,6 +81,11 @@ impl<'a> CompilerAtoms<'a> {
         self.index.capacity()
     }
 
+    /// The count of atoms the host's prefix had when the compilation began.
+    pub(super) fn prefix_len(&self) -> usize {
+        self.prefix_len
+    }
+
     pub(super) fn len(&self) -> usize {
         debug_assert_eq!(self.prefix_len, self.prefix.len(), "atom prefix grew during compilation");
         self.prefix_len + self.added.len()

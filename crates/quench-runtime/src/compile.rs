@@ -1899,9 +1899,9 @@ struct Compiler<'a> {
         ),
     >,
     /// The tables' cursors once each function, its nested ones included, is compiled.
-    function_exits: Vec<replay::TableCursors>,
+    function_exits: replay::FunctionRecords<replay::TableCursors>,
     /// What the program-wide layout analyses read of each compiled function.
-    function_facts: Vec<capture_layout::FunctionFacts>,
+    function_facts: replay::FunctionRecords<capture_layout::FunctionFacts>,
     /// Functions being compiled whose bodies may give nested functions binding sites
     /// (`early::body_may_bind_dynamically`). While any is open, a function finished inside
     /// it may still resolve names dynamically, so none is released early.
@@ -2438,8 +2438,8 @@ impl<'a> Compiler<'a> {
             superinstructions: SiteTable::default(),
             deferred_name_bindings: FxHashMap::default(),
             captured_name_scopes: FxHashMap::default(),
-            function_exits: Vec::new(),
-            function_facts: Vec::new(),
+            function_exits: Default::default(),
+            function_facts: Default::default(),
             dynamic_binding_scopes: 0,
             early_replays: FxHashMap::default(),
             invoked_functions: FxHashSet::default(),
@@ -2503,13 +2503,9 @@ impl<'a> Compiler<'a> {
             .get(id)
             .map(|function| capture_layout::FunctionFacts::of(function, &self.atoms))
             .expect("a function's record exists once it is compiled");
-        let id = id as usize;
-        if self.function_exits.len() <= id {
-            self.function_exits.resize(id + 1, replay::TableCursors::default());
-            self.function_facts.resize(id + 1, capture_layout::FunctionFacts::default());
-        }
-        self.function_exits[id] = self.cursors();
-        self.function_facts[id] = facts;
+        let cursors = self.cursors();
+        self.function_exits.set(id, cursors);
+        self.function_facts.set(id, facts);
     }
 
     /// Notes a function expression called where it is made: `(function () {})()`, an arrow
@@ -2552,7 +2548,7 @@ impl<'a> Compiler<'a> {
             .is_some_and(|span| self.invoked_functions.remove(&span.start));
         if self.replay_target.is_none()
             && self.replayable_source
-            && !invoked && !self.encloses_nested_stub(id, self.function_exits[id as usize].functions)
+            && !invoked && !self.encloses_nested_stub(id, self.function_exits.at(id).functions)
             && private_names == (self.private_name_references, self.private_name_ids.len())
         {
             self.replay_calls.insert(id, (entry, call));
@@ -2574,9 +2570,8 @@ impl<'a> Compiler<'a> {
         if !self.replayable_source || self.dynamic_binding_scopes != 0 {
             return;
         }
-        let exit = self.function_exits[id as usize].functions as usize;
-        let subtree = id as usize..exit;
-        if self.function_facts[subtree]
+        let exit = self.function_exits.at(id).functions as usize;
+        if self.function_facts.range(id, exit as u32)
             .iter()
             .any(|facts| facts.dynamic_access || facts.contains_with || facts.binding_sites)
         {
@@ -2591,7 +2586,7 @@ impl<'a> Compiler<'a> {
             .expect("an early-finished function has a replay call");
         let captured = capture_layout::captured_by(
             id as usize,
-            &self.function_facts,
+            self.function_facts.as_slice(),
             id as usize + 1..exit,
         );
         let layout = capture_layout::LayoutInputs {
@@ -2629,7 +2624,7 @@ impl<'a> Compiler<'a> {
         self.functions.release(id, function);
         // Its rewrites and the `undefined` constant may have added sites: a replay of the
         // function making it skips past them too.
-        self.function_exits[id as usize] = self.cursors();
+        *self.function_exits.at_mut(id) = self.cursors();
     }
 
     /// A function declaration or expression, compiled from its syntax and `context`, which
@@ -2780,11 +2775,11 @@ impl<'a> Compiler<'a> {
         predicted.sort_unstable();
         predicted.dedup();
         let id = id as usize;
-        let exit = self.function_exits[id].functions as usize;
+        let exit = self.function_exits.at(id as u32).functions as usize;
         let depth_below = |mut function: usize| {
             let mut depth = 0u32;
             while function != id {
-                function = self.function_facts[function].parent.expect("a descendant has a parent") as usize;
+                function = self.function_facts.at(function as u32).parent.expect("a descendant has a parent") as usize;
                 depth += 1;
             }
             depth
@@ -2792,7 +2787,7 @@ impl<'a> Compiler<'a> {
         let mut actual: Vec<(u32, u16)> = (id..exit)
             .flat_map(|function| {
                 let depth = depth_below(function);
-                self.function_facts[function]
+                self.function_facts.at(function as u32)
                     .captures
                     .iter()
                     .filter(move |(distance, _)| *distance > depth)
@@ -3263,7 +3258,7 @@ impl<'a> Compiler<'a> {
                 replay::FunctionEntry::Reserved => unreachable!("function {id} was never compiled"),
             })
             .collect();
-        let facts = std::mem::take(&mut self.function_facts);
+        let facts = std::mem::take(&mut self.function_facts).into_vec();
         let dynamic = capture_layout::dynamic_name_resolution(&facts);
         let reachable = capture_layout::dynamic_name_scopes(&facts, &dynamic);
         // A replay compiles one function and records no facts; it keeps no program. A class
@@ -3393,6 +3388,10 @@ impl<'a> Compiler<'a> {
                 self.superinstructions.as_slice(),
             );
         }
+        let room = std::mem::take(&mut self.first_call.room);
+        let rewrites_pend = self.rewrites_pend(&room);
+        let code = self.deferred_rewrite_code + room.code();
+        let cache_capacity = room.cache_capacity(self.cache_sites);
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites.into_vec());
         let atoms = self.atoms.table();
@@ -3428,7 +3427,7 @@ impl<'a> Compiler<'a> {
                 call_sites: Default::default(),
             })),
             atoms,
-            constants: constants.into(),
+            constants: crate::bytecode::append_vec::AppendVec::with_headroom(constants, room.constants()),
             // Collected into a table of its own size: an in-place collect would keep the
             // records' larger allocation.
             functions: {
@@ -3440,17 +3439,17 @@ impl<'a> Compiler<'a> {
                         None => FunctionSlot::released(released[&id].header),
                     }
                 }));
-                slots.into()
+                crate::bytecode::append_vec::AppendVec::with_headroom(slots, room.functions())
             },
-            cache_sites: self.cache_sites.into(),
-            method_sites: method_sites.into(),
-            method_arguments: method_arguments.into(),
-            field_sites: crate::bytecode::append_vec::AppendVec::with_headroom(field_sites, self.deferred_rewrite_code / FIELD_SITE_WINDOW + 1),
-            object_sites: self.object_sites.into_vec().into(),
-            regexp_literal_sites: self.regexp_literal_sites.into_vec().into(),
-            literal_templates: self.literal_templates.into_vec().into(),
-            superinstructions: crate::bytecode::append_vec::AppendVec::with_headroom(self.superinstructions.into_vec(), self.deferred_rewrite_code / SUPERINSTRUCTION_WINDOW + 1),
-            rewrite_ranges: replay::RewriteRanges { kept_pending: self.kept_rewrites_pending, ..Default::default() },
+            cache_sites: crate::bytecode::SiteCount::with_capacity(self.cache_sites, cache_capacity),
+            method_sites: crate::bytecode::append_vec::AppendVec::with_headroom(method_sites, room.method_sites()),
+            method_arguments: crate::bytecode::append_vec::AppendVec::with_headroom(method_arguments, room.method_arguments()),
+            field_sites: crate::bytecode::append_vec::AppendVec::with_headroom(field_sites, code / FIELD_SITE_WINDOW + room.field_sites() + 1),
+            object_sites: crate::bytecode::append_vec::AppendVec::with_headroom(self.object_sites.into_vec(), room.object_sites()),
+            regexp_literal_sites: crate::bytecode::append_vec::AppendVec::with_headroom(self.regexp_literal_sites.into_vec(), room.regexp_literal_sites()),
+            literal_templates: crate::bytecode::append_vec::AppendVec::with_headroom(self.literal_templates.into_vec(), room.literal_templates()),
+            superinstructions: crate::bytecode::append_vec::AppendVec::with_headroom(self.superinstructions.into_vec(), code / SUPERINSTRUCTION_WINDOW + 1),
+            rewrite_ranges: replay::RewriteRanges { kept_pending: rewrites_pend, ..Default::default() },
             replay: replay_atoms.map(|atoms| {
                 std::rc::Rc::new(replay::ProgramReplay {
                     source_type: self.source_type,
@@ -3464,7 +3463,7 @@ impl<'a> Compiler<'a> {
                     specialized: self.mode == SpecializationMode::Enabled,
                     template_sites: self.template_sites,
                     atoms,
-                    exits: std::mem::take(&mut self.function_exits).into_boxed_slice(),
+                    exits: std::mem::take(&mut self.function_exits).into_vec().into_boxed_slice(),
                     name_shared_sites: match &mut self.name_shared_sites {
                         NameSharedSites::Load { sites, .. } => std::mem::take(sites),
                         NameSharedSites::Replay(sites) => (*sites).clone(),
@@ -4251,7 +4250,7 @@ impl<'a> Compiler<'a> {
     fn arrows_reach_arguments(&self, owner: u32, slot: u16) -> bool {
         let facts = &self.function_facts;
         // Ids are reserved in pre-order, so only later ids nest in `owner`; uncompiled ones name no arrow.
-        facts.get(owner as usize + 1..).unwrap_or_default().iter().any(|function| {
+        facts.after(owner + 1).iter().any(|function| {
             // The function levels between `function` and `owner`, along arrows alone.
             let mut distance = 0;
             let mut current = function;
@@ -4262,7 +4261,7 @@ impl<'a> Compiler<'a> {
                 distance += 1;
                 match current.parent {
                     Some(parent) if parent == owner => break,
-                    Some(parent) => match facts.get(parent as usize) {
+                    Some(parent) => match facts.get(parent) {
                         Some(parent) => current = parent,
                         None => return false,
                     },

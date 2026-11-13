@@ -3670,7 +3670,7 @@ pub struct ResidualProgram {
     pub(crate) atoms: AtomTable,
     pub(crate) constants: append_vec::AppendVec<Constant>,
     pub(crate) functions: append_vec::AppendVec<FunctionSlot>,
-    pub(crate) cache_sites: std::cell::Cell<u16>,
+    pub(crate) cache_sites: chunk_append::SiteCount,
     pub(crate) method_sites: append_vec::AppendVec<MethodSite>,
     pub(crate) method_arguments: append_vec::AppendVec<Register>,
     pub(crate) field_sites: append_vec::AppendVec<FieldSite>,
@@ -4049,12 +4049,13 @@ impl ResidualProgram {
 
     /// `encode_snapshot`'s bytes, sharing `atoms` (the restored VM's) and with `text` as the
     /// source; valid as the compiler output it was when written.
-    /// The sizes of the program's inline-cache site tables, which a VM lays out per program.
+    /// The sizes the program's inline-cache site tables may reach, which a VM lays out per
+    /// program: the room a program that appends chunks reserved is laid out with it.
     pub(crate) fn cache_site_counts(&self) -> CacheSiteCounts {
         CacheSiteCounts {
-            fields: self.cache_sites.get(),
-            methods: self.method_sites.len(),
-            objects: self.object_sites.len(),
+            fields: self.cache_sites.capacity(),
+            methods: self.method_sites.capacity(),
+            objects: self.object_sites.capacity(),
         }
     }
 
@@ -4100,6 +4101,8 @@ mod binary;
 mod native_metadata;
 #[cfg(feature = "native-execution")]
 pub use native_metadata::NativeProgramNamespace;
+mod chunk_append;
+pub(crate) use chunk_append::{SiteCount, ChunkDelta, TableLengths};
 mod closure_reads;
 pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts};
 pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis, LoadEncoding, LoadRecords};

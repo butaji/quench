@@ -35,12 +35,18 @@ impl<'a> Compiler<'a> {
 
     /// Whether any record's rewrites may wait for its first read: nothing encodes or compares
     /// the load's records, and the rewrites run at all.
-    fn may_defer_rewrites(&self) -> bool {
+    pub(super) fn may_defer_rewrites(&self) -> bool {
         crate::DYNAMIC_EXECUTION_ENABLED
             && self.mode == SpecializationMode::Enabled
             && self.load_encoding.is_none()
             && !lowers_at_load()
             && !cfg!(feature = "profile-aggregate")
+    }
+
+    /// Whether some record of the program awaits its rewrites, which its first read runs: a
+    /// kept one's deferred (`defers_kept_rewrites`), or a stub's chunk, appended after the load.
+    pub(super) fn rewrites_pend(&self, room: &first_call::ChunkRoom) -> bool {
+        self.kept_rewrites_pending || (room.reserves() && self.may_defer_rewrites())
     }
 
     /// Whether function `id`, which the program keeps, leaves its rewrites to its first read: a

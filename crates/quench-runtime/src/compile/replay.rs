@@ -25,6 +25,15 @@ pub(super) enum SiteTable<'a, T> {
     /// The first replay of a function whose load deferred its rewrites: its entries go
     /// straight into the program's table, in the room the load reserved.
     Grow(&'a crate::bytecode::append_vec::AppendVec<T>),
+    /// A first-call chunk's: the program's `below` entries, which it reads, then the entries
+    /// it adds, at the indices that follow `base`, the program's length when the chunk began
+    /// (`below` is empty for a table the program keeps in another form). The program takes
+    /// the added entries once they are all made (`ChunkDelta`).
+    Delta {
+        below: &'a [T],
+        base: usize,
+        added: Vec<T>,
+    },
 }
 
 impl<T> Default for SiteTable<'_, T> {
@@ -46,12 +55,18 @@ impl<'a, T: Clone> SiteTable<'a, T> {
         Self::Grow(table)
     }
 
+    /// A chunk's table after the program's `base` entries, of which `below` are at hand.
+    pub(super) fn delta(below: &'a [T], base: usize) -> Self {
+        Self::Delta { below, base, added: Vec::new() }
+    }
+
     /// The index the next entry takes.
     pub(super) fn len(&self) -> usize {
         match self {
             Self::Owned(entries) => entries.len(),
             Self::Grow(table) => table.len(),
             Self::Replay { next, .. } => *next,
+            Self::Delta { base, added, .. } => base + added.len(),
         }
     }
 
@@ -59,6 +74,7 @@ impl<'a, T: Clone> SiteTable<'a, T> {
         match self {
             Self::Owned(entries) => entries.push(value),
             Self::Grow(table) => table.append(std::iter::once(value)),
+            Self::Delta { added, .. } => added.push(value),
             Self::Replay { next, written, .. } => {
                 written.insert(*next, value);
                 *next += 1;
@@ -79,6 +95,7 @@ impl<'a, T: Clone> SiteTable<'a, T> {
             Self::Owned(entries) => entries,
             Self::Grow(table) => table,
             Self::Replay { entries, .. } => entries,
+            Self::Delta { .. } => unreachable!("a chunk's passes never read a table whole"),
         }
     }
 
@@ -89,6 +106,10 @@ impl<'a, T: Clone> SiteTable<'a, T> {
             Self::Replay { entries, written, .. } => {
                 written.get(&index).or_else(|| entries.get(index))
             }
+            Self::Delta { below, base, added } => match index.checked_sub(*base) {
+                Some(at) => added.get(at),
+                None => below.get(index),
+            },
         }
     }
 
@@ -102,6 +123,7 @@ impl<'a, T: Clone> SiteTable<'a, T> {
         match self {
             Self::Owned(entries) => entries,
             Self::Replay { .. } | Self::Grow(_) => Vec::new(),
+            Self::Delta { added, .. } => added,
         }
     }
 
@@ -109,7 +131,7 @@ impl<'a, T: Clone> SiteTable<'a, T> {
     #[cfg(feature = "verify-replay")]
     pub(super) fn written(&self) -> impl Iterator<Item = (usize, &T)> {
         match self {
-            Self::Owned(_) | Self::Grow(_) => None,
+            Self::Owned(_) | Self::Grow(_) | Self::Delta { .. } => None,
             Self::Replay { written, .. } => Some(written.iter().map(|(index, value)| (*index, value))),
         }
         .into_iter()
@@ -130,6 +152,7 @@ impl<T: Clone> IndexMut<usize> for SiteTable<'_, T> {
         match self {
             Self::Owned(entries) => &mut entries[index],
             Self::Grow(table) => table.entry_mut(index),
+            Self::Delta { base, added, .. } => &mut added[index - *base],
             Self::Replay { entries, written, .. } => written
                 .entry(index)
                 .or_insert_with(|| entries[index].clone()),
@@ -198,19 +221,28 @@ impl ProgramAtomIndex {
 /// key's hash, then compared with the constants themselves, which are the one record of
 /// each value. At load the compiler's own constants back it; a replay finds every constant
 /// of the finished program.
+/// The indices of the constants of each key hash, in index order.
+type Candidates = FxHashMap<u64, smallvec::SmallVec<[u32; 1]>>;
+
 pub(super) enum ConstantIndex<'a> {
-    /// Each key hash's constant indices, in index order.
-    Owned(FxHashMap<u64, smallvec::SmallVec<[u32; 1]>>),
+    Owned(Candidates),
     Replay {
         /// Each constant's key hash with its index, in hash then index order.
         hashes: &'a [(u64, u32)],
         constants: &'a [crate::bytecode::Constant],
     },
+    /// A first-call chunk's: the program's constants as a replay finds them, then the chunk's
+    /// own as the load keeps them.
+    Delta {
+        hashes: &'a [(u64, u32)],
+        constants: &'a [crate::bytecode::Constant],
+        added: Candidates,
+    },
 }
 
 impl Default for ConstantIndex<'_> {
     fn default() -> Self {
-        Self::Owned(FxHashMap::default())
+        Self::Owned(Candidates::default())
     }
 }
 
@@ -219,7 +251,28 @@ fn constant_key_hash(key: super::ConstantKey<'_>) -> u64 {
     rustc_hash::FxBuildHasher.hash_one(key)
 }
 
-impl ConstantIndex<'_> {
+/// The first index in `hashes` of a constant of `hash` that `matches`.
+fn find_hashed(
+    hashes: &[(u64, u32)],
+    constants: &[crate::bytecode::Constant],
+    hash: u64,
+    matches: impl Fn(&crate::bytecode::Constant) -> bool,
+) -> Option<u32> {
+    let start = hashes.partition_point(|(candidate, _)| *candidate < hash);
+    hashes[start..]
+        .iter()
+        .take_while(|(candidate, _)| *candidate == hash)
+        .map(|(_, index)| *index)
+        .find(|index| matches(&constants[*index as usize]))
+}
+
+impl<'a> ConstantIndex<'a> {
+    /// The index of a chunk's constants over `constants` of its program, whose key hashes are
+    /// `hashes`.
+    pub(super) fn delta(hashes: &'a [(u64, u32)], constants: &'a [crate::bytecode::Constant]) -> Self {
+        Self::Delta { hashes, constants, added: Candidates::default() }
+    }
+
     /// The first index of a constant whose key is `key`; `added` holds the constants the
     /// compiler added, which an owned index names.
     pub(super) fn get(
@@ -229,25 +282,20 @@ impl ConstantIndex<'_> {
     ) -> Option<u32> {
         let hash = constant_key_hash(key);
         let matches = |constant: &crate::bytecode::Constant| super::ConstantKey::from(constant) == key;
+        let own = |index: &Candidates| {
+            index.get(&hash)?.iter().copied().find(|index| matches(&added[*index as usize]))
+        };
         match self {
-            Self::Owned(index) => {
-                index.get(&hash)?.iter().copied().find(|index| matches(&added[*index as usize]))
-            }
-            Self::Replay { hashes, constants } => {
-                let start = hashes.partition_point(|(candidate, _)| *candidate < hash);
-                hashes[start..]
-                    .iter()
-                    .take_while(|(candidate, _)| *candidate == hash)
-                    .map(|(_, index)| *index)
-                    .find(|index| matches(&constants[*index as usize]))
-            }
+            Self::Owned(index) => own(index),
+            Self::Replay { hashes, constants } => find_hashed(hashes, constants, hash, matches),
+            Self::Delta { hashes, constants, added } => find_hashed(hashes, constants, hash, matches).or_else(|| own(added)),
         }
     }
 
     /// Records the first index of `key`. A replay adds no constant.
     pub(super) fn insert(&mut self, key: super::ConstantKey<'_>, index: u32) {
         match self {
-            Self::Owned(entries) => entries.entry(constant_key_hash(key)).or_default().push(index),
+            Self::Owned(entries) | Self::Delta { added: entries, .. } => entries.entry(constant_key_hash(key)).or_default().push(index),
             Self::Replay { .. } => {
                 debug_assert!(false, "a replay adds no constant");
             }
@@ -256,7 +304,7 @@ impl ConstantIndex<'_> {
 }
 
 /// `ConstantIndex::Replay`'s hashes of `constants`.
-fn constant_hashes(constants: &[crate::bytecode::Constant]) -> Vec<(u64, u32)> {
+pub(super) fn constant_hashes(constants: &[crate::bytecode::Constant]) -> Vec<(u64, u32)> {
     let mut hashes: Vec<(u64, u32)> = constants
         .iter()
         .enumerate()
@@ -266,7 +314,7 @@ fn constant_hashes(constants: &[crate::bytecode::Constant]) -> Vec<(u64, u32)> {
     hashes
 }
 
-pub(super) use super::function_table::{FunctionEntry, FunctionTable, ReleasedFunction};
+pub(super) use super::function_table::{FunctionEntry, FunctionRecords, FunctionTable, ReleasedFunction};
 
 /// Where a function declaration or expression is made: everything its compilation reads
 /// beyond its own syntax.
@@ -520,7 +568,7 @@ fn single_expression<'s, 'a>(
 }
 
 /// The function `replay_wrapper` placed a plain function's source as.
-fn wrapped_function<'s, 'a>(
+pub(super) fn wrapped_function<'s, 'a>(
     program: &'s oxc_ast::ast::Program<'a>,
 ) -> Option<&'s oxc_ast::ast::Function<'a>> {
     match program.body.as_slice() {

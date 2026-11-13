@@ -150,7 +150,7 @@ mod fdlibm_math;
 mod field_cache;
 mod site_table;
 mod finalization;
-mod first_call_chunk;
+mod first_call_append; mod first_call_chunk;
 mod function;
 mod function_cache;
 mod gc;
@@ -3064,28 +3064,28 @@ impl<H: Host> Vm<H> {
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
             proxy_traps: proxy::PROXY_TRAP_NAMES.map(|name| self.intern_atom(name)),
         };
-        self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites.get()));
+        self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.field_caches_moved();
         self.field_cache_writes = Some(Vec::new());
         program.prime_loop_decoding();
         self.heap.dependencies_mut().clear_inherited();
-        self.inherited_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.get()));
-        self.accessor_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.get()));
+        self.inherited_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
+        self.accessor_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.accessor_fields.clear();
-        self.field_add_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.get()));
+        self.field_add_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
-        self.megamorphic_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.get()));
+        self.megamorphic_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.megamorphic_fields.clear();
         self.holder_hints.clear();
         self.length_atom = self.intern_atom("length");
         self.prototype_atom = self.intern_atom("prototype");
         self.to_fixed_atom = self.intern_atom("toFixed");
         self.to_precision_atom = self.intern_atom("toPrecision");
-        self.method_caches = vec![[EMPTY_METHOD_CACHE; method_cache::METHOD_CACHE_WAYS]; program.method_sites.len()];
+        self.method_caches = vec![[EMPTY_METHOD_CACHE; method_cache::METHOD_CACHE_WAYS]; program.method_sites.capacity()];
         self.megamorphic_methods.clear();
         self.method_cache_atoms.clear();
-        self.object_shapes = site_table::SiteTable::with_empty(program.object_sites.len());
+        self.object_shapes = site_table::SiteTable::with_empty(program.object_sites.capacity());
         self.descriptors.clear();
         self.function_values.clear();
         self.wasm_exported_functions.clear();
@@ -3109,7 +3109,7 @@ impl<H: Host> Vm<H> {
         self.program_cache_layouts.clear();
         self.free_cache_layouts.clear();
         self.program_cache_layouts.push(ProgramCacheLayout {
-            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program.cache_sites.get()),
+            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program.cache_sites.capacity()),
             ..ProgramCacheLayout::default()
         });
         self.set_active_program(ProgramId::MAIN);
@@ -3165,7 +3165,7 @@ impl<H: Host> Vm<H> {
         }
     }
     fn materialize_program_constants(&mut self, id: ProgramId, program: &ResidualProgram) {
-        let mut constants = Vec::with_capacity(program.constants.len());
+        let mut constants = Vec::with_capacity(program.constants.capacity());
         // Equal string constants share one cell, as engines intern literals: a string is an
         // immutable primitive, so which cell holds it is unobservable, and `===` between
         // literals from different sites then decides by identity before comparing text.

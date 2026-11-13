@@ -83,3 +83,38 @@ fn direct_eval_reports_early_errors_of_uncalled_functions() {
                   catch (e) { return e.constructor.name; } } globalThis.result = t();";
     assert_eq!(result_of(source), "SyntaxError");
 }
+
+/// Runs `source` and returns its `globalThis.result` with the number of programs the VM
+/// stores: a chunk that appended to its stub's program adds none.
+fn result_and_programs(source: &str) -> (String, usize) {
+    let program = Engine::specialize(source, "first-call-append.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("result");
+    let value = vm.own_property(vm.realm.globals, name).unwrap();
+    (vm.to_string(&program, value).unwrap(), vm.programs.len())
+}
+
+/// Stubs of an indirect eval, called one from another, compile into the eval's own program.
+#[test]
+fn chunks_append_to_their_stubs_program() {
+    let source = "(0, eval)('function a(x) { return b(x) + 1; } function b(y) { return y * 2 + k; } var k = 4; globalThis.result = a(3) + \",\" + a(5);')";
+    assert_eq!(result_and_programs(source), ("11,15".to_string(), 2));
+}
+
+/// A chunk's closures read the bindings of the code that made its stub, and its own nested
+/// functions and constants, shared with its program's, resolve as they do in eager code.
+#[test]
+fn appended_chunks_close_over_their_parents() {
+    let source = "(0, eval)('(function () { var m = 2; function l1(a) { var n = 3; return function (b) { return [a, b, m, n, \"x\", 2].join(); }; } \
+                  globalThis.f = l1(1); globalThis.g = l1(7); })(); globalThis.result = f(2) + \";\" + g(8);')";
+    assert_eq!(result_and_programs(source), ("1,2,2,3,x,2;7,8,2,3,x,2".to_string(), 2));
+}
+
+/// A chunk bigger than the room its program reserved compiles as a program of its own.
+#[test]
+fn a_chunk_without_room_compiles_as_its_own_program() {
+    let table: Vec<String> = (0..400).map(|index| format!("{index}.5")).collect();
+    let source = format!("(0, eval)('function big() {{ return [{}].length; }} globalThis.result = big();')", table.join(","));
+    assert_eq!(result_and_programs(&source), ("400".to_string(), 3));
+}

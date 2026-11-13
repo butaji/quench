@@ -8,6 +8,7 @@ use rustc_hash::FxHashMap;
 use residual::{EncodedResidual, Residual};
 
 pub(in crate::vm) mod lane_publication;
+mod chunks;
 mod eval_cache;
 mod js_jit_report;
 mod residual;
@@ -849,7 +850,7 @@ impl ProgramStore {
         let entry = self.entry(id)?;
         let body = entry.residual.function_get(function as usize)?;
         let cells = entry.js_entry_facts.0.get_or_init(|| {
-            entry.residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect()
+            (0..entry.residual.functions.capacity()).map(|_| std::cell::OnceCell::new()).collect()
         });
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
             let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body, !(STRESS || cfg!(test))); // tests pin tiny fixtures
@@ -1244,10 +1245,10 @@ impl ProgramStore {
         if !retain_profile_records && let Some(program) = Rc::get_mut(&mut program) {
             program.release_replayable_records();
         }
-        let regexp_literals = vec![None; program.regexp_literal_sites.len()];
-        let function_sources = vec![None; program.functions.len()];
+        let regexp_literals = vec![None; program.regexp_literal_sites.capacity()];
+        let function_sources = vec![None; program.functions.capacity()];
         let lane_views = LaneViews::default();
-        let lane_deferred = vec![std::cell::Cell::new(0); program.functions.len()];
+        let lane_deferred = vec![std::cell::Cell::new(0); program.functions.capacity()];
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.programs.push(Some(Box::new(ProgramEntry {
             residual: Residual::decoded(program),
@@ -1564,7 +1565,7 @@ impl ProgramStore {
 
     pub(crate) fn set_constants(&mut self, id: ProgramId, constants: Vec<Value>) {
         if let Some(entry) = self.entry_mut(id) {
-            entry.const_arrays = vec![None; constants.len()];
+            entry.const_arrays = vec![None; constants.capacity()];
             entry.constants = constants;
             // Lane views carry constants, so they derive from the new set.
             entry.lane_views = LaneViews::default();
@@ -2814,7 +2815,7 @@ impl LaneViews {
 
     #[cold]
     fn make_table(&self, residual: &ResidualProgram) -> &[LaneViewCell] {
-        self.table.get_or_init(|| residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect())
+        self.table.get_or_init(|| (0..residual.functions.capacity()).map(|_| std::cell::OnceCell::new()).collect())
     }
 
     /// `function`'s view if it has one, without making the table.

@@ -175,7 +175,7 @@ impl Compiler<'_> {
     /// Notes stub `id` of a nested function: its predicted `captures` decide the layouts
     /// around it, and its chunk compiles against the scopes of `context`.
     pub(super) fn note_nested_stub(&mut self, id: u32, captures: Box<[(u32, u16)]>, context: &replay::PlainFunctionContext) {
-        self.function_facts[id as usize].captures = captures;
+        self.function_facts.at_mut(id).captures = captures;
         let levels = context.scopes.levels().iter().map(|scope| self.scope_level(scope)).collect();
         self.first_call.nested.push((id, Rc::new(FirstCallScopes { levels, strict: context.inherited_strict })));
     }
