@@ -298,6 +298,7 @@ impl<H: Host> Vm<H> {
             frame_pool: _,
             pending_call_stacks: _,
             js_native_contexts: _,
+            native_roots: _,
             lane_stack: _,
             execution_mode: _,
             native_execution_rejections: _,
@@ -305,7 +306,6 @@ impl<H: Host> Vm<H> {
             #[cfg(feature = "native-execution")]
             native_program_resolver: _,
             execution_interrupt: _,
-            wasm_reference_epoch: _,
             active_call_roots,
             with_stack,
             startup_intrinsics,

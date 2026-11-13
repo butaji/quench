@@ -80,6 +80,7 @@ impl<H: Host> Vm<H> {
             frame_pool: vec![],
             pending_call_stacks: vec![],
             js_native_contexts: Vec::new(),
+            native_roots: super::compiled::NativeRoots::new(),
             lane_stack: Default::default(),
             execution_mode: ExecutionMode::default(),
             native_execution_rejections: 0,
@@ -87,7 +88,6 @@ impl<H: Host> Vm<H> {
             #[cfg(feature = "native-execution")]
             native_program_resolver: None,
             execution_interrupt,
-            wasm_reference_epoch: std::cell::Cell::new(1),
             active_call_roots: vec![],
             with_stack: vec![],
             with_scope_entered: false,

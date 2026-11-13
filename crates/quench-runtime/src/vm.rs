@@ -27,12 +27,15 @@ mod snapshot;
 mod startup_intrinsics;
 mod wasm;
 pub use compiled::{AheadImages, ExecutionMode};
+pub(crate) use compiled::InstanceRecord;
 pub use date::local_timezone_changed;
 mod wasm_exception;
 mod wasm_gc;
+mod wasm_global;
 mod wasm_host;
 mod wasm_js;
 pub(crate) use wasm_exception::{js_tag_cell, js_tag_type};
+mod wasm_indirect;
 mod wasm_table;
 use crate::Value;
 use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
@@ -1885,6 +1888,8 @@ pub(crate) struct Vm<H> {
     #[allow(clippy::vec_box)]
     #[cfg_attr(not(feature = "native-execution"), allow(dead_code))]
     js_native_contexts: Vec<Box<compiled::CallContext>>,
+    /// The environments native Wasm code holds across its calls into other instances.
+    native_roots: Box<compiled::NativeRoots>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
     /// Whether Wasm functions with a compiled denotation run as native code.
@@ -1895,9 +1900,6 @@ pub(crate) struct Vm<H> {
     #[cfg(feature = "native-execution")]
     native_program_resolver: Option<Box<native_program::NativeProgramResolver<H>>>,
     execution_interrupt: crate::ExecutionInterrupt,
-    /// Invalidates monomorphic `call_indirect` certificates after a table
-    /// mutation or collection that can change target identity.
-    wasm_reference_epoch: std::cell::Cell<u64>,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
     /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).

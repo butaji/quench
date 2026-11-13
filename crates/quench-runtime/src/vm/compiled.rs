@@ -30,14 +30,12 @@ use crate::bytecode::{Class, Traits,
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
     WideInstruction,
 };
-use crate::wasm::conversion::ScalarConversionOperator;
-use crate::wasm::float::{
-    F32BinaryOperator, F32UnaryOperator, F64BinaryOperator, F64UnaryOperator,
-};
-use crate::wasm::integer::{
-    I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator,
-};
-use crate::wasm::memory::{MemoryLoad, MemoryStore};
+use crate::staged::wasm_call::Call as WasmCall;
+use crate::staged::wasm_flow::Flow;
+use crate::staged::wasm_step::Step;
+use crate::staged::wasm::{WasmStage, Width, integer_binary};
+use crate::staged::wasm_operation::{Form, Operand as Right, WasmOperation};
+use crate::staged::ConcreteWasm;
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName,
     condcodes::{FloatCC, IntCC},
@@ -47,8 +45,7 @@ use cranelift_codegen::ir::{
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_codegen::entity::{SecondaryMap, packed_option::PackedOption};
 use std::ops::{Deref, DerefMut};
-use std::cell::UnsafeCell;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
@@ -95,6 +92,20 @@ pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 mod static_loops;
 #[path = "compiled/wasm_callable.rs"]
 mod wasm_callable;
+#[path = "compiled/wasm_stage.rs"]
+mod wasm_stage;
+mod wasm_instance_stage;
+mod instance_context;
+mod indirect_profile;
+pub(crate) use instance_context::{InstanceContext, InstanceRecord, NativeRoots};
+#[cfg(test)]
+mod wasm_global_tests;
+mod wasm_memory_stage;
+mod wasm_flow_stage;
+mod wasm_call_stage;
+mod wasm_table_stage;
+mod wasm_instance_switch;
+mod wasm_simd_stage;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(all(test, feature = "aot"))]
 pub(super) use lane_unit::static_call_targets;
@@ -1702,14 +1713,6 @@ impl Kind {
             Self::I64 => crate::WasmType::I64,
         }
     }
-
-    fn of_ir(ty: ir::Type) -> Self {
-        if ty.bits() == types::I32.bits() {
-            Self::I32
-        } else {
-            Self::I64
-        }
-    }
 }
 
 /// The views of a register's value, integer and float per width, in the
@@ -1759,40 +1762,6 @@ fn counterpart(ty: crate::WasmType) -> crate::WasmType {
         crate::WasmType::F32 => crate::WasmType::I32,
         crate::WasmType::F64 => crate::WasmType::I64,
         _ => unreachable!("compiled values are numeric scalars"),
-    }
-}
-
-/// An i32 integer operator is its i64 namesake: the i64 selectors extend the
-/// shared declaration (`crate::wasm::integer`), so tags agree.
-fn widen_binary(operator: I32BinaryOperator) -> I64BinaryOperator {
-    I64BinaryOperator::from_tag(operator as u32).expect("i64 selectors extend i32's")
-}
-
-fn widen_unary(operator: I32UnaryOperator) -> I64UnaryOperator {
-    I64UnaryOperator::from_tag(operator as u32).expect("i64 selectors extend i32's")
-}
-
-/// A float operator and its operand type; both widths share one declaration
-/// (`crate::wasm::float`), so tags agree.
-fn float_binary_operator(op: Op, tag: u32) -> Option<(F64BinaryOperator, crate::WasmType)> {
-    match op.class() {
-        Class::WasmFloatBinary32 => Some((
-            F64BinaryOperator::from_tag(F32BinaryOperator::from_tag(tag)? as u32)?,
-            crate::WasmType::F32,
-        )),
-        Class::WasmFloatBinary64 => Some((F64BinaryOperator::from_tag(tag)?, crate::WasmType::F64)),
-        _ => None,
-    }
-}
-
-fn float_unary_operator(op: Op, tag: u32) -> Option<(F64UnaryOperator, crate::WasmType)> {
-    match op.class() {
-        Class::WasmFloatUnary32 => Some((
-            F64UnaryOperator::from_tag(F32UnaryOperator::from_tag(tag)? as u32)?,
-            crate::WasmType::F32,
-        )),
-        Class::WasmFloatUnary64 => Some((F64UnaryOperator::from_tag(tag)?, crate::WasmType::F64)),
-        _ => None,
     }
 }
 
@@ -1919,13 +1888,16 @@ impl AnalysisState {
 
 /// Traps compiled code can raise, by status (index + 1); status 0 is a
 /// normal return.
-const TRAPS: [crate::WasmTrap; 6] = [
+const TRAPS: [crate::WasmTrap; 9] = [
     crate::WasmTrap::Unreachable,
     crate::WasmTrap::OutOfBoundsMemory,
     crate::WasmTrap::IntegerDivideByZero,
     crate::WasmTrap::IntegerOverflow,
     crate::WasmTrap::CallStackExhausted,
     crate::WasmTrap::InvalidConversionToInteger,
+    crate::WasmTrap::UndefinedElement,
+    crate::WasmTrap::UninitializedElement,
+    crate::WasmTrap::IndirectCallTypeMismatch,
 ];
 
 const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
@@ -2111,10 +2083,13 @@ pub(super) struct CallContext {
     /// The guarded memory reservation compiled code may fault in.
     guard_start: usize,
     guard_end: usize,
-    /// Per global the program accesses (`CompiledProgram::globals`), the
-    /// address of the global's value in this instance. Heap cells never move,
-    /// so the addresses outlive callouts.
-    globals: *const *mut Value,
+    /// Per environment slot (the instance's global area), the address of the native slot of the
+    /// global bound there, read and written raw; null for any other binding. Heap cells never
+    /// move, so the addresses outlive callouts.
+    globals: *const *mut u64,
+    /// Per environment slot, the words that publish the table bound there (`TableWords`): the
+    /// table's rows are read in place, its growth rewrites the words.
+    table_words: *const *const crate::heap::TableWords,
     /// `import_callout` for the VM's host type.
     callout: usize,
     /// VM helper for indirect calls, including table checks and invocation.
@@ -2145,11 +2120,6 @@ pub(super) struct CallContext {
     /// terminated; empty when compiled code checks the flag instead.
     poll_start: usize,
     poll_end: usize,
-    /// VM-local epoch advanced by table writes and collections. Fast indirect
-    /// calls are valid only while their artifact-local cached epoch matches.
-    reference_epoch: *const u64,
-    /// Stable per-site cache storage owned by the current compiled artifact.
-    reference_fast_caches: *mut FastReferenceCache,
     /// Diagnostic-only count of direct Emscripten same-memory copies.
     emscripten_memcpy_fast_path_hits: *mut u64,
     /// Per-import attribution, present only during opt-in diagnostic runs.
@@ -2160,6 +2130,11 @@ pub(super) struct CallContext {
     adapter_payload: *mut (),
     /// Borrowed only during a running entry; a non-reentrant region may prove unique ownership.
     interrupt_owner: *const crate::ExecutionInterrupt,
+    /// The record of the instance this context is in (`InstanceContext`), whose words the fields
+    /// it shares by name hold (`SWITCHED`): what a mirror row's instance is compared with.
+    instance: *const InstanceContext,
+    /// The VM's roots for the instances native code enters beyond this one.
+    native_roots: *mut NativeRoots,
 }
 
 impl CallContext {
@@ -2178,6 +2153,7 @@ impl CallContext {
             guard_start: 0,
             guard_end: 0,
             globals: std::ptr::null(),
+            table_words: std::ptr::null(),
             callout: 0,
             call_reference: 0,
             compiled: std::ptr::null(),
@@ -2193,13 +2169,13 @@ impl CallContext {
             reference_call_site_count: 0,
             poll_start: 0,
             poll_end: 0,
-            reference_epoch: std::ptr::null(),
-            reference_fast_caches: std::ptr::null_mut(),
             emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
             import_callout_counts: std::ptr::null(),
             import_callout_count: 0,
             adapter_payload: std::ptr::null_mut(),
             interrupt_owner: std::ptr::null(),
+            instance: std::ptr::null(),
+            native_roots: std::ptr::null_mut(),
         };
         context.bind_native_adapter(adapter_payload, interrupt, poll_page);
         context
@@ -2235,6 +2211,7 @@ impl CallContext {
             guard_start: 0,
             guard_end: 0,
             globals: std::ptr::null(),
+            table_words: std::ptr::null(),
             callout: 0,
             call_reference: 0,
             compiled: std::ptr::null(),
@@ -2250,13 +2227,13 @@ impl CallContext {
             reference_call_site_count: 0,
             poll_start: poll.map_or(0, |(start, _)| start),
             poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
-            reference_epoch: std::ptr::null(),
-            reference_fast_caches: std::ptr::null_mut(),
             emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
             import_callout_counts: std::ptr::null(),
             import_callout_count: 0,
             adapter_payload: std::ptr::null_mut(),
             interrupt_owner: interrupt,
+            instance: std::ptr::null(),
+            native_roots: std::ptr::null_mut(),
         }
     }
 
@@ -2281,6 +2258,7 @@ impl CallContext {
             guard_start: self.guard_start,
             guard_end: self.guard_end,
             globals: self.globals,
+            table_words: self.table_words,
             callout: self.callout,
             call_reference: self.call_reference,
             compiled: self.compiled,
@@ -2296,13 +2274,13 @@ impl CallContext {
             reference_call_site_count: self.reference_call_site_count,
             poll_start: self.poll_start,
             poll_end: self.poll_end,
-            reference_epoch: self.reference_epoch,
-            reference_fast_caches: self.reference_fast_caches,
             emscripten_memcpy_fast_path_hits: self.emscripten_memcpy_fast_path_hits,
             import_callout_counts: self.import_callout_counts,
             import_callout_count: self.import_callout_count,
             adapter_payload: std::ptr::null_mut(),
             interrupt_owner: self.interrupt_owner,
+            instance: self.instance,
+            native_roots: self.native_roots,
         }
     }
 }
@@ -2319,78 +2297,20 @@ const CONTEXT_TABLE: i32 = std::mem::offset_of!(CallContext, table) as i32;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 const CONTEXT_ENTRY_STACK: u8 = std::mem::offset_of!(CallContext, entry_stack) as u8;
 const CONTEXT_GLOBALS: i32 = std::mem::offset_of!(CallContext, globals) as i32;
+const CONTEXT_TABLE_WORDS: i32 = std::mem::offset_of!(CallContext, table_words) as i32;
 const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, callout) as i32;
 const CONTEXT_CALL_REFERENCE: i32 = std::mem::offset_of!(CallContext, call_reference) as i32;
 const CONTEXT_MEMORY_LENGTH: i32 = std::mem::offset_of!(CallContext, memory_length) as i32;
 const CONTEXT_CALL_REFERENCE_DIAGNOSTIC: i32 =
     std::mem::offset_of!(CallContext, call_reference_diagnostic) as i32;
-const CONTEXT_REFERENCE_EPOCH: i32 = std::mem::offset_of!(CallContext, reference_epoch) as i32;
-const CONTEXT_ENV: i32 = std::mem::offset_of!(CallContext, env) as i32;
-const CONTEXT_REFERENCE_FAST_CACHES: i32 =
-    std::mem::offset_of!(CallContext, reference_fast_caches) as i32;
+const CONTEXT_INSTANCE: i32 = std::mem::offset_of!(CallContext, instance) as i32;
+const CONTEXT_NATIVE_ROOTS: i32 = std::mem::offset_of!(CallContext, native_roots) as i32;
 /// The callout's signature: (context, function index, arguments, result) ->
 /// status; arguments and result are Wasm bits, one word each.
 type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
-type ReferenceCallout = unsafe extern "C" fn(
-    *mut CallContext,
-    u64,
-    u64,
-    u64,
-    u64,
-    *const u64,
-    *mut u64,
-    *mut FastReferenceCache,
-) -> i64;
+type ReferenceCallout =
+    unsafe extern "C" fn(*mut CallContext, u64, u64, u64, u64, *const u64, *mut u64) -> i64;
 type DiagnosticReferenceCallout = ReferenceCallout;
-
-/// A target certificate for same-artifact indirect calls: element `index` of instance `env`'s
-/// table in binding `table` is this artifact's `function`, of type `signature`, whose code is
-/// `body`. An
-/// artifact's call sites share its certificates, one per table index's low bits
-/// (`reference_dispatch_entries`). The body pointer is owned by this artifact's code mapping.
-/// The VM publishes the epoch last after a successful target return and a table-slot recheck;
-/// a nonzero epoch is the validity bit.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct FastReferenceCache {
-    epoch: u64,
-    env: Value,
-    table: u64,
-    index: u64,
-    signature: u64,
-    function: u64,
-    body: u64,
-}
-
-
-/// The most certificates an artifact keeps, however many sites it has: a direct-mapped cache
-/// whose collisions cost only a callout.
-const MAX_REFERENCE_DISPATCH_ENTRIES: usize = 256;
-
-/// The certificates of an artifact with `sites` indirect call sites, indexed by the table
-/// index's low bits: a power of two, none without sites.
-fn reference_dispatch_entries(sites: usize) -> usize {
-    if sites == 0 {
-        return 0;
-    }
-    (sites * tier_policy::POLYMORPHISM)
-        .next_power_of_two()
-        .min(MAX_REFERENCE_DISPATCH_ENTRIES)
-}
-
-impl Default for FastReferenceCache {
-    fn default() -> Self {
-        Self {
-            epoch: 0,
-            env: Value::NULL,
-            table: 0,
-            index: 0,
-            signature: 0,
-            function: 0,
-            body: 0,
-        }
-    }
-}
 
 /// Fill an already bounds-checked range in the instance's direct memory.
 /// The compiler checks against the exact current length before calling this
@@ -2402,15 +2322,6 @@ unsafe extern "C" fn compiled_memory_fill(address: u64, byte: u64, length: u64) 
         std::ptr::write_bytes(address as usize as *mut u8, byte as u8, length as usize);
     }
     0
-}
-
-/// Whether `field` of `instruction` is the unused second operand of a one-operand SIMD
-/// operator, which lowering leaves naming register 0 and nothing reads.
-fn unary_simd_spare(instruction: WideInstruction, field: crate::bytecode::InstructionField) -> bool {
-    instruction.op().is_wasm_simd()
-        && field == crate::bytecode::InstructionField::C
-        && crate::wasm::simd::SimdKernel::of(instruction.imm())
-            .is_some_and(|(kernel, _)| kernel.right.is_none())
 }
 
 /// The machine type compiled code holds a Wasm vector in (`Slot::Vector`).
@@ -2640,7 +2551,6 @@ unsafe extern "C" fn reference_callout<H: Host>(
     site: u64,
     args: *const u64,
     out: *mut u64,
-    fast_cache: *mut FastReferenceCache,
 ) -> i64 {
     // A stable call-site id is present even without diagnostics so the VM can
     // find the per-site monomorphic cache without a hash lookup.
@@ -2653,7 +2563,6 @@ unsafe extern "C" fn reference_callout<H: Host>(
             site,
             args,
             out,
-            fast_cache,
         )
     }
 }
@@ -2668,7 +2577,6 @@ unsafe extern "C" fn diagnostic_reference_callout<H: Host>(
     site: u64,
     args: *const u64,
     out: *mut u64,
-    fast_cache: *mut FastReferenceCache,
 ) -> i64 {
     unsafe {
         reference_callout_inner::<H, true>(
@@ -2679,7 +2587,6 @@ unsafe extern "C" fn diagnostic_reference_callout<H: Host>(
             site,
             args,
             out,
-            fast_cache,
         )
     }
 }
@@ -2695,7 +2602,6 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     site: u64,
     args: *const u64,
     out: *mut u64,
-    fast_cache: *mut FastReferenceCache,
 ) -> i64 {
     // SAFETY: generated code passes the context, table binding, table index,
     // signature index, argument words, and output storage for this call.
@@ -2708,21 +2614,10 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     let mut same_artifact_direct_hit = false;
     let mut target_same_artifact_native = false;
     let mut reference_target_function = None;
-    let mut fast_target: Option<(usize, Value, Value, u32, u64, u64)> = None;
     let mut direct_target_root = None;
     let mut direct_status = None;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let (
-            callee,
-            params,
-            result_type,
-            same_program_function,
-            direct_entry,
-            cache_hit,
-            table,
-            table_slot,
-            signature_index,
-        ) = {
+        let (callee, params, result_type, same_program_function, direct_entry) = {
             // Do all heap/program inspection before entering native code. The
             // VM is re-entered through callouts, so no `&mut Vm` may live
             // across that boundary.
@@ -2735,88 +2630,53 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                 .heap
                 .environment_slot(context.env, table_slot as usize)
                 .ok_or_else(|| JsError::validation("invalid Wasm table binding".into()))?;
-            let cached = usize::try_from(site).ok().and_then(|site| {
-                cached_direct_reference(
+            let callee = vm.wasm_indirect_target(program, table, index, signature_index)?;
+            let (params, result_type) = {
+                let signature = vm
+                    .programs
+                    .wasm_signatures(program)
+                    .and_then(|signatures| signatures.type_signature(signature_index))
+                    .ok_or_else(|| JsError::validation("invalid Wasm signature index".into()))?;
+                (
+                    signature
+                        .params
+                        .iter()
+                        .copied()
+                        .collect::<smallvec::SmallVec<[crate::WasmType; 8]>>(),
+                    signature.results.first().copied(),
+                )
+            };
+            let same_program_function = match vm.heap.function(callee) {
+                Some(FunctionRecord {
+                    kind: crate::heap::FunctionKind::User(target_program, function),
+                    env,
+                    ..
+                }) if *target_program == program => Some((*target_program, *function, *env)),
+                _ => None,
+            };
+            let same_instance_function = same_program_function
+                .filter(|(_, _, target_env)| *target_env == context.env)
+                .map(|(_, function, _)| function);
+            if let Some(function) = same_instance_function
+                && !context.compiled.is_null()
+                && let Ok(site) = usize::try_from(site)
+            {
+                // SAFETY: the running artifact outlives its own call.
+                unsafe { &*context.compiled }.note_indirect_target(site, function);
+            }
+            let direct_entry = same_instance_function.and_then(|function| {
+                let compiled =
+                    compiled_reference_target(vm, program, function as usize, context.compiled)?;
+                direct_reference_entry(
                     vm,
-                    context,
-                    table_slot,
-                    table,
-                    index,
-                    signature_index,
-                    site,
+                    compiled,
+                    function as usize,
+                    (context.env, program),
+                    context.memory,
+                    Some((&params, result_type)),
                 )
             });
-            if let Some((callee, direct_entry)) = cached {
-                (
-                    callee,
-                    smallvec::SmallVec::new(),
-                    None,
-                    None,
-                    Some(direct_entry),
-                    true,
-                    table,
-                    table_slot,
-                    signature_index,
-                )
-            } else {
-                let callee = vm.wasm_indirect_target(program, table, index, signature_index)?;
-                let (params, result_type) = {
-                    let signature = vm
-                        .programs
-                        .wasm_signatures(program)
-                        .and_then(|signatures| signatures.type_signature(signature_index))
-                        .ok_or_else(|| {
-                            JsError::validation("invalid Wasm signature index".into())
-                        })?;
-                    (
-                        signature
-                            .params
-                            .iter()
-                            .copied()
-                            .collect::<smallvec::SmallVec<[crate::WasmType; 8]>>(),
-                        signature.results.first().copied(),
-                    )
-                };
-                let same_program_function = match vm.heap.function(callee) {
-                    Some(FunctionRecord {
-                        kind: crate::heap::FunctionKind::User(target_program, function),
-                        env,
-                        ..
-                    }) if *target_program == program => Some((*target_program, *function, *env)),
-                    _ => None,
-                };
-                let direct_entry = same_program_function
-                    .filter(|(target_program, _, target_env)| {
-                        *target_program == program && *target_env == context.env
-                    })
-                    .and_then(|(_, function, _)| {
-                        let compiled = compiled_reference_target(
-                            vm,
-                            program,
-                            function as usize,
-                            context.compiled,
-                        )?;
-                        direct_reference_entry(
-                            vm,
-                            compiled,
-                            function as usize,
-                            context.env,
-                            context.memory,
-                            Some((&params, result_type)),
-                        )
-                    });
-                (
-                    callee,
-                    params,
-                    result_type,
-                    same_program_function,
-                    direct_entry,
-                    false,
-                    table,
-                    table_slot,
-                    signature_index,
-                )
-            }
+            (callee, params, result_type, same_program_function, direct_entry)
         };
         if DIAGNOSTICS {
             reference_target_function = direct_entry.as_ref().map(|entry| entry.1).or_else(|| {
@@ -2825,84 +2685,32 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                     .map(|(_, function, _)| *function as usize)
             });
         }
-        if let Some((compiled, function, entry, (base, length), memory_binding, guard, globals)) =
-            direct_entry
+        if let Some((
+            compiled,
+            function,
+            entry,
+            (base, length),
+            record,
+        )) = direct_entry
         {
             // A re-entrant import can mutate the table and collect while this
             // body is running. Keep its function cell alive until the call
-            // returns so a freed slot cannot be reused before cache publish.
+            // returns.
             let callee_root = unsafe { &mut *vm_pointer }.heap.root(callee);
             direct_target_root = Some(callee_root);
-            if !cache_hit
-                && let Ok(site) = usize::try_from(site)
-                && !context.compiled.is_null()
-            {
-                let target_weak = unsafe { &*vm_pointer }.heap.weak_handle(callee);
-                if let Some(target_weak) = target_weak {
-                    let caller = unsafe { &*context.compiled };
-                    caller.cache_indirect_call(
-                        site,
-                        IndirectCallCacheEntry {
-                            table_slot,
-                            table,
-                            index,
-                            signature_index,
-                            target: callee,
-                            target_weak,
-                            program,
-                            function: function as u32,
-                            env: context.env,
-                            compiled: Rc::downgrade(&compiled),
-                            hits: 0,
-                        },
-                    );
-                }
-            }
             let native_entry_should_sample = compiled.note_direct_reference_entry(function);
             let mut nested = context.nested_entry();
-            nested.compiled = Rc::as_ptr(&compiled);
-            nested.reference_fast_caches = compiled.reference_fast_caches_ptr();
-            nested.table = compiled.table.as_ptr();
-            nested.globals = globals.as_ptr();
-            nested.memory = memory_binding;
-            nested.memory_length = length;
-            let (guard_start, guard_end) = guard.map_or((0, 0), |(start, size)| {
-                (start as usize, start as usize + size)
-            });
-            nested.guard_start = guard_start;
-            nested.guard_end = guard_end;
-            nested.call_reference_diagnostic = compiled.diagnostics.as_ref().map_or(0, |_| {
-                diagnostic_reference_callout::<H> as DiagnosticReferenceCallout as usize
-            });
-            nested.reference_call_sites = compiled
-                .diagnostics
-                .as_ref()
-                .map_or(std::ptr::null(), |stats| {
-                    stats.reference_call_sites.as_ptr()
-                });
-            nested.reference_call_site_count = compiled
-                .diagnostics
-                .as_ref()
-                .map_or(0, |stats| stats.reference_call_sites.len());
+            // SAFETY: the record belongs to the environment the target runs in.
+            nested.enter(unsafe { &*record });
             // SAFETY: the table/signature resolver ran first; same program,
             // exact instance environment, and exact scalar signature were
             // checked above. The caller's raw argument/result buffers have
             // the Wasm ABI shape expected by this compiled entry, and `compiled`
             // keeps its executable mapping alive for the duration of the call.
             native_target_hit = true;
-            let same_artifact = !context.compiled.is_null()
-                && std::ptr::eq(context.compiled, Rc::as_ptr(&compiled));
-            if same_artifact
-                && let Some(body) = compiled
-                    .table
-                    .get(function)
-                    .copied()
-                    .filter(|body| *body != 0)
-            {
-                fast_target = Some((function, callee, table, table_slot, index, body as u64));
-            }
             if DIAGNOSTICS {
-                same_artifact_direct_hit = same_artifact;
+                same_artifact_direct_hit = !context.compiled.is_null()
+                    && std::ptr::eq(context.compiled, Rc::as_ptr(&compiled));
                 target_same_artifact_native = same_artifact_direct_hit;
             }
             let native_entry_sample_started =
@@ -3000,39 +2808,6 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
     let vm = unsafe { &mut *vm_pointer };
-    if let Some((function, target, table, table_slot, index, body)) = fast_target {
-        let target_still_matches = direct_target_root
-            .and_then(|root| vm.heap.root_value(root))
-            .is_some_and(|rooted| {
-                rooted == target
-                    && reference_target_matches(vm, target, program, function as u32, context.env)
-            });
-        if !fast_cache.is_null()
-            && direct_status == Some(0)
-            && called.as_ref().is_ok_and(|result| result.is_ok())
-            && target_still_matches
-        {
-            let table_binding = vm.heap.environment_slot(context.env, table_slot as usize);
-            let current_target = usize::try_from(index)
-                .ok()
-                .and_then(|index| vm.wasm_table_elements(table).ok()?.get(index).copied());
-            if table_binding == Some(table) && current_target == Some(target) {
-                // SAFETY: generated code passes a correctly aligned pointer to
-                // this site's UnsafeCell in the owning artifact. The artifact is
-                // retained throughout the call and native code is suspended until
-                // the callout returns.
-                let cache = unsafe { &mut *fast_cache };
-                cache.epoch = 0;
-                cache.env = context.env;
-                cache.table = u64::from(table_slot);
-                cache.index = index;
-                cache.signature = signature_index;
-                cache.function = function as u64;
-                cache.body = body;
-                cache.epoch = vm.wasm_reference_epoch.get();
-            }
-        }
-    }
     if let Some(root) = direct_target_root {
         vm.heap.release_root(root);
     }
@@ -3154,31 +2929,12 @@ pub(super) struct CompiledFunction {
     direct_reference_entries: std::cell::Cell<u64>,
 }
 
-/// A program's compiled functions, sharing one code mapping and one call
-/// table.
-#[derive(Clone)]
-struct IndirectCallCacheEntry {
-    table_slot: u32,
-    table: Value,
-    index: u64,
-    signature_index: u32,
-    target: Value,
-    target_weak: crate::heap::WeakHandle,
-    program: ProgramId,
-    function: u32,
-    env: Value,
-    compiled: Weak<CompiledProgram>,
-    hits: u64,
-}
-
 type DirectReferenceEntry = (
     Rc<CompiledProgram>,
     usize,
     WasmEntry,
     (u64, u64),
-    Value,
-    Option<(*mut u8, usize)>,
-    smallvec::SmallVec<[*mut Value; 8]>,
+    *const InstanceContext,
 );
 
 /// Build the per-invocation activation for a same-instance compiled indirect
@@ -3188,7 +2944,7 @@ fn direct_reference_entry<H: Host>(
     vm: &mut Vm<H>,
     compiled: Rc<CompiledProgram>,
     function: usize,
-    env: Value,
+    (env, program): (Value, ProgramId),
     context_memory: Value,
     signature: Option<(&[crate::WasmType], Option<crate::WasmType>)>,
 ) -> Option<DirectReferenceEntry> {
@@ -3199,42 +2955,13 @@ fn direct_reference_entry<H: Host>(
         return None;
     }
     let entry = native.entry;
-    let (memory, memory_binding, guard) = match compiled.memory_slot {
-        None => ((0, 0), Value::UNDEFINED, None),
-        Some(slot) => {
-            let binding = vm.heap.environment_slot(env, slot as usize)?;
-            if binding != context_memory {
-                return None;
-            }
-            let (base, length) = super::dispatch_fast::direct_memory(vm, binding)?;
-            let guard = guarded_memory(vm, binding);
-            if compiled.guarded && guard.is_none()
-                || compiled.fixed_base.is_some_and(|fixed| {
-                    guard.map(|(base, _)| displacement_base(base)) != Some(Some(fixed))
-                })
-            {
-                return None;
-            }
-            ((base as u64, length as u64), binding, guard)
-        }
-    };
-    let mut globals: smallvec::SmallVec<[*mut Value; 8]> = smallvec::SmallVec::new();
-    for slot in &compiled.globals {
-        let binding = vm.heap.environment_slot(env, *slot as usize)?;
-        match vm.heap.get_mut(binding)? {
-            Cell::WasmGlobal { value, .. } => globals.push(value),
-            _ => return None,
-        }
+    if let Some(slot) = compiled.memory_slot
+        && vm.heap.environment_slot(env, slot as usize)? != context_memory
+    {
+        return None;
     }
-    Some((
-        compiled,
-        function,
-        entry,
-        memory,
-        memory_binding,
-        guard,
-        globals,
-    ))
+    let (record, memory) = vm.publish_wasm_instance(&compiled, env, program)?;
+    Some((compiled, function, entry, memory, record))
 }
 
 /// Pick a compiled artifact for an indirect target, preferring the artifact
@@ -3278,80 +3005,7 @@ fn compiled_reference_target<H: Host>(
         })
 }
 
-/// Check the cache's guards without turning any miss into a Wasm trap. The
-/// ordinary resolver below remains authoritative for OOB, null, and mismatch
-/// cases, and for artifacts that cannot currently activate the cached target.
-fn cached_direct_reference<H: Host>(
-    vm: &mut Vm<H>,
-    context: &CallContext,
-    table_slot: u32,
-    table: Value,
-    index: u64,
-    signature_index: u32,
-    site: usize,
-) -> Option<(Value, DirectReferenceEntry)> {
-    if context.compiled.is_null() {
-        return None;
-    }
-    let caller = unsafe { &*context.compiled };
-    let cache = caller.indirect_call_cache(site)?;
-    if cache.table_slot != table_slot
-        || cache.table != table
-        || cache.index != index
-        || cache.signature_index != signature_index
-        || cache.program != context.program
-        || cache.env != context.env
-    {
-        return None;
-    }
-    let element = usize::try_from(index)
-        .ok()
-        .and_then(|index| vm.wasm_table_elements(table).ok()?.get(index).copied())?;
-    if element != cache.target || vm.heap.weak_value(cache.target_weak) != Some(element) {
-        return None;
-    }
-    match vm.heap.function(element) {
-        Some(FunctionRecord {
-            kind: crate::heap::FunctionKind::User(program, function),
-            env,
-            ..
-        }) if *program == cache.program && *function == cache.function && *env == cache.env => {}
-        _ => return None,
-    }
-    caller.note_indirect_cache_hit(site);
-    let compiled = cache.compiled.upgrade()?;
-    let direct = direct_reference_entry(
-        vm,
-        compiled,
-        cache.function as usize,
-        context.env,
-        context.memory,
-        None,
-    )?;
-    #[cfg(test)]
-    caller
-        .reference_cache_hits
-        .set(caller.reference_cache_hits.get().saturating_add(1));
-    Some((element, direct))
-}
-
-fn reference_target_matches<H: Host>(
-    vm: &Vm<H>,
-    target: Value,
-    program: ProgramId,
-    function: u32,
-    env: Value,
-) -> bool {
-    matches!(
-        vm.heap.function(target),
-        Some(FunctionRecord {
-            kind: crate::heap::FunctionKind::User(target_program, target_function),
-            env: target_env,
-            ..
-        }) if *target_program == program && *target_function == function && *target_env == env
-    )
-}
-
+/// A program's compiled functions, sharing one code mapping and one call table.
 pub(super) struct CompiledProgram {
     _code: CodeMemory,
     table: Box<[usize]>,
@@ -3369,22 +3023,12 @@ pub(super) struct CompiledProgram {
     /// displacement (see `displacement_base`); calls with another base fall
     /// back to the interpreter.
     fixed_base: Option<i32>,
-    /// The environment slots of the globals compiled code accesses, in the
-    /// order of the context's global addresses.
-    globals: Vec<u32>,
     diagnostics: Option<WasmJitDiagnostics>,
-    /// One optional monomorphic cache per actual compiled `call_indirect`
-    /// site. The vector is only pointers until a site becomes hot, and each
-    /// cache weakly references its callee artifact to avoid Rc cycles.
-    reference_call_caches: std::cell::RefCell<Vec<Option<Box<IndirectCallCacheEntry>>>>,
-    /// Target certificates for native direct dispatch, by table index
-    /// (`reference_dispatch_entries`). These do not retain heap values and are
-    /// invalidated by the VM epoch.
-    reference_fast_caches: Box<[UnsafeCell<FastReferenceCache>]>,
-    /// The owner and bytecode PC for each entry in `reference_call_caches`.
+    /// How often the VM's callout resolved each target at each actual compiled `call_indirect`
+    /// site.
+    indirect_hits: indirect_profile::SiteHits,
+    /// The owner, bytecode PC and table binding of each site `indirect_hits` counts.
     reference_cache_sites: Vec<(usize, usize, u32)>,
-    #[cfg(test)]
-    reference_cache_hits: std::cell::Cell<u64>,
 }
 
 /// Counters allocated only for opt-in benchmark diagnostics. These runs are
@@ -3529,119 +3173,6 @@ fn jit_diagnostics_enabled() -> bool {
 }
 
 impl CompiledProgram {
-    fn reference_fast_caches_ptr(&self) -> *mut FastReferenceCache {
-        self.reference_fast_caches
-            .first()
-            .map_or(std::ptr::null_mut(), |cache| cache.get())
-    }
-
-    fn indirect_call_cache(&self, site: usize) -> Option<IndirectCallCacheEntry> {
-        self.reference_call_caches
-            .borrow()
-            .get(site)?
-            .as_deref()
-            .cloned()
-    }
-
-    fn cache_indirect_call(&self, site: usize, entry: IndirectCallCacheEntry) {
-        if let Some(slot) = self.reference_call_caches.borrow_mut().get_mut(site) {
-            *slot = Some(Box::new(entry));
-        }
-    }
-
-    fn note_indirect_cache_hit(&self, site: usize) {
-        if let Some(Some(entry)) = self.reference_call_caches.borrow_mut().get_mut(site) {
-            entry.hits = entry.hits.saturating_add(1);
-        }
-    }
-
-    /// Return recently observed targets for call sites in a selective root's
-    /// static closure, hottest first. The target cache already includes the
-    /// exact program and instance environment guards.
-    pub(super) fn profiled_indirect_targets<H: Host>(
-        &self,
-        vm: &Vm<H>,
-        program: ProgramId,
-        env: Value,
-        callers: &[bool],
-    ) -> Vec<usize> {
-        let caches = self.reference_call_caches.borrow();
-        let mut targets = self
-            .reference_cache_sites
-            .iter()
-            .enumerate()
-            .filter(|(_, (caller, _, _))| callers.get(*caller).copied().unwrap_or(false))
-            .filter_map(|(site, (_, _, table_slot))| {
-                let entry = caches.get(site)?.as_deref()?;
-                let current_table = vm.heap.environment_slot(env, *table_slot as usize)?;
-                (entry.table_slot == *table_slot
-                    && entry.program == program
-                    && entry.env == env
-                    && entry.table == current_table
-                    && vm.wasm_table_get(current_table, entry.index).ok() == Some(entry.target)
-                    && vm.heap.weak_value(entry.target_weak) == Some(entry.target)
-                    && reference_target_matches(
-                        vm,
-                        entry.target,
-                        entry.program,
-                        entry.function,
-                        entry.env,
-                    ))
-                .then_some((entry.function as usize, entry.hits))
-            })
-            .collect::<Vec<_>>();
-        targets.sort_unstable_by_key(|(_, hits)| std::cmp::Reverse(*hits));
-        let mut unique = Vec::new();
-        for (target, _) in targets {
-            if !unique.contains(&target) {
-                unique.push(target);
-                if unique.len() == MAX_JIT_PROFILED_INDIRECT_TARGETS {
-                    break;
-                }
-            }
-        }
-        unique
-    }
-
-    pub(super) fn clear_indirect_call_caches(&self) {
-        self.reference_call_caches
-            .borrow_mut()
-            .iter_mut()
-            .for_each(|slot| *slot = None);
-    }
-
-    #[cfg(test)]
-    pub(super) fn reference_call_cache_target(&self, site: usize) -> Option<Value> {
-        self.indirect_call_cache(site).map(|entry| entry.target)
-    }
-
-    #[cfg(test)]
-    pub(super) fn reference_cache_hits(&self) -> u64 {
-        self.reference_cache_hits.get()
-    }
-
-    #[cfg(test)]
-    pub(super) fn reference_fast_cache_matches_target(
-        &self,
-        index: usize,
-        target_function: usize,
-    ) -> bool {
-        let entries = self.reference_fast_caches.len();
-        let Some(cache) = (entries != 0)
-            .then(|| self.reference_fast_caches.get(index & (entries - 1)))
-            .flatten()
-        else {
-            return false;
-        };
-        let Some(body) = self.table.get(target_function).copied() else {
-            return false;
-        };
-        // The VM has returned from native execution before tests inspect this
-        // cache, and only the owning artifact's callout writes the cell.
-        let cache = unsafe { *cache.get() };
-        cache.function == target_function as u64 && cache.body == body as u64 && body != 0
-    }
-
     #[cfg(test)]
     pub(super) fn emscripten_memcpy_fast_path_hits(&self) -> u64 {
         self.diagnostics
@@ -5843,11 +5374,6 @@ impl Plan {
     }
 }
 
-/// The register a direct access of `instruction` reads its memory through.
-fn direct_access(op: Op) -> bool {
-    MemoryLoad::from_direct_op(op).is_some() || MemoryStore::from_direct_op(op).is_some()
-}
-
 fn successors(function: &Function, pc: usize, instruction: WideInstruction) -> Vec<usize> {
     let mut successors = Vec::with_capacity(2);
     crate::bytecode::for_each_instruction_successor(pc, instruction, |successor| {
@@ -6095,11 +5621,11 @@ impl<H: Host> Analysis<'_, H> {
             let mut state = states[pc]
                 .clone()
                 .expect("queued instructions have a state");
-            if instruction.op().class().eq(Class::CallKnown)
-                && !callable.contains(usize::from(instruction.known_function_index()))
+            if let Some(callee) = Step::of(instruction.op(), instruction.imm())
+                .and_then(|step| step.callee(instruction))
+                && !callable.contains(callee)
                 && !self.experimental_root_compilation
             {
-                let callee = instruction.known_function_index();
                 self.reject(index, || format!("uncompiled-callee:{callee}@{pc}"));
                 return None;
             }
@@ -6109,8 +5635,7 @@ impl<H: Host> Analysis<'_, H> {
                     instruction,
                     &mut state,
                     callable,
-                    memory_register,
-                    memory_slot,
+                    (memory_register, memory_slot),
                     result,
                 )
                 .is_none()
@@ -6141,10 +5666,8 @@ impl<H: Host> Analysis<'_, H> {
             .zip(&instructions)
             .map(|(state, instruction)| {
                 let state = state.as_ref()?;
-                let operand = match instruction.op().class() {
-                    Class::WasmMemoryLoad | Class::WasmMemoryStore => instruction.c(),
-                    _ => instruction.b(),
-                };
+                let operand = Step::of(instruction.op(), instruction.imm())
+                    .map_or(instruction.b(), |step| step.operand(*instruction));
                 Some(state.get(operand, function.registers).unwrap_or(Slot::Conflict))
             })
             .collect();
@@ -6182,420 +5705,64 @@ impl<H: Host> Analysis<'_, H> {
     }
 
     /// Check `instruction` has a compiled denotation in `state`, and apply its
-    /// register writes.
-    #[allow(clippy::too_many_arguments)]
+    /// register writes. `memory` is the function's memory register and the slot it binds.
     fn transfer(
         &self,
         function: &Function,
         instruction: WideInstruction,
         state: &mut AnalysisState,
         callable: &crate::bitset::BitSet,
-        memory_register: Option<u16>,
-        memory_slot: &mut Option<u32>,
+        memory: (Option<u16>, &mut Option<u32>),
         result: Option<crate::WasmType>,
     ) -> Option<()> {
-        let op = instruction.op();
-        if !op.is_return() && instruction.returns_from_frame() {
-            return None;
-        }
-        if !super::dispatch_fast::lane_fields_fit(instruction, function) {
-            return None;
-        }
-        let value =
-            |state: &AnalysisState, register: u16| match state.get(register, function.registers)? {
-                Slot::Value(kind) => Some(kind),
-                Slot::Memory32Address => Some(Kind::I64),
-                _ => None,
-            };
-        let i32_value = |state: &AnalysisState, register: u16| {
-            (value(state, register)? == Kind::I32).then_some(())
-        };
-        let set = |state: &mut AnalysisState, register: u16, slot: Slot| {
-            state.set(register, function.registers, slot)
-        };
-        // The memory register is read only by direct accesses through it.
-        if memory_register.is_some_and(|memory| {
-            !direct_access(op) && !op.traits().has(Traits::WASM_MEMORY)
-                && !op.is_wasm_instance_binding()
-                && crate::bytecode::InstructionField::ALL.iter().any(|field| {
-                    op.field_layout(*field).reads_register()
-                        && instruction.field_value(*field) == memory
-                        && !unary_simd_spare(instruction, *field)
-                })
-        }) {
-            return None;
-        }
-        if let Some(_operator) = I32BinaryOperator::from_register_op(op) {
-            i32_value(state, instruction.b())?;
-            i32_value(state, instruction.c())?;
-            return set(state, instruction.a(), Slot::Value(Kind::I32));
-        }
-        if I32BinaryOperator::from_immediate_op(op).is_some() {
-            i32_value(state, instruction.b())?;
-            return set(state, instruction.a(), Slot::Value(Kind::I32));
-        }
-        if I32BinaryOperator::from_jump_op(op).is_some() {
-            i32_value(state, instruction.a())?;
-            return i32_value(state, instruction.b());
-        }
-        if I32BinaryOperator::from_immediate_jump_op(op).is_some() {
-            return i32_value(state, instruction.a());
-        }
-        if let Some(load) = MemoryLoad::from_direct_op(op) {
-            if Some(instruction.b()) != memory_register
-                || state.get(instruction.b(), function.registers) != Some(Slot::Memory)
-            {
-                return None;
-            }
-            i32_value(state, instruction.c())?;
-            return set(
-                state,
-                instruction.a(),
-                Slot::Value(Kind::of(load_type(load)?)?),
-            );
-        }
-        if let Some(store) = MemoryStore::from_direct_op(op) {
-            if Some(instruction.b()) != memory_register
-                || state.get(instruction.b(), function.registers) != Some(Slot::Memory)
-            {
-                return None;
-            }
-            i32_value(state, instruction.c())?;
-            return (value(state, instruction.a())? == Kind::of(store.value_type())?).then_some(());
-        }
-        // Result widths are read off the operators' own semantics:
-        // comparisons produce an i32.
-        if let Some((operator, ty)) = float_binary_operator(op, instruction.imm()) {
-            let kind = Kind::of(ty)?;
-            (value(state, instruction.b())? == kind).then_some(())?;
-            (value(state, instruction.c())? == kind).then_some(())?;
-            let comparison = operator.apply(0.0, 0.0).ty() == crate::WasmType::I32;
-            let result = if comparison { Kind::I32 } else { kind };
-            return set(state, instruction.a(), Slot::Value(result));
-        }
-        if let Some((_, ty)) = float_unary_operator(op, instruction.imm()) {
-            let kind = Kind::of(ty)?;
-            (value(state, instruction.b())? == kind).then_some(())?;
-            return set(state, instruction.a(), Slot::Value(kind));
-        }
-        match op.class() {
-            Class::WasmI64Binary => {
-                let operator = I64BinaryOperator::from_tag(instruction.imm())?;
-                (value(state, instruction.b())? == Kind::I64).then_some(())?;
-                (value(state, instruction.c())? == Kind::I64).then_some(())?;
-                let result = Kind::of(operator.apply(1, 1).ok()?.ty())?;
-                set(state, instruction.a(), Slot::Value(result))
-            }
-            Class::WasmI64Unary => {
-                let operator = I64UnaryOperator::from_tag(instruction.imm())?;
-                (value(state, instruction.b())? == Kind::I64).then_some(())?;
-                let result = Kind::of(operator.apply(0).ty())?;
-                set(state, instruction.a(), Slot::Value(result))
-            }
-            Class::WasmScalarConvert => {
-                let operator = ScalarConversionOperator::from_tag(instruction.imm())?;
-                (value(state, instruction.b())? == Kind::of(operator.source_type())?)
-                    .then_some(())?;
-                let result = Kind::of(operator.result_type())?;
-                set(state, instruction.a(), Slot::Value(result))
-            }
-            Class::Move => match state.get(instruction.b(), function.registers)? {
-                slot @ (Slot::Vector | Slot::Memory32Address) => {
-                    set(state, instruction.a(), slot)
-                }
-                _ => {
-                    let kind = value(state, instruction.b())?;
-                    set(state, instruction.a(), Slot::Value(kind))
-                }
-            },
-            Class::LoadConst => {
-                let constant = self.constant(instruction.constant_index())?;
-                set(state, instruction.a(), self.constant_slot(constant))
-            }
-            Class::WasmFillRegisters => {
-                let constant = self.constant(instruction.constant_index())?;
-                let slot = self.constant_slot(constant);
-                let window = instruction.register_window();
-                for offset in 0..window.count {
-                    set(state, window.base + offset, slot)?;
-                }
-                Some(())
-            }
-            // A vector access's effective address: a 32-bit address plus the access's offset,
-            // as 64 bits, so the sum cannot wrap.
-            Class::WasmMemoryAddress => {
-                self.vector_memory(function, state, instruction.c(), memory_register, memory_slot)?;
-                self.memory_offset(instruction.constant_index())?;
-                i32_value(state, instruction.b())?;
-                set(state, instruction.a(), Slot::Memory32Address)
-            }
-            Class::WasmMemoryLoad | Class::WasmMemoryStore => {
-                self.vector_memory(function, state, instruction.b(), memory_register, memory_slot)?;
-                if value(state, instruction.c())? != Kind::I64 {
-                    return None;
-                }
-                if op.class().eq(Class::WasmMemoryLoad) {
-                    (crate::wasm::memory::MemoryLoad::from_tag(instruction.imm())?
-                        == crate::wasm::memory::MemoryLoad::V128Load)
-                        .then_some(())?;
-                    set(state, instruction.a(), Slot::Vector)
-                } else {
-                    (crate::wasm::memory::MemoryStore::from_tag(instruction.imm())?
-                        == crate::wasm::memory::MemoryStore::V128Store)
-                        .then_some(())?;
-                    (state.get(instruction.a(), function.registers)? == Slot::Vector).then_some(())
-                }
-            }
-            Class::WasmSimd => {
-                let (kernel, lane) = crate::wasm::simd::SimdKernel::of(instruction.imm())?;
-                let operand = |register: u16, ty: crate::WasmType| match ty {
-                    crate::WasmType::V128 => {
-                        (state.get(register, function.registers)? == Slot::Vector).then_some(())
-                    }
-                    ty => (value(state, register)? == Kind::of(ty)?).then_some(()),
+        let step = Step::of(instruction.op(), instruction.imm())?;
+        admitted(function, instruction, step, memory.0)?;
+        let (memory_register, memory_slot) = memory;
+        match step {
+            Step::Numeric(operation) => {
+                let value = |state: &AnalysisState, register: u16| {
+                    wasm_instance_stage::value_kind(state.get(register, function.registers)?)
                 };
-                operand(instruction.b(), kernel.left)?;
-                if let Some(right) = kernel.right {
-                    operand(instruction.c(), right)?;
-                }
-                let result = match kernel.result_type(lane) {
-                    crate::WasmType::V128 => Slot::Vector,
-                    ty => Slot::Value(Kind::of(ty)?),
-                };
-                set(state, instruction.a(), result)
+                wasm_stage::transfer(state, function.registers, instruction, operation, &value)
             }
-            Class::WasmSimdShuffle => {
-                self.shuffle_lanes(instruction.constant_index())?;
-                for register in [instruction.b(), instruction.c()] {
-                    (state.get(register, function.registers)? == Slot::Vector).then_some(())?;
-                }
-                set(state, instruction.a(), Slot::Vector)
+            Step::Instance(step) => {
+                self.transfer_instance(function, instruction, state, step, (memory_register, memory_slot))
             }
-            Class::WasmI32Unary => {
-                I32UnaryOperator::from_tag(instruction.imm())?;
-                i32_value(state, instruction.b())?;
-                set(state, instruction.a(), Slot::Value(Kind::I32))
+            Step::Memory(step) => {
+                self.transfer_memory(function, instruction, state, step, (memory_register, *memory_slot))
             }
-            Class::WasmI32ShiftRightUnsignedAnd => {
-                i32_value(state, instruction.b())?;
-                set(state, instruction.a(), Slot::Value(Kind::I32))
+            Step::Flow(flow) => self.transfer_flow(function, instruction, state, flow, result),
+            Step::Call(call) => self.transfer_call(function, instruction, state, call, callable),
+            Step::Simd(step) => {
+                self.transfer_simd(function, instruction, state, step, (memory_register, memory_slot))
             }
-            Class::WasmI32AddJump => {
-                i32_value(state, instruction.b())?;
-                set(state, instruction.a(), Slot::Value(Kind::I32))
-            }
-            Class::WasmJumpI32Zero | Class::WasmJumpI32NonZero => i32_value(state, instruction.a()),
-            Class::Jump => Some(()),
-            Class::WasmBranchTable => {
-                i32_value(state, instruction.a())?;
-                
-                // Entries are `Jump`s; validation guarantees it for
-                // reachable tables.
-                (!crate::bytecode::branch_table_entries(0, instruction).next().is_none()).then_some(())
-            }
-            Class::WasmSelect => {
-                let (condition, _) = instruction.register_pair();
-                i32_value(state, condition)?;
-                let kind = value(state, instruction.b())?;
-                (value(state, instruction.c())? == kind).then_some(())?;
-                set(state, instruction.a(), Slot::Value(kind))
-            }
-            Class::WasmMemorySize => {
-                let memory = instruction.b();
-                if Some(memory) != memory_register
-                    || state.get(memory, function.registers) != Some(Slot::Memory)
-                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
-                {
-                    return None;
-                }
-                set(state, instruction.a(), Slot::Value(Kind::I32))
-            }
-            Class::WasmMemoryFill => {
-                let memory = instruction.a();
-                let (destination, _) = instruction.register_pair();
-                if Some(memory) != memory_register
-                    || state.get(memory, function.registers) != Some(Slot::Memory)
-                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
-                {
-                    return None;
-                }
-                i32_value(state, instruction.b())?;
-                i32_value(state, instruction.c())?;
-                i32_value(state, destination)
-            }
-            // A copy within the function's one memory: both memory operands name it.
-            Class::WasmMemoryCopy => {
-                let (destination, source) = instruction.register_pair();
-                if Some(instruction.a()) != memory_register
-                    || Some(instruction.b()) != memory_register
-                    || state.get(instruction.a(), function.registers) != Some(Slot::Memory)
-                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
-                {
-                    return None;
-                }
-                i32_value(state, destination)?;
-                i32_value(state, source)?;
-                i32_value(state, instruction.c())
-            }
-            Class::WasmIndirectTarget if self.callouts => {
-                let Slot::Binding(table) = state.get(instruction.b(), function.registers)? else {
-                    return None;
-                };
-                if !self.binds_table32(table) {
-                    return None;
-                }
-                i32_value(state, instruction.c())?;
-                self.type_signature(instruction.imm())?;
-                set(
-                    state,
-                    instruction.a(),
-                    Slot::IndirectReference {
-                        signature: instruction.imm(),
-                        table,
-                    },
-                )
-            }
-            Class::CallKnown => {
-                let callee = u32::from(instruction.known_function_index());
-                if !callable.contains(callee as usize)
-                    && (!self.experimental_root_compilation || (self.root_only && !self.callouts))
-                {
-                    return None;
-                }
-                let signature = self.signature(callee)?;
-                if signature.results.len() > 1
-                    && !callable.contains(callee as usize)
-                {
-                    // The VM callout ABI currently carries at most one result.
-                    // Do not admit a residual fallback that would silently
-                    // discard the remaining Wasm results.
-                    return None;
-                }
-                let window = instruction.call_window();
-                if usize::from(window.count) != signature.params.len() {
-                    return None;
-                }
-                for (offset, ty) in signature.params.iter().enumerate() {
-                    (value(state, window.base + offset as u16)? == Kind::of(*ty)?).then_some(())?;
-                }
-                let kind = match signature.results.first() {
-                    Some(ty) => Kind::of(*ty)?,
-                    None => Kind::I32,
-                };
-                set(state, instruction.result_register(), Slot::Value(kind))
-            }
-            Class::WasmRefFunc if self.callouts => {
-                let function = instruction.imm();
-                self.import_signature(function)?;
-                set(state, instruction.a(), Slot::Import(function))
-            }
-            Class::Call => {
-                let slot = state.get(instruction.b(), function.registers)?;
-                let signature = match slot {
-                    Slot::Import(function) => self.import_signature(function)?,
-                    Slot::IndirectReference { signature, .. } if self.callouts => {
-                        self.type_signature(signature)?
-                    }
-                    _ => return None,
-                };
-                let window = instruction.call_window();
-                if usize::from(window.count) != signature.params.len()
-                    || signature.results.len() > 1
-                {
-                    return None;
-                }
-                for (offset, ty) in signature.params.iter().enumerate() {
-                    (value(state, window.base + offset as u16)? == Kind::of(*ty)?).then_some(())?;
-                }
-                let kind = match signature.results.first() {
-                    Some(ty) => Kind::of(*ty)?,
-                    None => Kind::I32,
-                };
-                set(state, instruction.result_register(), Slot::Value(kind))
-            }
-            Class::WasmUnreachable
-                if self.experimental_root_compilation || eager_unreachable_admitted() =>
-            {
-                Some(())
-            }
-            Class::Return => match result {
-                Some(ty) => (value(state, instruction.a())? == Kind::of(ty)?).then_some(()),
-                None => Some(()),
-            },
-            Class::WasmInstanceBinding => {
-                let slot = instruction.imm();
-                if Some(instruction.a()) == memory_register {
-                    if !self.binds_direct_memory(slot) || memory_slot.is_some_and(|s| s != slot) {
-                        return None;
-                    }
-                    *memory_slot = Some(slot);
-                    return set(state, instruction.a(), Slot::Memory);
-                }
-                set(state, instruction.a(), Slot::Binding(slot))
-            }
-            // Compiled code reads and writes a 32-bit global's encoded value
-            // in place; a 64-bit global's value is a box, so it stays
-            // interpreted.
-            Class::WasmGlobalGet => {
-                let Slot::Binding(slot) = state.get(instruction.b(), function.registers)? else {
-                    return None;
-                };
-                (Kind::of(self.global_type(slot)?)? == Kind::I32).then_some(())?;
-                set(state, instruction.a(), Slot::Value(Kind::I32))
-            }
-            Class::WasmGlobalSet => {
-                let Slot::Binding(slot) = state.get(instruction.b(), function.registers)? else {
-                    return None;
-                };
-                (Kind::of(self.global_type(slot)?)? == Kind::I32).then_some(())?;
-                (value(state, instruction.a())? == Kind::I32).then_some(())
-            }
-            _ => None,
         }
     }
 }
 
-/// The Wasm type a direct load produces.
-fn load_type(load: MemoryLoad) -> Option<crate::WasmType> {
-    Some(match load {
-        MemoryLoad::I32Load
-        | MemoryLoad::I32Load8S
-        | MemoryLoad::I32Load8U
-        | MemoryLoad::I32Load16S
-        | MemoryLoad::I32Load16U => crate::WasmType::I32,
-        MemoryLoad::F32Load => crate::WasmType::F32,
-        MemoryLoad::I64Load
-        | MemoryLoad::I64Load8S
-        | MemoryLoad::I64Load8U
-        | MemoryLoad::I64Load16S
-        | MemoryLoad::I64Load16U
-        | MemoryLoad::I64Load32S
-        | MemoryLoad::I64Load32U => crate::WasmType::I64,
-        MemoryLoad::F64Load => crate::WasmType::F64,
-        _ => return None,
+/// Checks the lane fields of `instruction` fit, only a return leaves the frame, and the memory
+/// register is read only by the steps that name a memory.
+fn admitted(
+    function: &Function,
+    instruction: WideInstruction,
+    step: Step,
+    memory_register: Option<u16>,
+) -> Option<()> {
+    let fits = super::dispatch_fast::lane_fields_fit(instruction, function);
+    let leaves = instruction.returns_from_frame() && !step.returns();
+    let reads = memory_register
+        .is_some_and(|register| !step.reads_memory() && reads_register(instruction, register, step));
+    (fits && !leaves && !reads).then_some(())
+}
+
+/// Whether `instruction` reads `register` through a field `step` does not leave unread.
+fn reads_register(instruction: WideInstruction, register: u16, step: Step) -> bool {
+    let op = instruction.op();
+    crate::bytecode::InstructionField::ALL.iter().any(|field| {
+        op.field_layout(*field).reads_register()
+            && instruction.field_value(*field) == register
+            && !step.leaves_unread(*field)
     })
-}
-
-/// Whether a direct load sign-extends its narrow word.
-fn load_signed(load: MemoryLoad) -> bool {
-    matches!(
-        load,
-        MemoryLoad::I32Load8S
-            | MemoryLoad::I32Load16S
-            | MemoryLoad::I64Load8S
-            | MemoryLoad::I64Load16S
-            | MemoryLoad::I64Load32S
-    )
-}
-
-/// The width in bytes a direct store writes.
-fn store_width(store: MemoryStore) -> usize {
-    match store {
-        MemoryStore::I32Store8 | MemoryStore::I64Store8 => 1,
-        MemoryStore::I32Store16 | MemoryStore::I64Store16 => 2,
-        MemoryStore::I32Store | MemoryStore::F32Store | MemoryStore::I64Store32 => 4,
-        _ => 8,
-    }
 }
 
 /// Disjoint state compiled code accesses: an access to one never aliases an
@@ -6617,6 +5784,13 @@ impl Region {
 /// limit, the callout, global addresses): it may be reused and hoisted.
 fn invariant() -> MemFlagsData {
     MemFlagsData::trusted().with_readonly().with_can_move()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The CLIF of each Wasm body this thread built, by function index, for tests of what the
+    /// tier emits.
+    static BUILT_BODIES: std::cell::RefCell<Vec<(usize, String)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The memory facts a compiled call passes after the context: the base
@@ -6832,17 +6006,26 @@ fn writes_register(instruction: WideInstruction, register: u16) -> bool {
 /// Whether conditional jump `instruction` is taken when `register` holds
 /// `value`, if that alone decides it.
 fn decided_branch(instruction: WideInstruction, register: u16, value: i32) -> Option<bool> {
-    let op = instruction.op();
     if instruction.a() != register {
         return None;
     }
-    if let Some(operator) = I32BinaryOperator::from_immediate_jump_op(op) {
-        let right = i32::from(instruction.b() as i16);
-        return operator.evaluate(value, right).ok().map(|holds| holds != 0);
-    }
-    match op.class() {
-        Class::WasmJumpI32Zero => Some(value == 0),
-        Class::WasmJumpI32NonZero => Some(value != 0),
+    match WasmOperation::of(instruction.op(), instruction.imm())? {
+        WasmOperation::Test { nonzero } => Some((value != 0) == nonzero),
+        WasmOperation::Binary {
+            operator,
+            width: Width::I32,
+            form: Form::BranchImmediate,
+        } => {
+            let Right::Constant(right) = Form::BranchImmediate.right(instruction) else {
+                return None;
+            };
+            let (left, right) = (
+                ConcreteWasm.constant(Width::I32, i64::from(value)),
+                ConcreteWasm.constant(Width::I32, right),
+            );
+            let holds = integer_binary(&mut ConcreteWasm, operator, Width::I32, left, right);
+            holds.ok().map(|holds| holds != 0)
+        }
         _ => None,
     }
 }
@@ -7184,16 +6367,12 @@ struct Emitter<'a, 'b, H: Host> {
     guarded: bool,
     /// Per `Region`, its alias region in this function.
     regions: [ir::AliasRegion; Region::COUNT],
-    globals: &'a [u32],
     analysis: &'a Analysis<'a, H>,
     body: Body<'b>,
     plan: &'a Plan,
     blocks: Vec<Option<ir::Block>>,
     /// Dense ids for the compiled artifact's actual indirect call sites.
     reference_site_ids: &'a [(usize, usize)],
-    /// The artifact's certificate count less one (`reference_dispatch_entries`), which selects
-    /// a table index's certificate.
-    reference_dispatch_mask: u64,
     /// Selects the diagnostics ABI at compile time; both ABIs carry site ids.
     diagnostics_enabled: bool,
     base: ir::Value,
@@ -7234,6 +6413,8 @@ struct Emitter<'a, 'b, H: Host> {
     /// The words a SIMD kernel callout reads its operands from and writes its result to
     /// (`compiled_simd_kernel`), made at the first callout.
     simd_words: Option<ir::StackSlot>,
+    /// The table an indirect target is being emitted for (`WasmTable`).
+    indirect: Option<wasm_table_stage::IndirectSite>,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -7355,293 +6536,16 @@ impl<H: Host> Emitter<'_, '_, H> {
         }
     }
 
-    /// An integer operator at the operands' width.
-    fn integer_binary(
-        &mut self,
-        operator: I64BinaryOperator,
-        left: ir::Value,
-        right: ir::Value,
-    ) -> ir::Value {
-        use I64BinaryOperator as B;
-        let ty = self.body.core.builder.func.dfg.value_type(left);
-        let compare = |this: &mut Self, cc: IntCC| {
-            let flag = this.body.core.builder.ins().icmp(cc, left, right);
-            this.body.core.builder.ins().uextend(types::I32, flag)
-        };
-        match operator {
-            B::Add => self.body.core.builder.ins().iadd(left, right),
-            B::Subtract => self.body.core.builder.ins().isub(left, right),
-            B::Multiply => self.body.core.builder.ins().imul(left, right),
-            B::And => self.body.core.builder.ins().band(left, right),
-            B::Or => self.body.core.builder.ins().bor(left, right),
-            B::Xor => self.body.core.builder.ins().bxor(left, right),
-            B::ShiftLeft => self.body.core.builder.ins().ishl(left, right),
-            B::ShiftRightSigned => self.body.core.builder.ins().sshr(left, right),
-            B::ShiftRightUnsigned => self.body.core.builder.ins().ushr(left, right),
-            B::RotateLeft => self.body.core.builder.ins().rotl(left, right),
-            B::RotateRight => self.body.core.builder.ins().rotr(left, right),
-            B::MultiplyHighSigned => self.body.core.builder.ins().smulhi(left, right),
-            B::MultiplyHighUnsigned => self.body.core.builder.ins().umulhi(left, right),
-            B::Equal => compare(self, IntCC::Equal),
-            B::NotEqual => compare(self, IntCC::NotEqual),
-            B::LessSigned => compare(self, IntCC::SignedLessThan),
-            B::LessUnsigned => compare(self, IntCC::UnsignedLessThan),
-            B::GreaterSigned => compare(self, IntCC::SignedGreaterThan),
-            B::GreaterUnsigned => compare(self, IntCC::UnsignedGreaterThan),
-            B::LessEqualSigned => compare(self, IntCC::SignedLessThanOrEqual),
-            B::LessEqualUnsigned => compare(self, IntCC::UnsignedLessThanOrEqual),
-            B::GreaterEqualSigned => compare(self, IntCC::SignedGreaterThanOrEqual),
-            B::GreaterEqualUnsigned => compare(self, IntCC::UnsignedGreaterThanOrEqual),
-            B::DivideSigned | B::RemainderSigned | B::DivideUnsigned | B::RemainderUnsigned => {
-                let zero = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, right, 0);
-                self.trap_if(zero, crate::WasmTrap::IntegerDivideByZero);
-                match operator {
-                    B::DivideUnsigned => self.body.core.builder.ins().udiv(left, right),
-                    B::RemainderUnsigned => self.body.core.builder.ins().urem(left, right),
-                    B::DivideSigned => {
-                        let minimum = if ty == types::I32 {
-                            i64::from(i32::MIN)
-                        } else {
-                            i64::MIN
-                        };
-                        let minimum = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, left, minimum);
-                        let negative_one = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, right, -1);
-                        let overflow = self.body.core.builder.ins().band(minimum, negative_one);
-                        self.trap_if(overflow, crate::WasmTrap::IntegerOverflow);
-                        self.body.core.builder.ins().sdiv(left, right)
-                    }
-                    _ => {
-                        // `MIN % -1` is 0; the machine division would fault.
-                        let negative_one = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, right, -1);
-                        let one = self.body.core.builder.ins().iconst(ty, 1);
-                        let divisor = self.body.core.builder.ins().select(negative_one, one, right);
-                        self.body.core.builder.ins().srem(left, divisor)
-                    }
-                }
-            }
-        }
-    }
-
-    /// An integer unary operator at the operand's width.
-    fn integer_unary(&mut self, operator: I64UnaryOperator, value: ir::Value) -> ir::Value {
-        use I64UnaryOperator as U;
-        let ty = self.body.core.builder.func.dfg.value_type(value);
-        let mut extend = |narrow_type| {
-            let narrow = self.body.core.builder.ins().ireduce(narrow_type, value);
-            self.body.core.builder.ins().sextend(ty, narrow)
-        };
-        match operator {
-            U::EqualZero => {
-                let flag = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, value, 0);
-                self.body.core.builder.ins().uextend(types::I32, flag)
-            }
-            U::LeadingZeros => self.body.core.builder.ins().clz(value),
-            U::TrailingZeros => self.body.core.builder.ins().ctz(value),
-            U::PopulationCount => self.body.core.builder.ins().popcnt(value),
-            U::ExtendSigned8 => extend(types::I8),
-            U::ExtendSigned16 => extend(types::I16),
-            U::ExtendSigned32 => extend(types::I32),
-        }
-    }
-
-    /// The canonical NaN of float type `ty`, as `crate::wasm::float` produces.
-    fn canonical_nan(&mut self, ty: ir::Type) -> ir::Value {
-        use crate::wasm::numeric::canonical_nan_bits;
-        if ty == types::F32 {
-            let bits = canonical_nan_bits(f32::MANTISSA_DIGITS, u64::from(f32::INFINITY.to_bits()));
-            self.body.core.builder.ins().f32const(Ieee32::with_bits(bits as u32))
-        } else {
-            let bits = canonical_nan_bits(f64::MANTISSA_DIGITS, f64::INFINITY.to_bits());
-            self.body.core.builder.ins().f64const(Ieee64::with_bits(bits))
-        }
-    }
-
-    /// A float operator at the operands' width.
-    fn float_binary(
-        &mut self,
-        operator: F64BinaryOperator,
-        left: ir::Value,
-        right: ir::Value,
-    ) -> ir::Value {
-        use F64BinaryOperator as F;
-        let compare = |this: &mut Self, cc: FloatCC| {
-            let flag = this.body.core.builder.ins().fcmp(cc, left, right);
-            this.body.core.builder.ins().uextend(types::I32, flag)
-        };
-        match operator {
-            F::Add => self.body.core.builder.ins().fadd(left, right),
-            F::Subtract => self.body.core.builder.ins().fsub(left, right),
-            F::Multiply => self.body.core.builder.ins().fmul(left, right),
-            F::Divide => self.body.core.builder.ins().fdiv(left, right),
-            F::Minimum | F::Maximum => {
-                // Signed zeros order as Wasm requires; a NaN operand gives
-                // the canonical NaN.
-                let extremum = if operator == F::Minimum {
-                    self.body.core.builder.ins().fmin(left, right)
-                } else {
-                    self.body.core.builder.ins().fmax(left, right)
-                };
-                let unordered = self.body.core.builder.ins().fcmp(FloatCC::Unordered, left, right);
-                let ty = self.body.core.builder.func.dfg.value_type(left);
-                let nan = self.canonical_nan(ty);
-                self.body.core.builder.ins().select(unordered, nan, extremum)
-            }
-            F::CopySign => self.body.core.builder.ins().fcopysign(left, right),
-            F::Equal => compare(self, FloatCC::Equal),
-            F::NotEqual => compare(self, FloatCC::NotEqual),
-            F::Less => compare(self, FloatCC::LessThan),
-            F::Greater => compare(self, FloatCC::GreaterThan),
-            F::LessEqual => compare(self, FloatCC::LessThanOrEqual),
-            F::GreaterEqual => compare(self, FloatCC::GreaterThanOrEqual),
-        }
-    }
-
-    /// A float unary operator at the operand's width. The machine rounding
-    /// and square root quiet a signaling NaN, as the operators do.
-    fn float_unary(&mut self, operator: F64UnaryOperator, value: ir::Value) -> ir::Value {
-        use F64UnaryOperator as U;
-        match operator {
-            U::Absolute => self.body.core.builder.ins().fabs(value),
-            U::Negate => self.body.core.builder.ins().fneg(value),
-            U::Ceiling => self.body.core.builder.ins().ceil(value),
-            U::Floor => self.body.core.builder.ins().floor(value),
-            U::Truncate => self.body.core.builder.ins().trunc(value),
-            U::Nearest => self.body.core.builder.ins().nearest(value),
-            U::SquareRoot => self.body.core.builder.ins().sqrt(value),
-        }
-    }
-
-    /// A scalar conversion of `value`, already viewed as the source type.
-    fn convert(&mut self, operator: ScalarConversionOperator, value: ir::Value) -> ir::Value {
-        use ScalarConversionOperator as C;
-        let result = scalar_ir(operator.result_type());
-        let source = operator.source_type();
-        match operator {
-            C::WrapI64 => self.body.core.builder.ins().ireduce(result, value),
-            C::ExtendI32Signed => self.body.core.builder.ins().sextend(result, value),
-            C::ExtendI32Unsigned => self.body.core.builder.ins().uextend(result, value),
-            C::TruncateF32SignedI32
-            | C::TruncateF64SignedI32
-            | C::TruncateF32SignedI64
-            | C::TruncateF64SignedI64 => self.truncate(value, source, result, true),
-            C::TruncateF32UnsignedI32
-            | C::TruncateF64UnsignedI32
-            | C::TruncateF32UnsignedI64
-            | C::TruncateF64UnsignedI64 => self.truncate(value, source, result, false),
-            C::SaturateF32SignedI32
-            | C::SaturateF64SignedI32
-            | C::SaturateF32SignedI64
-            | C::SaturateF64SignedI64 => self.body.core.builder.ins().fcvt_to_sint_sat(result, value),
-            C::SaturateF32UnsignedI32
-            | C::SaturateF64UnsignedI32
-            | C::SaturateF32UnsignedI64
-            | C::SaturateF64UnsignedI64 => self.body.core.builder.ins().fcvt_to_uint_sat(result, value),
-            C::ConvertI32SignedF32
-            | C::ConvertI64SignedF32
-            | C::ConvertI32SignedF64
-            | C::ConvertI64SignedF64 => self.body.core.builder.ins().fcvt_from_sint(result, value),
-            C::ConvertI32UnsignedF32
-            | C::ConvertI64UnsignedF32
-            | C::ConvertI32UnsignedF64
-            | C::ConvertI64UnsignedF64 => self.body.core.builder.ins().fcvt_from_uint(result, value),
-            C::PromoteF32 => self.body.core.builder.ins().fpromote(result, value),
-            C::DemoteF64 => self.body.core.builder.ins().fdemote(result, value),
-            C::ReinterpretF32I32
-            | C::ReinterpretF64I64
-            | C::ReinterpretI32F32
-            | C::ReinterpretI64F64 => {
-                self.body.core.builder
-                    .ins()
-                    .bitcast(result, MemFlagsData::new(), value)
-            }
-        }
-    }
-
-    /// A trapping truncation: NaN and out-of-range inputs trap, in the
-    /// order and bounds of `crate::wasm::conversion`; the machine conversion
-    /// then sees only representable values.
-    fn truncate(
-        &mut self,
-        value: ir::Value,
-        source: crate::WasmType,
-        result: ir::Type,
-        signed: bool,
-    ) -> ir::Value {
-        let wide = if source == crate::WasmType::F32 {
-            self.body.core.builder.ins().fpromote(types::F64, value)
-        } else {
-            value
-        };
-        let nan = self.body.core.builder.ins().fcmp(FloatCC::Unordered, wide, wide);
-        self.trap_if(nan, crate::WasmTrap::InvalidConversionToInteger);
-        let truncated = self.body.core.builder.ins().trunc(wide);
-        let (lower, limit) = crate::wasm::conversion::truncation_bounds(result.bits(), signed);
-        let lower = self.body.core.builder.ins().f64const(lower);
-        let limit = self.body.core.builder.ins().f64const(limit);
-        let below = self.body.core.builder.ins().fcmp(FloatCC::LessThan, truncated, lower);
-        let above = self
-            .body.core.builder
-            .ins()
-            .fcmp(FloatCC::GreaterThanOrEqual, truncated, limit);
-        let overflow = self.body.core.builder.ins().bor(below, above);
-        self.trap_if(overflow, crate::WasmTrap::IntegerOverflow);
-        if signed {
-            self.body.core.builder.ins().fcvt_to_sint_sat(result, truncated)
-        } else {
-            self.body.core.builder.ins().fcvt_to_uint_sat(result, truncated)
-        }
-    }
-
-    /// The host address of a checked `width`-byte access at `address + offset`.
-    fn address(&mut self, address: ir::Value, offset: u32, width: usize) -> ir::Value {
-        let address = self.zero_extend(address);
-        if self.guarded {
-            // Index plus offset plus width stays inside the reservation; past
-            // the accessible prefix the access faults, and the fault handler
-            // raises the out-of-bounds trap (see `guard_fault`).
-            let host = self.body.core.builder.ins().iadd(self.base, address);
-            return self.body.core.builder.ins().iadd_imm_s(host, i64::from(offset));
-        }
-        let end = self
-            .body.core.builder
-            .ins()
-            .iadd_imm_s(address, i64::from(offset) + width as i64);
-        // A callout may grow the memory while its reserved base stays fixed.
-        // Read the refreshed length rather than the entry-time argument.
-        let length = if self.analysis.callouts {
-            self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            )
-        } else {
-            self.length.expect("unguarded accesses receive the length")
-        };
-        let out_of_bounds = self.body.core.builder.ins().icmp(
-            IntCC::UnsignedGreaterThan,
-            end,
-            length,
-        );
-        self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
-        let host = self.body.core.builder.ins().iadd(self.base, address);
-        self.body.core.builder.ins().iadd_imm_s(host, i64::from(offset))
-    }
-
-    /// The address of the value of the global bound at `slot`.
+    /// The address of the native slot of the global bound at `slot`: the instance's global area
+    /// holds it, indexed by the binding.
     fn global_address(&mut self, slot: u32) -> ir::Value {
-        let position = self
-            .globals
-            .iter()
-            .position(|candidate| *candidate == slot)
-            .expect("planned globals are collected");
         let table = self
             .body.core.builder
             .ins()
             .load(types::I64, invariant(), self.body.core.context, CONTEXT_GLOBALS);
         self.body.core.builder
             .ins()
-            .load(types::I64, invariant(), table, (position * 8) as i32)
+            .load(types::I64, invariant(), table, (slot as usize * size_of::<*mut u64>()) as i32)
     }
 
     /// The binding the `b` register of instruction `pc` holds.
@@ -7777,328 +6681,6 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.propagate(status);
         let destination = instruction.result_register();
         match signature.results.first() {
-            Some(ty) => {
-                let kind = Kind::of(*ty).expect("planned");
-                let bits = self
-                    .body.core.builder
-                    .ins()
-                    .load(types::I64, MemFlagsData::trusted(), out, 0);
-                let value = match kind {
-                    Kind::I32 => self.body.core.builder.ins().ireduce(types::I32, bits),
-                    Kind::I64 => bits,
-                };
-                self.write(destination, kind, value);
-            }
-            None => self.write_constant(destination, Kind::I32, 0),
-        }
-    }
-
-    /// Keep the table index in native code until the combined VM callout.
-    fn indirect_target(&mut self, _pc: usize, instruction: WideInstruction) {
-        let index = self.read(instruction.c(), Kind::I32);
-        let index = self.body.core.builder.ins().uextend(types::I64, index);
-        self.write(instruction.a(), Kind::I64, index);
-    }
-
-    /// Resolve and call a table reference through one ordinary VM boundary.
-    fn call_reference(&mut self, pc: usize, instruction: WideInstruction) {
-        let Slot::IndirectReference {
-            signature: signature_index,
-            table,
-        } = self.plan.operand(pc)
-        else {
-            unreachable!("planned indirect calls retain their table binding");
-        };
-        let wasm_signature = self
-            .analysis
-            .type_signature(signature_index)
-            .expect("planned")
-            .clone();
-        let word = types::I64.bytes();
-        let words = wasm_signature.params.len() + 1;
-        let slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
-            ir::StackSlotKind::ExplicitSlot,
-            word * words as u32,
-            word.trailing_zeros() as u8,
-        ));
-        let window = instruction.call_window();
-        for (offset, ty) in wasm_signature.params.iter().enumerate() {
-            let kind = Kind::of(*ty).expect("planned");
-            let value = self.read(window.base + offset as u16, kind);
-            let value = match kind {
-                Kind::I32 => self.body.core.builder.ins().uextend(types::I64, value),
-                Kind::I64 => value,
-            };
-            let address =
-                self.body.core.builder
-                    .ins()
-                    .stack_addr(types::I64, slot, (offset as u32 * word) as i32);
-            self.body.core.builder
-                .ins()
-                .store(MemFlagsData::trusted(), value, address, 0);
-        }
-        let result_offset = (wasm_signature.params.len() as u32 * word) as i32;
-        let args = self.body.core.builder.ins().stack_addr(types::I64, slot, 0);
-        let out = self
-            .body.core.builder
-            .ins()
-            .stack_addr(types::I64, slot, result_offset);
-        let index = self.read(instruction.b(), Kind::I64);
-        let table_slot = self.body.core.builder.ins().iconst(types::I64, i64::from(table));
-        let signature_index = self
-            .body.core.builder
-            .ins()
-            .iconst(types::I64, i64::from(signature_index));
-        let site_id = self
-            .reference_site_ids
-            .binary_search_by_key(&pc, |(site_pc, _)| *site_pc)
-            .ok()
-            .map(|index| self.reference_site_ids[index].1)
-            .expect("compiled indirect call has a cache site id");
-        let fast_cache_base = self.body.core.builder.ins().load(
-            types::I64,
-            invariant(),
-            self.body.core.context,
-            CONTEXT_REFERENCE_FAST_CACHES,
-        );
-        // The certificate of the index's low bits (`reference_dispatch_entries`).
-        let entry = self
-            .body.core.builder
-            .ins()
-            .band_imm_u(index, self.reference_dispatch_mask as i64);
-        let entry_offset = self
-            .body.core.builder
-            .ins()
-            .imul_imm_u(entry, std::mem::size_of::<FastReferenceCache>() as i64);
-        let fast_cache = self.body.core.builder.ins().iadd(fast_cache_base, entry_offset);
-        let cached_epoch = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, epoch) as i32,
-        );
-        let cache_initialized = self
-            .body.core.builder
-            .ins()
-            .icmp_imm_u(IntCC::NotEqual, cached_epoch, 0);
-        let check_cache = self.body.core.builder.create_block();
-        let check_entry = self.body.core.builder.create_block();
-        let fast_call = self.body.core.builder.create_block();
-        let slow_call = self.body.core.builder.create_block();
-        let done = self.body.core.builder.create_block();
-        let status_slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
-            ir::StackSlotKind::ExplicitSlot,
-            types::I64.bytes(),
-            types::I64.bytes().trailing_zeros() as u8,
-        ));
-        self.body.core.builder
-            .ins()
-            .brif(cache_initialized, check_cache, &[], slow_call, &[]);
-
-        // Table writes and collection advance the VM-local epoch. This makes
-        // artifact-local certificates stale without invalidation walks through
-        // recursive native frames.
-        self.body.core.builder.switch_to_block(check_cache);
-        let epoch_pointer = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            self.body.core.context,
-            CONTEXT_REFERENCE_EPOCH,
-        );
-        let current_epoch =
-            self.body.core.builder
-                .ins()
-                .load(types::I64, MemFlagsData::trusted(), epoch_pointer, 0);
-        let epoch_matches = self
-            .body.core.builder
-            .ins()
-            .icmp(IntCC::Equal, current_epoch, cached_epoch);
-        let current_env =
-            self.body.core.builder
-                .ins()
-                .load(types::I64, invariant(), self.body.core.context, CONTEXT_ENV);
-        let cached_env = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, env) as i32,
-        );
-        let env_matches = self
-            .body.core.builder
-            .ins()
-            .icmp(IntCC::Equal, current_env, cached_env);
-        let cached_index = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, index) as i32,
-        );
-        let index_matches = self.body.core.builder.ins().icmp(IntCC::Equal, index, cached_index);
-        let cached_signature = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, signature) as i32,
-        );
-        let signature_matches = self
-            .body.core.builder
-            .ins()
-            .icmp(IntCC::Equal, signature_index, cached_signature);
-        let cached_table = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, table) as i32,
-        );
-        let table_matches = self.body.core.builder.ins().icmp(IntCC::Equal, table_slot, cached_table);
-        let signature_matches = self.body.core.builder.ins().band(signature_matches, table_matches);
-        let epoch_and_env_match = self.body.core.builder.ins().band(epoch_matches, env_matches);
-        let index_and_signature_match = self.body.core.builder.ins().band(index_matches, signature_matches);
-        let cache_matches = self
-            .body.core.builder
-            .ins()
-            .band(epoch_and_env_match, index_and_signature_match);
-        self.body.core.builder
-            .ins()
-            .brif(cache_matches, check_entry, &[], slow_call, &[]);
-        self.body.core.builder.seal_block(check_cache);
-
-        // A valid cache is populated only from a checked same-artifact target,
-        // but keep the index and non-null tests here as a cheap corruption
-        // guard before indexing the artifact's entry table.
-        self.body.core.builder.switch_to_block(check_entry);
-        let cached_function = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, function) as i32,
-        );
-        let function_in_range = self.body.core.builder.ins().icmp_imm_u(
-            IntCC::UnsignedLessThan,
-            cached_function,
-            self.plans.len() as i64,
-        );
-        let body = {
-            let lookup_entry = self.body.core.builder.create_block();
-            self.body.core.builder
-                .ins()
-                .brif(function_in_range, lookup_entry, &[], slow_call, &[]);
-            self.body.core.builder.seal_block(check_entry);
-            self.body.core.builder.switch_to_block(lookup_entry);
-            let artifact_table =
-                self.body.core.builder
-                    .ins()
-                    .load(types::I64, invariant(), self.body.core.context, CONTEXT_TABLE);
-            let entry_offset = self.body.core.builder.ins().ishl_imm_u(cached_function, 3);
-            let entry_address = self.body.core.builder.ins().iadd(artifact_table, entry_offset);
-            let entry =
-                self.body.core.builder
-                    .ins()
-                    .load(types::I64, MemFlagsData::trusted(), entry_address, 0);
-            let entry_present = self.body.core.builder.ins().icmp_imm_u(IntCC::NotEqual, entry, 0);
-            self.body.core.builder
-                .ins()
-                .brif(entry_present, fast_call, &[], slow_call, &[]);
-            self.body.core.builder.seal_block(lookup_entry);
-            entry
-        };
-
-        self.body.core.builder.switch_to_block(fast_call);
-        let mut direct_args = vec![self.body.core.context];
-        if self.memory.base {
-            direct_args.push(self.base);
-        }
-        direct_args.extend(self.length);
-        for (offset, ty) in wasm_signature.params.iter().enumerate() {
-            let raw = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                args,
-                (offset as u32 * word) as i32,
-            );
-            direct_args.push(match Kind::of(*ty).expect("planned") {
-                Kind::I32 => self.body.core.builder.ins().ireduce(types::I32, raw),
-                Kind::I64 => raw,
-            });
-        }
-        let entry_signature = self.body.core.builder.import_signature(internal_signature(
-            self.memory,
-            &wasm_signature.params,
-            wasm_signature.results.first().copied(),
-            self.call_conv,
-        ));
-        let call = self
-            .body.core.builder
-            .ins()
-            .call_indirect(entry_signature, body, &direct_args);
-        let fast_results = self.body.core.builder.inst_results(call).to_vec();
-        let fast_status = fast_results[0];
-        if let Some(result) = wasm_signature.results.first() {
-            let value = match Kind::of(*result).expect("planned") {
-                Kind::I32 => self.body.core.builder.ins().uextend(types::I64, fast_results[1]),
-                Kind::I64 => fast_results[1],
-            };
-            self.body.core.builder
-                .ins()
-                .store(MemFlagsData::trusted(), value, out, 0);
-        }
-        let status_address = self.body.core.builder.ins().stack_addr(types::I64, status_slot, 0);
-        self.body.core.builder
-            .ins()
-            .store(MemFlagsData::trusted(), fast_status, status_address, 0);
-        self.body.core.builder.ins().jump(done, &[]);
-        self.body.core.builder.seal_block(fast_call);
-
-        self.body.core.builder.switch_to_block(slow_call);
-        self.body.core.builder.set_cold_block(slow_call);
-        let target_offset = if self.diagnostics_enabled {
-            CONTEXT_CALL_REFERENCE_DIAGNOSTIC
-        } else {
-            CONTEXT_CALL_REFERENCE
-        };
-        let target = self
-            .body.core.builder
-            .ins()
-            .load(types::I64, invariant(), self.body.core.context, target_offset);
-        let mut call_signature = Signature::new(self.call_conv);
-        for _ in 0..8 {
-            call_signature.params.push(AbiParam::new(types::I64));
-        }
-        call_signature.returns.push(AbiParam::new(types::I64));
-        let call_signature = self.body.core.builder.import_signature(call_signature);
-        let site_id = self.body.core.builder.ins().iconst(types::I64, site_id as i64);
-        let call = self.body.core.builder.ins().call_indirect(
-            call_signature,
-            target,
-            &[
-                self.body.core.context,
-                table_slot,
-                index,
-                signature_index,
-                site_id,
-                args,
-                out,
-                fast_cache,
-            ],
-        );
-        let slow_status = self.body.core.builder.inst_results(call)[0];
-        let status_address = self.body.core.builder.ins().stack_addr(types::I64, status_slot, 0);
-        self.body.core.builder
-            .ins()
-            .store(MemFlagsData::trusted(), slow_status, status_address, 0);
-        self.body.core.builder.ins().jump(done, &[]);
-        self.body.core.builder.seal_block(slow_call);
-
-        self.body.core.builder.switch_to_block(done);
-        self.body.core.builder.seal_block(done);
-        let status_address = self.body.core.builder.ins().stack_addr(types::I64, status_slot, 0);
-        let status =
-            self.body.core.builder
-                .ins()
-                .load(types::I64, MemFlagsData::trusted(), status_address, 0);
-        self.propagate(status);
-        let destination = instruction.result_register();
-        match wasm_signature.results.first() {
             Some(ty) => {
                 let kind = Kind::of(*ty).expect("planned");
                 let bits = self
@@ -8290,707 +6872,34 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     /// Emit the instruction at `pc`; returns whether control falls through.
-    /// The SIMD variable of `register`.
-    fn vector(&mut self, register: u16) -> Variable {
-        let index = usize::from(register);
-        if self.vectors.len() <= index {
-            self.vectors.resize(index + 1, None);
-        }
-        if let Some(variable) = self.vectors[index] {
-            return variable;
-        }
-        let variable = self.body.core.builder.declare_var(VECTOR_IR);
-        self.vectors[index] = Some(variable);
-        variable
-    }
-
-    fn read_vector(&mut self, register: u16) -> ir::Value {
-        let variable = self.vector(register);
-        self.body.core.builder.use_var(variable)
-    }
-
-    /// Define `register` as the vector `value`, of any lane shape.
-    fn write_vector(&mut self, register: u16, value: ir::Value) {
-        let value = self.lanes(VECTOR_IR, value);
-        let variable = self.vector(register);
-        self.known.retain(|(known, _)| *known != register);
-        self.body.core.builder.def_var(variable, value);
-    }
-
-    /// `value`, a vector, viewed with the lane shape `ty`: the same bits.
-    fn lanes(&mut self, ty: ir::Type, value: ir::Value) -> ir::Value {
-        if self.body.core.builder.func.dfg.value_type(value) == ty {
-            return value;
-        }
-        let flags = MemFlagsData::new().with_endianness(ir::Endianness::Little);
-        self.body.core.builder.ins().bitcast(ty, flags, value)
-    }
-
-    /// Address and effect flags for a full-width vector access. A proven memory32
-    /// address fits the guard reservation, including the vector's last byte. Keep
-    /// this access trapping: even an unused load must fault before later effects.
-    fn vector_address(&mut self, pc: usize, register: u16) -> (ir::Value, MemFlagsData) {
-        let address = self.read(register, Kind::I64);
-        if self.guarded && self.plan.operand(pc) == Slot::Memory32Address {
-            let flags = MemFlagsData::new()
-                .with_trap_code(Some(ir::TrapCode::HEAP_OUT_OF_BOUNDS))
-                .with_endianness(ir::Endianness::Little)
-                .with_alias_region(Some(self.regions[Region::LinearMemory as usize]));
-            return (self.body.core.builder.ins().iadd(self.base, address), flags);
-        }
-        let end = self
-            .body.core.builder
-            .ins()
-            .iadd_imm_u(address, crate::wasm::V128_BYTES as i64);
-        let memory_length = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            self.body.core.context,
-            CONTEXT_MEMORY_LENGTH,
-        );
-        let out_of_bounds =
-            self.body.core.builder
-                .ins()
-                .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
-        self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
-        let address = self.body.core.builder.ins().iadd(self.base, address);
-        (address, self.flags(Region::LinearMemory))
-    }
-
-    /// The instructions that define or read vectors (`Slot::Vector`); `None` for any other.
-    fn vector_instruction(&mut self, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
-        match instruction.op().class() {
-            Class::Move if self.plan.operand(pc) == Slot::Vector => {
-                let value = self.read_vector(b);
-                self.write_vector(a, value);
-            }
-            Class::LoadConst | Class::WasmFillRegisters => {
-                let constant = self.analysis.constant(instruction.constant_index())?;
-                let bits = self.analysis.constant_vector(constant)?;
-                let registers = if instruction.op().class().eq(Class::LoadConst) {
-                    a..a + 1
-                } else {
-                    let window = instruction.register_window();
-                    window.base..window.base + window.count
-                };
-                for register in registers {
-                    let value = self.vector_constant(bits);
-                    self.write_vector(register, value);
-                }
-            }
-            Class::WasmMemoryAddress => {
-                let offset = self
-                    .analysis
-                    .memory_offset(instruction.constant_index())
-                    .expect("planned");
-                let address = self.read(b, Kind::I32);
-                let address = self.body.core.builder.ins().uextend(types::I64, address);
-                // A memory32 offset is below 2^32, so the 64-bit sum cannot wrap.
-                let address = self.body.core.builder.ins().iadd_imm_u(address, offset as i64);
-                self.write(a, Kind::I64, address);
-            }
-            Class::WasmMemoryLoad => {
-                let (address, flags) = self.vector_address(pc, c);
-                let value = self.body.core.builder.ins().load(VECTOR_IR, flags, address, 0);
-                self.write_vector(a, value);
-            }
-            Class::WasmMemoryStore => {
-                let (address, flags) = self.vector_address(pc, c);
-                let value = self.read_vector(a);
-                self.body.core.builder.ins().store(flags, value, address, 0);
-            }
-            Class::WasmSimdShuffle => {
-                let lanes = self
-                    .analysis
-                    .shuffle_lanes(instruction.constant_index())
-                    .expect("planned");
-                let mask = self
-                    .body.core.builder
-                    .func
-                    .dfg
-                    .immediates
-                    .push(ir::ConstantData::from(lanes.to_vec()));
-                let (left, right) = (self.read_vector(b), self.read_vector(c));
-                let value = self.body.core.builder.ins().shuffle(left, right, mask);
-                self.write_vector(a, value);
-            }
-            Class::WasmSimd => self.simd(pc, instruction),
-            _ => return None,
-        }
-        Some(true)
-    }
-
-    fn vector_constant(&mut self, bits: u128) -> ir::Value {
-        let constant = self
-            .body.core.builder
-            .func
-            .dfg
-            .constants
-            .insert(ir::ConstantData::from(bits.to_le_bytes().to_vec()));
-        self.body.core.builder.ins().vconst(VECTOR_IR, constant)
-    }
-
-    /// A SIMD operator: one Cranelift instruction where one has its exact semantics, else
-    /// the operator's own kernel (`SimdKernel::apply_bits`), which the interpreter runs too.
-    fn simd(&mut self, pc: usize, instruction: WideInstruction) {
-        use crate::wasm::simd::SimdOperator as S;
-        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
-        let (operator, _) = S::from_selector(instruction.imm()).expect("planned");
-        // Lane-wise integer arithmetic, bitwise logic and shifts: Cranelift reduces a vector
-        // shift's count modulo the lane width, as Wasm does.
-        let lanes = match operator {
-            S::V128And | S::V128Or | S::V128Xor | S::V128AndNot | S::V128Not => Some(VECTOR_IR),
-            S::I8x16Add | S::I8x16Sub => Some(types::I8X16),
-            S::I16x8Add | S::I16x8Sub | S::I16x8Shl | S::I16x8ShrU | S::I16x8ShrS => {
-                Some(types::I16X8)
-            }
-            S::I32x4Add | S::I32x4Sub | S::I32x4Shl | S::I32x4ShrU | S::I32x4ShrS => {
-                Some(types::I32X4)
-            }
-            S::I64x2Add | S::I64x2Sub | S::I64x2Shl | S::I64x2ShrU | S::I64x2ShrS => {
-                Some(types::I64X2)
-            }
-            _ => None,
-        };
-        if let Some(ty) = lanes {
-            let left = self.read_vector(b);
-            let left = self.lanes(ty, left);
-            let builder = &mut self.body.core.builder;
-            let value = match operator {
-                S::V128Not => builder.ins().bnot(left),
-                S::I16x8Shl | S::I32x4Shl | S::I64x2Shl
-                | S::I16x8ShrU | S::I32x4ShrU | S::I64x2ShrU
-                | S::I16x8ShrS | S::I32x4ShrS | S::I64x2ShrS => {
-                    let count = self.read(c, Kind::I32);
-                    let builder = &mut self.body.core.builder;
-                    match operator {
-                        S::I16x8Shl | S::I32x4Shl | S::I64x2Shl => builder.ins().ishl(left, count),
-                        S::I16x8ShrU | S::I32x4ShrU | S::I64x2ShrU => {
-                            builder.ins().ushr(left, count)
-                        }
-                        _ => builder.ins().sshr(left, count),
-                    }
-                }
-                _ => {
-                    let right = self.read_vector(c);
-                    let right = self.lanes(ty, right);
-                    let builder = &mut self.body.core.builder;
-                    match operator {
-                        S::V128And => builder.ins().band(left, right),
-                        S::V128Or => builder.ins().bor(left, right),
-                        S::V128Xor => builder.ins().bxor(left, right),
-                        S::V128AndNot => builder.ins().band_not(left, right),
-                        S::I8x16Add | S::I16x8Add | S::I32x4Add | S::I64x2Add => {
-                            builder.ins().iadd(left, right)
-                        }
-                        _ => builder.ins().isub(left, right),
-                    }
-                }
-            };
-            self.write_vector(a, value);
-            return;
-        }
-        if matches!(operator, S::I64x2ExtMulLowI32x4U) {
-            let (left, right) = (self.read_vector(b), self.read_vector(c));
-            let (left, right) = (self.lanes(types::I32X4, left), self.lanes(types::I32X4, right));
-            let builder = &mut self.body.core.builder;
-            let left = builder.ins().uwiden_low(left);
-            let right = builder.ins().uwiden_low(right);
-            let value = builder.ins().imul(left, right);
-            self.write_vector(a, value);
-            return;
-        }
-        self.simd_kernel(pc, instruction);
-    }
-
-    /// `simd` through the kernel: operands to words, `compiled_simd_kernel`, the result back.
-    fn simd_kernel(&mut self, _pc: usize, instruction: WideInstruction) {
-        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
-        let (kernel, lane) = crate::wasm::simd::SimdKernel::of(instruction.imm()).expect("planned");
-        let word = types::I64.bytes();
-        let slot = match self.simd_words {
-            Some(slot) => slot,
-            None => {
-                let slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
-                    ir::StackSlotKind::ExplicitSlot,
-                    SIMD_KERNEL_WORDS as u32 * word,
-                    crate::wasm::V128_BYTES.trailing_zeros() as u8,
-                ));
-                self.simd_words = Some(slot);
-                slot
-            }
-        };
-        let operand = |emitter: &mut Self, register: u16, ty: crate::WasmType, at: usize| {
-            let offset = (at as u32 * word) as i32;
-            let (low, high) = match ty {
-                crate::WasmType::V128 => {
-                    let value = emitter.read_vector(register);
-                    let value = emitter.lanes(types::I64X2, value);
-                    let builder = &mut emitter.body.core.builder;
-                    (builder.ins().extractlane(value, 0), builder.ins().extractlane(value, 1))
-                }
-                ty => {
-                    let kind = Kind::of(ty).expect("planned");
-                    let value = emitter.read(register, kind);
-                    let builder = &mut emitter.body.core.builder;
-                    let value = if kind == Kind::I32 {
-                        builder.ins().uextend(types::I64, value)
-                    } else {
-                        value
-                    };
-                    (value, builder.ins().iconst(types::I64, 0))
-                }
-            };
-            let builder = &mut emitter.body.core.builder;
-            builder.ins().stack_store(types::I64, low, slot, offset);
-            builder.ins().stack_store(types::I64, high, slot, offset + word as i32);
-        };
-        operand(self, b, kernel.left, SIMD_KERNEL_LEFT);
-        if let Some(right) = kernel.right {
-            operand(self, c, right, SIMD_KERNEL_RIGHT);
-        }
-        let mut signature = Signature::new(self.call_conv);
-        signature.params.push(AbiParam::new(types::I64));
-        signature.params.push(AbiParam::new(types::I64));
-        let signature = self.body.core.builder.import_signature(signature);
-        let target = self.body.core.builder.ins().iconst(
-            types::I64,
-            compiled_simd_kernel as *const () as usize as i64,
-        );
-        let selector = self
-            .body.core.builder
-            .ins()
-            .iconst(types::I64, i64::from(instruction.imm()));
-        let words = self.body.core.builder.ins().stack_addr(types::I64, slot, 0);
-        self.body.core.builder
-            .ins()
-            .call_indirect(signature, target, &[selector, words]);
-        let result = (SIMD_KERNEL_RESULT as u32 * word) as i32;
-        match kernel.result_type(lane) {
-            crate::WasmType::V128 => {
-                let value = self.body.core.builder.ins().stack_load(types::I64, VECTOR_IR, slot, result);
-                self.write_vector(a, value);
-            }
-            ty => {
-                let kind = Kind::of(ty).expect("planned");
-                let value = self.body.core.builder.ins().stack_load(types::I64, types::I64, slot, result);
-                let value = if kind == Kind::I32 {
-                    self.body.core.builder.ins().ireduce(types::I32, value)
-                } else {
-                    value
-                };
-                self.write(a, kind, value);
-            }
-        }
-    }
-
     fn instruction(
         &mut self,
         function: &Function,
         pc: usize,
         instruction: WideInstruction,
     ) -> bool {
-        let op = instruction.op();
-        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
-        if let Some(done) = self.vector_instruction(pc, instruction) {
-            return done;
+        let step = Step::of(instruction.op(), instruction.imm())
+            .expect("planned instructions have a denotation");
+        match step {
+            Step::Numeric(operation) => self.operation(pc, instruction, operation),
+            Step::Instance(step) => {
+                self.instance(pc, instruction, step);
+                true
+            }
+            Step::Memory(step) => {
+                self.memory(instruction, step);
+                true
+            }
+            Step::Flow(flow) => self.flow(function, pc, instruction, flow),
+            Step::Call(call) => {
+                self.call(pc, instruction, call);
+                true
+            }
+            Step::Simd(step) => {
+                self.simd(pc, instruction, step);
+                true
+            }
         }
-        if let Some(operator) = I32BinaryOperator::from_register_op(op) {
-            let left = self.read(b, Kind::I32);
-            let right = self.read(c, Kind::I32);
-            let value = self.integer_binary(widen_binary(operator), left, right);
-            self.write(a, Kind::I32, value);
-            return true;
-        }
-        if let Some(operator) = I32BinaryOperator::from_immediate_op(op) {
-            let left = self.read(b, Kind::I32);
-            let right = self
-                .body.core.builder
-                .ins()
-                .iconst(types::I32, i64::from(instruction.imm() as i32));
-            let value = self.integer_binary(widen_binary(operator), left, right);
-            self.write(a, Kind::I32, value);
-            return true;
-        }
-        if let Some(operator) = I32BinaryOperator::from_jump_op(op) {
-            let left = self.read(a, Kind::I32);
-            let right = self.read(b, Kind::I32);
-            let holds = self.integer_binary(widen_binary(operator), left, right);
-            self.branch(pc, holds, instruction.jump_target() as usize, pc + 1);
-            return false;
-        }
-        if let Some(operator) = I32BinaryOperator::from_immediate_jump_op(op) {
-            let left = self.read(a, Kind::I32);
-            let right = self.body.core.builder.ins().iconst(types::I32, i64::from(b as i16));
-            let holds = self.integer_binary(widen_binary(operator), left, right);
-            self.branch(pc, holds, instruction.jump_target() as usize, pc + 1);
-            return false;
-        }
-        if let Some(load) = MemoryLoad::from_direct_op(op) {
-            let result = load_type(load).expect("planned");
-            let kind = Kind::of(result).expect("planned");
-            let address = self.read(c, Kind::I32);
-            let host = self.address(address, instruction.imm(), load.width());
-            let flags = self.flags(Region::LinearMemory);
-            let ty = kind.ir();
-            let value = match (load.width(), load_signed(load)) {
-                // A float loads straight into its view.
-                _ if result != kind.integer() => {
-                    self.body.core.builder.ins().load(scalar_ir(result), flags, host, 0)
-                }
-                (1, false) => self.body.core.builder.ins().uload8(ty, flags, host, 0),
-                (1, true) => self.body.core.builder.ins().sload8(ty, flags, host, 0),
-                (2, false) => self.body.core.builder.ins().uload16(ty, flags, host, 0),
-                (2, true) => self.body.core.builder.ins().sload16(ty, flags, host, 0),
-                (4, false) if kind == Kind::I64 => self.body.core.builder.ins().uload32(flags, host, 0),
-                (4, true) if kind == Kind::I64 => self.body.core.builder.ins().sload32(flags, host, 0),
-                _ => self.body.core.builder.ins().load(ty, flags, host, 0),
-            };
-            self.write_typed(a, result, value);
-            return true;
-        }
-        if let Some(store) = MemoryStore::from_direct_op(op) {
-            let kind = Kind::of(store.value_type()).expect("planned");
-            let value = self.read_typed(a, store.value_type());
-            let address = self.read(c, Kind::I32);
-            let width = store_width(store);
-            let host = self.address(address, instruction.imm(), width);
-            let flags = self.flags(Region::LinearMemory);
-            match width {
-                1 => self.body.core.builder.ins().istore8(flags, value, host, 0),
-                2 => self.body.core.builder.ins().istore16(flags, value, host, 0),
-                4 if kind == Kind::I64 => self.body.core.builder.ins().istore32(flags, value, host, 0),
-                _ => self.body.core.builder.ins().store(flags, value, host, 0),
-            };
-            return true;
-        }
-        if op.is_wasm_memory_size() {
-            let bytes = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            );
-            let pages = self.body.core.builder.ins().ushr_imm_u(bytes, 16);
-            let pages = self.body.core.builder.ins().ireduce(types::I32, pages);
-            self.write(a, Kind::I32, pages);
-            return true;
-        }
-        if op.is_wasm_memory_copy() {
-            let (destination, source) = instruction.register_pair();
-            let destination = self.read(destination, Kind::I32);
-            let destination = self.body.core.builder.ins().uextend(types::I64, destination);
-            let source = self.read(source, Kind::I32);
-            let source = self.body.core.builder.ins().uextend(types::I64, source);
-            let raw_length = self.read(c, Kind::I32);
-            let length = self.body.core.builder.ins().uextend(types::I64, raw_length);
-            let memory_length = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            );
-            // Both ranges are checked before any byte moves; 32-bit operands cannot overflow
-            // their 64-bit sums.
-            for start in [destination, source] {
-                let end = self.body.core.builder.ins().iadd(start, length);
-                let out_of_bounds =
-                    self.body.core.builder
-                        .ins()
-                        .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
-                self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
-            }
-            let destination = self.body.core.builder.ins().iadd(self.base, destination);
-            let source = self.body.core.builder.ins().iadd(self.base, source);
-            let mut signature = Signature::new(self.call_conv);
-            for _ in 0..3 {
-                signature.params.push(AbiParam::new(types::I64));
-            }
-            signature.returns.push(AbiParam::new(types::I64));
-            let signature = self.body.core.builder.import_signature(signature);
-            let target = self.body.core.builder.ins().iconst(
-                types::I64,
-                compiled_memory_copy as *const () as usize as i64,
-            );
-            self.body.core.builder
-                .ins()
-                .call_indirect(signature, target, &[destination, source, length]);
-            return true;
-        }
-        if op.is_wasm_memory_fill() {
-            let (destination, _) = instruction.register_pair();
-            let destination = self.read(destination, Kind::I32);
-            let destination = self.body.core.builder.ins().uextend(types::I64, destination);
-            let raw_length = self.read(c, Kind::I32);
-            let length = self.body.core.builder.ins().uextend(types::I64, raw_length);
-            let end = self.body.core.builder.ins().iadd(destination, length);
-            let memory_length = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            );
-            let out_of_bounds =
-                self.body.core.builder
-                    .ins()
-                    .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
-            self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
-            let address = self.body.core.builder.ins().iadd(self.base, destination);
-            let raw_byte = self.read(b, Kind::I32);
-            let byte = self.body.core.builder.ins().uextend(types::I64, raw_byte);
-            let mut signature = Signature::new(self.call_conv);
-            for _ in 0..3 {
-                signature.params.push(AbiParam::new(types::I64));
-            }
-            signature.returns.push(AbiParam::new(types::I64));
-            let signature = self.body.core.builder.import_signature(signature);
-            let target = self.body.core.builder.ins().iconst(
-                types::I64,
-                compiled_memory_fill as *const () as usize as i64,
-            );
-            self.body.core.builder
-                .ins()
-                .call_indirect(signature, target, &[address, byte, length]);
-            return true;
-        }
-        if let Some((operator, ty)) = float_binary_operator(op, instruction.imm()) {
-            let left = self.read_typed(b, ty);
-            let right = self.read_typed(c, ty);
-            let value = self.float_binary(operator, left, right);
-            let result = if self.body.core.builder.func.dfg.value_type(value) == types::I32 {
-                crate::WasmType::I32
-            } else {
-                ty
-            };
-            self.write_typed(a, result, value);
-            return true;
-        }
-        if let Some((operator, ty)) = float_unary_operator(op, instruction.imm()) {
-            let input = self.read_typed(b, ty);
-            let value = self.float_unary(operator, input);
-            self.write_typed(a, ty, value);
-            return true;
-        }
-        match op.class() {
-            Class::WasmI64Binary => {
-                let operator = I64BinaryOperator::from_tag(instruction.imm()).expect("planned");
-                let left = self.read(b, Kind::I64);
-                let right = self.read(c, Kind::I64);
-                let value = self.integer_binary(operator, left, right);
-                let kind = Kind::of_ir(self.body.core.builder.func.dfg.value_type(value));
-                self.write(a, kind, value);
-            }
-            Class::WasmI64Unary => {
-                let operator = I64UnaryOperator::from_tag(instruction.imm()).expect("planned");
-                let input = self.read(b, Kind::I64);
-                let value = self.integer_unary(operator, input);
-                let kind = Kind::of_ir(self.body.core.builder.func.dfg.value_type(value));
-                self.write(a, kind, value);
-            }
-            Class::WasmScalarConvert => {
-                let operator =
-                    ScalarConversionOperator::from_tag(instruction.imm()).expect("planned");
-                let input = self.read_typed(b, operator.source_type());
-                let value = self.convert(operator, input);
-                self.write_typed(a, operator.result_type(), value);
-            }
-            Class::Move => {
-                let kind = self.operand_kind(pc);
-                let value = self.read(b, kind);
-                self.write(a, kind, value);
-            }
-            Class::LoadConst | Class::WasmFillRegisters => {
-                let constant = self
-                    .analysis
-                    .constant(instruction.constant_index())
-                    .expect("planned");
-                let kind = self.analysis.constant_kind(constant);
-                let bits = self.analysis.constant_bits(constant);
-                if op.is_load_const() {
-                    self.write_constant(a, kind, bits);
-                } else {
-                    let window = instruction.register_window();
-                    for offset in 0..window.count {
-                        self.write_constant(window.base + offset, kind, bits);
-                    }
-                }
-            }
-            Class::WasmI32Unary => {
-                let operator = I32UnaryOperator::from_tag(instruction.imm()).expect("planned");
-                let input = self.read(b, Kind::I32);
-                let value = self.integer_unary(widen_unary(operator), input);
-                self.write(a, Kind::I32, value);
-            }
-            Class::WasmI32ShiftRightUnsignedAnd => {
-                let input = self.read(b, Kind::I32);
-                let shift = self.body.core.builder.ins().iconst(types::I32, i64::from(c as i16));
-                let shifted =
-                    self.integer_binary(I64BinaryOperator::ShiftRightUnsigned, input, shift);
-                let mask = self
-                    .body.core.builder
-                    .ins()
-                    .iconst(types::I32, i64::from(instruction.imm() as i32));
-                let value = self.integer_binary(I64BinaryOperator::And, shifted, mask);
-                self.write(a, Kind::I32, value);
-            }
-            Class::WasmI32AddJump => {
-                let input = self.read(b, Kind::I32);
-                let addend = self.body.core.builder.ins().iconst(types::I32, i64::from(c as i16));
-                let sum = self.body.core.builder.ins().iadd(input, addend);
-                self.write(a, Kind::I32, sum);
-                self.branch(pc, sum, instruction.jump_target() as usize, pc + 1);
-                return false;
-            }
-            Class::WasmJumpI32Zero | Class::WasmJumpI32NonZero => {
-                let value = self.read(a, Kind::I32);
-                let (taken, other) = (instruction.jump_target() as usize, pc + 1);
-                if op.is_wasm_jump_i32_non_zero() {
-                    self.branch(pc, value, taken, other);
-                } else {
-                    self.branch(pc, value, other, taken);
-                }
-                return false;
-            }
-            Class::Jump => {
-                let target = instruction.jump_target() as usize;
-                self.jump(target, self.polls(pc, target));
-                return false;
-            }
-            Class::WasmBranchTable => {
-                let selector = self.read(a, Kind::I32);
-                let entries: Vec<usize> = crate::bytecode::branch_table_entries(pc, instruction)
-                    .map(|entry| {
-                        super::dispatch_fast::decoded_instruction(function, function.code[entry])
-                            .jump_target() as usize
-                    })
-                    .collect();
-                // A table entry at or before `pc` is a backedge; a loop may
-                // repeat through the table alone, so it polls like a jump.
-                if entries.iter().any(|&target| target <= pc) {
-                    self.interrupt_safepoint();
-                }
-                let (default, cases) = entries.split_last().expect("a default entry");
-                let default = self.block(*default);
-                let default = self.body.core.builder.func.dfg.block_call(default, &[]);
-                let cases: Vec<_> = cases
-                    .iter()
-                    .map(|target| {
-                        let block = self.block(*target);
-                        self.body.core.builder.func.dfg.block_call(block, &[])
-                    })
-                    .collect();
-                let table = ir::JumpTableData::new(default, &cases);
-                let table = self.body.core.builder.create_jump_table(table);
-                self.body.core.builder.ins().br_table(selector, table);
-                return false;
-            }
-            Class::WasmSelect => {
-                let (condition, _) = instruction.register_pair();
-                let kind = self.operand_kind(pc);
-                let condition = self.read(condition, Kind::I32);
-                let taken = self.read(b, kind);
-                let other = self.read(c, kind);
-                let value = self.body.core.builder.ins().select(condition, taken, other);
-                self.write(a, kind, value);
-            }
-            Class::CallKnown => {
-                let callee = usize::from(instruction.known_function_index());
-                let Some(callee_plan) = self.plans[callee].as_ref() else {
-                    self.callout_known_fallback(callee as u32, instruction);
-                    return true;
-                };
-                let window = instruction.call_window();
-                let mut args = vec![self.body.core.context];
-                if self.memory.base {
-                    args.push(self.base);
-                }
-                args.extend(self.length);
-                for (offset, ty) in callee_plan.params.iter().enumerate() {
-                    let kind = Kind::of(*ty).expect("planned");
-                    args.push(self.read(window.base + offset as u16, kind));
-                }
-                // Compiled functions share one code buffer: a direct call,
-                // linked at placement (`link`).
-                let target = match self.callees[callee] {
-                    Some(target) => target,
-                    None => {
-                        let signature = internal_signature(
-                            self.memory,
-                            &callee_plan.params,
-                            callee_plan.result,
-                            self.call_conv,
-                        );
-                        let signature = self.body.core.builder.import_signature(signature);
-                        let name = self
-                            .body.core.builder
-                            .func
-                            .declare_imported_user_function(function_name(callee));
-                        let target = self.body.core.builder.import_function(ir::ExtFuncData {
-                            name: ir::ExternalName::User(name),
-                            signature,
-                            colocated: true,
-                            patchable: false,
-                        });
-                        self.callees[callee] = Some(target);
-                        target
-                    }
-                };
-                let call = self.body.core.builder.ins().call(target, &args);
-                let results = self.body.core.builder.inst_results(call).to_vec();
-                self.propagate(results[0]);
-                let destination = instruction.result_register();
-                match callee_plan.result {
-                    Some(ty) => self.write(destination, Kind::of(ty).expect("planned"), results[1]),
-                    None => {
-                        let zero = self.body.core.builder.ins().iconst(types::I32, 0);
-                        self.write(destination, Kind::I32, zero);
-                    }
-                }
-            }
-            Class::WasmRefFunc => {}
-            Class::WasmIndirectTarget => self.indirect_target(pc, instruction),
-            Class::Call => match self.plan.operand(pc) {
-                Slot::Import(_) => self.callout(pc, instruction),
-                Slot::IndirectReference { .. } => self.call_reference(pc, instruction),
-                _ => unreachable!("planned calls hold a supported callable"),
-            },
-            Class::WasmUnreachable => {
-                let trap = self.trap_block(crate::WasmTrap::Unreachable);
-                self.body.core.builder.ins().jump(trap, &[]);
-                return false;
-            }
-            Class::Return => {
-                let status = self.body.core.builder.ins().iconst(types::I64, 0);
-                let mut values = vec![status];
-                if let Some(ty) = self.plan.result {
-                    values.push(self.read(a, Kind::of(ty).expect("planned")));
-                }
-                self.body.core.builder.ins().return_(&values);
-                return false;
-            }
-            // A binding is known statically per instruction; the globals it
-            // names are reached through the context.
-            Class::WasmInstanceBinding => {}
-            Class::WasmGlobalGet => {
-                let slot = self.binding_slot(pc);
-                let address = self.global_address(slot);
-                let flags = self.flags(Region::Globals);
-                let value = self.body.core.builder.ins().load(types::I32, flags, address, 0);
-                self.write(a, Kind::I32, value);
-            }
-            Class::WasmGlobalSet => {
-                let slot = self.binding_slot(pc);
-                let address = self.global_address(slot);
-                let value = self.read(a, Kind::I32);
-                let wide = self.body.core.builder.ins().uextend(types::I64, value);
-                let encoded = self.body.core.builder.ins().bor_imm_u(wide, INTEGER_TAG as i64);
-                let flags = self.flags(Region::Globals);
-                self.body.core.builder.ins().store(flags, encoded, address, 0);
-            }
-            _ => unreachable!("planned instructions have a denotation"),
-        }
-        true
     }
 }
 
@@ -9157,9 +7066,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         plans: &[Option<Plan>],
         guarded: bool,
         fixed_base: Option<i32>,
-        globals: &[u32],
         reference_site_ids: &'a [(usize, usize)],
-        reference_dispatch_mask: u64,
         diagnostics_enabled: bool,
     ) -> Option<ir::Function> {
         let function = &self.code.function(index);
@@ -9203,7 +7110,10 @@ impl<'a, H: Host> Analysis<'a, H> {
             .iter()
             .enumerate()
             .filter(|(pc, instruction)| {
-                plan.reachable(*pc) && instruction.op().is_wasm_branch_table()
+                plan.reachable(*pc) && matches!(
+                    Step::of(instruction.op(), instruction.imm()),
+                    Some(Step::Flow(Flow::Table))
+                )
             })
             .map(|(_, instruction)| instruction.a())
             .collect();
@@ -9212,13 +7122,11 @@ impl<'a, H: Host> Analysis<'a, H> {
         let mut emitter = Emitter {
             guarded,
             regions,
-            globals,
             analysis: self,
             body: Body::new(builder, context, poll_address(&self.vm.execution_interrupt), Int32Extension::Zero),
             plan,
             blocks: vec![None; function.code.len()],
             reference_site_ids,
-            reference_dispatch_mask,
             diagnostics_enabled,
             base,
             length,
@@ -9244,6 +7152,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             pending_copies: Vec::new(),
             vectors: Vec::new(),
             simd_words: None,
+            indirect: None,
         };
         // Registers start at i32 zero, as an activation's register file does.
         for register in 0..function.registers {
@@ -9335,6 +7244,8 @@ impl<'a, H: Host> Analysis<'a, H> {
         emitter.finish_traps();
         emitter.body.core.builder.seal_all_blocks();
         emitter.body.into_builder().finalize(isa.frontend_config());
+        #[cfg(test)]
+        BUILT_BODIES.with(|built| built.borrow_mut().push((index, func.display().to_string())));
         Some(func)
     }
 
@@ -9682,7 +7593,12 @@ unsafe fn enter_wasm(
     out: *mut u64,
     entry: WasmEntry,
 ) -> u32 {
-    match guard_trampoline() {
+    // A fault resumes here with native frames unreturned, which held roots (`NativeRoots`): the
+    // entry gives back what it found.
+    let roots = context.native_roots;
+    // SAFETY: a context with roots is a Wasm entry's, whose VM outlives the call.
+    let depth = (!roots.is_null()).then(|| unsafe { (*roots).depth() });
+    let status = match guard_trampoline() {
         Some(trampoline) => {
             let outer = ACTIVE_CONTEXT.with(|active| active.replace(context));
             // SAFETY: as the caller promises; the trampoline saves the caller's registers
@@ -9693,7 +7609,12 @@ unsafe fn enter_wasm(
         }
         // SAFETY: as the caller promises.
         None => unsafe { entry(context, base, length, arguments, out) },
+    };
+    if let Some(depth) = depth {
+        // SAFETY: as above.
+        unsafe { (*roots).set_depth(depth) };
     }
+    status
 }
 
 /// Runs public JS function `entry` through the host trampoline: its ABI is the Wasm entry's,
@@ -9843,14 +7764,6 @@ fn link(bytes: &mut [u8], body: usize, call: &Call, callee: usize) -> Option<()>
 const FUNCTION_ALIGNMENT: usize = 64;
 
 impl<H: Host> Vm<H> {
-    /// Invalidate artifact-local indirect-call certificates when VM state that
-    /// native code cannot inspect directly changes: table contents or heap IDs.
-    pub(super) fn invalidate_wasm_reference_caches(&self) {
-        let next = self.wasm_reference_epoch.get().wrapping_add(1);
-        self.wasm_reference_epoch
-            .set(if next == 0 { 1 } else { next });
-    }
-
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
         self.execution_mode = mode; super::regexp_native::enable(mode != ExecutionMode::Interpreted);
     }
@@ -10423,8 +8336,10 @@ impl<H: Host> Vm<H> {
                 *selected_function = true;
                 for packed in &function.code {
                     let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                    if instruction.op().class().eq(Class::CallKnown) {
-                        pending.push(usize::from(instruction.known_function_index()));
+                    if let Some(callee) = Step::of(instruction.op(), instruction.imm())
+                        .and_then(|step| step.callee(instruction))
+                    {
+                        pending.push(callee);
                     }
                 }
             }
@@ -10474,8 +8389,10 @@ impl<H: Host> Vm<H> {
                     for packed in &function.code {
                         let instruction =
                             super::dispatch_fast::decoded_instruction(function, *packed);
-                        if instruction.op().class().eq(Class::CallKnown) {
-                            pending.push(usize::from(instruction.known_function_index()));
+                        if let Some(callee) = Step::of(instruction.op(), instruction.imm())
+                            .and_then(|step| step.callee(instruction))
+                        {
+                            pending.push(callee);
                         }
                     }
                 }
@@ -10552,10 +8469,8 @@ impl<H: Host> Vm<H> {
         let mut reference_call_sites = Vec::new();
         let mut reference_cache_sites = Vec::new();
         let mut reference_cache_count = 0usize;
-        // The globals compiled code accesses, each once.
-        let mut globals: Vec<u32> = Vec::new();
-        // One pass over each callable function's full plan finds both what every body's
-        // compilation reads first: its indirect reference sites and the globals it accesses.
+        // One pass over each callable function's full plan finds what every body's compilation
+        // reads first: its indirect reference sites.
         for index in 0..count {
             if plans[index].is_none() {
                 continue;
@@ -10564,31 +8479,23 @@ impl<H: Host> Vm<H> {
             let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                match instruction.op().class() {
-                    Class::Call => {
-                        if let Slot::IndirectReference { table, .. } = full_plan.operand(pc) {
-                            let site_id = reference_cache_count;
-                            reference_cache_count += 1;
-                            reference_site_ids[index].push((pc, site_id));
-                            reference_cache_sites.push((index, pc, table));
-                            if diagnostics_enabled {
-                                reference_call_sites.push(ReferenceCallSiteDiagnostics {
-                                    function: index,
-                                    pc,
-                                    counts: std::cell::Cell::new(ReferenceCallSiteCounts::default()),
-                                    targets: std::cell::RefCell::new(Vec::new()),
-                                });
-                            }
-                        }
-                    }
-                    Class::WasmGlobalGet | Class::WasmGlobalSet => {
-                        if let Some(Slot::Binding(slot)) = full_plan.operands[pc]
-                            && !globals.contains(&slot)
-                        {
-                            globals.push(slot);
-                        }
-                    }
-                    _ => {}
+                if Step::of(instruction.op(), instruction.imm()) != Some(Step::Call(WasmCall::Reference)) {
+                    continue;
+                }
+                let Slot::IndirectReference { table, .. } = full_plan.operand(pc) else {
+                    continue;
+                };
+                let site_id = reference_cache_count;
+                reference_cache_count += 1;
+                reference_site_ids[index].push((pc, site_id));
+                reference_cache_sites.push((index, pc, table));
+                if diagnostics_enabled {
+                    reference_call_sites.push(ReferenceCallSiteDiagnostics {
+                        function: index,
+                        pc,
+                        counts: std::cell::Cell::new(ReferenceCallSiteCounts::default()),
+                        targets: std::cell::RefCell::new(Vec::new()),
+                    });
                 }
             }
         }
@@ -10625,9 +8532,7 @@ impl<H: Host> Vm<H> {
                 &plans,
                 guarded,
                 fixed_base,
-                &globals,
                 &reference_site_ids[index],
-                reference_dispatch_entries(reference_cache_count).saturating_sub(1) as u64,
                 diagnostics_enabled,
             );
             if let Some(started) = body_build_started {
@@ -10767,20 +8672,9 @@ impl<H: Host> Vm<H> {
             memory_slot,
             guarded,
             fixed_base,
-            globals,
             diagnostics,
-            reference_call_caches: std::cell::RefCell::new(
-                std::iter::repeat_with(|| None)
-                    .take(reference_cache_count)
-                    .collect(),
-            ),
-            reference_fast_caches: (0..reference_dispatch_entries(reference_cache_count))
-                .map(|_| UnsafeCell::new(FastReferenceCache::default()))
-                .collect::<Vec<_>>()
-                .into_boxed_slice(),
+            indirect_hits: indirect_profile::SiteHits::new(reference_cache_count),
             reference_cache_sites,
-            #[cfg(test)]
-            reference_cache_hits: std::cell::Cell::new(0),
         })
     }
 
@@ -11093,37 +8987,10 @@ impl<H: Host> Vm<H> {
         };
         let result = (|| {
             let function = compiled.function(id as usize)?;
-            let (base, length, guard, memory_binding) = match compiled.memory_slot {
-                Some(slot) => {
-                    let binding = self.heap.environment_slot(env, slot as usize)?;
-                    let (view, guard) = super::dispatch_fast::direct_memory_and_guard(self, binding)?;
-                    // Code compiled without bounds checks needs this memory's guard.
-                    if compiled.guarded && guard.is_none() {
-                        return None;
-                    }
-                    if compiled.fixed_base.is_some_and(|fixed| {
-                        guard.map(|(base, _)| displacement_base(base)) != Some(Some(fixed))
-                    }) {
-                        return None;
-                    }
-                    (view.0 as u64, view.1 as u64, guard, binding)
-                }
-                None => (0, 0, None, Value::UNDEFINED),
-            };
+            let (record, (base, length)) = self.publish_wasm_instance(&compiled, env, program)?;
             let raw = self.compiled_raw_args(args, &function.params)?;
             let marker = 0u8;
             let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
-            let mut globals: smallvec::SmallVec<[*mut Value; 8]> = smallvec::SmallVec::new();
-            for slot in &compiled.globals {
-                let binding = self.heap.environment_slot(env, *slot as usize)?;
-                match self.heap.get_mut(binding)? {
-                    Cell::WasmGlobal { value, .. } => globals.push(value),
-                    _ => return None,
-                }
-            }
-            let (guard_start, guard_end) = guard.map_or((0, 0), |(start, size)| {
-                (start as usize, start as usize + size)
-            });
             let mut import_callouts = 0u64;
             let mut known_callouts = 0u64;
             let mut reference_callouts = 0u64;
@@ -11152,54 +9019,39 @@ impl<H: Host> Vm<H> {
             let mut context = CallContext {
                 stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
                 interrupt: self.execution_interrupt.attention_flag(),
-                table: compiled.table.as_ptr(),
+                table: std::ptr::null(),
                 vm: (self as *mut Self).cast(),
                 env,
                 entry_stack: 0,
-                guard_start,
-                guard_end,
-                globals: globals.as_ptr(),
+                guard_start: 0,
+                guard_end: 0,
+                globals: std::ptr::null(),
+                table_words: std::ptr::null(),
                 callout: import_callout::<H> as Callout as usize,
                 call_reference: reference_callout::<H> as ReferenceCallout as usize,
-                compiled: Rc::as_ptr(&compiled),
+                compiled: std::ptr::null(),
                 program,
                 import_callouts: import_callouts_ptr,
                 known_callouts: known_callouts_ptr,
                 reference_callouts: reference_callouts_ptr,
-                memory: memory_binding,
-                memory_length: length,
+                memory: Value::UNDEFINED,
+                memory_length: 0,
                 raised: None,
-                call_reference_diagnostic: compiled.diagnostics.as_ref().map_or(0, |_| {
-                    diagnostic_reference_callout::<H> as DiagnosticReferenceCallout as usize
-                }),
-                reference_call_sites: compiled
-                    .diagnostics
-                    .as_ref()
-                    .map_or(std::ptr::null(), |stats| {
-                        stats.reference_call_sites.as_ptr()
-                    }),
-                reference_call_site_count: compiled
-                    .diagnostics
-                    .as_ref()
-                    .map_or(0, |stats| stats.reference_call_sites.len()),
+                call_reference_diagnostic: 0,
+                reference_call_sites: std::ptr::null(),
+                reference_call_site_count: 0,
                 poll_start: poll.map_or(0, |(start, _)| start),
                 poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
-                reference_epoch: self.wasm_reference_epoch.as_ptr(),
-                reference_fast_caches: compiled.reference_fast_caches_ptr(),
                 emscripten_memcpy_fast_path_hits: emscripten_memcpy_fast_path_hits_ptr,
-                import_callout_counts: compiled
-                    .diagnostics
-                    .as_ref()
-                    .map_or(std::ptr::null(), |stats| {
-                        stats.import_callout_counts.as_ptr()
-                    }),
-                import_callout_count: compiled
-                    .diagnostics
-                    .as_ref()
-                    .map_or(0, |stats| stats.import_callout_counts.len()),
+                import_callout_counts: std::ptr::null(),
+                import_callout_count: 0,
                 adapter_payload: std::ptr::null_mut(),
                 interrupt_owner: std::ptr::null(),
+                instance: std::ptr::null(),
+                native_roots: &mut *self.native_roots,
             };
+            // SAFETY: the record belongs to the environment the call runs in.
+            context.enter(unsafe { &*record });
             let mut out = 0u64;
             let native_entry_should_sample = compiled.note_native_entry(id as usize);
             let native_entry_sample_started =
@@ -11421,9 +9273,6 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// The tag bits of an encoded i32, which a global's value carries.
-const INTEGER_TAG: u64 = crate::value::INTEGER_TAG_BITS;
-
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
 
@@ -11535,7 +9384,6 @@ impl<H: Host> Vm<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytecode::Op;
 
     #[test]
     fn native_narrow_store_encoding_matches_shared_values() {
@@ -14321,39 +12169,5 @@ mod tests {
             .set(0, 1, Slot::DEFAULT)
             .expect("register in range");
         assert_eq!(loop_state.get(0, 1), Some(Slot::DEFAULT));
-    }
-
-    /// Each i32 integer operator widens to its namesake, and each f32 float
-    /// operator to its f64 namesake.
-    #[test]
-    fn narrow_selectors_name_their_wide_namesakes() {
-        let mut tag = 0;
-        while let Some(operator) = I32BinaryOperator::from_tag(tag) {
-            assert_eq!(
-                format!("{operator:?}"),
-                format!("{:?}", widen_binary(operator))
-            );
-            tag += 1;
-        }
-        let mut tag = 0;
-        while let Some(operator) = I32UnaryOperator::from_tag(tag) {
-            assert_eq!(
-                format!("{operator:?}"),
-                format!("{:?}", widen_unary(operator))
-            );
-            tag += 1;
-        }
-        let mut tag = 0;
-        while let Some(operator) = F32BinaryOperator::from_tag(tag) {
-            let (wide, _) = float_binary_operator(Op::WasmF32Binary, tag).expect("f32 selector");
-            assert_eq!(format!("{operator:?}"), format!("{wide:?}"));
-            tag += 1;
-        }
-        let mut tag = 0;
-        while let Some(operator) = F32UnaryOperator::from_tag(tag) {
-            let (wide, _) = float_unary_operator(Op::WasmF32Unary, tag).expect("f32 selector");
-            assert_eq!(format!("{operator:?}"), format!("{wide:?}"));
-            tag += 1;
-        }
     }
 }

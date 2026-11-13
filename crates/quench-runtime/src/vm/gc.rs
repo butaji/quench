@@ -374,7 +374,6 @@ impl<H: Host> Vm<H> {
         self.materialize_deferred_lane();
         self.clear_call_targets();
         self.resolved_module_requests.clear();
-        self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
         if full {
             self.host.at_collection_boundary(self.memory_policy());
@@ -447,6 +446,7 @@ impl<H: Host> Vm<H> {
         self.programs.extend_roots(&mut roots, full, self.heap.promotion_age());
         self.heap.extend_folded_roots(&mut roots);
         roots.extend(self.wasm_js.roots());
+        roots.extend(self.native_roots.live().iter().copied());
         roots.extend([
             self.realm.globals,
             self.object_proto,
@@ -841,7 +841,6 @@ impl<H: Host> Vm<H> {
         // no cleanup allocation can yet reuse a dead function locator.
         unsafe { self.programs.retire_dead_native_calls(|callee| heap.is_live(callee)); }
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
-        self.programs.clear_wasm_reference_caches();
         self.prune_function_values(full);
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go

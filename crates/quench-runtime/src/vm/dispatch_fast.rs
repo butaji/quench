@@ -8775,9 +8775,7 @@ lane_handler! {
         let Some(operator) = I32UnaryOperator::from_tag(i.imm()) else {
             return exit(ip);
         };
-        let crate::WasmValue::I32(value) = operator.apply(read_i32::<ACC, ACC_B>(r, i.b, view)) else {
-            return exit(ip);
-        };
+        let value = operator.evaluate(read_i32::<ACC, ACC_B>(r, i.b, view));
         produce!(cx, r, ip, i.a, view.integers.encode(value), view)
     }
 }
@@ -8845,7 +8843,7 @@ lane_handler! {
             ) else {
                 return exit(ip);
             };
-            operator.apply(f64::from_bits(left), f64::from_bits(right))
+            operator.evaluate(f64::from_bits(left), f64::from_bits(right))
         } else {
             let (Some(left), Some(right), Some(operator)) = (
                 left.as_int(),
@@ -8854,7 +8852,7 @@ lane_handler! {
             ) else {
                 return exit(ip);
             };
-            operator.apply(f32::from_bits(left as u32), f32::from_bits(right as u32))
+            operator.evaluate(f32::from_bits(left as u32), f32::from_bits(right as u32))
         };
         let Some(value) = lane_encode(view, value) else {
             return exit(ip);
@@ -9292,14 +9290,14 @@ lane_handler! {
             else {
                 return exit(ip);
             };
-            operator.apply(f64::from_bits(input))
+            operator.evaluate(f64::from_bits(input))
         } else {
             let (Some(input), Some(operator)) =
                 (input.as_int(), F32UnaryOperator::from_tag(i.imm()))
             else {
                 return exit(ip);
             };
-            operator.apply(f32::from_bits(input as u32))
+            operator.evaluate(f32::from_bits(input as u32))
         };
         let Some(value) = lane_encode(view, value) else {
             return exit(ip);
@@ -9319,7 +9317,7 @@ lane_handler! {
         ) else {
             return exit(ip);
         };
-        let Ok(value) = operator.apply(left as i64, right as i64) else {
+        let Ok(value) = operator.evaluate(left as i64, right as i64) else {
             return exit(ip);
         };
         let Some(value) = lane_encode(view, value) else {
@@ -9337,7 +9335,7 @@ lane_handler! {
         ) else {
             return exit(ip);
         };
-        let Some(value) = lane_encode(view, operator.apply(input as i64)) else {
+        let Some(value) = lane_encode(view, operator.evaluate(input as i64)) else {
             return exit(ip);
         };
         produce!(cx, r, ip, i.a, value, view)
@@ -9354,7 +9352,7 @@ lane_handler! {
         else {
             return exit(ip);
         };
-        let Ok(value) = operator.apply(input) else {
+        let Ok(value) = operator.evaluate(input) else {
             return exit(ip);
         };
         let Some(value) = lane_encode(view, value) else {

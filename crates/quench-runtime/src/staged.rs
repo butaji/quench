@@ -82,6 +82,19 @@ mod generic;
 pub(crate) use steps::step;
 pub(crate) mod effects;
 pub(crate) mod region;
+pub(crate) mod wasm;
+pub(crate) mod wasm_float;
+mod wasm_concrete;
+pub(crate) mod wasm_call;
+pub(crate) mod wasm_flow;
+pub(crate) mod wasm_instance;
+pub(crate) mod wasm_machine;
+pub(crate) mod wasm_memory;
+pub(crate) mod wasm_operation;
+pub(crate) mod wasm_simd;
+pub(crate) mod wasm_simd_concrete;
+pub(crate) mod wasm_step;
+pub(crate) use wasm_concrete::ConcreteWasm;
 #[cfg(test)]
 pub(crate) mod trace;
 #[allow(unused_imports)] // the Stage v2 vocabulary: stencil and UltraJIT stages use the rest
@@ -535,3 +548,17 @@ mod element_tests;
 mod primitive_tests;
 #[cfg(test)]
 mod typed_element_tests;
+#[cfg(test)]
+mod wasm_tests;
+#[cfg(test)]
+mod wasm_float_tests;
+#[cfg(test)]
+mod wasm_instance_tests;
+#[cfg(test)]
+mod wasm_memory_tests;
+#[cfg(test)]
+mod wasm_flow_tests;
+#[cfg(test)]
+mod wasm_call_tests;
+#[cfg(test)]
+mod wasm_simd_tests;

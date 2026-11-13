@@ -4098,9 +4098,11 @@ impl Heap {
                 object(&function.object);
                 work.extend([function.env, function.realm]);
             }
-            Cell::WasmGlobal { header, value: global, .. } => {
+            Cell::WasmGlobal { header, bits, ty, .. } => {
                 object(&header.object);
-                work.push(*global);
+                if crate::staged::wasm_instance::Storage::of(*ty) == crate::staged::wasm_instance::Storage::Handle {
+                    work.push(Value::from_bits(*bits));
+                }
             }
             Cell::BindingReference { environment, .. } => work.push(*environment),
             Cell::Environment {
@@ -4157,6 +4159,7 @@ impl Heap {
                 ..
             }
             | Cell::WasmBits64(_)
+            | Cell::WasmInstance(_)
             | Cell::WasmV128(_) => {}
             Cell::WasmHostFunction {
                 target: crate::heap::WasmHostTarget::Js(target),
@@ -4338,6 +4341,7 @@ impl Heap {
             Cell::BigInt(_) => CellKind::BigInt,
             Cell::WasmElements(_) => CellKind::WasmElements,
             Cell::WasmGlobal { .. } => CellKind::WasmGlobal,
+            Cell::WasmInstance(_) => CellKind::WasmElements,
             Cell::WasmMemory { .. } => CellKind::WasmMemory,
             Cell::WasmTable { .. } => CellKind::WasmTable,
             Cell::WasmBits64(_) => CellKind::WasmBits64,
@@ -4386,6 +4390,7 @@ impl Heap {
                 | Cell::WeakRef { .. }
                 | Cell::FinalizationRegistry { .. }
                 | Cell::WasmGlobal { .. }
+                | Cell::WasmInstance(_)
                 | Cell::WasmBits64(_)
                 | Cell::WasmV128(_)
                 | Cell::WasmExtern(_)
@@ -4407,7 +4412,7 @@ impl Heap {
                         }
                 }
                 Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
-                Cell::WasmTable { elements, .. } => elements.capacity() * size_of::<Value>(),
+                Cell::WasmTable { elements, .. } => elements.external_bytes(),
                 Cell::WasmGc { fields, .. } => fields.allocated_bytes(),
                 Cell::TemporalPlainDate { calendar, .. }
                 | Cell::TemporalPlainDateTime { calendar, .. }

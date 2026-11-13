@@ -35,7 +35,7 @@ mod types;
 pub use types::WasmTypes;
 pub(crate) mod simd;
 pub(crate) mod table;
-pub(crate) use scalar::{ScalarBits, V128_BYTES, WasmSignatures};
+pub(crate) use scalar::{CanonicalSignature, ScalarBits, V128_BYTES, WasmSignatures};
 pub use scalar::{
     WasmHostSignature,
     WasmCallableType, WasmFunctionBody, WasmFunctionImport, WasmReferenceKind, WasmSignature,

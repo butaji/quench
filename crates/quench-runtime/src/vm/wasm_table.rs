@@ -164,40 +164,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn wasm_indirect_target(
-        &self,
-        caller: ProgramId,
-        table: Value,
-        index: u64,
-        expected_index: u32,
-    ) -> Result<Value, JsError> {
-        let elements = self.wasm_table_elements(table)?;
-        let reference = usize::try_from(index)
-            .ok()
-            .and_then(|index| elements.get(index))
-            .copied()
-            .ok_or_else(|| JsError::wasm_trap_error(crate::WasmTrap::UndefinedElement))?;
-        if reference.is_null() {
-            return Err(JsError::wasm_trap_error(
-                crate::WasmTrap::UninitializedElement,
-            ));
-        }
-        let expected = self
-            .programs
-            .wasm_signatures(caller)
-            .filter(|pool| pool.type_signature(expected_index).is_some())
-            .ok_or_else(|| JsError::validation("invalid Wasm signature index".into()))?;
-        let matches = self
-            .wasm_callable_matches(reference, expected, expected_index, false)
-            .ok_or_else(|| JsError::validation("invalid Wasm function signature".into()))?;
-        if !matches {
-            return Err(JsError::wasm_trap_error(
-                crate::WasmTrap::IndirectCallTypeMismatch,
-            ));
-        }
-        Ok(reference)
-    }
-
     pub(super) fn wasm_table_get(&self, table: Value, index: u64) -> Result<Value, JsError> {
         self.wasm_table_elements(table)?
             .get(
@@ -218,12 +184,12 @@ impl<H: Host> Vm<H> {
         if !self.wasm_table_accepts(table, value) {
             return Err(JsError::validation("invalid Wasm table reference".into()));
         }
+        let target = self.wasm_element_target(value);
         let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(table) else {
             unreachable!()
         };
         let range = table_range(index, length, elements.len())?;
-        elements[range].fill(value);
-        self.invalidate_wasm_reference_caches();
+        elements.fill(range, value, target);
         Ok(())
     }
 
@@ -236,6 +202,7 @@ impl<H: Host> Vm<H> {
         if !self.wasm_table_accepts(table, initial) {
             return Err(JsError::validation("invalid Wasm table reference".into()));
         }
+        let target = self.wasm_element_target(initial);
         let Some(Cell::WasmTable {
             elements, table64, ..
         }) = self.heap.get_mut(table)
@@ -253,14 +220,12 @@ impl<H: Host> Vm<H> {
         else {
             return Ok(None);
         };
-        let before = elements.capacity() * size_of::<Value>();
-        if elements.try_reserve_exact(length - old_size).is_err() {
+        let before = elements.external_bytes();
+        if !elements.try_grow(length, initial, target) {
             return Ok(None);
         }
-        elements.resize(length, initial);
-        let after = elements.capacity() * size_of::<Value>();
+        let after = elements.external_bytes();
         self.heap.adjust_external_bytes(before, after);
-        self.invalidate_wasm_reference_caches();
         Ok(Some(old_size as u64))
     }
 
@@ -283,11 +248,14 @@ impl<H: Host> Vm<H> {
         let input = table_range(input, length, values.len())?;
         let output = table_range(output, length, self.wasm_table_elements(table)?.len())?;
         let values = values[input].to_vec();
+        let targets: Vec<_> = values
+            .iter()
+            .map(|value| self.wasm_element_target(*value))
+            .collect();
         let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(table) else {
             unreachable!()
         };
-        elements[output].copy_from_slice(&values);
-        self.invalidate_wasm_reference_caches();
+        elements.copy_in(output.start, &values, &targets);
         Ok(())
     }
 
@@ -336,9 +304,8 @@ impl<H: Host> Vm<H> {
             else {
                 unreachable!()
             };
-            destination_elements[output].copy_from_slice(&source_elements[input]);
+            destination_elements.copy_from(output, source_elements, input);
         }
-        self.invalidate_wasm_reference_caches();
         Ok(())
     }
 }
