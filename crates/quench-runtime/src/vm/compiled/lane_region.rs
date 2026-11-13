@@ -2329,8 +2329,7 @@ impl Lowering<'_, '_> {
                 Class::GetField if !super::reads_length(self.program, *instruction) => {
                     let base = self.field_base(pc, *instruction);
                     base.and_then(|base| if base == crate::bytecode::FieldBase::THIS { Some(count) }
-                        else { base.register_index().map(usize::from) })
-                        .filter(|_| self.reads_own_field(*instruction))
+                        else { base.register_index().map(usize::from) }).filter(|_| self.reads_own_field(*instruction))
                 }
                 _ if instruction.op().is_field_store() => Some(match (instruction.field_store_register(), self.unit.origins[pc]) {
                     (Some(register), _) => usize::from(register),
