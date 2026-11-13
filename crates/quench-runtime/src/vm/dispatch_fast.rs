@@ -7727,7 +7727,7 @@ const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictIneq
 /// a value of equal contents (`Vm::heap_values_strictly_equal`).
 #[inline(always)]
 fn strictly_equal_constant<H: Host>(vm: &Vm<H>, value: Value, constant: Value) -> bool {
-    value == constant || (constant.is_heap() && value.is_heap() && vm.heap_values_strictly_equal(value, constant))
+    value == constant || vm.heap_values_strictly_equal(value, constant)
 }
 
 lane_handler! {
@@ -7825,11 +7825,11 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_jump_strict_equal_false` of two distinct heap values (`Vm::strict_equal`); out
+    /// `lane_jump_strict_equal_false` of two distinct strings or BigInts (`Vm::distinct_heap_values_equal`); out
     /// of line, so the common tests make no call.
     #[inline(never)]
     fn lane_jump_strict_equal_cells<BACKWARD: bool, NEGATED: bool>(cx, r, ip, i, view) {
-        if unsafe { vm(cx) }.strict_equal(r.get(i.b), r.get(i.c)) == NEGATED {
+        if unsafe { vm(cx) }.distinct_heap_values_equal(r.get(i.b), r.get(i.c)) == NEGATED {
             resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
         }
         next!(cx, r, following(ip), Carried::script(cx))
