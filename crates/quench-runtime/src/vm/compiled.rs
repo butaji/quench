@@ -1476,6 +1476,7 @@ thread_local! {
 }
 
 /// An object's atom table is the data symbol after its narrow table.
+#[cfg(feature = "aot")]
 pub(super) const NATIVE_ATOM_TABLE_OFFSET: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
