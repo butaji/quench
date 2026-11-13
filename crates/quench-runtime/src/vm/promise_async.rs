@@ -1,7 +1,7 @@
 use super::activation::{Completion, Continuation};
 use super::promise::{PromiseReaction, PromiseState};
 use super::*;
-use crate::heap::{AwaitKind, AwaitRole, AwaitState};
+use crate::heap::{AwaitKind, AwaitRole, AwaitState, ResumedAwait};
 
 /// What an await reaction resumes with, read from its `AwaitState`.
 #[derive(Clone, Copy, Debug)]
@@ -305,14 +305,13 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         state: Value,
-        taken: Option<(AwaitKind, Value, Value)>,
+        taken: Option<ResumedAwait>,
         rejected: bool,
         value: Value,
     ) -> Result<Value, JsError> {
-        let Some((kind, realm, promise)) = taken else {
+        let Some(ResumedAwait { role, continuation, realm, promise }) = taken else {
             return Err(JsError("stale async continuation".into()));
         };
-        let (role, continuation) = kind.into_role();
         let generator = role.generator();
         let resume = AwaitResume { state, promise, role, rejected };
         let previous_global = self.switch_realm_global(realm);

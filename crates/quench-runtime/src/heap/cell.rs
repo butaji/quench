@@ -19,7 +19,7 @@ mod shape_id;
 mod snapshot;
 mod typed_array_kind;
 mod wasm_fields;
-pub(crate) use await_state::{AwaitKind, AwaitRole, AwaitState};
+pub(crate) use await_state::{AwaitKind, AwaitRole, AwaitState, ResumedAwait};
 pub(crate) use wasm_fields::{WasmGcFields, WasmTableElements};
 pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};

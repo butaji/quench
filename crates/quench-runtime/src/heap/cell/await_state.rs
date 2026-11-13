@@ -42,9 +42,12 @@ impl AwaitState {
 
     /// Takes the pending await for its reaction run, leaving the state spent; `None` when
     /// it is spent already (a reaction cannot run twice).
-    pub(crate) fn resume(&mut self) -> Option<(AwaitKind, Value, Value)> {
+    pub(crate) fn resume(&mut self) -> Option<ResumedAwait> {
         match std::mem::replace(self, Self::Spent) {
-            Self::Pending { kind, realm, promise } => Some((kind, realm, promise)),
+            Self::Pending { kind, realm, promise } => {
+                let (role, continuation) = kind.into_role();
+                Some(ResumedAwait { role, continuation, realm, promise })
+            }
             Self::Spent => None,
         }
     }
@@ -53,7 +56,7 @@ impl AwaitState {
     #[cfg(test)]
     pub(crate) fn take_function_continuation(&mut self) -> Option<Continuation> {
         match self.resume() {
-            Some((AwaitKind::AsyncFunction(continuation), ..)) => Some(continuation),
+            Some(ResumedAwait { role: AwaitRole::AsyncFunction, continuation, .. }) => continuation,
             _ => None,
         }
     }
@@ -96,6 +99,16 @@ impl AwaitState {
             AwaitKind::AsyncGeneratorYield { generator } => out.push(*generator),
         }
     }
+}
+
+/// What an await's reaction run takes from its state (`AwaitState::resume`).
+pub(crate) struct ResumedAwait {
+    pub(crate) role: AwaitRole,
+    /// The suspended activation; none for an async generator's `yield` await.
+    pub(crate) continuation: Option<Continuation>,
+    /// The realm global that awaited, which the continuation resumes in.
+    pub(crate) realm: Value,
+    pub(crate) promise: Value,
 }
 
 /// Which activation an await reaction resumes, as `AwaitKind` says without its frame.
