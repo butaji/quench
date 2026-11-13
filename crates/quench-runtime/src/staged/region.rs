@@ -60,10 +60,14 @@ impl Region {
         Self::Constants,
     ];
 
+    // Inlined into every `Concrete` read: an access tag the interpreter ignores must cost nothing,
+    // and a plain call would cross codegen units.
+    #[inline(always)]
     pub(crate) const fn mutable(self) -> Access {
         Access { region: self, mutability: Mutability::Mutable }
     }
 
+    #[inline(always)]
     pub(crate) const fn readonly(self) -> Access {
         Access { region: self, mutability: Mutability::Readonly }
     }
