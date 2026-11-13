@@ -30,6 +30,9 @@ impl RegisterMasks {
     /// instructions over 9 registers). A body past the width gets one precise set per window,
     /// or one conservative all-live map when it is wider than the window budget.
     pub(crate) fn of(function: &Function, methods: &(impl super::MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction]) -> Option<Self> {
+        if !super::budget::admits(function) {
+            return Some(Self::Wide(Box::default()));
+        }
         if function.registers > ROOT_MAP_REGISTERS {
             return Some(windows::masked(function, methods, fields, superinstructions)
                 .unwrap_or_else(|| Self::Wide(Box::default())));

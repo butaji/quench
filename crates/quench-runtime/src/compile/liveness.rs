@@ -7,7 +7,7 @@ use crate::bytecode::{
 /// derives, and the root masks a collection reads.
 pub(crate) use set::RegisterSet; mod set;
 
-mod solve; mod masks; pub(crate) mod windows;
+mod solve; mod masks; pub(crate) mod windows; pub(crate) mod budget;
 pub(crate) use solve::{add_suspended_exception_roots, analyze_graph, analyze_transfers, analyze_wide};
 pub(crate) use masks::RegisterMasks;
 use solve::LiveMask;
@@ -132,7 +132,7 @@ pub(super) fn transfers(
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> Option<Vec<(RegisterSet, RegisterSet)>> {
-    (function.registers <= ROOT_MAP_REGISTERS).then(|| all_transfers(function, methods, fields, superinstructions))
+    (function.registers <= ROOT_MAP_REGISTERS && budget::admits(function)).then(|| all_transfers(function, methods, fields, superinstructions))
 }
 
 /// Every instruction's transfers, at the set's width: a body past it is solved per window.
