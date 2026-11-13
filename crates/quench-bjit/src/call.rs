@@ -88,7 +88,7 @@ mod tests {
                 }
                 CallRow::Direct { .. } => {
                     assert!([NEXT, TAKEN, EXIT].iter().all(|s| successors.contains(s)), "{successors:?}");
-                    assert!(!values.is_empty() && values.iter().all(|v| *v == 0), "the record address is the one value hole: {values:?}");
+                    assert!(values.contains(&0) && values.iter().all(|v| *v <= 1), "the record address and the call pc are the value holes: {values:?}");
                 }
                 CallRow::Reload(_) => {
                     assert!(successors.iter().all(|s| *s == NEXT), "{successors:?}");
