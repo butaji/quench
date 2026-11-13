@@ -54,11 +54,16 @@ use std::rc::{Rc, Weak};
 mod osr_loop;
 mod exit_protocol;
 pub(super) use exit_protocol::ExitTable;
-mod osr_compile; pub(in crate::vm) mod base_region; mod base_rows; mod stencil_run; use stencil_run::Crossing;
+mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_rows; mod stencil_run; use stencil_run::Crossing;
 pub(super) use osr_compile::{start_osr_region, OsrCompile, PendingOsrRegion};
 pub(super) use lane_region::ElementViews;
 use osr_compile::OsrFacts;
 use crate::typed_ir;
+
+/// The ordered tables of the frozen image's facts and of the loop regions' site facts: their
+/// iteration order is part of the image's and the code's determinism.
+type OrderedMap<K, V> = std::collections::BTreeMap<K, V>;
+type OrderedSet<T> = std::collections::BTreeSet<T>;
 #[path = "compiled/facts.rs"]
 pub(super) mod facts;
 pub(super) mod tier_policy;
@@ -1622,7 +1627,7 @@ pub(super) struct VmFacts<'a> {
     /// running VM's feedback: `Division::Frozen` instead of `Division::Online`.
     pub(super) frozen: bool,
     /// Whole-program prototype values by atom, each guarded at its read site.
-    pub(super) frozen_fields: Option<&'a std::collections::BTreeMap<Atom, Value>>,
+    pub(super) frozen_fields: Option<&'a OrderedMap<Atom, Value>>,
     /// The image's constant block, materialized after realm initialization.
     pub(super) frozen_constants: Option<usize>,
 }
@@ -3985,76 +3990,15 @@ impl CompiledOsrRegion {
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
         lane_context: usize,
     ) -> LoopOutcome {
-        let mut outcome = LoopOutcome::Terminated;
         #[cfg(test)]
         LANE_OSR_RUNS.with(|count| count.set(count.get() + 1));
-        let ran = unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, self.crossing == Crossing::General, |native, vm| {
-            native.dispatch.bind_native_storage(vm);
-            native.dispatch.lane_context = lane_context;
-            // A region's `THIS`-based reads take the running activation's receiver, as a
-            // lane body's do; `with` leaves it `DELETED`. The lane context's `this` is the
-            // outer activation's, so read the loop's own frame.
-            native.dispatch.receiver = vm.current_this(frame).unwrap_or(Value::DELETED).to_bits();
-            // The counter is the `words` field's first word, not the struct's offset 0:
-            // `LoopEntry` is not `repr(C)`.
-            native.dispatch.loop_entry = entry.words_mut() as usize;
-            // A leave inside an inlined callee writes the callee's live registers here.
-            if region.inlining.is_some() { native.dispatch.inlined = entry.scratch_address(); }
-            // A region that stores a capture reads the activation's own slots, as a lane body
-            // does; otherwise the loop entry's captures are the dense slot view the lane
-            // capture reads use, a stored slot holding `DELETED` so its reads take the lane's
-            // own lookup.
-            let live = (!region.stored_captures.is_empty())
-                .then(|| super::dispatch_fast::lane_context_captures::<H>(lane_context)).flatten();
-            let captures = if live.is_some() || (region.captures.is_empty() && region.stored_captures.is_empty()) { Vec::new() } else {
-                let len = region.captures.iter().chain(&region.stored_captures)
-                    .map(|slot| usize::from(*slot) + 1).max().unwrap_or(0);
-                let mut captures = vec![crate::Value::DELETED; len];
-                for (slot, value) in region.captures.iter().zip(entry.captures(region.captures.len())) {
-                    captures[usize::from(*slot)] = value;
-                }
-                captures
-            };
-            if let Some((values, len)) = live {
-                (native.dispatch.capture_values, native.dispatch.capture_len) = (values, len);
-            } else if !captures.is_empty() {
-                native.dispatch.capture_values = captures.as_ptr();
-                native.dispatch.capture_len = captures.len();
-            }
-            // The lane activation's own registers, locals and body. A frame whose local
-            // storage does not cover the function keeps them in the activation window,
-            // after the register file; the VM frame may name the caller.
-            if let Some(program) = vm.programs.get(program)
-                && let Some(body) = program.function_get(function as usize) {
-                native.dispatch.native_registers = registers;
-                native.dispatch.register_count = usize::from(body.registers);
-                native.dispatch.native_locals = if vm.frames[frame].locals.len() < usize::from(body.locals) {
-                    registers.add(usize::from(body.registers)
-                        + usize::from(super::dispatch_fast::WINDOW_LOCALS))
-                } else {
-                    vm.frames[frame].locals.as_mut_ptr()
-                };
-                native.dispatch.local_count = usize::from(body.locals);
-                native.dispatch.body = body as *const _;
-                native.dispatch.residual = Rc::as_ptr(&program) as usize;
-            }
-            native.dispatch.refresh_object_bases(vm);
-            let mut context = CallContext::interrupt_only(&*interrupt);
-            context.vm = std::ptr::from_mut(vm).cast();
-            context.program = program;
-            context.adapter_payload = (&mut native.dispatch as *mut JsStepDispatch).cast();
-            // SAFETY: as the caller promises; the code reads the register file and returns
-            // its status and result word.
-            let BodyReturn { status, value: word } = enter_body(&mut context, 0, resume, registers.cast::<u64>().cast_const(), code);
-
-            if let Some(Raised::Panic(panic)) = context.raised.take() {
-                std::panic::resume_unwind(panic);
-            }
-            let exit = LaneExit::read(status, word, || native.dispatch.returned_pc);
-            outcome = LoopOutcome::of(exit, region);
-        }) };
-        if ran.is_none() { return LoopOutcome::Terminated; }
-        outcome
+        // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
+        unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, self.crossing == Crossing::General, |native, vm| {
+            osr_lane::bind_loop(native, vm, region, entry, (frame, lane_context));
+            let _captures = osr_lane::bind_captures::<H>(native, region, entry, lane_context);
+            osr_lane::bind_frame(native, vm, (program, function, frame), registers);
+            osr_lane::enter(native, vm, region, program, (code, resume), registers, interrupt)
+        }) }.unwrap_or(LoopOutcome::Terminated)
     }
 
 }
@@ -4163,8 +4107,8 @@ fn publish_code(code: &[u8]) -> Option<CodeMemory> {
 /// Whole-program globals a frozen image may fold: a `var` the program writes exactly
 /// once, with an immediate, before any other function can observe it.
 #[cfg(feature = "aot")]
-fn global_store_counts(program: &ResidualProgram) -> std::collections::BTreeMap<Atom, usize> {
-    let mut stores: std::collections::BTreeMap<Atom, usize> = std::collections::BTreeMap::new();
+fn global_store_counts(program: &ResidualProgram) -> OrderedMap<Atom, usize> {
+    let mut stores: OrderedMap<Atom, usize> = std::collections::BTreeMap::new();
     for id in 0..program.function_count() {
         let function = program.function(id);
         for &packed in function.code.iter() {
@@ -4178,12 +4122,12 @@ fn global_store_counts(program: &ResidualProgram) -> std::collections::BTreeMap<
 }
 
 #[cfg(feature = "aot")]
-fn root_immediate_globals(program: &ResidualProgram, candidates: &std::collections::BTreeSet<Atom>,
-    stores: &std::collections::BTreeMap<Atom, usize>,
-) -> std::collections::BTreeMap<Atom, Value> {
+fn root_immediate_globals(program: &ResidualProgram, candidates: &OrderedSet<Atom>,
+    stores: &OrderedMap<Atom, usize>,
+) -> OrderedMap<Atom, Value> {
     let root = program.function(0);
     let mut values = std::collections::BTreeMap::new();
-    let mut immediates: std::collections::BTreeMap<u16, Value> = std::collections::BTreeMap::new();
+    let mut immediates: OrderedMap<u16, Value> = std::collections::BTreeMap::new();
     for &packed in root.code.iter() {
         let instruction = super::dispatch_fast::decoded_instruction(root, packed);
         for register in instruction.written_registers() { immediates.remove(&register); }
@@ -4206,16 +4150,16 @@ fn root_immediate_globals(program: &ResidualProgram, candidates: &std::collectio
 /// Whole-program globals a frozen image may fold: a `var` the program writes exactly
 /// once, with an immediate, before any other function can observe it.
 #[cfg(feature = "aot")]
-pub(super) fn frozen_globals(program: &ResidualProgram) -> std::collections::BTreeMap<Atom, Value> {
+pub(super) fn frozen_globals(program: &ResidualProgram) -> OrderedMap<Atom, Value> {
     let root = program.function(0);
-    let candidates: std::collections::BTreeSet<Atom> = root.global_var_atoms().iter().copied().collect();
+    let candidates: OrderedSet<Atom> = root.global_var_atoms().iter().copied().collect();
     let stores = global_store_counts(program);
     root_immediate_globals(program, &candidates, &stores)
 }
 
 #[cfg(feature = "aot")]
-fn field_store_counts(program: &ResidualProgram) -> std::collections::BTreeMap<Atom, usize> {
-    let mut counts: std::collections::BTreeMap<Atom, usize> = std::collections::BTreeMap::new();
+fn field_store_counts(program: &ResidualProgram) -> OrderedMap<Atom, usize> {
+    let mut counts: OrderedMap<Atom, usize> = std::collections::BTreeMap::new();
     for id in 0..program.function_count() {
         let function = program.function(id);
         for &packed in function.code.iter() {
@@ -4230,10 +4174,10 @@ fn field_store_counts(program: &ResidualProgram) -> std::collections::BTreeMap<A
 
 #[cfg(feature = "aot")]
 fn root_immediate_fields(program: &ResidualProgram,
-    counts: &std::collections::BTreeMap<Atom, usize>,
-) -> std::collections::BTreeMap<Atom, Value> {
+    counts: &OrderedMap<Atom, usize>,
+) -> OrderedMap<Atom, Value> {
     let root = program.function(0);
-    let mut immediates: std::collections::BTreeMap<u16, Value> = std::collections::BTreeMap::new();
+    let mut immediates: OrderedMap<u16, Value> = std::collections::BTreeMap::new();
     let mut values = std::collections::BTreeMap::new();
     for &packed in root.code.iter() {
         let instruction = super::dispatch_fast::decoded_instruction(root, packed);
@@ -4257,7 +4201,7 @@ fn root_immediate_fields(program: &ResidualProgram,
 /// immediate (a constructor's `prototype.k = <immediate>`), folded at each read and
 /// guarded there. Accessor definitions are outside this analysis.
 #[cfg(feature = "aot")]
-pub(super) fn frozen_fields(program: &ResidualProgram) -> std::collections::BTreeMap<Atom, Value> {
+pub(super) fn frozen_fields(program: &ResidualProgram) -> OrderedMap<Atom, Value> {
     let counts = field_store_counts(program);
     root_immediate_fields(program, &counts)
 }
@@ -4269,7 +4213,7 @@ pub(super) fn frozen_fields(program: &ResidualProgram) -> std::collections::BTre
 /// for a read before the declaration.
 #[cfg(feature = "aot")]
 pub(super) fn frozen_global_reads(program: &ResidualProgram, function: &Function,
-    globals: &std::collections::BTreeMap<Atom, Value>,
+    globals: &OrderedMap<Atom, Value>,
 ) -> crate::vm::global_facts::GlobalReads {
     let frozen = |atom: Atom| globals.get(&atom).map(|&value|
         crate::vm::global_facts::GlobalRead::Frozen { value, ty: crate::typed_ir::Type::immediate(value) });
@@ -4888,7 +4832,7 @@ impl<H: Host> Vm<H> {
     /// values they met (a function's own field, read through a plain object's proof), so
     /// they take the VM's cached read, which answers them (`lane_region::field_probe`).
     fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize])
-        -> std::collections::BTreeMap<u16, Vec<NativeFieldLoad>> {
+        -> OrderedMap<u16, Vec<NativeFieldLoad>> {
         let (generic, functions): (Vec<u16>, _) = (generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
             .map(|(site, _)| site).collect(), self.heap.function_shapes());
         unit.instructions
@@ -10285,7 +10229,16 @@ impl<H: Host> Vm<H> {
         // `super()` binds in the body.
         let outcome = self.complete_user_frame(program, result, constructed.is_some());
         drop(call_guard);
-        let outcome = match outcome? {
+        self.finish_pushed_call(caller, destination, call, outcome?)
+    }
+
+    /// The completed body's value as the pushing call's result: a construction yields the
+    /// body's object or else its receiver; a `call` returning from the caller's frame returns
+    /// it, any other writes the call's destination register.
+    #[cfg(feature = "native-execution")]
+    fn finish_pushed_call(&mut self, caller: usize, destination: Register, call: WideInstruction,
+        outcome: super::FrameOutcome) -> Result<super::StepResult, JsError> {
+        let outcome = match outcome {
             super::FrameOutcome::ConstructComplete { value, this } =>
                 super::FrameOutcome::Complete(if self.is_object_like(value) { value } else { this }),
             outcome => outcome,
@@ -10471,13 +10424,7 @@ impl<H: Host> Vm<H> {
         self.host.after_native_compilation();
         let artifact_failed = artifact.is_none();
         let compiled = artifact.and_then(CompiledJsFunction::from_artifact).map(Rc::new);
-        let compile_rejection = if artifact_failed {
-            Some(super::js_compiled::candidate_rejection_reason(&residual, function_id))
-        } else if compiled.is_none() {
-            Some("executable-memory-allocation-failed")
-        } else {
-            None
-        };
+        let compile_rejection = Self::js_tier_compile_rejection(&residual, function_id, artifact_failed, compiled.is_none());
         let installed = self.programs.install_js_tier(program_id, function_id, compiled.clone());
         if let Some(compile_started) = compile_started {
             let rejection = if !installed && compiled.is_some() { Some("shared-code-cache-budget-exhausted") } else { compile_rejection };
@@ -10485,6 +10432,17 @@ impl<H: Host> Vm<H> {
         }
         installed.then_some(())?;
         compiled
+    }
+
+    /// Why a compile installed nothing: the specializer declined the candidate
+    /// (`artifact_failed`), or executable memory could not be allocated for its artifact.
+    fn js_tier_compile_rejection(residual: &ResidualProgram, function_id: u32, artifact_failed: bool,
+        unallocated: bool) -> Option<&'static str> {
+        if artifact_failed {
+            Some(super::js_compiled::candidate_rejection_reason(residual, function_id))
+        } else {
+            unallocated.then_some("executable-memory-allocation-failed")
+        }
     }
 
     /// Records a compile for the diagnostics: its time, the installed code's size, and why

@@ -8,6 +8,7 @@ use rustc_hash::FxHashMap;
 use std::io::Write as _;
 
 pub(in crate::vm) mod lane_publication;
+mod js_jit_report;
 mod snapshot;
 mod tier_census;
 mod wasm_tier;
@@ -65,6 +66,31 @@ struct JsJitCallSiteCounters {
     outcomes: [u64; JsJitCallOutcome::COUNT],
     sampled_calls: u64,
     sampled_call_ns: [u64; JsJitCallOutcome::COUNT],
+}
+
+#[cfg(feature = "native-execution")]
+impl JsJitCallSiteCounters {
+    /// Counts one call by where it went: the site's first direct target, a later call to it,
+    /// a call to another direct target, or a target that is not a direct callee.
+    fn note_target(&mut self, direct_target: Option<(u32, u32)>) {
+        match direct_target {
+            Some(target) => match self.direct_target {
+                None => {
+                    self.direct_target = Some(target);
+                    self.direct_target_calls = self.direct_target_calls.saturating_add(1);
+                }
+                Some(first) if first == target => {
+                    self.direct_target_calls = self.direct_target_calls.saturating_add(1);
+                }
+                Some(_) => {
+                    self.alternate_target_calls = self.alternate_target_calls.saturating_add(1);
+                }
+            },
+            None => {
+                self.other_target_calls = self.other_target_calls.saturating_add(1);
+            }
+        }
+    }
 }
 
 #[cfg(feature = "native-execution")]
@@ -2297,23 +2323,7 @@ impl ProgramStore {
         };
         let site = &mut counters.call_sites[index];
         site.attempts = site.attempts.saturating_add(1);
-        match direct_target {
-            Some(target) => match site.direct_target {
-                None => {
-                    site.direct_target = Some(target);
-                    site.direct_target_calls = site.direct_target_calls.saturating_add(1);
-                }
-                Some(first) if first == target => {
-                    site.direct_target_calls = site.direct_target_calls.saturating_add(1);
-                }
-                Some(_) => {
-                    site.alternate_target_calls = site.alternate_target_calls.saturating_add(1);
-                }
-            },
-            None => {
-                site.other_target_calls = site.other_target_calls.saturating_add(1);
-            }
-        }
+        site.note_target(direct_target);
         let outcome_count = &mut site.outcomes[outcome as usize];
         *outcome_count = outcome_count.saturating_add(1);
         if let Some(elapsed_ns) = sampled_call_ns {
@@ -2721,304 +2731,6 @@ impl Drop for ProgramStore {
         if !census || crate::trace::Channel::JsJit.on() {
             self.report_js_jit();
         }
-    }
-}
-
-impl ProgramStore {
-    /// The `QUENCH_TRACE=js-jit` report, printed as the store drops.
-    fn report_js_jit(&self) {
-        let Some(diagnostics) = &self.js_jit_diagnostics else {
-            return;
-        };
-        for (program, entry) in self.programs.iter().enumerate() {
-            let Some(entry) = entry else { continue };
-            let code: &ResidualProgram = &entry.residual;
-            let op_at = |function: u32, pc: u32| code.function_get(function as usize)
-                .and_then(|body| body.instructions().nth(pc as usize)).map(|instruction| format!("{:?}", instruction.op()));
-            for (function, view) in (0..u32::MAX).map_while(|function| code.function_get(function as usize).map(|_| function)).filter_map(|function| entry.lane_views.derived(function).map(|view| (function, view))) {
-                if let Some(line) = view.body_stats.report(program, view.lane_body_state(), &op_at) {
-                    eprintln!("{line}");
-                } else {
-                    let (state, entries, claimed, warming) = view.lane_body_detail();
-                    eprintln!("QUENCH_LANE_STATE {{\"program\":{program},\"function\":{function},\"state\":\"{state}\",\"entries\":{},\"claimed\":{claimed},\"warming\":{warming},\"declined\":\"{}\"}}", entries.map_or(String::from("null"), |entries| entries.to_string()), view.body_stats.declined.get());
-                }
-            }
-        }
-        eprintln!("{}", super::dispatch_fast::lane_miss_report());
-            eprintln!("{}", super::dispatch_fast::lane_unlowered_report());
-        let mut records: Vec<_> = diagnostics.iter().collect();
-        records.sort_unstable_by_key(|(key, _)| **key);
-        let stderr = std::io::stderr();
-        let mut stderr = stderr.lock();
-        for ((program, function), counters) in records {
-            let entry = self
-                .programs
-                .get(*program as usize)
-                .and_then(Option::as_ref);
-            let status = entry
-                .and_then(|entry| entry.jit_tiers.js(*function))
-                .map(|tier| match tier {
-                    JsTierState::Hot { .. } => "hot",
-                    JsTierState::PromotionPending => "promotion-pending",
-                    JsTierState::Rejected { .. } => "unsupported",
-                    JsTierState::Unsupported => "unsupported",
-                    JsTierState::Compiled(_) => "compiled",
-                })
-                .unwrap_or(if counters.lane_entries != 0 {
-                    "lane-only"
-                } else {
-                    "reclaimed"
-                });
-            let function_name = entry
-                .and_then(|entry| entry.residual.functions.get(*function as usize).map(|f| (entry, f)))
-                .and_then(|(entry, function)| {
-                    let header = function.header();
-                    let atom = header.name.or(header.inferred_name)? as usize;
-                    (atom < entry.residual.atoms.len()).then(|| &entry.residual.atoms[atom])
-                })
-                .or(counters.function_name.as_deref())
-                .unwrap_or("");
-            let source_name = entry
-                .map(|entry| entry.residual.source_name.as_str())
-                .or(counters.source_name.as_deref())
-                .unwrap_or("");
-            let native_entry_coverage_ppm = parts_per_million(counters.native_entries, counters.entries);
-            let total_entries = counters.entries.saturating_add(counters.lane_entries);
-            let all_entry_native_coverage_ppm = parts_per_million(counters.native_entries, total_entries);
-            let osr = entry
-                .and_then(|entry| entry.lane_views.derived(*function))
-                .map(super::dispatch_fast::LaneView::osr_diagnostics)
-                .unwrap_or_default();
-            let _ = write!(
-                stderr,
-                "QUENCH_JS_JIT_STATS {{\"program\":{program},\"function\":{function},\"function_name\":"
-            );
-            let _ = write_json_string(&mut stderr, function_name);
-            let _ = write!(stderr, ",\"source_name\":");
-            let _ = write_json_string(&mut stderr, source_name);
-            let _ = write!(stderr, ",\"rejection_reason\":");
-            if let Some(reason) = counters.rejection_reason {
-                let _ = write_json_string(&mut stderr, reason);
-            } else {
-                let _ = write!(stderr, "null");
-            }
-            let _ = write!(
-                stderr,
-                ",\"status\":\"{status}\",\"parameter_count\":{},\"instruction_count\":{},\"entries\":{},\"lane_entries\":{},\"numeric_entries\":{},\"promotions\":{},\"compile_attempts\":{},\"compile_successes\":{},\"compile_ns\":{},\"native_entries\":{},\"native_entry_coverage_ppm\":{},\"all_entry_native_coverage_ppm\":{},\"field_cache_probes\":{},\"field_cache_hits\":{},\"field_store_cache_probes\":{},\"field_store_cache_hits\":{},\"field_return_candidate_entries\":{},\"field_return_fixed_this_entries\":{},\"field_return_fast_entries\":{},\"field_increment_candidate_entries\":{},\"field_increment_fixed_this_entries\":{},\"field_increment_fast_entries\":{},\"captured_store_fast_entries\":{},\"numeric_find_fast_entries\":{},\"fallback_entries\":{},\"interpreter_completions\":{},\"interpreter_inclusive_ns\":{},\"guard_census\":{{\"conditional_branch_sites\":{},\"typeof_operations\":{},\"strict_comparison_sites\":{},\"relational_comparison_sites\":{}}},\"osr\":{{\"plain_backward_jump_sites\":{},\"admitted_sites\":{},\"promotion_only_sites\":{},\"compile_attempts\":{},\"compile_successes\":{},\"currently_compiled_sites\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"tier_ups\":{},\"body_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{},\"sites\":[",
-                counters.parameter_count,
-                counters.instruction_count,
-                counters.entries,
-                counters.lane_entries,
-                counters.numeric_entries,
-                counters.promotions,
-                counters.compile_attempts,
-                counters.compile_successes,
-                counters.compile_ns,
-                counters.native_entries,
-                native_entry_coverage_ppm,
-                all_entry_native_coverage_ppm,
-                counters.field_cache_probes,
-                counters.field_cache_hits,
-                counters.field_store_cache_probes,
-                counters.field_store_cache_hits,
-                counters.field_return_candidate_entries,
-                counters.field_return_fixed_this_entries,
-                counters.field_return_fast_entries,
-                counters.field_increment_candidate_entries,
-                counters.field_increment_fixed_this_entries,
-                counters.field_increment_fast_entries,
-                counters.captured_store_fast_entries,
-                counters.numeric_find_fast_entries,
-                counters.fallback_entries,
-                counters.interpreter_completions,
-                counters.interpreter_inclusive_ns,
-                counters.guard_conditional_branches,
-                counters.guard_typeof_ops,
-                counters.guard_strict_comparisons,
-                counters.guard_relational_comparisons,
-                osr.plain_backward_jump_sites,
-                osr.admitted_sites,
-                osr.promotion_only_sites,
-                osr.compile_attempts,
-                osr.compile_successes,
-                osr.currently_compiled_sites,
-                osr.native_entry_attempts,
-                osr.native_region_runs,
-                osr.tier_ups,
-                osr.body_runs,
-                osr.entry_guard_misses,
-                osr.exits,
-                osr.widenings,
-            );
-            for (index, site) in osr.sites.iter().enumerate() {
-                if index != 0 {
-                    let _ = write!(stderr, ",");
-                }
-                let status = match site.status {
-                    super::dispatch_fast::OsrSiteStatus::Admitted => "admitted",
-                    super::dispatch_fast::OsrSiteStatus::CallBoundary => "call-boundary",
-                    super::dispatch_fast::OsrSiteStatus::PromotionOnly => "promotion-only",
-                    super::dispatch_fast::OsrSiteStatus::Rejected => "rejected",
-                };
-                let _ = write!(
-                    stderr,
-                    "{{\"header_pc\":{},\"backedge_pc\":{},\"status\":\"{}\",\"admitted\":{},\"deferred_call\":{},\"tier_threshold_reached\":{},\"lane_backedge_count\":{}",
-                    site.header_pc,
-                    site.backedge_pc,
-                    status,
-                    site.admitted,
-                    site.deferred_call,
-                    site.tier_threshold_reached,
-                    site.lane_backedge_count,
-                );
-                let _ = write!(stderr, ",\"call_boundary_pcs\":[");
-                for (boundary_index, pc) in site.call_boundary_pcs.iter().enumerate() {
-                    if boundary_index != 0 {
-                        let _ = write!(stderr, ",");
-                    }
-                    let _ = write!(stderr, "{pc}");
-                }
-                let _ = write!(stderr, "],\"failure_pc\":");
-                if let Some(failure) = site.failure {
-                    let _ = write!(stderr, "{},\"failure_reason\":", failure.pc);
-                    let name = match failure.reason {
-                        super::compiled::RegionRejection::RegionTooLarge => "region-too-large",
-                        super::compiled::RegionRejection::UnsupportedInstruction(op) => {
-                            crate::bytecode::opcode_name(usize::from(op))
-                        }
-                        super::compiled::RegionRejection::RegisterLimit => "register-limit",
-                        super::compiled::RegionRejection::CaptureLimit => "capture-limit",
-                        super::compiled::RegionRejection::ArrayLimit => "array-limit",
-                        super::compiled::RegionRejection::FieldLimit => "field-limit",
-                        super::compiled::RegionRejection::FieldStoreLimit => "field-store-limit",
-                        super::compiled::RegionRejection::FieldMutation => "field-mutation",
-                        super::compiled::RegionRejection::ArrayRedefined => "array-redefined",
-                    };
-                    let _ = write_json_string(&mut stderr, name);
-                } else {
-                    let _ = write!(stderr, "null,\"failure_reason\":null");
-                }
-                let _ = write!(
-                    stderr,
-                    ",\"compile_attempts\":{},\"compile_successes\":{},\"native_entry_attempts\":{},\"native_region_runs\":{},\"entry_guard_misses\":{},\"exits\":{},\"widenings\":{}}}",
-                    site.compile_attempts,
-                    site.compile_successes,
-                    site.native_entry_attempts,
-                    site.native_region_runs,
-                    site.entry_guard_misses,
-                    site.exits,
-                    site.widenings,
-                );
-            }
-            let _ = write!(stderr, "]}},\"call_sites\":[");
-            for (site_index, site) in counters.call_sites.iter().enumerate() {
-                if site_index != 0 {
-                    let _ = write!(stderr, ",");
-                }
-                let opcode = crate::bytecode::opcode_name(usize::from(site.opcode));
-                let _ = write!(stderr, "{{\"pc\":{},\"opcode\":", site.pc);
-                let _ = write_json_string(&mut stderr, opcode);
-                let _ = write!(stderr, ",\"attempts\":{},\"direct_target\":", site.attempts);
-                if let Some((program, function)) = site.direct_target {
-                    let _ = write!(stderr, "{{\"program\":{program},\"function\":{function}}}");
-                } else {
-                    let _ = write!(stderr, "null");
-                }
-                let _ = write!(
-                    stderr,
-                    ",\"direct_target_calls\":{},\"alternate_target_calls\":{},\"other_target_calls\":{},\"sampled_calls\":{},\"sampled_call_ns_by_outcome\":{{",
-                    site.direct_target_calls,
-                    site.alternate_target_calls,
-                    site.other_target_calls,
-                    site.sampled_calls,
-                );
-                for (sample_index, (outcome, elapsed_ns)) in JsJitCallOutcome::ALL
-                    .into_iter()
-                    .zip(site.sampled_call_ns)
-                    .enumerate()
-                {
-                    if sample_index != 0 {
-                        let _ = write!(stderr, ",");
-                    }
-                    let _ = write!(stderr, "\"{}\":{}", outcome.name(), elapsed_ns);
-                }
-                let _ = write!(stderr, "}},\"outcomes\":{{");
-                for (outcome_index, (outcome, count)) in JsJitCallOutcome::ALL
-                    .into_iter()
-                    .zip(site.outcomes)
-                    .enumerate()
-                {
-                    if outcome_index != 0 {
-                        let _ = write!(stderr, ",");
-                    }
-                    let _ = write!(stderr, "\"{}\":{}", outcome.name(), count);
-                }
-                let _ = write!(stderr, "}}}}");
-            }
-            let _ = write!(stderr, "],\"field_cache_sites\":[");
-            let mut field_cache_sites: Vec<_> = counters.field_cache_sites.iter().collect();
-            field_cache_sites.sort_unstable_by_key(|(site, _)| **site);
-            for (index, (site, (probes, hits))) in field_cache_sites.iter().enumerate() {
-                if index != 0 {
-                    let _ = write!(stderr, ",");
-                }
-                let hit_ppm = parts_per_million(*hits, *probes);
-                let _ = write!(
-                    stderr,
-                    "{{\"cache_site\":{site},\"probes\":{probes},\"hits\":{hits},\"hit_rate_ppm\":{hit_ppm}}}"
-                );
-            }
-            let _ = write!(stderr, "],\"opcodes\":[");
-            for (index, (opcode, count)) in counters.opcode_counts.iter().enumerate() {
-                if index != 0 {
-                    let _ = write!(stderr, ",");
-                }
-                let name = crate::bytecode::opcode_name(usize::from(*opcode));
-                let _ = write!(stderr, "[");
-                let _ = write_json_string(&mut stderr, name);
-                let _ = write!(stderr, ",{count}]");
-            }
-            let _ = write!(stderr, "],\"osr_analysis_rejections\":[");
-            for (index, (reason, count)) in osr.analysis_rejections.iter().enumerate() {
-                if index != 0 {
-                    let _ = write!(stderr, ",");
-                }
-                let name = match reason {
-                    super::compiled::RegionRejection::RegionTooLarge => "region-too-large",
-                    super::compiled::RegionRejection::UnsupportedInstruction(op) => {
-                        crate::bytecode::opcode_name(usize::from(*op))
-                    }
-                    super::compiled::RegionRejection::RegisterLimit => "register-limit",
-                    super::compiled::RegionRejection::CaptureLimit => "capture-limit",
-                    super::compiled::RegionRejection::ArrayLimit => "array-limit",
-                    super::compiled::RegionRejection::FieldLimit => "field-limit",
-                    super::compiled::RegionRejection::FieldStoreLimit => "field-store-limit",
-                    super::compiled::RegionRejection::FieldMutation => "field-mutation",
-                    super::compiled::RegionRejection::ArrayRedefined => "array-redefined",
-                };
-                let _ = write!(stderr, "[");
-                let _ = write_json_string(&mut stderr, name);
-                let _ = write!(stderr, ",{count}]");
-            }
-            let _ = writeln!(
-                stderr,
-                "],\"code_bytes\":{},\"guard_census_kind\":\"bytecode-sites-not-proven-redundancies\"}}",
-                counters.code_bytes
-            );
-        }
-        let _ = writeln!(
-            stderr,
-            "QUENCH_JS_JIT_DATAVIEW_FLOAT64 {{\"get_entries\":{},\"set_entries\":{}}}",
-            self.js_jit_dataview_float64_get_entries,
-            self.js_jit_dataview_float64_set_entries
-        );
-        let _ = writeln!(
-            stderr,
-            "QUENCH_JS_JIT_TIER_TRACKING {{\"tracked_functions\":{},\"tracking_limit\":{},\"exhaustion_events\":{}}}",
-            self.js_jit_tracked_functions,
-            JS_JIT_MAX_TRACKED_FUNCTIONS,
-            self.js_jit_tracking_exhaustions
-        );
     }
 }
 
