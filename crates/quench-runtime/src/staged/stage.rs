@@ -63,6 +63,16 @@ pub(crate) fn fill_by_rows<S: Stage + ?Sized>(stage: &mut S, top: S::Word, undef
     }
 }
 
+/// The record space whose barrier a store consults (`Stage::store_gate`): an ordinary object's, or
+/// a function record's, whose own properties are an `Object` at `NATIVE_FUNCTION_LAYOUT.object_offset`.
+/// The two spaces share one block layout, so the gate's reading is one implementation that differs
+/// only in the mark block list it starts from.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum RecordSpace {
+    Object,
+    Function,
+}
+
 /// A binding-time domain: the 64-bit words an operation computes on, its conditions, and where
 /// a failed guard goes. A 32-bit load zero-extends.
 pub(crate) trait Stage {
@@ -142,7 +152,7 @@ pub(crate) trait Stage {
     /// without a barrier log: no slot representation observes the write, and the record is not
     /// one the barrier logs for this value. The one place the store barrier's layout is read;
     /// a stage without that layout answers no, and the store leaves at its miss.
-    fn store_gate(&mut self, record_id: Self::Word, value: Self::Word) -> Self::Cond;
+    fn store_gate(&mut self, space: RecordSpace, record_id: Self::Word, value: Self::Word) -> Self::Cond;
     /// Whether the dependency named by `watch` (a per-site operand) still holds: the interpreter
     /// tests it, a specializer proves it once at publication and its code pays no check (the
     /// assumption registry retires the code when it breaks); a stage without a registry answers
@@ -195,6 +205,18 @@ pub(crate) trait Stage {
     fn fill_window(&mut self, top: Self::Word, undefined: Self::Word, prefix: &[u64], passed: Passed<'_, Self::Word>,
         registers: u16) {
         fill_by_rows(self, top, undefined, prefix, passed, registers);
+    }
+
+    /// Whether `target`, an encoded prototype link (`ProtoLink::bits`), lies on the prototype chain
+    /// of the object record `object`, as `(decided, holds)`: at most `max_depth` links past the
+    /// first are followed, in the object record table at `records`, and a link naming no object
+    /// record (a proxy, an array, a function) or a longer chain leaves it undecided, for the
+    /// caller's residual. The default unrolls the walk, one nested conditional per link, as a
+    /// specializer emits it; a stage that knows its words loops.
+    #[inline(always)]
+    fn walk_prototypes(&mut self, records: Self::Word, object: Self::Word, target: Self::Word, max_depth: u32)
+        -> (Self::Cond, Self::Cond) where Self: Sized {
+        super::object::walk_prototypes(self, records, object, target, max_depth)
     }
 
     /// Whether `target`, an encoded prototype link (`ProtoLink::bits`), lies on the prototype chain

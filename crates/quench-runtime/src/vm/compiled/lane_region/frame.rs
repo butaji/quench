@@ -76,6 +76,8 @@ pub(super) struct EmitFrame<'a> {
     /// The region's entry proofs, whose object record table a prototype walk addresses where the
     /// step carries no field facts.
     pub(super) table_entry: Option<&'a Entry>,
+    /// The record a call-out calls for, where the lowering made one (`call_outs`).
+    pub(super) call_out: Option<&'a call_out::CallOutSite>,
 }
 
 /// The address of the activation's local `slot` (`JsStepDispatch::native_locals`), which an
@@ -397,15 +399,15 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
     }
 
     fn int_operand(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand,
-        miss: ir::Block) -> ir::Value {
-        operand_int(stage.builder, self.registers, self.state, self.constants, operand, miss)
-            .expect("a numeric operand is a register or an immediate")
+        miss: ir::Block) -> Option<ir::Value> {
+        Some(operand_int(stage.builder, self.registers, self.state, self.constants, operand, miss)
+            .expect("a numeric operand is a register or an immediate"))
     }
 
     fn number_operand(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand,
-        miss: ir::Block) -> ir::Value {
-        operand_number(stage.builder, self.registers, self.state, self.constants, operand, miss)
-            .expect("a numeric operand is a register or an immediate")
+        miss: ir::Block) -> Option<ir::Value> {
+        Some(operand_number(stage.builder, self.registers, self.state, self.constants, operand, miss)
+            .expect("a numeric operand is a register or an immediate"))
     }
 
     fn int32_operand(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand,

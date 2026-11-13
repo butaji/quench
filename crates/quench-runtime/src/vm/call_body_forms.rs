@@ -169,7 +169,7 @@ fn keeps_frame_state(body: &Function) -> bool {
 /// load, a forward jump and the return, of a register, a constant or an operator's value. A
 /// body that keeps frame state (locals, handlers, `arguments`, dynamic scope) is none.
 /// `private` says whether an atom is a private name, whose access the running function
-/// decides (`lane_cached_field_miss`, `lane_private_brand`).
+/// decides (`lane_cached_field_miss`, `lane_private_atom`).
 pub(super) fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::bytecode::Atom) -> bool) -> Option<LeafForm> {
     if keeps_frame_state(body) {
         return None;

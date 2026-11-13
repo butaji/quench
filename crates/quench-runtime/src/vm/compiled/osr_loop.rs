@@ -37,7 +37,7 @@ use crate::value::Value;
 use super::super::operations::{NumberArithmetic, NumberBitwise, NumberUnary};
 
 use super::typed_ir::Type;
-use super::NativeFieldLoad;
+use super::{LaneExit, NativeFieldLoad, ShadowFrames};
 use oxc_ast::ast::UnaryOperator;
 
 /// The most instructions a region spans. Native code polls termination only at backward
@@ -54,6 +54,8 @@ pub(crate) use crate::vm::js_compiled::MAX_CODE_BYTES;
 
 #[path = "osr_loop/inlining.rs"]
 mod inlining;
+#[path = "osr_loop/function.rs"]
+mod function;
 #[path = "osr_loop/iteration.rs"]
 mod iteration;
 #[path = "osr_loop/receivers.rs"]
@@ -63,7 +65,7 @@ mod receivers;
 /// in the low one.
 /// The outcome of one native run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LoopOutcome {
+pub(in crate::vm) enum LoopOutcome {
     /// An entry guard failed: registers are untouched, and the interpreter takes the jump.
     NotEntered,
     /// Control left the region by a jump to this PC, which the lane runs next.
@@ -85,6 +87,10 @@ pub(crate) enum LoopOutcome {
     /// the lane resumes in the activation the call made, at `LaneContext::callee_resume`,
     /// not in this region's view.
     Callee,
+    /// A call the region made by its callee's entry left inside the callee (a stencil region, whose
+    /// status says so): the callee's own leave, with the native frames its call pushed, which the
+    /// lane makes the activations of (`lane_frames_resumed`) and resumes the leave in.
+    Left { exit: LaneExit, frames: ShadowFrames },
     /// Termination was requested while the code ran: its poll faulted, so registers may
     /// hold values of an unfinished iteration, which nothing reads before the request ends
     /// the execution.
@@ -1511,7 +1517,11 @@ fn admit_region(
     objects: &std::collections::BTreeSet<Register>,
     method_calls: MethodCalls,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
-    if let Err(offset) = iteration::iterates_natively(&instructions, header, method_calls) {
+    // Under `--b-jit` a loop whose every iteration leaves (at a call, a throw) is still a region:
+    // BaseJIT lowers each instruction (`base_region::steps`), and Cranelift never compiles the loop.
+    if !crate::jit_mode::base_only()
+        && let Err(offset) = iteration::iterates_natively(&instructions, header, method_calls)
+    {
         return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op() as u16), header, offset));
     }
     match admit_register_roles(

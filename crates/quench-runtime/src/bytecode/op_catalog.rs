@@ -3,7 +3,6 @@
 //! `opcodes!` table expands into `Op::class` and `Op::traits`.
 use super::Op;
 pub(crate) use super::opcode_table::{OPCODE_COUNT, opcode_name};
-
 /// A tier's operation family, declared once by the catalog (`Op::class`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -95,6 +94,7 @@ pub(crate) enum Class {
     DefineField,
     DefinePrivateField,
     MarkPrivateName,
+    ForInNext,
     YieldStar,
     DefinePropertyRecord,
     Delete,
@@ -113,6 +113,8 @@ pub(crate) enum Class {
     MakeObject2,
     MakeObjectLiteral,
     PrivateIn,
+    SetFunctionName,
+    AppendArray,
     RequireIteratorResult,
     StoreCapture,
     StoreEnvLocal,
@@ -223,6 +225,7 @@ macro_rules! class_of {
     (CopyDataProperties) => { Class::CopyDataProperties };
     (CreateRegExpLiteral) => { Class::CreateRegExpLiteral };
     (DefineField) => { Class::DefineField };
+    (ForInNext) => { Class::ForInNext };
     (DefinePrivateField) => { Class::DefinePrivateField };
     (MarkPrivateName) => { Class::MarkPrivateName };
     (DefinePropertyRecord) => { Class::DefinePropertyRecord };
@@ -242,6 +245,8 @@ macro_rules! class_of {
     (MakeObject2) => { Class::MakeObject2 };
     (MakeObjectLiteral) => { Class::MakeObjectLiteral };
     (PrivateIn) => { Class::PrivateIn };
+    (SetFunctionName) => { Class::SetFunctionName };
+    (AppendArray) => { Class::AppendArray };
     (RequireIteratorResult) => { Class::RequireIteratorResult };
     (StoreCapture) => { Class::StoreCapture };
     (StoreEnvLocal) => { Class::StoreEnvLocal };
@@ -311,6 +316,8 @@ impl Traits {
     pub(crate) const GLOBAL_NAME_ACCESS: Self = Self(1 << 27);
     /// A Wasm op that calls out to the VM or ends the body, which no unrolled loop admits.
     pub(crate) const UNROLL_EXCLUDED: Self = Self(1 << 28);
+    /// An op that always completes abruptly: it raises the value of its operand as an exception.
+    pub(crate) const RAISES: Self = Self(1 << 29);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
@@ -369,6 +376,7 @@ macro_rules! traits_of {
     (CheckPrivate) => { Traits::LANE_IN_PLACE };
     (PrivateIn) => { Traits::LANE_IN_PLACE };
     (MarkPrivateName) => { Traits::LANE_IN_PLACE };
+    (DeclarePrivateName) => { Traits::LANE_IN_PLACE };
     (SetFunctionName) => { Traits::LANE_IN_PLACE };
     (SetFunctionNameKey) => { Traits::LANE_IN_PLACE };
     (SetFunctionDebugName) => { Traits::LANE_IN_PLACE };
@@ -394,6 +402,7 @@ macro_rules! traits_of {
     (CallMethod) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
     (CallSpread) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
     (CallThisMethod) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
+    (Throw) => { Traits::RAISES };
     (WasmMemoryGrow) => { Traits::UNROLL_EXCLUDED };
     (WasmMemoryInit) => { Traits::UNROLL_EXCLUDED };
     (WasmTableGet) => { Traits::UNROLL_EXCLUDED };
@@ -406,7 +415,6 @@ macro_rules! traits_of {
     (WasmIndirectTarget) => { Traits::UNROLL_EXCLUDED };
     ($other:ident) => { Traits::NONE };
 }
-
 
 pub(crate) use super::denotation::JsDenotation;
 

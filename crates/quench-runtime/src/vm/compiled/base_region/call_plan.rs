@@ -2,6 +2,11 @@
 //! chain of stencil parts (`quench-bjit/stencils/call_rows.rs` holds the rows and their register
 //! and stack contract; `quench_bjit::call` names them).
 //!
+//! A call whose callee is small and monomorphic is not a chain at all: the stitch splices in the
+//! callee's rows (`inline::InlineSite`), so no part is planned and the pinned registers stay where
+//! they are. A call that returns its result (`return f(x)`) is followed by the row that completes
+//! the activation with it.
+//!
 //! The chain, in layout order:
 //!
 //! 1. one `Spill` row per pinned register live at the call, writing it to its frame slot as a
@@ -13,11 +18,15 @@
 //! 4. one `reload_*` row per pinned register live after the call (every pinned register is dead
 //!    across a call row).
 //!
+//! `plan_step` is the same chain for any instruction the helper runs in place (`steps`): spills,
+//! the helper row, reloads. The calls of the other forms (`CallForm`) are this chain with their own
+//! helper row and no direct row; a returning call has no reloads, the completion following it.
+//!
 //! Successors are chain-local: a part's `taken` is the index of the part it branches to, and
 //! `parts.len()` means the part after the chain (the next instruction). A part's `exits`, by
-//! exit kind, say which leave the linker patches in: `Leave::At(pc)` is a leave at `pc` that
-//! does not spill (the spills already ran), `Leave::Status` is `quench_bjit::call::LEAVE_STATUS`
-//! (the (status, word) in the first two pinned ints is the leave's result). The chain's record
+//! exit kind, say which leave the linker patches in (`Exit`: `At(pc)` leaves at `pc` without
+//! spilling, the spills already ran; `Status` is `quench_bjit::call::LEAVE_STATUS`, the (status,
+//! word) in the first two pinned ints being the leave's result). The chain's record
 //! lives in the chain: the code that uses the chain must not outlive it.
 //!
 //! Direct admission reads the cell's facts word once at plan time (`CellFacts`: its registers,
@@ -25,20 +34,70 @@
 //! validity word becomes the row's expected word, so a republish or withdrawal that bumps the
 //! validity sends the call to the helper row, which resolves the target anew.
 
-use super::SLOT;
+pub(super) mod inline;
+use super::{Exit, SLOT};
 use super::super::direct_callee::DirectCallee;
 use super::super::entry_cell::capture_word;
 use super::super::{FRAME_BYTES, LaneHelper, LaneHelpers};
-use crate::bytecode::{ImmediateLayout, Register, WideInstruction};
+use crate::bytecode::{Class, ImmediateLayout, Register, WideInstruction};
 use crate::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
 use quench_bjit::call::{self, CallRow};
 use quench_bjit::call_record::{CallRecord, MAX_DIRECT_ARGC};
 use quench_bjit::numeric::{self, Kind, Place};
 use quench_bjit::{HOLES, Stencil, padded_holes};
 
-/// What a `Call` instruction names, decoded once: the record the helper takes (`call_pc`), the
-/// callee and receiver registers, the first argument register, the argument count and the
-/// register that receives the result.
+/// How a body makes a call, by the instruction's operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CallForm {
+    /// `Call`, through its callee register and argument window: direct through the callee's entry
+    /// cell where its site recorded a stable callee, else the call helper (`lane_body_call`).
+    Plain,
+    /// `Construct` over registers: the construct helper (`lane_body_construct`), which plans the
+    /// receiver's fields or activates the constructor as the lane's own construction does.
+    Construct,
+    /// Every other form (method, this-method, array, spread and forwarding calls; a `super`
+    /// or array-argument construction): the interpreter's own step made in place by the step helper,
+    /// the call it makes running the callee as any call from a helper does. These sites record no
+    /// callee to call by its entry cell, and a method call's callee is the method cache's lookup,
+    /// which no register holds for a call row to read.
+    Stepped,
+}
+
+impl CallForm {
+    /// The form of the call `instruction` is, if a body's call chain makes it: a call form with no
+    /// result flag left but the `this` binding (the return flag is `cover`'s). `CallKnown` is the Wasm
+    /// compiler's call, which no JavaScript function holds, so it has no form. A call that binds the caller's
+    /// `this` (`SET_THIS_REGISTER`, a `super()` call) or has an `eval` flag (which declares bindings in the
+    /// caller's scope) is the step helper's own step made in place, a helper call row whatever its form: the
+    /// helper binds the frame's `this` and publishes the receiver, or runs the eval in the frame.
+    pub(super) fn of(instruction: WideInstruction) -> Option<Self> {
+        if !instruction.op().makes_script_call() || instruction.op().class() == Class::CallKnown
+            || instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER != 0 {
+            return None;
+        }
+        let in_place = instruction.writes_current_this() || instruction.resolves_dynamic_scope();
+        let over_registers = instruction.op().class() == Class::Construct && !instruction.is_super_construct() && !ImmediateLayout::construct_array_arguments(instruction.imm());
+        Some(match instruction.op().class() {
+            Class::Call if !in_place => Self::Plain,
+            Class::Construct if over_registers && !in_place => Self::Construct,
+            _ => Self::Stepped,
+        })
+    }
+
+    /// The helper whose row makes the call.
+    pub(super) fn helper(self) -> LaneHelper {
+        match self {
+            Self::Plain => LaneHelper::Call,
+            Self::Construct => LaneHelper::ConstructCall,
+            Self::Stepped => LaneHelper::Step,
+        }
+    }
+}
+
+/// What a call instruction names, decoded once: the record the helper takes (`call_pc`), the
+/// register that receives the result and the form. A plain call also names the callee and receiver
+/// registers, the first argument register and the argument count (zero for the other forms, whose
+/// helpers read their own operands from the record).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct CallShape {
     pub(super) call_pc: u32,
@@ -47,18 +106,30 @@ pub(super) struct CallShape {
     pub(super) window: Register,
     pub(super) argc: u16,
     pub(super) result: Register,
+    /// The call completes its caller's activation with its result (`return f(x)`): the row that
+    /// follows it does (`steps::completing`), and nothing is live after it.
+    pub(super) returning: bool,
+    pub(super) form: CallForm,
+    /// The call completes its caller's activation with its result (`return f(x)`).
+    pub(super) returning: bool,
 }
 
 impl CallShape {
-    pub(super) fn of(call_pc: u32, instruction: WideInstruction) -> Self {
+    pub(super) fn of(call_pc: u32, instruction: WideInstruction, form: CallForm) -> Self {
         let imm = instruction.imm();
-        Self {
-            call_pc,
-            callee: instruction.register_b(),
-            this: instruction.register_c(),
-            window: ImmediateLayout::call_window_base(imm),
-            argc: ImmediateLayout::argument_count(imm),
-            result: instruction.result_register(),
+        let (result, returning) = (instruction.result_register(), instruction.returns_from_frame());
+        match form {
+            CallForm::Plain => Self {
+                call_pc,
+                callee: instruction.register_b(),
+                this: instruction.register_c(),
+                window: ImmediateLayout::call_window_base(imm),
+                argc: ImmediateLayout::argument_count(imm),
+                result,
+                returning,
+                form,
+            },
+            CallForm::Construct | CallForm::Stepped => Self { call_pc, callee: 0, this: 0, window: 0, argc: 0, result, returning, form },
         }
     }
 }
@@ -120,10 +191,15 @@ pub(super) enum Declined {
     /// A construction, which the helper row's `lane_body_call` does not make either: the
     /// planner for `Construct` chooses.
     Construction,
+    /// The call is not a plain `Call`: no direct row makes it (`CallForm`).
+    Form,
     /// A callee with no registers has no window the room check can refuse.
     Window,
     /// The cell's facts do not describe the callee (not yet published, or another function's).
     Facts,
+    /// A returning call: its callee's activation under a host that makes proper tail calls must not
+    /// grow the stack, which only the helper row's own admission (`lane_returning_call_admitted`) knows.
+    Returning,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,23 +211,18 @@ pub(super) enum Choice {
 /// The row class of a call: direct when its target's cell is stable and describes the callee,
 /// else the helper row, with the first reason it cannot be direct.
 pub(super) fn choose(shape: &CallShape, direct: Option<&DirectFacts>) -> Choice {
+    if shape.form != CallForm::Plain {
+        return Choice::Helper(Declined::Form);
+    }
     let Some(facts) = direct else { return Choice::Helper(Declined::NoTarget) };
     let declined = [
         (usize::from(shape.argc) > MAX_DIRECT_ARGC, Declined::Arguments),
         (facts.construction, Declined::Construction),
         (facts.registers == 0, Declined::Window),
         (!facts.describes(shape.argc), Declined::Facts),
+        (shape.returning, Declined::Returning),
     ];
     declined.into_iter().find(|(declined, _)| *declined).map_or(Choice::Direct, |(_, why)| Choice::Helper(why))
-}
-
-/// The leave a part's exit hole is patched to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Leave {
-    /// Leave at this pc; nothing is spilled (the chain's spills already ran).
-    At(u32),
-    /// `LEAVE_STATUS`: the (status, word) the part left with.
-    Status,
 }
 
 /// One stencil of a chain with its hole values, chain-local `taken` successor and exits by kind.
@@ -159,7 +230,7 @@ pub(super) struct CallPart {
     pub(super) stencil: &'static Stencil,
     pub(super) holes: [u64; HOLES],
     pub(super) taken: Option<usize>,
-    pub(super) exits: Vec<Leave>,
+    pub(super) exits: Vec<Exit>,
 }
 
 /// A planned call: its parts, the record the direct row reads, and the choice that made them.
@@ -192,24 +263,24 @@ fn slot(register: Register) -> u64 {
     u64::from(register) * SLOT
 }
 
-fn part(stencil: &'static Stencil, holes: [u64; HOLES], exits: Vec<Leave>) -> CallPart {
+fn part(stencil: &'static Stencil, holes: [u64; HOLES], exits: Vec<Exit>) -> CallPart {
     CallPart { stencil, holes, taken: None, exits }
 }
 
-fn spill_part(place: Place, register: Register) -> Result<CallPart, String> {
+pub(super) fn spill_part(place: Place, register: Register) -> Result<CallPart, String> {
     let row = numeric::Row { kind: Kind::Spill, dst: Place::Mem, a: place, b: Place::Mem, speculate: false };
     Ok(part(numeric::stencil(row)?, padded_holes([slot(register)]), Vec::new()))
 }
 
-fn reload_part(place: Place, register: Register) -> Result<CallPart, String> {
-    Ok(part(call::stencil(CallRow::Reload(place))?, padded_holes([slot(register)]), Vec::new()))
+pub(super) fn reload_part(place: Place, register: Register) -> Result<CallPart, String> {
+    Ok(part(call::stencil(CallRow::Reload(place))?, [slot(register), 0, 0], Vec::new()))
 }
 
-fn helper_part(shape: &CallShape, helper: usize) -> Result<CallPart, String> {
+fn helper_part(call_pc: u32, helper: usize) -> Result<CallPart, String> {
     if helper == 0 {
         return Err("call: no helper address".to_string());
     }
-    Ok(part(call::stencil(CallRow::Helper)?, padded_holes([u64::from(shape.call_pc), helper as u64]), vec![Leave::At(shape.call_pc), Leave::Status]))
+    Ok(part(call::stencil(CallRow::Helper)?, [u64::from(call_pc), helper as u64, 0], vec![Exit::At(call_pc), Exit::Status]))
 }
 
 /// The direct row and the record it reads, whose address is its hole 0.
@@ -229,7 +300,18 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts) -> Result<(CallPart, Box<
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let stencil = call::stencil(CallRow::Direct { argc, sloppy: facts.global_this.is_some() })?;
-    Ok((part(stencil, padded_holes([std::ptr::from_ref(&*record).addr() as u64]), vec![Leave::Status]), record))
+    Ok((part(stencil, [std::ptr::from_ref(&*record).addr() as u64, 0, 0], vec![Exit::Status]), record))
+}
+
+/// The chain of a helper step at `pc` (any instruction whose operation the helper runs in place):
+/// the spills, the helper row, the reloads.
+pub(super) fn plan_step(pc: u32, helper: usize, spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
+    let mut parts = spills.iter().map(|&(place, register)| spill_part(place, register)).collect::<Result<Vec<_>, _>>()?;
+    parts.push(helper_part(pc, helper)?);
+    for &(place, register) in reloads {
+        parts.push(reload_part(place, register)?);
+    }
+    Ok(parts)
 }
 
 /// Rows a direct row's `taken` skips: itself and the helper row after it.
@@ -250,7 +332,7 @@ pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
         parts.push(row);
         record = Some(owned);
     }
-    parts.push(helper_part(&plan.shape, plan.helper)?);
+    parts.push(helper_part(plan.shape.call_pc, plan.helper)?);
     for &(place, register) in plan.reloads {
         parts.push(reload_part(place, register)?);
     }
@@ -262,11 +344,29 @@ mod tests {
     use super::*;
     use quench_bjit::call_record as protocol;
 
-    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6 };
+    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: CallForm::Plain };
 
     fn facts(registers: u16, params: u16) -> DirectFacts {
         let cell = CellFacts { registers, room: registers, params, entry: ENTRY_ACTIVATES as u8 };
         DirectFacts { callee: 7, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, registers, construction: false, frame_bytes: 32 }
+    }
+
+    /// Each call opcode has its form, and an instruction that is no call, or carries a result flag, has none.
+    #[test]
+    fn each_call_opcode_has_its_form() {
+        use crate::bytecode::{Op, RETURN_REGISTER};
+        let form = |op| CallForm::of(WideInstruction::new(op, 1, 2, 3, 0));
+        assert_eq!((form(Op::Call), form(Op::Construct)), (Some(CallForm::Plain), Some(CallForm::Construct)));
+        for op in [Op::CallMethod, Op::CallThisMethod, Op::CallArray, Op::CallSpread, Op::CallForwardingArguments] {
+            assert_eq!(form(op), Some(CallForm::Stepped), "{op:?}");
+        }
+        assert_eq!(form(Op::CallKnown), None, "the Wasm compiler's call is no JavaScript call form");
+        assert_eq!(form(Op::Move), None);
+        assert_eq!(CallForm::of(WideInstruction::new(Op::Call, 1 | RETURN_REGISTER, 2, 3, 0)), None);
+        let binds_this = WideInstruction::new(Op::Call, 1 | crate::bytecode::SET_THIS_REGISTER, 2, 3, 0);
+        assert_eq!(CallForm::of(binds_this), binds_this.writes_current_this().then_some(CallForm::Stepped), "a call that binds `this` is the helper step");
+        let [plain, construct, stepped] = [CallForm::Plain, CallForm::Construct, CallForm::Stepped].map(|form| form.helper() as usize);
+        assert!(plain != construct && construct != stepped && plain != stepped, "each form has its own helper");
     }
 
     #[test]
@@ -284,6 +384,11 @@ mod tests {
         assert_eq!(choose(&SHAPE, Some(&DirectFacts { construction: true, ..facts(4, 2) })), helper(Declined::Construction));
         assert_eq!(choose(&SHAPE, Some(&facts(0, 2))), helper(Declined::Window));
         assert_eq!(choose(&SHAPE, Some(&facts(4, 1))), helper(Declined::Facts), "more arguments than params");
+        let returning = CallShape { returning: true, ..SHAPE };
+        assert_eq!(choose(&returning, Some(&facts(4, 2))), helper(Declined::Returning));
+        for form in [CallForm::Construct, CallForm::Stepped] {
+            assert_eq!(choose(&CallShape { form, ..SHAPE }, Some(&facts(4, 2))), helper(Declined::Form));
+        }
         let unpublished = DirectFacts { facts: CellFacts { room: 9, ..facts(4, 2).facts }, ..facts(4, 2) };
         assert_eq!(choose(&SHAPE, Some(&unpublished)), helper(Declined::Facts), "the cell describes another window");
         let other_kind = DirectFacts { facts: CellFacts { entry: 1, ..facts(4, 2).facts }, ..facts(4, 2) };
@@ -303,8 +408,8 @@ mod tests {
         assert_eq!(chain.parts.len(), spills.len() + 2 + reloads.len());
         let (direct_at, helper_at) = (spills.len(), spills.len() + 1);
         assert_eq!(chain.parts[direct_at].taken, Some(helper_at + 1), "completion skips the helper row");
-        assert_eq!(chain.parts[direct_at].exits, [Leave::Status]);
-        assert_eq!(chain.parts[helper_at].exits, [Leave::At(SHAPE.call_pc), Leave::Status]);
+        assert_eq!(chain.parts[direct_at].exits, [Exit::Status]);
+        assert_eq!(chain.parts[helper_at].exits, [Exit::At(SHAPE.call_pc), Exit::Status]);
         assert_eq!(chain.parts[helper_at].holes[..2], [u64::from(SHAPE.call_pc), 0x4000]);
         let record = chain.record.expect("the direct row's record");
         assert_eq!(chain.parts[direct_at].holes[0], std::ptr::from_ref(&*record).addr() as u64);
@@ -319,6 +424,16 @@ mod tests {
         assert!(chain.parts.iter().all(|part| part.taken.is_none()));
         let nowhere = CallPlan { helper: 0, ..plan(None, &[], &[]) };
         assert!(plan_call(&nowhere).is_err(), "a helper row needs its address");
+    }
+
+    #[test]
+    fn a_step_chain_is_spills_helper_reloads() {
+        let (spills, reloads) = ([(Place::Pin(0), 1)], [(Place::PinF(1), 5), (Place::Pin(0), 1)]);
+        let parts = plan_step(9, 0x4000, &spills, &reloads).expect("a chain");
+        assert_eq!(parts.len(), spills.len() + 1 + reloads.len());
+        assert_eq!(parts[spills.len()].holes[..2], [9, 0x4000]);
+        assert_eq!(parts[spills.len()].exits, [Exit::At(9), Exit::Status]);
+        assert!(plan_step(9, 0, &[], &[]).is_err(), "a helper row needs its address");
     }
 
     #[test]
@@ -342,8 +457,8 @@ mod tests {
         }
         use stencil_layout as mirror;
         assert_eq!(
-            [compiled::LANE_CALL_COMPLETED, compiled::LANE_CALL_MISSED, compiled::LANE_CALL_LEFT, compiled::LANE_CALL_TERMINATED, compiled::LaneExit::Callee.word()],
-            [protocol::LANE_CALL_COMPLETED, protocol::LANE_CALL_MISSED, protocol::LANE_CALL_LEFT, protocol::LANE_CALL_TERMINATED, protocol::CALLEE_EXIT]
+            [compiled::LANE_CALL_COMPLETED, compiled::LANE_CALL_MISSED, compiled::LANE_CALL_LEFT, compiled::LANE_CALL_TERMINATED, compiled::LANE_CALL_BRANCHED, compiled::CALLEE_EXIT],
+            [protocol::LANE_CALL_COMPLETED, protocol::LANE_CALL_MISSED, protocol::LANE_CALL_LEFT, protocol::LANE_CALL_TERMINATED, protocol::LANE_CALL_BRANCHED, protocol::CALLEE_EXIT]
         );
         assert_eq!(
             [compiled::RETURN_STATUS_BASE, compiled::LANE_BODY_RETURNED, LANE_BODY_NOT_ENTERED, compiled::NATIVE_JS_STOPPED, compiled::TERMINATED_STATUS as u32],

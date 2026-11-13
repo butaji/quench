@@ -48,12 +48,12 @@ impl Effects {
     pub(crate) const NONE: Self = Self { reads: RegionSet::NONE, writes: RegionSet::NONE,
         may_alloc: false, may_collect: false, may_call_js: false, may_throw: false };
 
-    const fn reads(region: Region) -> Self { Self { reads: RegionSet::of(region), ..Self::NONE } }
+    pub(super) const fn reads(region: Region) -> Self { Self { reads: RegionSet::of(region), ..Self::NONE } }
 
-    const fn writes(region: Region) -> Self { Self { writes: RegionSet::of(region), ..Self::NONE } }
+    pub(super) const fn writes(region: Region) -> Self { Self { writes: RegionSet::of(region), ..Self::NONE } }
 
     /// An operation that may run guest code or collect: it reads and writes every region.
-    const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: true,
+    pub(super) const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: true,
         may_collect: true, may_call_js: true, may_throw: true };
 }
 

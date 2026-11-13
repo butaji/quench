@@ -1,0 +1,351 @@
+//! The register frame every staged operation runs on, and an operation's outcome: its own file
+//! so the b-jit stencil build (`quench-bjit/build.rs`) compiles the same trait the interpreter
+//! and the specializers use.
+
+use super::effects::{CallTarget, Effects};
+use crate::bytecode::Register;
+use crate::typed_ir::Type;
+use super::Stage;
+
+/// A constant an instruction materializes: its value and the semantic type a stage that
+/// keeps type facts records for it.
+#[derive(Clone, Copy)]
+pub(crate) struct Constant {
+    pub(crate) value: crate::Value,
+    pub(crate) ty: Type,
+}
+
+impl Constant {
+    /// A constant whose type the stage does not keep.
+    #[inline(always)]
+    pub(crate) const fn untyped(value: crate::Value) -> Self {
+        Self { value, ty: Type::ANY }
+    }
+}
+
+/// An iteration or spread step the host makes by the interpreter's own definition
+/// (`Vm::call_out`): the protocol runs guest code (`@@iterator`, `next`, `return`), so a
+/// frame answers it with a callout.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Protocol {
+    /// The iterator of the operand (`GetIterator`).
+    GetIterator,
+    /// The for-in state over the operand's key snapshot (`ForInStart`).
+    ForInStart,
+    /// Close the iterator in the operand (`IteratorClose`).
+    IteratorClose,
+    /// Append `length` holes to the array operand, then the optional element operand, spread
+    /// where `spread` (`AppendArray`).
+    AppendArray { length: usize, spread: bool },
+}
+
+/// The tag byte of each `CallOut`, which a helper-call row passes as its immediate.
+pub(crate) const TAG_EQUALITY: u8 = 0;
+pub(crate) const TAG_BINARY: u8 = 1;
+pub(crate) const TAG_PROPERTY_KEY: u8 = 2;
+pub(crate) const TAG_PROTOCOL: u8 = 3;
+pub(crate) const TAG_FOR_IN_NEXT: u8 = 4;
+pub(crate) const TAG_LOAD_ENV_LOCAL: u8 = 5;
+pub(crate) const TAG_STORE_ENV_LOCAL: u8 = 6;
+pub(crate) const TAG_ARGUMENTS_LENGTH: u8 = 7;
+pub(crate) const TAG_GLOBAL_WRITE: u8 = 8;
+pub(crate) const TAG_GLOBAL_TYPEOF: u8 = 9;
+
+/// The VM operations a staged row calls out for when its own words do not decide it, named as
+/// data. A frame answers one in place (`Frame::vm_step`): the interpreter's frame calls the VM
+/// method, the lane specializer's frame calls the lane helper that decodes the record and makes
+/// the same step (`dispatch_fast::lane_vm_step`), and a frame with no host declines. Plain
+/// data: its tag byte (`repr(u8)`) and fields are what a helper-call row passes as immediates.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub(crate) enum CallOut {
+    /// `left == right`, or `===` where `strict`, negated for `!=` and `!==`, by the VM's full
+    /// equality: strings and BigInts compare by contents, a conversion may run guest code.
+    Equality { left: Register, right: Register, strict: bool, negated: bool } = TAG_EQUALITY,
+    /// `left operator right` by the VM's `Vm::binary`: a string or BigInt relation or operator,
+    /// `instanceof`, `in`.
+    Binary { left: Register, right: Register, operator: u32 } = TAG_BINARY,
+    /// ToPropertyKey of `source` (`Vm::to_property_key`): a Number allocates, an object runs
+    /// guest code.
+    PropertyKey { source: Register } = TAG_PROPERTY_KEY,
+    /// An iteration or spread step over its operand registers (`Protocol`).
+    Protocol { step: Protocol, operands: [Option<Register>; 2] } = TAG_PROTOCOL,
+    /// The next key of the for-in state in `state`; `Value::DELETED`, which no key is, once
+    /// none is left.
+    ForInNext { state: Register } = TAG_FOR_IN_NEXT,
+    /// The environment local `slot` of the running frame, by the binding rules.
+    LoadEnvLocal { slot: u16 } = TAG_LOAD_ENV_LOCAL,
+    /// `source` to the environment local `slot` of the running frame, by the binding rules (a
+    /// `with` scope, TDZ, a constant), `initialize` where it declares the binding.
+    StoreEnvLocal { source: Register, slot: u16, initialize: bool } = TAG_STORE_ENV_LOCAL,
+    /// The length of the arguments binding in local `slot`.
+    ArgumentsLength { slot: u16 } = TAG_ARGUMENTS_LENGTH,
+    /// `source` to the global name `atom` through cache `site`, `initialize` for a declaration.
+    GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool } = TAG_GLOBAL_WRITE,
+    /// The `typeof` name of the global `atom` through cache `site`.
+    GlobalTypeof { atom: u32, site: u16 } = TAG_GLOBAL_TYPEOF,
+}
+
+impl CallOut {
+    /// The registers the VM reads, in the order its operation takes them: the first operand
+    /// then the second, which is the only one an operation of a single operand has.
+    pub(crate) fn operands(self) -> [Option<Register>; 2] {
+        match self {
+            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } => [Some(left), Some(right)],
+            Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
+            Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
+            Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } => [None, None],
+            Self::Protocol { operands, .. } => operands,
+        }
+    }
+}
+
+/// A register frame: each register's word and the static fact the stage keeps about it. A
+/// stage with no register facts uses `()`.
+pub(crate) trait Frame<S: Stage> {
+    /// The static fact a stage keeps about a register.
+    type Fact: Copy;
+
+    /// The fact `register` currently carries.
+    fn fact(&self, register: Register) -> Self::Fact;
+
+    /// `register`'s word in the representation its fact names; tagged where it is tagged.
+    fn read(&mut self, stage: &mut S, register: Register) -> S::Word;
+
+    /// `register`'s tagged word (`Value::to_bits`), boxing an unboxed representation.
+    #[inline(always)]
+    fn tagged(&mut self, stage: &mut S, register: Register) -> S::Word {
+        self.read(stage, register)
+    }
+
+    /// Define `register` with `value`, carrying `fact`.
+    fn write(&mut self, stage: &mut S, register: Register, value: S::Word, fact: Self::Fact);
+
+    /// Copy `source` into `destination` with its value and every fact derived from it; the
+    /// word copied.
+    #[inline(always)]
+    fn move_register(&mut self, stage: &mut S, destination: Register, source: Register) -> S::Word {
+        let fact = self.fact(source);
+        let value = self.read(stage, source);
+        self.write(stage, destination, value, fact);
+        value
+    }
+
+    /// The running activation's `this` word: the bound value, or `Value::DELETED` where the
+    /// activation does not hold it.
+    fn this(&mut self, stage: &mut S) -> S::Word;
+
+    /// Define `destination` with the activation's `this`, carrying every fact proved of it.
+    fn define_this(&mut self, stage: &mut S, destination: Register, this: S::Word);
+
+    /// `register`'s value from `constant`, with the fact the stage keeps of it.
+    fn constant(&mut self, stage: &mut S, constant: Constant) -> (S::Word, Self::Fact);
+
+    /// The proven slot `slot` of `base`'s object, with the fact the read proves; `None` where
+    /// the frame has no heap or the slot is not proved, leaving the instruction to the host.
+    #[inline(always)]
+    fn field_read(&mut self, _stage: &mut S, _base: Register, _slot: u16, _ty: Type, _proof: S::Proof) -> Option<(S::Word, Self::Fact)> {
+        None
+    }
+
+    /// Write `value` to the proven slot; `None` where the frame has no heap or the slot is
+    /// not writable, leaving the instruction to the host.
+    #[inline(always)]
+    fn field_write(&mut self, _stage: &mut S, _base: Register, _slot: u16, _ty: Type, _value: S::Word, _proof: S::Proof) -> Option<()> {
+        None
+    }
+
+    /// The dense array element at `index`, under the proof; a hole, a miss or an index past
+    /// the view leaves `None` to the caller's cold path.
+    #[inline(always)]
+    fn index_read(&mut self, _stage: &mut S, _index: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
+
+    /// Store `value` at the dense array element `index`, under the proof.
+    #[inline(always)]
+    fn index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
+    /// The typed array element at `index`, as a Number word.
+    #[inline(always)]
+    fn typed_index_read(&mut self, _stage: &mut S, _index: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
+
+    /// Store the Number `value` at typed array element `index`.
+    #[inline(always)]
+    fn typed_index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
+    /// The object literal `destination`, written with the frame's fact; `None` where the
+    /// frame has no heap allocator.
+    #[inline(always)]
+    fn allocate_object(&mut self, _stage: &mut S, _destination: Register, _proof: S::Proof) -> Option<S::Word> { None }
+
+    /// The array literal `destination`, of `length` holes or `elements` values.
+    #[inline(always)]
+    fn allocate_array(&mut self, _stage: &mut S, _destination: Register, _length: S::Word, _elements: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
+
+    /// The array literal `destination` of the `count` program constants from `constant`.
+    #[inline(always)]
+    fn allocate_const_array(&mut self, _stage: &mut S, _destination: Register, _constant: S::Word, _count: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
+
+    /// The two-property object literal `destination` of literal `site`'s shape.
+    #[inline(always)]
+    fn allocate_object_pair(&mut self, _stage: &mut S, _destination: Register, _site: u32, _first: S::Word, _second: S::Word,
+        _proof: S::Proof) -> Option<S::Word> { None }
+
+    /// Continue where no interrupt is requested; `None` leaves at the frame's miss edge.
+    #[inline(always)]
+    fn safepoint(&mut self, _stage: &mut S, _proof: S::Proof) -> Option<()> { Some(()) }
+
+    /// The element store's host helper; `None` where the frame has no helper table.
+    #[inline(always)]
+    fn index_set_helper(&mut self, _stage: &mut S, _base: S::Word, _key: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
+    /// The VM's field-store hit (`LaneHelper::FieldSet`).
+    #[inline(always)]
+    fn field_store_miss(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _site: u16, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
+
+    /// A call of `target` with `args` and effect row `effects`; a non-returning status leaves
+    /// at `leave`. `None` where the frame has no call protocol (Stage v2).
+    #[inline(always)]
+    #[allow(dead_code)]
+    fn call(&mut self, _stage: &mut S, _target: CallTarget<S::Word>, _args: &[S::Word], _effects: Effects,
+        _leave: S::Miss) -> Option<S::Word> { None }
+
+    /// Leave the function with `value` (Stage v2); `None` where the frame cannot.
+    #[inline(always)]
+    #[allow(dead_code)]
+    fn ret(&mut self, _stage: &mut S, _value: S::Word) -> Option<Self::Control> { None }
+
+    /// The activation's environment storage word and the fact its slot reads carry
+    /// (`environment::environment_slot`); `None` where the frame holds no environment.
+    #[inline(always)]
+    fn environment(&mut self, _stage: &mut S) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// Store `value` to environment slot `slot`; `None` where the frame cannot, leaving the
+    /// binding rules (an uninitialized or constant binding, a `with` scope) to the host.
+    #[inline(always)]
+    fn environment_write(&mut self, _stage: &mut S, _slot: u16, _value: S::Word) -> Option<()> { None }
+
+    /// The count of the arguments binding in local `slot`, an int32 word; `None` where the
+    /// binding is not one only kept values answer.
+    #[inline(always)]
+    fn arguments_length(&mut self, _stage: &mut S, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// The VM's own operation `operation` (`CallOut`), run in place where a row's words do not
+    /// decide it, defining `result` where the operation has one: the word it defined with the
+    /// fact the frame keeps of it, or a placeholder word where it defines none. `None` where the
+    /// frame has no host, or the operation raised, leaving the instruction to the interpreter.
+    #[inline(always)]
+    fn vm_step(&mut self, _stage: &mut S, _operation: CallOut, _result: Option<Register>)
+        -> Option<(S::Word, Self::Fact)> { None }
+
+    /// Where control goes: the edge the interpreter returns, or the branch a specializer
+    /// emits.
+    type Control;
+
+    /// ToBoolean of `register` from the frame's facts; `None` where a value's heap cell
+    /// decides it, leaving the test to the interpreter's fallback.
+    fn truthiness(&mut self, stage: &mut S, register: Register) -> Option<S::Cond>;
+
+    /// Continue at the jump target when `condition` holds, else after this instruction.
+    fn branch(&mut self, stage: &mut S, condition: S::Cond) -> Self::Control;
+
+    /// Continue at the jump target.
+    fn jump(&mut self, stage: &mut S) -> Self::Control;
+
+    /// The canonical boolean `condition`, with the fact this stage keeps of it.
+    fn boolean(&mut self, stage: &mut S, condition: S::Cond) -> (S::Word, Self::Fact);
+
+    /// Read local slot `slot` with the fact this stage keeps of it; `None` where this
+    /// frame cannot read the activation's locals (the tier then leaves at its exact PC).
+    #[inline(always)]
+    fn load_local(&mut self, _stage: &mut S, _slot: u16, _miss: Option<S::Miss>)
+        -> Option<(S::Word, Self::Fact)> { None }
+
+    /// Write `value` to local slot `slot`; `false` where this frame cannot write them.
+    #[inline(always)]
+    fn store_local(&mut self, _stage: &mut S, _slot: u16, _value: S::Word, _miss: Option<S::Miss>)
+        -> bool { false }
+}
+
+
+/// A conditional jump on the register's truthiness, taken when it is `taken`; unresolved where
+/// the frame cannot tell its truthiness.
+#[inline(always)]
+pub(crate) fn jump_if<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, register: Register, taken: bool) -> Step<S::Word, F::Control> {
+    let Some(condition) = frame.truthiness(stage, register) else { return Step::Unresolved };
+    let condition = if taken { condition } else { stage.not(condition) };
+    Step::Control(frame.branch(stage, condition))
+}
+
+/// `destination` defined with the logical negation of `source`'s truthiness.
+#[inline(always)]
+pub(crate) fn logical_not<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, source: Register) -> Step<S::Word, F::Control> {
+    let Some(truthy) = frame.truthiness(stage, source) else { return Step::Unresolved };
+    let falsy = stage.not(truthy);
+    let (value, fact) = frame.boolean(stage, falsy);
+    frame.write(stage, destination, value, fact);
+    Step::Value(value)
+}
+
+/// `destination` defined with the activation's `this`, where it holds one (not the deleted
+/// marker); `miss` where it does not.
+#[inline(always)]
+pub(crate) fn load_this<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, miss: S::Miss) -> Step<S::Word, F::Control> {
+    let this = frame.this(stage);
+    let bound = stage.ne_imm(this, crate::Value::DELETED.to_bits());
+    match stage.guard(bound, miss) {
+        Some(()) => {
+            frame.define_this(stage, destination, this);
+            Step::Value(this)
+        }
+        None => Step::Unresolved,
+    }
+}
+
+/// `destination` defined from local slot `slot`; `None` where the frame cannot read it.
+#[inline(always)]
+pub(crate) fn read_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, slot: u16, miss: Option<S::Miss>) -> Option<S::Word> {
+    let (value, fact) = frame.load_local(stage, slot, miss)?;
+    frame.write(stage, destination, value, fact);
+    Some(value)
+}
+
+/// `source`'s tagged word written to local slot `slot`; `None` where the frame cannot write it.
+#[inline(always)]
+pub(crate) fn write_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, source: Register, slot: u16, miss: Option<S::Miss>) -> Option<S::Word> {
+    let value = frame.tagged(stage, source);
+    frame.store_local(stage, slot, value, miss).then_some(value)
+}
+
+/// `destination` defined from local slot `slot` where its binding is initialized (not the deleted
+/// marker, which a binding in its temporal dead zone holds); `None` where the frame cannot read the
+/// slot, and `miss` where the binding is uninitialized: the host's read raises the `ReferenceError`.
+#[inline(always)]
+pub(crate) fn read_initialized_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, slot: u16, miss: S::Miss) -> Option<S::Word> {
+    let (value, fact) = frame.load_local(stage, slot, Some(miss))?;
+    let initialized = stage.ne_imm(value, crate::Value::DELETED.to_bits());
+    stage.guard(initialized, miss)?;
+    frame.write(stage, destination, value, fact);
+    Some(value)
+}
+
+/// `source`'s tagged word written to local slot `slot` where its binding is initialized: an assignment
+/// that is no initialization (`let x; x = 1`) of a binding still in its temporal dead zone is the
+/// host's `ReferenceError`, which `miss` leaves to.
+#[inline(always)]
+pub(crate) fn write_initialized_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, source: Register, slot: u16, miss: S::Miss) -> Option<S::Word> {
+    let (current, _) = frame.load_local(stage, slot, Some(miss))?;
+    let initialized = stage.ne_imm(current, crate::Value::DELETED.to_bits());
+    stage.guard(initialized, miss)?;
+    write_local(stage, frame, source, slot, Some(miss))
+}
+
+/// A staged instruction's outcome: the word it produced, or where control goes.
+pub(crate) enum Step<W, C> {
+    /// The operation produced `W`; control falls through.
+    Value(W),
+    /// The operation transferred control to `C`.
+    Control(C),
+    /// The operation left at its miss edge (a failed guard), or a value's heap cell decides
+    /// its truthiness: the interpreter must take its fallback path.
+    Unresolved,
+}

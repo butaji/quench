@@ -1033,6 +1033,7 @@ impl<H: Host> Vm<H> {
         self.heap.dependencies_mut().clear_inherited();
         self.accessor_fields.clear();
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
+        self.in_presences = [None; super::in_presence::IN_PRESENCES];
         self.closure_shapes = [None; _];
         self.resolver_function_shape = None;
         self.function_name_shapes.clear();
@@ -1058,10 +1059,11 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn invalidate_method_caches_for_key(&mut self, key: PropertyKey) {
         match key {
-            PropertyKey::String(atom) | PropertyKey::Private(atom) => {
+            PropertyKey::String(atom) => {
                 self.invalidate_method_caches_for_atom(atom);
             }
-            PropertyKey::Symbol(_) => {}
+            // Method caches name string atoms; a private atom is of its own space.
+            PropertyKey::Symbol(_) | PropertyKey::Private(_) => {}
         }
     }
     #[inline(always)]
@@ -1421,10 +1423,33 @@ impl<H: Host> Vm<H> {
     /// into an accessor or hide, so reading it needs no lookup.
     #[inline(always)]
     pub(super) fn array_length_field(&self, object: Value, atom: Atom) -> Option<Value> {
-        (atom == self.length_atom)
-            .then(|| self.own_array_length(object))
-            .flatten()
-            .map(Value::length)
+        if atom != self.length_atom {
+            return None;
+        }
+        // The staged row answers a direct array without extras; any other (an arguments object,
+        // sparse elements, a length past int32) is `own_array_length`'s.
+        self.heap
+            .array_record_base()
+            .and_then(|records| crate::staged::elements::concrete_array_length(records, object))
+            .or_else(|| self.own_array_length(object).map(Value::length))
+    }
+
+    /// The `length` of a direct string, from the staged row over its record (`staged::strings`);
+    /// the rows' other forms (a rope, a slice, a length past int32) are read through the string.
+    #[inline(always)]
+    pub(super) fn string_length_value(&self, object: Value) -> Option<Value> {
+        self.heap
+            .string_record_base()
+            .and_then(|records| crate::staged::strings::concrete_string_length(records, object))
+            .or_else(|| self.heap.string(object).map(|text| Value::length(text.len())))
+    }
+
+    /// The `length` of a direct array or string, from the one staged row over both record
+    /// tables (`staged::strings::length_of`); any other form is the general read's.
+    #[inline(always)]
+    pub(super) fn length_value(&self, object: Value) -> Option<Value> {
+        let (arrays, strings) = (self.heap.array_record_base()?, self.heap.string_record_base()?);
+        crate::staged::strings::concrete_length_of(arrays, strings, object)
     }
 
     /// `cached_field_hit` for compiled code's probe (`compiled::lane_field_get`), which also
@@ -1509,16 +1534,42 @@ impl<H: Host> Vm<H> {
         site: u16,
     ) -> Option<Value> {
         debug_assert!(self.specialized_operations_enabled(p));
-        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
-        let cache = self.field_cache_entry(site);
-        if cache.holder != NO_FIELD_HOLDER {
-            return None;
-        }
-        let value = self.own_field_entry_hit(cache, receiver)?;
+        debug_assert!(self.field_cache_index(site) < self.field_caches.len());
+        let (entries, records) = (self.active_field_entries as u64, self.heap.object_record_base()? as u64);
+        let offset = usize::from(site) as u64 * super::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64;
+        // SAFETY: `active_field_entries` is the running program's table (`field_cache_entry`), the
+        // site one of its sites, and the record table and arena the heap's own; the read ends here.
+        let value = unsafe { crate::staged::concrete_site_read(self.heap.arena_values_base(), (entries, records), object, offset) }?;
         #[cfg(feature = "profile-field-primitives")]
         self.profile.field_primitives.hit(crate::profile::field_primitives::Path::PrimaryOwnRead);
         self.profile.field_cache_hit(0, 0);
         Some(value)
+    }
+
+    /// The two reads of a nested lookup, `base.first.second`, through the primary entries of both
+    /// sites: `primary_own_field_hit` of each, the tables proved once (`staged::entry::site_chain`).
+    #[inline(always)]
+    pub(super) fn primary_own_chain_hit(&mut self, p: &ResidualProgram, base: Value, (first, second): (u16, u16)) -> Option<Value> {
+        debug_assert!(self.specialized_operations_enabled(p));
+        let (entries, records) = (self.active_field_entries as u64, self.heap.object_record_base()? as u64);
+        let offset = |site: u16| u64::from(site) * super::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64;
+        // SAFETY: as `primary_own_field_hit`, for both sites.
+        let value = unsafe { crate::staged::concrete_site_chain(self.heap.arena_values_base(), (entries, records), base, (offset(first), offset(second))) }?;
+        // One hit for each of the two reads.
+        self.profile.field_cache_hit(0, 0);
+        self.profile.field_cache_hit(0, 0);
+        Some(value)
+    }
+
+    /// The store of `value` through the site's primary entry into the own data field of a direct
+    /// object, where the write barrier needs no log (`staged::entry::site_store`): the store
+    /// `primary_own_field_store_hit::<false>` makes first.
+    #[inline(always)]
+    fn primary_site_store(&mut self, object: Value, value: Value, site: u16) -> bool {
+        let Some(records) = self.heap.object_record_base() else { return false };
+        let offset = usize::from(site) as u64 * super::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64;
+        // SAFETY: as `primary_own_field_hit`, with the heap that owns the record table.
+        unsafe { crate::staged::concrete_site_store(&self.heap, (self.active_field_entries as u64, records as u64), object, offset, value) }
     }
 
     /// The own data field the holderless field cache entry `cache` proves for `receiver`;
@@ -1750,7 +1801,8 @@ impl<H: Host> Vm<H> {
         };
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = self.field_cache_entry(site);
-        if !self.store_record_field_entry::<LOGS>(record_id, cache, value, layout) {
+        let stored = (!LOGS && self.primary_site_store(object, value, site)) || self.store_record_field_entry::<LOGS>(record_id, cache, value, layout);
+        if !stored {
             return false;
         }
         #[cfg(feature = "profile-field-primitives")]
@@ -1924,20 +1976,36 @@ impl<H: Host> Vm<H> {
         else {
             return false;
         };
-        let (target_shape, slot) = (cache.target_shape, usize::from(cache.slot));
+        let transition = cache.transition();
         if !cache.proof_holds(receiver.proto_link())
             || !receiver.admits_cached_add()
             || self.method_caches_may_name(atom)
         {
             return false;
         }
-        if !(receiver.admits_plain_append(slot, value)
-            && self.heap.record_property_append_plain(record_id, slot, value, target_shape))
-        {
-            self.heap.record_property_add_moving(object, slot, value, target_shape);
-        }
+        self.add_by_transition(object, record_id, transition, value);
         self.profile.field_cache_hit(0, 0);
         true
+    }
+
+    /// The add of `value` to `object`, the direct object record `record_id` the caller admitted
+    /// (`Object::admits_cached_add`), along the cached `transition`: the staged add row first
+    /// (`staged::add`, which proves the before-shape and plain storage and needs no call), then,
+    /// where the store gate is closed (slot representations are tracked, or the barrier would log
+    /// the value), the plain append that observes the write, else the add that moves storage or
+    /// allocates (`Heap::record_property_add_moving`).
+    #[inline(always)]
+    fn add_by_transition(&mut self, object: Value, record_id: u32, transition: Transition, value: Value) {
+        // SAFETY: `record_id` names the live record of `object`; the row proves the rest.
+        if unsafe { concrete_add_property(&mut self.heap, record_id, transition, value) } {
+            return;
+        }
+        let (slot, shape) = (usize::from(transition.slot), transition.after);
+        if !(self.heap.object_record_by_id(record_id).admits_plain_append(slot, value)
+            && self.heap.record_property_append_plain(record_id, slot, value, shape))
+        {
+            self.heap.record_property_add_moving(object, slot, value, shape);
+        }
     }
 
     /// `define_field_cached`'s hit inline, for an object record: the site's add entry for its
@@ -1962,17 +2030,28 @@ impl<H: Host> Vm<H> {
         let Some((_, cache)) = self.field_add_entry(self.field_cache_index(site), receiver.exact_shape(), atom) else {
             return false;
         };
-        let (target_shape, slot) = (cache.target_shape, usize::from(cache.slot));
+        let transition = cache.transition();
         if self.method_caches_may_name(atom) {
             return false;
         }
-        if !(receiver.admits_plain_append(slot, value)
-            && self.heap.record_property_append_plain(record_id, slot, value, target_shape))
-        {
-            self.heap.record_property_add_moving(object, slot, value, target_shape);
-        }
+        self.add_by_transition(object, record_id, transition, value);
         self.profile.field_cache_hit(0, 0);
         true
+    }
+
+    /// The add `atom`'s site recorded that compiled code may run (`staged::add::site_add`): a define's
+    /// (`chained` false) needs no chain proof, an adding store's needs the entry whose prototype chain
+    /// is proved now (`FieldAddCache::proof_holds`), whose link the code then tests per receiver and
+    /// whose proof it holds as a Stable fact. `None` where the site recorded none.
+    pub(super) fn native_field_add(&self, site: u16, atom: Atom, chained: bool) -> Option<AddSite> {
+        let set = self.field_add_indices.get(self.field_cache_index(site));
+        if set == NO_FIELD_ADD_SET {
+            return None;
+        }
+        self.field_add_sets[set as usize].entries().filter(|cache| cache.atom == atom).find_map(|cache| {
+            let link = chained.then_some(cache.proved_prototype);
+            link.is_none_or(|link| cache.proof_holds(link)).then_some(AddSite { transition: cache.transition(), link: link.map(ProtoLink::bits) })
+        })
     }
 
     /// Whether the site has recorded a cached property add (`try_cached_field_add`).
@@ -2133,15 +2212,20 @@ impl<H: Host> Vm<H> {
         let (receiver, kind) = self.inherited_receiver(object)?;
         let function_receiver = kind == super::field_cache::InheritedReceiver::Function;
         self.inherited_entry_answers(kind, index).then_some(())?;
-        let (shape, link) = (receiver.shape(), receiver.proto_link());
         // SAFETY: a site's index names a recorded entry (`record_inherited_field`), and a
         // hint's was found in the cache.
         let cache = unsafe { self.heap.dependencies().inherited_unchecked(index) };
-        if cache.receiver != shape
-            || function_receiver && !cache.function_links
-            || !cache.proved
-            || cache.proved_prototype != link
-        {
+        // An object record's receiver is the staged proof a folded read takes (`entry::held_receiver`);
+        // any other receiver's shape and link are read from its object.
+        let receiver_holds = match kind {
+            super::field_cache::InheritedReceiver::Record => {
+                let records = self.heap.object_record_base().unwrap_or(std::ptr::null());
+                // SAFETY: the heap's own object record reservation.
+                unsafe { crate::staged::concrete_held_receiver(records, object, cache.receiver, cache.proved_prototype.bits()) }
+            }
+            _ => cache.receiver == receiver.shape() && cache.proved_prototype == receiver.proto_link(),
+        };
+        if !receiver_holds || function_receiver && !cache.function_links || !cache.proved {
             return None;
         }
         let depth = u16::from(cache.depth);
@@ -2603,10 +2687,10 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Option<Value> {
-        let text = self.heap.string(object)?;
         if atom == self.length_atom {
-            return Some(Value::length(text.len()));
+            return self.string_length_value(object);
         }
+        self.heap.string(object)?;
         if !self.string_field_site_cacheable(p, atom) {
             return None;
         }
@@ -4169,7 +4253,7 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn record_field_add_cache(&mut self, site: usize, cache: FieldAddCache) {
+    pub(super) fn record_field_add_cache(&mut self, site: usize, cache: FieldAddCache) {
         if !self.field_cache_records(site) {
             return;
         }
@@ -4209,7 +4293,7 @@ impl<H: Host> Vm<H> {
     /// The add entry of cache site index `site` for receivers of `shape` adding `atom`, with
     /// the index of the site's set.
     #[inline(always)]
-    fn field_add_entry(&self, site: usize, shape: u32, atom: Atom) -> Option<(usize, &FieldAddCache)> {
+    pub(super) fn field_add_entry(&self, site: usize, shape: u32, atom: Atom) -> Option<(usize, &FieldAddCache)> {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors; every non-sentinel
         // index was installed together with its set.
         let set = unsafe { self.field_add_indices.get_unchecked(site) };

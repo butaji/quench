@@ -679,22 +679,21 @@ fn object_integrity_metadata_survives_collection() {
 }
 
 #[test]
-fn out_of_line_private_brand_keeps_its_home_alive() {
+fn a_private_environment_lives_and_dies_with_its_home() {
     let mut heap = Heap::new();
     let home = heap.alloc(Cell::Object(plain_object()));
-    let instance = heap.alloc(Cell::Object(plain_object()));
-    heap.object_record_mut(instance)
-        .unwrap()
-        .add_private_name(PrivateBrand { home, name: 0 });
+    let atom = PrivateAtom::from_raw(9);
+    heap.object_record_mut(home).unwrap().declare_private(3, atom);
+    heap.object_record_mut(home).unwrap().declare_private(3, PrivateAtom::from_raw(10));
 
-    heap.collect([instance]);
+    heap.collect([home]);
 
-    assert!(heap.is_live(instance));
-    assert!(heap.is_live(home));
+    let data = heap.object_record(home).unwrap();
+    assert_eq!((data.private_atom(3), data.private_atom(4)), (Some(atom), None));
+    assert_eq!(data.private_declarations().count(), 1, "a name declared again keeps its atom");
 
     heap.collect([]);
 
-    assert!(!heap.is_live(instance));
     assert!(!heap.is_live(home));
 }
 
@@ -785,10 +784,7 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     data.set_module_namespace();
     data.set_module_bindings(vec![(0, crate::vm::program_store::ProgramId::MAIN, 0)]);
     data.set_deferred_module(Some(crate::ModuleSource::text("module.js", "export const value = 1;")));
-    data.add_private_name(PrivateBrand {
-        home: object,
-        name: 0,
-    });
+    data.declare_private(0, PrivateAtom::from_raw(0));
 
     assert!(heap.memory_stats().3 > before);
     assert!(heap.live_payload_bytes()[CellKind::Object as usize] > 0);

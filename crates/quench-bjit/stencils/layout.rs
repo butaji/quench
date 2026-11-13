@@ -18,6 +18,7 @@ pub(crate) struct NativeObjectLayout {
     pub(crate) array_mask: u32,
     pub(crate) storage_start_mask: u32,
     pub(crate) dictionary_mask: u32,
+    pub(crate) integrity_mask: u32,
     pub(crate) inline_property_count: usize,
     pub(crate) extras_tag: u64,
     pub(crate) extras_tag_mask: u64,
@@ -45,6 +46,7 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     array_mask: 268435456,
     storage_start_mask: 1073741823,
     dictionary_mask: 2147483648,
+    integrity_mask: 3221225472,
     inline_property_count: 2,
     extras_tag: 9223090561878065152,
     extras_tag_mask: 18446462598732840960,
@@ -60,6 +62,17 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeFunctionLayout {
+    pub(crate) record_size: usize,
+    pub(crate) object_offset: usize,
+}
+
+pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLayout {
+    record_size: 48,
+    object_offset: 0,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeArrayLayout {
     pub(crate) record_capacity: usize,
     pub(crate) record_size: usize,
@@ -69,6 +82,8 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) header_length_offset: usize,
     pub(crate) header_values_offset: usize,
     pub(crate) header_owners_offset: usize,
+    pub(crate) header_capacity_offset: usize,
+    pub(crate) capacity_mask: u32,
     pub(crate) object_offset: usize,
     pub(crate) frozen_mask: u32,
     pub(crate) integrity_mask: u32,
@@ -83,6 +98,8 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     header_length_offset: 4,
     header_values_offset: 16,
     header_owners_offset: 0,
+    header_capacity_offset: 8,
+    capacity_mask: 2147483647,
     object_offset: 0,
     frozen_mask: 2147483648,
     integrity_mask: 3221225472,
@@ -175,6 +192,7 @@ pub(crate) mod words {
     pub(crate) const UNDEFINED: u64 = 0x7ff9000000000000;
     pub(crate) const DELETED: u64 = 0x7ffe000000000000;
     pub(crate) const FALSE: u64 = 0x7ffb000000000000;
+    pub(crate) const TRUE: u64 = FALSE | 1;
     pub(crate) const NARROW_INT_FLAG: u32 = 1;
     pub(crate) const NARROW_INTEGER_BITS: u32 = 30;
     pub(crate) const NARROW_CODE_SHIFT: u32 = 1;
@@ -183,6 +201,10 @@ pub(crate) mod words {
     pub(crate) const NARROW_INDEX_BITS: u32 = 25;
     pub(crate) const DIRECT_OBJECT_UPPER: u64 = 0x7ffc800000000000;
     pub(crate) const DIRECT_OBJECT_NARROW_CODE: u32 = 4;
+    pub(crate) const LOWER_WORD: u64 = 0xffff_ffff;
+    pub(crate) const HEAP_FAMILY_BITS: u64 = 0x0000_e000_0000_0000;
+    pub(crate) const HEAP_FAMILY_SHIFT: u32 = 45;
+    pub(crate) const NARROW_HEAP_FAMILIES: usize = 8;
 }
 
 /// Byte offsets of the fields of the compiled-code context (`CallContext`) and the dispatch
@@ -192,9 +214,57 @@ pub(crate) const CALL_CONTEXT_ADAPTER_PAYLOAD: usize = 248;
 #[path = "../src/call_record.rs"]
 pub(crate) mod call_record;
 pub(crate) const JS_STEP_LOOP_ENTRY: usize = 0;
-pub(crate) const JS_STEP_CAPTURE_VALUES: usize = 80;
-pub(crate) const JS_STEP_CAPTURE_LEN: usize = 88;
-pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = 96;
+pub(crate) const JS_STEP_CAPTURE_VALUES: usize = 96;
+pub(crate) const JS_STEP_CAPTURE_LEN: usize = 104;
+pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = 112;
+/// Whether the capture slots admit every direct store, which a store row requires
+/// (`environment::dense_capture_store`); the bit of a body's capture word that says so
+/// (`dispatch_fast::CAPTURE_STORES`) moves here at its entry.
+pub(crate) const JS_STEP_CAPTURE_STORES: usize = 360;
+/// The running activation's receiver (`this`) word, `DELETED` where it has none: the entry of a
+/// lane body or loop region publishes the one it is entered with, for its run.
+pub(crate) const JS_STEP_RECEIVER: usize = 200;
+pub(crate) const CAPTURE_STORES_BIT: u64 = 1;
+/// The activation's local slots and their count (`native_locals`, `local_count`).
+pub(crate) const JS_STEP_NATIVE_LOCALS: usize = 56;
+pub(crate) const JS_STEP_LOCAL_COUNT: usize = 64;
+/// The heap bases a field read through a site's cache entry reads: the object record
+/// reservation, the allocator header of the property values (whose base is at
+/// `PROPERTY_BUFFER_BASE`) and the field cache entries of the running program.
+pub(crate) const JS_STEP_OBJECT_RECORD_BASE: usize = 120;
+pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = 152;
+/// What a store's barrier reads (`Stage::store_gate`): the object records' mark blocks and their
+/// count, and whether the property arena records its slots' value classes (`slots_tracked`), which
+/// an unobserved store requires clear.
+pub(crate) const JS_STEP_OBJECT_MARK_BLOCKS: usize = 136;
+pub(crate) const JS_STEP_OBJECT_MARK_BLOCK_COUNT: usize = 144;
+pub(crate) const JS_STEP_SLOTS_TRACKED: usize = 528;
+/// The heap's collection epoch as of the last refresh (`JsStepDispatch::epoch`), which a for-in step
+/// compares to the epoch its state's snapshot was listed in (`staged::iteration::for_in_next`).
+pub(crate) const JS_STEP_EPOCH: usize = 472;
+/// The string record range's base, which a string `length` read finds the record from.
+pub(crate) const JS_STEP_STRING_RECORD_BASE: usize = JS_STEP_SLOTS_TRACKED + core::mem::size_of::<usize>();
+/// What a store into a function's own properties reads (`RecordSpace::Function`): the function
+/// records' mark blocks and their count, as the object records' (`JS_STEP_OBJECT_MARK_BLOCKS`); and the
+/// empty string's word, which a function's inferred name replaces (`staged::naming`).
+pub(crate) const JS_STEP_FUNCTION_MARK_BLOCKS: usize = JS_STEP_STRING_RECORD_BASE + core::mem::size_of::<usize>();
+pub(crate) const JS_STEP_FUNCTION_MARK_BLOCK_COUNT: usize = JS_STEP_FUNCTION_MARK_BLOCKS + core::mem::size_of::<usize>();
+pub(crate) const JS_STEP_EMPTY_STRING: usize = JS_STEP_FUNCTION_MARK_BLOCK_COUNT + core::mem::size_of::<usize>();
+/// The function record reservation's base (`JsStepDispatch::function_record_base`).
+pub(crate) const JS_STEP_FUNCTION_RECORD_BASE: usize = 128;
+pub(crate) const JS_STEP_FIELD_ENTRIES: usize = 160;
+pub(crate) const PROPERTY_BUFFER_BASE: usize = 0;
+/// Bits of a body's capture word that hold the dense slots' address; the slot count sits above
+/// them (`entry_cell::CAPTURE_ADDRESS_BITS`), and the pad is what a shift pair clears them with.
+pub(crate) const CAPTURE_ADDRESS_BITS: u32 = 48;
+pub(crate) const CAPTURE_ADDRESS_PAD: u32 = u64::BITS - CAPTURE_ADDRESS_BITS;
+/// The record a completed body names (`LANE_BODY_RETURNED`).
+pub(crate) const JS_STEP_RETURNED_PC: usize = 256;
+/// The words of a view of dense environment slots (`general_capture::EnvView`): the slots' address and their
+/// count, at a payload byte offset a row names (`ENV_ROW`).
+pub(crate) const ENV_VIEW_VALUES: usize = 0;
+pub(crate) const ENV_VIEW_LEN: usize = 8;
+pub(crate) const ENV_VIEW_STORES: usize = 16;
 
 /// More `JsStepDispatch` fields the call rows read: the lane body's VM, residual and lane
 /// context (a helper call's first three arguments), the lane stack's free span and the shadow
@@ -214,10 +284,18 @@ pub(crate) const CELL_RECOVERY_AT: usize = 8;
 pub(crate) const CELL_BODY_AT: usize = 16;
 pub(crate) const RECOVERY_VALUES_AT: usize = 0;
 pub(crate) const RECOVERY_ACTIVATIONS_AT: usize = 8;
-pub(crate) const JS_STEP_OBJECT_RECORD_BASE: usize = 104;
-pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = 136;
-pub(crate) const JS_STEP_METHOD_CACHE_ATOMS: usize = 152;
-pub(crate) const JS_STEP_METHOD_CACHE_ATOM_WORDS: usize = 160;
-pub(crate) const JS_STEP_STORES_SPECIALIZED: usize = 168;
-/// Where the property arena's header (`PropertyBuffer`) keeps the address of its first value.
-pub(crate) const PROPERTY_BUFFER_BASE: usize = 0;
+
+/// The flat string forms a string record is read in (`vm::wtf16::native_string`): the record's
+/// size (three words), where it keeps its form's tag, each form's tag, and where a short and a
+/// shared form keep their unit count. Checked against the runtime by `stencil_layout_matches`.
+pub(crate) mod string_form {
+    pub(crate) const RECORD_SIZE: usize = 3 * core::mem::size_of::<usize>();
+    pub(crate) const TAG_OFFSET: i32 = 0;
+    pub(crate) const TAG_SHORT: u8 = 0;
+    pub(crate) const TAG_ASCII: u8 = 1;
+    pub(crate) const TAG_WIDE: u8 = 3;
+    /// A short record's length byte follows its tag byte.
+    pub(crate) const SHORT_LENGTH_OFFSET: i32 = 1;
+    /// A shared record's pointer follows its tag at the next word, then its length.
+    pub(crate) const SHARED_LENGTH_OFFSET: i32 = 2 * core::mem::size_of::<usize>() as i32;
+}

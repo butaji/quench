@@ -169,7 +169,7 @@ pub(super) use code_heap::{flush_retired_writers, CodeMemory, CODE_GRANULE};
 #[path = "compiled/direct_call.rs"]
 mod direct_call;
 mod direct_callee;
-pub(super) use direct_callee::{DirectCallee, DirectCandidates, ShadowFrame};
+pub(super) use direct_callee::{names_dead_callee, window_width, DirectCallee, DirectCandidates, ShadowFrame};
 #[path = "compiled/lane_storage.rs"]
 mod lane_storage;
 mod lane_body_run;
@@ -1157,12 +1157,18 @@ fn emit_unlogged_property_store_guard(
     builder.ins().brif(immediate, write, &[], heap_value, &[]);
     builder.switch_to_block(heap_value);
     use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-    let blocks = emit_js_payload_word(
-        builder, payload, std::mem::offset_of!(JsStepDispatch, object_mark_blocks),
-    );
-    let count = emit_js_payload_word(
-        builder, payload, std::mem::offset_of!(JsStepDispatch, object_mark_block_count),
-    );
+    let (blocks_at, count_at) = match space {
+        crate::staged::RecordSpace::Object => (
+            std::mem::offset_of!(JsStepDispatch, object_mark_blocks),
+            std::mem::offset_of!(JsStepDispatch, object_mark_block_count),
+        ),
+        crate::staged::RecordSpace::Function => (
+            std::mem::offset_of!(JsStepDispatch, function_mark_blocks),
+            std::mem::offset_of!(JsStepDispatch, function_mark_block_count),
+        ),
+    };
+    let blocks = emit_js_payload_word(builder, payload, blocks_at);
+    let count = emit_js_payload_word(builder, payload, count_at);
     let block = builder.ins().ushr_imm_u(
         record_id, i64::from(OBJECT.mark_records_per_block.trailing_zeros()),
     );
@@ -1326,6 +1332,8 @@ lane_helper_inventory! { H;
     FieldGet => lane_field_get::<H>,
     FieldSet => lane_field_set::<H>,
     Call => super::dispatch_fast::lane_body_call::<H>,
+    /// A loop region's call (`dispatch_fast::lane_region_call`).
+    RegionCall => super::dispatch_fast::lane_region_call::<H>,
     IndexSet => lane_index_set::<H>,
     /// Room for a loop's append to a dense array (`lane_array_append_room`).
     AppendRoom => lane_array_append_room::<H>,
@@ -1571,6 +1579,12 @@ pub(super) struct OnlineFacts<'a> {
     pub(super) constants: &'a [Value],
     /// What the VM proved of a constructor's `instanceof` (`Vm::instanceof_fact`), by its identity.
     pub(super) instanceofs: &'a dyn Fn(Value) -> Option<crate::code_dependencies::InstanceofFact>,
+    /// The add a cache site recorded for an atom (`Vm::native_field_add`), whose staged row an adding
+    /// store runs where the chain proof it holds is a Stable fact; `None` where none may be held.
+    pub(super) adds: Option<&'a dyn Fn(u16, Atom, bool) -> Option<crate::staged::add_plan::AddSite>>,
+    /// The naming a cache site recorded for a `SetFunctionName`'s atom and the word of the name's string
+    /// (`Vm::native_function_name`), whose staged row names a function; `None` where none may be held.
+    pub(super) names: Option<&'a dyn Fn(u16, Atom) -> Option<(crate::staged::add_plan::Transition, u64)>>,
 }
 
 impl OnlineFacts<'_> {
@@ -3352,6 +3366,32 @@ fn write_perf_map(kind: &str, base: usize, bytes: &[u8], spans: &[(usize, usize,
 thread_local! {
     /// Lane-ABI OSR runs in this test thread.
     pub(super) static LANE_OSR_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Runs of lane bodies in this test thread, and those that completed their activation.
+    pub(super) static LANE_BODY_RUNS: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
+    /// What the lane-ABI OSR runs in this test thread did (`OsrRunKinds`).
+    pub(super) static LANE_OSR_KINDS: std::cell::Cell<OsrRunKinds> = const { std::cell::Cell::new(OsrRunKinds { lent: 0, left: 0, inlined: 0 }) };
+}
+
+/// The runs of lane-ABI OSR regions that ran on the lane frame's payload (a direct row), that left
+/// inside their loop (an exit, a leave inside a callee), and that left inside an inlined callee.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct OsrRunKinds {
+    pub(super) lent: usize,
+    pub(super) left: usize,
+    pub(super) inlined: usize,
+}
+
+#[cfg(test)]
+impl OsrRunKinds {
+    /// Counts a run that ended in `outcome`, `lent` the payload.
+    fn note(outcome: &LoopOutcome, lent: bool) {
+        let left = matches!(outcome, LoopOutcome::Exit(_) | LoopOutcome::Inlined { .. } | LoopOutcome::Left { .. } | LoopOutcome::Callee);
+        LANE_OSR_KINDS.with(|kinds| {
+            let now = kinds.get();
+            kinds.set(Self { lent: now.lent + usize::from(lent), left: now.left + usize::from(left), inlined: now.inlined + usize::from(matches!(outcome, LoopOutcome::Inlined { .. })) });
+        });
+    }
 }
 
 /// A native OSR region published by the shared compiler. Its lowerer is private to this
@@ -3365,6 +3405,9 @@ pub(super) struct CompiledOsrRegion {
     sites: std::cell::RefCell<base_region::CacheSites>,
     /// Where a run may re-enter the code mid-region (stencil regions only).
     resumes: base_region::ResumeTable,
+    /// What its code owns of its calls: the callees it runs as their own rows, whose registers
+    /// follow the activation's (`CallCode`).
+    pub(super) calls: CallCode,
 }
 
 
@@ -3441,7 +3484,7 @@ impl CompiledOsrRegion {
         function: u32,
         frame: usize,
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
-        lane_context: usize,
+        (lane_context, direct_calls): (usize, bool),
     ) -> LoopOutcome {
         #[cfg(test)]
         LANE_OSR_RUNS.with(|count| count.set(count.get() + 1));
@@ -3728,6 +3771,10 @@ pub(super) struct LaneMethod {
     /// The scratch registers a leave inside an inlined call fills (`LaneFrame::scratch`): one
     /// per register of the inlined callees, the unit's past the caller's.
     scratch_width: usize,
+    /// Whether its inlined frames' registers live in the activation's register file past the
+    /// caller's (a stitched body's) and not in the scratch window its code fills: a leave inside
+    /// one adopts them from the file (`Vm::lane_adopt_window`).
+    framed: bool,
     caller_registers: u16,
     /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
     amortizes: bool,
@@ -3737,6 +3784,11 @@ pub(super) struct LaneMethod {
     /// frames the lane's helper call misses (`dispatch_fast::lane_body_call`), so only such
     /// a body is called directly.
     closed: bool,
+    /// The call records its code reads (`CallRecord`), by address: the code must not outlive them.
+    _records: Vec<Box<quench_bjit::call_record::CallRecord>>,
+    /// The constructors its `instanceof` rows guard their operands against by identity: a collection that frees one
+    /// retires it (`ProgramStore::retire_dead_native_calls`), so a word they name is never a reused one.
+    pub(super) constructors: Box<[Value]>,
 }
 
 impl LaneMethod {
@@ -3744,6 +3796,12 @@ impl LaneMethod {
     /// The registers of the function it runs, which an inlined callee's follow.
     pub(super) fn caller_registers(&self) -> u16 {
         self.caller_registers
+    }
+
+    /// Whether its inlined frames' registers are in the activation's register file past the
+    /// caller's (`LaneMethod::framed`).
+    pub(super) fn framed(&self) -> bool {
+        self.framed
     }
 
     /// The address of its compiled entry, which a direct caller calls (`DirectCallee`).
@@ -4266,6 +4324,66 @@ impl<H: Host> Vm<H> {
         exit
     }
 
+    /// Copies the registers that follow the first `from` of the activation at `registers`, where a
+    /// stitched body kept its inlined callees' (`LaneMethod::framed`), into the scratch window a
+    /// leave inside one reads (`lane_scratch`), before the activations it makes overwrite them.
+    pub(super) fn lane_adopt_window(registers: *const Value, from: usize) {
+        let frame = lane_frame();
+        // SAFETY: as `take_shadow_frames`; the body's admission proved the room past the
+        // activation's registers (`LaneRecoverySpace`), and no lane body runs while the lane reads it.
+        unsafe {
+            for (at, slot) in (*frame).scratch.iter_mut().enumerate() {
+                *slot = registers.add(from + at).read();
+            }
+        }
+    }
+
+    /// Reloads the heap bases a running body's rows read through the payload
+    /// (`JsStepDispatch::refresh_object_bases`): a helper that allocated or ran guest code may
+    /// have moved the record tables or the barrier's mark blocks. Every call, construct and step
+    /// helper ends with it, so a row after one reads current bases and checks none.
+    ///
+    /// A body that runs in the VM frame `frame` also reloads the view of that frame's environment slots its
+    /// environment rows read (`env_view`, kept where its barrier admissions are); one that runs as lane
+    /// activations has none.
+    pub(super) fn refresh_body_bases(&mut self, frame: Option<usize>) {
+        let lane = lane_frame();
+        // SAFETY: the frame lives for the thread; the running body's helper is the payload's only user.
+        let dispatch = unsafe { &mut (*lane).dispatch };
+        let (epoch, view) = (dispatch.epoch, dispatch.env_view);
+        dispatch.refresh_object_bases(self);
+        dispatch.env_view = self.body_env_view(dispatch, frame, (view, epoch == dispatch.epoch));
+    }
+
+    /// The environment view of the VM frame `frame` a body runs in (`EnvView::after`), none where it runs as lane
+    /// activations; `previous` the payload's view and whether no collection ran since it was taken.
+    fn body_env_view(&mut self, dispatch: &JsStepDispatch, frame: Option<usize>, previous: (general_capture::EnvView, bool)) -> general_capture::EnvView {
+        // SAFETY: the dispatch's residual is the running program's, live for the run.
+        let program = unsafe { &*(dispatch.residual as *const ResidualProgram) };
+        frame.map_or(general_capture::EnvView::EMPTY, |frame| general_capture::EnvView::after(self, frame, (program, dispatch.program_id), previous))
+    }
+
+    /// Publishes `receiver`, a `this` the running body's frame has just bound (`InitializeThis`), as the
+    /// payload's receiver the body's rows read: the frame's own and the payload's are written by the one step.
+    pub(super) fn publish_body_receiver(&self, receiver: Value) {
+        let frame = lane_frame();
+        // SAFETY: as `refresh_body_bases`.
+        unsafe { (*frame).dispatch.receiver = receiver.to_bits() }
+    }
+
+    /// Reloads the heap bases of the payload of the native loop region the lane entered, whose address the
+    /// lane context holds (`dispatch_fast::lane_region_payload`; zero where none runs), as
+    /// `refresh_body_bases` does the body frame's.
+    pub(super) fn refresh_region_bases(&mut self, payload: usize) {
+        // SAFETY: a region's payload lives for its run, which the helper that calls this is made from.
+        if let Some(payload) = unsafe { (payload as *mut JsStepDispatch).as_mut() } {
+            payload.refresh_object_bases(self);
+            // The activation the call made is popped: a direct call's window and frame go where the lane's are now.
+            let direct_calls = payload.shadow_end != payload.shadow_base;
+            region_lend::bind_stacks(self, payload, direct_calls);
+        }
+    }
+
     /// Hands `write` each of the `count` registers an inlined callee its lane body left
     /// inside held, as the body wrote them to the scratch window (`LaneFrame::scratch`).
     pub(super) fn lane_scratch(start: usize, count: usize, mut write: impl FnMut(u16, Value)) {
@@ -4293,6 +4411,9 @@ struct LaneEntry {
     field_entries: usize,
     lane_context: usize,
     native_registers: *mut Value,
+    /// The activation's local slots and their count (`dispatch_fast::frame_locals`), which a
+    /// body's local rows read through the payload.
+    native_locals: (*mut Value, usize),
     residual: usize,
     /// The end of the frames the run may nest, which a nested run narrows and its caller regains.
     frames_end: usize,
@@ -4305,6 +4426,7 @@ impl LaneEntry {
             field_entries: dispatch.field_entries,
             lane_context: dispatch.lane_context,
             native_registers: dispatch.native_registers,
+            native_locals: (dispatch.native_locals, dispatch.local_count),
             residual: dispatch.residual,
             frames_end: dispatch.lane_frames_end,
         }
@@ -4315,6 +4437,7 @@ impl LaneEntry {
         dispatch.field_entries = self.field_entries;
         dispatch.lane_context = self.lane_context;
         dispatch.native_registers = self.native_registers;
+        (dispatch.native_locals, dispatch.local_count) = self.native_locals;
         dispatch.residual = self.residual;
         dispatch.lane_frames_end = self.frames_end;
     }
@@ -4424,6 +4547,11 @@ impl LaneFrame {
                 method_cache_atoms: 0,
                 method_cache_atom_words: 0,
                 stores_specialized: 0,
+                slots_tracked: 0,
+                string_record_base: 0,
+                function_mark_blocks: 0,
+                function_mark_block_count: 0,
+                empty_string: Value::DELETED.to_bits(),
                 receiver: Value::DELETED.to_bits(),
                 vm: 0,
                 residual: 0,
@@ -4550,6 +4678,11 @@ impl JsNativeActivation {
             object_mark_block_count: 0, property_buffer: 0,
             field_entries: 0, typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
             stores_specialized: 0,
+            slots_tracked: 0,
+            string_record_base: 0,
+            function_mark_blocks: 0,
+            function_mark_block_count: 0,
+            empty_string: Value::DELETED.to_bits(),
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
             residual: Rc::as_ptr(&program) as usize,
@@ -4603,6 +4736,11 @@ impl JsStepDispatch {
         self.epoch = vm.heap.collection_epoch();
         let (blocks, count) = vm.heap.native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
+        let (blocks, count) = vm.heap.native_function_mark_blocks();
+        (self.function_mark_blocks, self.function_mark_block_count) = (blocks as usize, count);
+        self.empty_string = vm.empty_string_word().to_bits();
+        self.slots_tracked = usize::from(vm.heap.tracks_slot_values());
+        self.string_record_base = vm.heap.string_record_base().map_or(0, |base| base as usize);
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
     }

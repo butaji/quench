@@ -44,6 +44,7 @@ pub(in crate::vm::compiled) use native_calls::{emit_float_extreme, emit_float_un
 mod stable;
 #[path = "lane_region/polls.rs"]
 mod polls;
+#[path = "lane_region/function_names.rs"] mod function_names;
 #[path = "lane_region/literals.rs"] mod literals;
 #[path = "lane_region/allocations.rs"] mod allocations;
 #[path = "lane_region/edges.rs"] mod edges;
@@ -548,6 +549,9 @@ struct Lowering<'a, 'f> {
     call_out_stop: Option<ir::Block>,
     /// The throws native code catches itself, by unit PC (`catches::catch_edges`).
     catches: BTreeMap<usize, catches::Catch>,
+    /// The block the call-outs' statuses of a leave in a callee, or a termination, reach with the
+    /// status, made at the first and filled at the region's end (`call_outs`).
+    call_out_stop: Option<ir::Block>,
 }
 
 enum Liveness<'a> {
@@ -2670,6 +2674,13 @@ impl Lowering<'_, '_> {
     /// `step` with what the operation's frame needs beyond its edges (`StepWith`).
     fn step_with(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>,
         StepWith { access, sites, site }: StepWith<'_>) -> crate::staged::Step<ir::Value, ()> {
+        self.step_at(state, edges, None, operation)
+    }
+
+    /// `step` of an operation whose slow case calls the VM (`call_out`: the record and what its
+    /// helper needs).
+    fn step_at(&mut self, state: &mut State, edges: frame::Edges, call_out: Option<&frame::call_out::CallOutSite>,
+        operation: crate::staged::Operation<ir::Value, EmitProof>) -> crate::staged::Step<ir::Value, ()> {
         let locals = self.completion != Completion::Number;
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
         let gate = access.map(|_| self.payload);

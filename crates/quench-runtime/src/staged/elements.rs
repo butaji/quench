@@ -161,6 +161,20 @@ fn unbarred_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, barred: 
     stage.guard(plain, miss)
 }
 
+/// The `length` of the direct array `base` as the int32 word it reads as: its dense backing's
+/// count, which an array without extras (an arguments object, sparse elements) has as its
+/// length. `None` (leaving at `miss`) for any other value, an array with extras, or a length
+/// past int32.
+#[inline(always)]
+pub(crate) fn array_length<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<S::Word> {
+    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
+    let backing = array_backing(stage, record_base, base, miss)?;
+    let payload = stage.load_u64(backing.record, (ARRAY.object_offset + OBJECT.payload_offset) as i32);
+    let plain = super::object::plain_payload(stage, payload);
+    stage.guard(plain, miss)?;
+    super::value::length_value(stage, backing.length, miss)
+}
+
 /// Replaces the present element at `address` of the dense backing at `values`, which held
 /// `old`, with `value`: the backing's count of values that are no int32 (its others) follows
 /// the write, and a count native code made unknown (`OTHERS_UNKNOWN`) stays unknown. The
@@ -208,6 +222,20 @@ pub(crate) fn append_element<S: Stage>(stage: &mut S, values: S::Word, length: S
     Some(grown)
 }
 
+/// Appends `value`, a Number word whose store passes the write barrier unlogged, at the length
+/// of the writable `backing` (`writable_backing`) while its capacity word proves a slot past the
+/// length; `None` (leaving at `miss`, before any write) for a full backing, which the VM grows.
+/// The capacity word changes only where the backing is allocated or grown, so room is a layout
+/// fact the row reads, not a VM reserve.
+#[inline(always)]
+pub(crate) fn append_in_room<S: Stage>(stage: &mut S, backing: Backing<S::Word>, value: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let word = stage.load_u32(backing.header, ARRAY.header_capacity_offset as i32);
+    let capacity = stage.and_imm(word, u64::from(ARRAY.capacity_mask));
+    append_element(stage, backing.values, backing.length, capacity, backing.length, value, miss)
+}
+
 /// A backing's count of other values once a write added `added` and overwrote `removed`;
 /// `OTHERS_UNKNOWN` stays unknown. Subtracting first keeps an exact count from overflowing.
 #[inline(always)]
@@ -239,6 +267,21 @@ pub(crate) unsafe fn concrete_replace_element(values: *mut crate::Value, index: 
     let address = unsafe { values.add(index) };
     let old = unsafe { address.read() };
     replace_element(&mut stage, values as u64, address as u64, old.to_bits(), value.to_bits());
+}
+
+/// The interpreter's reading of `append_in_room`: `value` appended to the direct array `array` among
+/// the array records at `record_base` where its backing is writable and has room; false (changing
+/// nothing) leaves the append to the VM, which grows the backing. A reference passes the write
+/// barrier and a hole is no element, so neither is a word the row appends.
+#[inline(always)]
+pub(crate) fn concrete_append_in_room(record_base: *const crate::heap::ArrayObject, array: crate::Value, value: crate::Value) -> bool {
+    if value.heap_index().is_some() || value.is_deleted() {
+        return false;
+    }
+    let mut stage = Concrete::new(std::ptr::null());
+    array_backing(&mut stage, record_base as u64, array.to_bits(), ()).is_some_and(|backing| {
+        writable_backing(&mut stage, backing, ()).is_some() && append_in_room(&mut stage, backing, value.to_bits(), ()).is_some()
+    })
 }
 
 /// The interpreter's reading of `other`.
@@ -323,5 +366,51 @@ mod tests {
         elements.reserve(1);
         assert_eq!(append(elements, full, Value::number(0.25)), Some(full as u64 + 1));
         assert_eq!(others(elements), u64::from(crate::heap::OTHERS_UNKNOWN), "an unknown count stays unknown");
+    }
+
+    /// `append_in_room` on `Concrete` over `elements`' own backing, whose header sits
+    /// `header_values_offset` before its values.
+    fn append_in_room_of(elements: &mut crate::heap::UniqueElements, value: Value) -> Option<u64> {
+        use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+        let values = elements.as_mut_ptr() as u64;
+        let header = values - ARRAY.header_values_offset as u64;
+        let backing = Backing { record: 0, header, values, length: elements.len() as u64 };
+        append_in_room(&mut Concrete::new(std::ptr::null()), backing, value.to_bits(), ())
+    }
+
+    #[test]
+    fn an_append_in_room_reads_the_capacity_word_and_leaves_where_the_backing_is_full() {
+        let mut backing = crate::heap::ArrayElements::from_slice(&[Value::integer(1)]);
+        let elements = backing.make_mut();
+        elements.reserve(2);
+        let room = (elements.capacity() - elements.len()) as u64;
+        assert!(room >= 2);
+        for grown in 2..2 + room {
+            assert_eq!(append_in_room_of(elements, Value::integer(0)), Some(grown));
+        }
+        assert_eq!(elements.len(), elements.capacity());
+        assert_eq!(append_in_room_of(elements, Value::integer(0)), None, "a full backing leaves for the VM to grow it");
+        assert_eq!(elements.len(), elements.capacity(), "the leave wrote nothing");
+    }
+
+    #[test]
+    fn the_interpreter_appends_in_room_and_leaves_references_holes_and_full_backings() {
+        use crate::heap::{ArrayElements, ArrayObject, Cell, Heap};
+        let mut heap = Heap::new();
+        let mut backing = ArrayElements::from_slice(&[Value::integer(1)]);
+        backing.make_mut().reserve(2);
+        let array = heap.alloc(Cell::Array { object: ArrayObject::fresh(Value::NULL, backing) });
+        let records = heap.array_record_base().expect("an array record");
+        assert!(concrete_append_in_room(records, array, Value::number(2.5)));
+        assert!(!concrete_append_in_room(records, array, array), "a reference passes the write barrier");
+        assert!(!concrete_append_in_room(records, array, Value::DELETED), "a hole is no element");
+        assert!(!concrete_append_in_room(records, Value::NULL, Value::integer(1)), "no array");
+        let mut length = 2;
+        while concrete_append_in_room(records, array, Value::integer(0)) {
+            length += 1;
+            assert!(length < 64, "the room is the capacity word's");
+        }
+        let elements = heap.array(array).expect("the array").elements();
+        assert_eq!((elements.len(), elements.as_slice()[1]), (length, Value::number(2.5)));
     }
 }

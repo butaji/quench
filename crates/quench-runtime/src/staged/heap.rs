@@ -62,12 +62,3 @@ fn index_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     }
 }
 
-/// A conditional jump on the register's truthiness, taken when it is `taken`; unresolved where
-/// the stage cannot tell its truthiness.
-pub(super) fn jump_if<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, register: Register, taken: bool)
-    -> Step<S::Word, F::Control> {
-    let Some(condition) = frame.truthiness(stage, register) else { return Step::Unresolved };
-    let condition = if taken { condition } else { stage.not(condition) };
-    Step::Control(frame.branch(stage, condition))
-}
-

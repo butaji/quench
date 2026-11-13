@@ -7,7 +7,7 @@ use super::*;
 pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::Jump => Step::Control(frame.jump(stage)),
-        Operation::JumpIf { register, taken } => super::heap::jump_if(stage, frame, register, taken),
+        Operation::JumpIf { register, taken } => jump_if(stage, frame, register, taken),
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         property @ (Operation::GetField { .. } | Operation::SetField { .. } | Operation::StoreField { .. } | Operation::FieldGetHost { .. }
             | Operation::FieldAdd { .. } | Operation::IndexGetHost { .. }) => super::property::property_step(stage, frame, property),
@@ -35,6 +35,9 @@ fn value_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination),
         Operation::TypeofIndex { destination, source } => super::control::typeof_index(stage, frame, destination, source),
+        Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
+            | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::Protocol { .. }
+            | Operation::ForInNext { .. } => super::names::step(stage, frame, operation),
         heap => super::heap::heap_step(stage, frame, heap),
     }
 }
@@ -50,15 +53,7 @@ fn register_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
             Step::Value(value)
         }
         Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. } => local_step(stage, frame, operation),
-        Operation::LogicalNot { destination, source } => match frame.truthiness(stage, source) {
-            Some(truthy) => {
-                let falsy = stage.not(truthy);
-                let (value, fact) = frame.boolean(stage, falsy);
-                frame.write(stage, destination, value, fact);
-                Step::Value(value)
-            }
-            None => Step::Unresolved,
-        },
+        Operation::LogicalNot { destination, source } => logical_not(stage, frame, destination, source),
         Operation::Safepoint { proof } => match frame.safepoint(stage, proof) {
             Some(()) => Step::Value(stage.constant(0)),
             None => Step::Unresolved,
@@ -71,18 +66,12 @@ fn register_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
 #[inline(always)]
 fn local_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
-        Operation::LoadLocalPlain { destination, slot } => {
-            match frame.load_local(stage, slot, frame.local_miss()) {
-                Some((value, fact)) => {
-                    frame.write(stage, destination, value, fact);
-                    Step::Value(value)
-                }
-                None => Step::Unresolved,
-            }
-        }
+        Operation::LoadLocalPlain { destination, slot } => match read_local(stage, frame, destination, slot, frame.local_miss()) {
+            Some(value) => Step::Value(value),
+            None => Step::Unresolved,
+        },
         Operation::StoreLocalPlain { source, slot, result } => {
-            let value = frame.tagged(stage, source);
-            if !frame.store_local(stage, slot, value, frame.local_miss()) { return Step::Unresolved; }
+            let Some(value) = write_local(stage, frame, source, slot, frame.local_miss()) else { return Step::Unresolved };
             if let Some(result) = result {
                 let fact = frame.fact(source);
                 frame.write(stage, result, value, fact);

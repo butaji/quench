@@ -1,6 +1,6 @@
 //! What a lane unit's by-name loads read at compile time: the global scope's bindings.
 use super::*;
-use super::super::global_facts::GlobalRead;
+use super::super::global_facts::{GlobalRead, GlobalReads, GlobalTable};
 
 impl<H: Host> Vm<H> {
     /// The PCs of `unit` whose by-name loads read the global scope as the lane's own does
@@ -22,13 +22,11 @@ impl<H: Host> Vm<H> {
         let reads: Vec<(usize, GlobalRead)> = unit.instructions.iter().enumerate()
             .filter(|(_, instruction)| instruction.op().is_throwing_name_load())
             .filter(|(pc, instruction)| {
-                let atom = instruction.atom_index();
                 let function = match unit.origins[*pc] {
                     lane_unit::Origin::Caller(_) => function,
                     lane_unit::Origin::Inlined { frame, .. } => unit.frames[frame].target.function,
                 };
-                global(function) && (!self.atom_class(atom).contains(super::super::object::AtomClass::INTERNAL)
-                    || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&self.atom_name(atom)))
+                self.reads_global_scope(program, function, instruction.atom_index())
             })
             .map(|(pc, instruction)| (pc, instruction.atom_index(), instruction.cache_site_index()))
             .collect::<Vec<_>>()
@@ -112,4 +110,26 @@ impl<H: Host> Vm<H> {
         self.heap.mark_prototype(holder);
         Some(self.object_data(holder)?.shape())
     }
+}
+
+/// The PCs a jump or a branch table enters: where control may arrive other than by falling through.
+fn branch_targets(code: &[crate::bytecode::WideInstruction]) -> std::collections::BTreeSet<usize> {
+    let mut entered = std::collections::BTreeSet::new();
+    for (pc, instruction) in code.iter().enumerate() {
+        crate::bytecode::for_each_instruction_successor(pc, *instruction, |successor| {
+            if successor != pc + 1 {
+                entered.insert(successor);
+            }
+        });
+    }
+    entered
+}
+
+/// The PC of the instruction defining the callee register of the call at `call`, if it is the only
+/// one reaching it: the nearest before the call that writes the register, with no jump landing
+/// between the two.
+fn straight_definition(code: &[crate::bytecode::WideInstruction], entered: &std::collections::BTreeSet<usize>, call: usize) -> Option<usize> {
+    let callee = code[call].register_b();
+    let defined = (0..call).rev().find(|pc| code[*pc].written_registers().any(|register| register == callee))?;
+    entered.range(defined + 1..=call).next().is_none().then_some(defined)
 }

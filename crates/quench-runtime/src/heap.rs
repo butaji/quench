@@ -82,6 +82,9 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) header_values_offset: usize,
     /// The backing's owner count, one where no other array shares it.
     pub(crate) header_owners_offset: usize,
+    /// The backing's capacity word: the values it has room for, under `capacity_mask`.
+    pub(crate) header_capacity_offset: usize,
+    pub(crate) capacity_mask: u32,
     /// The record's object part, whose meta and payload words `NATIVE_OBJECT_LAYOUT` names.
     pub(crate) object_offset: usize,
     /// The meta bit of a frozen array.
@@ -92,8 +95,9 @@ pub(crate) struct NativeArrayLayout {
 }
 
 /// The native reader's view of a function record: its own properties are the `Object` at
-/// `object_offset`, whose words `NATIVE_OBJECT_LAYOUT` names. Generated code reads them only;
-/// a store's barrier tests object record marks (`emit_unlogged_property_store_guard`).
+/// `object_offset`, whose words `NATIVE_OBJECT_LAYOUT` names. The record is `repr(C)`, so the layout
+/// is the declaration's. Generated code reads and, through the function space's barrier
+/// (`RecordSpace::Function`, `emit_unlogged_property_store_guard`), stores them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeFunctionLayout {
     pub(crate) record_size: usize,
@@ -115,6 +119,8 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     header_length_offset: array_elements::NATIVE_HEADER_LENGTH_OFFSET,
     header_values_offset: array_elements::NATIVE_HEADER_VALUES_OFFSET,
     header_owners_offset: array_elements::NATIVE_HEADER_OWNERS_OFFSET,
+    header_capacity_offset: array_elements::NATIVE_HEADER_CAPACITY_OFFSET,
+    capacity_mask: array_elements::NATIVE_HEADER_CAPACITY_MASK,
     object_offset: cell::NATIVE_ARRAY_OBJECT_OFFSET,
     frozen_mask: crate::value_vec::VALUE_VEC_FROZEN,
     integrity_mask: crate::value_vec::VALUE_VEC_INTEGRITY_BITS,
@@ -150,6 +156,8 @@ pub(crate) struct NativeObjectLayout {
     pub(crate) array_mask: u32,
     pub(crate) storage_start_mask: u32,
     pub(crate) dictionary_mask: u32,
+    /// The meta bits of an object that is not extensible or is frozen (`VALUE_VEC_INTEGRITY_BITS`).
+    pub(crate) integrity_mask: u32,
     pub(crate) inline_property_count: usize,
     pub(crate) extras_tag: u64,
     pub(crate) extras_tag_mask: u64,
@@ -178,6 +186,7 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     array_mask: cell::NATIVE_OBJECT_ARRAY_MASK,
     storage_start_mask: crate::value_vec::START_MASK,
     dictionary_mask: crate::value_vec::DICTIONARY_STORAGE,
+    integrity_mask: crate::value_vec::VALUE_VEC_INTEGRITY_BITS,
     inline_property_count: INLINE_PROPERTY_COUNT,
     extras_tag: cell::NATIVE_OBJECT_EXTRAS_TAG,
     extras_tag_mask: cell::NATIVE_OBJECT_EXTRAS_TAG_MASK,
@@ -3949,7 +3958,7 @@ impl Heap {
     }
 
     #[cfg(feature = "profile-memory")]
-    fn note_object_slots(&mut self, object: Value, slots: usize) {
+    pub(crate) fn note_object_slots(&mut self, object: Value, slots: usize) {
         self.memory_profile.object_slots_changed(object, slots);
     }
     /// Push the values `object` keeps alive. Objects that share a prototype push it once:

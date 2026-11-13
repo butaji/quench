@@ -40,6 +40,7 @@ mod wasm_table;
 use crate::Value;
 use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
     NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
+use crate::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_set_function_name};
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
@@ -132,6 +133,7 @@ mod call_printer;
 pub(crate) use call_printer::{freeze_call_sites, freeze_source_call_sites};
 mod call_out;
 mod call_out_calls;
+mod call_out;
 mod coercion;
 mod collections;
 mod construction;
@@ -147,6 +149,7 @@ mod dynamic_strings;
 mod lane_exits;
 mod embedding;
 mod provenance;
+mod private_slots;
 mod inspection;
 mod caller_view;
 mod environment;
@@ -158,6 +161,8 @@ mod error;
 mod eval;
 mod fdlibm_math;
 mod field_cache;
+mod in_presence;
+mod instanceof_walk;
 mod site_table;
 mod finalization;
 mod first_call_chunk;
@@ -216,6 +221,7 @@ mod object_symbols;
 #[cfg(test)] mod call_out_tests;
 #[cfg(test)] mod native_frame_tests;
 #[cfg(test)] mod catch_tests;
+#[cfg(test)] mod call_out_tests;
 #[cfg(test)] mod object_tests;
 mod property_key;
 use call_arguments::CallArguments;
@@ -989,6 +995,11 @@ impl FieldAddCache {
     fn prototype_shapes(&self) -> &[u32] {
         &self.prototype_shapes[..usize::from(self.prototype_depth)]
     }
+    /// The shape transition the entry caches, as the staged add row takes it.
+    #[inline(always)]
+    fn transition(&self) -> Transition {
+        Transition { before: self.source_shape, after: self.target_shape, slot: self.slot }
+    }
     /// Whether the chain proof (`proved_epoch`, `proved_prototype`) holds for a receiver
     /// whose prototype `link` names: then the chain needs no walk.
     #[inline(always)]
@@ -1297,6 +1308,17 @@ const DEFAULT_DATA_ATTRIBUTES: DataAttributes = DataAttributes {
     writable: true,
     enumerable: true,
     configurable: true,
+};
+/// A private field's slot (`private_slots`): writable, and neither enumerable nor configurable.
+const PRIVATE_FIELD_ATTRIBUTES: DataAttributes = DataAttributes {
+    writable: true,
+    enumerable: false,
+    configurable: false,
+};
+/// A private method's or accessor's brand: a field's attributes but read-only, which tells the two apart.
+const PRIVATE_BRAND_ATTRIBUTES: DataAttributes = DataAttributes {
+    writable: false,
+    ..PRIVATE_FIELD_ATTRIBUTES
 };
 /// The attributes of a function's own `length` and `name`.
 const FUNCTION_INFO_ATTRIBUTES: DataAttributes = DataAttributes {
@@ -2037,8 +2059,9 @@ pub(crate) struct Vm<H> {
     /// The compiled chunk of each first-call stub, by its program and function, while both live.
     first_chunks: first_call_chunk::FirstChunks,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
-    /// The `typeof` result string of each value type, made on first use; `undefined` until
-    /// then. Rooted, so `typeof` neither hashes nor allocates once warm.
+    /// The `typeof` result strings, one table indexed as `bytecode::TYPEOF_NAMES`, interned when the
+    /// heap is made (`Vm::intern_typeof_names`). Rooted, so `typeof` neither hashes nor allocates, and a
+    /// compiled body may name the table (`staged::value::typeof_string`).
     typeof_names: [Value; TYPEOF_NAMES],
     symbol_registry: FxHashMap<String, Value>,
     well_known_symbols: WellKnownSymbols,
@@ -2088,6 +2111,9 @@ pub(crate) struct Vm<H> {
     /// data `prototype` at the paired slot, direct-mapped by shape; derived from shapes, so
     /// field-cache invalidation clears them.
     instanceof_constructor_layouts: [Option<(u32, usize)>; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
+    /// What `key in object` answered of receiver shapes and keys (`in_presence`), direct-mapped; derived from
+    /// shapes, so field-cache invalidation clears it.
+    in_presences: [Option<in_presence::InPresence>; in_presence::IN_PRESENCES],
     /// Constructor prototypes (a subclass's parent constructor, `%TypedArray%`) proved to
     /// inherit the native `@@hasInstance` (`Vm::inherits_native_has_instance`), each with the
     /// prototype-layout epoch its proof holds under: the proof marks every link of the chain
@@ -2161,6 +2187,9 @@ pub(crate) struct Vm<H> {
     /// Private-name home objects found by `private_name_home`, kept while their starting
     /// environment is live.
     private_homes: FxHashMap<PrivateHomeKey, Value>,
+    /// The raw id of the next private atom a class evaluation declares (`Vm::fresh_private_atom`);
+    /// ids are never reused, so a shape's private key names one evaluation's name for good.
+    next_private_atom: u32,
     /// The collation `String.prototype.localeCompare` resolves without locales or options
     /// (`Vm::locale_compare_collation`); the host's default locale fixes it.
     default_collation: Option<std::rc::Rc<intl_collator::Collation>>,
@@ -3051,7 +3080,7 @@ impl<H: Host> Vm<H> {
         self.regexp_matchers.clear();
         self.atom_classes.resize_with(self.atom_text.len(), Default::default);
         self.dynamic_strings = None;
-        self.typeof_names = [Value::UNDEFINED; TYPEOF_NAMES];
+        self.intern_typeof_names();
         self.symbol_registry.clear();
         self.well_known_symbols.clear();
         self.clear_call_targets();
@@ -3117,6 +3146,7 @@ impl<H: Host> Vm<H> {
         self.programs.reset(program.clone());
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.instanceof_inheriting_holders = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
+        self.in_presences = [None; in_presence::IN_PRESENCES];
         self.closure_shapes = [None; 2];
         self.resolver_function_shape = None;
         self.function_name_shapes.clear();

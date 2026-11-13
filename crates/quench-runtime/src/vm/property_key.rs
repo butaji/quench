@@ -1,4 +1,5 @@
 use crate::bytecode::Atom;
+use crate::heap::PrivateAtom;
 use crate::value::Value;
 
 /// The semantic identity of an object property key.
@@ -11,10 +12,11 @@ use crate::value::Value;
 pub(crate) enum PropertyKey {
     String(Atom),
     Symbol(Value),
-    // OXC private-name lowering is introduced with class-field semantics;
-    // retain the namespace now so it cannot alias string or symbol keys.
-    #[allow(dead_code)]
-    Private(Atom),
+    /// A private field or brand of one class evaluation (`PrivateAtom`): a shape slot like any
+    /// other, but never a key of reflection. Own-key listing, descriptors, enumeration, proxies'
+    /// traps and structured copies name only string and symbol keys, so no operation of the
+    /// language reaches a private key but the private-name operations themselves.
+    Private(PrivateAtom),
 }
 
 impl PropertyKey {
@@ -26,8 +28,7 @@ impl PropertyKey {
         Self::Symbol(value)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn private(atom: Atom) -> Self {
+    pub(crate) fn private(atom: PrivateAtom) -> Self {
         Self::Private(atom)
     }
 
@@ -43,12 +44,13 @@ impl PropertyKey {
 mod tests {
     use super::PropertyKey;
     use crate::bytecode::Atom;
+    use crate::heap::PrivateAtom;
     use crate::value::Value;
 
     #[test]
     fn namespaces_do_not_alias() {
-        let atom = Atom::from(7_u8);
-        assert_ne!(PropertyKey::string(atom), PropertyKey::private(atom));
+        let atom: Atom = 7;
+        assert_ne!(PropertyKey::string(atom), PropertyKey::private(PrivateAtom::from_raw(atom)));
         assert_ne!(
             PropertyKey::symbol(Value::number(7.0)),
             PropertyKey::string(atom)

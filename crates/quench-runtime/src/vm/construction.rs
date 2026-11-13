@@ -126,24 +126,38 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc_string(text))
     }
 
+    /// SetFunctionName of `function` to the program atom `name` at cache `site`: the staged naming
+    /// row along the edge the site recorded (`named_by_transition`), else the general naming, which
+    /// records the edge it made for the next one.
     pub(super) fn set_function_name(
         &mut self,
         p: &ResidualProgram,
         function: Value,
-        name: Atom,
+        (name, site): (Atom, u16),
     ) -> Result<(), JsError> {
         if (name as usize) >= p.atoms.len() {
             return Err(JsError("function name atom is invalid".into()));
         }
+        if self.named_by_transition(function, name, site) {
+            return Ok(());
+        }
         // A program's atom ids are the VM's, so the name's atom is known without interning.
+        let before = self.object_data(function).map(Object::shape);
         let value = self
             .inferred_function_name_slot(function)
             .map(|slot| (slot, self.atom_string(name)));
-        if let Some((slot, value)) = value {
+        if let (Some((slot, value)), Some(before)) = (value, before) {
             self.heap.property_set(function, slot, value);
             self.capture_function_name_for_atom(function, name);
+            self.record_function_name_edge(site, function, name, (before, slot));
         }
         Ok(())
+    }
+
+    /// The word of the empty string every anonymous closure starts with as its name
+    /// (`closure_in_realm`), `DELETED` before any exists, which no name slot holds.
+    pub(super) fn empty_string_word(&self) -> Value {
+        self.heap.atom_string(self.runtime_atoms.empty, true).unwrap_or(Value::DELETED)
     }
 
     /// The string value spelling `atom`, shared for program atoms and the anonymous name.

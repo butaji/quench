@@ -23,6 +23,24 @@ pub use stub::{EXIT_STUB_LEN, exit_stub};
 pub const PINNED: usize = 4;
 pub const PINNED_F: usize = 8;
 
+/// Namespace of value holes (64-bit immediates) and of successor holes.
+const HOLE_VALUE: u32 = 1;
+const HOLE_CODE: u32 = 2;
+/// Successor hole indexes.
+pub const NEXT: u32 = 0;
+pub const TAKEN: u32 = 1;
+/// Exit hole indexes start here: exit `kind` is hole `EXIT + kind`, so each guard kind reaches
+/// its own exit stub (an `ExitSite` id), not one shared hole.
+pub const EXIT: u32 = 2;
+/// The successor hole index of a relocation to the row's own code: its addend is the target's
+/// offset in the stencil's `code` (`build/layout.rs`).
+pub const LOCAL: u32 = u8::MAX as u32;
+/// The pc-relative addend of a rel32 field that ends its instruction.
+const REL32_ADDEND: i64 = -4;
+
+/// `ret`: what a leave routine ends with.
+pub const RET: u8 = 0xc3;
+
 /// `jmp rel32`: the opcode byte, then the displacement a relocation patches.
 const JMP_REL32_LEN: usize = 5;
 
@@ -44,12 +62,15 @@ pub struct Stencil {
     pub relocs: Vec<Reloc>,
     /// The code's 32-bit hole fields.
     pub imm32: Vec<Imm32>,
-    /// Where the trailing jump to the next row starts when it ends the code, so adjacency drops it.
+    /// Where the trailing `jmp next` starts when it ends the hot part, so adjacency drops it.
     pub next_jump: Option<usize>,
     /// Bytes of that tail.
     pub tail_len: usize,
     /// Bytes of the code.
     pub raw_len: usize,
+    /// Bytes of the hot part, which `code` starts with; the rest is the cold part, which the
+    /// stitcher places after every hot part (`LOCAL` relocations reach across).
+    pub hot_len: usize,
 }
 
 /// One row of a program: its stencil, hole values and branch target row.
@@ -59,49 +80,94 @@ pub struct Row<'a> {
     pub taken: Option<usize>,
 }
 
-/// Each row's start offset and the code length once copied back to back, a `jmp next` dropped
-/// where the next stencil follows.
-fn layout(rows: &[Row]) -> (Vec<usize>, Vec<usize>, usize) {
-    let (mut starts, mut sizes, mut len) = (Vec::new(), Vec::new(), 0);
+/// Where a row's parts go: the hot parts back to back (a `jmp next` dropped where the next row
+/// follows), then every cold part.
+struct Layout {
+    hot: Vec<usize>,
+    hot_sizes: Vec<usize>,
+    cold: Vec<usize>,
+    len: usize,
+}
+
+fn layout(rows: &[Row]) -> Layout {
+    let (mut hot, mut hot_sizes, mut len) = (Vec::new(), Vec::new(), 0);
     for (k, row) in rows.iter().enumerate() {
-        starts.push(len);
+        hot.push(len);
         let drop = if row.stencil.next_jump.is_some() && k + 1 < rows.len() { row.stencil.tail_len } else { 0 };
-        sizes.push(row.stencil.code.len() - drop);
-        len += sizes[k];
+        hot_sizes.push(row.stencil.hot_len - drop);
+        len += hot_sizes[k];
     }
-    (starts, sizes, len)
+    let mut cold = Vec::new();
+    for row in rows {
+        cold.push(len);
+        len += row.stencil.code.len() - row.stencil.hot_len;
+    }
+    Layout { hot, hot_sizes, cold, len }
+}
+
+impl Layout {
+    /// Where offset `at` of row `k`'s code lands: in its hot part (an offset in a dropped
+    /// `jmp next` lands on the next row, which follows) or its cold part.
+    fn address(&self, rows: &[Row], k: usize, at: usize) -> usize {
+        let hot_len = rows[k].stencil.hot_len;
+        if at < hot_len { self.hot[k] + at } else { self.cold[k] + at - hot_len }
+    }
+
+    /// Whether the `width` bytes at offset `at` of row `k` are copied: not inside a dropped tail.
+    fn kept(&self, rows: &[Row], k: usize, at: usize) -> bool {
+        at >= rows[k].stencil.hot_len || at < self.hot_sizes[k]
+    }
 }
 
 /// Bytes a 32-bit immediate or pc-relative patch writes.
 pub const IMM32_WIDTH: usize = 4;
 
-/// Every patch lands inside the code it patches, at link time (a row's copied code: a write
-/// past it would overwrite the next row's first bytes) and at run time (an inline-cache
-/// re-patch of published code, which must end inside the body's own bytes).
-pub fn patch_ends_inside(offset: u32, width: usize, size: usize, what: &str) {
-    assert!(offset as usize + width <= size, "{what} patch ends past its row's code");
+/// Every patch lands inside its row's copied part: a write past it would overwrite the next
+/// part's first bytes.
+fn patch_ends_inside(layout: &Layout, rows: &[Row], k: usize, (offset, width): (u32, usize), what: &str) {
+    let hot_len = rows[k].stencil.hot_len;
+    let end = if (offset as usize) < hot_len { layout.hot_sizes[k] } else { rows[k].stencil.code.len() };
+    assert!(offset as usize + width <= end, "{what} patch ends past its row's code");
 }
 
-/// Copy `rows` into `out` back to back and patch their holes; `exit` gives each row's exit
-/// stub address for an exit kind. Returns the code length and each row's start offset.
+/// The address a pc-relative relocation of row `k` names.
+fn successor_target(layout: &Layout, rows: &[Row], out: usize, k: usize, r: &Reloc, exit: &impl Fn(usize, u32) -> usize) -> (usize, i64) {
+    match r.index {
+        NEXT => (out + layout.hot[k + 1], r.addend),
+        TAKEN => (out + layout.hot[rows[k].taken.expect("a branch row names its target")], r.addend),
+        LOCAL => (out + layout.address(rows, k, r.addend as usize), REL32_ADDEND),
+        index => (exit(k, index - EXIT), r.addend),
+    }
+}
+
+/// Copy `rows` into `out`, every hot part back to back and then every cold part, and patch
+/// their holes; `exit` gives each row's exit stub address for an exit kind. Returns the code
+/// length and each row's start offset.
 ///
 /// # Safety
 /// `out` must be writable for the whole code.
 pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize, u32) -> usize) -> (usize, Vec<usize>) {
-    let (starts, sizes, len) = layout(rows);
+    let layout = layout(rows);
     for (k, row) in rows.iter().enumerate() {
-        // SAFETY: the caller guarantees `out` holds the layout computed above, and the rows' spans are disjoint.
-        let code = unsafe { std::slice::from_raw_parts_mut(out.add(starts[k]), sizes[k]) };
-        code.copy_from_slice(&row.stencil.code[..sizes[k]]);
-        for field in row.stencil.imm32.iter().filter(|f| (f.offset as usize) < sizes[k]) {
-            let at = field.offset as usize;
-            code[at..at + size_of::<u32>()].copy_from_slice(&field.value((row.hole)(field.index) as u32).to_le_bytes());
-        }
-        for r in row.stencil.relocs.iter().filter(|r| (r.offset as usize) < sizes[k]) {
-            let place = out as usize + starts[k] + r.offset as usize;
-            if !class::is_successor(r.class) {
-                patch_value(code, r.offset as usize, r.class, (row.hole)(r.index));
-                continue;
+        let stencil = row.stencil;
+        // SAFETY: the caller guarantees `out` holds the layout computed above.
+        unsafe {
+            std::ptr::copy_nonoverlapping(stencil.code.as_ptr(), out.add(layout.hot[k]), layout.hot_sizes[k]);
+            std::ptr::copy_nonoverlapping(stencil.code[stencil.hot_len..].as_ptr(), out.add(layout.cold[k]), stencil.code.len() - stencil.hot_len);
+            for field in stencil.imm32.iter().filter(|f| layout.kept(rows, k, f.offset as usize)) {
+                patch_ends_inside(&layout, rows, k, (field.offset, IMM32_WIDTH), "an immediate");
+                std::ptr::write_unaligned(out.add(layout.address(rows, k, field.offset as usize)).cast::<u32>(), field.value((row.hole)(field.index) as u32));
+            }
+            for r in stencil.relocs.iter().filter(|r| layout.kept(rows, k, r.offset as usize)) {
+                patch_ends_inside(&layout, rows, k, (r.offset, if r.pc_relative { IMM32_WIDTH } else { ABS64_WIDTH }), "a relocation");
+                let place = out.add(layout.address(rows, k, r.offset as usize));
+                if !r.pc_relative {
+                    std::ptr::write_unaligned(place.cast::<u64>(), (row.hole)(r.index));
+                    continue;
+                }
+                let (target, addend) = successor_target(&layout, rows, out as usize, k, r, &exit);
+                let displacement = i32::try_from(target as i64 + addend - place as i64).expect("a successor within rel32 reach");
+                std::ptr::write_unaligned(place.cast::<i32>(), displacement);
             }
             let target = match r.index {
                 NEXT => out as usize + starts[k + 1],
@@ -111,7 +177,7 @@ pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize, u32) -
             patch_successor(code, r.offset as usize, r.class, target as i64 + r.addend - place as i64).expect("a successor within branch reach");
         }
     }
-    (len, starts)
+    (layout.len, layout.hot)
 }
 
 /// Stencils compiled by rustc from `stencils/rows.rs` (see `build.rs`), as [`Stencil`]s.
@@ -123,14 +189,55 @@ pub mod rustc {
     pub(crate) struct RawStencil {
         pub(crate) name: &'static str,
         pub(crate) code: &'static [u8],
+        pub(crate) hot_len: usize,
         pub(crate) relocs: &'static [(u16, u8, u8, i32)],
+    }
+
+    /// One CPU variant's stencils, and what `build.rs` counted over them (`build/checks.rs`).
+    pub(crate) struct RawLibrary {
+        /// Rows that adjust or use the stack, where a pinned register would spill.
+        pub(crate) stencils_with_stack_frame: usize,
+        /// Rows whose hot path does not end with the continuation jump the stitcher drops.
+        pub(crate) stencils_not_ending_in_continuation: usize,
+        pub(crate) rows: &'static [RawStencil],
     }
 
     include!(concat!(env!("OUT_DIR"), "/rustc_stencils.rs"));
 
+    /// Whether this CPU runs the x86-64-v3 build: its AVX2 and BMI2 baseline with the rest of the
+    /// level (AVX, BMI1, F16C, FMA, LZCNT, MOVBE). Other targets have only the baseline table.
+    fn runs_v3() -> bool {
+        #[cfg(target_arch = "x86_64")]
+        {
+            use std::arch::is_x86_feature_detected as has;
+            has!("avx") && has!("avx2") && has!("bmi1") && has!("bmi2") && has!("f16c") && has!("fma") && has!("lzcnt") && has!("movbe")
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    }
+
+    /// The library this process's stencils come from, chosen once at first use.
+    fn library() -> &'static RawLibrary {
+        static CHOSEN: std::sync::OnceLock<&'static RawLibrary> = std::sync::OnceLock::new();
+        CHOSEN.get_or_init(|| if runs_v3() { &V3 } else { &BASELINE })
+    }
+
+    /// Rows of the chosen library that keep a stack frame.
+    pub fn stencils_with_stack_frame() -> usize {
+        library().stencils_with_stack_frame
+    }
+
+    /// Rows of the chosen library whose hot path does not end with the continuation jump.
+    pub fn stencils_not_ending_in_continuation() -> usize {
+        library().stencils_not_ending_in_continuation
+    }
+
     /// The stencil of the row function `name`, if the object has it.
     pub fn stencil(name: &str) -> Option<Stencil> {
-        let raw = &RAW[RAW.binary_search_by(|raw| raw.name.cmp(name)).ok()?];
+        let rows = library().rows;
+        let raw = &rows[rows.binary_search_by(|raw| raw.name.cmp(name)).ok()?];
         let (mut relocs, mut imm32) = (Vec::new(), Vec::new());
         for &(offset, kind, index, addend) in raw.relocs {
             let (offset, index) = (u32::from(offset), u32::from(index));
@@ -140,8 +247,8 @@ pub mod rustc {
             }
         }
         let len = raw.code.len();
-        let (next_jump, tail_len) = trailing_next_jump(&relocs, len).map_or((None, 0), |(at, tail)| (Some(at), tail));
-        Some(Stencil { code: raw.code.to_vec(), relocs, imm32, next_jump, tail_len, raw_len: len })
+        let next_jump = relocs.iter().find(|r| r.index == NEXT && r.offset as usize + REL32 == raw.hot_len).map(|r| r.offset as usize - 1);
+        Some(Stencil { code: raw.code.to_vec(), relocs, imm32, next_jump, tail_len: super::JMP_REL32_LEN, raw_len: len, hot_len: raw.hot_len })
     }
 
     /// Where the jump to the next row starts and its length, when it is the code's last
@@ -159,11 +266,19 @@ pub mod rustc {
 }
 
 #[cfg(test)]
+#[path = "../build/layout.rs"]
+mod layout;
+
+#[cfg(test)]
 mod rustc_tests {
     use super::{numeric::library, rustc};
 
-    /// The routines around a region's rows (`stencils/entry.rs`).
-    const ROUTINES: [&str; 4] = ["entry_thunk", "entry_resume", "leave_word", "leave_pop"];
+    /// Rows `build/layout.rs` could not lay out with the continuation jump last in their hot
+    /// part (it keeps their built bytes). A row shape the layout cannot handle shows up here.
+    const NOT_ENDING_IN_CONTINUATION: usize = 0;
+
+    /// The routines around the rows (`stencils/entry.rs`).
+    const ROUTINES: [&str; 7] = ["entry_thunk", "entry_body", "leave_word", "leave_pop", "leave_stop", "leave_stop_pop", "leave_returned"];
 
     /// Every row the library names was built, and canonicalizing is idempotent.
     #[test]
@@ -199,28 +314,21 @@ mod rustc_tests {
         }
     }
 
-    /// The cache rows (`stencils/ic_rows.rs`) patch the holes `base_rows` fills: a get its
-    /// destination, receiver, shape and slot offset (a holder read also the holder's shape), a
-    /// store its receiver, value, atom, shape and slot offset; a chained row's hit takes the
-    /// branch target and the last entry's miss takes the exit.
+    /// No row keeps a stack frame, so no pinned register is spilled, in either CPU variant.
     #[test]
-    fn cache_rows_patch_their_entry_holes_and_take_their_successors() {
-        use super::numeric::library::{heap_canonical, heap_name, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_ROW, MEM};
-        let row = |heap, chained| {
-            let stencil = rustc::stencil(&heap_name(heap_canonical((heap, chained, MEM, MEM, MEM)))).expect("a cache row");
-            let mut values: Vec<u32> = stencil.imm32.iter().map(|field| field.index).collect();
-            values.sort_unstable();
-            values.dedup();
-            let successors: Vec<u32> = stencil.relocs.iter().filter(|reloc| crate::class::is_successor(reloc.class)).map(|reloc| reloc.index).collect();
-            (values, successors)
-        };
-        assert_eq!(row(IC_GET_ROW, false).0, [0, 1, 2, 3]);
-        assert_eq!(row(IC_GET_HOLDER_ROW, false).0, [0, 1, 2, 3, 4]);
-        assert_eq!(row(IC_SET_ROW, false).0, [0, 1, 2, 3, 4]);
-        for heap in [IC_GET_ROW, IC_GET_HOLDER_ROW, IC_SET_ROW] {
-            let (last, chained) = (row(heap, false).1, row(heap, true).1);
-            assert!(last.contains(&crate::EXIT) && !last.contains(&crate::TAKEN), "{heap}: {last:?}");
-            assert!(chained.contains(&crate::TAKEN) && chained.contains(&crate::NEXT), "{heap}: {chained:?}");
+    fn no_row_has_a_stack_frame() {
+        for library in [&rustc::BASELINE, &rustc::V3] {
+            assert_eq!(library.stencils_with_stack_frame, 0);
         }
+        assert_eq!(rustc::stencils_with_stack_frame(), 0);
+    }
+
+    /// Every row ends its hot part with the continuation jump.
+    #[test]
+    fn rows_end_in_the_continuation_jump() {
+        for library in [&rustc::BASELINE, &rustc::V3] {
+            assert_eq!(library.stencils_not_ending_in_continuation, NOT_ENDING_IN_CONTINUATION);
+        }
+        assert_eq!(rustc::stencils_not_ending_in_continuation(), NOT_ENDING_IN_CONTINUATION);
     }
 }

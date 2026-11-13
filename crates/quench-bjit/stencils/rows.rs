@@ -27,11 +27,12 @@ mod heap_rows;
 mod ic_rows;
 mod layout;
 mod numeric;
+mod places;
 mod stage;
 mod staged;
 mod supernode_rows;
 mod words;
-pub(crate) use facade::{Value, heap, typed_ir, value, value_vec, vm};
+pub(crate) use facade::{Value, bytecode, heap, operations, typed_ir, value, value_vec, vm};
 
 use numeric::{Out, S};
 

@@ -159,13 +159,13 @@ impl PropertyFrame<Concrete> for ConcreteFrame<'_> {
 impl ElementFrame<Concrete> for ConcreteFrame<'_> {}
 
 impl NumericFrame<Concrete> for ConcreteFrame<'_> {
-    fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
+    fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let register = operand.register_index().expect("a numeric operand is a register");
-        u64::from(Value::from_bits(self.read(stage, register)).as_int().expect("a proved int") as u32)
+        Some(u64::from(Value::from_bits(self.read(stage, register)).as_int().expect("a proved int") as u32))
     }
-    fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
+    fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let register = operand.register_index().expect("a numeric operand is a register");
-        Value::from_bits(self.read(stage, register)).as_number().expect("a proved Number").to_bits()
+        Some(Value::from_bits(self.read(stage, register)).as_number().expect("a proved Number").to_bits())
     }
     fn prove_number(&mut self, stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
         Value::from_bits(self.read(stage, register)).as_number().map(|_| ())
@@ -528,4 +528,27 @@ fn every_host_callout_operation_has_a_concrete_reading() {
         assert!(matches!(step(&mut stage, &mut frame, operation), Step::Unresolved));
     }
     assert!(matches!(step(&mut stage, &mut frame, Operation::Safepoint { proof: () }), Step::Value(_)));
+}
+
+/// The fast arms of `RequireIteratorResult` and `ToPropertyKey` answer from the register's word
+/// alone: an object or array record passes, a direct string is its own key, and every other
+/// value leaves for the full operation, writing nothing.
+#[test]
+fn the_key_and_iterator_fast_arms_decide_from_the_word_alone() {
+    let mut heap = Heap::new();
+    let mut stage = Concrete::new(std::ptr::null());
+    let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+    let string = heap.alloc_string(crate::vm::wtf16::JsString::from_str("key"));
+    for (value, passes) in [(object, true), (string, false), (Value::UNDEFINED, false), (Value::integer(1), false), (Value::number(0.5), false)] {
+        let mut frame = ConcreteFrame { registers: vec![value.to_bits()], heap: None };
+        let step = step(&mut stage, &mut frame, Operation::RequireIteratorResult { register: 0 });
+        assert_eq!(matches!(step, Step::Value(_)), passes, "{value:?}");
+    }
+    for (value, copies) in [(string, true), (object, false), (Value::integer(7), false), (Value::UNDEFINED, false)] {
+        let mut frame = ConcreteFrame { registers: vec![value.to_bits(), Value::NULL.to_bits()], heap: None };
+        let step = step(&mut stage, &mut frame, Operation::ToPropertyKey { destination: 1, source: 0 });
+        assert_eq!(matches!(step, Step::Value(_)), copies, "{value:?}");
+        let expected = if copies { value } else { Value::NULL };
+        assert_eq!(Value::from_bits(frame.registers[1]), expected, "{value:?}");
+    }
 }

@@ -357,10 +357,9 @@ impl<H: Host> Vm<H> {
     /// `key` as a JavaScript property key value.
     fn property_key_value(&mut self, key: PropertyKey) -> Value {
         match key {
-            PropertyKey::String(atom) | PropertyKey::Private(atom) => {
-                self.heap.alloc_string(self.atom_value(atom))
-            }
+            PropertyKey::String(atom) => self.heap.alloc_string(self.atom_value(atom)),
             PropertyKey::Symbol(symbol) => symbol,
+            PropertyKey::Private(_) => unreachable!("an intrinsic holder keeps no private names"),
         }
     }
 }

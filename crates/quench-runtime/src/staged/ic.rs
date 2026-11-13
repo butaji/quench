@@ -141,6 +141,57 @@ pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, proper
     load_slot(&mut stage, &at, slot, Form::Either, usize::from(slot) + 1, ()).map(crate::Value::from_bits)
 }
 
+/// The own data value the field cache entry of the site `offset` bytes into `entries` (the
+/// running program's table, `Vm::active_field_entries`) names in `object`, which the object
+/// record table at `records` holds: the interpreter's primary read of a site, `site_read` through
+/// `Concrete`, the row the stencil build compiles from the same definition. `None` where it misses.
+///
+/// # Safety
+/// `entries` is the table of the running program and `offset` a site's byte offset in it,
+/// `records` the object record reservation and `property_values` the base of the arena that
+/// holds the record's run; none outlives the call.
+#[inline(always)]
+pub(crate) unsafe fn concrete_site_read(property_values: *const crate::Value, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
+    let mut stage = super::Concrete::new(property_values);
+    super::entry::site_read(&mut stage, (entries, records), object.to_bits(), offset, ()).map(crate::Value::from_bits)
+}
+
+/// The value `object.first.second` reads through the field cache entries `first` and `second`
+/// (byte offsets into `entries`): `site_chain` through `Concrete`, one proof of the tables for
+/// both reads. `None` where either misses.
+///
+/// # Safety
+/// As `concrete_site_read`, for both offsets.
+#[inline(always)]
+pub(crate) unsafe fn concrete_site_chain(property_values: *const crate::Value, tables: (u64, u64), object: crate::Value, offsets: (u64, u64)) -> Option<crate::Value> {
+    let mut stage = super::Concrete::new(property_values);
+    super::entry::site_chain(&mut stage, tables, object.to_bits(), offsets, ()).map(crate::Value::from_bits)
+}
+
+/// The store of `value` into the own data field the site's entry `offset` bytes into `entries`
+/// names in `object`: `site_store` through `Concrete` over `heap`, which admits it where the
+/// write barrier needs no log. False changes nothing.
+///
+/// # Safety
+/// As `concrete_site_read`, with `heap` the heap whose tables `entries` and `records` are.
+#[inline(always)]
+pub(crate) unsafe fn concrete_site_store(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64, value: crate::Value) -> bool {
+    let mut stage = super::Concrete::storing(heap);
+    super::entry::site_store(&mut stage, (entries, records), object.to_bits(), offset, value.to_bits(), ()).is_some()
+}
+
+/// Whether `object`, among the object records at `records`, is a direct object of exact shape `shape`
+/// whose prototype link is `link`: `held_receiver` through `Concrete`, the receiver proof of a folded
+/// prototype-held read.
+///
+/// # Safety
+/// `records` is the object record reservation (or null before the first record).
+#[inline(always)]
+pub(crate) unsafe fn concrete_held_receiver(records: *const crate::heap::Object, object: crate::Value, shape: u32, link: u32) -> bool {
+    let mut stage = super::Concrete::new(std::ptr::null());
+    super::entry::held_receiver(&mut stage, records as u64, object.to_bits(), (u64::from(shape), u64::from(link)), ()).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

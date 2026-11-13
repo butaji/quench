@@ -23,6 +23,9 @@ pub(in crate::vm::compiled) struct Emit<'a, 'b> {
     /// The dispatch payload that holds the object marks the store barrier's test reads, where
     /// the operation stores (`Stage::store_gate`).
     pub(in crate::vm::compiled) gate: Option<ir::Value>,
+    /// The dispatch payload that holds the slot-observation flag and the object marks the store
+    /// barrier's test reads, where the operation stores (`Stage::store_gate`).
+    pub(in crate::vm::compiled) gate: Option<ir::Value>,
 }
 
 /// An immediate of the Cranelift stage: a constant, or a value the caller holds as one (a stencil's
@@ -282,6 +285,13 @@ impl Emit<'_, '_> {
         self.builder.switch_to_block(join);
         self.builder.seal_block(join);
         value
+    }
+    /// The walk unrolled up to the tier's bound; a longer chain is undecided, for the caller's
+    /// residual.
+    fn walk_prototypes(&mut self, records: ir::Value, object: ir::Value, target: ir::Value, max_depth: u32)
+        -> (ir::Value, ir::Value) {
+        let links = max_depth.min(crate::vm::compiled::tier_policy::PROTOTYPE_UNROLL_LINKS);
+        crate::staged::object::walk_prototypes(self, records, object, target, links)
     }
 }
 

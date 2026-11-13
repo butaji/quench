@@ -23,6 +23,13 @@ pub(crate) struct StableFacts {
     pub(crate) slots: Box<[crate::code_dependencies::SlotDependency]>,
     /// Constructors whose `prototype` it holds for an `instanceof` (`Vm::instanceof_fact`).
     pub(crate) instanceofs: Box<[crate::code_dependencies::InstanceofFact]>,
+    /// Constructors whose `prototype` it holds for an `instanceof` (`Vm::instanceof_fact`).
+    pub(crate) instanceofs: Box<[crate::code_dependencies::InstanceofFact]>,
+    /// Global objects whose layout it holds (`heap::subscribe_global_layout`).
+    pub(crate) layouts: Box<[crate::heap::GlobalLayoutFact]>,
+    /// Global slots it stores to, or reads the `typeof` of, by the slot's observed type
+    /// (`Heap::subscribe_slot_observation`).
+    pub(crate) slots: Box<[crate::code_dependencies::SlotDependency]>,
 }
 
 /// The Stable facts a lowering folded so far.
@@ -42,6 +49,10 @@ pub(super) struct StableUses {
     slots: Vec<crate::code_dependencies::SlotDependency>,
     /// Constructors whose `prototype` the code took as a constant for an `instanceof`.
     instanceofs: BTreeSet<crate::code_dependencies::InstanceofFact>,
+    /// Global objects whose layout the code held.
+    layouts: BTreeSet<crate::heap::GlobalLayoutFact>,
+    /// Global slots whose observed type the code relied on, each once.
+    slots: Vec<crate::code_dependencies::SlotDependency>,
     /// Loops, by header and backedge, entered only through forward edges that proved the realm
     /// (`Lowering::hoist_stable`): their blocks hold the proof.
     realm_loops: Vec<(usize, usize)>,
@@ -156,6 +167,16 @@ impl Lowering<'_, '_> {
         let mut hold = StableHold { holders: &mut self.stable.holders, loops: &self.stable.stable_loops,
             online: self.vm.online, at: self.at };
         hold.hold_holder((&mut self.builder, self.helpers), state, exit, holder).expect("only a division with Stable facts holds a prototype");
+    }
+
+    /// Holds what an add row (`staged::add::site_add`) relies on: that no method cache names `atom` and that the
+    /// prototype chain proved for the add (its before-shape `owner`) intercepts no store, until a prototype's
+    /// layout changes. An invalidation point made here whatever the block proved before: an add's sibling
+    /// blocks (a shape switch's cases) each hold their own.
+    pub(super) fn hold_add(&mut self, state: &mut State, exit: ir::Block, atom: Atom, owner: u32) {
+        self.read_invalidation(state, exit);
+        self.stable.atoms.insert(atom);
+        self.stable.holders.insert(owner);
     }
 
     /// Holds the value of global cell `fact` (`hold_stable`), read from the global object

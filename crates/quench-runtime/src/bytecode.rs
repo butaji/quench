@@ -874,6 +874,8 @@ opcodes!($;
     ToNumeric => READ_THROW; layout Scalar; meaning Unused; semantics Staged, @ Register, @ fields(ResultRegister, Register, Unused),
     CopyDataProperties => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
     MarkPrivateName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Unused, Register, Register),
+    // `b` (a class evaluation's home object) declares private name `imm` with a fresh private atom (`Vm::declare_private_name`).
+    DeclarePrivateName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex, @ Register, @ fields(Unused, Register, Unused),
     DefinePrivateField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, Register),
     SetField => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore, @ Register, @ fields(Register, Register, CacheSiteIndex),
     DefineComputedField => WRITE_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),

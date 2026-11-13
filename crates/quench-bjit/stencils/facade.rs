@@ -13,6 +13,7 @@ impl Value {
     pub(crate) const UNDEFINED: Self = Self(words::UNDEFINED);
     pub(crate) const DELETED: Self = Self(words::DELETED);
     pub(crate) const FALSE: Self = Self(words::FALSE);
+    pub(crate) const TRUE: Self = Self(words::TRUE);
     pub(crate) const fn to_bits(self) -> u64 {
         self.0
     }
@@ -35,6 +36,14 @@ pub(crate) mod typed_ir {
 
 pub(crate) mod value {
     use crate::layout::words;
+    pub(crate) const LOWER_WORD: u64 = words::LOWER_WORD;
+    pub(crate) const HEAP_FAMILY_BITS: u64 = words::HEAP_FAMILY_BITS;
+    pub(crate) const HEAP_FAMILY_SHIFT: u32 = words::HEAP_FAMILY_SHIFT;
+    pub(crate) const NARROW_HEAP_FAMILIES: usize = words::NARROW_HEAP_FAMILIES;
+    pub(crate) const TAG_UNDEFINED: u64 = words::UNDEFINED;
+    pub(crate) const TAG_NULL: u64 = words::NULL;
+    pub(crate) const TAG_BOOL: u64 = words::FALSE;
+    pub(crate) const TAG_DELETED: u64 = words::DELETED;
     pub(crate) struct ValueLayout;
     impl ValueLayout {
         pub(crate) const TAG_MASK: u64 = words::TAG_MASK;
@@ -61,13 +70,11 @@ pub(crate) mod value {
         pub(crate) const INDEX_BITS: u32 = words::NARROW_INDEX_BITS;
         pub(crate) const DIRECT_OBJECT_UPPER: u64 = words::DIRECT_OBJECT_UPPER;
         pub(crate) const DIRECT_OBJECT_CODE: u32 = words::DIRECT_OBJECT_NARROW_CODE;
-        /// The process's upper-word table: a hole a row that decodes a narrow value must be
-        /// given (no row does yet; an unknown hole fails `build.rs`).
+        /// The process's upper-word table, which the one row that decodes a narrow value (the
+        /// site field read, `heap_rows.rs`) is given as value hole 1.
+        #[inline(always)]
         pub(crate) fn upper_words() -> *const u64 {
-            unsafe extern "C" {
-                static HOLE_UPPER_WORDS: u64;
-            }
-            &raw const HOLE_UPPER_WORDS
+            crate::words::hole64::<{ crate::words::HOLE_A }>() as *const u64
         }
     }
 }
@@ -77,7 +84,7 @@ pub(crate) mod value_vec {
 }
 
 pub(crate) mod heap {
-    pub(crate) use crate::layout::{LENGTH_FROM_VALUES, NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_OBJECT_LAYOUT, OTHERS_FROM_VALUES, OTHERS_UNKNOWN};
+    pub(crate) use crate::layout::{LENGTH_FROM_VALUES, NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, OTHERS_FROM_VALUES, OTHERS_UNKNOWN};
     #[derive(Clone, Copy)]
     pub(crate) enum PlainPropertyStorage {
         PackedInline,
@@ -89,6 +96,34 @@ pub(crate) mod heap {
     pub(crate) struct Heap;
 }
 
+/// The Number operation rows, the runtime's own file: `crate::vm::operations` to the shared
+/// rows, which name nothing else of the runtime.
+#[path = "../../quench-runtime/src/vm/operations/number_rows.rs"]
+pub(crate) mod operations;
+
 pub(crate) mod vm {
+    pub(crate) use super::operations;
     pub(crate) use crate::layout::NATIVE_FIELD_CACHE_LAYOUT;
+    pub(crate) mod wtf16 {
+        pub(crate) struct JsString;
+        pub(crate) use crate::layout::string_form as native_string;
+    }
+}
+
+/// The register and operand names the staged numeric rows take. Only a register operand exists
+/// here: a row names its places by register.
+pub(crate) mod bytecode {
+    pub(crate) type Register = u16;
+
+    #[derive(Clone, Copy)]
+    pub(crate) struct Operand(Register);
+
+    impl Operand {
+        pub(crate) fn register(value: Register) -> Self {
+            Self(value)
+        }
+        pub(crate) fn register_index(self) -> Option<Register> {
+            Some(self.0)
+        }
+    }
 }

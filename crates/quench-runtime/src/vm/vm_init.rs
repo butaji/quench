@@ -9,7 +9,7 @@ impl<H: Host> Vm<H> {
         host: H,
         execution_interrupt: crate::ExecutionInterrupt,
     ) -> Self {
-        Self {
+        let mut vm = Self {
             host,
             native_microtask_running: false,
             unobserved_jobs_entered: false,
@@ -165,6 +165,7 @@ impl<H: Host> Vm<H> {
             length_atom: u32::MAX,
             prototype_atom: super::builtins::NO_CACHED_ATOM,
             instanceof_constructor_layouts: [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
+            in_presences: [None; in_presence::IN_PRESENCES],
             instanceof_inheriting_holders: [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
             closure_shapes: [None; 2],
             resolver_function_shape: None,
@@ -195,6 +196,7 @@ impl<H: Host> Vm<H> {
             function_values: Default::default(),
             wasm_exported_functions: FxHashMap::default(),
             private_homes: FxHashMap::default(),
+            next_private_atom: 0,
             default_collation: None,
             wasm_js: Default::default(),
             direct_eval: false,
@@ -206,6 +208,8 @@ impl<H: Host> Vm<H> {
             deferred_dependency_batch: false,
             construct_target: None,
             random_state: fresh_random_seed(),
-        }
+        };
+        vm.intern_typeof_names();
+        vm
     }
 }

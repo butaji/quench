@@ -4698,7 +4698,7 @@ fn class_field_record_roots_release_after_each_completion() {
             let atom = vm.intern_atom("entry");
             let key = match phase {
                 "symbol" => PropertyKey::symbol(values[2]),
-                "private" => PropertyKey::private(atom),
+                "private" => PropertyKey::private(crate::heap::PrivateAtom::from_raw(atom)),
                 _ => PropertyKey::string(atom),
             };
             let value = vm
@@ -21542,6 +21542,73 @@ fn lane_bodies_add_properties_at_feedback_stores() {
     }
     // Node's answer for the same program.
     assert_eq!(answers, [Some(36219000.0); 2]);
+}
+
+#[test]
+fn lane_bodies_run_the_staged_add_row_until_a_prototype_gains_a_setter() {
+    // An adding store of a constructor runs `staged::add`'s row in the lane body, holding the
+    // prototype chain's proof as a Stable fact; a setter installed late retires it, and the
+    // stores then reach the setter as the interpreter's do.
+    let source = r#"
+     (function () {
+      var hits = 0;
+      function W(n) { this.n = n; this.m = n + 1; this.k = n * 2; }
+      let t = 0;
+      for (let r = 0; r < 6000; r++) {
+        if (r === 4000) Object.defineProperty(W.prototype, 'm', { set(v) { hits += v; }, get() { return 5; }, configurable: true });
+        const w = new W(r & 15);
+        t = (t + w.n + w.m + w.k + hits) | 0;
+      }
+      globalThis.answer = t;
+     })();
+    "#;
+    let program = Engine::specialize(source, "lane-add-row.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    assert!(answers[0].is_some());
+    assert_eq!(answers[0], answers[1]);
+}
+
+#[test]
+fn set_function_name_runs_the_staged_naming_row_from_the_site_it_recorded() {
+    // The first closure a site names records the edge (its shape before and after, the name
+    // slot); the later ones run `staged::naming`'s row, and a function that no longer holds the
+    // empty name (a class with a static `name`) takes the general path and keeps its own.
+    let source = r#"
+     (function () {
+      let out = [];
+      for (let i = 0; i < 40; i++) {
+        let f = function () {};
+        let c = i % 8 === 0 ? class { static name() { return 1; } } : class {};
+        out.push(f.name, typeof c.name);
+      }
+      let g = (() => 1);
+      globalThis.answer = out.join() + '|' + g.name + '|' + Object.getOwnPropertyDescriptor(g, 'name').writable;
+     })();
+    "#;
+    let program = Engine::specialize(source, "function-name-row.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        let answer = vm.own_property(global, atom).and_then(|value| vm.heap.string(value).map(|text| text.to_string()));
+        answers.push(answer);
+    }
+    assert!(answers[0].as_deref().is_some_and(|text| text.starts_with("f,string,f,string")));
+    assert!(answers[0].as_deref().is_some_and(|text| text.ends_with("|g|false")));
+    assert_eq!(answers[0], answers[1]);
 }
 
 #[test]

@@ -669,7 +669,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         {
             return;
         }
-        self.emit(Op::SetFunctionName, value, 0, 0, name);
+        let site = self.owner.cache_site();
+        self.emit(Op::SetFunctionName, value, 0, site, name);
     }
 
     /// A fresh local named `name`, or `name` with a `HIDDEN_LOCAL_SUFFIX` and a count when a

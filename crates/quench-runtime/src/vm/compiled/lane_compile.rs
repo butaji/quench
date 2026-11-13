@@ -194,6 +194,8 @@ impl<H: Host> Vm<H> {
         let constants = self.programs.residual(active).filter(|running| std::ptr::eq(*running, program))
             .map_or(&[][..], |_| self.programs.constants(active));
         let instanceofs = |constructor: Value| self.instanceof_fact(constructor);
+        let adds = |site: u16, atom, chained| self.native_field_add(site, atom, chained);
+        let names = |site: u16, atom| self.native_function_name(site, atom);
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
             invalidation: invalidation.address(), constants, instanceofs: &instanceofs }), ..self.vm_facts() };
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(&unit))).chain(self.adding_stores(&unit)).collect();
@@ -477,7 +479,7 @@ pub(in crate::vm) struct LaneDependencies {
 }
 
 impl LaneDependencies {
-    fn of(loads: impl Iterator<Item = NativeFieldLoad> + Clone, direct: &[DirectCallee]) -> Self {
+    pub(super) fn of(loads: impl Iterator<Item = NativeFieldLoad> + Clone, direct: &[DirectCallee]) -> Self {
         let mut slots: Vec<_> = loads.clone().filter_map(NativeFieldLoad::slot_dependency)
             .chain(direct.iter().filter_map(|callee| callee.body.as_ref()).flat_map(|body| body.dependencies.slots.iter().copied())).collect();
         slots.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
@@ -502,6 +504,10 @@ impl LaneDependencies {
             && stable.slots.iter().all(|dependency| heap.subscribe_slot_observation(*dependency, code))
             && stable.instanceofs.iter().all(|fact| heap.subscribe_slot_observation(fact.slot_dependency(), code)
                 && heap.subscribe_shape(fact.shape, code) && crate::heap::subscribe_prototype_values(fact.holder, code))
+            && stable.instanceofs.iter().all(|fact| heap.subscribe_slot_observation(fact.slot_dependency(), code)
+                && heap.subscribe_shape(fact.shape, code) && crate::heap::subscribe_prototype_values(fact.holder, code))
+            && stable.layouts.iter().all(|fact| crate::heap::subscribe_global_layout(*fact, code))
+            && stable.slots.iter().all(|dependency| heap.subscribe_slot_observation(*dependency, code))
     }
 }
 

@@ -925,6 +925,9 @@ impl<H: Host> Vm<H> {
                     if result { Value::TRUE } else { Value::FALSE },
                 );
             }
+            Op::DeclarePrivateName => {
+                self.declare_private_name(self.read(f, i.register_b()), i.atom_index());
+            }
             Op::MarkPrivateName => {
                 self.mark_private_name(p, self.read(f, i.register_b()), self.read(f, i.register_c()), i.atom_index())?;
             }
@@ -1006,7 +1009,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::SetFunctionName => {
-                self.set_function_name(p, self.read(f, i.register_a()), i.atom_index())?;
+                self.set_function_name(p, self.read(f, i.register_a()), (i.atom_index(), i.cache_site_index()))?;
             }
             Op::SetFunctionNameKey => {
                 self.set_function_name_key(
@@ -1754,6 +1757,14 @@ impl<H: Host> Vm<H> {
 }
 
 impl<H: Host> Vm<H> {
+    /// An `AppendArray` of one element after no elisions (`holes`) made by the staged row the b-jit
+    /// runs (`elements::append_in_room`): the array's capacity word proves a slot, so nothing grows.
+    #[inline(always)]
+    fn appends_in_room(&mut self, array: Value, value: Value, holes: usize) -> bool {
+        holes == 0
+            && self.heap.array_record_base().is_some_and(|records| crate::staged::elements::concrete_append_in_room(records, array, value))
+    }
+
     /// The new array of the `count` constants from `start` of `program` (a `MakeConstArray`
     /// record's immediate and element count); `None` for a range outside the program's
     /// constants.

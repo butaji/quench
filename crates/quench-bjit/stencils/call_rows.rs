@@ -17,7 +17,9 @@
 //! the helper's address (`lane_body_call`); vm, residual and lane context come from the
 //! dispatch payload behind the context. Successors: COMPLETED continues at NEXT; MISSED
 //! (nothing ran) leaves at the call's pc through EXIT0 (a leave that does not spill); LEFT and
-//! TERMINATED leave through EXIT1 with the (status, word) in r14, r15 (`leave_status`).
+//! TERMINATED leave through EXIT1 with the (status, word) in r14, r15 (`leave_status`); BRANCHED
+//! (a step that took its conditional jump) continues at TAKEN, the reloads of the registers live
+//! at the jump's target.
 //!
 //! Direct row `call_direct_a<N>_<strict|sloppy>`: hole V0 = the address of the site's
 //! `CallRecord`. It checks the callee word and (sloppy) the receiver, admits the call with the
@@ -29,8 +31,14 @@
 //! goes to NEXT, which the planner makes the helper row; a completion stores the word to the
 //! call's register and goes to TAKEN (the reloads); any other status leaves through EXIT0 with
 //! (status, word) in r14, r15, the callee's shadow frames kept for the lane to materialize.
+//!
+//! Exit row `exit_here`: leaves through EXIT0 with every register as it came, so the exit stub
+//! writes the live pinned registers back: the lowering of an instruction whose operation only
+//! the interpreter runs.
 
-use crate::layout::call_record::{CallRecord, CALLEE_EXIT, LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, NATIVE_JS_STOPPED, REGISTER_BYTES, TERMINATED_STATUS};
+#[path = "../src/call_record.rs"]
+mod call_record;
+use self::call_record::{CallRecord, CALLEE_EXIT, LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, NATIVE_JS_STOPPED, REGISTER_BYTES, TERMINATED_STATUS};
 use crate::codes::{LAST_INT_PIN, PIN, PINF};
 use crate::heap_rows::{payload, word_at};
 use crate::layout::{CELL_BODY_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_CONTEXT, JS_STEP_NATIVE_END, JS_STEP_NATIVE_TOP, JS_STEP_RESIDUAL, JS_STEP_SHADOW_END, JS_STEP_SHADOW_TOP, JS_STEP_VM, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
@@ -55,12 +63,13 @@ const HOLE_RECORD: u8 = 0;
 /// Shift from a word count to bytes.
 const WORD_SHIFT: u32 = REGISTER_BYTES.trailing_zeros();
 
-/// `leave_status`: the leave a (status, word) in r14, r15 ends in: the lane body ABI's two
-/// return registers (eax, rdx), returned to the caller of the chain unchanged.
+/// `leave_status`: the leave a (status, word) in r14, r15 ends in, as every leave routine ends
+/// (`entry.rs`): the word in rax and the status in rdx, which `entry_body` swaps into the lane
+/// body ABI's (eax, rdx) and `entry_thunk` reads the word of.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn leave_status() {
-    core::arch::naked_asm!("mov eax, r14d", "mov rdx, r15", "ret")
+    core::arch::naked_asm!("mov rax, r15", "mov edx, r14d", "ret")
 }
 
 /// A lane body's return: its status and result word in (eax, rdx), as `BodyReturn`.
@@ -126,6 +135,7 @@ pub unsafe extern "rust-preserve-none" fn call_helper(frame: usize, ctx: usize, 
         let status = helper(word_at(payload, JS_STEP_VM), word_at(payload, JS_STEP_RESIDUAL), word_at(payload, JS_STEP_LANE_CONTEXT), hole64::<HOLE_CALL_PC>());
         match status {
             LANE_CALL_COMPLETED => go!(HOLE_NEXT, dead(&s)),
+            LANE_CALL_BRANCHED => go!(HOLE_TAKEN, dead(&s)),
             LANE_CALL_MISSED => {
                 core::hint::cold_path();
                 go!(HOLE_EXIT0, dead(&s))
@@ -299,6 +309,12 @@ direct_row!(call_direct_a0_sloppy, 0, true);
 direct_row!(call_direct_a1_sloppy, 1, true);
 direct_row!(call_direct_a2_sloppy, 2, true);
 direct_row!(call_direct_a3_sloppy, 3, true);
+
+/// The unconditional leave: every register is passed to the exit as it came.
+#[unsafe(no_mangle)]
+pub unsafe extern "rust-preserve-none" fn exit_here(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
+    unsafe { go!(HOLE_EXIT0, S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] }) }
+}
 
 /// A pinned register back from the tagged word a `Spill` row wrote to the frame slot at hole 0:
 /// the proof (an int word, a Number) was made by the spill, so it is not made again.

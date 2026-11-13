@@ -1,5 +1,6 @@
 //! The words and registers the rows compute on: the state (`S`), a row's outcome (`Out`), the
 //! patched holes, tagged-word tests and the float to int conversions that need no constant pool.
+//! Value representation only: what a Number operation computes is `staged::numeric`'s.
 
 use crate::layout::words::{CANONICAL_NAN, FIRST_TAG_FIELD, INT_TAG, TAG_SHIFT};
 
@@ -170,34 +171,19 @@ pub(crate) fn canonical(f: f64) -> u64 {
 }
 
 #[inline(always)]
-pub(crate) fn to_f64(x: u64) -> Option<f64> {
-    if is_int(x) {
-        Some(x as u32 as i32 as f64)
-    } else if is_double(x) {
-        Some(f64::from_bits(x))
-    } else {
-        None
-    }
-}
-
-#[inline(always)]
 pub(crate) fn f64_to_i32(f: f64) -> Option<i32> {
     let wide = truncate64(f);
     if wide != i64::MIN { Some(wide as i32) } else { None }
 }
 
+/// Whether both tagged words are int words (one test of their upper halves).
 #[inline(always)]
-pub(crate) fn to_i32(x: u64) -> Option<i32> {
-    if is_int(x) {
-        Some(x as u32 as i32)
-    } else if is_double(x) {
-        f64_to_i32(f64::from_bits(x))
-    } else {
-        None
-    }
+pub(crate) fn both_int(x: u64, y: u64) -> bool {
+    ((x ^ INT_TAG) | (y ^ INT_TAG)) >> HIGH_SHIFT == 0
 }
 
+/// Whether the tagged word's upper half is the int tag (an int word).
 #[inline(always)]
-pub(crate) fn unsigned_word(v: i32) -> u64 {
-    if v >= 0 { int_word(v) } else { (v as u32 as f64).to_bits() }
+pub(crate) fn has_int_high(x: u64) -> bool {
+    x >> HIGH_SHIFT == INT_HIGH
 }

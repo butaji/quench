@@ -13,18 +13,14 @@ pub const MAX_DIRECT_ARGC: usize = 3;
 pub const REGISTER_BYTES: usize = 8;
 
 /// What a helper call returned (`vm::compiled::LANE_CALL_*`): completed with its result in the
-/// call's register, missed before any effect, left the lane inside the callee's activation, or
-/// terminated the run.
+/// call's register, missed before any effect, left the lane inside the callee's activation,
+/// terminated the run, or completed a step that branched (`LANE_CALL_BRANCHED`: a conditional
+/// jump of the interpreter's own step, taken).
 pub const LANE_CALL_COMPLETED: u64 = 0;
 pub const LANE_CALL_MISSED: u64 = 1;
 pub const LANE_CALL_LEFT: u64 = 2;
 pub const LANE_CALL_TERMINATED: u64 = 3;
-/// A call-out that decides a comparison completed, and the comparison held; `LANE_CALL_COMPLETED`
-/// is that it did not.
-pub const LANE_CALL_HOLDS: u64 = 4;
-/// The callee's body ended by an exception (`LANE_BODY_THREW`): its activation is popped, the
-/// call's register is untouched and the exception waits in `Vm::lane_raised`.
-pub const LANE_CALL_RAISED: u64 = 5;
+pub const LANE_CALL_BRANCHED: u64 = 4;
 
 /// The general dispatch's return statuses count down from the top of `u32` by this many blocks
 /// (`vm::compiled::MAX_JS_GENERAL_DISPATCH_BLOCKS`).

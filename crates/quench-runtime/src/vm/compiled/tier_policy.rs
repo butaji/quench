@@ -5,12 +5,15 @@
 //! against, and what each memory policy lets compile. A tuning experiment changes a row here,
 //! never a controller.
 
+use crate::bytecode::Class;
+
 /// The thresholds every tier controller reads.
 pub(in crate::vm) struct Tiers {
     pub(in crate::vm) loops: Loops,
     pub(in crate::vm) lane_body: LaneBody,
     pub(in crate::vm) js_function: JsFunction,
     pub(in crate::vm) wasm: Wasm,
+    pub(in crate::vm) stitch: Stitch,
     pub(in crate::vm) priors: Priors,
 }
 
@@ -20,6 +23,26 @@ pub(in crate::vm) const TEST_PRIORS: Priors = Priors {
     interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
     region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800,
 };
+
+/// Stitch-inlining: the callee rows the b-jit stitcher splices in place of a direct-cell call row
+/// (`base_region::inline_plan`).
+pub(in crate::vm) struct Stitch {
+    /// The longest callee body, in bytecodes: the accessors and arithmetic helpers whose call
+    /// costs more than their work.
+    pub(in crate::vm) max_instructions: usize,
+    /// The callee bytecodes one stitch inlines in all, so a hot loop's code stays a few call
+    /// bodies' worth.
+    pub(in crate::vm) max_total_instructions: usize,
+    /// The frame slots above the caller's registers the inlined callees' windows may take: the room
+    /// a body's recovery reserves past its activation (`LaneRecoverySpace`).
+    pub(in crate::vm) window_registers: u32,
+    /// The inline depth: activations a leave inside inlined code materializes, the caller's
+    /// included.
+    pub(in crate::vm) max_depth: usize,
+    /// The opcode classes a callee body may hold: the numeric rows of the stencil library, its jumps
+    /// (the site's own rows), and the `Return` that becomes a move and a jump to the continuation.
+    pub(in crate::vm) classes: &'static [Class],
+}
 
 /// Parts per thousand, the unit of a prior's share.
 pub(in crate::vm) const PER_MILLE: u64 = 1000;
@@ -80,6 +103,11 @@ pub(in crate::vm) struct LaneBody {
     /// sites have linked their targets, which the body inlines (`lane_unit::unit`), and that
     /// only a function called repeatedly pays for compiling one.
     pub(in crate::vm) warmup_entries: u16,
+    /// The same under `--b-jit`, whose whole-function body (`Vm::base_body_work`) is stitched
+    /// from stencils in microseconds, with no register allocator or code generator thread to
+    /// pay for: a few entries show a function's parameters their types (the int32s its entry
+    /// rows assume), where a Cranelift body waits for hundreds to have its call sites linked.
+    pub(in crate::vm) base_entries: u16,
     /// The share of a body's runs, in percent, its leaves may reach, from `reoptimize_exits`
     /// leaves on, before it specializes again.
     pub(in crate::vm) reoptimize_share: u8,
@@ -230,6 +258,13 @@ const FLOOR: Tiers = Tiers {
     priors: MEASURED.priors,
 };
 
+impl LaneBody {
+    /// The entries before a function's body specializes in this process's mode.
+    pub(in crate::vm) fn warmup(&self) -> u16 {
+        if crate::jit_mode::base_only() { self.base_entries } else { self.warmup_entries }
+    }
+}
+
 /// The base a share in percent is a share of.
 pub(in crate::vm) const PERCENT: u64 = 100;
 
@@ -237,6 +272,7 @@ const MEASURED: Tiers = Tiers {
     loops: Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 128, widen_after_leaves: 4, max_compilations: 8 },
     lane_body: LaneBody {
         warmup_entries: 400,
+        base_entries: 8,
         reoptimize_share: 1,
         retire_after_runs: 1000,
         retire_share: 10,
@@ -314,7 +350,7 @@ mod tests {
     #[test]
     fn the_tier_table_is_consistent() {
         let lane = &TIERS.lane_body;
-        assert!(lane.warmup_entries > 0);
+        assert!(lane.warmup_entries > 0 && lane.base_entries > 0 && lane.base_entries <= lane.warmup_entries);
         // The warm-up doubles per dropped body, at most seven times, and must not overflow.
         assert!(u32::from(lane.warmup_entries) << 7 <= u32::from(u16::MAX));
         // The reoptimization threshold doubles per recompile and must not overflow its counter.
