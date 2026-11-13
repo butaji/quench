@@ -12210,7 +12210,7 @@ mod tests {
                 let memory = CodeMemory::new(code.buffer.data()).unwrap();
                 for (label, location) in [(PREVIOUS_LABEL, PREVIOUS_USE), (NEXT_LABEL, NEXT_USE)] {
                     let uses: Vec<_> = code.buffer.get_srclocs_sorted().iter().filter(|source|
-                        source.loc == ir::SourceLoc::new(location) && source.start < source.end).collect();
+                        source.loc == ir::MaybeRelSourceLoc::abs(ir::SourceLoc::new(location)) && source.start < source.end).collect();
                     if uses.is_empty() { continue; }
                     let ranges = code.value_labels_ranges.get(&ir::ValueLabel::from_u32(label)).unwrap_or_else(||
                         panic!("{ty} start{start} missing label{label}: {:?}\n{}", compiler.func.dfg.values_labels, compiler.func));
@@ -12330,7 +12330,7 @@ mod tests {
             assert!(!locations.is_empty());
             assert!(locations.windows(2).all(|pair| pair[0].end <= pair[1].start));
             let probes: Vec<_> = compiled.buffer.get_srclocs_sorted().iter()
-                .filter(|source| source.loc == probe_location && source.start < source.end).collect();
+                .filter(|source| source.loc == ir::MaybeRelSourceLoc::abs(probe_location) && source.start < source.end).collect();
             assert!(!probes.is_empty(), "the relocated backedge must retain its probe");
             for probe in probes {
                 assert!(locations.iter().any(|range| range.start <= probe.start && probe.end <= range.end),
@@ -12455,7 +12455,7 @@ mod tests {
             let compiled = compiler.compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default()).unwrap();
             let locations = compiled.value_labels_ranges.get(&update_label).expect("live update label");
             let probes: Vec<_> = compiled.buffer.get_srclocs_sorted().iter()
-                .filter(|source| source.loc == store_location && source.start < source.end).collect();
+                .filter(|source| source.loc == ir::MaybeRelSourceLoc::abs(store_location) && source.start < source.end).collect();
             assert!(!probes.is_empty());
             assert!(probes.iter().all(|probe| locations.iter().any(|range|
                 range.start <= probe.start && probe.end <= range.end)), "update label covers both storage arms");
@@ -13320,7 +13320,7 @@ mod tests {
         let (_memory, entry, _operands) = live_native_graph(&vm);
         let (status, _, outcome) = with_semantic_context(&mut vm, 0, |context, result| {
             // SAFETY: the shared context, native code and operand data outlive this entry.
-            unsafe { i64::from(entry(context, 0, 0, std::ptr::null(), result)) }
+            unsafe { i64::from(entry(context.cast(), 0, 0, std::ptr::null(), result)) }
         });
         assert_eq!(status, i64::from(NATIVE_JS_STOPPED));
         let Err(error) = outcome.expect("graph stops at throw").result else { panic!("expected throw") };
@@ -13932,7 +13932,7 @@ mod tests {
         for entry in [entry, partitioned] {
             let (status, word, outcome) = with_semantic_context(&mut vm, invalid, |context, result| {
                 // SAFETY: as above; the out-of-range PC is data, not a pointer.
-                unsafe { i64::from(entry(context, 0, 0, std::ptr::null(), result)) }
+                unsafe { i64::from(entry(context.cast(), 0, 0, std::ptr::null(), result)) }
             });
             assert_eq!(status, i64::from(NATIVE_JS_INVALID_PC));
             assert_eq!(word, invalid as u64);
@@ -13955,7 +13955,7 @@ mod tests {
         for entry in [entry, partitioned] {
             let (status, _, outcome) = with_semantic_context(&mut vm, 0, |context, result| {
                 // SAFETY: the rooted frame, entries and operands live through the call.
-                unsafe { i64::from(entry(context, 0, 0, std::ptr::null(), result)) }
+                unsafe { i64::from(entry(context.cast(), 0, 0, std::ptr::null(), result)) }
             });
             assert_eq!(status, i64::from(NATIVE_JS_STOPPED));
             let Err(error) = outcome.expect("graph stops at throw").result else { panic!("expected throw") };

@@ -54,8 +54,10 @@ pub(in crate::vm) fn frozen_globals(program: &ResidualProgram) -> FrozenValues {
     let stores = atom_store_counts(program, |instruction| instruction.op().stores_name());
     // The declaration's own store (`initializing`) carries its initializer.
     root_immediate_stores(program, |instruction| {
+        // `atom_index` is a by-name op's field: read it only where the op stores a name.
+        if !instruction.op().stores_name() { return None }
         let atom = instruction.atom_index();
-        (instruction.op().stores_name() && instruction.b() != 0 && candidates.contains(atom as usize)
+        (instruction.b() != 0 && candidates.contains(atom as usize)
             && stores.get(atom as usize) == Some(&1)).then_some(atom)
     })
 }
@@ -67,8 +69,9 @@ pub(in crate::vm) fn frozen_fields(program: &ResidualProgram) -> FrozenValues {
     let field_store = |instruction: WideInstruction| instruction.op().js_denotation() == crate::bytecode::JsDenotation::FieldStore;
     let counts = atom_store_counts(program, field_store);
     root_immediate_stores(program, |instruction| {
+        if !field_store(instruction) { return None }
         let atom = instruction.atom_index();
-        (field_store(instruction) && counts.get(atom as usize) == Some(&1)).then_some(atom)
+        (counts.get(atom as usize) == Some(&1)).then_some(atom)
     })
 }
 
