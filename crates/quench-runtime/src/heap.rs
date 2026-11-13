@@ -60,7 +60,9 @@ use records::{
 use records::RECORD_SPACE_CAPACITY;
 pub use root::RootId;
 pub(crate) use root::{RootTable, WeakHandle};
-use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
+use slots::{FREE_SLOT_WORDS, FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
+mod young;
+use young::YoungSlots;
 
 /// The native reader's view of an ordinary array's fixed record and dense backing.
 ///
@@ -614,7 +616,7 @@ pub(crate) struct Heap {
     /// Bytes of the reclaimable programs that stayed at the last full collection, which the
     /// next one's program growth is measured against.
     reclaimable_program_bytes_after_full: usize,
-    young: Vec<u32>,
+    young: YoungSlots,
     /// The young cells with weak entries (weak maps and sets, weak refs, finalization
     /// registries): a minor collection prunes only these and the remembered cells.
     young_weak: Vec<u32>,
@@ -916,7 +918,7 @@ impl Heap {
             carried_owners: Vec::new(),
             reclaimable_program_bytes_since_full: 0,
             reclaimable_program_bytes_after_full: 0,
-            young: Vec::with_capacity(384),
+            young: YoungSlots::default(),
             free_by_slab: Vec::with_capacity(12),
             free_slabs: Vec::with_capacity(12),
             free_slots: 0,
@@ -1656,7 +1658,7 @@ impl Heap {
         let index = slot as u32;
         self.slots.get_mut(slot).unwrap().cell = Some(cell());
         if track_young {
-            self.young.push(index);
+            self.young.insert(index as usize);
         }
         if weak {
             self.young_weak.push(index);
@@ -1699,7 +1701,7 @@ impl Heap {
             self.marks.push(AtomicU64::new(0));
         }
         if track_young {
-            self.young.push(index as u32);
+            self.young.insert(index);
         }
         if weak {
             self.young_weak.push(index as u32);
@@ -2272,7 +2274,7 @@ impl Heap {
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.remembered_owner_scans += self.remembered.len() as u64;
-                self.gc_profile.young_cells_swept += self.young.len() as u64;
+                self.gc_profile.young_cells_swept += self.young.count() as u64;
             }
         }
         if full {
@@ -2869,16 +2871,20 @@ impl Heap {
             let sparse_arrays = &mut self.sparse_arrays;
             #[cfg(feature = "profile-memory")]
             let memory_profile = &mut self.memory_profile;
-            // Frees `slot`'s cell, if it has one. A BigInt whose digits are inline, the cell
-            // most often freed where BigInt arithmetic runs, owns nothing beyond its slot: no
-            // payload or external bytes, no properties, nothing to drop.
-            let mut reclaim = |properties: &mut ValueArena, index: usize, slot: &mut Slot| {
+            // Frees `slot`'s cell, if it has one. A BigInt, the cell most often freed where
+            // BigInt arithmetic runs, owns nothing beyond its slot but spilled digits, which its
+            // own drop releases: no payload or external bytes, no properties, no cell move.
+            let mut release = |properties: &mut ValueArena, index: usize, slot: &mut Slot| -> bool {
                 match &slot.cell {
-                    None => return,
-                    Some(Cell::BigInt(value)) if value.is_inline() => {
+                    None => return false,
+                    Some(Cell::BigInt(_)) => {
                         #[cfg(feature = "profile-memory")]
                         memory_profile.freed(Value::heap(index as u32), slot.cell.as_ref().unwrap(), None);
-                        // SAFETY: the cell owns nothing a drop would release.
+                        if let Some(Cell::BigInt(value)) = &mut slot.cell {
+                            // SAFETY: dropped once; the slot then holds no cell.
+                            unsafe { std::ptr::drop_in_place(value) };
+                        }
+                        // SAFETY: the cell's only owned memory was released above.
                         unsafe { std::ptr::write(&mut slot.cell, None) };
                     }
                     Some(_) => {
@@ -2906,14 +2912,18 @@ impl Heap {
                         }
                     }
                 }
-                let slab = index / SLOTS_PER_SLAB;
+                true
+            };
+            // Lists the slots `bits` names in the heap's word `word` of slots as free.
+            let mut free_word = |word: usize, bits: u64| {
+                let slab = word / FREE_SLOT_WORDS;
                 let slab_free = &mut free_by_slab[slab];
                 if slab_free.is_empty() {
                     free_slabs.push(slab as u32);
                 }
-                slab_free.insert(index % SLOTS_PER_SLAB);
-                *free_slot_count += 1;
-                freed_cells += 1;
+                slab_free.insert_word(word % FREE_SLOT_WORDS, bits);
+                *free_slot_count += bits.count_ones() as usize;
+                freed_cells += bits.count_ones() as usize;
             };
             self.collection_state = CollectionState::Sweeping;
             if full {
@@ -2931,8 +2941,8 @@ impl Heap {
                                         index,
                                     ));
                                 }
-                        } else {
-                            reclaim(properties, index, slot);
+                        } else if release(properties, index, slot) {
+                            free_word(index / u64::BITS as usize, 1_u64 << (index % u64::BITS as usize));
                         }
                     }
                 }
@@ -2940,40 +2950,18 @@ impl Heap {
                 // Each young cell is freed, promoted (left marked), or, when `age` ages it on
                 // its first survival, aged: unmarked and young for one more minor collection.
                 // An aged cell is freed or promoted whatever `age` is now.
-                let mut promoted = 0;
-                let mut stays_young = 0;
-                let mut aged_fates = pacing::AgedFates::default();
-                let (slots, marks, aged) = (&mut self.slots, &self.marks, &mut self.aged);
-                self.young.retain(|&index| {
-                    swept_slots += 1;
-                    let index_usize = index as usize;
-                    let Some(slot) = slots.get_mut(index_usize) else {
-                        return false;
-                    };
-                    let (word, bit) = slot_bit(index_usize);
-                    let was_aged = aged.get(word).is_some_and(|ages| ages & bit != 0);
-                    let marked = Self::marked(marks, index_usize);
-                    if was_aged {
-                        aged[word] &= !bit;
-                        if marked { aged_fates.promoted += 1 } else { aged_fates.died += 1 }
-                    }
-                    if !marked {
-                        // Its mark bit is already clear: the test above found it so.
-                        reclaim(properties, index_usize, slot);
-                        false
-                    } else if was_aged || !age.ages() {
-                        promoted += 1;
-                        if age.ages() {
-                            promoted_cells.push(Value::heap(index));
-                        }
-                        false
-                    } else {
-                        aged[word] |= bit;
-                        marks[word].fetch_and(!bit, Ordering::Relaxed);
-                        stays_young += 1;
-                        true
-                    }
-                });
+                let slots = &mut self.slots;
+                let young = self.young.sweep(
+                    &self.marks,
+                    &mut self.aged,
+                    age,
+                    promoted_cells,
+                    |index| slots.get_mut(index).is_some_and(|slot| release(properties, index, slot)),
+                    &mut free_word,
+                );
+                swept_slots += young.swept;
+                let (promoted, stays_young) = (young.promoted, young.stays_young);
+                let aged_fates = young.aged_fates;
                 for index in self.remembered.iter().copied() {
                     let index = index as usize;
                     self.remembered_marks[index / 64] &= !(1 << (index % 64));
@@ -3059,7 +3047,7 @@ impl Heap {
     ) {
         let minor_marks = Self::snapshot_marks(&self.marks);
         let minor_record_marks = self.snapshot_record_marks();
-        let young = self.young.clone();
+        let young: Vec<usize> = self.young.indices().collect();
         #[cfg(feature = "profile-aggregate")]
         let profile = self.gc_profile;
         Self::clear_marks(&self.marks);
@@ -3069,7 +3057,7 @@ impl Heap {
         let pinned_records: rustc_hash::FxHashSet<Value> = old_records.iter().copied().collect();
         let mut young_slots = vec![false; self.slots.len()];
         for index in young.iter().copied() {
-            young_slots[index as usize] = true;
+            young_slots[index] = true;
         }
         let mut work = roots.to_vec();
         work.extend(self.slots.iter().enumerate().filter_map(|(index, slot)| {

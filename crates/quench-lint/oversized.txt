@@ -1394,7 +1394,7 @@ file-lines crates/quench-runtime/src/compile/liveness.rs 642
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1050
 file-lines crates/quench-runtime/src/compile/rewrite.rs 1680
-file-lines crates/quench-runtime/src/heap.rs 4660
+file-lines crates/quench-runtime/src/heap.rs 4642
 file-lines crates/quench-runtime/src/heap/access.rs 869
 file-lines crates/quench-runtime/src/heap/array_elements.rs 664
 file-lines crates/quench-runtime/src/heap/cell.rs 3990
@@ -1403,7 +1403,6 @@ file-lines crates/quench-runtime/src/heap/environment_trace.rs 543
 file-lines crates/quench-runtime/src/heap/memory_profile.rs 742
 file-lines crates/quench-runtime/src/heap/pacing.rs 756
 file-lines crates/quench-runtime/src/heap/records.rs 1115
-file-lines crates/quench-runtime/src/heap/slots.rs 508
 file-lines crates/quench-runtime/src/heap/tests.rs 1680
 file-lines crates/quench-runtime/src/host.rs 545
 file-lines crates/quench-runtime/src/native_link/link.rs 590

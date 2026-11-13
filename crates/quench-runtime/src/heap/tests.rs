@@ -1279,7 +1279,7 @@ fn full_collection_promotes_aged_survivors() {
     collect_minor(&mut heap, [cell, object]);
     heap.collect([cell, object]);
     assert!(heap.is_old(cell) && heap.is_old(object));
-    assert!(heap.young.is_empty() && heap.aged.iter().all(|ages| *ages == 0));
+    assert!(heap.young.count() == 0 && heap.aged.iter().all(|ages| *ages == 0));
     collect_minor(&mut heap, []);
     assert!(heap.is_live(cell) && heap.is_live(object), "old survivors outlive minor collections");
 }

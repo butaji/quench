@@ -2,7 +2,7 @@ use super::Slot;
 
 pub(super) const SLOTS_PER_SLAB: usize = 2_048;
 const FREE_SLOT_WORD_BITS: usize = u64::BITS as usize;
-const FREE_SLOT_WORDS: usize = SLOTS_PER_SLAB.div_ceil(FREE_SLOT_WORD_BITS);
+pub(super) const FREE_SLOT_WORDS: usize = SLOTS_PER_SLAB.div_ceil(FREE_SLOT_WORD_BITS);
 
 const _: () = assert!(SLOTS_PER_SLAB <= u16::MAX as usize);
 const _: () = assert!(FREE_SLOT_WORDS <= u32::BITS as usize);
@@ -17,15 +17,18 @@ pub(super) struct FreeSlotBitmap {
 impl FreeSlotBitmap {
     pub(super) fn insert(&mut self, offset: usize) {
         debug_assert!(offset < SLOTS_PER_SLAB);
-        let word_index = offset / FREE_SLOT_WORD_BITS;
-        let mask = 1_u64 << (offset % FREE_SLOT_WORD_BITS);
+        self.insert_word(offset / FREE_SLOT_WORD_BITS, 1_u64 << (offset % FREE_SLOT_WORD_BITS));
+    }
+
+    /// Lists the slots `mask` names in the slab's word `word_index` as free.
+    pub(super) fn insert_word(&mut self, word_index: usize, mask: u64) {
         let word = &mut self.words[word_index];
         debug_assert_eq!(*word & mask, 0, "free slot inserted twice");
         if *word == 0 {
             self.nonempty_words |= 1_u32 << word_index;
         }
         *word |= mask;
-        self.free_count += 1;
+        self.free_count += mask.count_ones() as u16;
         debug_assert!(self.free_count as usize <= SLOTS_PER_SLAB);
     }
 
@@ -62,22 +65,9 @@ impl FreeSlotBitmap {
     }
 
     pub(super) fn merge(&mut self, other: &Self) {
-        debug_assert!(
-            self.words
-                .iter()
-                .zip(other.words.iter())
-                .all(|(left, right)| left & right == 0)
-        );
-        for (word_index, (left, right)) in self.words.iter_mut().zip(other.words.iter()).enumerate()
-        {
-            if *right == 0 {
-                continue;
-            }
-            *left |= *right;
-            self.nonempty_words |= 1_u32 << word_index;
+        for (word_index, &bits) in other.words.iter().enumerate().filter(|(_, bits)| **bits != 0) {
+            self.insert_word(word_index, bits);
         }
-        self.free_count += other.free_count;
-        debug_assert!(self.free_count as usize <= SLOTS_PER_SLAB);
     }
 }
 
