@@ -3752,6 +3752,10 @@ struct JsStepDispatch {
     function_mark_blocks: usize,
     function_mark_block_count: usize,
     empty_string: u64,
+    /// The word of the storage the running lane body's environment-owned locals live in, which its environment rows
+    /// read through (`staged::environment::environment_slot`): its activation's window, or storage that holds no
+    /// slot where it runs in a frame (`heap::absent_environment_storage`).
+    environment_storage: u64,
     outcome: Option<JsNativeStep>,
     /// Past every word generated code reads: a feature's field leaves their offsets as they are.
     #[cfg(feature = "native-execution")]
@@ -3820,7 +3824,7 @@ impl LaneMethod {
 
     /// Whether an entry, which costs a few hundred instructions the lane's own run of a
     /// short leaf never pays, has work to amortize it: a loop, an inlined call, or length
-    /// (`LaneBody::amortizing_instructions`). A short leaf runs in the lane, or inlined.
+    /// (`Tiers::amortizing_instructions`). A short leaf runs in the lane, or inlined.
     pub(super) fn amortizes_entry(&self) -> bool {
         self.amortizes
     }
@@ -4404,9 +4408,11 @@ struct LaneEntry {
     field_entries: usize,
     lane_context: usize,
     native_registers: *mut Value,
-    /// The activation's local slots and their count (`dispatch_fast::frame_locals`), which a
+    /// The activation's local slots and their count (`dispatch_fast::body_locals`), which a
     /// body's local rows read through the payload.
     native_locals: (*mut Value, usize),
+    /// The storage of its environment-owned locals (`JsStepDispatch::environment_storage`).
+    environment_storage: u64,
     residual: usize,
     /// The end of the frames the run may nest, which a nested run narrows and its caller regains.
     frames_end: usize,
@@ -4420,6 +4426,7 @@ impl LaneEntry {
             lane_context: dispatch.lane_context,
             native_registers: dispatch.native_registers,
             native_locals: (dispatch.native_locals, dispatch.local_count),
+            environment_storage: dispatch.environment_storage,
             residual: dispatch.residual,
             frames_end: dispatch.lane_frames_end,
         }
@@ -4431,6 +4438,7 @@ impl LaneEntry {
         dispatch.lane_context = self.lane_context;
         dispatch.native_registers = self.native_registers;
         (dispatch.native_locals, dispatch.local_count) = self.native_locals;
+        dispatch.environment_storage = self.environment_storage;
         dispatch.residual = self.residual;
         dispatch.lane_frames_end = self.frames_end;
     }
@@ -4544,6 +4552,7 @@ impl LaneFrame {
                 function_mark_blocks: 0,
                 function_mark_block_count: 0,
                 empty_string: Value::DELETED.to_bits(),
+                environment_storage: crate::heap::absent_environment_storage(),
                 receiver: Value::DELETED.to_bits(),
                 vm: 0,
                 residual: 0,
@@ -4674,6 +4683,7 @@ impl JsNativeActivation {
             function_mark_blocks: 0,
             function_mark_block_count: 0,
             empty_string: Value::DELETED.to_bits(),
+            environment_storage: crate::heap::absent_environment_storage(),
             receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
             residual: Rc::as_ptr(&program) as usize,
@@ -9415,7 +9425,7 @@ const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 /// loop, a call (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
 pub(super) fn lane_body_may_amortize(body: &crate::bytecode::Function) -> bool {
-    body.loops() || body.code.len() >= TIERS.lane_body.amortizing_instructions()
+    body.loops() || body.code.len() >= TIERS.amortizing_instructions(tier_policy::lane_body_tier())
         || body.code.iter().any(|packed| super::dispatch_fast::decoded_instruction(body, *packed).op().is_call())
 }
 

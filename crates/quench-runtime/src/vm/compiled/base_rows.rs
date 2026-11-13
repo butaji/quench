@@ -55,6 +55,13 @@ pub(super) enum Heap {
     This,
     /// The activation's local slot `slot`, whose number is hole 1.
     LoadLocal(u16),
+    /// The initialized binding `slot` (hole 1, its byte offset hole 2) of the storage of the running activation's
+    /// environment window (`JsStepDispatch::environment_storage`) into the register at hole 0, else the row leaves into
+    /// the helper step after it. It continues at TAKEN, as `Capture` does.
+    EnvLocal(u16),
+    /// The register at hole 0 stored to that slot where its binding is initialized, else the row leaves into the helper
+    /// step after it; the slot is hole 1 and its byte offset hole 2. It continues at TAKEN.
+    EnvStore(u16),
     /// The first operand written to the activation's local slot `slot`, whose number is hole 2. It continues at TAKEN
     /// (`continues_at_taken`): as a fast arm it hops past the helper step, in a loop region it branches to the next
     /// instruction.
@@ -163,6 +170,8 @@ impl Heap {
             Heap::ThisSite | Heap::ThisChain => library::THIS_SITE_ROW,
             Heap::Length => library::LENGTH_ROW,
             Heap::CaptureSet(_) => library::CAPTURE_SET_ROW,
+            Heap::EnvLocal(_) => library::ENV_ROW,
+            Heap::EnvStore(_) => library::ENV_SET_ROW,
             Heap::SiteStore => library::SITE_STORE_ROW,
             Heap::ThisStore => library::THIS_STORE_ROW,
             Heap::This => library::THIS_ROW,
@@ -194,14 +203,14 @@ impl Heap {
     /// Whether a hit continues at the row's TAKEN exit, not its NEXT: the rows of one convention with the fast arms, whose
     /// hit hops past the step laid out after them (`base_region::steps::plan_fast`).
     pub(super) fn continues_at_taken(self) -> bool {
-        matches!(self, Heap::StoreLocal(_) | Heap::Capture(_) | Heap::CaptureSet(_))
+        matches!(self, Heap::StoreLocal(_) | Heap::Capture(_) | Heap::CaptureSet(_) | Heap::EnvLocal(_) | Heap::EnvStore(_))
     }
 
     /// Whether the row reads a snapshot of the heap the loop's entry took (the record's captures,
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
     /// slots, which every run reads live, and the rows that read no heap.
     pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::Identity | Heap::Live | Heap::Realm | Heap::Word | Heap::Object | Heap::Key | Heap::Append | Heap::Add { .. } | Heap::ForIn | Heap::Name { .. } | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::Identity | Heap::Live | Heap::Realm | Heap::Word | Heap::Object | Heap::Key | Heap::Append | Heap::Add { .. } | Heap::ForIn | Heap::Name { .. } | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
@@ -289,6 +298,7 @@ mod tests {
             ("function_mark_blocks", at!(JsStepDispatch, function_mark_blocks), m::JS_STEP_FUNCTION_MARK_BLOCKS),
             ("function_mark_block_count", at!(JsStepDispatch, function_mark_block_count), m::JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
             ("empty_string", at!(JsStepDispatch, empty_string), m::JS_STEP_EMPTY_STRING),
+            ("environment_storage", at!(JsStepDispatch, environment_storage), m::JS_STEP_ENV_STORAGE),
             ("property_buffer_base", crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, m::PROPERTY_BUFFER_BASE),
             ("capture_address_bits", super::super::entry_cell::CAPTURE_ADDRESS_BITS as usize, m::CAPTURE_ADDRESS_BITS as usize),
             ("capture_stores_bit", super::super::super::dispatch_fast::CAPTURE_STORES, m::CAPTURE_STORES_BIT as usize),

@@ -104,6 +104,14 @@ pub const TYPEOF_STRING_ROW: u8 = 24;
 /// continues at TAKEN; a cell the walk does not follow, another constructor or a longer chain leaves through EXIT0 into
 /// the helper step after the row.
 pub const INSTANCEOF_ROW: u8 = 27;
+/// A read (`ENV_ROW`) and a store (`ENV_SET_ROW`) of a local slot the running activation's environment window holds
+/// (`staged::environment::environment_slot`), through the storage word the payload keeps
+/// (`JS_STEP_ENV_STORAGE`; one that holds no window reads as sparse storage, which every such row misses at): the slot
+/// at hole 1 and its byte offset at hole 2 as a capture row's, the destination (read) or the value operand (store) at hole 0.
+/// A hit continues at TAKEN, past the helper step laid out after the row; a slot past the run or holding an internal
+/// marker (a dead zone, a slot the environment took) leaves through EXIT0 into it.
+pub const ENV_ROW: u8 = 46;
+pub const ENV_SET_ROW: u8 = 47;
 /// The inline-cache rows (`ic_rows.rs`): a read of the receiver's own flat slot, a read of the slot its
 /// prototype holds, and a store of a Number into the receiver's own flat slot, whose slot type is `ANY` or
 /// `NUMBER` (`IC_SET_ROW`) or `INT32` (`IC_SET_INT_ROW`).

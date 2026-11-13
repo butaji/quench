@@ -2386,13 +2386,12 @@ pub(super) fn capture_reads(capture: *const usize) -> *const usize {
     capture.map_addr(|address| address & !CAPTURE_STORES)
 }
 
-/// The local slots (address and count) of the VM frame the lane context `cx` runs, where a body's
-/// `LoadLocalPlain` and `StoreLocalPlain` rows read and write them, as the lane's handlers do
-/// (`lane_frame::staged_load_local_plain`); none where there is no context (a test's entry).
+/// The local slots (address and count) of the VM frame the lane context `cx` runs, as the lane's handlers read
+/// them (`lane_frame::staged_load_local_plain`); none where there is no context (a test's entry).
 ///
 /// # Safety
 /// `cx` is null or a live `LaneContext<H>`.
-pub(super) unsafe fn frame_locals<H: Host>(cx: *mut ()) -> (*mut Value, usize) {
+unsafe fn frame_locals<H: Host>(cx: *mut ()) -> (*mut Value, usize) {
     std::ptr::NonNull::new(cx.cast::<LaneContext<H>>()).map_or((std::ptr::null_mut(), 0), |cx| {
         // SAFETY: the caller's contract; the VM and its frame outlive the lane run.
         let (frames, root) = unsafe { (&mut vm(cx.as_ptr()).frames, (*cx.as_ptr()).root) };
@@ -2841,6 +2840,9 @@ lane_handler! {
 
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
+mod window_bodies;
+pub(super) use window_bodies::body_locals;
+use window_bodies::window_storage;
 mod lane_reads;
 use lane_reads::RecordOperand;
 mod loop_body;
@@ -4055,12 +4057,9 @@ script_handler! {
         let (slot, registers) = environment_window_fields(i);
         if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0 && !unsafe { (*cx).env }.is_deleted() {
             let value = if ENVIRONMENT {
-                // SAFETY: as `lane_load_window_local_general`'s read of the window's storage.
-                let storage = unsafe {
-                    &*(std::mem::transmute::<Value, u64>(r.get(registers + WINDOW_SLOTS))
-                        as *const crate::heap::EnvironmentSlots)
-                };
-                storage.dense().and_then(|dense| dense.dense_plain(slot))
+                // SAFETY: as `lane_load_window_local_general`'s read of the window's storage; `slot` is
+                // the 16-bit field of `environment_window_fields`.
+                unsafe { crate::staged::environment::concrete_environment_slot(window_storage(r, registers), slot as u16) }
             } else {
                 Some(r.get(registers + WINDOW_LOCALS + slot as u16)).filter(|value| !value.is_deleted())
             };
@@ -4113,20 +4112,20 @@ script_handler! {
     fn lane_store_window_local_window<ENVIRONMENT: bool>(cx, r, ip, i, view) {
         let (slot, registers) = environment_window_fields(i);
         if !unsafe { (*cx).env }.is_deleted() && i.c == 0 {
-            let binding = if ENVIRONMENT {
-                // SAFETY: as `lane_load_window_local_general`'s read of the window's storage.
-                let storage = unsafe {
-                    &mut *(std::mem::transmute::<Value, u64>(r.get(registers + WINDOW_SLOTS))
-                        as *mut crate::heap::EnvironmentSlots)
-                };
-                storage.dense_mut().and_then(|dense| dense.dense_plain_mut(slot))
+            let value = r.get(i.a);
+            let stored = if ENVIRONMENT {
+                // SAFETY: as `lane_load_window_local_general`'s read of the window's storage, which no
+                // other reference reads while this record runs; `slot` is the 16-bit field.
+                unsafe { crate::staged::environment::concrete_environment_slot_store(window_storage(r, registers), slot as u16, value) }
             } else {
                 // SAFETY: an environment activation's window holds its locals after its
                 // entries (`lane_activate_environment`).
-                Some(unsafe { &mut *r.0.add(usize::from(registers + WINDOW_LOCALS) + slot) })
-                    .filter(|binding| !binding.is_deleted())
+                let binding = unsafe { &mut *r.0.add(usize::from(registers + WINDOW_LOCALS) + slot) };
+                let initialized = !binding.is_deleted();
+                if initialized { *binding = value; }
+                initialized
             };
-            if let Some(binding) = binding {
+            if stored {
                 // The window's environment is young, or a resumed generator's, which joined the
                 // remembered set when its window opened (`generator_windows::open_window_locals`).
                 debug_assert!({
@@ -4134,8 +4133,6 @@ script_handler! {
                     let environment = r.get(registers + WINDOW_ENVIRONMENT);
                     !heap.is_old(environment) || heap.is_remembered_cell(environment)
                 });
-                let value = r.get(i.a);
-                *binding = value;
                 if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
                     r.set(register, value);
                 }
@@ -11683,8 +11680,9 @@ impl<H: Host> Vm<H> {
                     .inspect(|&form| unsafe { &*view }.specialize_leaf_returns::<H>(form)),
             }
         });
-        if !environment
-            && !settles
+        // An environment activation (`environment`, whose view has a window layout) claims as any other: its body
+        // reads its locals through the window (`window_bodies::body_locals`).
+        if !settles
             && self.claims_across(cross)
             && !body.rest
             && !plan.keeps_arguments

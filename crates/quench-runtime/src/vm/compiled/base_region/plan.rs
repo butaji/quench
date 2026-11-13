@@ -172,7 +172,7 @@ pub(super) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bo
         Heap::This => [dst_hole, 0, 0],
         Heap::Index if entry => [dst_hole, decoded.hole, b_hole],
         Heap::Field => [dst_hole, decoded.hole, 0],
-        Heap::Capture(slot) => [dst_hole, u64::from(slot), u64::from(slot) * SLOT],
+        Heap::Capture(slot) | Heap::EnvLocal(slot) => [dst_hole, u64::from(slot), u64::from(slot) * SLOT],
         Heap::LoadLocal(slot) | Heap::LoadChecked(slot) => [dst_hole, u64::from(slot), 0],
         Heap::StoreLocal(slot) | Heap::StoreChecked(slot) => [0, a_hole, u64::from(slot)],
         Heap::TypeofIs { index, .. } => [dst_hole, a_hole, u64::from(index)],
@@ -182,7 +182,7 @@ pub(super) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bo
             let link = decoded.instanceof.map_or(0, |(_, fact)| u64::from(fact.link));
             [dst_hole | a_hole << numeric::library::SITE_OBJECT_AT, b_hole | link << numeric::library::HELD_LINK_AT, decoded.hole]
         }
-        Heap::CaptureSet(slot) => [a_hole, u64::from(slot), u64::from(slot) * SLOT],
+        Heap::CaptureSet(slot) | Heap::EnvStore(slot) => [a_hole, u64::from(slot), u64::from(slot) * SLOT],
         Heap::Live => [0, decoded.hole, 0],
         _ => [dst_hole, a_hole, b_hole],
     }))

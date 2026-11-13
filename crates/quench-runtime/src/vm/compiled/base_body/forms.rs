@@ -162,3 +162,29 @@ fn in_of_a_constant_key_is_a_row_and_a_prototype_layout_change_retires_it() {
     assert!(runs > 100, "the bodies ran {runs} times");
     assert!(fast_rows(Op::Binary) > before, "no `in` row");
 }
+
+/// A function whose closures capture some of its locals runs as the lane activation of an environment window, and its body
+/// reads and assigns those locals through the window's storage, in place before a closure makes the environment and in it
+/// after (`ENV_ROW`, `ENV_SET_ROW`), and the others among the window's locals; a binding in its dead zone is the
+/// interpreter's.
+#[test]
+fn an_environment_activation_runs_as_a_body_over_its_window() {
+    let ops = [Op::LoadEnvLocal, Op::StoreEnvLocal];
+    let before = ops.map(fast_rows);
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function tally(n) {
+           let c = 0, d = 0; c = c + 1; d = d + c;
+           const bump = () => { c = c + 1; };
+           for (let i = 0; i < n; i++) { bump(); d = d + c; c = c + 2; }
+           return d + c;
+         }
+         function dead(n) { let s = 0; const f = () => z; for (let i = 0; i < n; i++) { try { s = s + z; } catch (e) { s = s + 1; } } let z = 1; return s + f(); }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + tally(k % 5) + dead(k % 3)) | 0;
+         print(t); print(tally(4)); print(dead(2));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+    for (op, before) in ops.into_iter().zip(before) {
+        assert!(fast_rows(op) > before, "{op:?} has no fast row");
+    }
+}

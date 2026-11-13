@@ -70,13 +70,11 @@ pub(crate) unsafe fn concrete_dense_capture_store(values: *mut crate::Value, len
     dense_capture_store(&mut stage, (values as u64, len as u64, u64::from(true)), slot, value.to_bits(), ()).is_some()
 }
 
-/// Value `slot` of the dense environment storage whose word `storage` holds: the header
-/// pointer, a header whose sparse mark is clear, `slot` below its length, an ordinary value.
-/// Any other storage or slot leaves at `miss` for the general read
+/// The values and length of the dense run of the environment storage whose word `storage` holds: the header
+/// pointer, a header whose sparse mark is clear. Any other storage leaves at `miss` for the general read
 /// (`EnvironmentSlots::dense` then `dense_plain`; `heap.environment_slot`).
-#[allow(dead_code)] // consumer: thread 13's Emit lowering of LoadEnvLocal in environment windows
 #[inline(always)]
-pub(crate) fn environment_slot<S: Stage>(stage: &mut S, storage: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
+fn storage_run<S: Stage>(stage: &mut S, storage: S::Word, miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let layout = crate::heap::NATIVE_ENVIRONMENT_LAYOUT;
     let header_pointer = stage.load_u64(Region::Cells.mutable(), storage, layout.header_pointer_offset);
     let header = stage.load_u64(Region::Cells.mutable(), header_pointer, 0);
@@ -84,19 +82,46 @@ pub(crate) fn environment_slot<S: Stage>(stage: &mut S, storage: S::Word, slot: 
     let dense = stage.eq_imm(marks, 0u64);
     stage.guard(dense, miss)?;
     let len = stage.and_imm(header, !layout.sparse_mark);
-    let values = stage.add_imm(header_pointer, layout.slots_offset);
+    Some((stage.add_imm(header_pointer, layout.slots_offset), len))
+}
+
+/// Value `slot` of the dense environment storage whose word `storage` holds (`storage_run`): an ordinary value,
+/// else a leave at `miss`.
+#[inline(always)]
+pub(crate) fn environment_slot<S: Stage>(stage: &mut S, storage: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
+    let (values, len) = storage_run(stage, storage, miss)?;
     dense_capture(stage, values, len, slot, miss)
+}
+
+/// Stores `value` into the initialized slot `slot` of the dense environment storage whose word `storage` holds
+/// (`storage_run`), a leave at `miss` otherwise with nothing written. The caller owns the write barrier: a storage the
+/// window holds in place has none, and an environment's takes none for a value that is no heap reference.
+#[inline(always)]
+pub(crate) fn environment_slot_store<S: Stage>(stage: &mut S, storage: S::Word, slot: u16, value: S::Word, miss: S::Miss) -> Option<()> {
+    let (values, len) = storage_run(stage, storage, miss)?;
+    let (address, _) = dense_slot(stage, values, len, slot, miss)?;
+    stage.store_u64(Region::Cells.mutable(), address, 0, value);
+    Some(())
 }
 
 /// The interpreter's `environment_slot` over the storage at `storage`.
 ///
 /// # Safety
 /// `storage` addresses a live `EnvironmentSlots`.
-#[allow(dead_code)] // consumer: thread 13's Emit lowering of LoadEnvLocal in environment windows
 #[inline(always)]
 pub(crate) unsafe fn concrete_environment_slot(storage: *const crate::heap::EnvironmentSlots, slot: u16) -> Option<crate::Value> {
     let mut stage = Concrete::new(std::ptr::null());
     environment_slot(&mut stage, storage as u64, slot, ()).map(crate::Value::from_bits)
+}
+
+/// The interpreter's `environment_slot_store` over the storage at `storage`: whether it wrote.
+///
+/// # Safety
+/// `storage` addresses a live `EnvironmentSlots` no other reference reads, and the caller owns the store's barrier.
+#[inline(always)]
+pub(crate) unsafe fn concrete_environment_slot_store(storage: *mut crate::heap::EnvironmentSlots, slot: u16, value: crate::Value) -> bool {
+    let mut stage = Concrete::new(std::ptr::null());
+    environment_slot_store(&mut stage, storage as u64, slot, value.to_bits(), ()).is_some()
 }
 
 #[cfg(test)]
@@ -127,6 +152,21 @@ mod tests {
         let (first, second) = (trace(2), trace(9));
         assert_eq!(first.ops, second.ops);
         assert_eq!((first.holes, second.holes), (vec![2, 16], vec![9, 72]));
+    }
+
+    /// The store writes where `dense_plain_mut` finds a place, and leaves a marker or a slot past the run as it is.
+    #[test]
+    fn an_environment_slot_store_writes_initialized_slots_only() {
+        use crate::heap::EnvironmentSlots;
+        let mut slots = EnvironmentSlots::from_values([Value::number(7.0), Value::DELETED].into_iter());
+        // SAFETY: `slots` is live and unborrowed.
+        let store = |slots: &mut EnvironmentSlots, slot| unsafe { concrete_environment_slot_store(slots, slot, Value::number(9.0)) };
+        assert!(store(&mut slots, 0));
+        assert!(!store(&mut slots, 1), "a dead zone is the helper's");
+        assert!(!store(&mut slots, 2), "past the run leaves");
+        let dense = slots.dense().expect("a new storage is dense");
+        assert_eq!(dense.dense_plain(0).map(Value::to_bits), Some(Value::number(9.0).to_bits()));
+        assert_eq!(dense.dense_plain(1).map(Value::to_bits), None);
     }
 
     /// The layout constants and the row read what `EnvironmentSlots::dense_plain` reads.

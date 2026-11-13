@@ -93,7 +93,7 @@ fn lowered(region: &LoopRegion, pc: u32, sites: &Sites, (instruction, returning)
     }
     match instruction.op().class() {
         Class::Return if plain && instruction.register_a() < sites.registers => returned(instruction.register_a()),
-        _ => locals::fast_row(sites.function, sites.id, instruction)
+        _ => locals::fast_row(sites.function, sites.id, instruction, sites.ending)
             .unwrap_or_else(|| decode(region, (facts, sites.known), pc, instruction, helpers)),
     }
 }
