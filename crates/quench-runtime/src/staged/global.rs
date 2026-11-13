@@ -33,4 +33,16 @@ pub(crate) trait GlobalFrame<S: Stage>: Frame<S> {
     /// The lane's own global-name read (`LaneHelper::GlobalGet`).
     #[inline(always)]
     fn global_read(&mut self, _stage: &mut S, _destination: Register, _atom: u32, _site: u16, _proof: S::Proof) -> Option<()> { None }
+
+    /// The global-name store of register `source`, whose word is `value`, to `atom` through
+    /// cache `site`, an initialization where `initialize`: a direct write to the global's slot
+    /// where the frame holds it (`GlobalSlot`) and the value's type fits it; `None` calls out.
+    #[inline(always)]
+    fn global_write(&mut self, _stage: &mut S, _source: Register, _atom: u32, _site: u16, _value: S::Word, _initialize: bool) -> Option<()> { None }
+
+    /// Define `destination` with the `typeof` name of the global `atom`, which the type of the
+    /// slot the frame holds (`GlobalSlot`) spells; `None` calls out, where the VM answers
+    /// (`undefined` where the name is unresolvable).
+    #[inline(always)]
+    fn global_typeof(&mut self, _stage: &mut S, _destination: Register, _atom: u32, _site: u16) -> Option<()> { None }
 }

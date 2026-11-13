@@ -23,6 +23,7 @@ C.prototype.get = function () { return this.v; };
 class K { x = 1; #p = 2; static s = 3; get y() { return this.#p; } has(o) { return #p in o; } }
 function* gen(n) { for (var j = 0; j < n; j++) yield j; }
 var kk = new K();
+globalThis.gcount = 0;
 ";
 
 /// (opcode family, loop body over `i` with the locals `acc`, `s`, `t`, `o` and `arr`).
@@ -122,6 +123,11 @@ const FAMILIES: &[(&str, &str)] = &[
     ("local-initialization-and-dead-zone", "{ let a = i & 3; acc += a; } try { acc += qq; let qq = 1; } catch (e) { acc += e instanceof ReferenceError ? 1 : 0; } { let b2; acc += b2 === undefined ? 1 : 0; b2 = i; acc += b2; }"),
     ("typeof-fast-arm-test-switch-and-flip", "var tv = i < 1500 ? i : i % 2 ? 'k' : {}; switch (typeof tv) { case 'number': acc += 1; break; case 'string': acc += 2; break; default: acc += 3; } acc += (typeof tv === 'object' ? 4 : 0) + (typeof tv !== 'number' ? 8 : 0);"),
     ("async-function", "(async function () { await 0; acc += 1; })();"),
+    ("global-counter", "gcount = (gcount + i) | 0; acc += gcount & 255;"),
+    ("global-typeof", "s = typeof gcount + typeof captured + typeof noSuchGlobal; gcount = i;"),
+    ("global-type-flip", "gcount = i < 1500 ? i : 'g' + i; s = typeof gcount; acc += s === 'number' ? 1 : 2;"),
+    ("global-redefined-to-accessor", "if (i === 1500) Object.defineProperty(globalThis, 'gcount', { get() { return 7; }, set(v) { acc += 1; }, configurable: true }); gcount = i; acc += gcount;"),
+    ("global-deleted", "if (i === 1500) delete globalThis.gcount; try { gcount = i; acc += 1; } catch (e) { acc += 2; }"),
 ];
 
 /// A program that runs `body` hot and ends by throwing a digest of what it computed, so the

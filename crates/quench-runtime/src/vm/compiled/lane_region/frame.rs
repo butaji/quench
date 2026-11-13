@@ -1,9 +1,10 @@
 //! The lane specializer's register frame: `staged` register operations over the SSA homes.
 use super::*;
 #[path = "frame_calls.rs"] pub(super) mod calls;
+#[path = "frame_call_out.rs"] pub(super) mod call_out;
 #[path = "frame_truthiness.rs"] mod truthiness;
 #[path = "frame_operands.rs"] mod operands;
-pub(in crate::vm) use operands::{operand_int, operand_number};
+pub(in crate::vm) use operands::{operand_int, operand_number, register_int_value, register_number_value};
 use truthiness::register_truthiness;
 
 /// The control edges a `step` transfers to, and the exit a value's cell truthiness leaves at.
@@ -39,6 +40,8 @@ pub(super) struct EmitFrame<'a> {
     pub(super) helpers: LaneHelpers,
     /// The poll instructions a fault-polling body records for later patching.
     pub(super) polls: &'a mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
+    /// The record a call-out calls for, where the lowering made one (`call_outs`).
+    pub(super) call_out: Option<&'a call_out::CallOutSite>,
 }
 
 impl EmitFrame<'_> {
@@ -122,6 +125,13 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
             binding: BindingTime::Static, proof: Proof::Static, projection: Projection::Exact })
             .expect("constant's canonical semantic type");
         (value, fact)
+    }
+
+    /// A row's slow case: the lane's own helper makes the VM's operation in place (`call_out::vm_step`).
+    #[inline(always)]
+    fn vm_step(&mut self, stage: &mut Emit<'_, '_>, _operation: crate::staged::CallOut, result: Option<Register>)
+        -> Option<(ir::Value, RegisterFact)> {
+        call_out::vm_step(self, stage, result)
     }
 
     /// A proven-slot read: the `CheckedObject` projection carries the layout and the slot
@@ -428,71 +438,5 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
 
     fn number_fact(&self) -> RegisterFact {
         RegisterFact::definition(Type::NUMBER, Representation::Float64)
-    }
-}
-
-/// `register`'s int32 value, proving it where the fact does not.
-pub(super) fn register_int_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
-    let index = usize::from(register);
-    let fact = state.values[index];
-    let int = match fact.value.representation {
-        Representation::Int32 => {
-            let variable = register_int(builder, registers, index);
-            return builder.use_var(variable);
-        }
-        Representation::Float64 if !fact.tagged.current() => {
-            let variable = register_float(builder, registers, index);
-            let number = builder.use_var(variable);
-            let (int, exact) = emit_js_exact_int32(builder, number);
-            if !fact.value.ty.is_subtype(Type::INT32) {
-                emit_js_guard(builder, exact, otherwise);
-            }
-            int
-        }
-        Representation::Tagged | Representation::Float64 => {
-            let bits = register_tagged(builder, registers, state, register);
-            if !fact.value.ty.is_subtype(Type::INT32) {
-                let integer = is_int_tagged(builder, bits);
-                emit_js_guard(builder, integer, otherwise);
-            }
-            builder.ins().ireduce(types::I32, bits)
-        }
-    };
-    let variable = register_int(builder, registers, index);
-    builder.def_var(variable, int);
-    state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-        ..RegisterFact::definition(Type::INT32, Representation::Int32) };
-    int
-}
-
-/// `register`'s binary64 value, proving Number where the fact does not.
-pub(super) fn register_number_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
-    let index = usize::from(register);
-    let fact = state.values[index].value;
-    match fact.representation {
-        Representation::Float64 => {
-            let variable = register_float(builder, registers, index);
-            builder.use_var(variable)
-        }
-        Representation::Int32 => {
-            let variable = register_int(builder, registers, index);
-            let int = builder.use_var(variable);
-            builder.ins().fcvt_from_sint(types::F64, int)
-        }
-        Representation::Tagged => {
-            let bits = register_tagged(builder, registers, state, register);
-            let number = if fact.ty.is_subtype(Type::NUMBER) {
-                emit_known_number(builder, bits)
-            } else {
-                emit_js_tagged_number(builder, bits, otherwise)
-            };
-            let variable = register_float(builder, registers, index);
-            builder.def_var(variable, number);
-            state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-                ..RegisterFact::definition(Type::NUMBER, Representation::Float64) };
-            number
-        }
     }
 }

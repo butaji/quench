@@ -1,21 +1,22 @@
-//! A lane body's value steps (`Vm::value_step`: `ToPropertyKey`, `GetIterator`, `ForInStart`,
-//! `IteratorClose`, `AppendArray`), the native form of every opcode that has one: the body's
-//! helper makes the step by the interpreter's own definition, as `lane_step_beside_activations`
-//! does for a frameless activation, and continues, so no such record hands its body back.
+//! A lane body's call-outs (`staged::CallOut`: the value steps, `ForInNext`, a `Binary`, the
+//! environment, arguments and global-name steps), the one helper a row's slow
+//! case calls: it makes the step by the interpreter's own definition (`Vm::call_out`), as
+//! `lane_step_beside_activations` does for a frameless activation, and continues, so no such
+//! record hands its body back.
 use super::*;
 
-/// The value step of the record at `call_pc`, its operands read from the running registers:
+/// The call-out of the record at `call_pc`, its operands read from the running registers:
 /// `LANE_CALL_COMPLETED` with the result written to its register, `LANE_CALL_MISSED` where it
-/// raised (the error stashed for the general path, which re-runs the record and raises it), or
-/// `LANE_CALL_LEFT` where guest code it ran made the lane's activations frames, which leave the
-/// body at the next record.
+/// raised (the error stashed for the general path, which re-runs the record and raises it) or where a
+/// native callee's shadow frames are active (nothing ran), or `LANE_CALL_LEFT` where guest code it ran
+/// made the lane's activations frames, which leave the body at the next record.
 ///
 /// The heap bases the body's rows read through the payload are reloaded after it
 /// (`Vm::refresh_body_bases`): the step may have allocated or run guest code.
 ///
 /// # Safety
 /// The caller is a body's helper row: `context` its running lane context, `call_pc` a record of its function.
-pub(in crate::vm) unsafe extern "C" fn lane_body_value_step<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+pub(in crate::vm) unsafe extern "C" fn lane_vm_step<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
     // SAFETY: the caller's contract.
     let status = unsafe { lane_body_value_step_record::<H>(vm, residual, context, call_pc) };
     unsafe { super::vm(context as usize as *mut LaneContext<H>) }.refresh_body_bases(unsafe { super::body_frame::<H>(context) });
@@ -35,6 +36,8 @@ unsafe fn lane_body_value_step_record<H: Host>(_vm: u64, _residual: u64, context
 unsafe fn lane_body_value_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
     use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
     let vm = unsafe { vm(cx) };
+    // A native callee's shadow frames hold registers and a function that are not the running frame's.
+    if Vm::<H>::lane_shadow_active() { return LANE_CALL_MISSED; }
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
     let function = match vm.lane_stack.activations.last() {
         Some(activation) => activation.function,
@@ -51,7 +54,7 @@ unsafe fn lane_body_value_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64
     let Some(value) = lane_in_place(cx, ip, |vm, code| vm.value_step(code, instruction, a, b)) else { return LANE_CALL_MISSED };
     // Guest code the step ran may have made the activations frames, whose registers these are.
     let after = unsafe { (*cx).registers };
-    if let (Some(value), Some(register)) = (value, super::super::dispatch::value_step_result(instruction)) {
+    if let (Some(value), Some(register)) = (value, result) {
         after.set(register, value);
     }
     if after.0 == r.0 { return LANE_CALL_COMPLETED; }

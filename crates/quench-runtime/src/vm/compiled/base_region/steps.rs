@@ -59,6 +59,8 @@ pub(super) enum Step {
     /// The heap row is the record's fast arm over its operand's frame slot, with `Helper` behind it
     /// as the slow arm.
     Fast(Heap),
+    /// `LaneHelper::VmStep` makes the record's call-out in place (`staged::CallOut`) and the region continues.
+    CallOut,
     /// The region leaves at the record.
     Leave,
     /// The activation completes with the register the row reads (a body's `Return`).
@@ -86,6 +88,11 @@ impl Step {
     /// end the run or go elsewhere.
     pub(super) fn falls(self) -> bool {
         !matches!(self, Self::Leave | Self::Return | Self::Throw | Self::Catch)
+    }
+
+    /// Whether a lane helper makes the record: it may write any heap value and run guest code.
+    pub(super) fn runs_helper(self) -> bool {
+        matches!(self, Self::Helper | Self::CallOut)
     }
 }
 

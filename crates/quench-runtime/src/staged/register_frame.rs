@@ -23,6 +23,83 @@ impl Constant {
     }
 }
 
+/// An iteration or spread step the host makes by the interpreter's own definition
+/// (`Vm::call_out`): the protocol runs guest code (`@@iterator`, `next`, `return`), so a
+/// frame answers it with a callout.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Protocol {
+    /// The iterator of the operand (`GetIterator`).
+    GetIterator,
+    /// The for-in state over the operand's key snapshot (`ForInStart`).
+    ForInStart,
+    /// Close the iterator in the operand (`IteratorClose`).
+    IteratorClose,
+    /// Append `length` holes to the array operand, then the optional element operand, spread
+    /// where `spread` (`AppendArray`).
+    AppendArray { length: usize, spread: bool },
+}
+
+/// The tag byte of each `CallOut`, which a helper-call row passes as its immediate.
+pub(crate) const TAG_EQUALITY: u8 = 0;
+pub(crate) const TAG_BINARY: u8 = 1;
+pub(crate) const TAG_PROPERTY_KEY: u8 = 2;
+pub(crate) const TAG_PROTOCOL: u8 = 3;
+pub(crate) const TAG_FOR_IN_NEXT: u8 = 4;
+pub(crate) const TAG_LOAD_ENV_LOCAL: u8 = 5;
+pub(crate) const TAG_STORE_ENV_LOCAL: u8 = 6;
+pub(crate) const TAG_ARGUMENTS_LENGTH: u8 = 7;
+pub(crate) const TAG_GLOBAL_WRITE: u8 = 8;
+pub(crate) const TAG_GLOBAL_TYPEOF: u8 = 9;
+
+/// The VM operations a staged row calls out for when its own words do not decide it, named as
+/// data. A frame answers one in place (`Frame::vm_step`): the interpreter's frame calls the VM
+/// method, the lane specializer's frame calls the lane helper that decodes the record and makes
+/// the same step (`dispatch_fast::lane_vm_step`), and a frame with no host declines. Plain
+/// data: its tag byte (`repr(u8)`) and fields are what a helper-call row passes as immediates.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub(crate) enum CallOut {
+    /// `left == right`, or `===` where `strict`, negated for `!=` and `!==`, by the VM's full
+    /// equality: strings and BigInts compare by contents, a conversion may run guest code.
+    Equality { left: Register, right: Register, strict: bool, negated: bool } = TAG_EQUALITY,
+    /// `left operator right` by the VM's `Vm::binary`: a string or BigInt relation or operator,
+    /// `instanceof`, `in`.
+    Binary { left: Register, right: Register, operator: u32 } = TAG_BINARY,
+    /// ToPropertyKey of `source` (`Vm::to_property_key`): a Number allocates, an object runs
+    /// guest code.
+    PropertyKey { source: Register } = TAG_PROPERTY_KEY,
+    /// An iteration or spread step over its operand registers (`Protocol`).
+    Protocol { step: Protocol, operands: [Option<Register>; 2] } = TAG_PROTOCOL,
+    /// The next key of the for-in state in `state`; `Value::DELETED`, which no key is, once
+    /// none is left.
+    ForInNext { state: Register } = TAG_FOR_IN_NEXT,
+    /// The environment local `slot` of the running frame, by the binding rules.
+    LoadEnvLocal { slot: u16 } = TAG_LOAD_ENV_LOCAL,
+    /// `source` to the environment local `slot` of the running frame, by the binding rules (a
+    /// `with` scope, TDZ, a constant), `initialize` where it declares the binding.
+    StoreEnvLocal { source: Register, slot: u16, initialize: bool } = TAG_STORE_ENV_LOCAL,
+    /// The length of the arguments binding in local `slot`.
+    ArgumentsLength { slot: u16 } = TAG_ARGUMENTS_LENGTH,
+    /// `source` to the global name `atom` through cache `site`, `initialize` for a declaration.
+    GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool } = TAG_GLOBAL_WRITE,
+    /// The `typeof` name of the global `atom` through cache `site`.
+    GlobalTypeof { atom: u32, site: u16 } = TAG_GLOBAL_TYPEOF,
+}
+
+impl CallOut {
+    /// The registers the VM reads, in the order its operation takes them: the first operand
+    /// then the second, which is the only one an operation of a single operand has.
+    pub(crate) fn operands(self) -> [Option<Register>; 2] {
+        match self {
+            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } => [Some(left), Some(right)],
+            Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
+            Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
+            Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } => [None, None],
+            Self::Protocol { operands, .. } => operands,
+        }
+    }
+}
+
 /// A register frame: each register's word and the static fact the stage keeps about it. A
 /// stage with no register facts uses `()`.
 pub(crate) trait Frame<S: Stage> {
@@ -136,6 +213,29 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     #[allow(dead_code)]
     fn ret(&mut self, _stage: &mut S, _value: S::Word) -> Option<Self::Control> { None }
+
+    /// The activation's environment storage word and the fact its slot reads carry
+    /// (`environment::environment_slot`); `None` where the frame holds no environment.
+    #[inline(always)]
+    fn environment(&mut self, _stage: &mut S) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// Store `value` to environment slot `slot`; `None` where the frame cannot, leaving the
+    /// binding rules (an uninitialized or constant binding, a `with` scope) to the host.
+    #[inline(always)]
+    fn environment_write(&mut self, _stage: &mut S, _slot: u16, _value: S::Word) -> Option<()> { None }
+
+    /// The count of the arguments binding in local `slot`, an int32 word; `None` where the
+    /// binding is not one only kept values answer.
+    #[inline(always)]
+    fn arguments_length(&mut self, _stage: &mut S, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// The VM's own operation `operation` (`CallOut`), run in place where a row's words do not
+    /// decide it, defining `result` where the operation has one: the word it defined with the
+    /// fact the frame keeps of it, or a placeholder word where it defines none. `None` where the
+    /// frame has no host, or the operation raised, leaving the instruction to the interpreter.
+    #[inline(always)]
+    fn vm_step(&mut self, _stage: &mut S, _operation: CallOut, _result: Option<Register>)
+        -> Option<(S::Word, Self::Fact)> { None }
 
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.

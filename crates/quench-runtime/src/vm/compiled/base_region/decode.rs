@@ -89,6 +89,11 @@ pub(super) struct Decoded {
     /// identity is the row's `hole`, which the constructor register must hold, and the prototype link the walk looks for
     /// is the fact's, a Stable fact the code depends on (`held_instanceofs`).
     pub(super) instanceof: Option<(Value, InstanceofFact)>,
+    /// The global object's slot the row holds under the object's layout and the slot's observed type
+    /// (`globals`): Stable facts the code takes.
+    pub(super) global: Option<Access>,
+    /// A second register the row defines, with `undefined`: a name call's receiver.
+    pub(super) also: Option<Register>,
 }
 
 impl Decoded {
@@ -376,7 +381,8 @@ fn activation_row(instruction: WideInstruction) -> Option<Decoded> {
 }
 
 /// The heap instructions: a capture, a dense element read or store, a recorded or cached field
-/// read or store, the proof that a base is an array, the activation's `this` and its local slots.
+/// read or store, the proof that a base is an array, the activation's `this` and its local slots, and
+/// a global name's access (`globals`).
 pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     match instruction.op().class() {
         Class::LoadCapture | Class::StoreCapture => capture_row(facts, instruction),
@@ -384,6 +390,7 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32,
         Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
         Class::LoadThis | Class::LoadLocalPlain | Class::StoreLocalPlain => activation_row(instruction),
         Class::Binary => membership_row(known, pc, instruction),
+        Class::LoadName | Class::LoadNameCall | Class::LoadNameTypeof | Class::StoreName => global_row(known, pc, instruction),
         _ if instruction.op().is_field_store() => field_store_row(known, instruction),
         _ => None,
     }

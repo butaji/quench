@@ -1,6 +1,6 @@
 //! What a lane unit's by-name loads read at compile time: the global scope's bindings.
 use super::*;
-use super::super::global_facts::GlobalRead;
+use super::super::global_facts::{GlobalRead, GlobalReads, GlobalTable};
 
 impl<H: Host> Vm<H> {
     /// The PCs of `unit` whose by-name loads read the global scope as the lane's own does
@@ -29,7 +29,53 @@ impl<H: Host> Vm<H> {
             })
             .collect();
         let members: Vec<(usize, GlobalRead)> = reads.iter().filter_map(|(pc, read)| self.native_member(unit, *pc, read)).collect();
-        reads.into_iter().chain(members).collect()
+        let slots = self.lane_global_slots(program, function, unit);
+        reads.into_iter().chain(members).chain(slots).collect()
+    }
+
+    /// The by-name global accesses of `unit` as `table`'s tier takes them: the lane's own
+    /// (`lane_global_reads`), or the b-jit's, where a load of a global object's own data property that
+    /// is no constant is held as a slot of the object's layout too, which its row reads live.
+    pub(in crate::vm) fn global_table(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit, table: GlobalTable)
+        -> GlobalReads {
+        let reads = self.lane_global_reads(program, function, unit);
+        match table {
+            GlobalTable::Lane => reads,
+            GlobalTable::Base => {
+                let loads: Vec<(usize, GlobalRead)> = reads.range(0..=usize::MAX).map(|(pc, read)| (pc, *read)).collect();
+                loads.into_iter().map(|(pc, read)| (pc, self.slot_load(unit, pc, read))).collect()
+            }
+        }
+    }
+
+    /// The by-name load at `pc` held as a slot of the global object's layout where its read is no
+    /// constant and the object owns the name as a data property (`Vm::stable_global_slot`); `read` otherwise.
+    fn slot_load(&mut self, unit: &lane_unit::Unit, pc: usize, read: GlobalRead) -> GlobalRead {
+        let instruction = unit.instructions[pc];
+        let loads = matches!(read, GlobalRead::Stable { .. } | GlobalRead::Dynamic) && instruction.op().is_throwing_name_load();
+        loads.then(|| self.stable_global_slot(instruction.atom_index(), false)).flatten().map_or(read, GlobalRead::Slot)
+    }
+
+    /// The PCs of `unit` whose `StoreName` (not a declaration's) or `LoadNameTypeof` reaches the
+    /// global scope as `lane_global_reads` decides for a load, each with the global object's
+    /// slot it holds (`Vm::stable_global_slot`), where it holds one.
+    fn lane_global_slots(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> Vec<(usize, GlobalRead)> {
+        let sites: Vec<(usize, crate::bytecode::Atom, bool)> = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
+            let store = match instruction.op() {
+                crate::bytecode::Op::StoreName if instruction.boolean_field(crate::bytecode::InstructionField::B) == Some(false) => true,
+                crate::bytecode::Op::LoadNameTypeof => false,
+                _ => return None,
+            };
+            let function = match unit.origins[pc] {
+                lane_unit::Origin::Caller(_) => function,
+                lane_unit::Origin::Inlined { frame, .. } => unit.frames[frame].target.function,
+            };
+            let statically_global = program.function_get(function as usize).is_some_and(|body| body.names_resolve_statically(program))
+                && self.programs.names_are_global(self.active_program);
+            (statically_global && !self.atom_class(instruction.atom_index()).contains(super::super::object::AtomClass::INTERNAL))
+                .then_some((pc, instruction.atom_index(), store))
+        }).collect();
+        sites.into_iter().filter_map(|(pc, atom, store)| Some((pc, GlobalRead::Slot(self.stable_global_slot(atom, store)?)))).collect()
     }
 
     /// Whether a by-name load of `atom` in `function` reads the global scope as the lane's own load does

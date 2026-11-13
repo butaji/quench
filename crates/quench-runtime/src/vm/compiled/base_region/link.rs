@@ -109,6 +109,8 @@ pub(super) struct Layout<'a> {
     pub(super) invalidation: Option<usize>,
     /// The realm the entry proves active, where the code inlines callees.
     pub(super) realm: Option<RealmProof>,
+    /// The realm the rows' global slots belong to, proved active once at entry (`Heap::Realm`).
+    pub(super) realm: Option<Realm>,
 }
 
 impl Layout<'_> {
@@ -210,6 +212,10 @@ pub(super) fn entry_rows(layout: &Layout) -> Result<Vec<(&'static Stencil, [u64;
         if number && layout.homes.place(web) == Place::Mem {
             rows.push(guard(Kind::Guard, Place::Mem, slot(web))?);
         }
+    }
+    if let Some(realm) = layout.realm {
+        let proof = HeapRow { heap: Heap::Realm, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
+        rows.push((base_rows::stencil(proof)?, [0, realm.offset, realm.global]));
     }
     Ok(rows)
 }

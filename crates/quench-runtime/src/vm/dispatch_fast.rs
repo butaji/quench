@@ -3285,6 +3285,9 @@ script_handler! {
         if staged_to_property_key(r, Carried::script(cx), i.a, i.b) {
             next!(cx, r, following(ip), Carried::script(cx))
         }
+        if staged_property_key(r, Carried::script(cx), i.a, i.b) {
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
         let vm = unsafe { vm(cx) };
         let value = r.get(i.b);
         let key = if let Some(integer) = value.as_int() {
@@ -3389,7 +3392,7 @@ lane_handler! {
     }
 }
 
-/// `lane_general_step` within a frameless activation: a value step (`Vm::value_step`) of
+/// `lane_general_step` within a frameless activation: a value step (`Vm::call_out`) of
 /// the activation's registers, made beside the activations as a native runs beside them
 /// (`DeferredLaneCall`), so guest code it reaches makes them frames first; its result lands
 /// in the running function's registers then. Any other step takes the general path.
@@ -3408,14 +3411,19 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     if !instruction.op().traits().has(crate::bytecode::Traits::LANE_RESULT_STEP) {
         return Resumed::Exit(exit(ip));
     }
-    let [a, b] = super::dispatch::value_step_operands(instruction).map(|register| register.map(|register| r.get(register)));
-    let Some(value) = lane_in_place(cx, ip, |vm, code| vm.value_step(code, instruction, a, b)) else {
+    let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, |_| None)
+        .and_then(|row| row.call_out()).expect("a result step is a call-out row");
+    let operands = operation.operands().map(|register| register.map(|register| r.get(register)));
+    let Some(value) = lane_in_place(cx, ip, |vm, code| {
+        let site = super::call_out::CallSite { frame: vm.frames.len() - 1, resume: pc + 1 };
+        vm.call_out(code, site, operation, operands)
+    }) else {
         return Resumed::Exit(exit(ip));
     };
     // Guest code the step ran made the activations frames, whose registers these are.
     let r = unsafe { (*cx).registers };
-    if let Some(value) = value {
-        r.set(instruction.result_register(), value);
+    if let (Some(value), Some(result)) = (value, result) {
+        r.set(result, value);
     }
     Resumed::At(r, following(ip), Carried::script(cx))
 }
@@ -13418,8 +13426,8 @@ use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
 mod native_calls; mod generator_yields; use generator_yields::yield_handler;
 mod array_steps;
-mod value_steps;
-pub(in crate::vm) use value_steps::{lane_body_step, lane_body_value_step};
+mod vm_steps;
+pub(in crate::vm) use vm_steps::{lane_body_step, lane_vm_step};
 use array_steps::*;
 use native_calls::{native_call_handler, string_char_at_ascii, string_char_code_at};
 mod wasm_gc;

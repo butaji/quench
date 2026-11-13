@@ -48,6 +48,10 @@ pub(in crate::vm::compiled) struct Body {
     /// Whether it reads no heap row, makes no step and proves no realm: a loop region that does not
     /// needs from its payload only the entry record's address (`Crossing::Bare`).
     pub(in crate::vm::compiled) bare: bool,
+    /// The global layouts and slot types its rows hold (a Stable fact): a change retires the body
+    /// (`StableFacts::layouts`, `StableFacts::slots`).
+    pub(in crate::vm::compiled) layouts: Box<[crate::heap::GlobalLayoutFact]>,
+    pub(in crate::vm::compiled) slot_types: Box<[crate::code_dependencies::SlotDependency]>,
 }
 
 /// What a stitch decides its call sites by: the callees they recorded and the stitch's budget, the

@@ -13,6 +13,7 @@ use crate::code_dependencies::Invalidation;
 mod calls;
 pub(in crate::vm) use calls::{CallCode, RegionCalls};
 use crate::bytecode::{FieldLookup, Function, Op, ResidualProgram, WideInstruction};
+use crate::vm::global_facts::GlobalTable;
 use super::super::specializer::Specializer;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -75,7 +76,7 @@ pub(in crate::vm) enum OsrCompile {
 /// The function's full decoded code as a plain lane unit: the loop coverage selects
 /// `header..=backedge`, so every other PC is an exact-PC exit and the loop's PCs stay the
 /// function's.
-fn loop_unit(function: &Function) -> lane_unit::Unit {
+pub(super) fn loop_unit(function: &Function) -> lane_unit::Unit {
     let instructions: Vec<_> = function.instructions().collect();
     let count = instructions.len();
     lane_unit::Unit {
@@ -295,14 +296,14 @@ impl LoopPlanner<'_> {
     /// at the call's exact PC, with no callee inlined. The inlined unit is an optimization over
     /// that plan, used only where the general plan declines; an inlined callee the region
     /// cannot prove exactly then costs the region nothing but the inlining.
-    fn plan(&self, global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads,
+    fn plan(&self, global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> crate::vm::global_facts::GlobalReads,
         unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, (header, backedge): (usize, usize),
         generic: &[usize]) -> Option<super::lane_region::LoweredRegion> {
         let number_reads = observed_reads(unit, self.observation.number_arrays, self.observation.abandoned, generic);
         super::lane_region::RegionSpecializer {
             number_reads: &number_reads, int_entries: self.observation.int_entries, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
             function_id: self.function_id, unit, helpers: self.helpers, fields: self.fields,
-            global_reads: &global_reads(unit), facts: VmFacts::STATIC, generic,
+            global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts::STATIC, generic,
             direct: &BTreeMap::new(), frame_captures: &[], isa: self.isa,
             entry_fields,
             plan: super::lane_region::RegionPlan {
@@ -353,7 +354,7 @@ pub(in crate::vm) fn start_osr_region(
     program: &ResidualProgram,
     function_id: u32,
     helpers: LaneHelpers,
-    global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads,
+    global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> crate::vm::global_facts::GlobalReads,
     (widened, stores): (&[usize], Option<&crate::vm::method_cache::AtomBits>),
     calls: RegionCalls,
 ) -> Option<PendingOsrRegion> {

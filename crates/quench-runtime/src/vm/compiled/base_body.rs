@@ -92,6 +92,8 @@ impl<H: Host> Vm<H> {
         let folds = self.specialized && program.specialized;
         let constructors = if folds { self.instanceof_constructors(program, &code, parameters) } else { Vec::new() };
         let presences = if folds { self.membership_facts(&code) } else { Vec::new() };
+        // ...and its global names' accesses read the global object's slots under its layout.
+        let globals = folds.then(|| self.global_table(program, function, &super::osr_compile::loop_unit(body), GlobalTable::Base));
         let reads = |site: u16| self.native_field_read_descriptors(site);
         let instanceofs = |pc: usize| constructors.get(pc).copied().flatten().and_then(|constructor| self.instanceof_fact(constructor).map(|fact| (constructor, fact)));
         let known = Known {
@@ -102,6 +104,7 @@ impl<H: Host> Vm<H> {
             typeof_names: &self.typeof_names,
             instanceofs: folds.then_some(&instanceofs as &dyn Fn(usize) -> Option<(Value, InstanceofFact)>),
             presences: folds.then_some(presences.as_slice()),
+            globals: globals.as_ref(),
         };
         let speculated = widened(generic);
         let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: [&ints, &doubles] };
