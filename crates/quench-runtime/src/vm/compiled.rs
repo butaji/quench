@@ -2100,7 +2100,8 @@ fn jit_memory_snapshot() -> Option<(u64, u64)> {
 /// The status of a callout that raised: the VM's error (or panic) waits in
 /// the context.
 const RAISED_STATUS: i64 = TRAPS.len() as i64 + 1;
-const TERMINATED_STATUS: i64 = RAISED_STATUS + 1;
+const TERMINATED_STATUS: i64 = quench_bjit::call_record::TERMINATED_STATUS as i64;
+const _: () = assert!(TERMINATED_STATUS == RAISED_STATUS + 1, "the stencils' terminated status follows the raised one");
 
 fn trap_status(trap: crate::WasmTrap) -> i64 {
     TRAPS

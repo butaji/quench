@@ -2,14 +2,14 @@
 //! that holds it runs as the interpreter does, with the interpreter's step behind a fast arm.
 use super::tests::{run_both, run_in};
 use crate::JitMode;
-use crate::bytecode::Op;
+use crate::bytecode::Op as Opcode;
 use crate::vm::compiled::base_region::fast_rows;
 
 /// A read of a binding in its temporal dead zone, and an assignment that is no initialization, leave a fast row
 /// into the interpreter's step, which raises; an initialized binding is read and written by the row.
 #[test]
 fn local_reads_and_assignments_check_their_temporal_dead_zone_in_a_row() {
-    let ops = [Op::LoadLocal, Op::StoreLocal];
+    let ops = [Opcode::LoadLocal, Opcode::StoreLocal];
     let before = ops.map(fast_rows);
     let (interpreted, compiled, [runs, _]) = run_both(
         "function reads(n) { let s = 0; for (let i = 0; i < n; i++) { let a = i; s = s + a; { let b = s; b = b + 1; s = b; } } return s; }
@@ -29,7 +29,7 @@ fn local_reads_and_assignments_check_their_temporal_dead_zone_in_a_row() {
 /// value; a heap value leaves the row for the interpreter's step.
 #[test]
 fn typeof_strings_are_the_interned_table_entries() {
-    let before = fast_rows(Op::Unary);
+    let before = fast_rows(Opcode::Unary);
     let (interpreted, compiled, [runs, _]) = run_both(
         "function name(v) { return typeof v; }
          function same(v) { const s = typeof v; return s === 'number' || s === 'undefined' || s === 'object'; }
@@ -41,7 +41,7 @@ fn typeof_strings_are_the_interned_table_entries() {
     );
     assert_eq!(interpreted, compiled);
     assert!(runs > 100, "the bodies ran {runs} times");
-    assert!(fast_rows(Op::Unary) > before, "no typeof string fast row");
+    assert!(fast_rows(Opcode::Unary) > before, "no typeof string fast row");
 }
 
 /// `super()` binds the derived constructor's `this` and the rows after it read the receiver it bound: the helper
@@ -116,7 +116,7 @@ fn a_numeric_operator_with_a_local_target_is_a_helper_step() {
 /// `prototype` retires the body that held it, so the next answer is the interpreter's.
 #[test]
 fn instanceof_of_a_held_constructor_is_a_row_and_a_prototype_change_retires_it() {
-    let before = fast_rows(Op::Binary);
+    let before = fast_rows(Opcode::Binary);
     let (interpreted, compiled, [runs, _]) = run_both(
         "class A {} class B extends A {} class C {} function F() {}
          function is(v, K) { return v instanceof K; }
@@ -134,7 +134,7 @@ fn instanceof_of_a_held_constructor_is_a_row_and_a_prototype_change_retires_it()
     );
     assert_eq!(interpreted, compiled);
     assert!(runs > 100, "the bodies ran {runs} times");
-    assert!(fast_rows(Op::Binary) > before, "no instanceof fast row");
+    assert!(fast_rows(Opcode::Binary) > before, "no instanceof fast row");
 }
 
 /// `'k' in o` of a constant key that one receiver layout answered is a row over the object's exact shape and prototype
@@ -142,7 +142,7 @@ fn instanceof_of_a_held_constructor_is_a_row_and_a_prototype_change_retires_it()
 /// answer for any other layout; a prototype that gains or loses the key retires the body that held the answer.
 #[test]
 fn in_of_a_constant_key_is_a_row_and_a_prototype_layout_change_retires_it() {
-    let before = fast_rows(Op::Binary);
+    let before = fast_rows(Opcode::Binary);
     let (interpreted, compiled, [runs, _]) = run_both(
         "class P { m() { return 1; } } class Q extends P {}
          function own(o) { return 'a' in o; }
@@ -161,7 +161,7 @@ fn in_of_a_constant_key_is_a_row_and_a_prototype_layout_change_retires_it() {
     );
     assert_eq!(interpreted, compiled);
     assert!(runs > 100, "the bodies ran {runs} times");
-    assert!(fast_rows(Op::Binary) > before, "no `in` row");
+    assert!(fast_rows(Opcode::Binary) > before, "no `in` row");
 }
 
 /// A function whose closures capture some of its locals runs as the lane activation of an environment window, and its body
@@ -170,7 +170,7 @@ fn in_of_a_constant_key_is_a_row_and_a_prototype_layout_change_retires_it() {
 /// interpreter's.
 #[test]
 fn an_environment_activation_runs_as_a_body_over_its_window() {
-    let ops = [Op::LoadEnvLocal, Op::StoreEnvLocal];
+    let ops = [Opcode::LoadEnvLocal, Opcode::StoreEnvLocal];
     let before = ops.map(fast_rows);
     let (interpreted, compiled, [runs, _]) = run_both(
         "function tally(n) {

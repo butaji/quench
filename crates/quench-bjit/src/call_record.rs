@@ -43,7 +43,8 @@ pub const LANE_BODY_THREW: u32 = GENERAL_RETURN_STATUS_BASE - 3;
 /// terminated run (`TERMINATED_STATUS`).
 pub const NATIVE_JS_STOPPED: u32 = 1;
 pub const CALLEE_EXIT: u64 = 1 << 63;
-pub const TERMINATED_STATUS: u32 = 8;
+/// One past the runtime's raised status, which follows its Wasm trap codes (`vm::compiled::TRAPS`, asserted there).
+pub const TERMINATED_STATUS: u32 = 11;
 
 /// The per-site record of a direct-call row, one cache line, patched into the row as the one
 /// 64-bit value hole 0 (its address). Everything a site knows that does not fit the three value
