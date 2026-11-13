@@ -469,11 +469,20 @@ fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<
     nullish_constant.then_some(IdentityBranch { register })
 }
 
-/// Whether `register` has definitions in `instructions` and every one is a field read, which
-/// may give an object.
-fn field_reads_alone_define(instructions: &[WideInstruction], register: Register) -> bool {
+/// Whether `register` has definitions in `instructions` and every one is a `load`, which may
+/// give an object.
+fn loads_alone_define(instructions: &[WideInstruction], register: Register, load: fn(Op) -> bool) -> bool {
     let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(register)).peekable();
-    definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())
+    definitions.peek().is_some() && definitions.all(|definition| load(definition.op()))
+}
+
+fn field_reads_alone_define(instructions: &[WideInstruction], register: Register) -> bool {
+    loads_alone_define(instructions, register, Op::is_get_field)
+}
+
+/// A field read or an element read: the loads whose result a field read may take as its receiver.
+fn is_receiver_load(op: Op) -> bool {
+    op.is_get_field() || matches!(op, Op::GetIndex)
 }
 
 /// Traces a tagged-register rejection at `offset` (`QUENCH_TRACE=osr-reject`).
@@ -589,10 +598,10 @@ fn tagged_registers_with_failure(
                 .then_some(instruction.result_register())
         }))
         .chain(held.iter().copied())
-        // A field receiver the region's field reads give holds an object.
+        // A field receiver the region's field or element reads give holds an object.
         .chain(instructions.iter().filter(|instruction| instruction.op().is_get_field()).filter_map(|instruction| {
             let receiver = object_reads(*instruction)?;
-            field_reads_alone_define(instructions, receiver).then_some(receiver)
+            loads_alone_define(instructions, receiver, is_receiver_load).then_some(receiver)
         }))
         // A branch on a value only field reads give tests its truthiness tagged:
         // a field may hold an object.

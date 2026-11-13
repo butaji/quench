@@ -415,7 +415,10 @@ const REPATCH_SOURCE: &str = r#"
 /// The leaves a BaseJIT region makes in one `sum` call after `anchor` changes shape `changes`
 /// times in a row, one call to each: the exits and native runs that call added.
 fn repatch_leaves(changes: i32) -> Vec<(u64, u64)> {
-    crate::jit_mode::JitMode::BaseOnly.set_process_mode();
+    crate::jit_mode::JitMode::BaseOnly.with_mode(|| repatch_leaves_in_mode(changes))
+}
+
+fn repatch_leaves_in_mode(changes: i32) -> Vec<(u64, u64)> {
     let program = Engine::compile(crate::ExecutionRequest::script(REPATCH_SOURCE, "bjit-repatch.js")).unwrap();
     let function_id = function_named(&program, "sum");
     let mut vm = test_vm();
@@ -437,7 +440,6 @@ fn repatch_leaves(changes: i32) -> Vec<(u64, u64)> {
         leaves.push((now.0 - last.0, now.1 - last.1));
         last = now;
     }
-    crate::jit_mode::JitMode::default().set_process_mode();
     leaves
 }
 

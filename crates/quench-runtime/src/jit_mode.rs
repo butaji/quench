@@ -72,6 +72,20 @@ impl JitMode {
     pub fn set_process_mode(self) {
         PROCESS_MODE.store(self as u8, std::sync::atomic::Ordering::Relaxed);
     }
+
+    /// Runs `body` with this as the calling thread's mode, which tests on other threads do not see.
+    #[cfg(test)]
+    pub fn with_mode<R>(self, body: impl FnOnce() -> R) -> R {
+        let previous = THREAD_MODE.with(|mode| mode.replace(Some(self)));
+        let result = body();
+        THREAD_MODE.with(|mode| mode.set(previous));
+        result
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static THREAD_MODE: std::cell::Cell<Option<JitMode>> = const { std::cell::Cell::new(None) };
 }
 
 /// The compiling tiers, in the order a function climbs them: BaseJIT (stencils), QuickJIT
@@ -94,6 +108,10 @@ impl Tier {
 static PROCESS_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(JitMode::Full as u8);
 
 fn process_mode() -> JitMode {
+    #[cfg(test)]
+    if let Some(mode) = THREAD_MODE.with(std::cell::Cell::get) {
+        return mode;
+    }
     [JitMode::Interp, JitMode::BaseOnly, JitMode::UltraOnly, JitMode::QuickOnly, JitMode::Full]
         .into_iter()
         .find(|mode| *mode as u8 == PROCESS_MODE.load(std::sync::atomic::Ordering::Relaxed))
