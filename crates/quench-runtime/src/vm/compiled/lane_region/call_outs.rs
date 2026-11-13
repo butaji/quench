@@ -3,6 +3,7 @@
 //! (`dispatch_fast::lane_vm_step`) that continues in place, so no such record leaves its body.
 use super::*;
 use super::super::lane_unit::Origin;
+use crate::vm::global_facts::GlobalSlot;
 
 impl Lowering<'_, '_> {
     /// The call-out row (`Operation::call_out`) of `instruction` where this lowering makes it: in a
@@ -10,7 +11,9 @@ impl Lowering<'_, '_> {
     fn call_out_row(&self, instruction: WideInstruction) -> Option<crate::staged::Operation<ir::Value, EmitProof>> {
         let row = crate::staged::Operation::decode(instruction, crate::staged::DecodeContext::of(self.program))?;
         let (call, result) = row.call_out()?;
-        (self.completion.status_and_pc() && instruction.result_flags() == 0
+        // A comparison jump decides by its own lowering (`compare_jumps`).
+        (!matches!(row, crate::staged::Operation::CompareJump { .. })
+            && self.completion.status_and_pc() && instruction.result_flags() == 0
             && call.operands().registers(&[]).chain(result).all(|register| register < self.unit.registers))
             .then_some(row)
     }
@@ -41,18 +44,33 @@ impl Lowering<'_, '_> {
         let miss = self.guard_exit(state, pc as u32);
         self.canonicalize(state, pc);
         let cell = self.global_cell(state, pc, &row, miss);
-        let site = frame::call_out::CallOutSite { record, stop: self.call_out_stop(), registers: self.registers_base,
-            properties: self.entry.as_ref().expect("entry facts").receiver.properties, spill: self.spilled(pc), cell };
+        let site = self.call_out_site(pc, record, cell);
         if !matches!(row, crate::staged::Operation::ForInNext { .. }) {
-            self.step_with(state, frame::Edges::ValueGuarded { miss }, row, StepWith { call_out: Some(&site), ..StepWith::default() });
+            self.step_with(state, frame::Edges::ValueGuarded { miss }, row, StepWith { sites: sites(&site), ..StepWith::default() });
             state.call_effect();
             return true;
         }
         let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
-        self.step_with(state, frame::Edges::Branch { target: taken, following: fall, miss }, row, StepWith { call_out: Some(&site), ..StepWith::default() });
+        self.step_with(state, frame::Edges::Branch { target: taken, following: fall, miss }, row, StepWith { sites: sites(&site), ..StepWith::default() });
         state.call_effect();
         self.continue_branch(state, pc, instruction.jump_target() as usize, taken, fall);
         false
+    }
+
+    /// The site of the call-out record at `pc`: where the helper decodes it, the registers the body
+    /// wrote, and where a status other than completion or a miss ends the body.
+    pub(super) fn call_out_site(&mut self, pc: usize, record: u32, cell: Option<GlobalSlot>) -> frame::call_out::CallOutSite {
+        frame::call_out::CallOutSite { record, stop: self.call_out_stop(), registers: self.registers_base,
+            properties: self.entry.as_ref().expect("entry facts").receiver.properties, spill: self.spilled(pc), cell }
+    }
+
+    /// The record of the comparison jump at `pc` where the VM can decide it in place: a body with
+    /// the helper, a record of its own, and registers of the unit for operands.
+    pub(super) fn decide_record(&self, pc: usize, operands: [Operand; 2]) -> Option<u32> {
+        let Some(Origin::Caller(record)) = self.unit.origins.get(pc).copied() else { return None };
+        (self.completion.status_and_pc() && operands.iter()
+            .all(|operand| operand.register_index().is_some_and(|register| register < self.unit.registers)))
+            .then_some(record)
     }
 
     /// The block the call-outs' statuses of a leave in a callee, or a termination, reach with the
@@ -74,6 +92,11 @@ impl Lowering<'_, '_> {
         let status = self.builder.block_params(block)[0];
         self.stop_by_status(status);
     }
+}
+
+/// The step's sites where the lowering made a call-out's record.
+fn sites(site: &frame::call_out::CallOutSite) -> frame::Sites<'_> {
+    frame::Sites { call_out: Some(site), ..frame::Sites::default() }
 }
 
 /// Whether `row` is a `Binary` of two registers, equality or any other operator.

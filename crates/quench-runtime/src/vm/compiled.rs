@@ -1371,6 +1371,9 @@ lane_helper_inventory! { H;
     NewConcat => lane_new_concat::<H>,
     /// A regexp literal's fresh object of its site's template (`lane_new_regexp`).
     NewRegExp => lane_new_regexp::<H>,
+    /// A decision of two words the call-out carries, which needs no VM record
+    /// (`dispatch_fast::lane_decide`).
+    Decide => super::dispatch_fast::lane_decide::<H>,
 }
 
 /// Makes the frames of a chain of native activations, outer to inner, above the payload's
@@ -1522,23 +1525,6 @@ struct NullishComparison {
     negated: bool,
 }
 
-impl NullishComparison {
-    fn known_outcome(self, ty: typed_ir::Type) -> Option<bool> {
-        use typed_ir::Type;
-        let equal = if ty.is_subtype(Type::language(crate::ValueType::Null)) {
-            !self.strict || self.expected == Value::NULL
-        } else if ty.is_subtype(Type::language(crate::ValueType::Undefined)) {
-            !self.strict || self.expected == Value::UNDEFINED
-        } else if ty.is_direct_object_family()
-            || ty.is_subtype(Type::NUMBER.join(Type::language(crate::ValueType::Boolean))) {
-            false
-        } else {
-            return None;
-        };
-        Some(if self.negated { equal } else { !equal })
-    }
-}
-
 /// Resolve the constant operand and equality denotation before execution.
 fn nullish_comparison(constants: &[crate::bytecode::Constant], instruction: WideInstruction,
     register_type: impl Fn(Register) -> typed_ir::Type) -> Option<NullishComparison> {
@@ -1566,6 +1552,8 @@ pub(super) struct OnlineFacts<'a> {
     pub(super) invalidation: usize,
     /// The program's constants as the VM made and roots them (`Vm::active_constant`).
     pub(super) constants: &'a [Value],
+    /// What the VM proved of a constructor's `instanceof` (`Vm::instanceof_fact`), by its identity.
+    pub(super) instanceofs: &'a dyn Fn(Value) -> Option<crate::code_dependencies::InstanceofFact>,
 }
 
 impl OnlineFacts<'_> {
@@ -1622,55 +1610,6 @@ impl<H: Host> Vm<H> {
         VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), online: None, frozen: false,
             frozen_fields: None, frozen_constants: None }
     }
-}
-
-/// Whether JumpBinaryFalse takes its target. Where the IsHTMLDDA object may exist
-/// (`html_dda`), a loose test leaves at `fallback` for any heap value but an object record.
-fn emit_nullish_branch(builder: &mut FunctionBuilder<'_>, value: ir::Value,
-    comparison: NullishComparison, html_dda: bool, fallback: ir::Block) -> ir::Value {
-    let taken = builder.create_block();
-    let fall = builder.create_block();
-    let join = builder.create_block();
-    let result = builder.append_block_param(join, types::I8);
-    emit_nullish_edges(builder, value, comparison, html_dda, fallback, taken, fall, None);
-    for (block, bit) in [(taken, 1), (fall, 0)] {
-        builder.switch_to_block(block);
-        let bit = builder.ins().iconst(types::I8, bit);
-        builder.ins().jump(join, &[ir::BlockArg::Value(bit)]);
-    }
-    builder.switch_to_block(join);
-    result
-}
-
-/// Resolve comparison continuations without materializing a Boolean at their join.
-#[allow(clippy::too_many_arguments)]
-fn emit_nullish_edges(builder: &mut FunctionBuilder<'_>, value: ir::Value,
-    comparison: NullishComparison, html_dda: bool, fallback: ir::Block, taken: ir::Block, fall: ir::Block,
-    direct_object: Option<ir::Block>) {
-    use crate::value::ValueLayout;
-    let equal = if comparison.strict {
-        builder.ins().icmp_imm_u(IntCC::Equal, value, comparison.expected.to_bits() as i64)
-    } else {
-        let object = crate::staged::value::is_direct_object(&mut object_slots::emit(builder), value);
-        // A direct object cannot be nullish or IsHTMLDDA. Resolve that family
-        // before inspecting the remaining canonical encodings.
-        let remaining = builder.create_block();
-        let unequal = if comparison.negated { fall } else { taken };
-        builder.ins().brif(object, direct_object.unwrap_or(unequal), &[], remaining, &[]);
-        builder.switch_to_block(remaining);
-        if html_dda {
-            let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
-            let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
-            let array = crate::staged::value::is_direct_array(&mut object_slots::emit(builder), value);
-            let safe = builder.ins().bor(immediate, array);
-            emit_js_guard(builder, safe, fallback);
-        }
-        let null = builder.ins().icmp_imm_u(IntCC::Equal, value, Value::NULL.to_bits() as i64);
-        let undefined = builder.ins().icmp_imm_u(IntCC::Equal, value, Value::UNDEFINED.to_bits() as i64);
-        builder.ins().bor(null, undefined)
-    };
-    let (yes, no) = if comparison.negated { (taken, fall) } else { (fall, taken) };
-    builder.ins().brif(equal, yes, &[], no, &[]);
 }
 
 /// `function_id` lowered as an ahead lane body (`Coverage::Prefix`, the lane body ABI) under
@@ -4327,7 +4266,7 @@ pub(super) const LANE_BODY_RETURNED: u32 = RETURN_STATUS_BASE - 1;
 /// or left the lane in the callee's activation it made.
 /// Termination is terminal: the outer native body must not reconstruct or replay a call.
 pub(super) use quench_bjit::call_record::{
-    LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_TERMINATED,
+    LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_TERMINATED,
 };
 
 impl LaneExit {

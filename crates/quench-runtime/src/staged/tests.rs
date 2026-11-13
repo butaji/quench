@@ -270,7 +270,8 @@ fn every_staged_opcode_decodes_to_one_operation() {
     let staged = [Op::Move, Op::LoadConst, Op::LoadLocalPlain, Op::StoreLocalPlain,
         Op::Jump, Op::JumpFalse, Op::JumpTrue, Op::LoadThis, Op::RequireObjectCoercible,
         Op::ToNumeric, Op::ToPropertyKey, Op::LoadEnvLocal, Op::StoreEnvLocal, Op::ArgumentsLength, Op::LoadNameTypeof,
-        Op::StoreName, Op::ForInNext, Op::ForInStart, Op::GetIterator, Op::IteratorClose, Op::AppendArray, Op::LoadCapture, Op::Return];
+        Op::StoreName, Op::ForInNext, Op::ForInStart, Op::GetIterator, Op::IteratorClose, Op::AppendArray,
+        Op::LoadCapture, Op::StoreCapture, Op::JumpBinaryFalse, Op::Return];
     for op in staged {
         assert_eq!(op.semantics(), Semantics::Staged, "{op:?}");
         let instruction = WideInstruction::new(op, 1, 1, 1, 0);

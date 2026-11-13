@@ -146,7 +146,7 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
         let program = self.program;
         let unnamed_atoms = super::method_cache::AtomBits::default();
         let facts = VmFacts { frozen: true, frozen_fields: Some(self.fields), frozen_constants: Some(self.constants),
-            online: Some(OnlineFacts { method_cache_atoms: &unnamed_atoms, invalidation: self.invalidation.address(), constants: &[] }),
+            online: Some(OnlineFacts { method_cache_atoms: &unnamed_atoms, invalidation: self.invalidation.address(), constants: &[], instanceofs: &|_| None }),
             ..VmFacts::STATIC };
         let reads = frozen_global_reads(program, program.function_get(function_id as usize)?, self.globals);
         let (body, atoms) = lower_lane_body(program, function_id, isa,

@@ -31,11 +31,14 @@ mod spread;
 mod admission;
 mod delete;
 mod decode;
+mod captures;
+pub(crate) mod compare;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::{CallOut, OperandValues};
 pub(crate) use spread::Passing;
 pub(crate) use decode::DecodeContext;
+pub(crate) use compare::{Comparison, Nullish};
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod builtins;
@@ -116,6 +119,16 @@ pub(crate) trait Frame<S: Stage> {
     /// The fact `register` currently carries.
     fn fact(&self, register: Register) -> Self::Fact;
 
+    /// The semantic type `register` is proved to have; `None` where the stage keeps none, as the
+    /// interpreter does not.
+    #[inline(always)]
+    fn register_type(&self, _register: Register) -> Option<Type> { None }
+
+    /// `register` holds a value of type `ty` along `edge` of the jump the running step ends in:
+    /// a frame that keeps type facts narrows them for that edge's successor.
+    #[inline(always)]
+    fn refine(&mut self, _register: Register, _ty: Type, _edge: Edge) {}
+
     /// `register`'s word in the representation its fact names; tagged where it is tagged.
     fn read(&mut self, stage: &mut S, register: Register) -> S::Word;
 
@@ -174,12 +187,6 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn ret(&mut self, _stage: &mut S, _register: Register) -> Option<Self::Control> { None }
 
-    /// The captured value at `slot` of the environment `depth` scopes out: its ordinary
-    /// value, or `None` (leaving at `miss`) where the frame holds no such run of slots or the
-    /// slot holds an internal marker, which the caller resolves the long way.
-    #[inline(always)]
-    fn capture(&mut self, _stage: &mut S, _depth: u16, _slot: u16, _miss: S::Miss) -> Option<S::Word> { None }
-
     /// The activation's environment storage word and the fact its slot reads carry
     /// (`environment::environment_slot`); `None` where the frame holds no environment.
     #[inline(always)]
@@ -202,6 +209,19 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn vm_step(&mut self, _stage: &mut S, _operation: CallOut, _result: Option<Register>)
         -> Option<(S::Word, Self::Fact)> { None }
+
+    /// Read the capture `slot`, `depth` scopes out (a static operand: the walk's length), with the
+    /// fact the frame keeps of it; `root` reads the root environment's projected binding (a
+    /// script's global var or lexical) the walk ends at instead of a function's slots. `None`
+    /// where the frame cannot (an uninitialized or shared binding, no captures), leaving the
+    /// read to the interpreter.
+    #[inline(always)]
+    fn capture_slot(&mut self, _stage: &mut S, _depth: u16, _slot: u16, _root: bool) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// Store `value` to the capture `slot`, `depth` scopes out; `None` where the binding does
+    /// not take the direct store (a `const`, an uninitialized `let`).
+    #[inline(always)]
+    fn store_capture(&mut self, _stage: &mut S, _depth: u16, _slot: u16, _value: S::Word) -> Option<()> { None }
 
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
@@ -251,9 +271,6 @@ pub(crate) enum Operation<W, P> {
     /// Define `destination` with the activation's `this`; where the activation does not
     /// hold it, leave at the frame's miss edge.
     LoadThis { destination: Register },
-    /// The captured value at `slot` of the environment `depth` scopes out (`Frame::capture`);
-    /// the caller defines the destination.
-    LoadCapture { depth: u16, slot: u16 },
     /// A Number operation (`numeric`).
     Number(NumberOperation),
     /// Continue where register `register` is neither `null` nor `undefined`; those leave at
@@ -354,6 +371,15 @@ pub(crate) enum Operation<W, P> {
     /// `base[key] = value`, replacing a present dense element in place where the array owns its
     /// backing alone and the value needs no barrier log, else the VM's store.
     ElementWrite { value: Register, base: Register, key: Register },
+    /// Define `destination` from the capture `slot`, `depth` scopes out, or from the root
+    /// environment's projected binding where `root` (`Frame::capture_slot`). The decode never
+    /// names a root: only a tier that found the walk end at one does.
+    LoadCapture { destination: Register, depth: u16, slot: u16, root: bool },
+    /// Store `source` to the capture `slot`, `depth` scopes out (`Frame::store_capture`).
+    StoreCapture { source: Register, depth: u16, slot: u16 },
+    /// `left` compared with `right` (`Comparison`), jumping to the target when the comparison
+    /// holds, or fails where `negate` (`JumpBinaryFalse`); otherwise continue after it.
+    CompareJump { comparison: Comparison, left: Operand, right: Operand, negate: bool },
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes and the
@@ -374,8 +400,9 @@ impl<W, P> Operation<W, P> {
                 register: instruction.register_a(), taken: false },
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
-            Op::Binary | Op::ToPropertyKey => return Self::decode_generic(instruction),
-            Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::IncDec | Op::LoadCapture => return Self::decode_value(instruction),
+            Op::Binary | Op::ToPropertyKey | Op::JumpBinaryFalse => return Self::decode_generic(instruction),
+            Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::IncDec
+                | Op::LoadCapture | Op::StoreCapture => return Self::decode_value(instruction),
             Op::GetField | Op::Delete => return Self::decode_property(instruction),
             op if op.is_field_store() => return Self::decode_property(instruction),
             Op::GetIndex | Op::SetIndex => return Self::decode_element(instruction),
@@ -425,9 +452,6 @@ impl<W, P> Operation<W, P> {
         Some(match instruction.op() {
             Op::LoadThis => Self::LoadThis {
                 destination: instruction.result_register() },
-            Op::LoadCapture => Self::LoadCapture {
-                depth: crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()),
-                slot: crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()) },
             Op::RequireObjectCoercible => Self::RequireObjectCoercible {
                 register: instruction.register_b() },
             Op::ToNumeric => Self::Number(NumberOperation::ToNumeric {
@@ -435,6 +459,11 @@ impl<W, P> Operation<W, P> {
             Op::IncDec if instruction.numeric_local_target().is_none() => Self::Number(NumberOperation::IncDec {
                 destination: instruction.result_register(), source: instruction.register_b(),
                 decrement: instruction.boolean_flag()?, overflow: Overflow::Exit }),
+            Op::LoadCapture if instruction.result_flags() == 0 => Self::LoadCapture {
+                destination: instruction.result_register(), depth: instruction.capture_depth(), slot: instruction.capture_slot(),
+                root: false },
+            Op::StoreCapture => Self::StoreCapture {
+                source: instruction.register_a(), depth: instruction.capture_depth(), slot: instruction.capture_slot() },
             Op::Unary => return Self::decode_unary(instruction),
             _ => return None,
         })

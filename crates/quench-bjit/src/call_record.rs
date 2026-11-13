@@ -19,6 +19,9 @@ pub const LANE_CALL_COMPLETED: u64 = 0;
 pub const LANE_CALL_MISSED: u64 = 1;
 pub const LANE_CALL_LEFT: u64 = 2;
 pub const LANE_CALL_TERMINATED: u64 = 3;
+/// A call-out that decides a comparison completed, and the comparison held; `LANE_CALL_COMPLETED`
+/// is that it did not.
+pub const LANE_CALL_HOLDS: u64 = 4;
 
 /// The general dispatch's return statuses count down from the top of `u32` by this many blocks
 /// (`vm::compiled::MAX_JS_GENERAL_DISPATCH_BLOCKS`).

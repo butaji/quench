@@ -103,7 +103,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     fn value_fact(&self, register: Register) -> Type { self.state.values[usize::from(register)].value.ty }
 
     fn object_records(&mut self, stage: &mut Emit<'b, 'c>) -> Option<ir::Value> {
-        let entry = self.entry()?;
+        let entry = self.entry().or(self.table_entry)?;
         Some(headers::object_table_base(stage.builder, entry, self.payload))
     }
 

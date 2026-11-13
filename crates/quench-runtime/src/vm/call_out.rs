@@ -60,6 +60,9 @@ impl<H: Host> Vm<H> {
                 let strict = strict || p.function(site.function as usize).strict;
                 self.delete_reference_property_mode(p, first.expect("a delete names its base"), operand, strict).map(Some)
             }
+            CallOut::Decide { operator, .. } => self
+                .binary_truthy(p, operator, first.expect("a decision names its left operand"), operand)
+                .map(|holds| Some(Value::boolean(holds))),
             CallOut::ForInNext { .. } => Ok(Some(self.for_in_next(p, operand)?.unwrap_or(Value::DELETED))),
             CallOut::Protocol { step, .. } => self.protocol_step(p, step, first, second),
             CallOut::Spread { passing, .. } => self.spread_call(p, passing, [first, second], &list).map(Some),

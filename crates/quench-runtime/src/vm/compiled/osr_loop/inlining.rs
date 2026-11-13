@@ -2,8 +2,9 @@
 //! region PCs every kept instruction takes, the instructions each takes there, and the
 //! guards the frames end with.
 
+use crate::bytecode::Class;
 use super::{
-    admitted_store, field_base, inlined_returning, inlined_set_this, inlinable, intern_field, object_reads, renamed, Class,
+    admitted_store, field_base, inlined_returning, inlined_set_this, inlinable, intern_field, object_reads, renamed,
     FieldBase, FieldLookup, FieldPath, FieldReceiver, FieldSite, FieldUse, ImmediateLayout, ImmediateRole, InlineCallee,
     InlineFrame, InlineGuard, LoopRegion, Op, Origin, Register, RegisterSet, WideInstruction, CALLEE_CAPTURE,
     MAX_INLINE_PARAMS, MAX_REGION_FIELDS,

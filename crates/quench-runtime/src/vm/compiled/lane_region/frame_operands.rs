@@ -41,6 +41,56 @@ pub(in crate::vm) fn operand_number(builder: &mut FunctionBuilder<'_>, registers
     }
 }
 
+/// A bitwise operand's ToInt32: an int32 as it is, a number by truncation modulo 2^32. A
+/// double of magnitude 2^63 or more, an infinity or NaN leaves (`EXACT_I64_TRUNCATION_LIMIT`).
+pub(in crate::vm) fn operand_to_int32(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+    state: &mut State, constants: &[crate::bytecode::Constant], operand: crate::bytecode::Operand,
+    exit: ir::Block) -> Option<ir::Value> {
+    use crate::bytecode::OperandKind;
+    let integral = match operand.kind()? {
+        OperandKind::Register => state.values[usize::from(operand.payload())].value.ty.is_subtype(Type::INT32),
+        OperandKind::Constant => constants.get(usize::from(operand.payload()))
+            .and_then(super::super::facts::immediate).is_some_and(super::super::facts::is_int32),
+        OperandKind::Field | OperandKind::Local => return None,
+    };
+    if integral { return operand_int(builder, registers, state, constants, operand, exit); }
+    // A register only its tag types is its int where the tag says so, else its Number's
+    // ToInt32; neither path proves a fact the other does not.
+    let tagged = operand.register_index()
+        .filter(|register| state.values[usize::from(*register)].value.representation == Representation::Tagged);
+    match tagged {
+        Some(register) => Some(tagged_to_int32(builder, registers, state, register, exit)),
+        None => {
+            let number = operand_number(builder, registers, state, constants, operand, exit)?;
+            Some(crate::vm::compiled::emit_number_to_int32(builder, number, exit))
+        }
+    }
+}
+
+/// A tagged register's ToInt32, kept for the later uses of the same bits.
+fn tagged_to_int32(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, state: &mut State,
+    register: Register, exit: ir::Block) -> ir::Value {
+    let bits = register_tagged(builder, registers, state, register);
+    if let Some((_, int32)) = state.proofs.int32_projections.iter().find(|(source, _)| *source == bits) {
+        #[cfg(test)] INT32_PROJECTION_REUSES.with(|count| count.set(count.get() + 1));
+        return *int32;
+    }
+    let integer = is_int_tagged(builder, bits);
+    let (int_block, number_block, join) = (builder.create_block(), builder.create_block(), builder.create_block());
+    let int32 = builder.append_block_param(join, types::I32);
+    builder.ins().brif(integer, int_block, &[], number_block, &[]);
+    builder.switch_to_block(int_block);
+    let int = builder.ins().ireduce(types::I32, bits);
+    builder.ins().jump(join, &[ir::BlockArg::Value(int)]);
+    builder.switch_to_block(number_block);
+    let number = emit_js_tagged_number(builder, bits, exit);
+    let truncated = crate::vm::compiled::emit_number_to_int32(builder, number, exit);
+    builder.ins().jump(join, &[ir::BlockArg::Value(truncated)]);
+    builder.switch_to_block(join);
+    state.proofs.int32_projections.push((bits, int32));
+    int32
+}
+
 /// `register`'s int32 value, proving it where the fact does not.
 pub(in crate::vm) fn register_int_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {

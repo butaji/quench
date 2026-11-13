@@ -42,7 +42,7 @@ macro_rules! number_relations {
 
         impl NumberRelation {
             #[inline(always)]
-            pub(super) fn from_operator(op: u32) -> Option<Self> {
+            pub(crate) fn from_operator(op: u32) -> Option<Self> {
                 $(
                     if $(op == BinaryOperator::$operator as u32)||+ {
                         return Some(Self::$relation);
@@ -294,7 +294,7 @@ pub(super) fn number_truthiness<T: Copy, S: NumberTruthinessStage<T>>(
 /// The int32 operations used by JavaScript bitwise expressions. Keeping their
 /// operator mapping and operation selection in one stage lets the interpreter
 /// and native emitters share the same signed/unsigned shift decisions.
-pub(super) trait NumberBitwiseStage<T> {
+pub(crate) trait NumberBitwiseStage<T> {
     type Output;
 
     fn and(&mut self, left: T, right: T) -> Self::Output;
@@ -308,19 +308,19 @@ pub(super) trait NumberBitwiseStage<T> {
 macro_rules! number_bitwise {
     ($($operation:ident => $operator:ident, $stage_method:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(super) enum NumberBitwise { $($operation),+ }
+        pub(crate) enum NumberBitwise { $($operation),+ }
 
         impl NumberBitwise {
             /// `from_operator` of a decoded operator, as one match.
             #[inline(always)]
-            pub(super) fn from_binary_operator(operator: BinaryOperator) -> Option<Self> {
+            pub(crate) fn from_binary_operator(operator: BinaryOperator) -> Option<Self> {
                 match operator {
                     $(BinaryOperator::$operator => Some(Self::$operation),)+
                     _ => None,
                 }
             }
 
-            pub(super) fn from_operator(operator: u32) -> Option<Self> {
+            pub(crate) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == BinaryOperator::$operator as u32 {
                         return Some(Self::$operation);
@@ -401,6 +401,12 @@ impl NumberBitwiseStage<i32> for I32BitwiseStage {
     fn shift_right_unsigned(&mut self, left: i32, right: i32) -> Self::Output {
         ((left as u32) >> ((right as u32) & crate::value::WORD32_SHIFT_MASK)) as i32
     }
+}
+
+/// The int32 bits `operation` makes of two int32 operands.
+#[inline(always)]
+pub(crate) fn int32_bitwise_bits(operation: NumberBitwise, left: i32, right: i32) -> i32 {
+    operation.apply(&mut I32BitwiseStage, left, right)
 }
 
 #[inline(always)]
@@ -2551,6 +2557,16 @@ pub(crate) fn equality_operator(op: u32) -> Option<(bool, bool)> {
     );
     let offset = op.wrapping_sub(EQUALITY);
     (offset <= STRICT | NEGATED).then_some((offset & STRICT != 0, offset & NEGATED != 0))
+}
+
+/// The equality operator that is `strict` and `negated`: the inverse of `equality_operator`.
+pub(crate) fn equality_binary_operator(strict: bool, negated: bool) -> u32 {
+    match (strict, negated) {
+        (false, false) => BinaryOperator::Equality as u32,
+        (false, true) => BinaryOperator::Inequality as u32,
+        (true, false) => BinaryOperator::StrictEquality as u32,
+        (true, true) => BinaryOperator::StrictInequality as u32,
+    }
 }
 
 /// The entry that runs a native's call (`Vm::call_native_dispatch`), one per family of

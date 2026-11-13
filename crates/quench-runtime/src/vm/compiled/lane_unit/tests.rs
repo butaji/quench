@@ -1,4 +1,5 @@
 use super::*;
+use crate::bytecode::Class;
 
 #[cfg(feature = "aot")]
 #[test]

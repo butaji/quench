@@ -21,6 +21,7 @@ pub(crate) const TAG_SPREAD: u8 = 10;
 pub(crate) const TAG_DELETE: u8 = 11;
 pub(crate) const TAG_LOAD_NAME: u8 = 12;
 pub(crate) const TAG_SUPER_CALL: u8 = 13;
+pub(crate) const TAG_DECIDE: u8 = 14;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -64,6 +65,10 @@ pub(crate) enum CallOut {
     /// `callee` constructed by `super(...)` with the arguments in `arguments`, by the VM's
     /// construction with the running activation's `new.target`.
     SuperCall { callee: Register, arguments: Arguments, passing: Passing } = TAG_SUPER_CALL,
+    /// `left operator right` decided by the VM (`Vm::binary_truthy`): a comparison jump's slow
+    /// case. It defines no register; its answer is a canonical boolean, which a lane's helper
+    /// reports as its status (`LANE_CALL_HOLDS`).
+    Decide { left: Register, right: Register, operator: u32 } = TAG_DECIDE,
 }
 
 /// The registers the VM reads for a `CallOut`: up to two of fixed place, and a list a call
@@ -111,7 +116,8 @@ impl CallOut {
     /// list of arguments a call passes.
     pub(crate) fn operands(self) -> Operands {
         Operands::of_fixed(match self {
-            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } | Self::Delete { base: left, key: right, .. } => [Some(left), Some(right)],
+            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } | Self::Delete { base: left, key: right, .. }
+                | Self::Decide { left, right, .. } => [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
             Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
             Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. } => [None, None],
@@ -150,6 +156,8 @@ impl<W, P> Operation<W, P> {
                 (CallOut::GlobalWrite { source, atom, site, initialize }, None),
             Self::GlobalTypeof { destination, atom, site } => (CallOut::GlobalTypeof { atom, site }, Some(destination)),
             Self::Delete { destination, base, key, strict } => (CallOut::Delete { base, key, strict }, Some(destination)),
+            Self::CompareJump { comparison, left, right, .. } => (CallOut::Decide { left: left.register_index()?,
+                right: right.register_index()?, operator: comparison.operator()? }, None),
             _ => return self.call_out_of_call(),
         })
     }

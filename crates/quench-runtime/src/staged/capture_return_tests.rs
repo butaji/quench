@@ -1,14 +1,13 @@
-//! The staged capture read and Number return on the concrete stage.
+//! The staged Number return on the concrete stage.
 
 use super::*;
 use crate::bytecode::Register;
 use crate::Value;
 
-/// A concrete frame over a few registers, the environments `depth` scopes out, and the word
+/// A concrete frame over a few registers and the word
 /// the last staged return left with.
 struct ScopeFrame {
     registers: Vec<u64>,
-    scopes: Vec<Vec<Value>>,
     returned: Option<u64>,
 }
 
@@ -28,11 +27,6 @@ impl Frame<Concrete> for ScopeFrame {
     fn branch(&mut self, _stage: &mut Concrete, _condition: bool) -> Edge { Edge::Following }
     fn jump(&mut self, _stage: &mut Concrete) -> Edge { Edge::Target }
     fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, ()) { (Value::boolean(condition).to_bits(), ()) }
-
-    fn capture(&mut self, stage: &mut Concrete, depth: u16, slot: u16, miss: ()) -> Option<u64> {
-        let run = self.scopes.get(usize::from(depth))?;
-        environment::dense_capture(stage, run.as_ptr() as u64, run.len() as u64, slot, miss)
-    }
 
     fn ret(&mut self, stage: &mut Concrete, register: Register) -> Option<Edge> {
         let value = self.read(stage, register);
@@ -65,34 +59,17 @@ impl NumericFrame<Concrete> for ScopeFrame {
     fn number_fact(&self) {}
 }
 
-fn frame(registers: Vec<u64>, scopes: Vec<Vec<Value>>) -> ScopeFrame {
-    ScopeFrame { registers, scopes, returned: None }
-}
-
-#[test]
-fn a_staged_capture_reads_every_depth_and_leaves_at_markers_and_past_the_run() {
-    let scopes = vec![vec![Value::number(1.5), Value::DELETED], vec![Value::UNDEFINED]];
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = frame(vec![], scopes);
-    let mut read = |depth, slot| match step(&mut stage, &mut frame, Operation::LoadCapture { depth, slot }) {
-        Step::Value(word) => Some(Value::from_bits(word)),
-        Step::Unresolved => None,
-        Step::Control(_) => unreachable!("a capture read transfers no control"),
-    };
-    assert_eq!(read(0, 0), Some(Value::number(1.5)));
-    assert_eq!(read(0, 1), None, "an internal marker leaves");
-    assert_eq!(read(0, 2), None, "past the run leaves");
-    assert_eq!(read(1, 0), Some(Value::UNDEFINED));
-    assert_eq!(read(2, 0), None, "no scope that far out leaves");
+fn frame(registers: Vec<u64>) -> ScopeFrame {
+    ScopeFrame { registers, returned: None }
 }
 
 #[test]
 fn a_staged_return_leaves_with_a_number_and_leaves_unresolved_for_any_other_value() {
     let mut stage = Concrete::new(std::ptr::null());
-    let mut numeric = frame(vec![Value::number(2.5).to_bits()], vec![]);
+    let mut numeric = frame(vec![Value::number(2.5).to_bits()]);
     assert!(matches!(step(&mut stage, &mut numeric, Operation::Return { source: 0 }), Step::Control(_)));
     assert_eq!(numeric.returned, Some(Value::number(2.5).to_bits()));
-    let mut other = frame(vec![Value::UNDEFINED.to_bits()], vec![]);
+    let mut other = frame(vec![Value::UNDEFINED.to_bits()]);
     assert!(matches!(step(&mut stage, &mut other, Operation::Return { source: 0 }), Step::Unresolved));
     assert_eq!(other.returned, None);
 }

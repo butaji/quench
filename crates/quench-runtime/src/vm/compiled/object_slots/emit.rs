@@ -5,7 +5,7 @@ use crate::staged::region::Mutability;
 use crate::staged::{Access, Domain, NumericStage, Stage, Table};
 use crate::staged::flow::FlowStage;
 use crate::vm::compiled::regions;
-use crate::vm::operations::{NumberArithmetic, NumberRelation};
+use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 
 /// One Cranelift instruction at the stage's builder: `ins!(self, iadd(a, b))` is
 /// `self.builder.ins().iadd(a, b)`.
@@ -232,6 +232,13 @@ impl Stage for Emit<'_, '_> {
     fn table(&mut self, table: Table) -> ir::Value {
         match table { Table::PropertyValues => self.property_values.expect("an operation addressing the arena has its base") }
     }
+    /// The walk unrolled up to the tier's bound; a longer chain is undecided, for the caller's
+    /// residual.
+    fn walk_prototypes(&mut self, records: ir::Value, object: ir::Value, target: ir::Value, max_depth: u32)
+        -> (ir::Value, ir::Value) {
+        let links = max_depth.min(crate::vm::compiled::tier_policy::PROTOTYPE_UNROLL_LINKS);
+        crate::staged::object::walk_prototypes(self, records, object, target, links)
+    }
 }
 
 impl FlowStage for Emit<'_, '_> {
@@ -320,6 +327,9 @@ impl NumericStage for Emit<'_, '_> {
     fn u32_to_f64(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().fcvt_from_uint(types::F64, a) }
     fn to_int32(&mut self, number: ir::Value, miss: ir::Block) -> Option<ir::Value> {
         Some(emit_number_to_int32(self.builder, number, miss))
+    }
+    fn int_bitwise(&mut self, operation: NumberBitwise, left: ir::Value, right: ir::Value) -> ir::Value {
+        emit_number_bitwise_bits(self.builder, operation, left, right)
     }
     fn i32_is_zero(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, 0) }
     fn i32_is_negative(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, a, 0) }

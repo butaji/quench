@@ -196,4 +196,8 @@ impl Stage for Concrete {
     }
     #[inline(always)]
     fn table(&mut self, table: Table) -> u64 { self.tables[table as usize] }
+    #[inline(always)]
+    fn walk_prototypes(&mut self, records: u64, object: u64, target: u64, max_depth: u32) -> (bool, bool) {
+        super::object::walk_prototypes_loop(self, records, object, target, max_depth)
+    }
 }

@@ -3,8 +3,8 @@
 use super::{Frame, Stage, Step};
 use crate::bytecode::{Operand, Register};
 use crate::vm::operations::{
-    CheckedInt32Stage, NumberArithmetic, NumberArithmeticStage, NumberF64Stage, NumberRelation,
-    NumberUnary, PartialOrderStage,
+    int32_bitwise_bits, CheckedInt32Stage, NumberArithmetic, NumberArithmeticStage, NumberBitwise, NumberF64Stage,
+    NumberRelation, NumberUnary, PartialOrderStage,
 };
 
 /// The representation both operands and the result of a Number operation have.
@@ -62,6 +62,8 @@ pub(crate) trait NumericStage: Stage {
     /// ToInt32 of a binary64 word, as an int32 word; a specializer whose native range is narrower
     /// than ToInt32's leaves at `miss` for what it does not convert.
     fn to_int32(&mut self, number: Self::Word, miss: Self::Miss) -> Option<Self::Word>;
+    /// The int32 word `operation` makes of two int32 words (a shift takes its count modulo 32).
+    fn int_bitwise(&mut self, operation: NumberBitwise, left: Self::Word, right: Self::Word) -> Self::Word;
     fn i32_is_zero(&mut self, value: Self::Word) -> Self::Cond;
     fn i32_is_negative(&mut self, value: Self::Word) -> Self::Cond;
     fn both(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
@@ -81,6 +83,34 @@ pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + supe
     /// untyped register taken for an int32), leaving at `miss` for the rest.
     fn prove_number(&mut self, stage: &mut S, register: Register, miss: S::Miss) -> Option<()>;
     fn miss(&self) -> S::Miss;
+
+    /// The tagged word of `operand`: a register's, or a constant the frame holds; `None` for any
+    /// other operand, which leaves the row to the interpreter.
+    #[inline(always)]
+    fn operand_word(&mut self, stage: &mut S, operand: Operand) -> Option<S::Word> {
+        operand.register_index().map(|register| self.tagged(stage, register))
+    }
+
+    /// `operand`'s ToInt32, as a bitwise operator reads it: an int32 as it is, a Number by
+    /// truncation; `None` where it is no Number, which leaves the row to the interpreter. A frame
+    /// that proves int32 operands only reads them as such.
+    #[inline(always)]
+    fn int32_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<S::Word> {
+        Some(self.int_operand(stage, operand, miss))
+    }
+
+    /// The encoded prototype link (`ProtoLink::bits`) of `constructor`'s `prototype`, where the
+    /// frame holds it as a Stable fact together with the constructor's absent `Symbol.hasInstance`
+    /// and its plain, unbound call: a dependency on both retires the code that relied on them
+    /// where one changes, so an `instanceof` of `constructor` walks the value's chain by words.
+    /// `None` where the frame holds no such fact, which leaves `instanceof` to the VM.
+    #[inline(always)]
+    fn stable_prototype(&mut self, _stage: &mut S, _constructor: Register) -> Option<S::Word> { None }
+
+    /// Whether an IsHTMLDDA object can exist (the host provides one): a heap cell other than an
+    /// object or array record may then be it, which no word decides.
+    #[inline(always)]
+    fn html_dda_possible(&self) -> bool { true }
 
     /// The miss edge a local access uses, where this frame guards it. A frame whose locals
     /// are plain storage reads and writes them without a guard returns `None`, and its
@@ -186,13 +216,19 @@ fn bitwise_not<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F
 /// A relation of two operands in `domain`; its predicate word.
 fn relation<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     left: Operand, right: Operand, relation: NumberRelation, domain: Domain) -> Step<S::Word, F::Control> {
+    let holds = relation_holds(stage, frame, left, right, relation, domain);
+    Step::Value(stage.cond_word(holds))
+}
+
+/// Whether `relation` holds of two operands in `domain`.
+pub(super) fn relation_holds<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    left: Operand, right: Operand, relation: NumberRelation, domain: Domain) -> S::Cond {
     let miss = frame.miss();
     let (left, right) = match domain {
         Domain::Int32 => (frame.int_operand(stage, left, miss), frame.int_operand(stage, right, miss)),
         Domain::Float64 => (frame.number_operand(stage, left, miss), frame.number_operand(stage, right, miss)),
     };
-    let condition = stage.relation(relation, domain, left, right);
-    Step::Value(stage.cond_word(condition))
+    stage.relation(relation, domain, left, right)
 }
 
 /// Arithmetic of two operands in `domain`; the result in `domain` or widened to binary64.
@@ -387,6 +423,9 @@ impl NumericStage for super::Concrete {
     fn u32_to_f64(&mut self, value: u64) -> u64 { f64::from(value as u32).to_bits() }
     fn to_int32(&mut self, number: u64, _miss: ()) -> Option<u64> {
         Some(u64::from(crate::units::to_int32(f64::from_bits(number)) as u32))
+    }
+    fn int_bitwise(&mut self, operation: NumberBitwise, left: u64, right: u64) -> u64 {
+        u64::from(int32_bitwise_bits(operation, int32(left), int32(right)) as u32)
     }
     fn i32_is_zero(&mut self, value: u64) -> bool { int32(value) == 0 }
     fn i32_is_negative(&mut self, value: u64) -> bool { int32(value) < 0 }

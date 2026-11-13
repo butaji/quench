@@ -10,7 +10,7 @@
 //! outermost first, through the lane's own call path, and continues at the innermost one's
 //! record (`Vm::lane_body_inlined_activation`).
 
-use crate::bytecode::{Class, FieldLookup, ImmediateLayout, Op, Register, Traits, WideInstruction};
+use crate::bytecode::{FieldLookup, ImmediateLayout, Op, Register, Traits, WideInstruction};
 use crate::bytecode::Function;
 use crate::staged::{plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Resolved};
 use crate::typed_ir::BindingTime;
@@ -232,14 +232,14 @@ const MAX_INLINING_DEPTH: usize = 5;
 /// only one it inlines in turn.
 fn inlinable(instruction: WideInstruction) -> bool {
     let plain = instruction.result_flags() == 0 || super::osr_loop::inlined_returning(instruction);
-    match instruction.op().class() {
+    match instruction.op() {
         _ if instruction.op().traits().has(Traits::SCALAR_REGION.union(Traits::ELEMENT_ACCESS).union(Traits::THIS_LEAF)) => plain,
         // The callee's own captures, which its frame reads from its environment
         // (`Lowering::frame_captures`).
-        Class::LoadCapture => plain && ImmediateLayout::capture_depth(instruction.imm()) == 0,
+        opcode if opcode.is_load_capture() => plain && ImmediateLayout::capture_depth(instruction.imm()) == 0,
         // A nested lookup's chain names its base by the function's registers; the lowering
         // renames it through the frame (`Lowering::get_field`), and its sink stores to `this`.
-        Class::GetField => match instruction.field_lookup() {
+        opcode if opcode.is_get_field() => match instruction.field_lookup() {
             Some(FieldLookup::Atom { .. }) => plain,
             Some(FieldLookup::Site(_)) => plain || instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER,
             None => false,
@@ -247,11 +247,11 @@ fn inlinable(instruction: WideInstruction) -> bool {
         _ if instruction.op().is_field_store() => plain,
         // A fused `typeof` test (`Lowering::typeof_test`), a `typeof` switch's index
         // (`Lowering::typeof_index`); any other unary leaves where the lowering has none.
-        Class::Unary => plain,
+        opcode if opcode.is_unary() => plain,
         // Operations native code leaves at, exactly, through the inlined frame's recovery: a
         // global name's read, a construction and a throw, typically a callee's error path.
-        Class::LoadName | Class::Construct | Class::Throw => instruction.result_flags() == 0,
-        Class::Call => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
+        opcode if opcode.is_load_name() || opcode.is_construct() || opcode.is_throw() => instruction.result_flags() == 0,
+        opcode if opcode.is_call() => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
         _ => plain && instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
     }
 }
@@ -260,11 +260,11 @@ fn inlinable(instruction: WideInstruction) -> bool {
 /// leaf. A miss may restart that call without replaying effects.
 fn restartable(program: &crate::ResidualProgram, function: &Function, code: &[WideInstruction]) -> bool {
     if super::lane_region::restartable_numeric_function(program, function, code) { return true; }
-    code.iter().enumerate().all(|(pc, instruction)| match instruction.op().class() {
-        Class::SetIndex | Class::Call => false,
+    code.iter().enumerate().all(|(pc, instruction)| match instruction.op() {
+        opcode if opcode.is_set_index() || opcode.is_call() => false,
         _ if instruction.op().is_field_store() => false,
-        Class::IncDec => instruction.numeric_local_target().is_none(),
-        Class::Jump | Class::JumpFalse | Class::JumpTrue | Class::JumpBinaryFalse => instruction.jump_target() as usize > pc,
+        opcode if opcode.is_inc_dec() => instruction.numeric_local_target().is_none(),
+        opcode if opcode.is_jump() || opcode.is_jump_false() || opcode.is_jump_true() || opcode.is_jump_binary_false() => instruction.jump_target() as usize > pc,
         _ => true, // `inlinable` owns the supported instruction/effect set.
     })
 }
@@ -290,9 +290,9 @@ fn terminal_return(code: &[WideInstruction]) -> Option<usize> {
 /// (`osr_loop::renamed`): its operands are registers or constants. The plan decides it, so a
 /// unit it plans always emits.
 fn renamable(instruction: WideInstruction) -> bool {
-    match instruction.op().class() {
-        Class::Call | Class::Return | Class::LoadThis | Class::LoadName | Class::Construct | Class::Throw => true,
-        Class::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => true,
+    match instruction.op() {
+        opcode if opcode.is_call() || opcode.is_return() || opcode.is_load_this() || opcode.is_load_name() || opcode.is_construct() || opcode.is_throw() => true,
+        opcode if opcode.is_get_field() && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => true,
         _ => {
             let plain = if super::osr_loop::inlined_returning(instruction) {
                 WideInstruction::new(instruction.op(), instruction.result_register(), instruction.b(), instruction.c(), instruction.imm())
@@ -307,7 +307,7 @@ fn renamable(instruction: WideInstruction) -> bool {
 /// The unit PCs an inlined callee instruction takes: a completion of the call (a `Return`, or
 /// an instruction that computes and returns) adds the result's move and the jump past the call.
 fn completion_length(instruction: WideInstruction) -> u32 {
-    if instruction.op().class().eq(Class::Return) {
+    if instruction.op().is_return() {
         2
     } else if super::osr_loop::inlined_returning(instruction) {
         3
@@ -396,7 +396,7 @@ impl Planner<'_, '_> {
                 let through = self.through_call(function, pc as u32, *instruction);
                 // Strict terminal calls retain the VM's proper-tail-call policy.
                 // A root completion must name a real Return, never the completed Call.
-                let (calls, ran) = if instruction.op().class().eq(Class::Call) && instruction.returns_from_frame()
+                let (calls, ran) = if instruction.op().is_call() && instruction.returns_from_frame()
                     && (strict || (depth == 0 && terminal_return(&code).is_none())) {
                     (Vec::new(), true)
                 } else { self.inline(function, pc as u32, through.map_or(*instruction, |(call, _)| call), depth, through.is_some(), self.weight.saturating_mul(site_weights[pc])) };
@@ -421,7 +421,7 @@ impl Planner<'_, '_> {
     fn through_call(&self, function: u32, pc: u32, instruction: WideInstruction) -> Option<(WideInstruction, (Register, Value))> {
         let imm = instruction.imm();
         let (base, count) = (ImmediateLayout::call_window_base(imm), ImmediateLayout::argument_count(imm));
-        (instruction.op().class().eq(Class::Call) && count > 0 && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
+        (instruction.op().is_call() && count > 0 && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
         let through = (self.targets)(function, pc).into_iter().find_map(CallTarget::through)?;
         let call = WideInstruction::new(Op::Call, instruction.a(), instruction.register_c(), base,
             ImmediateLayout::call_immediate(base + 1, count - 1, false, false));
@@ -432,7 +432,7 @@ impl Planner<'_, '_> {
     /// inlines within the budget, as the call's switch; any other callee takes the call.
     /// With whether the call has run: a call the plan may not inline counts as run.
     fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction, depth: usize, forwarded: bool, weight: u64) -> (Vec<InlinedPlan>, bool) {
-        if !instruction.op().class().eq(Class::Call) {
+        if !instruction.op().is_call() {
             return (Vec::new(), false);
         }
         if !returns_or_keeps(instruction) || instruction.direct_eval()
@@ -516,7 +516,7 @@ impl Planner<'_, '_> {
 fn lowerable(code: &[WideInstruction]) -> bool {
     code.iter().all(|instruction| inlinable(*instruction) && renamable(*instruction))
         && code.iter().any(|instruction| completion_length(*instruction) > 1
-            || (instruction.op().class().eq(Class::Call) && instruction.returns_from_frame()))
+            || (instruction.op().is_call() && instruction.returns_from_frame()))
 }
 
 /// The unit's instructions, origins and frames as a plan lays them out.
@@ -627,19 +627,19 @@ impl Emitter {
         if super::osr_loop::inlined_returning(instruction) {
             return self.emit_returning(instruction, origin, register, receiver, result, continuation, target_of);
         }
-        let rewritten = match instruction.op().class() {
-            Class::Return => {
+        let rewritten = match instruction.op() {
+            opcode if opcode.is_return() => {
                 self.unit.instructions.push(WideInstruction::new(Op::Move, result, register(instruction.register_a()), 0, 0));
                 self.unit.origins.push(origin);
                 WideInstruction::new(Op::Jump, 0, 0, 0, continuation)
             }
-            Class::LoadThis => WideInstruction::new(Op::Move, register(instruction.result_register()), receiver, 0, 0),
+            opcode if opcode.is_load_this() => WideInstruction::new(Op::Move, register(instruction.result_register()), receiver, 0, 0),
             // Exit-only operations (`inlinable`): their registers, renamed for the analyses;
             // the lowering leaves at each, and recovery runs the callee's own instruction.
-            Class::LoadName | Class::Throw => WideInstruction::new(instruction.op(), register(instruction.a()), instruction.b(), instruction.c(), instruction.imm()),
-            Class::Construct => WideInstruction::new(Op::Construct, register(instruction.a()), register(instruction.b()),
+            opcode if opcode.is_load_name() || opcode.is_throw() => WideInstruction::new(instruction.op(), register(instruction.a()), instruction.b(), instruction.c(), instruction.imm()),
+            opcode if opcode.is_construct() => WideInstruction::new(Op::Construct, register(instruction.a()), register(instruction.b()),
                 register(instruction.c()), instruction.imm()),
-            Class::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => {
+            opcode if opcode.is_get_field() && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => {
                 let flags = instruction.result_flags();
                 WideInstruction::new(Op::GetField, flags | register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
             }
@@ -655,7 +655,7 @@ impl Emitter {
     #[allow(clippy::too_many_arguments)]
     fn emit_returning(&mut self, instruction: WideInstruction, origin: Origin, register: &dyn Fn(Register) -> Register,
         receiver: Register, result: Register, continuation: u32, target_of: &dyn Fn(u32) -> Option<u32>) -> Option<()> {
-        let computed = if instruction.op().class().eq(Class::GetField) && instruction.b() == crate::bytecode::FieldBase::NESTED {
+        let computed = if instruction.op().is_get_field() && instruction.b() == crate::bytecode::FieldBase::NESTED {
             // A nested lookup keeps its site, whose base the lowering renames.
             WideInstruction::new(instruction.op(), register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
         } else {

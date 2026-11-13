@@ -17,13 +17,6 @@ pub(super) fn safepoint(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, pro
     safepoint_parts(stage.builder, frame.polls, proof)
 }
 
-/// A depth-zero capture of the resolved run: the staged dense read, whose marker or bounds
-/// miss leaves at `miss`.
-pub(super) fn capture(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, depth: u16, slot: u16, miss: ir::Block) -> Option<ir::Value> {
-    let (values, len) = frame.captures.filter(|_| depth == 0)?;
-    crate::staged::environment::dense_capture(stage, values, len, slot, miss)
-}
-
 /// A Number return: the register in the int32 or binary64 view its facts favor, jumped to a
 /// block that `Lowering::finish_number_returns` completes with the joined format.
 pub(super) fn number_return(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, register: Register) -> Option<()> {

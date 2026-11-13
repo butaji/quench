@@ -9,9 +9,10 @@ use super::*;
 /// `LANE_CALL_COMPLETED` with the result written to its register, `LANE_CALL_MISSED` where it
 /// raised (the error stashed for the general path, which re-runs the record and raises it), or
 /// `LANE_CALL_LEFT` where guest code it ran made the lane's activations frames, which leave the
-/// body at the next record.
+/// body at the next record. A decision (`CallOut::Decide`) completes with `LANE_CALL_HOLDS` where
+/// the comparison held.
 pub(in crate::vm) unsafe extern "C" fn lane_vm_step<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
+    use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_LEFT, LANE_CALL_MISSED};
     let cx = context as usize as *mut LaneContext<H>;
     // The function's activation is the one the step reads (`activations.last`).
     lane_materialize_running_leaf(cx);
@@ -33,8 +34,17 @@ pub(in crate::vm) unsafe extern "C" fn lane_vm_step<H: Host>(_vm: u64, _residual
     if let (Some(value), Some(register)) = (value, result) {
         after.set(register, value);
     }
-    if after.0 == r.0 { return LANE_CALL_COMPLETED; }
-    unsafe { (*cx).callee_resume = following(ip); (*cx).callee_acc = Value::UNDEFINED; }
+    if after.0 == r.0 {
+        let holds = matches!(operation, crate::staged::CallOut::Decide { .. }) && value == Some(Value::TRUE);
+        return if holds { LANE_CALL_HOLDS } else { LANE_CALL_COMPLETED };
+    }
+    // A decision that failed took its jump (`JumpBinaryFalse`), which the activations resume at.
+    let resume = match operation {
+        crate::staged::CallOut::Decide { .. } if value != Some(Value::TRUE) =>
+            unsafe { (*cx).base.add(instruction.jump_target() as usize) },
+        _ => following(ip),
+    };
+    unsafe { (*cx).callee_resume = resume; (*cx).callee_acc = Value::UNDEFINED; }
     LANE_CALL_LEFT
 }
 
@@ -62,4 +72,27 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_string_concat<H: Host>(_vm: u64
         }
         None => LANE_CALL_MISSED,
     }
+}
+
+/// The decision of `left operator right` that runs no guest code and allocates nothing: a strict
+/// equality (`Vm::strict_equal`), `instanceof` by the remembered constructor layout
+/// (`Vm::steady_instanceof`) and `in` of a string key in an ordinary object (`Vm::plain_in`);
+/// `None` for any other pair, which the full algorithm decides. The one rule of the interpreter's
+/// staged frame and of the lane's decide helper.
+pub(super) fn lane_decision<H: Host>(vm: &mut Vm<H>, operator: u32, left: Value, right: Value) -> Option<bool> {
+    match crate::vm::operations::equality_operator(operator) {
+        Some((strict, negated)) => strict.then(|| vm.strict_equal(left, right) != negated),
+        None if operator == INSTANCEOF_OPERATOR => vm.steady_instanceof(left, right),
+        None => vm.plain_in(operator, left, right),
+    }
+}
+
+/// A lane body's decision of `left operator right` by the words a `CallOut::Decide` carries, which
+/// needs no record of the VM's: `Value::TRUE` or `Value::FALSE`, or `Value::DELETED` where only
+/// the full algorithm decides, which leaves the body at the test (`lane_decision`).
+pub(in crate::vm) unsafe extern "C" fn lane_decide<H: Host>(vm: u64, _residual: u64, left: u64, right: u64, operator: u64) -> u64 {
+    // SAFETY: as `lane_field_set`; the decision reads the heap, runs no guest code and allocates nothing.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    lane_decision(vm, operator as u32, Value::from_bits(left), Value::from_bits(right))
+        .map_or_else(|| Value::DELETED.to_bits(), |holds| Value::boolean(holds).to_bits())
 }

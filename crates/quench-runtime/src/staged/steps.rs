@@ -13,7 +13,8 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             | Operation::FieldAdd { .. } | Operation::IndexGetHost { .. }) => super::property::property_step(stage, frame, property),
         Operation::Delete { destination, base, key, strict } => super::delete::step(stage, frame, destination, [base, key], strict),
         element @ (Operation::ElementRead { .. } | Operation::ElementWrite { .. }) => super::element_rows::step(stage, frame, element),
-        Operation::Void { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. } | Operation::Binary { .. } => super::generic::step(stage, frame, operation),
+        Operation::Void { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. } | Operation::Binary { .. }
+            | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
         Operation::Call(CallOperation::Site(site)) => super::invoke::invoke(stage, frame, frame.miss(), site),
         Operation::Return { source } => super::invoke::ret(stage, frame, source),
         Operation::Call(operation) => super::protocol::step(stage, frame.miss(), operation),
@@ -21,7 +22,8 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             | Operation::LogicalNot { .. } | Operation::Safepoint { .. } => register_step(stage, frame, operation),
         Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::LoadName { .. } | Operation::Protocol { .. }
-            | Operation::ForInNext { .. } | Operation::SpreadCall { .. } | Operation::SuperCall { .. } => super::names::step(stage, frame, operation),
+            | Operation::ForInNext { .. } | Operation::SpreadCall { .. } | Operation::SuperCall { .. }
+            | Operation::LoadCapture { .. } | Operation::StoreCapture { .. } => super::names::step(stage, frame, operation),
         value => value_step(stage, frame, value),
     }
 }
@@ -33,10 +35,6 @@ fn value_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination),
         Operation::TypeofIndex { destination, source } => super::control::typeof_index(stage, frame, destination, source),
-        Operation::LoadCapture { depth, slot } => match frame.capture(stage, depth, slot, frame.miss()) {
-            Some(value) => Step::Value(value),
-            None => Step::Unresolved,
-        },
         heap => super::heap::heap_step(stage, frame, heap),
     }
 }

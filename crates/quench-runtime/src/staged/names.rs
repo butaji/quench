@@ -92,6 +92,7 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             calling(stage, frame, CallOut::Protocol { step, operands }, destination),
         Operation::ForInNext { destination, state } => for_in_next(stage, frame, destination, state),
         Operation::SpreadCall { .. } | Operation::SuperCall { .. } => super::spread::step(stage, frame, operation),
+        Operation::LoadCapture { .. } | Operation::StoreCapture { .. } => super::captures::step(stage, frame, operation),
         _ => Step::Unresolved,
     }
 }

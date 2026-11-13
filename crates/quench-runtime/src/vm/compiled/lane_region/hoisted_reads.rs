@@ -11,7 +11,7 @@ impl Lowering<'_, '_> {
             prove_receiver(state, instruction, receiver, header);
         }
         let raw = self.builder.use_var(variable);
-        if representation == Representation::Int32 && instruction.op().class().eq(Class::LoadCapture) {
+        if representation == Representation::Int32 && instruction.op().is_load_capture() {
             // Captures have no tagged field-cache consumer. Preserve the
             // admitted view; recovery or a tagged use boxes it on demand.
             self.set_int(state, instruction.result_register(), raw);
@@ -20,7 +20,7 @@ impl Lowering<'_, '_> {
         }
         let destination = instruction.result_register();
         let value = match instruction.field_lookup() {
-            Some(lookup @ FieldLookup::Atom { atom, base, cache_site }) if instruction.op().class().eq(Class::GetField) => {
+            Some(lookup @ FieldLookup::Atom { atom, base, cache_site }) if instruction.op().is_get_field() => {
                 let exit = self.guard_exit(state, pc as u32);
                 let held = HeldRead { hoisted: Some(read), ..HeldRead::default() };
                 let value = self.field_value(state, (base, lookup), &[], held, exit)

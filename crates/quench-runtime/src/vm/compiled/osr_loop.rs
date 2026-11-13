@@ -29,7 +29,7 @@
 //! boundaries exit before their effects.
 
 use crate::bytecode::{
-    Class, FieldBase, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
+    FieldBase, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
     OperandKind, Register, WideInstruction,
 };
 use crate::compile::liveness::RegisterSet;
@@ -516,7 +516,7 @@ fn tagged_registers_with_failure(
         .chain(
             instructions
                 .iter()
-                .filter(|instruction| reads_type(**instruction) || allocates(instruction.op())
+                .filter(|instruction| reads_type(**instruction) || instruction.op().allocates()
                     || number_comparison(**instruction).is_some())
                 .map(|instruction| instruction.result_register()),
         )
@@ -642,8 +642,8 @@ fn tagged_registers_with_failure(
             if !tagged.contains(&result) || boxed.contains(&result) {
                 continue;
             }
-            match instruction.op().class() {
-                Class::LoadConst => {
+            match instruction.op() {
+                opcode if opcode.is_load_const() => {
                     if constants.get(instruction.constant_index()).is_none() {
                         trace_tagged_reject(header, offset, result, "missing_constant");
                         return Err(offset);
@@ -651,12 +651,12 @@ fn tagged_registers_with_failure(
                 }
                 // Entry captures, cached fields, global bindings and fresh allocations can
                 // carry arbitrary boxed values.
-                Class::LoadCapture | Class::GetField | Class::GetIndex | Class::LoadName => {}
-                _ if allocates(instruction.op()) => {}
-                Class::Binary if number_comparison(instruction).is_some() => {}
+                opcode if opcode.is_load_capture() || opcode.is_get_field() || opcode.is_get_index() || opcode.is_load_name() => {}
+                _ if instruction.op().allocates() => {}
+                opcode if opcode.is_binary() && number_comparison(instruction).is_some() => {}
                 // A type test reads its operand's tag, and the VM's cell of a heap value
                 // (the type-name index exits for one instead).
-                Class::Unary if reads_type(instruction) => {
+                opcode if opcode.is_unary() && reads_type(instruction) => {
                     tagged.insert(instruction.register_b());
                 }
                 _ => {
@@ -862,8 +862,8 @@ pub(super) fn renamed(
 /// The registers an instruction reads as objects: a field read's receiver, an indexed
 /// access's array.
 fn object_reads(instruction: WideInstruction) -> Option<Register> {
-    match instruction.op().class() {
-        Class::GetField => match instruction.field_lookup()? {
+    match instruction.op() {
+        opcode if opcode.is_get_field() => match instruction.field_lookup()? {
             FieldLookup::Atom { base, .. } => base.register_index(),
             _ => None,
         },
@@ -874,9 +874,9 @@ fn object_reads(instruction: WideInstruction) -> Option<Register> {
 
 /// The register an indexed access, or the coercibility check before one, reads as its array.
 fn array_read(instruction: WideInstruction) -> Option<Register> {
-    match instruction.op().class() {
-        Class::GetIndex => instruction.operand_b().register_index(),
-        Class::SetIndex | Class::RequireObjectCoercible => Some(instruction.register_b()),
+    match instruction.op() {
+        opcode if opcode.is_get_index() => instruction.operand_b().register_index(),
+        opcode if opcode.is_set_index() || opcode.is_require_object_coercible() => Some(instruction.register_b()),
         _ => None,
     }
 }
@@ -1732,8 +1732,7 @@ fn redefinition(instructions: &[WideInstruction], register: Register,
     }
     Some(reaching.into_iter().find(|offset| {
         let instruction = instructions[*offset];
-        !allocates(instruction.op()) && !matches!(instruction.op().class(),
-            Class::GetIndex | Class::GetField | Class::Move | Class::LoadCapture | Class::LoadEnvLocal | Class::LoadName)
+        !instruction.op().carries_boxed_value()
     }))
 }
 
@@ -2142,8 +2141,8 @@ fn admit(
     defined_registers: &std::collections::BTreeSet<Register>,
     dynamic_arrays: &std::collections::BTreeSet<Register>,
 ) -> Option<()> {
-    match instruction.op().class() {
-        Class::LoadConst => {
+    match instruction.op() {
+        opcode if opcode.is_load_const() => {
             let index = instruction.constant_index();
             if tagged.contains(&instruction.result_register()) {
                 admission.any_constant(index)?;
@@ -2153,7 +2152,7 @@ fn admit(
                 admission.result(instruction)?;
             }
         }
-        Class::Move => {
+        opcode if opcode.is_move() => {
             if tagged.contains(&instruction.result_register()) {
                 admission.tagged(instruction.result_register())?;
                 admission.tagged(instruction.register_b())?;
@@ -2162,7 +2161,7 @@ fn admit(
                 admission.number(instruction.register_b())?;
             }
         }
-        Class::LoadCapture => {
+        opcode if opcode.is_load_capture() => {
             (instruction.capture_depth() == 0 && instruction.result_flags() == 0).then_some(())?;
             admit_loaded(admission, instruction, tagged)?;
             let slot = instruction.capture_slot();
@@ -2170,7 +2169,7 @@ fn admit(
                 admission.captures.push(slot);
             }
         }
-        Class::Binary | Class::NumericAdd | Class::NumericMultiply => {
+        opcode if opcode.is_binary_arithmetic() => {
             if number_comparison(instruction).is_some() {
                 (instruction.result_flags() == 0).then_some(())?;
                 admission.tagged(instruction.result_register())?;
@@ -2181,16 +2180,16 @@ fn admit(
             admission.source(instruction.operand_b())?;
             admission.source(instruction.operand_c())?;
         }
-        Class::ToNumeric => {
+        opcode if opcode.is_to_numeric() => {
             admission.result(instruction)?;
             admission.number(instruction.register_b())?;
         }
-        Class::IncDec => {
+        opcode if opcode.is_inc_dec() => {
             instruction.boolean_flag()?;
             admission.result(instruction)?;
             admission.number(instruction.register_b())?;
         }
-        Class::Unary => {
+        opcode if opcode.is_unary() => {
             if reads_type(instruction) && tagged.contains(&instruction.result_register())
             {
                 admission.tagged(instruction.result_register())?;
@@ -2202,12 +2201,12 @@ fn admit(
             }
         }
         // An array the entry guard proved is an object passes.
-        Class::RequireObjectCoercible => {
+        opcode if opcode.is_require_object_coercible() => {
             if !dynamic_arrays.contains(&instruction.register_b()) {
                 admission.array(instruction.register_b(), false)?;
             }
         }
-        Class::GetIndex => {
+        opcode if opcode.is_get_index() => {
             admit_loaded(admission, instruction, tagged)?;
             let base = instruction.operand_b().register_index()?;
             // A dynamic array takes no register role (`LoopRegion::dynamic_arrays`).
@@ -2217,11 +2216,11 @@ fn admit(
             admission.source(instruction.operand_c())?;
         }
         // Its field is the region's (`LoopRegion::field_reads`).
-        Class::GetField => {
+        opcode if opcode.is_get_field() => {
             admit_loaded(admission, instruction, tagged)?;
         }
         // A tagged value is stored as the lane's element store takes it.
-        Class::SetIndex => {
+        opcode if opcode.is_set_index() => {
             if tagged.contains(&instruction.register_a()) {
                 admission.tagged(instruction.register_a())?;
             } else {
@@ -2243,24 +2242,24 @@ fn admit(
         }
         // The lane stores through the binding's own store, and a binding it does not take
         // leaves; the entry snapshot holds no slot the region stores (`stored_captures`).
-        Class::StoreCapture => {
+        opcode if opcode.is_store_capture() => {
             let value = instruction.register_a();
             admit_stored(admission, value, tagged, defined_registers)?;
         }
         // A global binding's read (`Vm::lane_global_reads`), a Number where arithmetic reads it.
-        Class::LoadName => {
+        opcode if opcode.is_load_name() => {
             (instruction.result_flags() == 0).then_some(())?;
             admit_loaded(admission, instruction, tagged)?;
         }
         // A literal or construction allocates without collecting, a due collection leaving
         // first; its arguments and elements pass boxed.
-        _ if allocates(instruction.op()) => {
+        _ if instruction.op().allocates() => {
             (instruction.result_flags() == 0).then_some(())?;
             admission.tagged(instruction.result_register())?;
         }
         // Its literal's allocation writes it (`Allocation::ArrayOf`).
-        Class::DefineArrayElement => {}
-        Class::LoadEnvLocal => {
+        opcode if opcode.is_define_array_element() => {}
+        opcode if opcode.is_load_env_local() => {
             if instruction.result_flags() != 0
                 || instruction.returns_from_frame()
                 || instruction.numeric_local_target().is_some()
@@ -2274,8 +2273,8 @@ fn admit(
         _ if exits_before_effects(instruction) => {}
         // A return leaves the loop: the lane resumes at it with the state written back, and
         // runs it.
-        Class::Return | Class::Jump => {}
-        Class::JumpBinaryFalse => {
+        opcode if opcode.is_return() || opcode.is_jump() => {}
+        opcode if opcode.is_jump_binary_false() => {
             if let Some(branch) = identity_branch(instruction, constants) {
                 admission.tagged(branch.register)?;
             } else if let Some((register, constant)) = match (
@@ -2319,7 +2318,7 @@ fn admit(
                 admission.source(instruction.operand_c())?;
             }
         }
-        Class::JumpFalse | Class::JumpTrue => {
+        opcode if opcode.is_truthiness_jump() => {
             let register = instruction.register_a();
             // A tagged value's truthiness is decided natively where the value alone
             // decides it; any other value exits.
@@ -2429,23 +2428,10 @@ impl Webs {
 
 /// The Number registers an instruction reads.
 pub(super) fn number_reads(instruction: WideInstruction) -> Vec<Register> {
-    let register = |operand: Operand| operand.register_index();
-    match instruction.op().class() {
-        _ if exits_before_effects(instruction) => Vec::new(),
-        Class::Unary if reads_type(instruction) => Vec::new(),
-        Class::Move | Class::IncDec | Class::Unary | Class::ToNumeric => vec![instruction.register_b()],
-        Class::Binary | Class::NumericAdd | Class::NumericMultiply | Class::JumpBinaryFalse => [
-            register(instruction.operand_b()),
-            register(instruction.operand_c()),
-        ]
-        .into_iter()
-        .flatten()
-        .collect(),
-        Class::JumpFalse | Class::JumpTrue => vec![instruction.register_a()],
-        Class::GetIndex => register(instruction.operand_c()).into_iter().collect(),
-        Class::SetIndex => vec![instruction.register_a(), instruction.register_c()],
-        _ => Vec::new(),
+    if exits_before_effects(instruction) || reads_type(instruction) || !instruction.op().reads_values() {
+        return Vec::new();
     }
+    instruction.value_registers().collect()
 }
 
 /// SSA operands and their semantic requirements. Entry-pinned heap views have
@@ -2457,7 +2443,7 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
         && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict)
         && [instruction.operand_b(), instruction.operand_c()].iter().any(|operand|
             operand.kind() == Some(OperandKind::Constant) && region.constants.contains_key(&usize::from(operand.payload())));
-    let expected = if matches!(instruction.op().class(), Class::Move | Class::JumpFalse | Class::JumpTrue)
+    let expected = if instruction.op().is_move() || instruction.op().is_truthiness_jump()
         || region.identity_branches.contains_key(&pc) || strict_number_test {
         Type::ANY
     } else {
@@ -2468,9 +2454,9 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
         reads.push((instruction.register_b(), Type::ANY));
     }
     if let Some(register) = object_reads(instruction) {
-        let dynamic = match instruction.op().class() {
-            Class::GetField => region.dynamic_field_reads.contains_key(&(offset as u32)),
-            Class::GetIndex => region.dynamic_arrays.contains(&register)
+        let dynamic = match instruction.op() {
+            opcode if opcode.is_get_field() => region.dynamic_field_reads.contains_key(&(offset as u32)),
+            opcode if opcode.is_get_index() => region.dynamic_arrays.contains(&register)
                 || !region.arrays.iter().any(|array| array.register == register),
             _ if instruction.field_store_register().is_some() => region.dynamic_field_stores.contains_key(&(offset as u32)),
             _ => region.dynamic_arrays.contains(&register),
@@ -2487,10 +2473,7 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
 
 /// The value register an instruction defines, numeric or tagged.
 fn number_definition(instruction: WideInstruction) -> Option<Register> {
-    (allocates(instruction.op()) || matches!(instruction.op().class(), Class::LoadConst | Class::Move
-        | Class::LoadCapture | Class::Binary | Class::NumericAdd | Class::NumericMultiply | Class::IncDec
-        | Class::Unary | Class::ToNumeric | Class::GetIndex | Class::GetField | Class::LoadEnvLocal | Class::LoadName))
-    .then(|| instruction.result_register())
+    instruction.op().defines_loop_result().then(|| instruction.result_register())
 }
 
 /// The instructions this tier lowers to native code (`admit`): those of the lane specializer's
@@ -2499,32 +2482,20 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
 /// definition, so the tier covers every opcode; analysis and emission keep that boundary.
 fn lowered_natively(instruction: WideInstruction) -> bool {
     let op = instruction.op();
-    admitted_store(op) || allocates(op) || match op.class() {
+    admitted_store(op) || if op.is_jump_binary_false() {
         // A conditional jump only on a relation or a bitwise and, so one on `in` or
         // `instanceof` is an exit.
-        Class::JumpBinaryFalse => super::super::operations::NumberRelation::from_operator(instruction.binary_operator_field())
-            .is_some() || bitwise_condition(instruction).is_some(),
-        class => matches!(class,
-            Class::LoadConst | Class::Move | Class::LoadCapture | Class::StoreCapture | Class::LoadName
-            | Class::Binary | Class::NumericAdd
-            | Class::NumericMultiply | Class::ToNumeric | Class::IncDec | Class::Unary
-            | Class::RequireObjectCoercible | Class::GetIndex | Class::GetField | Class::SetIndex
-            | Class::DefineArrayElement
-            | Class::LoadEnvLocal | Class::Return | Class::Jump | Class::JumpFalse | Class::JumpTrue),
+        super::super::operations::NumberRelation::from_operator(instruction.binary_operator_field())
+            .is_some() || bitwise_condition(instruction).is_some()
+    } else {
+        op.lowers_in_loop()
     }
-}
-
-/// An allocation the lane makes in place, running no guest code: a literal (`lane_new_object`,
-/// `lane_new_object_pair`, `lane_new_array`, `lane_new_regexp`) or a construction by its callee's plan
-/// (`lane_construct`). A due collection leaves before it, so native code never collects.
-fn allocates(op: Op) -> bool {
-    matches!(op.class(), Class::MakeObject | Class::MakeObject2 | Class::MakeArray | Class::CreateRegExpLiteral | Class::Construct)
 }
 
 /// The registers an allocation of `instructions` defines, which also hold the Numbers a
 /// register reuse writes to them.
 fn boxed(instructions: &[WideInstruction]) -> std::collections::BTreeSet<Register> {
-    instructions.iter().filter(|instruction| allocates(instruction.op())).map(|instruction| instruction.result_register()).collect()
+    instructions.iter().filter(|instruction| instruction.op().allocates()).map(|instruction| instruction.result_register()).collect()
 }
 
 /// A `typeof` of its operand: the type-name index or a fused test (`bytecode::typeof_test`).
