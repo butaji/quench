@@ -10,7 +10,7 @@ use crate::staged::{Operation, Step};
 impl Lowering<'_, '_> {
     /// The row of `instruction` where it is an element access whose operands this unit holds.
     fn element_row(&self, instruction: WideInstruction) -> Option<Operation<ir::Value, EmitProof>> {
-        let row = Operation::decode(instruction, |_| None)?;
+        let row = Operation::decode(instruction, crate::staged::DecodeContext::EMPTY)?;
         let held = |register: Register| register < self.unit.registers;
         let supported = match row {
             Operation::ElementRead { base, key } => held(base) && self.operand_supported(key),

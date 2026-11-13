@@ -61,12 +61,17 @@ impl Lowering<'_, '_> {
     }
 
 
-    /// The address of `kind` for `key`, which is `live` now. A live lowering embeds `live`; a
-    /// linking one emits the symbol the loader resolves to the same address.
+    /// The address of `kind` for `key`, which is `live` now (`address`).
     pub(super) fn reloc(&mut self, kind: RelocKind, key: u32, live: u64) -> ir::Value {
-        if !self.helpers.links() {
-            return self.word_const(live as i64);
-        }
-        crate::vm::jit_backend::symbol_address(&mut self.builder, types::I64, kind as u32, key)
+        address(self.helpers, &mut self.builder, kind, key, live)
     }
+}
+
+/// The address of `kind` for `key`, which is `live` now. A live lowering embeds `live`; a
+/// linking one emits the symbol the loader resolves to the same address.
+pub(super) fn address(helpers: LaneHelpers, builder: &mut FunctionBuilder<'_>, kind: RelocKind, key: u32, live: u64) -> ir::Value {
+    if !helpers.links() {
+        return builder.ins().iconst(types::I64, live as i64);
+    }
+    crate::vm::jit_backend::symbol_address(builder, types::I64, kind as u32, key)
 }

@@ -27,11 +27,15 @@ pub(crate) mod division;
 pub(crate) mod math;
 mod names;
 mod callout;
+mod spread;
 mod admission;
 mod delete;
+mod decode;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
-pub(crate) use callout::CallOut;
+pub(crate) use callout::{CallOut, OperandValues};
+pub(crate) use spread::Passing;
+pub(crate) use decode::DecodeContext;
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod builtins;
@@ -51,8 +55,17 @@ pub(crate) mod strings;
 pub(crate) mod holder;
 pub(crate) mod call; pub(crate) mod frame;
 pub(crate) mod construct;
+pub(crate) mod forms;
 pub(crate) mod protocol;
-pub(crate) use protocol::{CallOperation, Invocation, WindowFill};
+pub(crate) use forms::{Arguments, CallFacts, Callee, Invocation, Receiver, RegisterList};
+pub(crate) use protocol::CallOperation;
+pub(crate) mod invoke;
+pub(crate) mod plan;
+mod native_call;
+pub(crate) use plan::{plan_entry, CalleeKind, CallEntry, DirectPlan, Identity, Resolved};
+#[cfg(test)]
+pub(crate) use plan::Bound;
+pub(crate) use invoke::{CallFrame, Entered, Room};
 mod allocation;
 pub(crate) use allocation::Allocation;
 pub(crate) mod plan_fields;
@@ -69,14 +82,14 @@ pub(crate) mod region;
 #[cfg(test)]
 pub(crate) mod trace;
 #[allow(unused_imports)] // the Stage v2 vocabulary: stencil and UltraJIT stages use the rest
-pub(crate) use effects::{CallTarget, Effects, Region, RegionSet};
+pub(crate) use effects::{Effects, Region, RegionSet};
 #[allow(unused_imports)]
 pub(crate) use region::Access;
 pub(crate) use ic::concrete_own_field_hit;
 pub(crate) use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
 
 mod stage;
-pub(crate) use stage::{Stage, Table};
+pub(crate) use stage::{fill_by_rows, Passed, Stage, Table, word_bytes, word_offset};
 
 /// A constant an instruction materializes: its value and the semantic type a stage that
 /// keeps type facts records for it.
@@ -155,13 +168,6 @@ pub(crate) trait Frame<S: Stage> {
     /// The VM's field-store hit (`LaneHelper::FieldSet`).
     #[inline(always)]
     fn field_store_miss(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _site: u16, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
-
-    /// A call of `target` with `args` and effect row `effects`; a non-returning status leaves
-    /// at `leave`. `None` where the frame has no call protocol (Stage v2).
-    #[inline(always)]
-    #[allow(dead_code)]
-    fn call(&mut self, _stage: &mut S, _target: CallTarget<S::Word>, _args: &[S::Word], _effects: Effects,
-        _leave: S::Miss) -> Option<S::Word> { None }
 
     /// Leave the function with the Number register `register`, in the representation its fact
     /// names; `None` where the frame has no numeric completion.
@@ -248,8 +254,6 @@ pub(crate) enum Operation<W, P> {
     /// The captured value at `slot` of the environment `depth` scopes out (`Frame::capture`);
     /// the caller defines the destination.
     LoadCapture { depth: u16, slot: u16 },
-    /// Leave the function returning Number register `register` (`Frame::ret`).
-    Return { register: Register },
     /// A Number operation (`numeric`).
     Number(NumberOperation),
     /// Continue where register `register` is neither `null` nor `undefined`; those leave at
@@ -337,6 +341,13 @@ pub(crate) enum Operation<W, P> {
     /// A step of the call protocol: admission, `this` binding, the callee's window, completion
     /// (`protocol`).
     Call(CallOperation<W>),
+    /// A call whose one argument register holds an iterable to spread or an array to apply
+    /// (`CallSpread`, `CallArray`): the VM's call, a callout (`spread`).
+    SpreadCall { destination: Register, callee: Register, receiver: Register, arguments: Arguments, passing: Passing },
+    /// `super(...)`: the VM's construction with the activation's `new.target`, a callout (`spread`).
+    SuperCall { destination: Register, callee: Register, arguments: Arguments, passing: Passing },
+    /// Complete the activation with the value of `source` (`invoke::ret`).
+    Return { source: Register },
     /// The value `base[key]` reads, a present dense element where the array and the key's int32
     /// are proved (`element_rows`), else the VM's read; the tier defines the result register.
     ElementRead { base: Register, key: Operand },
@@ -345,18 +356,18 @@ pub(crate) enum Operation<W, P> {
     ElementWrite { value: Register, base: Register, key: Register },
 }
 impl<W, P> Operation<W, P> {
-    /// The staged operation `instruction` denotes, with the operands the catalog fixes.
-    /// `None` where the opcode has no staged operation, or where its constant is not
-    /// available to this tier: the caller then takes its own exact path. The heap
-    /// operations are the frame's (`Frame::field_read`); a tier decodes those itself.
-    pub(crate) fn decode(instruction: WideInstruction,
-        constant: impl FnOnce(usize) -> Option<Constant>) -> Option<Self> {
+    /// The staged operation `instruction` denotes, with the operands the catalog fixes and the
+    /// tables of `context` its operands index. `None` where the opcode has no staged operation,
+    /// or where its constant or method site is not available to this tier: the caller then takes
+    /// its own exact path. The heap operations are the frame's (`Frame::field_read`); a tier
+    /// decodes those itself.
+    pub(crate) fn decode(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         Some(match instruction.op() {
             Op::Move => Self::Move {
                 destination: instruction.result_register(), source: instruction.register_b() },
             Op::LoadConst => Self::LoadConst {
                 destination: instruction.result_register(),
-                constant: constant(instruction.constant_index())? },
+                constant: context.constant(instruction.constant_index())? },
             Op::LoadLocalPlain | Op::StoreLocalPlain => return Self::decode_local(instruction),
             Op::Jump => Self::Jump,
             Op::JumpFalse => Self::JumpIf {
@@ -364,14 +375,24 @@ impl<W, P> Operation<W, P> {
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
             Op::Binary | Op::ToPropertyKey => return Self::decode_generic(instruction),
-            Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::IncDec | Op::LoadCapture | Op::Return => return Self::decode_value(instruction),
-            Op::Call | Op::CallForwardingArguments | Op::Construct =>
-                Self::Call(CallOperation::Site(Invocation::of(instruction)?)),
+            Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::IncDec | Op::LoadCapture => return Self::decode_value(instruction),
             Op::GetField | Op::Delete => return Self::decode_property(instruction),
             op if op.is_field_store() => return Self::decode_property(instruction),
             Op::GetIndex | Op::SetIndex => return Self::decode_element(instruction),
+            Op::Call | Op::CallForwardingArguments | Op::Construct | Op::CallKnown | Op::CallMethod | Op::CallThisMethod =>
+                return Self::decode_call(instruction, context),
+            Op::Return => Self::Return { source: instruction.register_a() },
             _ => return names::decode(instruction),
         })
+    }
+
+    /// The call operations of `decode`: a call or construction through its forms (`Invocation`),
+    /// except `super(...)`, whose arguments the VM gathers (`spread`).
+    fn decode_call(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
+        if instruction.op() == Op::Construct && instruction.is_super_construct() {
+            return spread::decode(instruction);
+        }
+        Some(Self::Call(CallOperation::Site(Invocation::of(instruction, context)?)))
     }
 
     /// The property operations of `decode`: a plain named read, a named store and `delete`.
@@ -407,7 +428,6 @@ impl<W, P> Operation<W, P> {
             Op::LoadCapture => Self::LoadCapture {
                 depth: crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()),
                 slot: crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()) },
-            Op::Return => Self::Return { register: instruction.register_a() },
             Op::RequireObjectCoercible => Self::RequireObjectCoercible {
                 register: instruction.register_b() },
             Op::ToNumeric => Self::Number(NumberOperation::ToNumeric {

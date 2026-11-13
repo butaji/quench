@@ -98,6 +98,16 @@ mod wasm_callable;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(all(test, feature = "aot"))]
 pub(super) use lane_unit::static_call_targets;
+/// `emit` with its guards exempt from the forced-deopt switch: the status dispatch of a call
+/// protocol is no speculation (`forced_miss::exempt`).
+#[cfg(feature = "aot")]
+#[inline(always)]
+fn unforced<T>(emit: impl FnOnce() -> T) -> T {
+    #[cfg(test)]
+    return forced_miss::exempt(emit);
+    #[cfg(not(test))]
+    emit()
+}
 /// The forced-deopt switch (R26): a test arms the Nth guard `emit_js_guard` emits on this
 /// thread, which then always leaves through its exit; tests compile on the running thread.
 #[cfg(test)]
@@ -108,8 +118,8 @@ pub(in crate::vm) mod forced_miss {
         static EXEMPT: Cell<bool> = const { Cell::new(false) };
     }
     /// Runs `emit`, whose guards are not deopt points: they dispatch on a status the code
-    /// already holds (`direct_finish`), which no speculation could make fail, so they are
-    /// neither counted nor forced.
+    /// already holds, which no speculation could make fail, so they are neither counted nor forced.
+    #[cfg(feature = "aot")]
     pub(in crate::vm::compiled) fn exempt<T>(emit: impl FnOnce() -> T) -> T {
         let outer = EXEMPT.replace(true);
         let result = emit();
@@ -128,15 +138,6 @@ pub(in crate::vm) mod forced_miss {
             forced == Some(count)
         })
     }
-}
-/// `emit` with its guards exempt from the forced-deopt switch: the status dispatch of a call
-/// protocol is no speculation (`forced_miss::exempt`).
-#[inline(always)]
-fn unforced<T>(emit: impl FnOnce() -> T) -> T {
-    #[cfg(test)]
-    return forced_miss::exempt(emit);
-    #[cfg(not(test))]
-    emit()
 }
 /// The successor a guard-shaped branch takes when its condition holds: the forced-deopt switch
 /// makes a test-armed guard take `fail` instead. Sites call it in place of `ok`.

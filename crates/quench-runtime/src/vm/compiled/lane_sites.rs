@@ -75,7 +75,7 @@ impl<H: Host> Vm<H> {
     /// slot it holds (`Vm::stable_global_slot`), where it holds one.
     fn lane_global_slots(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> Vec<(usize, bool, GlobalRead)> {
         let sites: Vec<(usize, crate::bytecode::Atom, bool)> = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
-            let store = match crate::staged::Operation::<(), ()>::decode(*instruction, |_| None)? {
+            let store = match crate::staged::Operation::<(), ()>::decode(*instruction, crate::staged::DecodeContext::EMPTY)? {
                 crate::staged::Operation::GlobalWrite { initialize: false, .. } => true,
                 crate::staged::Operation::GlobalTypeof { .. } => false,
                 _ => return None,

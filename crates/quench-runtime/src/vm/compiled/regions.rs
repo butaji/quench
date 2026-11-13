@@ -53,8 +53,6 @@ region_flags! {
     dispatch => Dispatch.mutable,
     /// Heap bookkeeping (`Region::HeapMeta`): a cache entry, the property arena's header.
     heap_meta => HeapMeta.mutable,
-    /// A word of a function's entry cell, or of the recovery space it names.
-    entry_cell => EntryCell.mutable,
     /// The code's invalidation word.
     invalidation => Invalidation.mutable,
     /// A record-reservation base word of the dispatch.

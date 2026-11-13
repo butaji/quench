@@ -8,10 +8,10 @@ impl Lowering<'_, '_> {
     /// The call-out row (`Operation::call_out`) of `instruction` where this lowering makes it: in a
     /// lane body or loop region, over the unit's registers.
     fn call_out_row(&self, instruction: WideInstruction) -> Option<crate::staged::Operation<ir::Value, EmitProof>> {
-        let row = crate::staged::Operation::decode(instruction, |_| None)?;
+        let row = crate::staged::Operation::decode(instruction, crate::staged::DecodeContext::of(self.program))?;
         let (call, result) = row.call_out()?;
         (self.completion.status_and_pc() && instruction.result_flags() == 0
-            && call.operands().into_iter().flatten().chain(result).all(|register| register < self.unit.registers))
+            && call.operands().registers(&[]).chain(result).all(|register| register < self.unit.registers))
             .then_some(row)
     }
 
@@ -37,7 +37,7 @@ impl Lowering<'_, '_> {
             self.exit(state, pc as u32);
             return false;
         };
-        let row = crate::staged::Operation::decode(instruction, |_| None).expect("a call-out record decodes");
+        let row = crate::staged::Operation::decode(instruction, crate::staged::DecodeContext::of(self.program)).expect("a call-out record decodes");
         let miss = self.guard_exit(state, pc as u32);
         self.canonicalize(state, pc);
         let cell = self.global_cell(state, pc, &row, miss);
@@ -57,7 +57,7 @@ impl Lowering<'_, '_> {
 
     /// The block the call-outs' statuses of a leave in a callee, or a termination, reach with the
     /// status: made at the first, filled once at the region's end (`fill_call_out_stop`).
-    fn call_out_stop(&mut self) -> ir::Block {
+    pub(super) fn call_out_stop(&mut self) -> ir::Block {
         let builder = &mut self.builder;
         *self.call_out_stop.get_or_insert_with(|| {
             let block = builder.create_block();

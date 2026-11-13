@@ -102,6 +102,8 @@ impl PropertyFrame<Concrete> for Probe {
     fn plans(&self) -> NoPlans { NoPlans }
 }
 
+impl crate::staged::CallFrame<Concrete> for Probe {}
+
 impl NumericFrame<Concrete> for Probe {
     fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 { unreachable!("no numeric row") }
     fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 { unreachable!("no numeric row") }
@@ -210,7 +212,7 @@ fn a_row_that_calls_out_names_the_call_its_frame_receives() {
         let (call, result) = row.call_out().expect("a calling row");
         assert_eq!(frame.calls.last(), Some(&(call, result)));
     }
-    assert_eq!(CallOut::ForInNext { state: 1 }.operands(), [None, Some(1)]);
+    assert_eq!(CallOut::ForInNext { state: 1 }.operands().fixed, [None, Some(1)]);
     assert!(Row::<u64, ()>::Jump.call_out().is_none());
 }
 
@@ -239,7 +241,7 @@ fn an_equality_or_key_the_words_do_not_decide_calls_the_vm_and_a_decided_one_doe
 
 #[test]
 fn the_catalog_decodes_each_name_environment_and_iteration_opcode() {
-    let decode = |op, imm| Operation::<u64, ()>::decode(WideInstruction::new(op, 1, 1, 1, imm), |_| None);
+    let decode = |op, imm| Operation::<u64, ()>::decode(WideInstruction::new(op, 1, 1, 1, imm), crate::staged::DecodeContext::EMPTY);
     assert!(matches!(decode(Op::LoadEnvLocal, 2), Some(Row::LoadEnvLocal { destination: 1, slot: 2 })));
     assert!(matches!(decode(Op::StoreEnvLocal, 2), Some(Row::StoreEnvLocal { source: 1, slot: 2, .. })));
     assert!(matches!(decode(Op::ArgumentsLength, 2), Some(Row::ArgumentsLength { destination: 1, slot: 2 })));
@@ -259,7 +261,7 @@ fn a_delete_the_frame_does_not_answer_is_the_vms_and_defines_its_result() {
     assert!(matches!(run(&mut frame, delete), Step::Value(_)));
     assert_eq!(frame.calls, [(CallOut::Delete { base: 1, key: 2, strict: true }, Some(0))]);
     assert_eq!(Value::from_bits(frame.registers[0]), Value::number(9.0));
-    assert_eq!(CallOut::Delete { base: 1, key: 2, strict: true }.operands(), [Some(1), Some(2)]);
+    assert_eq!(CallOut::Delete { base: 1, key: 2, strict: true }.operands().fixed, [Some(1), Some(2)]);
     frame.declines = true;
     assert!(matches!(run(&mut frame, delete), Step::Unresolved));
 }
@@ -355,4 +357,23 @@ fn the_global_undefined_is_a_constant_no_read_or_call_answers() {
     assert!(matches!(run(&mut frame, call), Step::Value(_)));
     assert_eq!((Value::from_bits(frame.registers[0]), Value::from_bits(frame.registers[1])), (Value::UNDEFINED, Value::UNDEFINED));
     assert!(frame.calls.is_empty());
+}
+
+#[test]
+fn a_spread_call_and_a_super_construction_call_out_with_their_registers_and_define_the_result() {
+    use crate::staged::{Arguments, Passing};
+    let mut frame = Probe::new(8);
+    let one = Arguments::Window { first: 6, count: 1 };
+    let spread = Row::SpreadCall { destination: 4, callee: 1, receiver: 2, arguments: one, passing: Passing::Iterable };
+    assert!(matches!(run(&mut frame, spread), Step::Value(_)));
+    let window = Arguments::Window { first: 3, count: 2 };
+    let construct = Row::SuperCall { destination: 5, callee: 1, arguments: window, passing: Passing::Values };
+    assert!(matches!(run(&mut frame, construct), Step::Value(_)));
+    assert_eq!(frame.calls, [
+        (CallOut::Spread { callee: 1, receiver: 2, arguments: one, passing: Passing::Iterable }, Some(4)),
+        (CallOut::SuperCall { callee: 1, arguments: window, passing: Passing::Values }, Some(5)),
+    ]);
+    assert_eq!((Value::from_bits(frame.registers[4]), Value::from_bits(frame.registers[5])), (Value::number(9.0), Value::number(9.0)));
+    frame.declines = true;
+    assert!(matches!(run(&mut frame, spread), Step::Unresolved), "a frame with no host leaves the call to the interpreter");
 }

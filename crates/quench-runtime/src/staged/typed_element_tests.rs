@@ -52,6 +52,8 @@ impl ElementFrame<Concrete> for Typed {
     }
 }
 
+impl crate::staged::CallFrame<Concrete> for Typed {}
+
 impl NumericFrame<Concrete> for Typed {
     fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 { unreachable!("no int32 operand") }
     fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 { self.registers[2] }

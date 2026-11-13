@@ -12,6 +12,8 @@
 
 use crate::bytecode::{Class, FieldLookup, ImmediateLayout, Op, Register, Traits, WideInstruction};
 use crate::bytecode::Function;
+use crate::staged::{plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Resolved};
+use crate::typed_ir::BindingTime;
 use crate::value::Value;
 #[path = "lane_unit/weights.rs"] mod weights;
 #[cfg(all(test, feature = "aot"))] #[path = "lane_unit/static_hints.rs"] mod static_hints;
@@ -215,18 +217,12 @@ impl Unit {
     }
 }
 
-/// The longest callee copy the unit inlines, in code bytes (three pages): each copy costs code
-/// and compile time at every call site, and short bodies (accessors, field updates) are where
-/// a call costs most relative to its work.
-const MAX_INLINED_CALLEE_BYTES: usize = 12 * 1024;
-const MAX_INLINED_INSTRUCTIONS: usize = MAX_INLINED_CALLEE_BYTES / super::lane_region::LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
 /// The callee instructions one unit inlines in all, the region's budget: what a lane body's
 /// code-size budget holds (`lane_region::LANE_BODY_MAX_CODE_BYTES`), TurboFan's cumulative
 /// inlining budget (`max_inlined_bytecode_size_cumulative`). The planner spends it on the call
 /// sites by weight per instruction (`weights::select`).
 pub(super) const MAX_UNIT_INLINED_INSTRUCTIONS: usize =
     super::lane_region::LANE_BODY_MAX_CODE_BYTES / super::lane_region::LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
-const _: () = assert!(MAX_INLINED_INSTRUCTIONS <= MAX_UNIT_INLINED_INSTRUCTIONS);
 /// How deep calls nest inside a unit: JSC's inlining depth (`maximumInliningDepth`).
 const MAX_INLINING_DEPTH: usize = 5;
 
@@ -464,8 +460,8 @@ impl Planner<'_, '_> {
     }
 
     /// Whether the callee's code fits the inlining budget and the call's arguments fit its registers.
-    fn within_budget(&self, instruction: WideInstruction, callee: &Function, code: &[WideInstruction]) -> bool {
-        code.len() <= MAX_INLINED_INSTRUCTIONS && code.len() <= self.budget
+    fn within_budget(&self, target: CallTarget, instruction: WideInstruction, callee: &Function, code: &[WideInstruction]) -> bool {
+        matches!(self.entry(target, callee, code.len()), CallEntry::Inline(_))
             && ImmediateLayout::argument_count(instruction.imm()) <= callee.registers
     }
 
@@ -475,11 +471,25 @@ impl Planner<'_, '_> {
             || (callee.plain_activation(self.program) && super::super::js_compiled::eligible(callee, self.program))
     }
 
+    /// The entry the call's callee takes, which the staged planner decides (`staged::plan_entry`): a
+    /// linked identity is Stable, a function binding Static, and the callee's body inlines within
+    /// the unit's remaining budget, capped by the policy's longest inlined body.
+    fn entry(&self, target: CallTarget, callee: &Function, size: usize) -> CallEntry {
+        let binding = match target.callee {
+            CalleeBinding::Function => BindingTime::Static,
+            CalleeBinding::Identity(_) | CalleeBinding::Forwarded { .. } => BindingTime::Stable,
+        };
+        let plan = DirectPlan { kind: CalleeKind::Script, identity: Identity::Guarded(target.identity().map_or(0, Value::to_bits)),
+            sloppy: None, registers: callee.registers, returned: super::LANE_BODY_RETURNED, bound: None };
+        let budget = self.budget.min(super::tier_policy::TIERS.lane_body.max_inlined_instructions);
+        plan_entry(Some(Resolved { plan, binding, body: Some(size) }), budget)
+    }
+
     /// The callee of `target`, whole, if it inlines within the budget (`inline_target` chooses).
     fn inline_body(&mut self, target: CallTarget, instruction: WideInstruction, depth: usize) -> Option<InlinedPlan> {
         let callee = (self.body)(target.function)?;
         let code = decoded(callee);
-        if !self.within_budget(instruction, callee, &code) || !lowerable(&code) || !self.eligible_callee(target, callee) {
+        if !self.within_budget(target, instruction, callee, &code) || !lowerable(&code) || !self.eligible_callee(target, callee) {
             return None;
         }
         let recovery = if super::lane_region::restartable_numeric_function(self.program, callee, &code)

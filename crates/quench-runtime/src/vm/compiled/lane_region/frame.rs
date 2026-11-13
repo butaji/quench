@@ -57,6 +57,8 @@ pub(super) struct EmitFrame<'a> {
     /// Whether no operation of the unit may move an array's backing or the record table
     /// (`fixed_arrays`), so the table's base word is read-only.
     pub(super) arrays_fixed: bool,
+    /// The call or return a step of the call family runs for (`call_frames`).
+    pub(super) site: Option<super::call_frames::Site<'a>>,
 }
 
 impl EmitFrame<'_> {
@@ -201,8 +203,17 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         calls::capture(self, stage, depth, slot, miss)
     }
 
+    /// The activation completes with `register`: by status at the record the lowering made a
+    /// site for (`call_frames::complete_activation`), else a Number return of a restartable scalar
+    /// entry, which proves the register a Number first.
     #[inline(always)]
     fn ret(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<()> {
+        if matches!(self.site, Some(super::call_frames::Site::Return(_))) {
+            let value = <Self as crate::staged::Frame<Emit<'_, '_>>>::tagged(self, stage, register);
+            return super::call_frames::complete_activation(self, stage, value);
+        }
+        let Edges::ValueGuarded { miss } = self.edges else { return None };
+        crate::staged::NumericFrame::prove_number(self, stage, register, miss)?;
         calls::number_return(self, stage, register)
     }
 

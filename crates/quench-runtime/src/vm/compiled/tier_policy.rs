@@ -111,6 +111,10 @@ pub(in crate::vm) struct LaneBody {
     /// The length below which a lane body without loops or inlined calls declines
     /// (`Vm::compile_lane_method`).
     pub(in crate::vm) min_instructions: usize,
+    /// The longest callee body a unit or a call plan inlines (`staged::plan_entry`): each copy of it
+    /// costs code and compile time at every call site, and short bodies (accessors, field updates)
+    /// are where a call costs most relative to its work.
+    pub(in crate::vm) max_inlined_instructions: usize,
     /// The most entries between looks for a compiling body's code, which start one entry apart
     /// and double (`LaneBody::Compiling`). A look costs a channel poll
     /// and the specialization's bookkeeping, some 300 instructions, at each backward jump of
@@ -242,6 +246,7 @@ const MEASURED: Tiers = Tiers {
         max_callee_recompiles: 3,
         late_call_calls: 4096,
         min_instructions: 40,
+        max_inlined_instructions: 96,
         compile_poll_interval: 64,
         audit_period: 16,
         audit_samples: 16,

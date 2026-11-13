@@ -17,10 +17,11 @@ impl Lowering<'_, '_> {
         let instructions = &self.unit.instructions;
         let number = |pc: usize, register: Register| self.facts.before(pc, register, instructions, leaders,
             &self.program.constants, writes, self.native_calls).is_subtype(Type::NUMBER);
+        let untyped: Vec<Constant> = self.program.constants.iter().map(|_| Constant::untyped(Value::UNDEFINED)).collect();
+        let context = crate::staged::DecodeContext { constants: &untyped, ..crate::staged::DecodeContext::of(self.program) };
         instructions.iter().enumerate().all(|(pc, instruction)| {
             if instruction.op().is_return() { return true; }
-            let decoded = Operation::<ir::Value, EmitProof>::decode(*instruction,
-                |_| Some(Constant::untyped(Value::UNDEFINED)));
+            let decoded = Operation::<ir::Value, EmitProof>::decode(*instruction, context);
             match decoded {
                 Some(Operation::Binary { left, right, .. } | Operation::Equality { left, right, .. }) =>
                     number(pc, left) && number(pc, right),

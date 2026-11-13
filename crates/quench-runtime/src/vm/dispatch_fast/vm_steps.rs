@@ -22,11 +22,12 @@ pub(in crate::vm) unsafe extern "C" fn lane_vm_step<H: Host>(_vm: u64, _residual
         None => vm.frames[unsafe { (*cx).frame }].function,
     };
     // SAFETY: the context's program outlives the lane run.
-    let body = unsafe { &*(*cx).code }.function(function as usize);
+    let code = unsafe { &*(*cx).code };
+    let body = code.function(function as usize);
     let instruction = decoded_instruction(body, body.code[call_pc as usize]);
-    let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, |_| None)
+    let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::of(code))
         .and_then(|row| row.call_out()).expect("a call-out record decodes");
-    let operands = operation.operands().map(|register| register.map(|register| r.get(register)));
+    let operands = operation.operands().read(&code.method_arguments, |register| r.get(register));
     let Some(value) = lane_in_place(cx, ip, |vm, code| {
         let site = super::super::call_out::CallSite { frame: vm.frames.len() - 1, function, resume: call_pc as usize + 1 };
         vm.call_out(code, site, operation, operands)

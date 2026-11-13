@@ -57,6 +57,8 @@ impl ElementFrame<Concrete> for Probe {
     }
 }
 
+impl crate::staged::CallFrame<Concrete> for Probe {}
+
 impl NumericFrame<Concrete> for Probe {
     fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 { unreachable!("no numbers") }
     fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 { unreachable!("no numbers") }
@@ -150,9 +152,9 @@ fn the_frameless_arms_are_the_rows_dense_arms() {
 fn the_element_instructions_decode_to_their_rows() {
     use crate::bytecode::{Op, WideInstruction};
     let read = WideInstruction::new(Op::GetIndex, 3, 4, 5, 0);
-    assert!(matches!(Operation::<u64, ()>::decode(read, |_| None),
+    assert!(matches!(Operation::<u64, ()>::decode(read, crate::staged::DecodeContext::EMPTY),
         Some(Operation::ElementRead { base: 4, key }) if key.register_index() == Some(5)));
     let write = WideInstruction::new(Op::SetIndex, 3, 4, 5, 0);
-    assert!(matches!(Operation::<u64, ()>::decode(write, |_| None),
+    assert!(matches!(Operation::<u64, ()>::decode(write, crate::staged::DecodeContext::EMPTY),
         Some(Operation::ElementWrite { value: 3, base: 4, key: 5 })));
 }

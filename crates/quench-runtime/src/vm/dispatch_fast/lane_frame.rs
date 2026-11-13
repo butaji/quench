@@ -203,6 +203,8 @@ impl<const ACC: u8> crate::staged::GlobalFrame<Concrete> for LaneFrame<ACC> {
     }
 }
 
+impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {}
+
 impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     type Plans = crate::staged::NoPlans;
 

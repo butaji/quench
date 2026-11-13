@@ -35,7 +35,9 @@ impl Frame<Concrete> for ScopeFrame {
     }
 
     fn ret(&mut self, stage: &mut Concrete, register: Register) -> Option<Edge> {
-        self.returned = Some(self.read(stage, register));
+        let value = self.read(stage, register);
+        Value::from_bits(value).as_number()?;
+        self.returned = Some(value);
         Some(Edge::Following)
     }
 }
@@ -49,6 +51,8 @@ impl crate::staged::PropertyFrame<Concrete> for ScopeFrame {
 }
 
 impl GlobalFrame<Concrete> for ScopeFrame {}
+
+impl crate::staged::CallFrame<Concrete> for ScopeFrame {}
 
 impl NumericFrame<Concrete> for ScopeFrame {
     fn int_operand(&mut self, _stage: &mut Concrete, _operand: crate::bytecode::Operand, _miss: ()) -> u64 { unreachable!() }
@@ -86,9 +90,9 @@ fn a_staged_capture_reads_every_depth_and_leaves_at_markers_and_past_the_run() {
 fn a_staged_return_leaves_with_a_number_and_leaves_unresolved_for_any_other_value() {
     let mut stage = Concrete::new(std::ptr::null());
     let mut numeric = frame(vec![Value::number(2.5).to_bits()], vec![]);
-    assert!(matches!(step(&mut stage, &mut numeric, Operation::Return { register: 0 }), Step::Control(_)));
+    assert!(matches!(step(&mut stage, &mut numeric, Operation::Return { source: 0 }), Step::Control(_)));
     assert_eq!(numeric.returned, Some(Value::number(2.5).to_bits()));
     let mut other = frame(vec![Value::UNDEFINED.to_bits()], vec![]);
-    assert!(matches!(step(&mut stage, &mut other, Operation::Return { register: 0 }), Step::Unresolved));
+    assert!(matches!(step(&mut stage, &mut other, Operation::Return { source: 0 }), Step::Unresolved));
     assert_eq!(other.returned, None);
 }

@@ -672,7 +672,7 @@ const FIXED_ARGUMENT_COPIES: u16 = 4;
 /// # Safety
 /// Both ranges hold `count` values and do not overlap.
 #[inline(always)]
-unsafe fn copy_arguments(destination: *mut Value, source: *const Value, count: u16) {
+pub(crate) unsafe fn copy_arguments(destination: *mut Value, source: *const Value, count: u16) {
     /// One move of `N` values.
     #[inline(always)]
     unsafe fn copy<const N: usize>(destination: *mut Value, source: *const Value) {
@@ -714,7 +714,7 @@ const WINDOW_INLINE_FILL_LIMIT: usize = WINDOW_FILL_BLOCK * 2;
 /// # Safety
 /// `registers` has writable storage for `count` values, none of them live.
 #[inline(always)]
-unsafe fn fill_window(registers: *mut Value, count: usize, initial: Value) {
+pub(crate) unsafe fn fill_window(registers: *mut Value, count: usize, initial: Value) {
     if count >= WINDOW_INLINE_FILL_LIMIT {
         for index in 0..count {
             // SAFETY: each destination lies within the caller's uninitialized range.
@@ -3305,9 +3305,9 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     if !instruction.op().traits().has(crate::bytecode::Traits::LANE_RESULT_STEP) {
         return Resumed::Exit(exit(ip));
     }
-    let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, |_| None)
+    let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::of(code))
         .and_then(|row| row.call_out()).expect("a result step is a call-out row");
-    let operands = operation.operands().map(|register| register.map(|register| r.get(register)));
+    let operands = operation.operands().read(&code.method_arguments, |register| r.get(register));
     let Some(value) = lane_in_place(cx, ip, |vm, code| {
         let site = super::call_out::CallSite { frame: vm.frames.len() - 1, function, resume: pc + 1 };
         vm.call_out(code, site, operation, operands)
@@ -11878,14 +11878,9 @@ fn lane_receiver_this<H: Host>(vm: &Vm<H>, binding: ThisBinding, receiver: Value
         // An arrow whose environment binds no `this` takes its caller's receiver.
         return (binding != ThisBinding::Lexical).then_some(receiver);
     }
-    // An object receiver binds itself; a direct record of any object family is one.
-    if receiver.is_direct_object_family() {
-        Some(receiver)
-    } else if receiver.is_null() || receiver.is_undefined() {
-        Some(vm.realm.globals)
-    } else {
-        None
-    }
+    // The staged binding (`protocol::bind_this`): an object receiver binds itself, `undefined`
+    // and `null` bind the global object, and any other receiver is the host's to box.
+    crate::staged::protocol::concrete_bind_this(receiver.to_bits(), vm.realm.globals.to_bits()).map(Value::from_bits)
 }
 
 script_handler! {

@@ -68,7 +68,7 @@ fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>
         Op::GetIterator => (Protocol::GetIterator, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::ForInStart => (Protocol::ForInStart, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::IteratorClose => (Protocol::IteratorClose, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
-        _ => return None,
+        _ => return super::spread::decode(instruction),
     };
     Some(Operation::Protocol { step, destination, operands })
 }
@@ -91,6 +91,7 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::Protocol { step, destination, operands } =>
             calling(stage, frame, CallOut::Protocol { step, operands }, destination),
         Operation::ForInNext { destination, state } => for_in_next(stage, frame, destination, state),
+        Operation::SpreadCall { .. } | Operation::SuperCall { .. } => super::spread::step(stage, frame, operation),
         _ => Step::Unresolved,
     }
 }

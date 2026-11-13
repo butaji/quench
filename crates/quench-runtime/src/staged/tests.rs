@@ -148,6 +148,8 @@ impl Frame<Concrete> for ConcreteFrame<'_> {
 
 impl GlobalFrame<Concrete> for ConcreteFrame<'_> {}
 
+impl crate::staged::CallFrame<Concrete> for ConcreteFrame<'_> {}
+
 impl PropertyFrame<Concrete> for ConcreteFrame<'_> {
     type Plans = NoPlans;
 
@@ -272,7 +274,7 @@ fn every_staged_opcode_decodes_to_one_operation() {
     for op in staged {
         assert_eq!(op.semantics(), Semantics::Staged, "{op:?}");
         let instruction = WideInstruction::new(op, 1, 1, 1, 0);
-        assert!(Operation::<u64, ()>::decode(instruction, |index| constants.get(index).copied()).is_some(),
+        assert!(Operation::<u64, ()>::decode(instruction, crate::staged::DecodeContext::of_constants(&constants)).is_some(),
             "{op:?} must decode to a staged operation");
     }
     for index in 0..Op::COUNT {

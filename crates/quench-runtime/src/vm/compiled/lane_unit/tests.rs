@@ -217,3 +217,22 @@ fn remapped_liveness_covers_synthesized_reads_without_loading_callee_registers_a
     unit.registers = crate::compile::liveness::ROOT_MAP_REGISTERS + 1;
     assert!(unit.register_masks(&program, caller).is_none(), "uncovered widths retain conservative recovery");
 }
+
+fn named(program: &crate::ResidualProgram, name: &str) -> u32 {
+    program.functions.iter().position(|body| body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap() as u32
+}
+
+#[test]
+fn a_callee_the_plan_declines_for_the_budget_stays_a_call() {
+    let program = crate::Engine::specialize("function leaf(x){return x+1;} function run(n){let r=leaf(n);return r;}", "budget.js").unwrap();
+    let (caller, leaf) = (named(&program, "run"), named(&program, "leaf"));
+    let targets = |function: u32, pc: u32| if function == caller && program.function(caller as usize).instructions().nth(pc as usize).is_some_and(|call| call.op().is_call()) {
+        vec![CallTarget { function: leaf, callee: CalleeBinding::Identity(Value::integer(0)) }]
+    } else { Vec::new() };
+    let body = |id: u32| program.function_get(id as usize);
+    let inlined = unit(&program, caller, program.function(caller as usize), &targets, &body).unwrap();
+    assert_eq!(inlined.frames.len(), 1, "the callee fits the budget");
+    let declined = with_budget(&program, caller, program.function(caller as usize), 0, &targets, &body).unwrap();
+    assert!(declined.frames.is_empty() && declined.markers.is_empty(), "no budget, no inlined frame");
+    assert_eq!(declined.instructions.len(), program.function(caller as usize).code.len(), "the call stays the caller's own instruction");
+}

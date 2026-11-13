@@ -32,7 +32,7 @@ impl Lowering<'_, '_> {
         let value = self.builder.append_block_param(join, types::I64);
         match dense {
             Some((values, len)) => {
-                let operation = crate::staged::Operation::decode(instruction, |_| None).expect("a capture decodes");
+                let operation = crate::staged::Operation::decode(instruction, crate::staged::DecodeContext::EMPTY).expect("a capture decodes");
                 let edges = super::frame::Edges::ValueGuarded { miss: slow };
                 let crate::staged::Step::Value(read) = self.step_with(state, edges, operation, StepWith { captures: Some((values, len)), ..StepWith::default() }) else {
                     unreachable!("the emit stage reads the dense run it was given")

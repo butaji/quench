@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::bytecode::{Operand, Register, WideInstruction};
-use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, NumericFrame, Operation, PropertyFrame, Protocol, Step};
+use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, NumericFrame, OperandValues, Operation, PropertyFrame, Protocol, Step};
 
 /// What the global-name rows did in a test: the call-outs that ran, and the direct global stores
 /// and typeofs the lane specializer emitted instead of one.
@@ -40,7 +40,8 @@ impl<H: Host> Vm<H> {
     /// The VM's operation `operation` at `site` of its operand values (`CallOut::operands`): the
     /// value it defines, if any. A for-in step defines `Value::DELETED` once no key is left.
     pub(super) fn call_out(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut,
-        [first, second]: [Option<Value>; 2]) -> Result<Option<Value>, JsError> {
+        operands: OperandValues<Value>) -> Result<Option<Value>, JsError> {
+        let OperandValues { fixed: [first, second], list } = operands;
         let operand = second.unwrap_or(Value::UNDEFINED);
         #[cfg(test)]
         if matches!(operation, CallOut::GlobalWrite { .. } | CallOut::GlobalTypeof { .. }) {
@@ -61,6 +62,8 @@ impl<H: Host> Vm<H> {
             }
             CallOut::ForInNext { .. } => Ok(Some(self.for_in_next(p, operand)?.unwrap_or(Value::DELETED))),
             CallOut::Protocol { step, .. } => self.protocol_step(p, step, first, second),
+            CallOut::Spread { passing, .. } => self.spread_call(p, passing, [first, second], &list).map(Some),
+            CallOut::SuperCall { passing, .. } => self.super_call(p, passing, first, &list).map(Some),
             _ => self.name_step(p, site, operation, first),
         }
     }
@@ -177,7 +180,7 @@ impl<H: Host> Vm<H> {
     /// `AppendArray`, `Delete`) at `site`, by its staged row on the interpreter's stage: the words
     /// decide a string key, and the VM makes every other step.
     pub(super) fn staged_value_step(&mut self, p: &ResidualProgram, site: CallSite, i: WideInstruction) -> Result<(), JsError> {
-        let row = Operation::<u64, ()>::decode(i, |_| None).expect("a value step decodes");
+        let row = Operation::<u64, ()>::decode(i, crate::staged::DecodeContext::of(p)).expect("a value step decodes");
         self.staged_row(p, site, row)
     }
 
@@ -243,7 +246,8 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
     }
 
     fn vm_step(&mut self, _stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, ())> {
-        let operands = operation.operands().map(|register| register.map(|register| self.vm.read(self.site.frame, register)));
+        let (vm, frame) = (&*self.vm, self.site.frame);
+        let operands = operation.operands().read(&self.program.method_arguments, |register| vm.read(frame, register));
         match self.vm.call_out(self.program, self.site, operation, operands) {
             Ok(value) => Some((value.map_or(0, Value::to_bits), ())),
             Err(error) => {
@@ -263,6 +267,8 @@ impl<H: Host> PropertyFrame<Concrete> for HostFrame<'_, H> {
 }
 
 impl<H: Host> crate::staged::ElementFrame<Concrete> for HostFrame<'_, H> {}
+
+impl<H: Host> crate::staged::CallFrame<Concrete> for HostFrame<'_, H> {}
 
 impl<H: Host> NumericFrame<Concrete> for HostFrame<'_, H> {
     fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 {
