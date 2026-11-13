@@ -209,21 +209,21 @@ pub(crate) mod words {
 
 /// Byte offsets of the fields of the compiled-code context (`CallContext`) and the dispatch
 /// payload (`JsStepDispatch`, behind the context's `adapter_payload`) the rows read.
-pub(crate) const CALL_CONTEXT_ADAPTER_PAYLOAD: usize = 248;
+pub(crate) const CALL_CONTEXT_ADAPTER_PAYLOAD: usize = 240;
 /// The lane-call protocol, shared with the host (`quench_bjit::call_record`).
 #[path = "../src/call_record.rs"]
 pub(crate) mod call_record;
 pub(crate) const JS_STEP_LOOP_ENTRY: usize = 0;
-pub(crate) const JS_STEP_CAPTURE_VALUES: usize = 96;
-pub(crate) const JS_STEP_CAPTURE_LEN: usize = 104;
-pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = 112;
+pub(crate) const JS_STEP_CAPTURE_VALUES: usize = 80;
+pub(crate) const JS_STEP_CAPTURE_LEN: usize = 88;
+pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = 104;
 /// Whether the capture slots admit every direct store, which a store row requires
 /// (`environment::dense_capture_store`); the bit of a body's capture word that says so
 /// (`dispatch_fast::CAPTURE_STORES`) moves here at its entry.
-pub(crate) const JS_STEP_CAPTURE_STORES: usize = 360;
+pub(crate) const JS_STEP_CAPTURE_STORES: usize = 96;
 /// The running activation's receiver (`this`) word, `DELETED` where it has none: the entry of a
 /// lane body or loop region publishes the one it is entered with, for its run.
-pub(crate) const JS_STEP_RECEIVER: usize = 200;
+pub(crate) const JS_STEP_RECEIVER: usize = 192;
 pub(crate) const CAPTURE_STORES_BIT: u64 = 1;
 /// The activation's local slots and their count (`native_locals`, `local_count`).
 pub(crate) const JS_STEP_NATIVE_LOCALS: usize = 56;
@@ -231,35 +231,35 @@ pub(crate) const JS_STEP_LOCAL_COUNT: usize = 64;
 /// The heap bases a field read through a site's cache entry reads: the object record
 /// reservation, the allocator header of the property values (whose base is at
 /// `PROPERTY_BUFFER_BASE`) and the field cache entries of the running program.
-pub(crate) const JS_STEP_OBJECT_RECORD_BASE: usize = 120;
-pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = 152;
+pub(crate) const JS_STEP_OBJECT_RECORD_BASE: usize = 112;
+pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = 144;
 /// What a store's barrier reads (`Stage::store_gate`): the object records' mark blocks and their
 /// count, and whether the property arena records its slots' value classes (`slots_tracked`), which
 /// an unobserved store requires clear.
-pub(crate) const JS_STEP_OBJECT_MARK_BLOCKS: usize = 136;
-pub(crate) const JS_STEP_OBJECT_MARK_BLOCK_COUNT: usize = 144;
-pub(crate) const JS_STEP_SLOTS_TRACKED: usize = 528;
+pub(crate) const JS_STEP_OBJECT_MARK_BLOCKS: usize = 128;
+pub(crate) const JS_STEP_OBJECT_MARK_BLOCK_COUNT: usize = 136;
+pub(crate) const JS_STEP_SLOTS_TRACKED: usize = 184;
 /// The heap's collection epoch as of the last refresh (`JsStepDispatch::epoch`), which a for-in step
 /// compares to the epoch its state's snapshot was listed in (`staged::iteration::for_in_next`).
-pub(crate) const JS_STEP_EPOCH: usize = 472;
+pub(crate) const JS_STEP_EPOCH: usize = 336;
 /// The string record range's base, which a string `length` read finds the record from.
-pub(crate) const JS_STEP_STRING_RECORD_BASE: usize = JS_STEP_SLOTS_TRACKED + core::mem::size_of::<usize>();
+pub(crate) const JS_STEP_STRING_RECORD_BASE: usize = 376;
 /// What a store into a function's own properties reads (`RecordSpace::Function`): the function
 /// records' mark blocks and their count, as the object records' (`JS_STEP_OBJECT_MARK_BLOCKS`); and the
 /// empty string's word, which a function's inferred name replaces (`staged::naming`).
-pub(crate) const JS_STEP_FUNCTION_MARK_BLOCKS: usize = JS_STEP_STRING_RECORD_BASE + core::mem::size_of::<usize>();
-pub(crate) const JS_STEP_FUNCTION_MARK_BLOCK_COUNT: usize = JS_STEP_FUNCTION_MARK_BLOCKS + core::mem::size_of::<usize>();
-pub(crate) const JS_STEP_EMPTY_STRING: usize = JS_STEP_FUNCTION_MARK_BLOCK_COUNT + core::mem::size_of::<usize>();
+pub(crate) const JS_STEP_FUNCTION_MARK_BLOCKS: usize = 416;
+pub(crate) const JS_STEP_FUNCTION_MARK_BLOCK_COUNT: usize = 424;
+pub(crate) const JS_STEP_EMPTY_STRING: usize = 432;
 /// The function record reservation's base (`JsStepDispatch::function_record_base`).
-pub(crate) const JS_STEP_FUNCTION_RECORD_BASE: usize = 128;
-pub(crate) const JS_STEP_FIELD_ENTRIES: usize = 160;
+pub(crate) const JS_STEP_FUNCTION_RECORD_BASE: usize = 120;
+pub(crate) const JS_STEP_FIELD_ENTRIES: usize = 152;
 pub(crate) const PROPERTY_BUFFER_BASE: usize = 0;
 /// Bits of a body's capture word that hold the dense slots' address; the slot count sits above
 /// them (`entry_cell::CAPTURE_ADDRESS_BITS`), and the pad is what a shift pair clears them with.
 pub(crate) const CAPTURE_ADDRESS_BITS: u32 = 48;
 pub(crate) const CAPTURE_ADDRESS_PAD: u32 = u64::BITS - CAPTURE_ADDRESS_BITS;
 /// The record a completed body names (`LANE_BODY_RETURNED`).
-pub(crate) const JS_STEP_RETURNED_PC: usize = 256;
+pub(crate) const JS_STEP_RETURNED_PC: usize = 248;
 /// The words of a view of dense environment slots (`general_capture::EnvView`): the slots' address and their
 /// count, at a payload byte offset a row names (`ENV_ROW`).
 pub(crate) const ENV_VIEW_VALUES: usize = 0;
@@ -269,13 +269,22 @@ pub(crate) const ENV_VIEW_STORES: usize = 16;
 /// More `JsStepDispatch` fields the call rows read: the lane body's VM, residual and lane
 /// context (a helper call's first three arguments), the lane stack's free span and the shadow
 /// frames' span. Checked against the runtime by `stencil_layout_matches`.
-pub(crate) const JS_STEP_VM: usize = 184;
-pub(crate) const JS_STEP_RESIDUAL: usize = 192;
-pub(crate) const JS_STEP_LANE_CONTEXT: usize = 224;
-pub(crate) const JS_STEP_NATIVE_TOP: usize = 240;
-pub(crate) const JS_STEP_NATIVE_END: usize = 248;
-pub(crate) const JS_STEP_SHADOW_TOP: usize = 256;
-pub(crate) const JS_STEP_SHADOW_END: usize = 264;
+pub(crate) const JS_STEP_VM: usize = 200;
+pub(crate) const JS_STEP_RESIDUAL: usize = 208;
+pub(crate) const JS_STEP_LANE_CONTEXT: usize = 240;
+/// The lane stack's words (`Vm::lane_stack_words`): the addresses of the values' and the activations' tops,
+/// the end of the values' room and the end of the frames' room.
+pub(crate) const JS_STEP_LANE_VALUES_TOP: usize = 288;
+pub(crate) const JS_STEP_LANE_VALUES_END: usize = 296;
+pub(crate) const JS_STEP_LANE_ACTIVATIONS_TOP: usize = 304;
+pub(crate) const JS_STEP_LANE_FRAMES_END: usize = 312;
+/// An activation's size, and where its kind tag lies; `KIND_NATIVE` marks a frame a direct call wrote.
+pub(crate) const ACTIVATION_BYTES: usize = 128;
+pub(crate) const ACTIVATION_KIND_OFFSET: usize = 72;
+pub(crate) const KIND_NATIVE: u8 = 0;
+/// The entry cell's run counters, and the unit a raised run adds (`entry_cell::RAISED_RUN`).
+pub(crate) const CELL_COUNTERS_AT: usize = 56;
+pub(crate) const RAISED_RUN: u64 = 1 << 32;
 
 /// The entry cell's entry, recovery and body words (`EntryCell`), and the recovery space's
 /// values and activations (`LaneRecoverySpace`).
@@ -309,6 +318,6 @@ pub(crate) mod string_form {
 }
 /// What an inline-cache row reads of the dispatch payload (`stencils/ic_rows.rs`): the method-cache atom bits and their
 /// word count, which a store row consults, and whether stores are specialized.
-pub(crate) const JS_STEP_METHOD_CACHE_ATOMS: usize = 0;
-pub(crate) const JS_STEP_METHOD_CACHE_ATOM_WORDS: usize = 0;
-pub(crate) const JS_STEP_STORES_SPECIALIZED: usize = 0;
+pub(crate) const JS_STEP_METHOD_CACHE_ATOMS: usize = 160;
+pub(crate) const JS_STEP_METHOD_CACHE_ATOM_WORDS: usize = 168;
+pub(crate) const JS_STEP_STORES_SPECIALIZED: usize = 176;

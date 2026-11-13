@@ -244,16 +244,72 @@ mod tests {
     /// The numbers the stencil rows are compiled with (`quench-bjit/stencils/layout.rs`) are
     /// the runtime's own.
     use super::super::{CallContext, JsStepDispatch};
+    use crate::vm::wtf16::native_string as form;
     #[allow(dead_code)]
     mod stencil_layout {
         include!("../../../../quench-bjit/stencils/layout.rs");
+    }
+
+
+    /// Every payload field a stencil row reads, as (name, the runtime's offset, the stencil layout's).
+    fn payload_offsets() -> Vec<(&'static str, usize, usize)> {
+        use stencil_layout as m;
+        use std::mem::offset_of as at;
+                vec![
+            ("adapter_payload", at!(CallContext, adapter_payload), m::CALL_CONTEXT_ADAPTER_PAYLOAD),
+            ("loop_entry", at!(JsStepDispatch, loop_entry), m::JS_STEP_LOOP_ENTRY),
+            ("capture_values", at!(JsStepDispatch, capture_values), m::JS_STEP_CAPTURE_VALUES),
+            ("capture_len", at!(JsStepDispatch, capture_len), m::JS_STEP_CAPTURE_LEN),
+            ("capture_stores", at!(JsStepDispatch, capture_stores), m::JS_STEP_CAPTURE_STORES),
+            ("array_record_base", at!(JsStepDispatch, array_record_base), m::JS_STEP_ARRAY_RECORD_BASE),
+            ("object_record_base", at!(JsStepDispatch, object_record_base), m::JS_STEP_OBJECT_RECORD_BASE),
+            ("function_record_base", at!(JsStepDispatch, function_record_base), m::JS_STEP_FUNCTION_RECORD_BASE),
+            ("object_mark_blocks", at!(JsStepDispatch, object_mark_blocks), m::JS_STEP_OBJECT_MARK_BLOCKS),
+            ("object_mark_block_count", at!(JsStepDispatch, object_mark_block_count), m::JS_STEP_OBJECT_MARK_BLOCK_COUNT),
+            ("property_buffer", at!(JsStepDispatch, property_buffer), m::JS_STEP_PROPERTY_BUFFER),
+            ("field_entries", at!(JsStepDispatch, field_entries), m::JS_STEP_FIELD_ENTRIES),
+            ("method_cache_atoms", at!(JsStepDispatch, method_cache_atoms), m::JS_STEP_METHOD_CACHE_ATOMS),
+            ("method_cache_atom_words", at!(JsStepDispatch, method_cache_atom_words), m::JS_STEP_METHOD_CACHE_ATOM_WORDS),
+            ("stores_specialized", at!(JsStepDispatch, stores_specialized), m::JS_STEP_STORES_SPECIALIZED),
+            ("slots_tracked", at!(JsStepDispatch, slots_tracked), m::JS_STEP_SLOTS_TRACKED),
+            ("receiver", at!(JsStepDispatch, receiver), m::JS_STEP_RECEIVER),
+            ("vm", at!(JsStepDispatch, vm), m::JS_STEP_VM),
+            ("residual", at!(JsStepDispatch, residual), m::JS_STEP_RESIDUAL),
+            ("lane_context", at!(JsStepDispatch, lane_context), m::JS_STEP_LANE_CONTEXT),
+            ("returned_pc", at!(JsStepDispatch, returned_pc), m::JS_STEP_RETURNED_PC),
+            ("lane_values_top", at!(JsStepDispatch, lane_values_top), m::JS_STEP_LANE_VALUES_TOP),
+            ("lane_values_end", at!(JsStepDispatch, lane_values_end), m::JS_STEP_LANE_VALUES_END),
+            ("lane_activations_top", at!(JsStepDispatch, lane_activations_top), m::JS_STEP_LANE_ACTIVATIONS_TOP),
+            ("lane_frames_end", at!(JsStepDispatch, lane_frames_end), m::JS_STEP_LANE_FRAMES_END),
+            ("native_locals", at!(JsStepDispatch, native_locals), m::JS_STEP_NATIVE_LOCALS),
+            ("local_count", at!(JsStepDispatch, local_count), m::JS_STEP_LOCAL_COUNT),
+            ("epoch", at!(JsStepDispatch, epoch), m::JS_STEP_EPOCH),
+            ("string_record_base", at!(JsStepDispatch, string_record_base), m::JS_STEP_STRING_RECORD_BASE),
+            ("function_mark_blocks", at!(JsStepDispatch, function_mark_blocks), m::JS_STEP_FUNCTION_MARK_BLOCKS),
+            ("function_mark_block_count", at!(JsStepDispatch, function_mark_block_count), m::JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
+            ("empty_string", at!(JsStepDispatch, empty_string), m::JS_STEP_EMPTY_STRING),
+            ("property_buffer_base", crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, m::PROPERTY_BUFFER_BASE),
+            ("capture_address_bits", super::super::entry_cell::CAPTURE_ADDRESS_BITS as usize, m::CAPTURE_ADDRESS_BITS as usize),
+            ("capture_stores_bit", super::super::super::dispatch_fast::CAPTURE_STORES, m::CAPTURE_STORES_BIT as usize),
+            ("activation_kind", crate::vm::dispatch_fast::KIND_OFFSET, m::ACTIVATION_KIND_OFFSET),
+            ("kind_native", usize::from(crate::vm::dispatch_fast::KIND_NATIVE), usize::from(m::KIND_NATIVE)),
+            ("cell_entry", at!(super::super::entry_cell::EntryCell, entry), m::CELL_ENTRY_AT),
+            ("cell_recovery", at!(super::super::entry_cell::EntryCell, recovery), m::CELL_RECOVERY_AT),
+            ("cell_body", at!(super::super::entry_cell::EntryCell, body), m::CELL_BODY_AT),
+            ("cell_counters", at!(super::super::entry_cell::EntryCell, counters), m::CELL_COUNTERS_AT),
+            ("raised_run", super::super::entry_cell::RAISED_RUN as usize, m::RAISED_RUN as usize),
+            ("frame_bytes", super::super::FRAME_BYTES, m::ACTIVATION_BYTES),
+            ("short_units", form::SHORT_UNITS_OFFSET as usize, m::string_form::SHORT_UNITS_OFFSET as usize),
+            ("shared_pointer", form::SHARED_POINTER_OFFSET as usize, m::string_form::SHARED_POINTER_OFFSET as usize),
+            ("shared_units", form::shared_units_offset() as usize, m::string_form::shared_units_offset() as usize),
+        ]
     }
 
     #[test]
     fn stencil_layout_matches() {
         use crate::value::{NarrowLayout, ValueLayout};
         use stencil_layout as mirror;
-        eprintln!("OFFSETS {} {} {} {} {} {}", std::mem::offset_of!(CallContext, adapter_payload), std::mem::offset_of!(JsStepDispatch, loop_entry), std::mem::offset_of!(JsStepDispatch, capture_values), std::mem::offset_of!(JsStepDispatch, capture_len), std::mem::offset_of!(JsStepDispatch, array_record_base), std::mem::offset_of!(JsStepDispatch, returned_pc));
+        eprintln!("OFFSETS {:?}", payload_offsets());
         assert_eq!(format!("{:?}", crate::heap::NATIVE_OBJECT_LAYOUT), format!("{:?}", mirror::NATIVE_OBJECT_LAYOUT));
         assert_eq!(format!("{:?}", crate::heap::NATIVE_FUNCTION_LAYOUT), format!("{:?}", mirror::NATIVE_FUNCTION_LAYOUT));
         assert_eq!(format!("{:?}", crate::heap::NATIVE_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_ARRAY_LAYOUT));
@@ -283,17 +339,9 @@ mod tests {
             [u64::from(w::NARROW_INT_FLAG), u64::from(w::NARROW_INTEGER_BITS), u64::from(w::NARROW_CODE_SHIFT), u64::from(w::NARROW_CODE_MASK), u64::from(w::NARROW_INDEX_SHIFT), u64::from(w::NARROW_INDEX_BITS), w::DIRECT_OBJECT_UPPER, u64::from(w::DIRECT_OBJECT_NARROW_CODE)]
         );
         assert_eq!(super::super::NATIVE_JS_STOPPED, mirror::call_record::NATIVE_JS_STOPPED);
-        assert_eq!(
-            [std::mem::offset_of!(CallContext, adapter_payload), std::mem::offset_of!(JsStepDispatch, loop_entry), std::mem::offset_of!(JsStepDispatch, capture_values), std::mem::offset_of!(JsStepDispatch, capture_len), std::mem::offset_of!(JsStepDispatch, array_record_base), std::mem::offset_of!(JsStepDispatch, returned_pc)],
-            [mirror::CALL_CONTEXT_ADAPTER_PAYLOAD, mirror::JS_STEP_LOOP_ENTRY, mirror::JS_STEP_CAPTURE_VALUES, mirror::JS_STEP_CAPTURE_LEN, mirror::JS_STEP_ARRAY_RECORD_BASE, mirror::JS_STEP_RETURNED_PC]
-        );
-        assert_eq!(
-            [std::mem::offset_of!(JsStepDispatch, object_record_base), std::mem::offset_of!(JsStepDispatch, property_buffer), std::mem::offset_of!(JsStepDispatch, field_entries), crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, super::super::entry_cell::CAPTURE_ADDRESS_BITS as usize, std::mem::offset_of!(JsStepDispatch, capture_stores), super::super::super::dispatch_fast::CAPTURE_STORES,
-             std::mem::offset_of!(JsStepDispatch, object_mark_blocks), std::mem::offset_of!(JsStepDispatch, object_mark_block_count), std::mem::offset_of!(JsStepDispatch, slots_tracked), std::mem::offset_of!(JsStepDispatch, string_record_base), std::mem::offset_of!(JsStepDispatch, receiver), std::mem::offset_of!(JsStepDispatch, native_locals), std::mem::offset_of!(JsStepDispatch, local_count), std::mem::offset_of!(JsStepDispatch, epoch), std::mem::offset_of!(JsStepDispatch, function_mark_blocks), std::mem::offset_of!(JsStepDispatch, function_mark_block_count), std::mem::offset_of!(JsStepDispatch, empty_string), std::mem::offset_of!(JsStepDispatch, function_record_base)],
-            [mirror::JS_STEP_OBJECT_RECORD_BASE, mirror::JS_STEP_PROPERTY_BUFFER, mirror::JS_STEP_FIELD_ENTRIES, mirror::PROPERTY_BUFFER_BASE, mirror::CAPTURE_ADDRESS_BITS as usize, mirror::JS_STEP_CAPTURE_STORES, mirror::CAPTURE_STORES_BIT as usize,
-             mirror::JS_STEP_OBJECT_MARK_BLOCKS, mirror::JS_STEP_OBJECT_MARK_BLOCK_COUNT, mirror::JS_STEP_SLOTS_TRACKED, mirror::JS_STEP_STRING_RECORD_BASE, mirror::JS_STEP_RECEIVER, mirror::JS_STEP_NATIVE_LOCALS, mirror::JS_STEP_LOCAL_COUNT, mirror::JS_STEP_EPOCH, mirror::JS_STEP_FUNCTION_MARK_BLOCKS, mirror::JS_STEP_FUNCTION_MARK_BLOCK_COUNT, mirror::JS_STEP_EMPTY_STRING, mirror::JS_STEP_FUNCTION_RECORD_BASE]
-        );
-        use crate::vm::wtf16::native_string as form;
+        for (name, runtime, copy) in payload_offsets() {
+            assert_eq!(runtime, copy, "{name}: the runtime's offset is the stencil layout's");
+        }
         assert_eq!(
             [form::RECORD_SIZE as i32, form::TAG_OFFSET, i32::from(form::TAG_SHORT), i32::from(form::TAG_ASCII), i32::from(form::TAG_WIDE), form::SHORT_LENGTH_OFFSET, form::SHARED_LENGTH_OFFSET],
             [mirror::string_form::RECORD_SIZE as i32, mirror::string_form::TAG_OFFSET, i32::from(mirror::string_form::TAG_SHORT), i32::from(mirror::string_form::TAG_ASCII), i32::from(mirror::string_form::TAG_WIDE), mirror::string_form::SHORT_LENGTH_OFFSET, mirror::string_form::SHARED_LENGTH_OFFSET]

@@ -36,10 +36,10 @@
 //! writes the live pinned registers back: the lowering of an instruction whose operation only
 //! the interpreter runs.
 
-use crate::layout::call_record::{CallRecord, CALLEE_EXIT, LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, NATIVE_JS_STOPPED, REGISTER_BYTES, TERMINATED_STATUS};
+use crate::layout::call_record::{CallRecord, CALLEE_EXIT, LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_BODY_THREW, LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_RAISED, NATIVE_JS_STOPPED, REGISTER_BYTES, TERMINATED_STATUS};
 use crate::codes::{LAST_INT_PIN, PIN, PINF};
 use crate::heap_rows::{payload, word_at};
-use crate::layout::{CELL_BODY_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_CONTEXT, JS_STEP_NATIVE_END, JS_STEP_NATIVE_TOP, JS_STEP_RESIDUAL, JS_STEP_SHADOW_END, JS_STEP_SHADOW_TOP, JS_STEP_VM, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
+use crate::layout::{ACTIVATION_KIND_OFFSET, CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_ACTIVATIONS_TOP, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_FRAMES_END, JS_STEP_LANE_VALUES_END, JS_STEP_LANE_VALUES_TOP, JS_STEP_RESIDUAL, JS_STEP_RETURNED_PC, JS_STEP_VM, KIND_NATIVE, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
 use crate::stage::StencilStage;
 use crate::staged::{call::admit_native, frame, value};
 use crate::words::{S, hole64, is_int, slot};
@@ -58,6 +58,8 @@ unsafe extern "C" {
 const HOLE_CALL_PC: u8 = 0;
 const HOLE_HELPER: u8 = 1;
 const HOLE_RECORD: u8 = 0;
+/// A direct row's call record index in the caller, which a raise names to the lane (`raising`).
+const HOLE_DIRECT_PC: u8 = 1;
 /// Shift from a word count to bytes.
 const WORD_SHIFT: u32 = REGISTER_BYTES.trailing_zeros();
 
@@ -93,6 +95,15 @@ fn dead(s: &S) -> S {
 #[inline(always)]
 fn leaving(s: &S, status: u32, word: u64) -> S {
     S { p: [status as usize, word as usize, 0, 0], ..dead(s) }
+}
+
+/// The caller's own end by the exception a callee raised (`Vm::lane_raised`): the record that raised it is
+/// in the payload for the lane to unwind from (`LANE_BODY_THREW`).
+#[inline(always)]
+unsafe fn raising(s: &S, payload: usize, pc: u64) -> S {
+    // SAFETY: the payload is the live activation's.
+    unsafe { put(payload, JS_STEP_RETURNED_PC, pc) };
+    leaving(s, LANE_BODY_THREW, 0)
 }
 
 macro_rules! go {
@@ -142,6 +153,10 @@ pub unsafe extern "rust-preserve-none" fn call_helper(frame: usize, ctx: usize, 
                 core::hint::cold_path();
                 go!(HOLE_EXIT1, leaving(&s, NATIVE_JS_STOPPED, CALLEE_EXIT))
             }
+            LANE_CALL_RAISED => {
+                core::hint::cold_path();
+                go!(HOLE_EXIT1, raising(&s, payload, hole64::<HOLE_CALL_PC>()))
+            }
             _ => {
                 core::hint::cold_path();
                 go!(HOLE_EXIT1, leaving(&s, TERMINATED_STATUS, 0))
@@ -156,6 +171,8 @@ enum Entered {
     Refused,
     /// The callee completed; its word is stored in the call's register.
     Returned,
+    /// The callee ended by an exception: the caller raises it at the call.
+    Raised,
     /// The callee left: its (status, word), which the caller leaves with.
     Left(u32, u64),
 }
@@ -192,8 +209,8 @@ unsafe fn fill_window<const ARGC: usize>(args: usize, top: usize, room: usize) {
     }
 }
 
-/// What admission found: the callee's cell, the lane stack's top where its window goes, the
-/// window's size and the shadow frame's address.
+/// What admission found: the callee's cell, the lane stack's values' top where its window goes, the
+/// window's size and the activations' top where its native frame goes.
 struct Admitted {
     cell: usize,
     top: usize,
@@ -201,25 +218,42 @@ struct Admitted {
     shadow: usize,
 }
 
-/// The cell's validity and both stacks' room: `admit_native` over the lane stack's free words
-/// less the callee's recovery space, and the shadow frames its recovery needs.
+/// The word at the address the payload's word `at` holds: a lane stack top, owned by the VM.
+#[inline(always)]
+unsafe fn stack_top(payload: usize, at: usize) -> usize {
+    // SAFETY: the payload names the live lane stack's top words.
+    unsafe { word_at(word_at(payload, at) as usize, 0) as usize }
+}
+
+/// Moves the lane stack's two tops: the values' and the activations'.
+#[inline(always)]
+unsafe fn set_tops(payload: usize, values: usize, activations: usize) {
+    // SAFETY: as `stack_top`.
+    unsafe {
+        put(word_at(payload, JS_STEP_LANE_VALUES_TOP) as usize, 0, values as u64);
+        put(word_at(payload, JS_STEP_LANE_ACTIVATIONS_TOP) as usize, 0, activations as u64);
+    }
+}
+
+/// The cell's validity and both stacks' room: `admit_native` over the values' free words less the callee's
+/// recovery space, and the frames its recovery needs.
 #[inline(always)]
 unsafe fn admit(record: usize, payload: usize) -> Option<Admitted> {
     // SAFETY: the record and cell are live for the code's life, the payload for the activation's.
     unsafe {
         let cell = word_at(record, offset_of!(CallRecord, cell)) as usize;
-        let (top, end) = (word_at(payload, JS_STEP_NATIVE_TOP) as usize, word_at(payload, JS_STEP_NATIVE_END) as usize);
+        let (top, end) = (stack_top(payload, JS_STEP_LANE_VALUES_TOP), word_at(payload, JS_STEP_LANE_VALUES_END) as usize);
         let recovery = word_at(cell, CELL_RECOVERY_AT) as usize;
         let free = (((end - top) >> WORD_SHIFT) as u64).saturating_sub(word_at(recovery, RECOVERY_VALUES_AT));
         let room = admit_native(&mut StencilStage::from_hole(0), cell as u64, word_at(record, offset_of!(CallRecord, expected)), free, ())? as usize;
-        let shadow = word_at(payload, JS_STEP_SHADOW_TOP) as usize;
+        let shadow = stack_top(payload, JS_STEP_LANE_ACTIVATIONS_TOP);
         let frames = word_at(recovery, RECOVERY_ACTIVATIONS_AT) as usize + 1;
-        let fits = shadow + frames * word_at(record, offset_of!(CallRecord, frame_bytes)) as usize <= word_at(payload, JS_STEP_SHADOW_END) as usize;
+        let fits = shadow + frames * word_at(record, offset_of!(CallRecord, frame_bytes)) as usize <= word_at(payload, JS_STEP_LANE_FRAMES_END) as usize;
         fits.then_some(Admitted { cell, top, room, shadow })
     }
 }
 
-/// The callee's window, its shadow frame, and the lane stack's and shadow stack's new tops.
+/// The callee's window, its native frame (`ActivationKind::Native`), and the lane stack's new tops.
 #[inline(always)]
 unsafe fn push<const ARGC: usize>(s: &S, record: usize, payload: usize, a: &Admitted, this: u64) {
     // SAFETY: as `admit`, which proved the room.
@@ -229,28 +263,34 @@ unsafe fn push<const ARGC: usize>(s: &S, record: usize, payload: usize, a: &Admi
         put(a.shadow, frame::THIS, this);
         put(a.shadow, frame::BODY, word_at(a.cell, CELL_BODY_AT));
         put(a.shadow, frame::WINDOW, a.top as u64);
-        put(payload, JS_STEP_SHADOW_TOP, (a.shadow + word_at(record, offset_of!(CallRecord, frame_bytes)) as usize) as u64);
-        put(payload, JS_STEP_NATIVE_TOP, (a.top + (a.room << WORD_SHIFT)) as u64);
+        put(a.shadow, ACTIVATION_KIND_OFFSET, u64::from(KIND_NATIVE));
+        set_tops(payload, a.top + (a.room << WORD_SHIFT), a.shadow + word_at(record, offset_of!(CallRecord, frame_bytes)) as usize);
     }
 }
 
-/// Where each status of the callee goes: a completion pops its shadow frame and stores its word
-/// to the call's register; a callee that was not entered pops it and is refused; any other
-/// status keeps the frames (the lane materializes them) and is the caller's leave.
+/// Where each status of the callee goes: a completion pops its window and frame and stores its word
+/// to the call's register; a callee that was not entered pops them and is refused; one that ended by an
+/// exception pops them, is counted in its cell and raises in the caller; any other status keeps the frames
+/// (the lane links them) and is the caller's leave.
 #[inline(always)]
 unsafe fn finish(s: &S, record: usize, payload: usize, a: &Admitted, returned: BodyReturn) -> Entered {
     // SAFETY: as `push`.
     unsafe {
-        put(payload, JS_STEP_NATIVE_TOP, a.top as u64);
         match returned.status {
             LANE_BODY_RETURNED => {
-                put(payload, JS_STEP_SHADOW_TOP, a.shadow as u64);
+                set_tops(payload, a.top, a.shadow);
                 put(register_slot(s, record, offset_of!(CallRecord, result_register)), 0, returned.value);
                 Entered::Returned
             }
             LANE_BODY_NOT_ENTERED => {
-                put(payload, JS_STEP_SHADOW_TOP, a.shadow as u64);
+                set_tops(payload, a.top, a.shadow);
                 Entered::Refused
+            }
+            LANE_BODY_THREW => {
+                set_tops(payload, a.top, a.shadow);
+                let counters = word_at(a.cell, CELL_COUNTERS_AT);
+                put(a.cell, CELL_COUNTERS_AT, counters.wrapping_add(RAISED_RUN));
+                Entered::Raised
             }
             status => Entered::Left(status, returned.value),
         }
@@ -288,6 +328,10 @@ macro_rules! direct_row {
                     Entered::Refused => {
                         core::hint::cold_path();
                         go!(HOLE_NEXT, dead(&s))
+                    }
+                    Entered::Raised => {
+                        core::hint::cold_path();
+                        go!(HOLE_EXIT0, raising(&s, payload(&s), hole64::<HOLE_DIRECT_PC>()))
                     }
                     Entered::Left(status, word) => {
                         core::hint::cold_path();

@@ -301,7 +301,7 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts) -> Result<(CallPart, Box<
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let stencil = call::stencil(CallRow::Direct { argc, sloppy: facts.global_this.is_some() })?;
-    Ok((part(stencil, quench_bjit::padded_holes([std::ptr::from_ref(&*record).addr() as u64]), vec![Exit::Status]), record))
+    Ok((part(stencil, quench_bjit::padded_holes([std::ptr::from_ref(&*record).addr() as u64, u64::from(shape.call_pc)]), vec![Exit::Status]), record))
 }
 
 /// The chain of a helper step at `pc` (any instruction whose operation the helper runs in place):
@@ -463,15 +463,6 @@ mod tests {
             [protocol::GENERAL_RETURN_STATUS_BASE, protocol::LANE_BODY_RETURNED, protocol::LANE_BODY_NOT_ENTERED, protocol::NATIVE_JS_STOPPED, protocol::TERMINATED_STATUS]
         );
         assert_eq!(protocol::REGISTER_BYTES, std::mem::size_of::<crate::value::Value>());
-        let dispatch = |offsets: [usize; 7]| offsets;
-        assert_eq!(
-            dispatch([
-                std::mem::offset_of!(compiled::JsStepDispatch, vm), std::mem::offset_of!(compiled::JsStepDispatch, residual), std::mem::offset_of!(compiled::JsStepDispatch, lane_context),
-                std::mem::offset_of!(compiled::JsStepDispatch, native_top), std::mem::offset_of!(compiled::JsStepDispatch, native_end),
-                std::mem::offset_of!(compiled::JsStepDispatch, shadow_top), std::mem::offset_of!(compiled::JsStepDispatch, shadow_end),
-            ]),
-            [mirror::JS_STEP_VM, mirror::JS_STEP_RESIDUAL, mirror::JS_STEP_LANE_CONTEXT, mirror::JS_STEP_NATIVE_TOP, mirror::JS_STEP_NATIVE_END, mirror::JS_STEP_SHADOW_TOP, mirror::JS_STEP_SHADOW_END]
-        );
         use crate::vm::dispatch_fast::LaneRecoverySpace;
         assert_eq!(
             [std::mem::offset_of!(EntryCell, entry), std::mem::offset_of!(EntryCell, recovery), std::mem::offset_of!(EntryCell, body), std::mem::offset_of!(LaneRecoverySpace, values), std::mem::offset_of!(LaneRecoverySpace, activations)],
