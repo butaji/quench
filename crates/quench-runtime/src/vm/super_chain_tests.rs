@@ -229,6 +229,9 @@ fn chain_constructions_cross_programs() {
         "globalThis.P = class P { constructor(x) { this.x = x; } }; globalThis.Q = class Q extends P { constructor(x, y) { super(x); this.y = y; } };",
         "globalThis.R = class R { constructor(a) { this.a = a; this.b = a + 1; } };",
         "function go() { let s = 0; for (let i = 0; i < 3000; i++) s += new Q(i, 2).y + new R(i).b + new P(i).x; return s + JSON.stringify(new Q(1, 2)) + Object.keys(new Q(1, 2)); } print(go()); Object.setPrototypeOf(Q, R); print(go());",
+        "globalThis.B1 = class B1 { constructor(n) { this.n = n; } };",
+        "globalThis.D1 = class D1 extends B1 { constructor() { super('passed-literal'); } };",
+        "let t = ''; for (let i = 0; i < 3000; i++) t = new D1().n; print(t);",
     ];
     let first = Engine::specialize(sources[0], "cross-0.js").unwrap();
     vm.execute(&first).unwrap();
@@ -237,6 +240,6 @@ fn chain_constructions_cross_programs() {
     }
     assert_eq!(
         output.take(),
-        ["9006000{\"x\":1,\"y\":2}x,y", "9006000{\"a\":1,\"b\":2,\"y\":2}a,b,y"].map(String::from)
+        ["9006000{\"x\":1,\"y\":2}x,y", "9006000{\"a\":1,\"b\":2,\"y\":2}a,b,y", "passed-literal"].map(String::from)
     );
 }

@@ -18,33 +18,37 @@ type Passed<'a> = Option<&'a SuperArguments<'a>>;
 
 struct SuperArguments<'a> {
     values: &'a [InitializerValue],
+    /// The program of the class whose `super(...)` passes them, which their string constants index.
+    program: ProgramId,
     below: Passed<'a>,
 }
 
 /// What parameter `parameter` of a class passed `passed` takes, in the constructed class's
-/// parameters: `undefined` past the values.
-fn passed_value(passed: Passed<'_>, parameter: u16) -> InitializerValue {
+/// parameters: `undefined` past the values. `None` for a string literal of another program than
+/// `home`, the store's, whose constant index would name another string there.
+fn passed_value(passed: Passed<'_>, parameter: u16, home: ProgramId) -> Option<InitializerValue> {
     let Some(arguments) = passed else {
-        return InitializerValue::Parameter { parameter, fallback: None };
+        return Some(InitializerValue::Parameter { parameter, fallback: None });
     };
     match arguments.values.get(usize::from(parameter)) {
-        None => InitializerValue::Constant(InitializerConstant::Undefined),
-        Some(InitializerValue::Parameter { parameter, .. }) => passed_value(arguments.below, *parameter),
-        Some(value) => *value,
+        None => Some(InitializerValue::Constant(InitializerConstant::Undefined)),
+        Some(InitializerValue::Parameter { parameter, .. }) => passed_value(arguments.below, *parameter, home),
+        Some(InitializerValue::Constant(InitializerConstant::String(_))) if arguments.program != home => None,
+        Some(value) => Some(*value),
     }
 }
 
 /// `value` of a class passed `passed`, in the constructed class's parameters; `None` for a
 /// default or a computation of anything but a parameter passed on as it is, which the
-/// bodies make.
-fn rebased(value: InitializerValue, passed: Passed<'_>) -> Option<InitializerValue> {
-    let source = |parameter| match passed_value(passed, parameter) {
+/// bodies make, and for a string literal of another program than `home`, the store's.
+fn rebased(value: InitializerValue, passed: Passed<'_>, home: ProgramId) -> Option<InitializerValue> {
+    let source = |parameter| match passed_value(passed, parameter, home)? {
         InitializerValue::Parameter { parameter, fallback: None } => Some(parameter),
         _ => None,
     };
     Some(match value {
         InitializerValue::Constant(_) | InitializerValue::Construct(_) => value,
-        InitializerValue::Parameter { parameter, fallback: None } => passed_value(passed, parameter),
+        InitializerValue::Parameter { parameter, fallback: None } => passed_value(passed, parameter, home)?,
         InitializerValue::Parameter { parameter, fallback } => InitializerValue::Parameter { parameter: source(parameter)?, fallback },
         InitializerValue::Numeric { parameter, operator, constant } => {
             InitializerValue::Numeric { parameter: source(parameter)?, operator, constant }
@@ -55,7 +59,7 @@ fn rebased(value: InitializerValue, passed: Passed<'_>) -> Option<InitializerVal
 /// Appends `own`, the stores of a class passed `passed`, rebased.
 fn append(stores: &mut ChainStores, program: ProgramId, own: &[InitializerStore], passed: Passed<'_>) -> Option<()> {
     for store in own {
-        stores.push((program, InitializerStore { value: rebased(store.value, passed)?, ..*store }));
+        stores.push((program, InitializerStore { value: rebased(store.value, passed, program)?, ..*store }));
     }
     Some(())
 }
@@ -91,7 +95,7 @@ fn chain_stores<H: Host>(
         return chain_stores(vm, parent, passed, stores, classes + 1);
     }
     let initializer = body.super_initializer(&code.atoms, &code.constants)?;
-    let arguments = SuperArguments { values: &initializer.arguments, below: passed };
+    let arguments = SuperArguments { values: &initializer.arguments, program, below: passed };
     let below = if initializer.forwards { passed } else { Some(&arguments) };
     let root = chain_stores(vm, parent, below, stores, classes + 1)?;
     append(stores, program, &initializer.stores, passed).map(|()| root)
