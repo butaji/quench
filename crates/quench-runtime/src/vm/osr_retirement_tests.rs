@@ -233,6 +233,8 @@ fn printed_run(program: &crate::bytecode::ResidualProgram, mode: crate::Executio
 /// interpreter prints, and each loop of `native` (one per function) runs natively wherever
 /// the policy compiles loops. The throughput run's VM.
 fn assert_typed_osr(source: &str, native: &[&str]) -> Vm<TestHost> {
+    // The fixtures are too small to repay a compile at the wall-clock cost the model has learned.
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(source, "osr-typed.js")).unwrap();
     let (expected, _) = printed_run(&program, crate::ExecutionMode::Interpreted, crate::MemoryPolicy::Throughput);
     for policy in crate::MemoryPolicy::ALL {
