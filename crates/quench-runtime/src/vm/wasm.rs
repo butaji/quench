@@ -96,7 +96,14 @@ impl<H: Host> Vm<H> {
                 "Wasm state requires a rooted instance".into(),
             ));
         }
-        self.execute_wasm_in_environment(function, args, Value::NULL)
+        // A stateless function still runs in an instance (its record is what compiled code enters).
+        let instance = self.instantiate_wasm_module(&function.module)?;
+        let result = match self.root_value(instance.environment) {
+            Some(environment) => self.execute_wasm_in_environment(function, args, environment),
+            None => Err(JsError::validation("invalid Wasm instance root".into())),
+        };
+        self.heap.release_root(instance.environment);
+        result
     }
 
     pub(crate) fn instantiate_wasm(
