@@ -60,10 +60,13 @@ pub(super) use lane_region::ElementViews;
 use osr_compile::OsrFacts;
 use crate::typed_ir;
 
-/// The ordered tables of the frozen image's facts and of the loop regions' site facts: their
-/// iteration order is part of the image's and the code's determinism.
-type OrderedMap<K, V> = std::collections::BTreeMap<K, V>;
-type OrderedSet<T> = std::collections::BTreeSet<T>;
+/// Whole-program values by atom (`frozen_globals`, `frozen_fields`): sparse over the atom
+/// table, and ordered because an image's assumptions list them in atom order.
+type FrozenValues = std::collections::BTreeMap<Atom, Value>;
+/// A loop region's proved field loads by cache site, in site order (`lane_region`'s table).
+type FieldLoads = std::collections::BTreeMap<u16, Vec<NativeFieldLoad>>;
+/// A loop region's entry fields by PC (`lane_region`'s table).
+type EntryFields = std::collections::BTreeMap<usize, u32>;
 #[path = "compiled/facts.rs"]
 pub(super) mod facts;
 pub(super) mod tier_policy;
@@ -1627,7 +1630,7 @@ pub(super) struct VmFacts<'a> {
     /// running VM's feedback: `Division::Frozen` instead of `Division::Online`.
     pub(super) frozen: bool,
     /// Whole-program prototype values by atom, each guarded at its read site.
-    pub(super) frozen_fields: Option<&'a OrderedMap<Atom, Value>>,
+    pub(super) frozen_fields: Option<&'a FrozenValues>,
     /// The image's constant block, materialized after realm initialization.
     pub(super) frozen_constants: Option<usize>,
 }
@@ -4104,106 +4107,70 @@ fn publish_code(code: &[u8]) -> Option<CodeMemory> {
     Some(memory)
 }
 
-/// Whole-program globals a frozen image may fold: a `var` the program writes exactly
-/// once, with an immediate, before any other function can observe it.
+/// How many instructions of the program, over all functions, `counted` gives each atom.
 #[cfg(feature = "aot")]
-fn global_store_counts(program: &ResidualProgram) -> OrderedMap<Atom, usize> {
-    let mut stores: OrderedMap<Atom, usize> = std::collections::BTreeMap::new();
+fn atom_store_counts(program: &ResidualProgram, counted: impl Fn(WideInstruction) -> bool) -> Vec<u32> {
+    let mut counts = vec![0_u32; program.atoms.len()];
     for id in 0..program.function_count() {
         let function = program.function(id);
         for &packed in function.code.iter() {
             let instruction = super::dispatch_fast::decoded_instruction(function, packed);
-            if instruction.op().stores_name() {
-                *stores.entry(instruction.atom_index()).or_default() += 1;
-            }
-        }
-    }
-    stores
-}
-
-#[cfg(feature = "aot")]
-fn root_immediate_globals(program: &ResidualProgram, candidates: &OrderedSet<Atom>,
-    stores: &OrderedMap<Atom, usize>,
-) -> OrderedMap<Atom, Value> {
-    let root = program.function(0);
-    let mut values = std::collections::BTreeMap::new();
-    let mut immediates: OrderedMap<u16, Value> = std::collections::BTreeMap::new();
-    for &packed in root.code.iter() {
-        let instruction = super::dispatch_fast::decoded_instruction(root, packed);
-        for register in instruction.written_registers() { immediates.remove(&register); }
-        if instruction.op().js_denotation() == crate::bytecode::JsDenotation::LoadConst {
-            if let Some(value) = program.constants.get(instruction.constant_index()).and_then(facts::immediate) {
-                immediates.insert(instruction.result_register(), value);
-            }
-        } else if instruction.op().stores_name() && instruction.b() != 0 {
-            // The declaration's own store (`initializing`) carries its initializer.
-            let atom = instruction.atom_index();
-            if candidates.contains(&atom) && stores.get(&atom) == Some(&1)
-                && let Some(&value) = immediates.get(&instruction.register_a()) {
-                values.insert(atom, value);
-            }
-        }
-    }
-    values
-}
-
-/// Whole-program globals a frozen image may fold: a `var` the program writes exactly
-/// once, with an immediate, before any other function can observe it.
-#[cfg(feature = "aot")]
-pub(super) fn frozen_globals(program: &ResidualProgram) -> OrderedMap<Atom, Value> {
-    let root = program.function(0);
-    let candidates: OrderedSet<Atom> = root.global_var_atoms().iter().copied().collect();
-    let stores = global_store_counts(program);
-    root_immediate_globals(program, &candidates, &stores)
-}
-
-#[cfg(feature = "aot")]
-fn field_store_counts(program: &ResidualProgram) -> OrderedMap<Atom, usize> {
-    let mut counts: OrderedMap<Atom, usize> = std::collections::BTreeMap::new();
-    for id in 0..program.function_count() {
-        let function = program.function(id);
-        for &packed in function.code.iter() {
-            let instruction = super::dispatch_fast::decoded_instruction(function, packed);
-            if instruction.op().js_denotation() == crate::bytecode::JsDenotation::FieldStore {
-                *counts.entry(instruction.atom_index()).or_default() += 1;
+            if counted(instruction) && let Some(count) = counts.get_mut(instruction.atom_index() as usize) {
+                *count += 1;
             }
         }
     }
     counts
 }
 
+/// The root's stores `stored` names an atom for, whose source register holds an immediate
+/// the root loaded, as (atom, value) in program order.
 #[cfg(feature = "aot")]
-fn root_immediate_fields(program: &ResidualProgram,
-    counts: &OrderedMap<Atom, usize>,
-) -> OrderedMap<Atom, Value> {
+fn root_immediate_stores(program: &ResidualProgram, stored: impl Fn(WideInstruction) -> Option<Atom>) -> FrozenValues {
     let root = program.function(0);
-    let mut immediates: OrderedMap<u16, Value> = std::collections::BTreeMap::new();
-    let mut values = std::collections::BTreeMap::new();
+    let mut values = FrozenValues::new();
+    let mut immediates: Vec<Option<Value>> = vec![None; usize::from(root.registers)];
     for &packed in root.code.iter() {
         let instruction = super::dispatch_fast::decoded_instruction(root, packed);
-        for register in instruction.written_registers() { immediates.remove(&register); }
+        for register in instruction.written_registers() {
+            if let Some(slot) = immediates.get_mut(usize::from(register)) { *slot = None; }
+        }
         if instruction.op().js_denotation() == crate::bytecode::JsDenotation::LoadConst {
-            if let Some(value) = program.constants.get(instruction.constant_index()).and_then(facts::immediate) {
-                immediates.insert(instruction.result_register(), value);
-            }
-        } else if instruction.op().js_denotation() == crate::bytecode::JsDenotation::FieldStore {
-            let atom = instruction.atom_index();
-            if counts.get(&atom) == Some(&1)
-                && let Some(&value) = immediates.get(&instruction.register_a()) {
-                values.insert(atom, value);
-            }
+            let value = program.constants.get(instruction.constant_index()).and_then(facts::immediate);
+            if let Some(slot) = immediates.get_mut(usize::from(instruction.result_register())) { *slot = value; }
+        } else if let Some(atom) = stored(instruction)
+            && let Some(Some(value)) = immediates.get(usize::from(instruction.register_a())) {
+            values.insert(atom, *value);
         }
     }
     values
+}
+
+/// Whole-program globals a frozen image may fold: a `var` the program writes exactly
+/// once, with an immediate, before any other function can observe it.
+#[cfg(feature = "aot")]
+pub(super) fn frozen_globals(program: &ResidualProgram) -> FrozenValues {
+    let candidates: Vec<Atom> = program.function(0).global_var_atoms().iter().copied().collect();
+    let stores = atom_store_counts(program, |instruction| instruction.op().stores_name());
+    // The declaration's own store (`initializing`) carries its initializer.
+    root_immediate_stores(program, |instruction| {
+        let atom = instruction.atom_index();
+        (instruction.op().stores_name() && instruction.b() != 0 && candidates.contains(&atom)
+            && stores.get(atom as usize) == Some(&1)).then_some(atom)
+    })
 }
 
 /// Whole-program prototype values: a field the root stores exactly once with an
 /// immediate (a constructor's `prototype.k = <immediate>`), folded at each read and
 /// guarded there. Accessor definitions are outside this analysis.
 #[cfg(feature = "aot")]
-pub(super) fn frozen_fields(program: &ResidualProgram) -> OrderedMap<Atom, Value> {
-    let counts = field_store_counts(program);
-    root_immediate_fields(program, &counts)
+pub(super) fn frozen_fields(program: &ResidualProgram) -> FrozenValues {
+    let field_store = |instruction: WideInstruction| instruction.op().js_denotation() == crate::bytecode::JsDenotation::FieldStore;
+    let counts = atom_store_counts(program, field_store);
+    root_immediate_stores(program, |instruction| {
+        let atom = instruction.atom_index();
+        (field_store(instruction) && counts.get(atom as usize) == Some(&1)).then_some(atom)
+    })
 }
 
 /// Each by-name load or capture read of a frozen global, with the closure's whole-program
@@ -4213,7 +4180,7 @@ pub(super) fn frozen_fields(program: &ResidualProgram) -> OrderedMap<Atom, Value
 /// for a read before the declaration.
 #[cfg(feature = "aot")]
 pub(super) fn frozen_global_reads(program: &ResidualProgram, function: &Function,
-    globals: &OrderedMap<Atom, Value>,
+    globals: &FrozenValues,
 ) -> crate::vm::global_facts::GlobalReads {
     let frozen = |atom: Atom| globals.get(&atom).map(|&value|
         crate::vm::global_facts::GlobalRead::Frozen { value, ty: crate::typed_ir::Type::immediate(value) });
@@ -4832,7 +4799,7 @@ impl<H: Host> Vm<H> {
     /// values they met (a function's own field, read through a plain object's proof), so
     /// they take the VM's cached read, which answers them (`lane_region::field_probe`).
     fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize])
-        -> OrderedMap<u16, Vec<NativeFieldLoad>> {
+        -> FieldLoads {
         let (generic, functions): (Vec<u16>, _) = (generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
             .map(|(site, _)| site).collect(), self.heap.function_shapes());
         unit.instructions
@@ -10209,27 +10176,28 @@ impl<H: Host> Vm<H> {
             let completion = constructed.map_or(super::CallCompletion::Value, super::CallCompletion::Constructor);
             return Ok(super::StepResult::PushFrame { destination, call_guard, completion });
         };
-        // A linked body that returns completes the call without a loop; any other transition
-        // it made is the loop's to continue, as its own entry of the body would.
-        #[cfg(feature = "native-execution")]
-        let result = {
-            let caller_registers = self.active_registers;
-            self.active_registers = self.frames[callee].registers.as_mut_ptr();
-            let result = match self.js_linked_frame_entry(callee, 0, None, true) {
-                Some(JsNativeStep { result: Ok(super::StepResult::Return(value)), .. }) => Ok(super::FrameOutcome::Complete(value)),
-                Some(entered) => self.run_frame_general_after(program, callee, entered),
-                None => self.run_frame_general(program, callee),
-            };
-            self.active_registers = caller_registers;
-            result
-        };
-        #[cfg(not(feature = "native-execution"))]
-        let result = self.run_frame_general(program, callee);
+        let result = self.run_pushed_body(program, callee);
         // A construction yields the activation's own receiver, which a derived constructor's
         // `super()` binds in the body.
         let outcome = self.complete_user_frame(program, result, constructed.is_some());
         drop(call_guard);
         self.finish_pushed_call(caller, destination, call, outcome?)
+    }
+
+    /// Runs the pushed body in `callee`: a linked body that returns completes the call without a
+    /// loop; any other transition it made is the loop's to continue, as its own entry of the
+    /// body would.
+    #[cfg(feature = "native-execution")]
+    fn run_pushed_body(&mut self, program: &ResidualProgram, callee: usize) -> Result<super::FrameOutcome, JsError> {
+        let caller_registers = self.active_registers;
+        self.active_registers = self.frames[callee].registers.as_mut_ptr();
+        let result = match self.js_linked_frame_entry(callee, 0, None, true) {
+            Some(JsNativeStep { result: Ok(super::StepResult::Return(value)), .. }) => Ok(super::FrameOutcome::Complete(value)),
+            Some(entered) => self.run_frame_general_after(program, callee, entered),
+            None => self.run_frame_general(program, callee),
+        };
+        self.active_registers = caller_registers;
+        result
     }
 
     /// The completed body's value as the pushing call's result: a construction yields the

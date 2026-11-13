@@ -4,7 +4,7 @@
 use super::{
     compile_native_function, dump_native_bytes, dump_native_code, names_length, native_dump_directory, lane_unit, osr_loop,
     publish_body, tier_policy, CompiledOsrRegion, FieldReceiver, LaneHelpers, LoopRegion,
-    NativeCompileRejection, NativeFieldLoad, Observation, OrderedMap, VmFacts,
+    NativeCompileRejection, NativeFieldLoad, Observation, VmFacts, EntryFields, FieldLoads,
 };
 use crate::bytecode::{FieldLookup, Function, Op, ResidualProgram, WideInstruction};
 use super::super::specializer::Specializer;
@@ -137,7 +137,7 @@ fn localized_jumps(region: &LoopRegion) -> Vec<WideInstruction> {
 /// The region's static field reads, by the unit PC each instruction took, answered from
 /// the entry record: an instruction at region offset `o` moved past every marker at or
 /// before it (`inserted`).
-fn inlined_entry_fields(region: &LoopRegion, program: &ResidualProgram, inserted: &[(usize, u32)]) -> OrderedMap<usize, u32> {
+fn inlined_entry_fields(region: &LoopRegion, program: &ResidualProgram, inserted: &[(usize, u32)]) -> EntryFields {
     let unit_pc = |offset: usize| offset + inserted.iter().filter(|(at, _)| *at <= offset).count();
     region.field_reads().iter()
         .filter(|(_, index)| entry_read(region, **index, program))
@@ -175,7 +175,7 @@ fn insert_markers(instructions: &mut Vec<WideInstruction>, origins: &mut Vec<lan
 /// Map an inlining loop region onto the lane unit: its instructions' jump targets become
 /// unit PCs, its origins name the caller/inlined frame of each instruction, and its frames
 /// carry the callee identity, function, call window and result.
-fn inlining_unit(region: &LoopRegion, program: &ResidualProgram) -> Option<(lane_unit::Unit, OrderedMap<usize, u32>)> {
+fn inlining_unit(region: &LoopRegion, program: &ResidualProgram) -> Option<(lane_unit::Unit, EntryFields)> {
     let inlining = region.inlining.as_deref()?;
     let count = region.instructions().len();
     let mut instructions = localized_jumps(region);
@@ -208,7 +208,7 @@ fn entry_read(region: &LoopRegion, index: usize, program: &ResidualProgram) -> b
 
 /// A plain loop unit's static field reads, by the unit PC each instruction keeps, answered
 /// from the entry record.
-fn plain_entry_fields(region: &LoopRegion, program: &ResidualProgram) -> OrderedMap<usize, u32> {
+fn plain_entry_fields(region: &LoopRegion, program: &ResidualProgram) -> EntryFields {
     let header = region.header as usize;
     region.field_reads().iter()
         .filter(|(_, index)| entry_read(region, **index, program))
@@ -220,7 +220,7 @@ fn plain_entry_fields(region: &LoopRegion, program: &ResidualProgram) -> Ordered
 /// The loop's cached field reads, keyed by their field-cache site: the lane specializer's
 /// field-site map, from the observation's descriptors.
 fn loop_fields(region: &LoopRegion, observation: &Observation<'_>)
-    -> OrderedMap<u16, Vec<NativeFieldLoad>> {
+    -> FieldLoads {
     let mut fields = BTreeMap::new();
     for (&offset, &index) in region.field_reads() {
         let Some(FieldLookup::Atom { cache_site, .. }) =
@@ -277,7 +277,7 @@ pub(super) fn observed_reads(unit: &lane_unit::Unit, number_arrays: &[(crate::by
 /// lowering with its own facts, widenings and entry record.
 struct LoopPlanner<'a> {
     observation: &'a Observation<'a>,
-    fields: &'a OrderedMap<u16, Vec<NativeFieldLoad>>,
+    fields: &'a FieldLoads,
     isa: &'a dyn cranelift_codegen::isa::TargetIsa,
     program: &'a ResidualProgram,
     function_id: u32,
@@ -291,7 +291,7 @@ impl LoopPlanner<'_> {
     /// that plan, used only where the general plan declines; an inlined callee the region
     /// cannot prove exactly then costs the region nothing but the inlining.
     fn plan(&self, global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads,
-        unit: &lane_unit::Unit, entry_fields: &OrderedMap<usize, u32>, (header, backedge): (usize, usize),
+        unit: &lane_unit::Unit, entry_fields: &EntryFields, (header, backedge): (usize, usize),
         generic: &[usize]) -> Option<super::lane_region::LoweredRegion> {
         let number_reads = observed_reads(unit, self.observation.number_arrays, self.observation.abandoned, generic);
         super::lane_region::RegionSpecializer {
@@ -343,7 +343,7 @@ fn lower_loop(planner: &LoopPlanner<'_>, region: &LoopRegion,
     global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads, widened: &[usize],
 ) -> Option<super::lane_region::LoweredRegion> {
     let program = planner.program;
-    let mut plan = |unit: &lane_unit::Unit, entry_fields: &OrderedMap<usize, u32>, header: usize, backedge: usize, generic: &[usize]|
+    let mut plan = |unit: &lane_unit::Unit, entry_fields: &EntryFields, header: usize, backedge: usize, generic: &[usize]|
         planner.plan(&mut *global_reads, unit, entry_fields, (header, backedge), generic);
     let inlined = region.inlining.is_some().then(|| inlining_unit(region, program)).flatten();
     inlined

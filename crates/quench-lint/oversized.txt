@@ -2801,7 +2801,6 @@ function-lines crates/quench-runtime/src/vm/compiled.rs::JsNativeActivation::wit
 function-lines crates/quench-runtime/src/vm/compiled.rs::LaneFrame::new 58
 function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::call_import 132
 function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::compile_program_with_diagnostics_and_root_mode 430
-function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::complete_pushed_call 57
 function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::js_jit_at_entry 100
 function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::js_linked_frame_entry 51
 function-lines crates/quench-runtime/src/vm/compiled.rs::Vm<H>::js_tier_frame_entry 91
