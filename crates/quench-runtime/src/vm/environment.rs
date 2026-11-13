@@ -454,14 +454,17 @@ impl<H: Host> Vm<H> {
     /// a direct eval's `var` of its name leaves visible to ordinary references (Annex B).
     pub(super) fn store_catch_binding(
         &mut self,
-        p: &ResidualProgram,
         owner: VarOwner,
         binding: crate::bytecode::EvalBinding,
         value: Value,
     ) -> Result<(), JsError> {
         let invalid = || JsError("invalid catch binding".into());
         match (owner, binding.location) {
-            (VarOwner::Frame(frame), _) => self.store_name_binding(p, frame, binding, value, false),
+            // The binding is the caller's, whose program is not the eval's.
+            (VarOwner::Frame(frame), _) => {
+                let program = self.programs.get(self.frames[frame].program).ok_or_else(invalid)?;
+                self.store_name_binding(&program, frame, binding, value, false)
+            }
             (VarOwner::Record(_), crate::bytecode::EvalBindingLocation::Local(slot)) => {
                 self.store_owner_slot(owner, usize::from(slot), value).then_some(()).ok_or_else(invalid)
             }
@@ -2303,7 +2306,7 @@ impl<H: Host> Vm<H> {
             if let Some(frame) = self.frames.len().checked_sub(1)
                 && let Some((caller, binding)) = self.direct_eval_catch_binding(frame, atom)
             {
-                return self.store_catch_binding(p, caller, binding, value);
+                return self.store_catch_binding(caller, binding, value);
             }
             if self.store_direct_eval_var_binding(atom, value) {
                 return Ok(());
