@@ -48,8 +48,8 @@ pub(super) unsafe fn bind_captures<H: Host>(
         .then(|| unsafe { super::dispatch_fast::lane_context_captures::<H>(lane_context) }).flatten();
     let none = region.captures.is_empty() && region.stored_captures.is_empty();
     let captures = if live.is_some() || none { Vec::new() } else { dense_captures(region, entry) };
-    if let Some((values, len)) = live {
-        (native.dispatch.capture_values, native.dispatch.capture_len) = (values, len);
+    if let Some(((values, len), stores)) = live {
+        (native.dispatch.capture_values, native.dispatch.capture_len, native.dispatch.capture_stores) = (values, len, usize::from(stores));
     } else if !captures.is_empty() {
         native.dispatch.capture_values = captures.as_ptr();
         native.dispatch.capture_len = captures.len();
@@ -108,13 +108,15 @@ pub(super) unsafe fn enter<H: Host>(
     };
     context.adapter_payload = payload.cast();
     // The region's call rows reload its payload's heap bases after the callee ran (`lane_region_call`).
-    let outer = super::dispatch_fast::lane_region_payload::<H>(lane_context, payload.addr());
+    // SAFETY: `lane_context` is the running lane's.
+    let outer = unsafe { super::dispatch_fast::lane_region_payload::<H>(lane_context, payload.addr()) };
     // SAFETY: as the caller promises; the code reads the register file and returns
     // its status and result word.
     let BodyReturn { status, value: word } = unsafe {
         enter_body(&mut context, 0, resume, registers.cast::<u64>().cast_const(), code)
     };
-    super::dispatch_fast::lane_region_payload::<H>(lane_context, outer);
+    // SAFETY: as above.
+    unsafe { super::dispatch_fast::lane_region_payload::<H>(lane_context, outer) };
     if lend.is_some() {
         // SAFETY: `payload` is the one `lend` was given, and the run it lent for is over.
         unsafe { region_lend::reclaim(&mut native.dispatch) };

@@ -554,7 +554,7 @@ pub(super) fn staged_load_local_checked<H: Host, const ACC: u8>(cx: *mut LaneCon
 
 /// `StoreLocal` and `StoreEnvLocal` of `source` to `slot` over the binding the frame owns, by
 /// `staged::write_initialized_local` (`staged::write_local` for the store that initializes its binding), mirrored
-/// into a mapped `arguments` as `Vm::store_initialized_frame_binding` does; false, writing nothing, for a root
+/// into a mapped `arguments` (`Vm::mapped_argument_store`); false, writing nothing, for a root
 /// body's frame, a self binding, a slot outside the frame or an assignment to a binding in its temporal dead zone.
 #[inline(always)]
 pub(super) fn staged_store_local_checked<H: Host, const ACC: u8>(cx: *mut LaneContext<H>,

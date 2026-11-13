@@ -38,13 +38,6 @@ pub(in crate::vm) trait CallerView {
     /// stack of the VM's frames, which a frame's chain is a suffix of.
     fn scope_chain<'a>(&'a self, entered: &'a [Value]) -> &'a [Value];
 
-    /// The function object it runs, which fixes its realm (`Vm::caller_realm`): `None` for a
-    /// script, a module or eval code.
-    fn callee(&self) -> Option<Value>;
-
-    /// The owner of its variable environment, given `frame`, the index of its VM frame where it
-    /// is one: its record where a lane activation holds one, `None` where it has none.
-    fn var_owner(&self, frame: usize) -> Option<VarOwner>;
 }
 
 impl CallerView for Frame {
@@ -78,14 +71,6 @@ impl CallerView for Frame {
 
     fn scope_chain<'a>(&'a self, entered: &'a [Value]) -> &'a [Value] {
         &entered[self.with_base.min(entered.len())..]
-    }
-
-    fn callee(&self) -> Option<Value> {
-        self.context.callable()
-    }
-
-    fn var_owner(&self, frame: usize) -> Option<VarOwner> {
-        Some(VarOwner::Frame(frame))
     }
 }
 
@@ -122,14 +107,6 @@ impl CallerView for FrameRecord {
 
     fn scope_chain<'a>(&'a self, _entered: &'a [Value]) -> &'a [Value] {
         &self.with_objects
-    }
-
-    fn callee(&self) -> Option<Value> {
-        self.context.callable()
-    }
-
-    fn var_owner(&self, _frame: usize) -> Option<VarOwner> {
-        Some(VarOwner::Record(std::ptr::from_ref(self).cast_mut()))
     }
 }
 
@@ -168,17 +145,6 @@ impl<H: Host> Vm<H> {
     /// The activation a direct eval runs for (`eval_owner`), `None` for host code.
     pub(super) fn eval_caller(&self) -> Option<&dyn CallerView> {
         self.eval_owner().map(|owner| self.owner_view(owner))
-    }
-
-    /// The realm `caller`'s function was created in: the running one for code that is no
-    /// function's.
-    pub(super) fn caller_realm(&self, caller: &dyn CallerView) -> Value {
-        caller.callee().and_then(|callee| self.heap.function(callee)).map_or(self.realm.globals, |function| function.realm)
-    }
-
-    /// The environment `caller`'s private names resolve in: the one its closure captured.
-    pub(super) fn private_environment(&self, caller: &dyn CallerView) -> Value {
-        self.captured_parent_environment(caller)
     }
 
     /// The metadata in `p` of the function the eval's caller runs.

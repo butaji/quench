@@ -95,7 +95,7 @@ impl<H: Host> Vm<H> {
         match owner {
             VarOwner::Frame(index) => self.frames[index].locals.get(slot).copied(),
             // SAFETY: as `owner_view`.
-            VarOwner::Record(record) => unsafe { (*record).locals.get(slot).copied() },
+            VarOwner::Record(record) => unsafe { &*record }.locals.get(slot).copied(),
         }
     }
 

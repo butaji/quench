@@ -30,6 +30,7 @@ pub(crate) fn require_iterator_result<S: Stage, F: Frame<S>>(stage: &mut S, fram
 /// its own property key; any other value leaves at `miss`, where an integer, a symbol or an
 /// object takes the full conversion.
 #[inline(always)]
+#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn to_property_key<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register,
     source: Register, miss: S::Miss) -> Step<S::Word, F::Control> {
     let word = frame.tagged(stage, source);

@@ -188,11 +188,10 @@ unsafe fn lane_body_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run, and `call_pc` is a record of the running frame's function.
     if !vm.lane_stack.activations.is_empty() {
-        let function = vm.lane_stack.activations.last().map_or(0, |activation| activation.function);
-        let body = unsafe { &*(*cx).code }.function(function as usize);
+        let body = unsafe { &*(*cx).code }.function(lane_running_function(cx) as usize);
         return unsafe { lane_frames_step_in(cx, call_pc, decoded_instruction(body, body.code[call_pc as usize])) };
     }
-    let (code, frame, ip) = unsafe { (&*(*cx).code, (*cx).frame, (*cx).base.add(call_pc as usize)) };
+    let (code, frame, ip) = unsafe { (&*(*cx).code, (*cx).frame(), (*cx).base.add(call_pc as usize)) };
     let function = code.function(vm.frames[frame].function as usize);
     // A returning record (`return a + b`) is made as the step that writes its result register: the body's
     // own `Return` row completes the activation with it.

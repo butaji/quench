@@ -1337,6 +1337,7 @@ enum ActivationKind {
     /// (`Activation::native`, the callee's descriptor, receiver, body and window) and this
     /// tag, no link state. `NativeFrames::link` makes it a `Script` activation when the lane
     /// first observes it; the prefix stays, as the descriptor of the frame above it.
+    #[allow(dead_code)] // written by emitted code (`call_frames`), read as the tag
     Native = KIND_NATIVE,
     Script(ScriptActivation) = KIND_SCRIPT,
     /// A Wasm activation keeps its caller's memory for the return and its requested
@@ -3067,13 +3068,7 @@ lane_handler! {
     fn lane_store_local<>(cx, r, ip, i, view) {
         let value = r.get(i.a);
         let stored = unsafe { (*cx).env }.is_deleted()
-            && (unsafe { vm(cx) }).store_initialized_frame_binding(
-                unsafe { &*(*cx).code },
-                unsafe { (*cx).frame() },
-                i.imm() as usize,
-                value,
-                i.c != 0,
-            );
+            && lane_frame::staged_store_local_checked::<H, ACC_NONE>(cx, r, view, (i.a, i.imm() as usize), i.c != 0);
         if !stored {
             return exit(ip);
         }
@@ -13282,7 +13277,7 @@ mod generator_windows; use generator_windows::{lane_generator_returned, lane_res
 mod raised_windows;
 mod array_steps;
 mod vm_steps;
-pub(in crate::vm) use vm_steps::{lane_body_string_concat, lane_decide, lane_vm_step};
+pub(in crate::vm) use vm_steps::{lane_body_step, lane_body_string_concat, lane_decide, lane_vm_step};
 mod handler_edges;
 pub(in crate::vm) use handler_edges::lane_handler_edge;
 use array_steps::*;
@@ -21685,7 +21680,7 @@ unsafe fn lane_enter_prepared_values<H: Host, const N: usize>(
     registers: *mut Value,
 ) -> Ip {
     unsafe {
-        let registers = lane_fill_prepared_values(cx, entry, values, registers);
+        let registers = lane_fill_prepared_values::<H, N>(entry, values, registers);
         lane_enter_filled(cx, entry, registers)
     }
 }
@@ -21706,7 +21701,7 @@ unsafe fn lane_reenter_prepared_values<H: Host, const N: usize>(
     registers: *mut Value,
 ) -> Ip {
     unsafe {
-        let registers = lane_fill_prepared_values(cx, entry, values, registers);
+        let registers = lane_fill_prepared_values::<H, N>(entry, values, registers);
         debug_assert!(
             (*cx).registers.0 == registers
                 && (*cx).base == (*entry.view).records()
@@ -21730,7 +21725,6 @@ unsafe fn lane_reenter_prepared_values<H: Host, const N: usize>(
 /// As `lane_enter_prepared_values`'s.
 #[inline(always)]
 unsafe fn lane_fill_prepared_values<H: Host, const N: usize>(
-    cx: *mut LaneContext<H>,
     entry: &PreparedEntry,
     values: [Value; N],
     registers: *mut Value,

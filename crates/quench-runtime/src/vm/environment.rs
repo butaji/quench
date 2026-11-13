@@ -568,53 +568,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// `load_local_binding` where it raises nothing: the initialized binding a frame other than
-    /// a root body owns, read through a mapped `arguments`. `None` leaves the read to
-    /// `load_local_binding`.
-    pub(super) fn initialized_frame_binding(
-        &self,
-        p: &ResidualProgram,
-        frame: usize,
-        slot: usize,
-    ) -> Option<Value> {
-        if self.frames[frame].function == super::ROOT_FUNCTION_ID {
-            return None;
-        }
-        let value = self
-            .frame_binding(p, frame, slot)
-            .filter(|value| !value.is_deleted())?;
-        Some(self.mapped_argument_load(p, frame, slot, value))
-    }
-
-    /// `StoreLocal`, and `StoreEnvLocal` of a function that resolves no names at run time
-    /// (`Function::has_dynamic_scope_access`, which the caller decides), where they raise
-    /// nothing and run no guest code: the store to an initialized (or initializing) binding a
-    /// frame other than a root body owns, of a slot other than its self binding, mirrored into
-    /// a mapped `arguments`. `false` leaves the store to the general path.
-    pub(super) fn store_initialized_frame_binding(
-        &mut self,
-        p: &ResidualProgram,
-        frame: usize,
-        slot: usize,
-        value: Value,
-        initializing: bool,
-    ) -> bool {
-        let function_id = self.frames[frame].function;
-        if function_id == super::ROOT_FUNCTION_ID {
-            return false;
-        }
-        let function = &p.function(function_id as usize);
-        if function.is_self_binding_slot(slot) {
-            return false;
-        }
-        match self.frame_binding_mut(p, frame, slot) {
-            Some(binding) if initializing || !binding.is_deleted() => *binding = value,
-            _ => return false,
-        }
-        self.mapped_argument_store(p, frame, slot, value);
-        true
-    }
-
     /// All local execution views read the same binding owner before coercion.
     pub(super) fn load_local_binding(
         &mut self,

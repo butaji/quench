@@ -266,6 +266,7 @@ pub(crate) fn site_read<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), obj
 /// A nested lookup's chain of two reads, `object.first.second` (`FieldLookup::Site`): the value
 /// the first entry reads is the object the second reads from, and the tables are proved once.
 #[inline(always)]
+#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> S::Word {
     stage.load_site(Region::LoopEntry.readonly(), entry, offset)
 }
@@ -278,6 +279,7 @@ pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm
 /// may store in place at all (a specialized run, no method cache naming the field) is the
 /// caller's.
 #[inline(always)]
+#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> (S::Word, S::Word) {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let address = stage.add_imm(entry, offset);

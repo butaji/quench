@@ -147,6 +147,8 @@ pub(super) fn advance_into_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&
         // SAFETY: a linked frame holds its prefix; its callee outlives the run.
         let frame = unsafe { (*slot).native };
         if let Some(skipped) = unsafe { &*frame.callee }.forwarder { vm.lane_stack.forwarders.push(skipped); }
+        // The leave inside the callee's body counts on its cell's word, which no handler entry notes.
+        unsafe { &*(*frame.callee).target.view }.note_native_leave();
         unsafe { (*slot).native.callee = std::ptr::null() };
         innermost = Some(frame);
     }

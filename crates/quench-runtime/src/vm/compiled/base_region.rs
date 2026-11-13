@@ -183,13 +183,16 @@ pub(in crate::vm) enum Event {
 /// The rows planned as a fast arm (`Step::Fast`, or a constant a row writes as it is), by the opcode
 /// they stand for, counted whether or not the trace channel is on: a test asks that an operation's
 /// fast row exists in the bodies it compiled.
+#[cfg(test)]
 static FAST_ROWS: [std::sync::atomic::AtomicU64; crate::bytecode::Op::COUNT] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::bytecode::Op::COUNT];
 
 /// The fast rows planned for `op`.
+#[cfg(test)]
 pub(in crate::vm) fn fast_rows(op: crate::bytecode::Op) -> u64 {
     FAST_ROWS[op as usize].load(std::sync::atomic::Ordering::Relaxed)
 }
 
+#[cfg(test)]
 fn note_fast(op: crate::bytecode::Op) {
     FAST_ROWS[op as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }

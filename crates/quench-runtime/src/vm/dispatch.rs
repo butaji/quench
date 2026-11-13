@@ -1757,14 +1757,6 @@ impl<H: Host> Vm<H> {
 }
 
 impl<H: Host> Vm<H> {
-    /// An `AppendArray` of one element after no elisions (`holes`) made by the staged row the b-jit
-    /// runs (`elements::append_in_room`): the array's capacity word proves a slot, so nothing grows.
-    #[inline(always)]
-    fn appends_in_room(&mut self, array: Value, value: Value, holes: usize) -> bool {
-        holes == 0
-            && self.heap.array_record_base().is_some_and(|records| crate::staged::elements::concrete_append_in_room(records, array, value))
-    }
-
     /// The new array of the `count` constants from `start` of `program` (a `MakeConstArray`
     /// record's immediate and element count); `None` for a range outside the program's
     /// constants.

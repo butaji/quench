@@ -35,7 +35,6 @@ fn value_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination, frame.miss()),
         Operation::RequireIteratorResult { register } => super::iteration::require_iterator_result(stage, frame, register, frame.miss()),
-        Operation::ToPropertyKey { destination, source } => super::iteration::to_property_key(stage, frame, destination, source, frame.miss()),
         Operation::TypeofIndex { destination, source } => super::control::typeof_index(stage, frame, destination, source),
         Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::Protocol { .. }

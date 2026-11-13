@@ -28,6 +28,7 @@ impl PropertyKey {
         Self::Symbol(value)
     }
 
+    #[cfg(test)]
     pub(crate) fn private(atom: PrivateAtom) -> Self {
         Self::Private(atom)
     }

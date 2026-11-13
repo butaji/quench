@@ -305,16 +305,6 @@ pub(crate) fn concrete_dense_element(elements: &[crate::Value], index: usize) ->
         .map(|(_, value)| crate::Value::from_bits(value))
 }
 
-/// The interpreter's reading of `array_backing` then `dense_element`: element `index` of the
-/// direct array `base` among the array records at `record_base`.
-#[inline(always)]
-pub(crate) fn concrete_record_element(record_base: *const crate::heap::ArrayObject, base: crate::Value, index: usize) -> Option<crate::Value> {
-    let mut stage = Concrete::new(std::ptr::null());
-    let backing = array_backing(&mut stage, record_base as u64, base.to_bits(), ())?;
-    dense_element(&mut stage, backing.values, backing.length, index as u64, ())
-        .map(|(_, value)| crate::Value::from_bits(value))
-}
-
 /// The interpreter's reading of `array_length`: the `length` of the direct array `base` among the
 /// array records at `record_base`, as the int32 it reads as.
 #[inline(always)]

@@ -144,9 +144,6 @@ pub(crate) enum Operation<W, P> {
     /// `RequireIteratorResult` accepts as it is; any other value leaves at the frame's miss edge,
     /// where the VM raises or reads it.
     RequireIteratorResult { register: Register },
-    /// ToPropertyKey of a string `source`, which is its own key, written to `destination`; any
-    /// other value leaves at the miss edge, where the VM converts it.
-    ToPropertyKey { destination: Register, source: Register },
     /// Define `destination` with the logical negation of register `source`'s truthiness.
     LogicalNot { destination: Register, source: Register },
     /// Define `destination` with the `typeof` name index (int32) of register `source`'s value

@@ -1,6 +1,6 @@
 //! A generator's lifecycle: where it is, and the continuation it can resume from.
 
-use super::{AsyncGeneratorRequest, Completion, Continuation, FrameRecord};
+use super::{AsyncGeneratorRequest, Continuation, FrameRecord};
 use crate::snapshot::{Reader, Snap, SnapshotError, SnapshotResult, Writer};
 use crate::Value;
 use std::collections::VecDeque;

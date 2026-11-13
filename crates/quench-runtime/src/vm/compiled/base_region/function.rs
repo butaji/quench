@@ -100,6 +100,7 @@ fn lowered(region: &LoopRegion, pc: u32, sites: &Sites, (instruction, returning)
 
 /// Whether the row is a fast arm of its instruction: a fast step, a constant written as it is, or the value a Stable
 /// fact folded (`Decoded::folded`).
+#[cfg(test)]
 fn is_fast(row: &Decoded) -> bool {
     matches!(row.step, Some(Step::Fast(_) | Step::Guard(_))) || matches!(row.a, Some(Source::Value(_))) || row.folded.is_some()
 }
@@ -170,6 +171,7 @@ fn cover(region: &LoopRegion, pc: u32, sites: &Sites, instruction: WideInstructi
     if returning && !completable(&row) {
         return What::Row(Decoded::step(Step::Leave, None));
     }
+    #[cfg(test)]
     if is_fast(&row) {
         note_fast(instruction.op());
     }

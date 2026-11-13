@@ -1583,9 +1583,6 @@ pub(super) struct OnlineFacts<'a> {
     pub(super) constants: &'a [Value],
     /// What the VM proved of a constructor's `instanceof` (`Vm::instanceof_fact`), by its identity.
     pub(super) instanceofs: &'a dyn Fn(Value) -> Option<crate::code_dependencies::InstanceofFact>,
-    /// The add a cache site recorded for an atom (`Vm::native_field_add`), whose staged row an adding
-    /// store runs where the chain proof it holds is a Stable fact; `None` where none may be held.
-    pub(super) adds: Option<&'a dyn Fn(u16, Atom, bool) -> Option<crate::staged::add_plan::AddSite>>,
     /// The naming a cache site recorded for a `SetFunctionName`'s atom and the word of the name's string
     /// (`Vm::native_function_name`), whose staged row names a function; `None` where none may be held.
     pub(super) names: Option<&'a dyn Fn(u16, Atom) -> Option<(crate::staged::add_plan::Transition, u64)>>,
@@ -3662,6 +3659,8 @@ struct JsStepDispatch {
     /// after every semantic callout; generated reads do not cross a safepoint.
     capture_values: *const Value,
     capture_len: usize,
+    /// Whether those slots admit every direct store (`dispatch_fast::capture_stores`): the b-jit's capture write rows.
+    capture_stores: usize,
     /// Stable base of this VM's direct-array record reservation. The field is
     /// refreshed after VM callouts because the reservation may be lazy.
     array_record_base: usize,
@@ -3878,7 +3877,7 @@ pub(super) const LANE_BODY_THREW: u32 = RETURN_STATUS_BASE - 3;
 /// or left the lane in the callee's activation it made.
 /// Termination is terminal: the outer native body must not reconstruct or replay a call.
 pub(super) use quench_bjit::call_record::{
-    LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_RAISED, LANE_CALL_TERMINATED,
+    LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_RAISED, LANE_CALL_TERMINATED,
 };
 
 impl LaneExit {
@@ -4519,7 +4518,7 @@ impl LaneFrame {
                 local_count: 0,
                 fixed_this_slot: std::ptr::null(),
                 capture_values: std::ptr::null(),
-                capture_len: 0,
+                capture_len: 0, capture_stores: 0,
                 array_record_base: 0,
                 string_record_base: 0,
                 ascii_unit_strings: 0,
@@ -4662,7 +4661,7 @@ impl JsNativeActivation {
             native_locals: activation.locals.as_mut_ptr(),
             local_count: activation.locals.len(),
             fixed_this_slot: std::ptr::null(),
-            capture_values: std::ptr::null(), capture_len: 0,
+            capture_values: std::ptr::null(), capture_len: 0, capture_stores: 0,
             array_record_base: 0, string_record_base: 0, ascii_unit_strings: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
             field_entries: 0, typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
@@ -4748,6 +4747,7 @@ impl JsStepDispatch {
     /// while its slot memo is missing or stale, or its storage is not dense, and a read then
     /// leaves at its record.
     fn refresh_capture_view<H: Host>(&mut self, vm: &Vm<H>) {
+        let held = self.capture_values;
         (self.capture_values, self.capture_len) = vm.frames.get(self.frame)
             .and_then(|_| vm.current_capture_slots(self.frame))
             .and_then(|(slots, root)| {
@@ -4757,6 +4757,7 @@ impl JsStepDispatch {
                 unsafe { &*slots }.native_dense_view()
             })
             .unwrap_or((std::ptr::null(), 0));
+        self.capture_stores &= usize::from(self.capture_values == held);
     }
 
     /// Binds the frame's capture slots once per activation. Only a lane entry makes the slot

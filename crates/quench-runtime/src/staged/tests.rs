@@ -546,7 +546,7 @@ fn the_key_and_iterator_fast_arms_decide_from_the_word_alone() {
     }
     for (value, copies) in [(string, true), (object, false), (Value::integer(7), false), (Value::UNDEFINED, false)] {
         let mut frame = ConcreteFrame { registers: vec![value.to_bits(), Value::NULL.to_bits()], heap: None };
-        let step = step(&mut stage, &mut frame, Operation::ToPropertyKey { destination: 1, source: 0 });
+        let step = step(&mut stage, &mut frame, Operation::PropertyKey { destination: 1, source: 0 });
         assert_eq!(matches!(step, Step::Value(_)), copies, "{value:?}");
         let expected = if copies { value } else { Value::NULL };
         assert_eq!(Value::from_bits(frame.registers[1]), expected, "{value:?}");

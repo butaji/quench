@@ -159,26 +159,6 @@ impl LoopTier {
     }
 }
 
-/// A named field access: its cache site and atom, and whether it reads.
-struct FieldAccess {
-    site: u16,
-    atom: crate::bytecode::Atom,
-    read: bool,
-    /// The register a read's receiver was in, where it names one.
-    base: Option<crate::bytecode::Register>,
-}
-
-impl FieldAccess {
-    fn of(instruction: &WideInstruction) -> Option<Self> {
-        let op = instruction.op();
-        if matches!(op.class(), Class::GetField) {
-            let Some(crate::bytecode::FieldLookup::Atom { atom, cache_site, base }) = instruction.field_lookup() else { return None };
-            return Some(Self { site: cache_site, atom, read: true, base: base.register_index() });
-        }
-        op.is_field_store().then(|| Self { site: instruction.cache_site_index(), atom: instruction.atom_index(), read: false, base: None })
-    }
-}
-
 /// Starts compiling `site`'s region over the tier's element views from the running activation,
 /// and looks for its code at once: a code generator without its own thread has it ready.
 pub(super) fn lane_loop_compile<H: Host>(
@@ -219,7 +199,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     let stores = program.as_deref().filter(|program| machine.specialized && program.specialized).map(|_| machine.method_cache_atoms.bits().clone());
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
         &observation, policy, program, function, helpers,
-        &mut |unit| machine.lane_global_reads(program, function, unit), (&tier.widened, stores.as_ref()), calls));
+        &mut |unit, table| machine.global_table(program, function, unit, table), (&tier.widened, stores.as_ref()), calls));
     if let Some(pending) = &started {
         let (watch, callees) = pending.native_calls();
         machine.programs.note_pending_native_calls(&watch, callees);

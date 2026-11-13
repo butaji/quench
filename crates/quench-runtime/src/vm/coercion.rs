@@ -442,14 +442,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// The kinds whose `typeof` names differ: `null` reads as an object.
-const TYPEOF_KINDS: [crate::ValueType; 8] = {
-    use crate::ValueType as T;
-    [T::Undefined, T::Object, T::Boolean, T::Number, T::String, T::BigInt, T::Symbol, T::Function]
-};
-
-/// The index in `bytecode::TYPEOF_NAMES` of the name `typeof` yields for a value of `kind`;
-/// `TYPEOF_KINDS` lists the kinds in that order.
+/// The index in `bytecode::TYPEOF_NAMES` of the name `typeof` yields for a value of `kind`.
 #[inline] pub(crate) fn typeof_name_index(kind: crate::ValueType) -> usize {
     use crate::ValueType as T;
     match kind {

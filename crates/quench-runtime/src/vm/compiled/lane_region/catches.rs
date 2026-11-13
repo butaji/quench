@@ -180,7 +180,8 @@ impl Lowering<'_, '_> {
         let record = self.leaves_at(pc)?;
         let value = self.tagged(state, instruction.register_a());
         self.home_written(state, pc);
-        let site = self.ins().iconst(types::I64, super::super::raise_site(self.function_id, record) as i64);
+        let raise_site = super::super::raise_site(self.function_id, record) as i64;
+        let site = self.ins().iconst(types::I64, raise_site);
         self.helper_call(LaneHelper::Raise, &[value, site]);
         self.stop_with(LANE_BODY_THREW, record, None);
         Some(false)
