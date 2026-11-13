@@ -167,10 +167,12 @@ impl FlowStage for Emit<'_, '_> {
         let args: Vec<ir::BlockArg> = args.iter().map(|value| ir::BlockArg::Value(*value)).collect();
         self.builder.ins().jump(block, &args);
     }
+    #[cfg(feature = "aot")]
     fn branch(&mut self, cond: ir::Value, then: (ir::Block, &[ir::Value]), otherwise: (ir::Block, &[ir::Value])) {
         let arguments = |values: &[ir::Value]| values.iter().map(|value| ir::BlockArg::Value(*value)).collect::<Vec<_>>();
         self.builder.ins().brif(cond, then.0, &arguments(then.1), otherwise.0, &arguments(otherwise.1));
     }
+    #[cfg(feature = "aot")]
     fn ret(&mut self, values: &[ir::Value]) { self.builder.ins().return_(values); }
 }
 

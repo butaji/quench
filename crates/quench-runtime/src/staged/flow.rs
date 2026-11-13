@@ -9,8 +9,10 @@ pub(crate) trait FlowStage: Stage {
     type Block: Copy;
     /// Continues at `block` with `args` as its parameters.
     fn jump(&mut self, block: Self::Block, args: &[Self::Word]);
+    #[cfg(feature = "aot")]
     /// Continues at `then` where `cond` holds, else at `otherwise`, each with its arguments.
     fn branch(&mut self, cond: Self::Cond, then: (Self::Block, &[Self::Word]), otherwise: (Self::Block, &[Self::Word]));
+    #[cfg(feature = "aot")]
     /// Leaves the function with `values`.
     fn ret(&mut self, values: &[Self::Word]);
 }
