@@ -9,7 +9,7 @@ use super::*;
 use crate::bytecode::Class;
 use crate::staged::add_plan::Transition;
 use crate::staged::naming::name_form;
-use quench_bjit::HOLES;
+use quench_bjit::{padded_holes, HOLES};
 
 /// What one `SetFunctionName` instruction runs: the site's edge, whose slot is the function's `name`
 /// slot, and the word of the name's string.
@@ -33,7 +33,7 @@ impl Name {
     pub(super) fn holes(self, function: u64) -> [u64; HOLES] {
         use numeric::library::{ADD_AFTER_AT, NAME_FUNCTION_AT};
         let shapes = u64::from(self.transition.before) | u64::from(self.transition.after) << ADD_AFTER_AT;
-        [shapes, self.word, u64::from(self.transition.slot) | function << NAME_FUNCTION_AT]
+        padded_holes([shapes, self.word, u64::from(self.transition.slot) | function << NAME_FUNCTION_AT])
     }
 }
 
@@ -77,7 +77,7 @@ mod tests {
     #[test]
     fn the_holes_pack_the_edge_the_row_unpacks() {
         let name = Name { transition: Transition { before: 5, after: 9, slot: 1 }, word: 0xABCD };
-        let [shapes, word, site] = name.holes(24);
+        let [shapes, word, site, ..] = name.holes(24);
         assert_eq!((shapes & u64::from(u32::MAX), shapes >> ADD_AFTER_AT, word), (5, 9, 0xABCD));
         assert_eq!((site & ((1 << numeric::library::ADD_SLOT_BITS) - 1), site >> NAME_FUNCTION_AT), (1, 24));
     }

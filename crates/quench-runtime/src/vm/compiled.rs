@@ -51,8 +51,8 @@ use std::rc::Rc;
 mod osr_loop;
 mod exit_protocol;
 pub(super) use exit_protocol::ExitTable;
-mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_rows; mod stencil_run; use stencil_run::Crossing;
-pub(super) use osr_compile::{start_osr_region, OsrCompile, PendingOsrRegion};
+mod region_lend; mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
+pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
 pub(super) use lane_region::ElementViews;
 use osr_compile::OsrFacts;
 use crate::typed_ir;
@@ -1380,6 +1380,9 @@ lane_helper_inventory! { H;
     StringConcat => super::dispatch_fast::lane_body_string_concat::<H>,
     /// A VM operation a staged row calls out for (`dispatch_fast::lane_vm_step`).
     VmStep => super::dispatch_fast::lane_vm_step::<H>,
+    /// An instruction whose general step runs in place (`dispatch_fast::lane_body_step`), which the b-jit's
+    /// helper steps and stepped calls make (`base_region::steps`).
+    Step => super::dispatch_fast::lane_body_step::<H>,
     /// ToBoolean of a value its cell decides (`lane_truthy`).
     Truthy => lane_truthy::<H>,
     /// The array storage proofs a shorter array falsifies (`lane_retire_array_proofs`).
@@ -3401,8 +3404,6 @@ pub(super) struct CompiledOsrRegion {
     entry: BodyEntry,
     pub(super) facts: OsrFacts,
     crossing: Crossing,
-    /// The inline-cache entries of the code a miss may re-patch (`base_region::CacheSites`).
-    sites: std::cell::RefCell<base_region::CacheSites>,
     /// Where a run may re-enter the code mid-region (stencil regions only).
     resumes: base_region::ResumeTable,
     /// What its code owns of its calls: the callees it runs as their own rows, whose registers
@@ -3429,15 +3430,6 @@ impl CompiledOsrRegion {
 
     /// Whether Cranelift made the region (UltraJIT), not BaseJIT's stencils.
     pub(super) fn is_ultra(&self) -> bool { self.crossing == Crossing::General }
-
-    /// A miss at the cache site of `pc` met `load`'s shape: points the site's one entry at it by
-    /// rewriting its shape and slot in the published code (through the code heap's write view),
-    /// where the entry's slot type and dependencies allow and the site has patches left.
-    /// `watch` is the region's publication, which the new load's slot observation retires.
-    pub(in crate::vm) fn repatch(&self, pc: u32, atom: crate::bytecode::Atom, load: &NativeFieldLoad, watch: &Rc<dyn crate::code_dependencies::DependentCode>, heap: &mut crate::heap::Heap) -> base_region::Repatch {
-        let subscribe = || OsrFacts::of_loads([load]).subscribe(watch, heap);
-        self.sites.borrow_mut().repatch(pc, atom, load, subscribe, |at, value| self.code.write_imm32(at, value))
-    }
 
     /// Runs the region on `registers` with `entry`'s record, through the lane body ABI
     /// (`enter_body`), from its header or, where `can_run_from`, from the instruction at `from`.

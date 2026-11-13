@@ -11,7 +11,7 @@
 
 use crate::staged::Form;
 use quench_bjit::numeric::{library, Place};
-use quench_bjit::{Stencil, HOLES};
+use quench_bjit::Stencil;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -84,7 +84,7 @@ pub(super) enum Heap {
     ThisHeld,
     /// Branches to its taken successor, an entry's failure, unless the active realm's global object (the
     /// word at the byte offset in hole 1 of the VM) is the word of hole 2: the realm a body folded
-    /// facts of its callees in (`Vm::realm_globals_offset`), proved once, at the entry.
+    /// facts of its callees or its global names in (`Vm::realm_globals_offset`), proved once, at the entry.
     Realm,
     /// Leaves unless the invalidation word at the address in hole 1 is zero (`code_dependencies::Invalidation`):
     /// the check before a row that holds a Stable fact where a call may have changed it.
@@ -120,15 +120,6 @@ pub(super) enum Heap {
     /// The tagged word of hole 1 into the destination: an immutable global, a folded `typeof` name, and
     /// the `undefined` receiver of a name call.
     Word,
-    /// The realm proof entry rows make once: the VM's active realm field (hole 1: its byte offset) names the
-    /// global object word of hole 2; a mismatch fails the entry.
-    Realm,
-    /// The fast arm of `RequireIteratorResult` (`staged::iteration`): the register at the frame offset
-    /// of hole 1 holds a direct object or array record, else the row leaves into the helper step after it.
-    Object,
-    /// The fast arm of `ToPropertyKey`: the register at hole 1 holds a direct string, which is copied to
-    /// the register at hole 0, else the row leaves into the helper step after it.
-    Key,
     /// The fast arm of `AppendArray` (`elements::append_in_room`): the Number operand at hole 1 is appended to
     /// the unique writable dense array in the frame slot of hole 0 where the backing's capacity word proves
     /// room, else the row leaves into the helper step after it, which grows the backing.
@@ -202,9 +193,6 @@ impl Heap {
             Heap::GlobalRead => library::GLOBAL_READ_ROW,
             Heap::GlobalStore => library::GLOBAL_STORE_ROW,
             Heap::Word => library::CONSTANT_ROW,
-            Heap::Realm => library::REALM_ROW,
-            Heap::Object => library::OBJECT_ROW,
-            Heap::Key => library::KEY_ROW,
             Heap::Append => library::APPEND_ROW,
             Heap::ForIn => library::FOR_IN_ROW,
             Heap::Name { form } => library::NAME_ROWS[usize::from(form == Form::Arena)],
@@ -222,13 +210,13 @@ impl Heap {
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
     /// slots, which every run reads live, and the rows that read no heap.
     pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::Identity | Heap::Live | Heap::Object | Heap::Key | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::Identity | Heap::Live | Heap::Realm | Heap::Word | Heap::Object | Heap::Key | Heap::Append | Heap::Add { .. } | Heap::ForIn | Heap::Name { .. } | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
     /// which a register held in a pinned register as a Number does not have there.
     pub(super) fn reads_frame_word(self) -> bool {
-        matches!(self, Heap::Object | Heap::Key | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
+        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value
@@ -243,52 +231,6 @@ impl HeapRow {
     pub(super) fn code(self) -> library::HeapCode {
         library::heap_canonical((self.heap.code(), self.entry, self.dst.code(), self.a.code(), self.b.code()))
     }
-}
-
-
-/// The first hole of an entry's own operands in a cache row: holes 0 and 1 are its frame operands.
-pub(super) const CACHE_ENTRY_HOLE: usize = 2;
-/// The holes of one cache entry.
-pub(super) type EntryHoles = [u64; HOLES - CACHE_ENTRY_HOLE];
-
-/// The holes of a cache row: the two frame operands, then the entry's.
-pub(super) fn cache_holes(operands: [u64; CACHE_ENTRY_HOLE], entry: EntryHoles) -> [u64; HOLES] {
-    let mut holes = [0; HOLES];
-    holes[..CACHE_ENTRY_HOLE].copy_from_slice(&operands);
-    holes[CACHE_ENTRY_HOLE..].copy_from_slice(&entry);
-    holes
-}
-
-/// Where a cache entry's shape and slot offset sit among its holes (`EntryHoles`) for a get and
-/// for a store: the two operands an in-place re-patch rewrites. The entry holes' constructors
-/// below put them there.
-#[derive(Clone, Copy)]
-pub(super) struct EntryOperands {
-    pub(super) shape: usize,
-    pub(super) slot: usize,
-}
-
-pub(super) const GET_ENTRY_OPERANDS: EntryOperands = EntryOperands { shape: 0, slot: 1 };
-pub(super) const SET_ENTRY_OPERANDS: EntryOperands = EntryOperands { shape: 1, slot: 2 };
-
-/// The byte offset of `load`'s slot in a flat run of arena values.
-fn slot_offset(load: &NativeFieldLoad) -> u64 {
-    u64::from(load.slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64
-}
-
-/// A get entry's holes: the receiver's shape, then the slot's byte offset; an entry whose slot
-/// the prototype holds names the holder's shape between them.
-pub(super) fn get_entry_holes(load: &NativeFieldLoad) -> EntryHoles {
-    match load.holder {
-        Some(holder) => [u64::from(load.shape), u64::from(holder), slot_offset(load)],
-        None => [u64::from(load.shape), slot_offset(load), 0],
-    }
-}
-
-/// A store entry's holes: the atom a method cache may name, the receiver's shape and the slot's
-/// byte offset.
-pub(super) fn set_entry_holes(atom: crate::bytecode::Atom, load: &NativeFieldLoad) -> EntryHoles {
-    [u64::from(atom), u64::from(load.shape), slot_offset(load)]
 }
 
 /// The stencil of `row`, built at compile time by rustc; a row the library lacks declines the region.
@@ -325,8 +267,8 @@ mod tests {
         assert_eq!(format!("{:?}", crate::heap::NATIVE_OBJECT_LAYOUT), format!("{:?}", mirror::NATIVE_OBJECT_LAYOUT));
         assert_eq!(format!("{:?}", crate::heap::NATIVE_FUNCTION_LAYOUT), format!("{:?}", mirror::NATIVE_FUNCTION_LAYOUT));
         assert_eq!(format!("{:?}", crate::heap::NATIVE_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_ARRAY_LAYOUT));
-        assert_eq!(format!("{:?}", crate::heap::NATIVE_ENVIRONMENT_LAYOUT), format!("{:?}", mirror::NATIVE_ENVIRONMENT_LAYOUT));
         assert_eq!(format!("{:?}", crate::heap::NATIVE_TYPED_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_TYPED_ARRAY_LAYOUT));
+        assert_eq!(format!("{:?}", crate::heap::NATIVE_ENVIRONMENT_LAYOUT), format!("{:?}", mirror::NATIVE_ENVIRONMENT_LAYOUT));
         let (cache, copy) = (crate::vm::NATIVE_FIELD_CACHE_LAYOUT, mirror::NATIVE_FIELD_CACHE_LAYOUT);
         assert_eq!([cache.entry_size, cache.receiver_offset, cache.holder_offset, cache.slot_offset], [copy.entry_size, copy.receiver_offset, copy.holder_offset, copy.slot_offset]);
         assert_eq!(
@@ -368,50 +310,5 @@ mod tests {
             [form::RECORD_SIZE as i32, form::TAG_OFFSET, i32::from(form::TAG_SHORT), i32::from(form::TAG_ASCII), i32::from(form::TAG_WIDE), form::SHORT_LENGTH_OFFSET, form::SHARED_LENGTH_OFFSET],
             [mirror::string_form::RECORD_SIZE as i32, mirror::string_form::TAG_OFFSET, i32::from(mirror::string_form::TAG_SHORT), i32::from(mirror::string_form::TAG_ASCII), i32::from(mirror::string_form::TAG_WIDE), mirror::string_form::SHORT_LENGTH_OFFSET, mirror::string_form::SHARED_LENGTH_OFFSET]
         );
-    }
-
-    /// The payload words and the arena header the cache rows read are the runtime's own.
-    #[test]
-    fn stencil_cache_layout_matches() {
-        use stencil_layout as mirror;
-        assert_eq!(
-            [std::mem::offset_of!(JsStepDispatch, object_record_base), std::mem::offset_of!(JsStepDispatch, property_buffer),
-                std::mem::offset_of!(JsStepDispatch, method_cache_atoms), std::mem::offset_of!(JsStepDispatch, method_cache_atom_words),
-                std::mem::offset_of!(JsStepDispatch, stores_specialized), crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base],
-            [mirror::JS_STEP_OBJECT_RECORD_BASE, mirror::JS_STEP_PROPERTY_BUFFER, mirror::JS_STEP_METHOD_CACHE_ATOMS,
-                mirror::JS_STEP_METHOD_CACHE_ATOM_WORDS, mirror::JS_STEP_STORES_SPECIALIZED, mirror::PROPERTY_BUFFER_BASE]
-        );
-    }
-
-    fn observed(shape: u32, holder: Option<u32>) -> super::NativeFieldLoad {
-        super::NativeFieldLoad {
-            shape, holder, slot: 3, storage_len: 4, storage: Some(crate::heap::PlainPropertyStorage::Arena),
-            ty: crate::typed_ir::Type::ANY, inherited: None, function_shape: false,
-        }
-    }
-
-    /// An entry's holes are its shape ids and its slot's byte offset, in the order the stencil
-    /// rows' staged ops name them (`stencils/ic_rows.rs`), after the row's two frame operands.
-    #[test]
-    fn cache_entry_holes_follow_the_staged_order() {
-        use super::{cache_holes, get_entry_holes, set_entry_holes};
-        let offset = 3 * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64;
-        assert_eq!(get_entry_holes(&observed(7, None)), [7, offset, 0]);
-        assert_eq!(get_entry_holes(&observed(7, Some(9))), [7, 9, offset]);
-        assert_eq!(set_entry_holes(5, &observed(7, None)), [5, 7, offset]);
-        assert_eq!(cache_holes([1, 2], [3, 4, 5]), [1, 2, 3, 4, 5]);
-    }
-
-    /// Every cache row, as the last entry of a site and as a chained one, was built.
-    #[test]
-    fn cache_rows_are_in_the_library() {
-        use super::{stencil, Heap, HeapRow};
-        use quench_bjit::numeric::Place;
-        for heap in [Heap::CacheGet, Heap::CacheHolderGet, Heap::CacheSet, Heap::CacheSetInt] {
-            for entry in [false, true] {
-                let row = HeapRow { heap, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry };
-                assert!(stencil(row).is_ok(), "{row:?}");
-            }
-        }
     }
 }

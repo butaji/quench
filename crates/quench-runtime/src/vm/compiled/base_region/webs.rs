@@ -62,9 +62,9 @@ impl Decoded {
     }
 
     /// Where control goes after row `k` of `count`.
-    pub(super) fn successors(&self, k: usize, count: usize, region: &LoopRegion) -> impl Iterator<Item = Next> {
-        let fall = (self.kind != Kind::Jump && !self.completes && self.step.is_none_or(Step::falls)).then(|| if k + 1 < count { Next::Row(k + 1) } else { Next::Leave(region.backedge + 1) });
-        let branch = self.target.map(|target| row_at(region, target).map_or(Next::Leave(target), Next::Row));
+    pub(super) fn successors(&self, k: usize, count: usize, span: &Span) -> impl Iterator<Item = Next> {
+        let fall = (self.kind != Kind::Jump && !self.completes && self.step.is_none_or(Step::falls)).then(|| if k + 1 < count { Next::Row(k + 1) } else { Next::Leave(span.backedge + 1) });
+        let branch = self.target.map(|target| row_at(span, target).map_or(Next::Leave(target), Next::Row));
         fall.into_iter().chain(branch)
     }
 }
@@ -351,9 +351,8 @@ impl Renamer<'_> {
                 other => other,
             };
             let (a, b, base) = (source(row.a), source(row.b), row.base.map(|register| read(register)));
-            let identity = row.identity.map(|(register, word)| (read(register), word));
             let [dst, also] = defs.written[k].map(|def| def.map(|def| self.web(def)));
-            renamed.push(Decoded { dst, also, a, b, base, identity, ..*row });
+            renamed.push(Decoded { dst, also, a, b, base, ..*row });
             at.extend(here);
         }
         let leaf_at = (0..flow.leaf_pcs.len()).flat_map(|leaf| self.table(flow.leaf(leaf))).collect();
@@ -394,7 +393,7 @@ impl Webs {
     pub(super) fn clashes(&self, span: &Span, decoded: &[Decoded]) -> Vec<Vec<usize>> {
         let mut clash: Vec<Vec<usize>> = vec![Vec::new(); self.orig.len()];
         for (k, row) in decoded.iter().enumerate() {
-            let mut held = self.live_at(region, region.header + k as Pc);
+            let mut held = self.live_at(span, span.header + k as Pc);
             held.extend([row.dst, row.also].into_iter().flatten().map(usize::from));
             for &web in &held {
                 clash[web].extend(held.iter().copied().filter(|other| *other != web));

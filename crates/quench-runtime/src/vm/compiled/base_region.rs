@@ -18,6 +18,7 @@ use super::osr_loop::LoopRegion;
 use crate::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
 use crate::code_dependencies::InstanceofFact;
 use crate::value::Value;
+use crate::vm::dispatch_fast::operand_feedback::OperandKinds;
 use crate::vm::in_presence::InPresence;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 use super::base_rows::{self, Heap, HeapRow};
@@ -41,10 +42,13 @@ mod link;
 mod locals;
 mod plan;
 mod repr;
+mod residuals;
+mod resume;
 mod span;
 mod steps;
 mod throws;
 mod stitch;
+mod tile;
 mod webs;
 use sites::*;
 #[cfg(test)]
@@ -53,12 +57,10 @@ mod region_tests;
 use decode::*;
 use globals::*;
 use link::*;
-pub(in crate::vm) use patch::{CacheSites, Repatch};
-#[cfg(test)]
-pub(in crate::vm) use patch::MAX_REPATCHES_PER_SITE;
-use patch::SiteEntry;
 use plan::*;
 use repr::*;
+pub(in crate::vm) use resume::ResumeTable;
+use resume::*;
 use span::*;
 use steps::*;
 pub(in crate::vm::compiled) use steps::covers;
@@ -79,6 +81,13 @@ pub(in crate::vm::compiled) struct Known<'a> {
     /// prototype holds folds to the value the holder holds now (`folded_read`), which a change of the
     /// holder's values retires the code over (`Body::holders`). `None` where no fact may be held.
     pub(in crate::vm::compiled) reads: Option<&'a dyn Fn(u16) -> Vec<NativeFieldLoad>>,
+    /// The add a cache site recorded for an atom, as a define's (`false`) or an adding store's (`true`,
+    /// whose proved prototype chain is then a Stable fact) transition (`Vm::native_field_add`): a
+    /// `DefineField` or an adding `SetField` runs it as `staged::add`'s row. `None` where no fact may be held.
+    pub(in crate::vm::compiled) adds: Option<&'a dyn Fn(u16, Atom, bool) -> Option<crate::staged::add_plan::AddSite>>,
+    /// The naming a cache site recorded for a `SetFunctionName`'s atom, with the word of the name's string
+    /// (`Vm::native_function_name`): the instruction runs it as `staged::naming`'s row. `None` where no fact may be held.
+    pub(in crate::vm::compiled) names: Option<&'a dyn Fn(u16, Atom) -> Option<(crate::staged::add_plan::Transition, u64)>>,
     /// The address of the code's invalidation word (`code_dependencies::Invalidation`), which code that
     /// holds a Stable fact and makes a call reads before the rows that hold it.
     pub(in crate::vm::compiled) invalidation: Option<usize>,
@@ -100,6 +109,9 @@ pub(in crate::vm::compiled) struct Known<'a> {
     /// object has the receiver layout (exact shape and prototype link) that answered, which a layout change of any
     /// prototype retires the code over (`Body::holders`). `None` where no fact may be held.
     pub(in crate::vm::compiled) presences: Option<&'a [Option<InPresence>]>,
+    /// What each by-name global access takes (`Vm::global_table`, the b-jit's), where the code may hold
+    /// Stable facts: a global object's slot under its layout (`globals`). `None` where none may.
+    pub(in crate::vm::compiled) globals: Option<&'a crate::vm::global_facts::GlobalReads>,
 }
 
 /// The realm a body's inlined callees were found in: where the active realm's global object sits in
@@ -109,9 +121,6 @@ pub(in crate::vm::compiled) struct Known<'a> {
 pub(in crate::vm::compiled) struct RealmProof {
     pub(in crate::vm::compiled) offset: u64,
     pub(in crate::vm::compiled) global: u64,
-    /// What each by-name global access takes (`Vm::global_table`, the b-jit's), where the code may hold
-    /// Stable facts: a global object's slot under its layout (`globals`). `None` where none may.
-    pub(in crate::vm::compiled) globals: Option<&'a crate::vm::global_facts::GlobalReads>,
 }
 
 impl Known<'_> {
@@ -216,23 +225,9 @@ pub(in crate::vm) fn leave(function: u32, pc: u32, op: crate::bytecode::Op) {
     }
 }
 
-/// Whether regions and events are counted: a report that reads them is on (`report`, `census`).
-fn counted() -> bool {
-    static COUNTED: std::sync::LazyLock<bool> =
-        std::sync::LazyLock::new(|| crate::trace::Channel::JsJit.on() || crate::trace::Channel::Census.on());
-    *COUNTED
-}
-
-/// What regions did, for the tier census: regions built, the instructions they cover, and runs that
-/// entered published code. All zero unless a report is on.
-pub(in crate::vm) fn census() -> (u64, u64, u64) {
-    let regions = TOTALS.lock().map_or((0, 0), |totals| (totals.regions, totals.ops));
-    (regions.0, regions.1, EVENTS[Event::Entered as usize].load(std::sync::atomic::Ordering::Relaxed))
-}
-
-/// Counts `event` where a report is on.
+/// Counts `event` where the trace channel is on.
 pub(in crate::vm) fn count(event: Event) {
-    if !counted() {
+    if !crate::trace::Channel::JsJit.on() {
         return;
     }
     REPORT.call_once(|| {
@@ -243,9 +238,6 @@ pub(in crate::vm) fn count(event: Event) {
 }
 
 extern "C" fn report() {
-    if !crate::trace::Channel::JsJit.on() {
-        return;
-    }
     let (Ok(totals), Ok(rejects)) = (TOTALS.lock(), REJECTS.lock()) else { return };
     let ops = totals.ops.max(1);
     eprintln!(
@@ -272,7 +264,7 @@ extern "C" fn report() {
 }
 
 fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
-    if !counted() {
+    if !crate::trace::Channel::JsJit.on() {
         return;
     }
     REPORT.call_once(|| {
@@ -285,7 +277,7 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
 }
 
 /// The webs of `decoded`, their representations and homes, and the rows renamed to webs.
-fn analyze(span: &Span, decoded: &[Decoded], widened: &[usize], seen: [&[Register]; SEEN]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
+fn analyze(span: &Span, decoded: &[Decoded], widened: (&[usize], &[Option<OperandKinds>]), seen: [&[Register]; SEEN]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
     // A register with several webs may not have a web in an int slot, whose writes keep a
     // tagged word's high half; such a register is left whole.
     let mut merged = Bits::default();
@@ -301,33 +293,6 @@ fn analyze(span: &Span, decoded: &[Decoded], widened: &[usize], seen: [&[Registe
             merged.insert(usize::from(register));
         }
     }
-}
-
-/// A loop region's code, whether it reads no heap row and makes no step (such a region needs from
-/// its payload only the entry record's address, `Crossing::Bare`), the atoms its stores hold
-/// unnamed by method caches (a Stable fact: a cache naming one retires it, `OsrFacts::atoms`), and
-/// the global layouts and slot types its rows hold (`globals`).
-pub(in crate::vm::compiled) struct Built {
-    pub(in crate::vm::compiled) code: Vec<u8>,
-    pub(in crate::vm::compiled) bare: bool,
-    pub(in crate::vm::compiled) atoms: Box<[Atom]>,
-    pub(in crate::vm::compiled) layouts: Box<[crate::heap::GlobalLayoutFact]>,
-    pub(in crate::vm::compiled) slot_types: Box<[crate::code_dependencies::SlotDependency]>,
-}
-
-fn assemble(region: &LoopRegion, (dense, known): (bool, Known), widened: &[usize], seen: [&[Register]; SEEN], helpers: LaneHelpers) -> Result<Built, String> {
-    let (header, backedge) = (region.header, region.backedge);
-    let count = (backedge - header) as usize + 1;
-    let instructions = region.instructions().get(..count).ok_or("region instructions")?;
-    let writes = instructions.iter().any(|instruction| stores_field(known, *instruction) || stores_name(*instruction));
-    let facts = (Facts::Entry { dense, writes }, known);
-    let mut decoded: Vec<Decoded> = instructions.iter().enumerate().map(|(k, instruction)| decode(region, facts, header + k as u32, *instruction, helpers)).collect();
-    settle(&mut decoded);
-    let (reprs, homes, webs, decoded) = analyze(region, &decoded, widened, seen);
-    let layout = Layout { header, backedge, homes, webs, region, ending: Ending::Region, callees: &[], invalidation: None, realm: held_realm(&decoded) };
-    let body = decoded.iter().enumerate().map(|(k, row)| plan(row, &layout, header + k as u32, is_general(row, &reprs), helpers)).collect::<Result<Vec<_>, _>>()?;
-    let bare = decoded.iter().all(|row| row.heap.is_none() && !row.step.is_some_and(Step::runs_helper));
-    Ok(Built { code: link(&layout, &body)?, bare, atoms: held_atoms(&decoded) })
 }
 
 impl<H: crate::Host> crate::vm::Vm<H> {

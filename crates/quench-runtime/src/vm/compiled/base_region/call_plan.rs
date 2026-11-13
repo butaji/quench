@@ -110,8 +110,6 @@ pub(super) struct CallShape {
     /// follows it does (`steps::completing`), and nothing is live after it.
     pub(super) returning: bool,
     pub(super) form: CallForm,
-    /// The call completes its caller's activation with its result (`return f(x)`).
-    pub(super) returning: bool,
 }
 
 impl CallShape {
@@ -273,15 +271,18 @@ pub(super) fn spill_part(place: Place, register: Register) -> Result<CallPart, S
 }
 
 pub(super) fn reload_part(place: Place, register: Register) -> Result<CallPart, String> {
-    Ok(part(call::stencil(CallRow::Reload(place))?, [slot(register), 0, 0], Vec::new()))
+    Ok(part(call::stencil(CallRow::Reload(place))?, padded_holes([slot(register)]), Vec::new()))
 }
 
 fn helper_part(call_pc: u32, helper: usize) -> Result<CallPart, String> {
     if helper == 0 {
         return Err("call: no helper address".to_string());
     }
-    Ok(part(call::stencil(CallRow::Helper)?, [u64::from(call_pc), helper as u64, 0], vec![Exit::At(call_pc), Exit::Status]))
+    Ok(part(call::stencil(CallRow::Helper)?, padded_holes([u64::from(call_pc), helper as u64]), vec![Exit::At(call_pc), Exit::Status]))
 }
+
+/// Rows a direct row's `taken` skips: itself and the helper row after it.
+const ROWS_PAST_DIRECT: usize = 2;
 
 /// The direct row and the record it reads, whose address is its hole 0.
 fn direct_part(shape: &CallShape, facts: &DirectFacts) -> Result<(CallPart, Box<CallRecord>), String> {
@@ -313,9 +314,6 @@ pub(super) fn plan_step(pc: u32, helper: usize, spills: &[(Place, Register)], re
     }
     Ok(parts)
 }
-
-/// Rows a direct row's `taken` skips: itself and the helper row after it.
-const ROWS_PAST_DIRECT: usize = 2;
 
 /// The chain of a call (see the module doc for its layout and successors).
 pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {

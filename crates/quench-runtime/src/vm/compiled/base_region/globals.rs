@@ -20,7 +20,7 @@ use crate::code_dependencies::SlotDependency;
 use crate::heap::GlobalLayoutFact;
 use crate::typed_ir::Type;
 use crate::vm::global_facts::{GlobalRead, GlobalSlot};
-use quench_bjit::HOLES;
+use quench_bjit::{padded_holes, HOLES};
 
 /// The global object's slot a row holds: the fact the VM took (`Vm::stable_global_slot`) and the
 /// record id the object is named by.
@@ -47,14 +47,6 @@ impl Access {
     pub(super) fn numeric(self) -> bool {
         self.slot.ty != Type::NEVER && self.slot.ty.is_subtype(Type::NUMBER)
     }
-}
-
-/// The realm a body or region was compiled for: the global object word its realm field names while
-/// that realm is active, and the field's byte offset in the VM.
-#[derive(Clone, Copy)]
-pub(super) struct Realm {
-    pub(super) global: u64,
-    pub(super) offset: u64,
 }
 
 /// The type of the value an operand place holds: a pinned int32, an int slot or an int32 immediate an
@@ -150,12 +142,12 @@ pub(super) fn global_holes(
     [dst_hole, a_hole, _]: [u64; 3],
 ) -> Option<[u64; HOLES]> {
     let id = decoded.global.map_or(0, |access| u64::from(access.id));
-    Some(match heap {
+    Some(padded_holes(match heap {
         Heap::GlobalRead => [dst_hole, id, decoded.hole],
         Heap::GlobalStore => [id, a_hole, decoded.hole],
         Heap::Word => [dst_hole, decoded.hole, 0],
         _ => return None,
-    })
+    }))
 }
 
 /// Whether a store row's operand cannot be written straight to the slot: the place's type is not the
@@ -186,11 +178,11 @@ pub(super) fn receiver_row(homes: &Homes, register: Register, pc: u32) -> Result
 }
 
 /// The realm the rows' slots belong to: every row of one compile names the same one.
-pub(super) fn held_realm(decoded: &[Decoded]) -> Option<Realm> {
+pub(super) fn held_realm(decoded: &[Decoded]) -> Option<RealmProof> {
     decoded
         .iter()
         .find_map(|row| row.global)
-        .map(|access| Realm {
+        .map(|access| RealmProof {
             global: access.slot.global.to_bits(),
             offset: u64::from(access.slot.realm_offset.unsigned_abs()),
         })

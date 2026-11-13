@@ -11,7 +11,9 @@ use super::base_region::function::{build_body, Body, BodySpec};
 use super::base_region::{Known, RealmProof};
 use super::lane_facts::bind_callees;
 use crate::code_dependencies::{InstanceofFact, Invalidation};
-use crate::bytecode::Register;
+use crate::vm::global_facts::GlobalTable;
+use crate::bytecode::{Register, WideInstruction};
+use super::lane_region::StableFacts;
 use crate::compile::liveness::RegisterMasks;
 
 /// The registers an entry's parameters hold as int32s, and as other Numbers: the types the body's
@@ -40,11 +42,11 @@ impl LaneMethod {
         // SAFETY: `base_region::function` links its code behind `entry_body`, of the lane body ABI.
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
         Some(Self {
-            dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: super::lane_region::StableFacts { holders: body.holders, atoms: body.atoms, instanceofs: body.instanceofs, ..Default::default() }, invalidation, _code: memory, entry,
-            recovery_space: Default::default(), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
-            names_shapes: !direct.is_empty(), inlined: Vec::new(), scratch_width: 0,
+            dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, atoms: body.atoms, instanceofs: body.instanceofs, layouts: body.layouts, slots: body.slot_types, ..Default::default() }, invalidation, _code: memory, entry,
+            recovery_space: super::super::dispatch_fast::LaneRecoverySpace::inlined(&body.frames), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
+            names_shapes: !direct.is_empty(), scratch_width, framed: true,
             caller_registers: registers, amortizes: body.loops || body.covered >= TIERS.lane_body.min_instructions || !direct.is_empty(),
-            direct, closed, _records: body.records, constructors: body.constructors,
+            direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames,
         })
     }
 }
@@ -103,6 +105,8 @@ impl<H: Host> Vm<H> {
             reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
             adds: folds.then_some(&adds as &dyn Fn(u16, crate::bytecode::Atom, bool) -> Option<crate::staged::add_plan::AddSite>),
             names: folds.then_some(&names as &dyn Fn(u16, crate::bytecode::Atom) -> Option<(crate::staged::add_plan::Transition, u64)>),
+            adds: folds.then_some(&adds as &dyn Fn(u16, crate::bytecode::Atom, bool) -> Option<crate::staged::add_plan::AddSite>),
+            names: folds.then_some(&names as &dyn Fn(u16, crate::bytecode::Atom) -> Option<(crate::staged::add_plan::Transition, u64)>),
             invalidation: Some(invalidation.address()),
             constants: self.programs.constants(self.active_program),
             typeof_names: &self.typeof_names,
@@ -111,7 +115,7 @@ impl<H: Host> Vm<H> {
             globals: globals.as_ref(),
         };
         let speculated = widened(generic);
-        let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: [&ints, &doubles] };
+        let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: [&ints, &doubles], kinds: &[] };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, helpers) }) else { return LaneBodyOutcome::Declined };
         let closed = callees.closed(&code);

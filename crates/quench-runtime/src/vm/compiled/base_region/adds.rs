@@ -13,7 +13,7 @@ use super::*;
 use crate::bytecode::Op;
 use crate::staged::Form;
 use crate::staged::add_plan::AddSite;
-use quench_bjit::HOLES;
+use quench_bjit::{padded_holes, HOLES};
 
 /// What one add instruction runs: the site's transition, the storage form it can take
 /// (`Transition::form`) and whether the receiver is the activation's `this`.
@@ -45,7 +45,7 @@ impl Add {
         let transition = self.site.transition;
         let shapes = u64::from(transition.before) | u64::from(transition.after) << ADD_AFTER_AT;
         let site = u64::from(transition.slot) | u64::from(self.site.link.unwrap_or_default()) << ADD_LINK_AT | object << ADD_OBJECT_AT;
-        [shapes, value, site]
+        padded_holes([shapes, value, site])
     }
 }
 
@@ -110,7 +110,7 @@ mod tests {
     /// The holes carry what `heap_rows::add_row` unpacks: shapes, value offset, slot, link and object offset.
     #[test]
     fn the_holes_pack_the_transition_the_row_unpacks() {
-        let [shapes, value, site] = add(Some(0xABC)).holes(24, 16);
+        let [shapes, value, site, ..] = add(Some(0xABC)).holes(24, 16);
         assert_eq!((shapes & u64::from(u32::MAX), shapes >> ADD_AFTER_AT, value), (5, 9, 16));
         let slot_mask = (1 << numeric::library::ADD_SLOT_BITS) - 1;
         let link_mask = (1 << numeric::library::ADD_LINK_BITS) - 1;

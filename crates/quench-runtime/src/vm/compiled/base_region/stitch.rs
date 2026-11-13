@@ -58,6 +58,9 @@ pub(super) struct Stitched {
     pub(super) copies: Vec<Vec<(Register, Register)>>,
     /// The Stable facts the sites fold: the code is subscribed to each.
     pub(super) facts: Vec<GlobalFact>,
+    /// The first row of each caller PC of the span (PC, row): where the interpreter's resume at the PC
+    /// re-enters the program (`resume`).
+    pub(super) entries: Vec<(u32, u32)>,
 }
 
 /// The first row of each caller PC's parts (by offset from the span's header), and the row past the last.
@@ -107,7 +110,8 @@ pub(super) fn stitch(region: &LoopRegion, parts: Vec<Part>, registers: u16, inva
     let tops = parts.iter().filter_map(|part| if let What::Site(site) = &part.what { Some(site.top as usize) } else { None });
     let rows = starts[starts.len() - 1] as usize;
     let capacity = rows + leaves.len();
-    let mut stitched = Stitched { rows: Vec::with_capacity(capacity), origins: Vec::with_capacity(capacity), live: Live::new(tops.fold(usize::from(registers), usize::max)), frames: Vec::new(), copies: Vec::new(), facts: Vec::new() };
+    let mut stitched = Stitched { rows: Vec::with_capacity(capacity), origins: Vec::with_capacity(capacity), live: Live::new(tops.fold(usize::from(registers), usize::max)), frames: Vec::new(), copies: Vec::new(), facts: Vec::new(),
+        entries: (region.header..).zip(&starts).take(starts.len() - 1).map(|(pc, row)| (pc, *row)).collect() };
     let row_of = |target: u32| match target.checked_sub(region.header).filter(|local| (*local as usize) < starts.len() - 1) {
         Some(local) => starts[local as usize],
         None => (rows + leaves.iter().position(|leave| *leave == target).expect("a leave row for each target outside")) as u32,

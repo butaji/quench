@@ -23,13 +23,6 @@ pub(crate) struct StableFacts {
     pub(crate) slots: Box<[crate::code_dependencies::SlotDependency]>,
     /// Constructors whose `prototype` it holds for an `instanceof` (`Vm::instanceof_fact`).
     pub(crate) instanceofs: Box<[crate::code_dependencies::InstanceofFact]>,
-    /// Constructors whose `prototype` it holds for an `instanceof` (`Vm::instanceof_fact`).
-    pub(crate) instanceofs: Box<[crate::code_dependencies::InstanceofFact]>,
-    /// Global objects whose layout it holds (`heap::subscribe_global_layout`).
-    pub(crate) layouts: Box<[crate::heap::GlobalLayoutFact]>,
-    /// Global slots it stores to, or reads the `typeof` of, by the slot's observed type
-    /// (`Heap::subscribe_slot_observation`).
-    pub(crate) slots: Box<[crate::code_dependencies::SlotDependency]>,
 }
 
 /// The Stable facts a lowering folded so far.
@@ -49,10 +42,6 @@ pub(super) struct StableUses {
     slots: Vec<crate::code_dependencies::SlotDependency>,
     /// Constructors whose `prototype` the code took as a constant for an `instanceof`.
     instanceofs: BTreeSet<crate::code_dependencies::InstanceofFact>,
-    /// Global objects whose layout the code held.
-    layouts: BTreeSet<crate::heap::GlobalLayoutFact>,
-    /// Global slots whose observed type the code relied on, each once.
-    slots: Vec<crate::code_dependencies::SlotDependency>,
     /// Loops, by header and backedge, entered only through forward edges that proved the realm
     /// (`Lowering::hoist_stable`): their blocks hold the proof.
     realm_loops: Vec<(usize, usize)>,

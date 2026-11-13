@@ -56,6 +56,12 @@ pub(super) fn chains(instruction: WideInstruction) -> bool {
     CallForm::of(instruction.split_return().0) == Some(CallForm::Plain)
 }
 
+/// The callee the call site `instruction` makes calls, if its body's call chain makes it: the
+/// latest its site reached.
+fn called<'a>(instruction: WideInstruction, site: &'a DirectCandidates) -> Option<&'a DirectCallee> {
+    site.first().filter(|_| chains(instruction))
+}
+
 impl Callees {
     /// The function each call site of `code` was recorded calling (`candidates`, by PC).
     pub(in crate::vm::compiled) fn recorded(code: &[WideInstruction], candidates: &[DirectCandidates]) -> Vec<Option<crate::value::Value>> {

@@ -94,8 +94,8 @@ pub(super) enum Branch {
 /// A row placed in the program: its stencil, hole values and branch target.
 pub(super) struct Planned {
     pub(super) stencil: &'static Stencil,
-    /// The row's library code, which a tile of this row and its neighbour is looked up by; none
-    /// for a tile itself.
+    /// The row's library code, which a tile of this row and its neighbour is looked up by (`tile`);
+    /// none for a tile itself and for the rows no supernode names (chains, leaves).
     pub(super) node: Option<Node>,
     pub(super) holes: [u64; HOLES],
     pub(super) branch: Option<Branch>,
@@ -129,7 +129,7 @@ impl Planned {
     }
 
     pub(super) fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
-        Self { stencil, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: None }
+        Self { stencil, node: None, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: None }
     }
 }
 
@@ -153,7 +153,7 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
     let upper = crate::value::NarrowLayout::upper_words() as u64;
     let folded = decoded.folded.map_or(0, Folded::word);
     let object = dst_hole | a_hole << numeric::library::SITE_OBJECT_AT;
-    Some(match heap {
+    Some(padded_holes(match heap {
         Heap::SiteStore => [base, a_hole, decoded.hole],
         Heap::ThisStore => [0, a_hole, decoded.hole],
         Heap::ThisSite | Heap::ThisChain => [dst_hole, upper, decoded.hole],
@@ -161,13 +161,13 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
         Heap::Held => [object, folded, decoded.hole],
         Heap::ThisHeld => [dst_hole, folded, decoded.hole],
         _ => return None,
-    })
+    }))
 }
 
 /// The hole values of a heap row of `decoded`, given its holes of destination, first and second operand.
 pub(super) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bool, holes @ [dst_hole, a_hole, b_hole]: [u64; 3]) -> [u64; HOLES] {
     let base = if entry { decoded.hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
-    site_holes(decoded, heap, base, holes).or_else(|| global_holes(decoded, heap, holes)).unwrap_or_else(|| match heap {
+    site_holes(decoded, heap, base, holes).or_else(|| global_holes(decoded, heap, holes)).unwrap_or_else(|| padded_holes(match heap {
         Heap::Store => [base, a_hole, b_hole],
         Heap::This => [dst_hole, 0, 0],
         Heap::Index if entry => [dst_hole, decoded.hole, b_hole],
@@ -187,7 +187,7 @@ pub(super) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bo
         Heap::CaptureSet(slot) => [a_hole, u64::from(slot), u64::from(slot) * SLOT],
         Heap::Live => [0, decoded.hole, 0],
         _ => [dst_hole, a_hole, b_hole],
-    })
+    }))
 }
 
 /// The plan of a heap row, given its (place, hole) of destination, first and second operand; a row
@@ -196,11 +196,37 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
     let entry = heap_variant(heap, decoded.hole, a);
     let holes = heap_holes(decoded, homes, heap, entry, [dst_hole, a_hole, b_hole]);
     // The row's stencil reads pinned operands and delivers a pinned result itself.
-    Ok(Planned::single(base_rows::stencil(HeapRow { heap, dst, a, b, entry })?, holes, heap.continues_at_taken().then_some(pc + 1), Some(pc)))
+    let row = HeapRow { heap, dst, a, b, entry };
+    let mut planned = Planned { node: Some(Node::Heap(row.code())), ..Planned::single(base_rows::stencil(row)?, holes, heap.continues_at_taken().then_some(pc + 1), Some(pc)) };
+    if let Some(receiver) = decoded.also {
+        planned.post.push(receiver_row(homes, receiver, pc)?);
+    }
+    Ok(planned)
 }
 
-/// The row of `decoded` at `pc`; a backward jump takes the poll row the layout's ending names.
-pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, general: bool, helpers: LaneHelpers) -> Result<Planned, String> {
+/// Whether a row of `variant` speculates int32 operands, given whether the representations make
+/// it `general`: the double variant never does, the others as the representations say. A
+/// `Variant::Concat` site would call the runtime (`lane_body_string_concat`) through the helper row
+/// (`call_plan`), whose payload only a region that crosses with the activation's dispatch has;
+/// until then it takes the generic row, whose tag guard exits at the PC for a string operand and
+/// writes nothing.
+fn speculates(variant: Variant, general: bool) -> bool {
+    variant != Variant::Double && !general
+}
+
+/// The row of the variant's speculation or, where the library holds none, of the speculation the
+/// representations give, with its stencil.
+fn chosen_row(kind: Kind, [dst, a, b]: [Place; 3], variant: Variant, general: bool) -> Result<(numeric::Row, &'static Stencil), String> {
+    let row = |speculate| {
+        let row = numeric::Row { kind, dst, a, b, speculate };
+        numeric::stencil(row).map(|stencil| (row, stencil))
+    };
+    row(speculates(variant, general)).or_else(|_| row(!general))
+}
+
+/// The row of `decoded` at `pc`, which takes general semantics where `general` and the speculation of
+/// its feedback `variant`; a backward jump takes the poll row the layout's ending names.
+pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): (bool, Variant), helpers: LaneHelpers) -> Result<Planned, String> {
     if decoded.step.is_some() {
         return plan_step(decoded, layout, pc, helpers);
     }
@@ -221,13 +247,13 @@ pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, general: bool, h
     }
     let polls = decoded.target.is_some_and(|target| target <= pc) && decoded.kind == Kind::Jump;
     let kind = if polls { layout.ending.poll() } else { decoded.kind };
-    let stencil = numeric::stencil(numeric::Row { kind, dst, a, b, speculate: !general })?;
+    let (row, stencil) = chosen_row(kind, [dst, a, b], variant, general)?;
     let interrupt = std::mem::offset_of!(super::super::CallContext, interrupt) as u64;
     let exits = polls || !matches!(kind, Kind::Jump | Kind::Move) || matches!(dst, Place::Pin(_) | Place::PinF(_) | Place::MemInt);
     // A poll row also names where the run's backward-edge counter lives (`jump_row`).
     let counter = [std::mem::offset_of!(super::super::CallContext, adapter_payload) as u64, std::mem::offset_of!(super::super::JsStepDispatch, loop_entry) as u64];
     let holes = padded_holes(if polls { [interrupt, counter[0], counter[1]] } else { [dst_hole, a_hole, b_hole] });
-    Ok(Planned::single(stencil, Node::Number(numeric::library::canonical(row.code())), holes, decoded.target, exits.then_some(pc)))
+    Ok(Planned { node: Some(Node::Number(numeric::library::canonical(row.code()))), ..Planned::single(stencil, holes, decoded.target, exits.then_some(pc)) })
 }
 
 /// A leave row: the stub that tags the pinned registers back and returns `word`.

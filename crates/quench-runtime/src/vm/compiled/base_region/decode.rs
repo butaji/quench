@@ -84,9 +84,6 @@ pub(super) struct Decoded {
     /// A `ToNumeric` copy: its operand is no Number until the row proves it (a loop's entry guards
     /// prove the registers it names; a function's registers are not proved).
     pub(super) checked: bool,
-    /// The callee register and function word a row stands on where it replaces the call of that
-    /// function (`function::inlined_call`): the row proves the register holds it.
-    pub(super) identity: Option<(Register, u64)>,
     /// The instruction carried the return flag: the activation completes with the result the row
     /// writes (`steps::completing`), so control reaches nothing after it.
     pub(super) completes: bool,
@@ -97,13 +94,11 @@ pub(super) struct Decoded {
     /// The global object's slot the row holds under the object's layout and the slot's observed type
     /// (`globals`): Stable facts the code takes.
     pub(super) global: Option<Access>,
-    /// A second register the row defines, with `undefined`: a name call's receiver.
-    pub(super) also: Option<Register>,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, identity: None, completes: false, instanceof: None }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, completes: false, instanceof: None, global: None, add: None, name: None }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -115,21 +110,21 @@ impl Decoded {
     }
 
     /// Whether the row holds a Stable fact its code took: a folded prototype-held read, an `instanceof` of a constructor's
-    /// `prototype`, or a store in place for an atom no method cache names. A change of the fact retires the code, and a run
-    /// already inside it learns that from the invalidation word (`Heap::Live`).
+    /// `prototype`, a global object's slot, an add, or a store in place for an atom no method cache names. A change of the fact
+    /// retires the code, and a run already inside it learns that from the invalidation word (`Heap::Live`).
     pub(super) fn holds_stable(&self) -> bool {
-        matches!(self.heap, Some(Heap::Held | Heap::ThisHeld | Heap::SiteStore | Heap::ThisStore)) || self.instanceof.is_some()
+        self.add.is_some() || matches!(self.heap, Some(Heap::Held | Heap::ThisHeld | Heap::SiteStore | Heap::ThisStore)) || self.instanceof.is_some() || self.global.is_some()
     }
 
     /// Whether the row makes a call or a step the interpreter's operation runs, either of which may
     /// run guest code that changes a Stable fact.
     pub(super) fn makes_calls(&self) -> bool {
-        matches!(self.step, Some(Step::Call(_) | Step::Helper))
+        matches!(self.step, Some(Step::Call(_))) || self.step.is_some_and(Step::runs_helper)
     }
 
     /// The registers the row names.
     pub(super) fn registers(&self) -> impl Iterator<Item = Register> {
-        [self.dst, self.also, self.a.and_then(register_of), self.b.and_then(register_of), self.base, self.identity.map(|(register, _)| register)].into_iter().flatten()
+        [self.dst, self.also, self.a.and_then(register_of), self.b.and_then(register_of), self.base].into_iter().flatten()
     }
 }
 
@@ -345,7 +340,6 @@ fn capture_row(facts: Facts, instruction: WideInstruction) -> Option<Decoded> {
         Class::StoreCapture if own_capture_store(instruction) => {
             Some(Decoded::heap(Heap::CaptureSet(instruction.capture_slot()), None, Some(Source::Register(instruction.register_a())), None))
         }
-        _ if instruction.op().is_field_store() => cached_set(region, instruction, loads),
         _ => None,
     }
 }
@@ -422,7 +416,7 @@ pub(super) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u3
         .flatten()
         .or_else(|| heap_row(region, facts, known, pc, instruction).filter(|_| instruction.result_flags() == 0))
         .or_else(|| value_row(known, instruction))
-        .unwrap_or_else(|| names(known, instanceof_arm(known, pc, instruction, decode_step(pc, instruction, (helpers, matches!(facts, Facts::Site))))))
+        .unwrap_or_else(|| names(known, instanceof_arm(known, pc, instruction, decode_step(pc, instruction, known, (helpers, matches!(facts, Facts::Site))))))
 }
 
 /// The step `row` with the table of `typeof` result strings its fast arm reads (hole 2) where the VM has

@@ -1,5 +1,5 @@
 use super::*;
-use crate::vm::dispatch_fast::operand_feedback::OperandClass;
+use crate::vm::dispatch_fast::operand_feedback::{OperandClass, OperandKinds};
 
 /// How the values of a register are held, from the narrowest to the widest: a raw int32, a
 /// Number as `f64`, a tagged word. A register takes the widest of what its writers produce.
@@ -103,7 +103,7 @@ pub(super) fn result_repr(row: &Decoded, reprs: &[Repr], widened: bool, numbers:
 }
 
 /// Whether the row at `pc` is widened: named by a leave, recorded as declining its int32 step
-/// (`kinds`), or a loaded value among widened ones.
+/// (`kinds`, its site's, where it is a caller instruction), or a loaded value among widened ones.
 fn row_widened(widened: &[usize], pc: usize, with_loads: bool, kinds: Option<&OperandKinds>) -> bool {
     with_loads || widened.contains(&pc) || kinds.is_some_and(|kinds| !selected(kinds.class()).speculates())
 }
@@ -126,7 +126,7 @@ fn entry_repr(entered: bool, register: Register, seen: [&[Register]; SEEN]) -> R
 
 /// The representation of every web the region names, to a fixed point: where the compile
 /// began (`ints`, `doubles`; dead at the header: none yet), then each writer's result.
-pub(super) fn representations(span: &Span, decoded: &[Decoded], widened: &[usize], seen: [&[Register]; SEEN], webs: &Webs) -> Reprs {
+pub(super) fn representations(span: &Span, decoded: &[Decoded], (widened, kinds): (&[usize], &[Option<OperandKinds>]), seen: [&[Register]; SEEN], webs: &Webs) -> Reprs {
     let header = span.header;
     // One loaded value that left for its int32 speculation widens every loaded value at once: the
     // next compile need not discover them one leave at a time.
@@ -142,7 +142,8 @@ pub(super) fn representations(span: &Span, decoded: &[Decoded], widened: &[usize
                 changed = true;
             }
             let Some(dst) = row.dst else { continue };
-            let result = result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some()), span.number_registers().contains(&webs.orig[usize::from(dst)]));
+            let numbers = span.number_registers().contains(&webs.orig[usize::from(dst)]) || row.global.is_some_and(Access::numeric);
+            let result = result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some(), kinds.get(k).and_then(Option::as_ref)), numbers);
             if reprs[usize::from(dst)] < result {
                 reprs[usize::from(dst)] = result;
                 changed = true;
