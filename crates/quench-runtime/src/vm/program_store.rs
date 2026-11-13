@@ -5,7 +5,6 @@ use crate::bytecode::ResidualProgram;
 use std::rc::{Rc, Weak};
 use crate::heap::{PromotionAge, WeakHandle};
 use rustc_hash::FxHashMap;
-use std::io::Write as _;
 
 pub(in crate::vm) mod lane_publication;
 mod js_jit_report;
