@@ -115,8 +115,8 @@ impl<T, const CAPACITY: usize> RecordFamily for RecordSpace<T, CAPACITY> {
     }
 }
 
-const RECORDS_PER_BLOCK: usize = 1_024;
-const OCCUPANCY_WORD_BITS: usize = u64::BITS as usize;
+pub(crate) const RECORDS_PER_BLOCK: usize = 1_024;
+pub(crate) const OCCUPANCY_WORD_BITS: usize = u64::BITS as usize;
 const BLOCK_WORDS: usize = RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS;
 pub(super) const RECORD_SPACE_CAPACITY: usize = 1 << 24;
 
@@ -232,7 +232,42 @@ pub(super) const NATIVE_RECORD_BLOCK_SIZE: usize = size_of::<RecordBlock>();
 pub(super) const NATIVE_RECORD_MARK_OFFSET: usize = std::mem::offset_of!(RecordBlock, marked);
 const _: () = assert!(NATIVE_RECORD_MARK_OFFSET + size_of::<[u64; BLOCK_WORDS]>() <= NATIVE_RECORD_BLOCK_SIZE);
 
+/// The record-claim fast path's state, as pointers to the live fields a staged claim row
+/// reads and writes: the authority stays the record space, and the fields a callout may move
+/// (`blocks`, block count) are refreshed with the other heap bases.
+pub(crate) struct RecordClaimFacts {
+    pub(crate) next_id: *mut u32,
+    pub(crate) free_word: *mut u64,
+    pub(crate) free_cursor: *mut u32,
+    pub(crate) live: *mut usize,
+    pub(crate) blocks: *mut u8,
+    pub(crate) block_count: usize,
+    pub(crate) reserved: bool,
+    pub(crate) capacity: usize,
+    pub(crate) records_per_block: usize,
+    pub(crate) occupancy_word_bits: usize,
+    pub(crate) block_size: usize,
+}
+
 impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
+    /// The record-claim fast path's fields (`_record_claim`), as pointers to the live state.
+    /// Native code writes them with no Rust borrow live, as it does the allocator header.
+    pub(crate) fn claim_facts(&self) -> RecordClaimFacts {
+        RecordClaimFacts {
+            next_id: (&self.next_id as *const u32).cast_mut(),
+            free_word: (&self.free_word as *const u64).cast_mut(),
+            free_cursor: (&self.free_cursor as *const u32).cast_mut(),
+            live: (&self.live as *const usize).cast_mut(),
+            blocks: self.blocks.as_ptr().cast_mut().cast(),
+            block_count: self.blocks.len(),
+            reserved: self.is_reserved(),
+            capacity: CAPACITY,
+            records_per_block: RECORDS_PER_BLOCK,
+            occupancy_word_bits: OCCUPANCY_WORD_BITS,
+            block_size: size_of::<RecordBlock>(),
+        }
+    }
+
     /// The blocks stay valid until a heap callout can allocate or collect.
     pub(super) fn native_mark_blocks(&self) -> (*const u8, usize) {
         (self.blocks.as_ptr().cast(), self.blocks.len())

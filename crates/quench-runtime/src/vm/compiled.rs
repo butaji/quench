@@ -6534,6 +6534,21 @@ struct JsStepDispatch {
     /// entries of `program_id`'s sites; zero where absent. A callout may grow or compact any
     /// of them, so each is read again after one (`refresh_heap_bases`).
     object_record_base: usize,
+    /// The staged record-claim row's inputs (`heap::RecordClaimFacts`): pointers to the live
+    /// object-record next id, free word, free cursor and live count, the block array and
+    /// count, whether the space is reserved, and its capacity and block geometry. Refreshed
+    /// with the other heap bases.
+    record_next_id: usize,
+    record_free_word: usize,
+    record_free_cursor: usize,
+    record_live: usize,
+    record_blocks: usize,
+    record_block_count: usize,
+    record_capacity: usize,
+    record_records_per_block: usize,
+    record_occupancy_word_bits: usize,
+    record_block_size: usize,
+    record_reserved: bool,
     /// The function record reservation, whose records' own fields reads take
     /// (`ObjectHeader::prove_readable`); zero where absent.
     function_record_base: usize,
@@ -7392,6 +7407,9 @@ impl LaneFrame {
                 capture_len: 0,
                 array_record_base: 0,
                 object_record_base: 0,
+                record_next_id: 0, record_free_word: 0, record_free_cursor: 0, record_live: 0,
+                record_blocks: 0, record_block_count: 0, record_capacity: 0, record_records_per_block: 0,
+                record_occupancy_word_bits: 0, record_block_size: 0, record_reserved: false,
                 function_record_base: 0,
                 object_mark_blocks: 0,
                 object_mark_block_count: 0,
@@ -7548,7 +7566,10 @@ impl JsNativeActivation {
             local_count: activation.locals.len(),
             native_pcs: std::ptr::null(), native_pc_count: 0, fixed_this_slot: std::ptr::null(),
             capture_values: std::ptr::null(), capture_len: 0,
-            array_record_base: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
+            array_record_base: 0, object_record_base: 0, record_next_id: 0, record_free_word: 0, record_free_cursor: 0, record_live: 0,
+                record_blocks: 0, record_block_count: 0, record_capacity: 0, record_records_per_block: 0,
+                record_occupancy_word_bits: 0, record_block_size: 0, record_reserved: false,
+                function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
             field_entries: 0, field_store: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0, add_operand_string: 0, string_concat: 0, object_like: 0, hole_array: 0, define_element: 0, iterator_push: 0, iterator_pop: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
             stores_specialized: 0,
@@ -7621,6 +7642,28 @@ impl JsStepDispatch {
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
+        let facts = vm.heap.record_claim_facts();
+        self.record_next_id = facts.next_id as usize;
+        self.record_free_word = facts.free_word as usize;
+        self.record_free_cursor = facts.free_cursor as usize;
+        self.record_live = facts.live as usize;
+        self.record_blocks = facts.blocks as usize;
+        self.record_block_count = facts.block_count;
+        self.record_capacity = facts.capacity;
+        self.record_records_per_block = facts.records_per_block;
+        self.record_occupancy_word_bits = facts.occupancy_word_bits;
+        self.record_block_size = facts.block_size;
+        self.record_reserved = facts.reserved;
+        // Once a process: the row's inputs, which the staged claim row will consume.
+        static REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if crate::trace::Channel::JsJit.on()
+            && !REPORTED.swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            eprintln!("QUENCH_RECORD_CLAIM {{\"next_id\":{},\"free_word\":{},\"free_cursor\":{},\"live\":{},\"blocks\":{},\"block_count\":{},\"reserved\":{},\"capacity\":{},\"records_per_block\":{},\"occupancy_word_bits\":{},\"block_size\":{}}}",
+                self.record_next_id, self.record_free_word, self.record_free_cursor, self.record_live,
+                self.record_blocks, self.record_block_count, self.record_reserved, self.record_capacity,
+                self.record_records_per_block, self.record_occupancy_word_bits, self.record_block_size);
+        }
     }
 
     /// Refresh the additional frame and array views read by the general tier.
@@ -17756,6 +17799,48 @@ mod tests {
         let (memory, entry) = compile_native_function(native, &*isa, usize::MAX, publish_entry)
             .expect("native semantic graph compiles");
         (memory, entry, sites)
+    }
+
+    #[cfg(feature = "aot")]
+    #[test]
+    fn the_native_payload_mirrors_the_object_record_claim_state() {
+        let mut vm = semantic_vm("throw 7;");
+        // The payload's facts are pointers into the live record space, not copies.
+        let pointer = |vm: &mut Vm<crate::test_host::TestHost>, field: fn(&JsStepDispatch) -> usize| {
+            JsNativeActivation::with(vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| field(&activation.dispatch)).unwrap()
+        };
+        let (next_ptr, cursor_ptr, live_ptr) = (
+            pointer(&mut vm, |d| d.record_next_id),
+            pointer(&mut vm, |d| d.record_free_cursor),
+            pointer(&mut vm, |d| d.record_live),
+        );
+        let state = |vm: &mut Vm<crate::test_host::TestHost>| {
+            JsNativeActivation::with(vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
+                let d = &activation.dispatch;
+                // SAFETY: the pointers name fields of this VM's live object-record space.
+                unsafe { (
+                    *(d.record_next_id as *const u32), *(d.record_free_cursor as *const u32),
+                    *(d.record_live as *const usize), d.record_blocks, d.record_block_count,
+                    d.record_capacity, d.record_records_per_block, d.record_occupancy_word_bits,
+                    d.record_block_size, d.record_reserved,
+                ) }
+            }).unwrap()
+        };
+        // SAFETY: as in `state`; the binding above still names this VM's fields.
+        let (next_before, cursor_before, live_before) = unsafe {
+            (*(next_ptr as *const u32), *(cursor_ptr as *const u32), *(live_ptr as *const usize))
+        };
+        // A claim through the heap is visible through the pointers bound before it.
+        let _ = vm.object();
+        let (next, cursor, live, blocks, block_count, capacity, records_per_block, word_bits, block_size, reserved) = state(&mut vm);
+        assert_eq!(next, next_before.saturating_add(1), "a claim advances the bound next_id");
+        assert_eq!(live, live_before.saturating_add(1));
+        assert_eq!(cursor, cursor_before);
+        assert!(reserved && blocks != 0 && block_count >= 1);
+        assert_eq!(capacity, 1 << 24);
+        assert_eq!(records_per_block, 1024);
+        assert_eq!(word_bits, 64);
+        assert!(block_size > 0);
     }
 
     #[cfg(feature = "aot")]

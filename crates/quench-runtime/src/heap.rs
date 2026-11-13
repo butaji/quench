@@ -55,6 +55,7 @@ use records::{
     ArrayRecordSpace, AwaitRecordSpace, FunctionRecordSpace, IteratorRecordSpace, V128RecordSpace,
     ObjectRecordSpace, PromiseRecordSpace, RecordFamily, StringRecordSpace, RecordId, RecordSweep,
 };
+pub(crate) use records::RecordClaimFacts;
 use records::RECORD_SPACE_CAPACITY;
 pub use root::RootId;
 pub(crate) use root::{RootTable, WeakHandle};
