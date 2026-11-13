@@ -4242,7 +4242,7 @@ impl Lowering<'_, '_> {
             return self.field_probe(state, probe_owner, object_bits, read, exit);
         }
         let owner = if receiver { None } else { register };
-        let probed = self.probes_field_misses(&shapes);
+        let probed = self.probes_field_misses(&shapes) || self.inherited_off_record(state, register, receiver, &shapes);
         self.probed_read(state, owner, probe_owner, probed, object_bits, read, exit, |lowering, state, generic| {
             let (object, shape, inline) = if receiver {
                 let entry = lowering.entry.as_ref().expect("entry facts");
@@ -4266,6 +4266,14 @@ impl Lowering<'_, '_> {
             }
             Some(read)
         })
+    }
+
+    /// Whether `register`, whose type no object proof covers, may hold a receiver the object
+    /// table has no record of (a `Map`'s, a `Set`'s) at a read of inherited constants: its miss
+    /// would leave at every entry, so it asks the VM's proved inherited entry instead.
+    fn inherited_off_record(&self, state: &State, register: Option<Register>, receiver: bool, shapes: &[NativeFieldLoad]) -> bool {
+        !receiver && shapes.iter().any(|load| load.inherited.is_some())
+            && register.is_some_and(|register| !state.values[usize::from(register)].value.ty.is_direct_object_family())
     }
 
     /// Whether a read of these shapes asks the VM's caches on a guard miss rather than leaves.
