@@ -2159,9 +2159,9 @@ impl<'a> From<&'a Constant> for ConstantKey<'a> {
 /// read: under `verify-replay`, and in tests that compare the two (`LOWER_AT_LOAD`).
 /// The instructions a rewrite consumes for each site it adds: a field site fuses a read of a
 /// field with the store of its result, and no later rewrite fuses what a field site made again.
-const FIELD_SITE_WINDOW: usize = 2;
+pub(crate) const FIELD_SITE_WINDOW: usize = 2;
 /// The instructions of the window a superinstruction fuses.
-const SUPERINSTRUCTION_WINDOW: usize = rewrite::CONST_ARRAY_OBJECT2.len();
+pub(crate) const SUPERINSTRUCTION_WINDOW: usize = rewrite::CONST_ARRAY_OBJECT2.len();
 
 fn lowers_at_load() -> bool {
     #[cfg(test)]

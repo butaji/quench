@@ -37,6 +37,11 @@ impl<T> AppendVec<T> {
         &mut vec[index]
     }
 
+    /// How many entries `append` can still add.
+    pub(crate) fn spare(&self) -> usize {
+        self.capacity() - self.len()
+    }
+
     fn capacity(&self) -> usize {
         // SAFETY: reads the capacity field only.
         unsafe { (*self.0.get()).capacity() }
@@ -115,6 +120,15 @@ mod tests {
         copy.append([2, 3].into_iter());
         assert_eq!(&*copy, [1, 2, 3]);
         assert_eq!(&*table, [1]);
+    }
+
+    /// `spare` is what a caller checks before appending, so production never reaches the panic.
+    #[test]
+    fn spare_counts_remaining_room() {
+        let table = AppendVec::with_headroom(vec![1u8], 3);
+        assert!(table.spare() >= 3);
+        table.append([2, 3, 4].into_iter());
+        assert!(table.spare() < 3);
     }
 
     #[test]

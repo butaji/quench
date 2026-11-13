@@ -9,6 +9,7 @@
 
 use crate::bytecode::Atom;
 use rustc_hash::FxHashMap;
+use super::{FIELD_SITE_WINDOW, SUPERINSTRUCTION_WINDOW};
 use std::ops::{Index, IndexMut};
 
 /// A program-wide table the compiler appends to. At load the compiler owns its entries. A
@@ -934,20 +935,19 @@ pub(crate) fn recompile(
         .ok_or("the replay made no record")?;
     function.arguments_slot = function_replay.arguments_slot;
     capture_layout::apply_function(&mut function, id as usize, &function_replay.layout, &compiler.atoms);
-    let (start, appends) = rewrite_start(program, id, function_replay.rewrite);
-    if appends {
-        compiler.field_sites = SiteTable::grow(&program.field_sites);
-        compiler.superinstructions = SiteTable::grow(&program.superinstructions);
-    } else {
-        compiler.field_sites.skip_to(start.field_sites as usize);
-        compiler.superinstructions.skip_to(start.superinstructions as usize);
-    }
-    compiler.rewrite_function(&mut function);
-    if appends {
-        let mut ranges = program.rewrite_ranges.borrow_mut();
-        let len = ranges.len().max(id as usize + 1);
-        ranges.resize(len, None);
-        ranges[id as usize] = Some(start);
+    match rewrite_plan(program, id, function_replay.rewrite, function.code.len()) {
+        RewritePlan::Skip => {}
+        RewritePlan::Replay(start) => {
+            compiler.field_sites.skip_to(start.field_sites as usize);
+            compiler.superinstructions.skip_to(start.superinstructions as usize);
+            compiler.rewrite_function(&mut function);
+        }
+        RewritePlan::Append(start) => {
+            compiler.field_sites = SiteTable::grow(&program.field_sites);
+            compiler.superinstructions = SiteTable::grow(&program.superinstructions);
+            compiler.rewrite_function(&mut function);
+            program.record_rewrite(id, Some(start));
+        }
     }
     let undefined_constant = compiler.constant(Constant::Undefined);
     compiler.lower_function(&mut function, undefined_constant);
@@ -1000,14 +1000,33 @@ pub(crate) fn recompile(
     Ok(Recompiled { function, entries })
 }
 
-/// Where `id`'s rewrites start in the program's tables, and whether this replay adds their
-/// sites to the tables: the first replay of a function whose load deferred its rewrites does.
-fn rewrite_start(program: &crate::bytecode::ResidualProgram, id: u32, rewrite: Rewrite) -> (RewriteStart, bool) {
+/// How a replay treats the rewrites of one function.
+enum RewritePlan {
+    /// The load, or an earlier replay, put their sites at these cursors.
+    Replay(RewriteStart),
+    /// This replay appends their sites to the program's tables, from these cursors.
+    Append(RewriteStart),
+    /// They stay unrun: the program's room for sites is short of what they may add. The
+    /// function runs on its unrewritten code, as when specialization is off.
+    Skip,
+}
+
+fn rewrite_plan(program: &crate::bytecode::ResidualProgram, id: u32, rewrite: Rewrite, code: usize) -> RewritePlan {
     match rewrite {
-        Rewrite::Loaded(start) => (start, false),
+        Rewrite::Loaded(start) => RewritePlan::Replay(start),
         Rewrite::Deferred => match program.rewrite_ranges.borrow().get(id as usize).copied().flatten() {
-            Some(start) => (start, false),
-            None => (RewriteStart { field_sites: program.field_sites.len() as u32, superinstructions: program.superinstructions.len() as u32 }, true),
+            Some(Some(start)) => RewritePlan::Replay(start),
+            Some(None) => RewritePlan::Skip,
+            None => {
+                let (fields, supers) = (&program.field_sites, &program.superinstructions);
+                let start = RewriteStart { field_sites: fields.len() as u32, superinstructions: supers.len() as u32 };
+                if fields.spare() >= code / FIELD_SITE_WINDOW && supers.spare() >= code / SUPERINSTRUCTION_WINDOW {
+                    RewritePlan::Append(start)
+                } else {
+                    program.record_rewrite(id, None);
+                    RewritePlan::Skip
+                }
+            }
         },
     }
 }
