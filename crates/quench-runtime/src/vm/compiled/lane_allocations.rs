@@ -107,10 +107,14 @@ pub(super) unsafe extern "C" fn lane_new_closure<H: Host>(vm: u64, residual: u64
     // SAFETY: as `lane_new_object`; the residual is the running program.
     let (vm, program, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
         &mut *(payload as *mut JsStepDispatch)) };
+    // A lane or frameless activation has no frame of the payload's to read.
+    if dispatch.lane_context != 0 || vm.frameless.inside(dispatch) || vm.heap.should_collect() {
+        return Value::DELETED.to_bits();
+    }
     let function = vm.frames[dispatch.frame].function;
     let shares_frame_environment = function != crate::vm::ROOT_FUNCTION_ID
         && program.function_get(function as usize).is_some_and(|body| body.binding_sites.is_empty());
-    if !shares_frame_environment || vm.frameless.inside(dispatch) || dispatch.lane_context != 0 || vm.heap.should_collect() {
+    if !shares_frame_environment {
         return Value::DELETED.to_bits();
     }
     let captured = vm.frames[dispatch.frame].captured;
