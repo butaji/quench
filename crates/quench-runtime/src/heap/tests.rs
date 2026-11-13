@@ -1678,3 +1678,15 @@ fn memory_census_distinguishes_sparse_environment_storage_from_logical_slots() {
     heap.collect([]);
     assert_eq!(heap.memory_composition().environment_storage_bytes, 0);
 }
+
+/// The claim row's cold helper claims through the real allocator: ids in order, the live
+/// count advanced, and the record range reserved.
+#[test]
+fn the_claim_rows_cold_helper_returns_live_record_ids() {
+    let mut heap = heap_at(PromotionAge::First);
+    let first = heap.claim_record_id().unwrap();
+    let second = heap.claim_record_id().unwrap();
+    assert_eq!(second, first + 1);
+    assert_eq!(heap.object_records.live_count(), 2);
+    assert!(heap.object_record_base().is_some());
+}

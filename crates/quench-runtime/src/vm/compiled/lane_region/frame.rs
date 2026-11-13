@@ -1,5 +1,6 @@
 //! The lane specializer's register frame: `staged` register operations over the SSA homes.
 use super::*;
+use crate::staged::Stage;
 #[path = "frame_calls.rs"] pub(super) mod calls;
 #[path = "frame_truthiness.rs"] mod truthiness;
 #[path = "frame_operands.rs"] mod operands;
@@ -494,5 +495,82 @@ pub(super) fn register_number_value(builder: &mut FunctionBuilder<'_>, registers
                 ..RegisterFact::definition(Type::NUMBER, Representation::Float64) };
             number
         }
+    }
+}
+
+/// The record-claim row's Emit projection (`staged::records`): the payload's pointers and the
+/// block words, with the cold path through the allocator helper.
+impl crate::staged::records::ClaimFrame<Emit<'_, '_>> for EmitFrame<'_> {
+    fn claim_words(&mut self, stage: &mut Emit<'_, '_>) -> crate::staged::records::ClaimWords<ir::Value> {
+        use std::mem::offset_of;
+        use crate::staged::records::ClaimWords;
+        let payload = self.payload;
+        let pointer = |stage: &mut Emit<'_, '_>, field: usize| super::super::emit_js_payload_word(stage.builder, payload, field);
+        let free_word = pointer(stage, offset_of!(super::super::JsStepDispatch, record_free_word));
+        let free_cursor = pointer(stage, offset_of!(super::super::JsStepDispatch, record_free_cursor));
+        let next_id = pointer(stage, offset_of!(super::super::JsStepDispatch, record_next_id));
+        let live = pointer(stage, offset_of!(super::super::JsStepDispatch, record_live));
+        let _ = live;
+        ClaimWords {
+            free_word: stage.load_u64(free_word, 0),
+            free_cursor: stage.load_u32(free_cursor, 0),
+            next_id: stage.load_u32(next_id, 0),
+            block_count: pointer(stage, offset_of!(super::super::JsStepDispatch, record_block_count)),
+            blocks: pointer(stage, offset_of!(super::super::JsStepDispatch, record_blocks)),
+            reserved: pointer(stage, offset_of!(super::super::JsStepDispatch, record_reserved)),
+        }
+    }
+
+    fn claim_geometry(&self) -> (u32, u32, u64) {
+        (crate::heap::OCCUPANCY_WORD_BITS as u32,
+            crate::heap::RECORDS_PER_BLOCK.trailing_zeros(),
+            crate::heap::NATIVE_RECORD_BLOCK_SIZE as u64)
+    }
+
+    fn claim_block(&mut self, stage: &mut Emit<'_, '_>, words: crate::staged::records::ClaimWords<ir::Value>,
+        block: ir::Value, record: ir::Value, miss: ir::Block) -> Option<()> {
+        let (word_bits, _, block_size) = self.claim_geometry();
+        let word_index = stage.shr_imm(record, u64::from(word_bits.trailing_zeros()));
+        let shift = stage.constant(3);
+        let byte = stage.shl(word_index, shift);
+        let base = stage.mul_imm(block, block_size);
+        let within = stage.add(words.blocks, base);
+        let address = stage.add(within, byte);
+        let word = stage.load_u64(address, 0);
+        let index = stage.and_imm(record, u64::from(word_bits - 1));
+        let one = stage.constant(1);
+        let bit = stage.shl(one, index);
+        let set = stage.or(word, bit);
+        let held = stage.and(word, bit);
+        let clear = stage.eq_imm(held, 0u64);
+        stage.guard(clear, miss)?;
+        stage.store_u64(address, 0, set);
+        Some(())
+    }
+
+    fn commit_fresh(&mut self, stage: &mut Emit<'_, '_>, next_id: ir::Value) -> ir::Value {
+        use std::mem::offset_of;
+        let payload = self.payload;
+        let pointer = |stage: &mut Emit<'_, '_>, field: usize| super::super::emit_js_payload_word(stage.builder, payload, field);
+        let next = pointer(stage, offset_of!(super::super::JsStepDispatch, record_next_id));
+        let id = stage.load_u32(next, 0);
+        let bumped = stage.add_imm(id, 1u64);
+        stage.store_u32(next, 0, bumped);
+        let live = pointer(stage, offset_of!(super::super::JsStepDispatch, record_live));
+        let runs = stage.load_u64(live, 0);
+        let count = stage.add_imm(runs, 1u64);
+        stage.store_u64(live, 0, count);
+        next_id
+    }
+
+    fn claim_cold(&mut self, stage: &mut Emit<'_, '_>, _words: crate::staged::records::ClaimWords<ir::Value>,
+        miss: ir::Block) -> Option<ir::Value> {
+        let payload = self.payload;
+        let address = self.helpers.address(stage.builder, LaneHelper::ClaimObjectRecord);
+        let id = super::super::emit_lane_helper_call(stage.builder, payload, address, &[payload]);
+        let failed = stage.eq_imm(id, u64::MAX);
+        let ok = stage.not(failed);
+        stage.guard(ok, miss)?;
+        Some(id)
     }
 }

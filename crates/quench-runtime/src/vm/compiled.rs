@@ -1808,6 +1808,8 @@ lane_helper_inventory! { H;
     ConstructCall => super::dispatch_fast::lane_body_construct::<H>,
     /// An object literal's and an array literal's allocation.
     NewObject => lane_new_object::<H>,
+    /// The record-claim row's cold path: a claimed record id, or `u32::MAX`.
+    ClaimObjectRecord => super::dispatch_fast::lane_claim_object_record::<H>,
     NewArray => lane_new_array::<H>,
     /// An array literal of program constants (`lane_new_const_array`).
     NewConstArray => lane_new_const_array::<H>,
@@ -6548,7 +6550,7 @@ struct JsStepDispatch {
     record_records_per_block: usize,
     record_occupancy_word_bits: usize,
     record_block_size: usize,
-    record_reserved: bool,
+    record_reserved: u32,
     /// The function record reservation, whose records' own fields reads take
     /// (`ObjectHeader::prove_readable`); zero where absent.
     function_record_base: usize,
@@ -7409,7 +7411,7 @@ impl LaneFrame {
                 object_record_base: 0,
                 record_next_id: 0, record_free_word: 0, record_free_cursor: 0, record_live: 0,
                 record_blocks: 0, record_block_count: 0, record_capacity: 0, record_records_per_block: 0,
-                record_occupancy_word_bits: 0, record_block_size: 0, record_reserved: false,
+                record_occupancy_word_bits: 0, record_block_size: 0, record_reserved: 0,
                 function_record_base: 0,
                 object_mark_blocks: 0,
                 object_mark_block_count: 0,
@@ -7568,7 +7570,7 @@ impl JsNativeActivation {
             capture_values: std::ptr::null(), capture_len: 0,
             array_record_base: 0, object_record_base: 0, record_next_id: 0, record_free_word: 0, record_free_cursor: 0, record_live: 0,
                 record_blocks: 0, record_block_count: 0, record_capacity: 0, record_records_per_block: 0,
-                record_occupancy_word_bits: 0, record_block_size: 0, record_reserved: false,
+                record_occupancy_word_bits: 0, record_block_size: 0, record_reserved: 0,
                 function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
             field_entries: 0, field_store: 0, field_get: 0, field_getter: 0, native_call: 0, user_call: 0, captures: 0, env_local: 0, closure: 0, capture_stores: 0, env_view: general_capture::EnvView::EMPTY, global_get: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, element_set: 0, construct_receiver: 0, construct_result: 0, array_construct: 0, object: 0, define_field: 0, binary: 0, add_operand_string: 0, string_concat: 0, object_like: 0, hole_array: 0, define_element: 0, iterator_push: 0, iterator_pop: 0, allocated: 0, collect_at: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
@@ -7653,7 +7655,7 @@ impl JsStepDispatch {
         self.record_records_per_block = facts.records_per_block;
         self.record_occupancy_word_bits = facts.occupancy_word_bits;
         self.record_block_size = facts.block_size;
-        self.record_reserved = facts.reserved;
+        self.record_reserved = u32::from(facts.reserved);
         // Once a process: the row's inputs, which the staged claim row will consume.
         static REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         if crate::trace::Channel::JsJit.on()
@@ -17836,7 +17838,7 @@ mod tests {
         assert_eq!(next, next_before.saturating_add(1), "a claim advances the bound next_id");
         assert_eq!(live, live_before.saturating_add(1));
         assert_eq!(cursor, cursor_before);
-        assert!(reserved && blocks != 0 && block_count >= 1);
+        assert!(reserved != 0 && blocks != 0 && block_count >= 1);
         assert_eq!(capacity, 1 << 24);
         assert_eq!(records_per_block, 1024);
         assert_eq!(word_bits, 64);

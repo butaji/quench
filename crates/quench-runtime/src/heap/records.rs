@@ -228,7 +228,7 @@ struct RecordBlock {
 /// Authoritative record-mark layout for native write-barrier guards.
 pub(super) const NATIVE_RECORDS_PER_BLOCK: usize = RECORDS_PER_BLOCK;
 pub(super) const NATIVE_RECORD_MARK_WORD_BITS: usize = OCCUPANCY_WORD_BITS;
-pub(super) const NATIVE_RECORD_BLOCK_SIZE: usize = size_of::<RecordBlock>();
+pub(crate) const NATIVE_RECORD_BLOCK_SIZE: usize = size_of::<RecordBlock>();
 pub(super) const NATIVE_RECORD_MARK_OFFSET: usize = std::mem::offset_of!(RecordBlock, marked);
 const _: () = assert!(NATIVE_RECORD_MARK_OFFSET + size_of::<[u64; BLOCK_WORDS]>() <= NATIVE_RECORD_BLOCK_SIZE);
 
@@ -264,6 +264,7 @@ impl<T, const CAPACITY: usize> crate::staged::records::ClaimFrame<crate::staged:
             free_cursor: u64::from(self.space.free_cursor),
             next_id: u64::from(self.space.next_id),
             block_count: self.space.blocks.len() as u64,
+            blocks: self.space.blocks.as_mut_ptr() as u64,
             reserved: u64::from(self.space.is_reserved()),
         }
     }
@@ -273,7 +274,7 @@ impl<T, const CAPACITY: usize> crate::staged::records::ClaimFrame<crate::staged:
     }
 
     fn claim_block(&mut self, stage: &mut crate::staged::Concrete, _words: crate::staged::records::ClaimWords<u64>,
-        block: u64, record: u64) -> Option<()> {
+        block: u64, record: u64, _miss: ()) -> Option<()> {
         use crate::staged::Stage;
         let word = stage.shr_imm(record, 6u64) as usize;
         let index = stage.and_imm(record, 63u64);

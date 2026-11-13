@@ -14,6 +14,7 @@ pub(crate) struct ClaimWords<W> {
     pub(crate) free_cursor: W,
     pub(crate) next_id: W,
     pub(crate) block_count: W,
+    pub(crate) blocks: W,
     pub(crate) reserved: W,
 }
 
@@ -26,7 +27,7 @@ pub(crate) trait ClaimFrame<S: Stage> {
     /// Tests and sets `record`'s occupancy bit in `block`; `None` where it was already set
     /// (an id a sweep has not released), which leaves the claim.
     fn claim_block(&mut self, stage: &mut S, words: ClaimWords<S::Word>, block: S::Word,
-        record: S::Word) -> Option<()>;
+        record: S::Word, miss: S::Miss) -> Option<()>;
     /// Commits the fresh id `next_id`: the space's next id and live count advance; the id.
     fn commit_fresh(&mut self, stage: &mut S, next_id: S::Word) -> S::Word;
     /// The cold path's id: the loaded free word, the free-cursor scan or block growth, and
@@ -64,7 +65,7 @@ pub(crate) fn claim<S: Stage, F: ClaimFrame<S>>(stage: &mut S, frame: &mut F, mi
     stage.choose_leaving(fast,
         |stage| {
             let mut frame = frame.borrow_mut();
-            frame.claim_block(stage, words, block, mask)?;
+            frame.claim_block(stage, words, block, mask, miss)?;
             Some(frame.commit_fresh(stage, words.next_id))
         },
         |stage| frame.borrow_mut().claim_cold(stage, words, miss))

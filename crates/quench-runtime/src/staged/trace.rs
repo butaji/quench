@@ -55,6 +55,7 @@ impl Stage for Trace {
     fn load_table(&mut self, address: u32) -> u32 { self.word(format!("load_table w{address}")) }
     fn add(&mut self, a: u32, b: u32) -> u32 { self.word(format!("add w{a} w{b}")) }
     fn or(&mut self, a: u32, b: u32) -> u32 { self.word(format!("or w{a} w{b}")) }
+    fn and(&mut self, a: u32, b: u32) -> u32 { self.word(format!("and w{a} w{b}")) }
     fn add_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("add_imm w{a} {}", Self::operand(imm.into()))) }
     fn mul_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("mul_imm w{a} {}", Self::operand(imm.into()))) }
     fn and_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("and_imm w{a} {}", Self::operand(imm.into()))) }
