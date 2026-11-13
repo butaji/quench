@@ -66,6 +66,7 @@ pub(super) fn plain_value<S: Stage>(stage: &mut S, record: S::Word, slot: S::Wor
 
 /// A field read through two cache entries: the first names a value the second entry's site reads from.
 #[inline(always)]
+#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn site_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, (first, second): (S::Imm, S::Imm), miss: S::Miss) -> Option<S::Word> {
     site_tables(stage, tables, miss)?;
     let middle = site_read_in(stage, tables, object, first, miss)?;
@@ -143,6 +144,7 @@ pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S:
 /// a run in the arena, so `None` (leaving at `miss`) where it has none, or where an inline value
 /// is past the inline ones.
 #[inline(always)]
+#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 fn holder_value<S: Stage>(stage: &mut S, holder: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
     let payload = stage.load_u64(Region::Payload.mutable(), holder, OBJECT.payload_offset as i32);
     let extras = has_extras(stage, payload);
@@ -180,6 +182,7 @@ fn own_entry_value<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, mis
 /// entry's slot. `None` (leaving at `miss`) for any other receiver, link or holder, so a changed
 /// prototype is a miss.
 #[inline(always)]
+#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 fn holder_entry_value<S: Stage>(stage: &mut S, records: S::Word, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
     let link = super::object::proto_link(stage, record);
@@ -246,10 +249,37 @@ pub(crate) fn held_receiver<S: Stage>(stage: &mut S, records: S::Word, object: S
 /// `None` (leaving at `miss`) where the word is no direct object or the entry is no entry for
 /// the record (`own_entry_value`, `holder_entry_value`).
 #[inline(always)]
+#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 fn site_read_in<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
     let (_, record, entry) = site_record(stage, tables, object, offset, miss)?;
     let own = own_entry(stage, entry);
     stage.choose_leaving(own, |stage| own_entry_value(stage, record, entry, miss), |stage| holder_entry_value(stage, tables.1, record, entry, miss))
+}
+
+/// `site_read_in` of an own entry alone: `None` (leaving at `miss`) for an entry that names a
+/// prototype holder, which the interpreter's own-field handlers (`Vm::primary_own_field_hit`) do
+/// not answer, since they keep the receiver's slot as their hint.
+#[inline(always)]
+fn site_own_in<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
+    let (_, record, entry) = site_record(stage, tables, object, offset, miss)?;
+    let own = own_entry(stage, entry);
+    stage.guard(own, miss)?;
+    own_entry_value(stage, record, entry, miss)
+}
+
+/// `site_read` of an own entry alone (`site_own_in`).
+#[inline(always)]
+pub(crate) fn site_own_read<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
+    site_tables(stage, tables, miss)?;
+    site_own_in(stage, tables, object, offset, miss)
+}
+
+/// `site_chain` of own entries alone (`site_own_in`).
+#[inline(always)]
+pub(crate) fn site_own_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, (first, second): (S::Imm, S::Imm), miss: S::Miss) -> Option<S::Word> {
+    site_tables(stage, tables, miss)?;
+    let middle = site_own_in(stage, tables, object, first, miss)?;
+    site_own_in(stage, tables, middle, second, miss)
 }
 
 /// A field read through the cache entry `offset` bytes into the field cache table `entries`
@@ -258,6 +288,7 @@ fn site_read_in<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::
 /// offset is the row's only per-site operand, so a site is read as the interpreter's cached
 /// read reads it.
 #[inline(always)]
+#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn site_read<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
     site_tables(stage, tables, miss)?;
     site_read_in(stage, tables, object, offset, miss)

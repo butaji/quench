@@ -106,7 +106,7 @@ pub(crate) mod trace;
 pub(crate) use effects::{Effects, Region, RegionSet};
 #[allow(unused_imports)]
 pub(crate) use region::Access;
-pub(crate) use ic::{concrete_held_receiver, concrete_own_field_hit, concrete_site_chain, concrete_site_read, concrete_site_store};
+pub(crate) use ic::{concrete_held_receiver, concrete_own_field_hit, concrete_site_own_chain, concrete_site_own_read, concrete_site_store};
 pub(crate) use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
 
 mod stage;

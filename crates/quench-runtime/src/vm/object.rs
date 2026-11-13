@@ -1533,7 +1533,7 @@ impl<H: Host> Vm<H> {
         let offset = usize::from(site) as u64 * super::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64;
         // SAFETY: `active_field_entries` is the running program's table (`field_cache_entry`), the
         // site one of its sites, and the record table and arena the heap's own; the read ends here.
-        let value = unsafe { crate::staged::concrete_site_read(self.heap.arena_values_base(), (entries, records), object, offset) }?;
+        let value = unsafe { crate::staged::concrete_site_own_read(self.heap.arena_values_base(), (entries, records), object, offset) }?;
         #[cfg(feature = "profile-field-primitives")]
         self.profile.field_primitives.hit(crate::profile::field_primitives::Path::PrimaryOwnRead);
         self.profile.field_cache_hit(0, 0);
@@ -1548,7 +1548,7 @@ impl<H: Host> Vm<H> {
         let (entries, records) = (self.active_field_entries as u64, self.heap.object_record_base()? as u64);
         let offset = |site: u16| u64::from(site) * super::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64;
         // SAFETY: as `primary_own_field_hit`, for both sites.
-        let value = unsafe { crate::staged::concrete_site_chain(self.heap.arena_values_base(), (entries, records), base, (offset(first), offset(second))) }?;
+        let value = unsafe { crate::staged::concrete_site_own_chain(self.heap.arena_values_base(), (entries, records), base, (offset(first), offset(second))) }?;
         // One hit for each of the two reads.
         self.profile.field_cache_hit(0, 0);
         self.profile.field_cache_hit(0, 0);

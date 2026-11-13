@@ -145,29 +145,40 @@ pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, proper
 
 /// The own data value the field cache entry of the site `offset` bytes into `entries` (the
 /// running program's table, `Vm::active_field_entries`) names in `object`, which the object
-/// record table at `records` holds: the interpreter's primary read of a site, `site_read` through
-/// `Concrete`, the row the stencil build compiles from the same definition. `None` where it misses.
+/// record table at `records` holds: the interpreter's primary read of a site, `site_own_read`
+/// through `Concrete`, the own arm of the row the stencil build compiles from `site_read`. `None`
+/// where it misses, or the entry names a prototype holder.
 ///
 /// # Safety
 /// `entries` is the table of the running program and `offset` a site's byte offset in it,
 /// `records` the object record reservation and `property_values` the base of the arena that
 /// holds the record's run; none outlives the call.
 #[inline(always)]
+pub(crate) unsafe fn concrete_site_own_read(property_values: *const crate::Value, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
+    let mut stage = super::Concrete::new(property_values);
+    super::entry::site_own_read(&mut stage, (entries, records), object.to_bits(), offset, ()).map(crate::Value::from_bits)
+}
+
+/// `site_read` through `Concrete`: own and prototype-held entries alike.
+///
+/// # Safety
+/// As `concrete_site_own_read`.
+#[cfg(test)]
 pub(crate) unsafe fn concrete_site_read(property_values: *const crate::Value, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
     super::entry::site_read(&mut stage, (entries, records), object.to_bits(), offset, ()).map(crate::Value::from_bits)
 }
 
 /// The value `object.first.second` reads through the field cache entries `first` and `second`
-/// (byte offsets into `entries`): `site_chain` through `Concrete`, one proof of the tables for
+/// (byte offsets into `entries`): `site_own_chain` through `Concrete`, one proof of the tables for
 /// both reads. `None` where either misses.
 ///
 /// # Safety
-/// As `concrete_site_read`, for both offsets.
+/// As `concrete_site_own_read`, for both offsets.
 #[inline(always)]
-pub(crate) unsafe fn concrete_site_chain(property_values: *const crate::Value, tables: (u64, u64), object: crate::Value, offsets: (u64, u64)) -> Option<crate::Value> {
+pub(crate) unsafe fn concrete_site_own_chain(property_values: *const crate::Value, tables: (u64, u64), object: crate::Value, offsets: (u64, u64)) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
-    super::entry::site_chain(&mut stage, tables, object.to_bits(), offsets, ()).map(crate::Value::from_bits)
+    super::entry::site_own_chain(&mut stage, tables, object.to_bits(), offsets, ()).map(crate::Value::from_bits)
 }
 
 /// The store of `value` into the own data field the site's entry `offset` bytes into `entries`
