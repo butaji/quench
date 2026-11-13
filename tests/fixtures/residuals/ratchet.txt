@@ -1,1 +1,17 @@
 # kernel tier boxes guards spills calls instructions: current values, shrink-only
+array-copy u-jit 0 5 0 0 46
+array-copy b-jit 0 3 2 0 5
+bitwise-mix u-jit 0 1 0 0 37
+bitwise-mix b-jit 0 10 4 0 12
+closure-counter u-jit 2 3 1 1 51
+early-exit u-jit 0 3 0 0 38
+early-exit b-jit 1 5 1 0 9
+field-accumulate u-jit 0 3 0 0 50
+float-dot u-jit 0 5 0 0 70
+float-dot b-jit 0 5 5 0 7
+int-sum u-jit 0 1 0 0 23
+int-sum b-jit 2 5 2 0 7
+matmul u-jit 0 9 0 0 97
+matmul b-jit 0 16 9 0 20
+poly-field u-jit 0 8 0 0 183
+small-call u-jit 4 4 1 1 66

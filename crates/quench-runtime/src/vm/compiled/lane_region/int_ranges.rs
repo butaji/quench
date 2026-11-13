@@ -210,7 +210,8 @@ impl Analysis<'_> {
         if super::super::reads_length(self.program, instruction) && instruction.result_flags() == 0
             && let Some(FieldLookup::Atom { base, .. }) = instruction.field_lookup()
             && let Some(array) = base.register_index().filter(|array| *array != instruction.result_register()) {
-            state.relations.length_of[usize::from(instruction.result_register())] = Some(array);
+            // A result outside the unit's registers has no relation to keep.
+            if let Some(slot) = state.relations.length_of.get_mut(usize::from(instruction.result_register())) { *slot = Some(array); }
         }
     }
 
