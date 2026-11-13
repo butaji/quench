@@ -286,6 +286,7 @@ mod tests {
     /// An int32 and a double operand make the site a Number site, and nothing more.
     #[test]
     fn a_double_operand_makes_a_number_site() {
+    crate::vm::compiled::tier_policy::force_admission();
         let kinds = run_with("let s = 0; for (let i = 0; i < n; i++) { s = s + x; } return s;", "0.5");
         assert!(kinds.iter().any(|kinds| kinds.class() == OperandClass::Number && kinds.contains(OperandKinds::DOUBLE)), "{kinds:?}");
         assert!(kinds.iter().all(|kinds| kinds.class() <= OperandClass::Number), "{kinds:?}");
@@ -301,6 +302,7 @@ mod tests {
     /// Two int32s whose sum leaves the int32 range widen the site without a double operand.
     #[test]
     fn an_int32_overflow_widens_the_site() {
+    crate::vm::compiled::tier_policy::force_admission();
         let kinds = run_with("let s = 2147483000; for (let i = 0; i < n; i++) { s = s + 1000; } return s;", "1");
         assert!(kinds.iter().any(|kinds| kinds.contains(OperandKinds::WIDENED) && kinds.class() == OperandClass::Number), "{kinds:?}");
     }
@@ -308,6 +310,7 @@ mod tests {
     /// A comparison against a double records it through its out-of-line handler.
     #[test]
     fn a_double_comparison_records_its_operands() {
+    crate::vm::compiled::tier_policy::force_admission();
         let kinds = run_with("let c = 0; for (let i = 0; i < n; i++) { if (i < x) { c = c + 1; } } return c;", "10.5");
         assert!(kinds.iter().any(|kinds| kinds.contains(OperandKinds::DOUBLE)), "{kinds:?}");
     }

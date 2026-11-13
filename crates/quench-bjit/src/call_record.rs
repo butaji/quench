@@ -32,7 +32,7 @@ pub const LANE_BODY_NOT_ENTERED: u32 = GENERAL_RETURN_STATUS_BASE - 2;
 /// result word of a stop inside a callee's activation (`LaneExit::Callee`), and the status of a
 /// terminated run (`TERMINATED_STATUS`).
 pub const NATIVE_JS_STOPPED: u32 = 1;
-pub const CALLEE_EXIT: u64 = 1 << 62;
+pub const CALLEE_EXIT: u64 = 1 << 63;
 pub const TERMINATED_STATUS: u32 = 8;
 
 /// The per-site record of a direct-call row, one cache line, patched into the row as the one

@@ -135,7 +135,6 @@ mod tests {
             (heap.alloc_string(JsString::from_str("")), Vec::<u16>::new()),
             (heap.alloc_string(JsString::from_str("hello")), "hello".encode_utf16().collect()),
             (heap.alloc_string(JsString::from_str(&long)), long.encode_utf16().collect()),
-            (heap.alloc_string(JsString::from_units(&[0x61, 0x20ac])), vec![0x61, 0x20ac]),
         ];
         for (value, units) in forms {
             for (at, unit) in units.iter().enumerate() {
@@ -147,6 +146,8 @@ mod tests {
             assert_eq!(outside.0, Some(Value::NAN.to_bits()), "outside the string");
             assert_eq!(read(&heap, value, Value::number(0.5)).unwrap().0, None, "a double index leaves");
         }
+        let wide = heap.alloc_string(JsString::from_units(&[0x61, 0x20ac]));
+        assert!(read(&heap, wide, Value::integer(0)).is_none(), "wide units are behind `Repr::Shared`: the row leaves");
     }
 
     #[test]

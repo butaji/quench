@@ -43,13 +43,13 @@ impl Lowering<'_, '_> {
     /// (`Vm::stable_global_slot`), after taking its dependencies: the layout and the slot's
     /// type, and the realm that names the global object (`hold_global_slot`); a store also holds
     /// that no method cache names its atom (`emit_store_atom_admitted`).
-    pub(super) fn global_cell(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, exit: ir::Block)
+    pub(super) fn global_cell(&mut self, state: &mut State, pc: usize, row: &crate::staged::Operation<ir::Value, EmitProof>, exit: ir::Block)
         -> Option<GlobalSlot> {
         let GlobalRead::Slot(slot) = *self.global_reads.get(&pc)? else { return None };
         if !self.division().folds(BindingTime::Stable) { return None; }
         self.hold_global_slot(state, exit, slot);
-        if instruction.op() == crate::bytecode::Op::StoreName {
-            let admitted = self.emit_store_atom_admitted(instruction.atom_index());
+        if let crate::staged::Operation::GlobalWrite { atom, .. } = *row {
+            let admitted = self.emit_store_atom_admitted(atom);
             emit_js_guard(&mut self.builder, admitted, exit);
         }
         Some(slot)

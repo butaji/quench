@@ -66,6 +66,7 @@ fn osr_site(vm: &Vm<TestHost>, function_id: usize) -> crate::vm::dispatch_fast::
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_receiver_shape_departures_between_runs_do_not_exhaust_compilations() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(SOURCE, "osr-receiver-shape-departure.js")).unwrap();
     let function_id = function_named(&program, "sum");
     let mut vm = test_vm();
@@ -369,6 +370,7 @@ fn shared_osr_array_literals_allocate_in_native_loops() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_counted_loops_leave_at_nested_for_of_and_builtin_calls() {
+    crate::vm::compiled::tier_policy::force_admission();
     // A `for...of` over an Array, then a Set, and a builtin method call, each on a path some
     // iterations take: the counted loop leaves there, and the iterator protocol and the call
     // run in the interpreter.
@@ -384,6 +386,7 @@ fn shared_osr_counted_loops_leave_at_nested_for_of_and_builtin_calls() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_leave_inside_an_inlined_callee_makes_its_activation() {
+    crate::vm::compiled::tier_policy::force_admission();
     // The callee's loop overflows int32 (from `x = 72086`) on the last iterations of the
     // caller's native loop: the region leaves inside the inlined callee, whose live registers
     // make its activation.
@@ -441,6 +444,7 @@ fn repatch_leaves(changes: i32) -> Vec<(u64, u64)> {
 #[test]
 #[cfg(not(quench_profiled))]
 fn bjit_loop_whose_receiver_shape_changes_once_runs_native_again_after_one_leave() {
+    crate::vm::compiled::tier_policy::force_admission();
     let (exits, runs) = repatch_leaves(1)[0];
     assert_eq!(exits, 1, "the miss leaves once; the re-patched entry then hits");
     assert!(runs >= 2, "the region runs again after the leave: {runs} runs");
@@ -449,6 +453,7 @@ fn bjit_loop_whose_receiver_shape_changes_once_runs_native_again_after_one_leave
 #[test]
 #[cfg(not(quench_profiled))]
 fn bjit_site_whose_receiver_shape_changes_past_the_patch_bound_goes_generic() {
+    crate::vm::compiled::tier_policy::force_admission();
     use crate::vm::compiled::base_region::MAX_REPATCHES_PER_SITE;
     let leaves = repatch_leaves(i32::from(MAX_REPATCHES_PER_SITE) + 1);
     let (patched, generic) = leaves.split_at(usize::from(MAX_REPATCHES_PER_SITE));

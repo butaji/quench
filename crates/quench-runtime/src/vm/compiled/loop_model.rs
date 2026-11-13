@@ -9,7 +9,7 @@
 //! wall share of its time. The iterations to come are `taken / remaining_divisor` (Lindy).
 
 use super::tier_model::{compile_wall_permille, learned_ns_per_ir};
-use super::tier_policy::{Loops, Priors, PER_MILLE, STRESS, TIERS};
+use super::tier_policy::{admits_every_compile, Loops, Priors, PER_MILLE, TIERS};
 
 /// What one iteration of a loop `span` bytecodes long saves, in ns, over the interpreter.
 fn saved_per_iteration(priors: &Priors, span: u64) -> u64 {
@@ -41,7 +41,7 @@ fn required_taken(priors: &Priors, loops: &Loops, span: u64, compile_ns_per_ir: 
 /// The backward jumps a loop `span` bytecodes long takes in the interpreter before its compile
 /// pays, at the compile cost this process has learned; under `tier-stress` the warm-up alone.
 pub(in crate::vm) fn admission_taken(span: u64) -> u32 {
-    if STRESS { return TIERS.loops.warmup_taken; }
+    if admits_every_compile() { return TIERS.loops.warmup_taken; }
     required_taken(&TIERS.priors, &TIERS.loops, span, learned_ns_per_ir(), compile_wall_permille())
 }
 

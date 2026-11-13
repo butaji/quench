@@ -40,7 +40,7 @@ impl Lowering<'_, '_> {
         let row = crate::staged::Operation::decode(instruction, |_| None).expect("a call-out record decodes");
         let miss = self.guard_exit(state, pc as u32);
         self.canonicalize(state, pc);
-        let cell = self.global_cell(state, pc, instruction, miss);
+        let cell = self.global_cell(state, pc, &row, miss);
         let site = frame::call_out::CallOutSite { record, stop: self.call_out_stop(), registers: self.registers_base,
             properties: self.entry.as_ref().expect("entry facts").receiver.properties, spill: self.spilled(pc), cell };
         if !matches!(row, crate::staged::Operation::ForInNext { .. }) {

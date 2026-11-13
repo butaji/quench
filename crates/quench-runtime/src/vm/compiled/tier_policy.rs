@@ -188,6 +188,21 @@ pub(in crate::vm) const STRESS: bool = cfg!(feature = "tier-stress");
 /// (`regexp_native`): compiling costs about what this many searches of a small program do.
 pub(in crate::vm) const REGEXP_NATIVE_RUNS: u32 = if STRESS { 1 } else { 2000 };
 
+#[cfg(test)]
+thread_local! { static FORCED_ADMISSION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+/// Makes this thread's tier models admit every eligible compile, as `tier-stress` does for the
+/// process: for tests of what compiled code does, on fixtures too small to repay a compile.
+#[cfg(test)]
+pub(in crate::vm) fn force_admission() { FORCED_ADMISSION.set(true); }
+
+/// Whether the tier models admit every eligible compile (`tier-stress`, or a test that forced it).
+pub(in crate::vm) fn admits_every_compile() -> bool {
+    #[cfg(test)]
+    if FORCED_ADMISSION.get() { return true; }
+    STRESS
+}
+
 /// The thresholds every tier controller compares against: the measured row, or under
 /// `STRESS` the floor row, which makes every eligible site compile on its first chance.
 pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };

@@ -19,6 +19,7 @@ fn answer(vm: &mut Vm<TestHost>, source: &str, name: &str) -> Option<f64> {
 /// and agree with the run before.
 #[test]
 fn a_program_install_that_moves_the_field_cache_table_leaves_lane_entries_reading_it() {
+    crate::vm::compiled::tier_policy::force_admission();
     let hot = "globalThis.hot = function (o) { let s = 0; for (let i = 0; i < 4; i++) { s = (s + o.x + o.y) | 0; } return s; };";
     let drive = "globalThis.o = { x: 1, y: 2 }; let t = 0; for (let r = 0; r < 4000; r++) { t = (t + hot(o)) | 0; } globalThis.answer = t;";
     let wide: String = (0..WIDE_PROGRAM_SITES).map(|site| format!("w.f{site} = {site};")).collect();
@@ -48,6 +49,7 @@ const HOT_CALLEE: &str = r#"(function () {
 /// the entries. What an entry writes itself is its window and the stacks' room.
 #[test]
 fn entries_of_one_lane_run_rewrite_no_word_of_the_run() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::specialize(HOT_CALLEE, "hot-callee.js").unwrap();
     super::compiled::LANE_ENTRIES.with(|counts| counts.set((0, 0)));
     super::compiled::LANE_RUN_REWRITES.with(|count| count.set(0));

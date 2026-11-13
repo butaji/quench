@@ -76,6 +76,7 @@ fn a_remainder_loop_runs_through_the_lane_unit() {
 /// exit: the loop's native run count stays above its exits and the result matches.
 #[test]
 fn a_return_inside_a_loop_completes_through_the_lane_unit() {
+    crate::vm::compiled::tier_policy::force_admission();
     super::super::LANE_OSR_RUNS.with(|count| count.set(0));
     let program = crate::Engine::specialize(
         "function cmp(a, b) { var i = a.length; while (--i >= 0) { var r = a[i] - b[i]; if (r != 0) return r; } return 0; }
@@ -280,6 +281,7 @@ fn osr_run(source: &str, function: &str) -> (Vec<String>, crate::vm::dispatch_fa
 /// the binding see each store; another closure reads the value after the loop.
 #[test]
 fn a_capture_store_loop_keeps_its_capture_value() {
+    crate::vm::compiled::tier_policy::force_admission();
     let (output, osr) = osr_run(
         "function make(){ var c = 0; var peek = function(){ return c; };
            function add(n){ var seen = 0; for (var i = 0; i < n; i++) { c = (c + i) | 0; seen = (seen + c) | 0; } return seen; }

@@ -96,7 +96,8 @@ mod tests {
             let expected: Vec<u16> = text.bytes().map(u16::from).collect();
             assert_eq!(through_layout(&string), Some((false, expected)), "{text:?}");
         }
-        assert_eq!(through_layout(&wide), Some((true, vec![0x61, 0x20ac, 0xd800])));
+        // Wide units live behind `Repr::Shared`, not in the record: the record is not a flat form.
+        assert_eq!(through_layout(&wide), None);
     }
 
     #[test]

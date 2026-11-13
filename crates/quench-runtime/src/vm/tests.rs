@@ -14446,6 +14446,7 @@ fn lane_define_property_record_matches_interpreter_across_gc_and_throw() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
+    crate::vm::compiled::tier_policy::force_admission();
     // Five distinct loops call a polymorphic callback. Each reaches the OSR threshold, but
     // no callback identity is stable enough to build an inlined native region. The callbacks
     // force collection repeatedly and throw one unique object at the final call.
@@ -15133,6 +15134,7 @@ fn shared_osr_exact_effect_exit_preserves_prefix_across_gc_and_throw() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_inlines_method_calls_in_a_loop() {
+    crate::vm::compiled::tier_policy::force_admission();
     // Each iteration calls `x.am` twice: the region runs am3 in place, its object
     // parameter bound to the caller register it was moved from.
     let source = r#"
@@ -15200,6 +15202,7 @@ print(t + " " + w.array[5] + " " + w.array[77]);
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_inlined_callee_leaves_through_its_activation() {
+    crate::vm::compiled::tier_policy::force_admission();
     // An element the inlined callee reads leaves the subset partway through its loop: native
     // code leaves at the callee's instruction, whose activation the interpreter finishes.
     let source = r#"
@@ -15370,6 +15373,7 @@ print(t + " " + big + " " + (big > 2147483647));
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_inlines_calls_on_a_receiver_a_field_read_gives() {
+    crate::vm::compiled::tier_policy::force_admission();
     // `reduce` calls `this.m.am(…)` and reads `this.m.t`, a nested field: its loop runs am3
     // in place, the receiver the value of `this.m` at entry.
     // Wrapped in a function, as a CommonJS module is, so `DM` and `DV` are captures.
@@ -15774,6 +15778,7 @@ fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_compiles_numeric_truthiness_branches() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function zero() { return 0; }
@@ -15865,6 +15870,7 @@ fn shared_osr_compiles_numeric_truthiness_branches() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function seed() { return 0; }
@@ -16100,6 +16106,7 @@ fn shared_osr_exits_at_effectful_calls_with_live_state_written_back() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_reads_initialized_captured_environment_locals_and_deopts_non_numbers() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function run(initial) {
@@ -16363,6 +16370,7 @@ fn shared_osr_shape_invalidation_retires_only_dependent_code() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_compiles_typeof_switch_indices_and_falls_back_for_heap_values() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function classify(value) {
@@ -16443,6 +16451,7 @@ fn shared_osr_compiles_typeof_switch_indices_and_falls_back_for_heap_values() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_tagged_number_equality_keeps_boolean_negation_and_number_semantics() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function classify(value) {
@@ -16495,6 +16504,7 @@ fn shared_osr_tagged_number_equality_keeps_boolean_negation_and_number_semantics
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_compiles_loose_nullish_equality_without_coercion() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function seed() { return 0; }
@@ -23839,6 +23849,7 @@ fn lane_entry_counts(source: &str, mode: crate::ExecutionMode) -> LaneEntryCount
 /// context and interrupt standing, so the runs bound are a small fraction of the entries.
 #[test]
 fn interpreter_calls_cross_into_bodies_with_one_payload_per_lane_run() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"(function () {
       function step(a, b) { let s = 0; for (let i = 0; i < 4; i++) { s = (s + a * i + b) | 0; } return s; }
       let total = 0;

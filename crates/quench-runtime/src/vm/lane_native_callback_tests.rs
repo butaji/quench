@@ -59,6 +59,7 @@ fn run_source(mode: crate::ExecutionMode, source: &str) -> (Vec<String>, Vm<Test
 
 #[test]
 fn a_compiled_body_calls_natives_that_call_back_without_leaving() {
+    crate::vm::compiled::tier_policy::force_admission();
     assert_body_stays(CALLBACK_SOURCE);
 }
 
@@ -67,6 +68,7 @@ fn a_compiled_body_calls_natives_that_call_back_without_leaving() {
 /// iteration: the output equals the interpreter's and no call leaves the body.
 #[test]
 fn a_compiled_body_iterates_arrays_and_collections_without_leaving() {
+    crate::vm::compiled::tier_policy::force_admission();
     assert_body_stays(ITERATION_SOURCE);
 }
 

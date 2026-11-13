@@ -4,7 +4,7 @@
 //! numbers it reads are `TIERS.priors`, and the compile cost is learned from this process's
 //! own compiles.
 
-use super::tier_policy::{Priors, PER_MILLE, STRESS, TIERS};
+use super::tier_policy::{Priors, PER_MILLE, TIERS};
 use std::sync::Mutex;
 
 /// What the model knows of one function at a decision point.
@@ -83,7 +83,7 @@ pub(super) fn net_ns(priors: &Priors, share: u64, compile_ns_per_ir: u64, wall_p
 pub(super) fn admits(observed: &Observed, diagnostics: bool) -> bool {
     let net = net_ns(&TIERS.priors, TIERS.priors.body_share, learned_ns_per_ir(), compile_wall_permille(), observed);
     if diagnostics { shadow_log(observed, net); }
-    STRESS || net > 0
+    super::tier_policy::admits_every_compile() || net > 0
 }
 
 /// The decision under `QUENCH_TRACE=js-jit`.

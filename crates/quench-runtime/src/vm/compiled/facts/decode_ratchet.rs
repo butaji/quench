@@ -7,7 +7,7 @@
 fn constant_decodes_outside_the_facts_only_shrink() {
     const DECODES: &[(&str, &str, usize)] = &[
         ("vm/js_compiled.rs", include_str!("../../js_compiled.rs"), 0),
-        ("vm/compiled.rs", include_str!("../../compiled.rs"), 2),
+        ("vm/compiled.rs", include_str!("../../compiled.rs"), 0),
         ("vm/compiled/osr_loop.rs", include_str!("../osr_loop.rs"), 0),
         ("vm/compiled/lane_region.rs", include_str!("../lane_region.rs"), 0),
         ("vm/compiled/lane_unit.rs", include_str!("../lane_unit.rs"), 0),
