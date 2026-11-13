@@ -9830,7 +9830,7 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
         let mut optimized = Runtime::new(optimized_host);
         let optimized_program = Engine::specialize(source, "optimized.js").unwrap();
         assert!(optimized_program.specialized);
-        assert!(optimized_program.cache_sites > 0);
+        assert!(optimized_program.cache_sites.get() > 0);
         assert!(optimized_program.functions.iter().any(|function| {
             function
                 .code

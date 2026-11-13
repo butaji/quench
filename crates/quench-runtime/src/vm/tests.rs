@@ -2927,7 +2927,7 @@ fn property_sites_past_the_site_space_share_a_site_per_name() {
     );
     let program = Engine::specialize(&source, "site-overflow.js").unwrap();
     assert_eq!(
-        program.cache_sites,
+        program.cache_sites.get(),
         crate::bytecode::SHARED_UNCACHED_SITE + 1
     );
     let mut vm = Vm::new(TestHost::default());
@@ -2970,7 +2970,7 @@ fn name_shared_sites_keep_loads_apart_from_stores() {
          var result = seen + calls + ':' + ro.a + ':' + Object.keys(child).length;"
     );
     let program = Engine::specialize(&source, "name-shared-sites.js").unwrap();
-    assert_eq!(program.cache_sites, crate::bytecode::SHARED_UNCACHED_SITE + 1);
+    assert_eq!(program.cache_sites.get(), crate::bytecode::SHARED_UNCACHED_SITE + 1);
     let mut vm = Vm::new(TestHost::default());
     vm.execute(&program).unwrap();
     let name = vm.intern_atom("result");

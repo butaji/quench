@@ -3668,15 +3668,15 @@ pub struct ResidualProgram {
     pub(crate) source_name: String,
     pub(crate) source: Option<ProgramSource>,
     pub(crate) atoms: AtomTable,
-    pub(crate) constants: Vec<Constant>,
-    pub(crate) functions: Vec<FunctionSlot>,
-    pub(crate) cache_sites: u16,
-    pub(crate) method_sites: Vec<MethodSite>,
-    pub(crate) method_arguments: Vec<Register>,
+    pub(crate) constants: append_vec::AppendVec<Constant>,
+    pub(crate) functions: append_vec::AppendVec<FunctionSlot>,
+    pub(crate) cache_sites: std::cell::Cell<u16>,
+    pub(crate) method_sites: append_vec::AppendVec<MethodSite>,
+    pub(crate) method_arguments: append_vec::AppendVec<Register>,
     pub(crate) field_sites: append_vec::AppendVec<FieldSite>,
-    pub(crate) object_sites: Vec<ObjectSite>,
-    pub(crate) regexp_literal_sites: Vec<RegExpLiteralSite>,
-    pub(crate) literal_templates: Vec<Box<[LiteralStep]>>,
+    pub(crate) object_sites: append_vec::AppendVec<ObjectSite>,
+    pub(crate) regexp_literal_sites: append_vec::AppendVec<RegExpLiteralSite>,
+    pub(crate) literal_templates: append_vec::AppendVec<Box<[LiteralStep]>>,
     pub(crate) superinstructions: append_vec::AppendVec<Superinstruction>,
     pub(crate) rewrite_ranges: crate::compile::replay::RewriteRanges,
     /// How its functions can be compiled again from source, when they can.
@@ -4052,7 +4052,7 @@ impl ResidualProgram {
     /// The sizes of the program's inline-cache site tables, which a VM lays out per program.
     pub(crate) fn cache_site_counts(&self) -> CacheSiteCounts {
         CacheSiteCounts {
-            fields: self.cache_sites,
+            fields: self.cache_sites.get(),
             methods: self.method_sites.len(),
             objects: self.object_sites.len(),
         }

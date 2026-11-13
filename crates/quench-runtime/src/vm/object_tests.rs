@@ -70,8 +70,8 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
         .iter()
         .position(|atom| atom == "method")
         .unwrap() as Atom;
-    let cache = program.cache_sites;
-    program.cache_sites = program.cache_sites.checked_add(1).unwrap();
+    let cache = program.cache_sites.get();
+    program.cache_sites.set(program.cache_sites.get().checked_add(1).unwrap());
     let site = program.method_sites.len() as u32;
     program.method_sites.push(crate::bytecode::MethodSite {
         atom,

@@ -37,12 +37,18 @@ impl<T> AppendVec<T> {
         &mut vec[index]
     }
 
+    /// Adds `entry` after the current ones, as `append`.
+    #[cfg(test)]
+    pub(crate) fn push(&mut self, entry: T) {
+        self.0.get_mut().push(entry);
+    }
+
     /// How many entries `append` can still add.
     pub(crate) fn spare(&self) -> usize {
         self.capacity() - self.len()
     }
 
-    fn capacity(&self) -> usize {
+    pub(crate) fn capacity(&self) -> usize {
         // SAFETY: reads the capacity field only.
         unsafe { (*self.0.get()).capacity() }
     }
@@ -61,6 +67,12 @@ impl<T> Deref for AppendVec<T> {
 impl<T> std::ops::DerefMut for AppendVec<T> {
     fn deref_mut(&mut self) -> &mut [T] {
         self.0.get_mut()
+    }
+}
+
+impl<T: PartialEq> PartialEq for AppendVec<T> {
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
     }
 }
 

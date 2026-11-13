@@ -3428,7 +3428,7 @@ impl<'a> Compiler<'a> {
                 call_sites: Default::default(),
             })),
             atoms,
-            constants,
+            constants: constants.into(),
             // Collected into a table of its own size: an in-place collect would keep the
             // records' larger allocation.
             functions: {
@@ -3440,15 +3440,15 @@ impl<'a> Compiler<'a> {
                         None => FunctionSlot::released(released[&id].header),
                     }
                 }));
-                slots
+                slots.into()
             },
-            cache_sites: self.cache_sites,
-            method_sites,
-            method_arguments,
+            cache_sites: self.cache_sites.into(),
+            method_sites: method_sites.into(),
+            method_arguments: method_arguments.into(),
             field_sites: crate::bytecode::append_vec::AppendVec::with_headroom(field_sites, self.deferred_rewrite_code / FIELD_SITE_WINDOW + 1),
-            object_sites: self.object_sites.into_vec(),
-            regexp_literal_sites: self.regexp_literal_sites.into_vec(),
-            literal_templates: self.literal_templates.into_vec(),
+            object_sites: self.object_sites.into_vec().into(),
+            regexp_literal_sites: self.regexp_literal_sites.into_vec().into(),
+            literal_templates: self.literal_templates.into_vec().into(),
             superinstructions: crate::bytecode::append_vec::AppendVec::with_headroom(self.superinstructions.into_vec(), self.deferred_rewrite_code / SUPERINSTRUCTION_WINDOW + 1),
             rewrite_ranges: replay::RewriteRanges { kept_pending: self.kept_rewrites_pending, ..Default::default() },
             replay: replay_atoms.map(|atoms| {

@@ -3064,18 +3064,18 @@ impl<H: Host> Vm<H> {
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
             proxy_traps: proxy::PROXY_TRAP_NAMES.map(|name| self.intern_atom(name)),
         };
-        self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites.get()));
         self.field_caches_moved();
         self.field_cache_writes = Some(Vec::new());
         program.prime_loop_decoding();
         self.heap.dependencies_mut().clear_inherited();
-        self.inherited_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
-        self.accessor_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.inherited_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.get()));
+        self.accessor_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.get()));
         self.accessor_fields.clear();
-        self.field_add_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.field_add_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.get()));
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
-        self.megamorphic_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.megamorphic_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.get()));
         self.megamorphic_fields.clear();
         self.holder_hints.clear();
         self.length_atom = self.intern_atom("length");
@@ -3109,7 +3109,7 @@ impl<H: Host> Vm<H> {
         self.program_cache_layouts.clear();
         self.free_cache_layouts.clear();
         self.program_cache_layouts.push(ProgramCacheLayout {
-            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program.cache_sites),
+            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program.cache_sites.get()),
             ..ProgramCacheLayout::default()
         });
         self.set_active_program(ProgramId::MAIN);
