@@ -132,8 +132,7 @@ fn an_ordinary_function_with_locals_and_a_with_statement_runs_as_an_environment_
     assert_eq!(agree(source), ["45450"]);
     let program = crate::Engine::specialize(source, "scoped-activation.js").unwrap();
     let pick = program
-        .functions
-        .iter()
+        .compiled_functions()
         .find(|function| function.name.is_some_and(|atom| program.atoms[atom as usize].to_string() == "pick"))
         .expect("the function is in the program");
     assert!(pick.call_plan(&program).environment_activation);
@@ -145,8 +144,7 @@ fn an_ordinary_function_reading_implicit_bindings_stays_a_frame() {
     // no record to keep.
     let program = crate::Engine::specialize("function f(o) { let t = 0; with (o) { t = eval('a'); } return () => t; }", "eval-frame.js").unwrap();
     let f = program
-        .functions
-        .iter()
+        .compiled_functions()
         .find(|function| function.name.is_some_and(|atom| program.atoms[atom as usize].to_string() == "f"))
         .expect("the function is in the program");
     assert!(!f.call_plan(&program).environment_activation);

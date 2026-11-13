@@ -234,8 +234,7 @@ pub(super) mod tests {
     pub(in crate::vm) fn layouts(source: &str) -> Vec<(bool, bool)> {
         let program = Engine::specialize(source, "suspended-plans.js").unwrap();
         program
-            .functions
-            .iter()
+            .compiled_functions()
             .filter(|function| function.is_generator || function.is_async)
             .map(|function| {
                 let plan = function.call_plan(&program);

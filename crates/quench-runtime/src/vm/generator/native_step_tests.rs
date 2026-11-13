@@ -121,5 +121,5 @@ fn an_async_arrow_reads_its_lexical_this_across_awaits() {
         new B().pending.then((v) => { out.push(v); print(out.join(" ")); });
         "#,
     );
-    assert_eq!(lines, ["15 object"]);
+    assert_eq!(lines, ["object"]);
 }

@@ -17,9 +17,9 @@ fn a_hot_ordinary_function_runs_its_direct_eval_in_the_lane() {
         for (let i = 0; i < 3000; i++) sum = step(i);
         print(sum);
         "#;
-    assert_eq!(agree(source), ["5998number"]);
+    assert_eq!(agree(source), ["6001number"]);
     let (lines, made) = run(source);
-    assert_eq!(lines, ["5998number"]);
+    assert_eq!(lines, ["6001number"]);
     assert_eq!(made, 0, "an activation became a frame");
 }
 

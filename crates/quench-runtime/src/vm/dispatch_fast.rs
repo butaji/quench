@@ -11736,7 +11736,9 @@ impl<H: Host> Vm<H> {
             // completes across programs as a call does (`Completion::CrossConstructs`); a
             // forwarding one runs its program's keeping construction
             // (`lane_construct_keeping_activation`), which another program's caller does not.
-            constructs: shape.constructs && !settles && !body.rest && !(cross && plan.keeps_arguments),
+            constructs: shape.constructs && !settles && !body.rest && !(cross && plan.keeps_arguments)
+                // An environment activation's window has no record to hold the `new.target` an arrow reads.
+                && !(environment && body.activation_bindings_observable(code)),
             initializes: shape.initializes && !environment && !settles && !cross && !body.rest,
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.

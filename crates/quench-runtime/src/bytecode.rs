@@ -4105,6 +4105,12 @@ impl ResidualProgram {
         }
     }
 
+    /// Every function, compiled where its slot is not yet (tests).
+    #[cfg(test)]
+    pub(crate) fn compiled_functions(&self) -> impl Iterator<Item = &Function> {
+        (0..self.function_count()).map(|index| self.function(index))
+    }
+
     pub fn function_count(&self) -> usize {
         self.functions.len()
     }
