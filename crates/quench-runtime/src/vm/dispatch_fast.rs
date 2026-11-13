@@ -16399,16 +16399,28 @@ lane_handler! {
 /// `lane_return_plain` of the innermost activation, a script one whose call keeps its
 /// result: of the caller's program (`Completion::Plain`), or, where `CROSSES`, of another
 /// (`Completion::Cross`), which enters the caller's program first, or, where `CONSTRUCTS`, a
-/// `new` of its program (`Completion::Constructs`). `INTO_BODY` admits a returning call too.
+/// `new` of its program (`Completion::Constructs`), or, where `SETTLES`, a settling async
+/// call (`Completion::SettlesPromise`), whose promise the value resolves and the call yields.
+/// `INTO_BODY` admits a returning call too.
 #[inline(always)]
-fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const CONSTRUCTS: bool>(cx: *mut LaneContext<H>, mut value: Value) -> Option<(Registers, Ip)> {
+fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const CONSTRUCTS: bool, const SETTLES: bool>(cx: *mut LaneContext<H>, mut value: Value) -> Option<(Registers, Ip)> {
     debug_assert!(unsafe { (*cx).leaf.call }.is_null(), "a leaf's own returns complete it");
     let vm = unsafe { vm(cx) };
+    // A resolution that would observe the value returns it from the frame instead.
+    let then = if SETTLES { lane_settled_then(vm, value)? } else { Value::UNDEFINED };
     // A construction yields its receiver, the activation's `this`, for a non-object result.
     if CONSTRUCTS && !vm.is_object_like(value) { value = unsafe { (*cx).this }; }
     let stack = &mut vm.lane_stack;
     let top = stack.activations.last()?;
-    let expected = if CROSSES { Completion::Cross } else if CONSTRUCTS { Completion::Constructs } else { Completion::Plain };
+    let expected = if CROSSES {
+        Completion::Cross
+    } else if CONSTRUCTS {
+        Completion::Constructs
+    } else if SETTLES {
+        Completion::SettlesPromise
+    } else {
+        Completion::Plain
+    };
     let ActivationKind::Script(script) = &top.kind else { return None };
     if script.completion != expected { return None; }
     // SAFETY: the call record belongs to the caller's live view.
@@ -16440,6 +16452,7 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
         (*cx).env = env;
         (*cx).capture = capture;
     }
+    if SETTLES { value = lane_settle_promise(cx, value, then); }
     caller_registers.set(destination, value);
     Some((caller_registers, following(call)))
 }

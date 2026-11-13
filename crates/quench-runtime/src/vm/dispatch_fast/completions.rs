@@ -26,7 +26,8 @@ pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, 
         // `lane_complete_activation` begins with the same chain.
         Some(Completion::Plain) => None,
         Some(Completion::Cross) => lane_complete_cross_activation(cx, value),
-        Some(Completion::Constructs) => lane_return_from::<H, false, false, true>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
+        Some(Completion::SettlesPromise) => lane_return_from::<H, false, false, false, true>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
+        Some(Completion::Constructs) => lane_return_from::<H, false, false, true, false>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
         _ => None,
     };
     if common.is_some() {
@@ -43,7 +44,7 @@ pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, 
 /// activation the same way (`lane_complete_cross_activation`).
 #[inline(always)]
 pub(super) fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
-    lane_return_from::<H, false, false, false>(cx, value)
+    lane_return_from::<H, false, false, false, false>(cx, value)
 }
 
 /// `lane_return_plain` into a running lane body's call (`lane_body_call`): a returning
@@ -51,7 +52,7 @@ pub(super) fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) 
 /// it next (`LaneExit::Returned`).
 #[inline(always)]
 pub(super) fn lane_return_to_body<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
-    lane_return_from::<H, false, true, false>(cx, value)
+    lane_return_from::<H, false, true, false, false>(cx, value)
 }
 
 /// `lane_complete_plain_activation` of an activation of another program than its caller's
@@ -60,7 +61,7 @@ pub(super) fn lane_return_to_body<H: Host>(cx: *mut LaneContext<H>, value: Value
 /// carries none of the program switch.
 #[inline(always)]
 pub(super) fn lane_complete_cross_activation<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
-    let (registers, next) = lane_return_from::<H, true, false, false>(cx, value)?;
+    let (registers, next) = lane_return_from::<H, true, false, false, false>(cx, value)?;
     Some(Resumed::At(registers, next, Carried::script(cx)))
 }
 
