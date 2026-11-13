@@ -166,25 +166,9 @@ pub(super) fn number_truthiness<T: Copy, S: NumberTruthinessStage<T>>(
     stage.and(nonzero, not_nan)
 }
 
-/// The int32 operations used by JavaScript bitwise expressions. Keeping their
-/// operator mapping and operation selection in one stage lets the interpreter
-/// and native emitters share the same signed/unsigned shift decisions.
-pub(crate) trait NumberBitwiseStage<T> {
-    type Output;
-
-    fn and(&mut self, left: T, right: T) -> Self::Output;
-    fn or(&mut self, left: T, right: T) -> Self::Output;
-    fn xor(&mut self, left: T, right: T) -> Self::Output;
-    fn shift_left(&mut self, left: T, right: T) -> Self::Output;
-    fn shift_right(&mut self, left: T, right: T) -> Self::Output;
-    fn shift_right_unsigned(&mut self, left: T, right: T) -> Self::Output;
-}
-
-macro_rules! number_bitwise {
+/// `number_bitwise_rows` rows' operators: which binary operator denotes each operation.
+macro_rules! number_bitwise_operators {
     ($($operation:ident => $operator:ident, $stage_method:ident;)+) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(crate) enum NumberBitwise { $($operation),+ }
-
         impl NumberBitwise {
             /// `from_operator` of a decoded operator, as one match.
             #[inline(always)]
@@ -224,47 +208,6 @@ impl NumberBitwise {
     pub(super) fn result_is_int32(self, right: Option<f64>) -> bool {
         self != Self::ShiftRightUnsigned || right.is_some_and(|right|
             crate::value::number_to_u32(right) & crate::value::WORD32_SHIFT_MASK != 0)
-    }
-}
-
-struct I32BitwiseStage;
-
-impl NumberBitwiseStage<i32> for I32BitwiseStage {
-    type Output = i32;
-
-    #[inline(always)]
-    fn and(&mut self, left: i32, right: i32) -> Self::Output {
-        left & right
-    }
-    #[inline(always)]
-    fn or(&mut self, left: i32, right: i32) -> Self::Output {
-        left | right
-    }
-    #[inline(always)]
-    fn xor(&mut self, left: i32, right: i32) -> Self::Output {
-        left ^ right
-    }
-    #[inline(always)]
-    fn shift_left(&mut self, left: i32, right: i32) -> Self::Output {
-        ((left as u32).wrapping_shl((right as u32) & crate::value::WORD32_SHIFT_MASK)) as i32
-    }
-    #[inline(always)]
-    fn shift_right(&mut self, left: i32, right: i32) -> Self::Output {
-        left >> ((right as u32) & crate::value::WORD32_SHIFT_MASK)
-    }
-    #[inline(always)]
-    fn shift_right_unsigned(&mut self, left: i32, right: i32) -> Self::Output {
-        ((left as u32) >> ((right as u32) & crate::value::WORD32_SHIFT_MASK)) as i32
-    }
-}
-
-#[inline(always)]
-fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) -> f64 {
-    let bits = operation.apply(&mut I32BitwiseStage, left, right);
-    if operation == NumberBitwise::ShiftRightUnsigned {
-        f64::from(bits as u32)
-    } else {
-        f64::from(bits)
     }
 }
 

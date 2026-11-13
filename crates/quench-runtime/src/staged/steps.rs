@@ -33,7 +33,9 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 fn value_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
-        Operation::LoadThis { destination } => load_this(stage, frame, destination),
+        Operation::LoadThis { destination } => load_this(stage, frame, destination, frame.miss()),
+        Operation::RequireIteratorResult { register } => super::iteration::require_iterator_result(stage, frame, register, frame.miss()),
+        Operation::ToPropertyKey { destination, source } => super::iteration::to_property_key(stage, frame, destination, source, frame.miss()),
         Operation::TypeofIndex { destination, source } => super::control::typeof_index(stage, frame, destination, source),
         Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::Protocol { .. }
@@ -79,29 +81,6 @@ fn local_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             Step::Value(value)
         }
         _ => Step::Unresolved,
-    }
-}
-
-/// The activation's `this` word where it holds one; an unbound `this` leaves at `miss`.
-#[inline(always)]
-pub(super) fn bound_this<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss) -> Option<S::Word> {
-    let this = frame.this(stage);
-    let bound = stage.ne_imm(this, crate::Value::DELETED.to_bits());
-    stage.guard(bound, miss)?;
-    Some(this)
-}
-
-/// The activation's `this` into `destination`, where the activation holds it.
-#[inline(always)]
-fn load_this<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    destination: Register) -> Step<S::Word, F::Control> {
-    let miss = frame.miss();
-    match bound_this(stage, frame, miss) {
-        Some(this) => {
-            frame.define_this(stage, destination, this);
-            Step::Value(this)
-        }
-        None => Step::Unresolved,
     }
 }
 
