@@ -19602,7 +19602,9 @@ fn derive_lane_view<'live, H: Host>(
     specialize_negated_instanceof::<H>(&mut records);
     specialize_frame_locals::<H>(function, &mut records);
     specialize_captures::<H>(&mut records);
-    let environment_window = specialize_environment_window::<H>(function, &decoded, &mut records);
+    // A Wasm view's records take no JavaScript context (`script_handler!`): it has no environment windows.
+    let environment_window = (kind != crate::bytecode::ProgramKind::Wasm)
+        .then(|| specialize_environment_window::<H>(function, &decoded, &mut records)).flatten();
     let (loops, osr_rejections) = if loop_tier && kind != crate::bytecode::ProgramKind::Wasm {
         install_loop_sites::<H>(
             function_id,
