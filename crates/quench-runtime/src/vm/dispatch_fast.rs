@@ -3954,14 +3954,28 @@ script_handler! {
         // the one read this record makes inline; every other takes the window's out of line,
         // so this one keeps few registers.
         if ENVIRONMENT {
-            let (slot, _) = environment_window_fields(i);
-            if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0
-                && unsafe { (*cx).env }.is_deleted()
-                && let Some((storage, _)) = lane_known_frame_storage(cx)
-                && let Some(value) = storage.dense().and_then(|dense| dense.dense_plain(slot))
-            {
-                r.set(i.a, value);
-                next!(cx, r, following(ip), view)
+            let (slot, registers) = environment_window_fields(i);
+            if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0 {
+                // The environment value decides the read: a frame run's storage that a local
+                // access already found (`lane_frame_storage`), or an activation's window,
+                // whose in-place storage aliases its slots (`lane_activate_environment`).
+                // Both are the same dense slot read; a miss takes the handlers out of line.
+                let env = unsafe { (*cx).env };
+                let value = if env.is_deleted() {
+                    lane_known_frame_storage(cx)
+                        .and_then(|(storage, _)| storage.dense().and_then(|dense| dense.dense_plain(slot)))
+                } else {
+                    // SAFETY: as `lane_load_window_local_window`'s read of the window's storage.
+                    let storage = unsafe {
+                        &*(std::mem::transmute::<Value, u64>(r.get(registers + WINDOW_SLOTS))
+                            as *const crate::heap::EnvironmentSlots)
+                    };
+                    storage.dense().and_then(|dense| dense.dense_plain(slot))
+                };
+                if let Some(value) = value {
+                    r.set(i.a, value);
+                    next!(cx, r, following(ip), view)
+                }
             }
             sibling!(lane_load_window_local_window::<H, true>, r, ip, view)
         }
