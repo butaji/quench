@@ -23,7 +23,7 @@ pub(crate) use field_store::{FieldStore, StoreReceiver, field_store_op};
 mod instruction;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
-mod numeric_ops; mod op_classes; mod unary_operators;
+mod numeric_ops; mod op_classes; mod op_scan; mod unary_operators;
 pub(crate) use unary_operators::*;
 mod source_positions;
 pub(crate) use source_positions::SourcePositions;
@@ -1947,7 +1947,7 @@ impl Function {
         }
         let plain = crate::bitset::BitSet::from_fn(locals, |slot| self.plain_local_slot_is_safe(slot));
         let mut dead_zone = crate::bitset::BitSet::new(locals);
-        for instruction in self.instructions().filter(|instruction| instruction.op() == Op::InitializeTdz) {
+        for instruction in self.instructions_of(|op| op == Op::InitializeTdz) {
             if plain.contains(instruction.local_slot()) {
                 dead_zone.insert(instruction.local_slot());
             }
@@ -2070,18 +2070,9 @@ impl Function {
             || self.instance_initializer.is_some()
             || self.inherited_with_scope
             || !self.binding_sites.is_empty()
-            || self.instructions().any(|instruction| {
+            || self.instructions_of(name_bindings::may_read_binding).any(|instruction| {
                 name_bindings::reads_hidden_name(instruction, tables)
-                    || matches!(
-                        instruction.op(),
-                        Op::ResolveName
-                            | Op::LoadResolvedName
-                            | Op::DeleteName
-                            | Op::StoreResolvedName
-                            | Op::StoreVarBinding
-                            | Op::InitializeThis
-                            | Op::SuperCallCheck
-                    )
+                    || name_bindings::reads_binding_op(instruction.op())
                     || (instruction.op().is_call_with_eval_flags()
                         && (instruction.direct_eval() || instruction.parameter_eval()))
             })
@@ -2106,12 +2097,10 @@ impl Function {
             Some(captured) => {
                 u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
             }
-            None => self.instructions().any(|instruction| {
-                matches!(
-                    instruction.op(),
-                    Op::MakeClosure | Op::LoadEnvLocal | Op::StoreEnvLocal
-                )
-            }),
+            None => self
+                .instructions_of(|op| matches!(op, Op::MakeClosure | Op::LoadEnvLocal | Op::StoreEnvLocal))
+                .next()
+                .is_some(),
         }
     }
 
