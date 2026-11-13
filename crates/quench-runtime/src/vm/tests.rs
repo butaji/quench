@@ -20175,10 +20175,46 @@ if (mapped[1999].o.i !== 1999 || mapped.length !== 2000) throw Error('values sto
     }
 }
 
+#[test]
+fn lane_name_loads_resolve_undefined_intrinsics_and_call_receivers() {
+    // By-name loads of the global `undefined`, of globals a call reads (whose receiver is
+    // `undefined`: a strict function's `this`, globalThis for a sloppy one), of intrinsic
+    // names (`{ __proto__: v }`, `super`) and of intrinsic natives, run from their first
+    // resolution to their bound reads (`lane_load_name_resolve`, `lane_load_name_bound`). The
+    // expected values are Node's.
+    let source = r#"
+      function hot(f) { var s = 0; for (var i = 0; i < 3000; i++) s = (s + f(i)) | 0; return s; }
+      function strictThis() { "use strict"; return this === undefined ? 1 : 0; }
+      function sloppyThis() { return this === globalThis ? 1 : 0; }
+      var out = [];
+      out.push(hot(function () { return undefined === void 0 ? 1 : 0; }));
+      out.push(hot(function () { return strictThis(); }));
+      out.push(hot(function () { return sloppyThis(); }));
+      out.push(hot(function (i) { return Math.max(i, 5) & 7; }));
+      out.push(hot(function (i) { return { __proto__: Array.prototype, v: i } instanceof Array ? 1 : 0; }));
+      class A { m() { return 1; } }
+      class B extends A { m() { return super.m() + 1; } }
+      var b = new B();
+      out.push(hot(function () { return b.m(); }));
+      out.push(hot(function () { return typeof parseInt === "function" ? 1 : 0; }));
+      out.push(hot(function () { return Number.isInteger(parseInt("12", 10)) ? 2 : 0; }));
+      print(out.join(" "));
+    "#;
+    let program = Engine::specialize(source, "lane-name-loads.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["3000 3000 3000 10515 3000 6000 3000 6000"], "{mode:?}");
+    }
+}
+
 #[cfg(not(quench_profiled))]
 #[test]
 fn global_reads_follow_redefinition_deletion_accessors_and_later_lexical_declarations() {
-    // Hot reads of global bindings (`lane_load_global_name`) across every change of what the
+    // Hot reads of global bindings (`lane_load_name_bound`) across every change of what the
     // name resolves to; the expectations are Node's, each script run as its own global Script.
     let first = r#"
 function hot(read) { var s = 0; for (var i = 0; i < 2000; i++) s = (s + read()) | 0; return s; }
@@ -21304,6 +21340,80 @@ fn lane_bodies_allocate_literals() {
     }
     // Node's answer for the same program.
     assert_eq!(answers, [Some(-1474336480.0); 2]);
+}
+
+/// The osr diagnostics of function `name` after `source` runs compiled under every memory
+/// policy that compiles loops, with the printed output each policy must give.
+fn compiled_loop_diagnostics(source: &str, file: &str, name: &str, expected: &[&str])
+    -> Vec<(crate::MemoryPolicy, super::dispatch_fast::OsrDiagnostics)> {
+    let program = Engine::specialize(source, file).unwrap();
+    let function_id = program.functions.iter()
+        .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+    let mut diagnostics = Vec::new();
+    for policy in crate::MemoryPolicy::ALL.into_iter().filter(|policy| super::compiled::loop_tier_compiles(*policy)) {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{policy:?}");
+        let views = compiled.programs.lane_views(super::program_store::ProgramId::MAIN).expect("main program lane views");
+        diagnostics.push((policy, views.get(function_id).and_then(super::program_store::derived_lane_view)
+            .expect("the function's lane view").osr_diagnostics()));
+    }
+    diagnostics
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn lane_loops_make_array_literals_of_integers_and_objects_natively() {
+    // An array literal of integers, a number computed in the loop and one object twice
+    // (`Allocation::ArrayOf`) is made by the loop's native code, which reads the elements back
+    // as the interpreter does; the loop leaves only where a collection is due. Expected value
+    // is Node's.
+    let source = r#"
+      function run(n) {
+        var t = 0;
+        for (var i = 0; i < n; i++) {
+          var o = { v: i };
+          var a = [i, o, i + 1, o, 7];
+          t = (t + a[0] + a[1].v + a[2] + a[3].v + a[4] + a.length) | 0;
+        }
+        return t;
+      }
+      var s = 0;
+      for (var k = 0; k < 200; k++) s = (s + run(300)) | 0;
+      print(s);
+    "#;
+    for (policy, osr) in compiled_loop_diagnostics(source, "lane-array-literal-loop.js", "run", &["36660000"]) {
+        assert!(osr.native_region_runs > 0 && osr.exits < osr.native_region_runs, "{policy:?}: {osr:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn lane_loops_make_regexp_literals_natively_with_fresh_state() {
+    // A regexp literal in a loop (`Allocation::RegExp`, `lane_new_regexp`) is a fresh object of
+    // its site's template each iteration: matching one leaves the others' `lastIndex` alone,
+    // and the loop leaves only where a collection is due. Expected value is Node's.
+    let source = r#"
+      function run(n) {
+        var t = 0, re;
+        for (var i = 0; i < n; i++) {
+          re = /a(b+)c/g;
+          t = (t + i) | 0;
+        }
+        return [re, t];
+      }
+      var first = run(300)[0], last, total = 0;
+      for (var k = 0; k < 200; k++) { var made = run(300); last = made[0]; total = (total + made[1]) | 0; }
+      first.test("xabbc");
+      print([first.lastIndex, last.lastIndex, first !== last, last.source, last.flags, last.exec("xabbbc")[1], total].join(" "));
+    "#;
+    for (policy, osr) in compiled_loop_diagnostics(source, "lane-regexp-literal-loop.js", "run", &["5 0 true a(b+)c g bbb 8970000"]) {
+        assert!(osr.native_region_runs > 0 && osr.exits < osr.native_region_runs, "{policy:?}: {osr:?}");
+    }
 }
 
 #[test]

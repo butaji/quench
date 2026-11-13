@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::bytecode::{Operand, Register, WideInstruction};
-use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NumericFrame, Operation, Protocol, Step};
+use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, NumericFrame, Operation, PropertyFrame, Protocol, Step};
 
 /// What the global-name rows did in a test: the call-outs that ran, and the direct global stores
 /// and typeofs the lane specializer emitted instead of one.
@@ -26,11 +26,13 @@ pub(crate) mod counts {
     }
 }
 
-/// Where a call-out runs: the running frame, and the PC after its instruction, which the
-/// binding rules of a name read for their error site.
+/// Where a call-out runs: the running frame, the function whose code holds the instruction (the
+/// strictness a refusal throws by), and the PC after its instruction, which the binding rules of
+/// a name read for their error site.
 #[derive(Clone, Copy)]
 pub(super) struct CallSite {
     pub(super) frame: usize,
+    pub(super) function: u32,
     pub(super) resume: usize,
 }
 
@@ -53,6 +55,10 @@ impl<H: Host> Vm<H> {
             }
             CallOut::Binary { operator, .. } =>
                 self.binary(p, operator, first.expect("a binary names its left operand"), operand).map(Some),
+            CallOut::Delete { strict, .. } => {
+                let strict = strict || p.function(site.function as usize).strict;
+                self.delete_reference_property_mode(p, first.expect("a delete names its base"), operand, strict).map(Some)
+            }
             CallOut::ForInNext { .. } => Ok(Some(self.for_in_next(p, operand)?.unwrap_or(Value::DELETED))),
             CallOut::Protocol { step, .. } => self.protocol_step(p, step, first, second),
             _ => self.name_step(p, site, operation, first),
@@ -64,7 +70,7 @@ impl<H: Host> Vm<H> {
     fn name_step(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut, value: Option<Value>)
         -> Result<Option<Value>, JsError> {
         let site = if operation.reads_frame_locals() { self.own_frame(site) } else { site };
-        let CallSite { frame, resume } = site;
+        let CallSite { frame, resume, .. } = site;
         let value = value.unwrap_or(Value::UNDEFINED);
         match operation {
             CallOut::LoadEnvLocal { slot } => self.load_local_binding(p, frame, usize::from(slot), None).map(Some),
@@ -81,6 +87,8 @@ impl<H: Host> Vm<H> {
             }
             CallOut::GlobalTypeof { atom, site } =>
                 self.at_binding_site(frame, resume, |vm| vm.load_name_typeof(p, atom, site)).map(Some),
+            CallOut::LoadName { atom, site } =>
+                self.at_binding_site(frame, resume, |vm| vm.load_name(p, atom, Some(site))).map(Some),
             _ => unreachable!("{operation:?} is no name step"),
         }
     }
@@ -166,10 +174,22 @@ impl<H: Host> Vm<H> {
     }
 
     /// The call-out row `i` (`ToPropertyKey`, `GetIterator`, `ForInStart`, `IteratorClose`,
-    /// `AppendArray`) at `site`, by its staged row on the interpreter's stage: the words
+    /// `AppendArray`, `Delete`) at `site`, by its staged row on the interpreter's stage: the words
     /// decide a string key, and the VM makes every other step.
     pub(super) fn staged_value_step(&mut self, p: &ResidualProgram, site: CallSite, i: WideInstruction) -> Result<(), JsError> {
         let row = Operation::<u64, ()>::decode(i, |_| None).expect("a value step decodes");
+        self.staged_row(p, site, row)
+    }
+
+    /// The name read `i` (`LoadName`) at `site`, by its staged row on the interpreter's stage: the
+    /// interpreter proves nothing of a global, so the VM's binding rules read it.
+    pub(super) fn staged_load_name(&mut self, p: &ResidualProgram, site: CallSite, i: WideInstruction) -> Result<(), JsError> {
+        let row = Operation::<u64, ()>::decode_load_name(i, ()).expect("a name read decodes");
+        self.staged_row(p, site, row)
+    }
+
+    /// `row` on the interpreter's stage over the running frame: an error the VM raised is thrown.
+    fn staged_row(&mut self, p: &ResidualProgram, site: CallSite, row: Operation<u64, ()>) -> Result<(), JsError> {
         let mut frame = HostFrame { vm: self, program: p, site, raised: None };
         match crate::staged::step(&mut Concrete::new(std::ptr::null()), &mut frame, row) {
             Step::Unresolved => Err(frame.raised.expect("a step left to the VM raised")),
@@ -236,10 +256,10 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
 
 impl<H: Host> GlobalFrame<Concrete> for HostFrame<'_, H> {}
 
-impl<H: Host> crate::staged::PropertyFrame<Concrete> for HostFrame<'_, H> {
-    type Plans = crate::staged::NoPlans;
+impl<H: Host> PropertyFrame<Concrete> for HostFrame<'_, H> {
+    type Plans = NoPlans;
 
-    fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
+    fn plans(&self) -> NoPlans { NoPlans }
 }
 
 impl<H: Host> NumericFrame<Concrete> for HostFrame<'_, H> {

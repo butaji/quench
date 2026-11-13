@@ -105,7 +105,6 @@ impl Frameless {
     }
 
     /// Whether the payload runs inside a frameless activation.
-    #[cfg(feature = "native-execution")]
     pub(super) fn inside(&self, dispatch: &JsStepDispatch) -> bool {
         dispatch.shadow_top != self.shadow.as_ptr() as usize
     }

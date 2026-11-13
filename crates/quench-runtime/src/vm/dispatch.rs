@@ -646,13 +646,7 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_a()),
             )?,
             Op::LoadName => {
-                let v = with_binding_site_pc!(
-                    self,
-                    f,
-                    *pc,
-                    self.load_name(p, i.atom_index(), Some(i.cache_site_index()))
-                )?;
-                self.write(f, i.result_register(), v);
+                self.staged_load_name(p, super::call_out::CallSite { frame: f, function: self.frames[f].function, resume: *pc }, i)?;
             }
             Op::LoadNameCall => {
                 let (callee, this) = with_binding_site_pc!(
@@ -991,8 +985,8 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_b()),
                 self.read(f, i.register_c()),
             )?,
-            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart => {
-                self.staged_value_step(p, super::call_out::CallSite { frame: f, resume: *pc }, i)?;
+            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart | Op::Delete => {
+                self.staged_value_step(p, super::call_out::CallSite { frame: f, function: self.frames[f].function, resume: *pc }, i)?;
             }
             Op::RequireObjectCoercible => {
                 self.require_object_coercible(p, self.read(f, i.register_b()))?;
@@ -1301,16 +1295,6 @@ impl<H: Host> Vm<H> {
                     return Ok(StepResult::Return(v));
                 }
                 self.write(f, i.result_register(), v);
-            }
-            Op::Delete => {
-                let result = self.delete_reference_property_mode(
-                    p,
-                    self.read(f, i.register_b()),
-                    self.read(f, i.register_c()),
-                    p.function(self.frames[f].function as usize).strict
-                        || i.boolean_flag().expect("validated boolean immediate"),
-                )?;
-                self.write(f, i.result_register(), result);
             }
             Op::Jump => {
                 *pc = i.jump_target() as usize;

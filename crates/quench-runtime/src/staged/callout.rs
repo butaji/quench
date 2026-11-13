@@ -16,6 +16,8 @@ pub(crate) const TAG_STORE_ENV_LOCAL: u8 = 6;
 pub(crate) const TAG_ARGUMENTS_LENGTH: u8 = 7;
 pub(crate) const TAG_GLOBAL_WRITE: u8 = 8;
 pub(crate) const TAG_GLOBAL_TYPEOF: u8 = 9;
+pub(crate) const TAG_DELETE: u8 = 11;
+pub(crate) const TAG_LOAD_NAME: u8 = 12;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -47,6 +49,12 @@ pub(crate) enum CallOut {
     GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool } = TAG_GLOBAL_WRITE,
     /// The `typeof` name of the global `atom` through cache `site`.
     GlobalTypeof { atom: u32, site: u16 } = TAG_GLOBAL_TYPEOF,
+    /// `delete base[key]` by the VM's `delete_reference_property_mode`, which throws on a
+    /// refusal where `strict` or the running function is strict.
+    Delete { base: Register, key: Register, strict: bool } = TAG_DELETE,
+    /// The value of the name `atom` through cache `site`, by the binding rules of the running
+    /// frame (`Vm::load_name`: a `with` scope, a global, an uninitialized binding).
+    LoadName { atom: u32, site: u16 } = TAG_LOAD_NAME,
 }
 
 impl CallOut {
@@ -59,10 +67,10 @@ impl CallOut {
     /// then the second, which is the only one an operation of a single operand has.
     pub(crate) fn operands(self) -> [Option<Register>; 2] {
         match self {
-            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } => [Some(left), Some(right)],
+            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } | Self::Delete { base: left, key: right, .. } => [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
             Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
-            Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } => [None, None],
+            Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. } => [None, None],
             Self::Protocol { operands, .. } => operands,
         }
     }
@@ -94,6 +102,7 @@ impl<W, P> Operation<W, P> {
             Self::GlobalWrite { source, atom, site, initialize } =>
                 (CallOut::GlobalWrite { source, atom, site, initialize }, None),
             Self::GlobalTypeof { destination, atom, site } => (CallOut::GlobalTypeof { atom, site }, Some(destination)),
+            Self::Delete { destination, base, key, strict } => (CallOut::Delete { base, key, strict }, Some(destination)),
             _ => return None,
         })
     }

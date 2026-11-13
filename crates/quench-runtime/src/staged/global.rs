@@ -18,6 +18,12 @@ pub(crate) enum GlobalBinding {
 
 /// A frame's reading of a global-name read; a frame with no such callout declines it.
 pub(crate) trait GlobalFrame<S: Stage>: Frame<S> {
+    /// What is known of the global the read under `proof` names: the tier's facts about it (an
+    /// immutable value, a cell a code dependency holds, a frozen program's value); `Dynamic`
+    /// where nothing is, which the interpreter's frames always answer.
+    #[inline(always)]
+    fn global_binding(&mut self, _proof: S::Proof) -> GlobalBinding { GlobalBinding::Dynamic }
+
     /// Define `destination` as the immutable global's `value`.
     #[inline(always)]
     fn global_constant(&mut self, _stage: &mut S, _destination: Register, _value: Value) -> Option<()> { None }

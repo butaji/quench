@@ -9,45 +9,24 @@ use super::*;
 pub(super) fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
-        literal @ (Operation::MakeObject { .. } | Operation::MakeArray { .. } | Operation::MakeConstArray { .. } | Operation::MakeObjectPair { .. }) =>
-            allocation_step(stage, frame, literal),
-        helper @ (Operation::IndexSetHelper { .. } | Operation::GlobalRead { .. }
-            | Operation::FieldStoreMiss { .. }) => helper_step(stage, frame, helper),
+        allocate @ Operation::Allocate { .. } => allocation_step(stage, frame, allocate),
+        helper @ (Operation::IndexSetHelper { .. } | Operation::FieldStoreMiss { .. }) => helper_step(stage, frame, helper),
         index => index_step(stage, frame, index),
     }
 }
 
-/// An object or array literal allocation over a frame's heap.
+/// An allocation row over a frame's heap.
 #[inline(always)]
 fn allocation_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let value = match operation {
-        Operation::MakeObject { destination, proof } =>
-            frame.allocate_object(stage, destination, proof),
-        Operation::MakeArray { destination, length, elements, proof } =>
-            frame.allocate_array(stage, destination, length, elements, proof),
-        Operation::MakeConstArray { destination, constant, count, proof } =>
-            frame.allocate_const_array(stage, destination, constant, count, proof),
-        Operation::MakeObjectPair { destination, site, first, second, proof } =>
-            frame.allocate_object_pair(stage, destination, site, first, second, proof),
+        Operation::Allocate { destination, allocation, proof } =>
+            frame.allocate_value(stage, destination, allocation, proof),
         _ => None,
     };
     match value {
         Some(value) => Step::Value(value),
         None => Step::Unresolved,
-    }
-}
-
-/// The global-name read, by what its binding time leaves known.
-#[inline(always)]
-fn global_row<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
-    (atom, site): (u32, u16), binding: GlobalBinding, proof: S::Proof) -> Option<()> {
-    match binding {
-        GlobalBinding::Constant(value) => frame.global_constant(stage, destination, value),
-        GlobalBinding::Held { value, ty } => frame.global_held(stage, destination, value, ty),
-        GlobalBinding::Frozen { value, ty } => frame.global_frozen(stage, destination, atom, site, value, ty, proof),
-        GlobalBinding::Dynamic => frame.global_read(stage, destination, atom, site, Type::ANY, proof),
-        GlobalBinding::Typed { ty } => frame.global_read(stage, destination, atom, site, ty, proof),
     }
 }
 
@@ -59,11 +38,6 @@ fn helper_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F
         Operation::IndexSetHelper { base, key, value, proof } =>
             match frame.index_set_helper(stage, base, key, value, proof) {
                 Some(()) => Step::Value(value),
-                None => Step::Unresolved,
-            },
-        Operation::GlobalRead { destination, atom, site, binding, proof } =>
-            match global_row(stage, frame, destination, (atom, site), binding, proof) {
-                Some(()) => Step::Value(stage.constant(0)),
                 None => Step::Unresolved,
             },
         Operation::FieldStoreMiss { object, atom, site, value, proof } =>

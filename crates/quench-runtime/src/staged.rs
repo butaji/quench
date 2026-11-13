@@ -28,6 +28,7 @@ pub(crate) mod math;
 mod names;
 mod callout;
 mod admission;
+mod delete;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::CallOut;
@@ -47,6 +48,8 @@ pub(crate) mod call; pub(crate) mod frame;
 pub(crate) mod construct;
 pub(crate) mod protocol;
 pub(crate) use protocol::{CallOperation, Invocation, WindowFill};
+mod allocation;
+pub(crate) use allocation::Allocation;
 pub(crate) mod plan_fields;
 pub(crate) mod property;
 mod property_write;
@@ -144,23 +147,10 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn typed_index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
 
-    /// The object literal `destination`, written with the frame's fact; `None` where the
-    /// frame has no heap allocator.
+    /// The heap value `allocation` makes, defined into `destination`; `None` where the frame
+    /// has no allocator for it or the value is the general path's (a due collection).
     #[inline(always)]
-    fn allocate_object(&mut self, _stage: &mut S, _destination: Register, _proof: S::Proof) -> Option<S::Word> { None }
-
-    /// The array literal `destination`, of `length` holes or `elements` values.
-    #[inline(always)]
-    fn allocate_array(&mut self, _stage: &mut S, _destination: Register, _length: S::Word, _elements: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
-
-    /// The array literal `destination` of the `count` program constants from `constant`.
-    #[inline(always)]
-    fn allocate_const_array(&mut self, _stage: &mut S, _destination: Register, _constant: S::Word, _count: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
-
-    /// The two-property object literal `destination` of literal `site`'s shape.
-    #[inline(always)]
-    fn allocate_object_pair(&mut self, _stage: &mut S, _destination: Register, _site: u32, _first: S::Word, _second: S::Word,
-        _proof: S::Proof) -> Option<S::Word> { None }
+    fn allocate_value(&mut self, _stage: &mut S, _destination: Register, _allocation: Allocation, _proof: S::Proof) -> Option<S::Word> { None }
 
     /// Continue where no interrupt is requested; `None` leaves at the frame's miss edge.
     #[inline(always)]
@@ -287,24 +277,20 @@ pub(crate) enum Operation<W, P> {
     TypedIndexRead { index: W, proof: P },
     /// Store the Number `value` at typed array element `index`, under `proof`.
     TypedIndexWrite { index: W, value: W, proof: P },
-    /// The object literal `destination`, allocated by the frame's heap; a due collection
-    /// leaves at the frame's miss edge.
-    MakeObject { destination: Register, proof: P },
-    /// The array literal `destination`: `length` holes, or `elements` values.
-    MakeArray { destination: Register, length: W, elements: W, proof: P },
-    /// The array literal `destination` of the `count` program constants from `constant`.
-    MakeConstArray { destination: Register, constant: W, count: W, proof: P },
-    /// The two-property object literal `destination` of literal `site`'s shape, holding
-    /// `first` and `second`; a due collection leaves at the frame's miss edge.
-    MakeObjectPair { destination: Register, site: u32, first: W, second: W, proof: P },
+    /// The empty object, object or array literal, constant array, regexp literal, closure,
+    /// literal template or string concatenation `allocation` makes, defined into `destination`; a due collection leaves
+    /// at the frame's miss edge (`Frame::allocate_value`).
+    Allocate { destination: Register, allocation: Allocation, proof: P },
     /// Continue unless an interrupt or a due collection is requested (`Frame::safepoint`).
     Safepoint { proof: P },
     /// The element store's host helper for `base[key] = value`, under `proof`; the frame's
     /// miss edge takes a failed store.
     IndexSetHelper { base: W, key: W, value: W, proof: P },
-    /// The global-name read of `atom` through cache `site`, defined into `destination` as
-    /// `binding` says; a miss leaves at the proof's edge.
-    GlobalRead { destination: Register, atom: u32, site: u16, binding: GlobalBinding, proof: P },
+    /// The name read of `atom` through cache `site` into `destination`, and `undefined` into
+    /// `receiver` where it is a call's: the frame's facts about the global (`GlobalFrame::global_binding`)
+    /// decide it, else the VM's read (`CallOut::LoadName`). A call's receiver is the VM's where
+    /// a `with` scope may bind the name, so a read the frame does not resolve leaves.
+    LoadName { destination: Register, atom: u32, site: u16, receiver: Option<Register>, proof: P },
     /// Define `destination` as `undefined` (`void`).
     Void { destination: Register },
     /// ToPropertyKey of a string `source`, which is its own key; any other value leaves at the
@@ -356,8 +342,9 @@ pub(crate) enum Operation<W, P> {
     /// The VM's adding store of `value` to `atom` of `object` (`PropertyFrame::field_add`).
     #[cfg_attr(not(test), allow(dead_code))]
     FieldAdd { object: W, atom: u32, site: u16, value: W },
-    /// `delete base[key]`, throwing on a refusal where `strict` (`PropertyFrame::delete_property`).
-    Delete { base: Register, key: Register, strict: bool },
+    /// `delete base[key]` into `destination`, throwing on a refusal where `strict`
+    /// (`PropertyFrame::delete_property`, else `CallOut::Delete`).
+    Delete { destination: Register, base: Register, key: Register, strict: bool },
     /// `base[key]` past the dense and typed element reads (`PropertyFrame::index_get_host`).
     #[cfg_attr(not(test), allow(dead_code))]
     IndexGetHost { base: W, key: W },
@@ -398,8 +385,8 @@ impl<W, P> Operation<W, P> {
     fn decode_property(instruction: WideInstruction) -> Option<Self> {
         match instruction.op() {
             Op::GetField => Self::decode_get_field(instruction),
-            Op::Delete => Some(Self::Delete { base: instruction.register_b(), key: instruction.register_c(),
-                strict: instruction.boolean_flag()? }),
+            Op::Delete => Some(Self::Delete { destination: instruction.result_register(), base: instruction.register_b(),
+                key: instruction.register_c(), strict: instruction.boolean_flag()? }),
             op if op.is_field_store() => Some(Self::SetField { value: instruction.register_a(),
                 base: instruction.field_store_register(), atom: instruction.atom_index(),
                 site: instruction.cache_site_index() }),

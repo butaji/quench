@@ -199,7 +199,7 @@ fn leaf_reads(instruction: WideInstruction, body: &Function, code: &ResidualProg
         // place (`lane_set_field_in_place`) or on the general path, either of which makes
         // the leaf an activation first.
         op if op.is_field_store() => return store_leaf(instruction, private),
-        // A global name's first load finds the running function (`lane_load_name_first`),
+        // A global name's first load finds the running function (`lane_name_resolution`),
         // which makes the leaf an activation first; its later loads read the realm alone.
         op if op.traits().has(Traits::NAME_LEAF) && body.names_resolve_statically(code) => PLAIN_LEAF,
         // A returning read requickens by its site's tier in its leaf form

@@ -21,6 +21,7 @@ pub(crate) use environment_clone::Resets;
 mod field_store;
 pub(crate) use field_store::{FieldStore, StoreReceiver, field_store_op};
 mod instruction;
+mod register_list;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
 mod numeric_ops; mod op_classes; mod unary_operators;
@@ -62,6 +63,7 @@ pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl 
 pub(crate) use control_flow::{ControlEdge, Successors, branch_table_entries, for_each_instruction_successor, reachable_from};
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
+pub(crate) use register_list::{ARRAY_LITERAL_WINDOW, RegisterList};
 pub(crate) use numeric_ops::specialized_numeric_op;
 pub(crate) const RETURN_REGISTER: Register = 1 << 15;
 /// Property cache sites are 16-bit. A program with more sites than that gives every site

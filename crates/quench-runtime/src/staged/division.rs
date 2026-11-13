@@ -123,15 +123,16 @@ impl<W, P> Operation<W, P> {
             Self::FieldGetHost { .. } => SmallVec::from_slice(&[("object", VALUE), ("atom", BYTECODE), ("site", SITE)]),
             Self::FieldAdd { .. } => SmallVec::from_slice(&[("object", VALUE), ("atom", BYTECODE), ("site", SITE),
                 ("value", VALUE)]),
-            Self::Delete { .. } => SmallVec::from_slice(&[("base", REGISTER), ("key", REGISTER), ("strict", BYTECODE)]),
+            Self::Delete { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("base", REGISTER), ("key", REGISTER),
+                ("strict", BYTECODE)]),
             Self::IndexGetHost { .. } => SmallVec::from_slice(&[("base", VALUE), ("key", VALUE)]),
             Self::IndexRead { .. } | Self::TypedIndexRead { .. } => SmallVec::from_slice(&[("index", VALUE), ("proof", PROOF)]),
             Self::IndexWrite { .. } | Self::TypedIndexWrite { .. } =>
                 SmallVec::from_slice(&[("index", VALUE), ("value", VALUE), ("proof", PROOF)]),
             Self::IndexSetHelper { .. } => SmallVec::from_slice(&[("base", VALUE), ("key", VALUE),
                 ("value", VALUE), ("proof", PROOF)]),
-            Self::GlobalRead { binding, .. } => SmallVec::from_slice(&[("destination", REGISTER),
-                ("atom", BYTECODE), ("site", SITE), ("binding", binding.time()), ("proof", PROOF)]),
+            Self::LoadName { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("atom", BYTECODE),
+                ("site", SITE), ("receiver", REGISTER), ("proof", PROOF)]),
             Self::FieldStoreMiss { .. } => SmallVec::from_slice(&[("object", VALUE), ("atom", BYTECODE),
                 ("site", SITE), ("value", VALUE), ("proof", PROOF)]),
             _ => self.make_operand_times(),
@@ -141,13 +142,8 @@ impl<W, P> Operation<W, P> {
     /// The allocation and safepoint operations' operands (`heap_operand_times`).
     fn make_operand_times(&self) -> OperandTimes {
         match self {
-            Self::MakeObject { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("proof", PROOF)]),
-            Self::MakeArray { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("length", VALUE),
-                ("elements", VALUE), ("proof", PROOF)]),
-            Self::MakeConstArray { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("constant", VALUE),
-                ("count", VALUE), ("proof", PROOF)]),
-            Self::MakeObjectPair { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("site", SITE),
-                ("first", VALUE), ("second", VALUE), ("proof", PROOF)]),
+            Self::Allocate { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("allocation", BYTECODE),
+                ("proof", PROOF)]),
             Self::Safepoint { .. } => SmallVec::from_slice(&[("proof", PROOF)]),
             _ => unreachable!("`operand_times` answers every other operation"),
         }
@@ -183,19 +179,16 @@ mod tests {
             Op::StoreField { base: None, value: 0, fact: Type::ANY, atom: 0, site: 0 },
             Op::FieldGetHost { object: 0, atom: 0, site: 0 },
             Op::FieldAdd { object: 0, atom: 0, site: 0, value: 1 },
-            Op::Delete { base: 0, key: 1, strict: false },
+            Op::Delete { destination: 2, base: 0, key: 1, strict: false },
             Op::IndexGetHost { base: 0, key: 1 },
             Op::IndexRead { index: 0, proof: () },
             Op::IndexWrite { index: 0, value: 0, proof: () },
             Op::TypedIndexRead { index: 0, proof: () },
             Op::TypedIndexWrite { index: 0, value: 0, proof: () },
-            Op::MakeObject { destination: 0, proof: () },
-            Op::MakeArray { destination: 0, length: 0, elements: 0, proof: () },
-            Op::MakeConstArray { destination: 0, constant: 0, count: 0, proof: () },
-            Op::MakeObjectPair { destination: 0, site: 0, first: 0, second: 0, proof: () },
+            Op::Allocate { destination: 0, allocation: crate::staged::Allocation::Empty, proof: () },
             Op::Safepoint { proof: () },
             Op::IndexSetHelper { base: 0, key: 1, value: 2, proof: () },
-            Op::GlobalRead { destination: 0, atom: 0, site: 0, binding: GlobalBinding::Dynamic, proof: () },
+            Op::LoadName { destination: 0, atom: 0, site: 0, receiver: None, proof: () },
             Op::FieldStoreMiss { object: 0, atom: 0, site: 0, value: 1, proof: () },
         ]
     }
@@ -223,12 +216,11 @@ mod tests {
     }
 
     #[test]
-    fn a_global_read_folds_by_its_binding() {
-        let times = |binding| Op::GlobalRead { destination: 0, atom: 0, site: 0, binding, proof: () }.operand_times();
+    fn a_global_binding_folds_by_its_time() {
         let held = GlobalBinding::Held { value: Value::UNDEFINED, ty: Type::ANY };
-        assert!(folded(&times(held), Division::Offline).all(|name| name != "binding"));
-        assert!(folded(&times(held), Division::Frozen).any(|name| name == "binding"));
-        assert!(folded(&times(GlobalBinding::Constant(Value::UNDEFINED)), Division::Offline).any(|name| name == "binding"));
-        assert!(folded(&times(GlobalBinding::Dynamic), Division::Online).all(|name| name != "binding"));
+        assert!(!Division::Offline.folds(held.time()));
+        assert!(Division::Frozen.folds(held.time()));
+        assert!(Division::Offline.folds(GlobalBinding::Constant(Value::UNDEFINED).time()));
+        assert!(!Division::Online.folds(GlobalBinding::Dynamic.time()));
     }
 }

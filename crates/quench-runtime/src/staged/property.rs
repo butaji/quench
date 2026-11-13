@@ -295,10 +295,12 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
         }
     }
 
-    /// `delete base[key]` where `strict` throws on a refusal: the boolean word, or a leave
-    /// at `miss`.
+    /// `delete base[key]` where the frame's own deletion answers it (an ordinary object's
+    /// configurable property, which runs no guest code): the boolean word with its fact; `None`
+    /// leaves the deletion to the VM's call-out (`CallOut::Delete`), which refuses by `strict`.
     #[inline(always)]
-    fn delete_property(&mut self, _stage: &mut S, _base: S::Word, _key: S::Word, _strict: bool, _miss: S::Miss) -> Option<S::Word> { None }
+    fn delete_property(&mut self, _stage: &mut S, _base: S::Word, _key: S::Word, _strict: bool, _miss: S::Miss)
+        -> Option<(S::Word, Self::Fact)> { None }
 
     /// `base[key]` where no dense or typed element read answers it: a hole read through the
     /// prototype chain, an index past a typed array, a string's character, a keyed own read.
@@ -457,10 +459,6 @@ pub(super) fn property_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
             super::property_write::store_word(stage, frame, base, (value, fact), (atom, site), miss),
         Operation::FieldGetHost { object, atom, site } => frame.field_probe(stage, Owner::Temporary, object, atom, site, miss),
         Operation::FieldAdd { object, atom, site, value } => frame.field_add(stage, object, atom, site, value, miss).map(|()| value),
-        Operation::Delete { base, key, strict } => {
-            let (base, key) = (frame.tagged(stage, base), frame.tagged(stage, key));
-            frame.delete_property(stage, base, key, strict, miss)
-        }
         Operation::IndexGetHost { base, key } => frame.index_get_host(stage, base, key, miss),
         _ => None,
     };

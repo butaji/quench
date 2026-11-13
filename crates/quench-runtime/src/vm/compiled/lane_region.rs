@@ -45,6 +45,7 @@ mod stable;
 #[path = "lane_region/polls.rs"]
 mod polls;
 #[path = "lane_region/literals.rs"] mod literals;
+#[path = "lane_region/allocations.rs"] mod allocations;
 #[path = "lane_region/edges.rs"] mod edges;
 #[path = "lane_region/demand.rs"] mod demand;
 #[path = "lane_region/exits.rs"] mod exits;
@@ -2614,9 +2615,7 @@ impl Lowering<'_, '_> {
                 && !self.helpers.is_numeric() => self.typeof_test(state, pc, instruction),
             _ if plain && instruction.op().js_denotation() == JsDenotation::NumericUnary
                 && instruction.register_b() < self.unit.registers => self.unary(state, pc, instruction),
-            // A literal's allocation, by the lane's own (`compiled::lane_new_object`); a due
-            // collection leaves first. The staged operation allocates and writes the result.
-            Class::MakeObject | Class::MakeArray | Class::MakeConstArray | Class::MakeObject2 if self.literal_completes(instruction, pc) => Some(self.literal(state, pc, instruction)),
+            _ if self.allocation_row(pc, instruction) => Some(self.allocation(state, pc, instruction)),
             Class::Construct if self.completion != Completion::Number && !instruction.is_super_construct()
                 && matches!(instruction.construct_arguments(), crate::bytecode::ConstructArguments::Registers(_)) => self.construct(state, pc, instruction),
             _ if plain && self.is_jump(instruction) => return self.jump(state, pc, instruction),
@@ -2821,12 +2820,6 @@ impl Lowering<'_, '_> {
         Some(true)
     }
 
-    /// The `typeof` switch index (`UNARY_TYPEOF_INDEX`) as an int32: a constant where the
-    /// operand's type decides its name, else by the operand's tag for a Number, `undefined`,
-    /// `null` or a boolean, as `osr_loop` does; a heap value, whose cell decides its name,
-    /// leaves at the instruction.
-    /// ToBoolean of `register` as an i8, from its proved representation; a tagged value
-    /// whose truthiness needs its cell (`emit_js_tagged_truthiness`) leaves at `exit`.
     /// `operation` by the interpreter's semantics (`staged::step`) on the emit stage, with
     /// `edges` as its control edges. The lane specializer decides every truthiness itself, so
     /// no step is left unresolved.
@@ -2859,33 +2852,6 @@ impl Lowering<'_, '_> {
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step
-    }
-
-    /// A literal's allocation, by the lane's own (`compiled::lane_new_object`); a due
-    /// collection leaves first. The staged operation allocates and writes the result.
-    fn literal(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
-        use crate::staged::Operation;
-        let exit = self.guard_exit(state, pc as u32);
-        let proof = super::EmitProof::Allocation { miss: exit };
-        let destination = instruction.result_register();
-        let operation = match instruction.op().class() {
-            Class::MakeObject | Class::MakeArray if instruction.op().is_make_object() => Operation::MakeObject { destination, proof },
-            Class::MakeObject | Class::MakeArray => {
-                let (length, elements) = (self.ins().iconst(types::I64, instruction.array_length() as i64), self.literal_elements(state, pc, instruction));
-                Operation::MakeArray { destination, length, elements, proof }
-            }
-            Class::MakeConstArray => {
-                let (constant, count) = (self.ins().iconst(types::I64, instruction.constant_index() as i64), self.ins().iconst(types::I64, i64::from(instruction.element_count())));
-                Operation::MakeConstArray { destination, constant, count, proof }
-            }
-            _ => {
-                let (first, second) = (self.tagged(state, instruction.register_b()), self.tagged(state, instruction.register_c()));
-                Operation::MakeObjectPair { destination, site: instruction.imm(), first, second, proof }
-            }
-        };
-        self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
-        self.allocated(state);
-        self.literal_done(state, pc, instruction)
     }
 
     /// Whether a literal's allocation lowers here: plain, or the one that returns its value

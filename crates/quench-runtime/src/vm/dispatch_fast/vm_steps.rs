@@ -28,7 +28,7 @@ pub(in crate::vm) unsafe extern "C" fn lane_vm_step<H: Host>(_vm: u64, _residual
         .and_then(|row| row.call_out()).expect("a call-out record decodes");
     let operands = operation.operands().map(|register| register.map(|register| r.get(register)));
     let Some(value) = lane_in_place(cx, ip, |vm, code| {
-        let site = super::super::call_out::CallSite { frame: vm.frames.len() - 1, resume: call_pc as usize + 1 };
+        let site = super::super::call_out::CallSite { frame: vm.frames.len() - 1, function, resume: call_pc as usize + 1 };
         vm.call_out(code, site, operation, operands)
     }) else { return LANE_CALL_MISSED };
     // Guest code the step ran may have made the activations frames, whose registers these are.

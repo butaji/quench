@@ -75,7 +75,7 @@ mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
-use lane_allocations::{lane_binary, lane_new_array, lane_new_const_array, lane_new_object, lane_new_object_pair};
+use lane_allocations::{lane_binary, lane_new_array, lane_new_closure, lane_new_concat, lane_new_const_array, lane_new_object, lane_new_object_literal, lane_new_object_pair, lane_new_regexp, lane_new_template};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/site_posterior.rs"]
@@ -747,7 +747,7 @@ pub(in crate::vm::compiled) enum EmitProof {
     /// `in_bounds`: the index is proved below the view's length, so only a hole leaves at `absent`.
     Index { view: DenseArrayView, absent: ir::Block, in_bounds: bool },
     TypedIndex { values: ir::Value, length: ir::Value, kind: ir::Value, absent: ir::Block }, Allocation { miss: ir::Block },
-    Safepoint { interrupt: ir::Value, miss: Option<ir::Block>, fault_poll: bool }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block> }, FieldStoreMiss { miss: ir::Block },
+    Safepoint { interrupt: ir::Value, miss: Option<ir::Block>, fault_poll: bool }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block>, binding: crate::staged::GlobalBinding }, FieldStoreMiss { miss: ir::Block },
 }
 
 /// The view of the dense own array `base` (tagged); `writable` also proves in-place
@@ -1360,6 +1360,16 @@ lane_helper_inventory! { H;
     Truthy => lane_truthy::<H>,
     /// The array storage proofs a shorter array falsifies (`lane_retire_array_proofs`).
     RetireArrayProofs => lane_retire_array_proofs,
+    /// An object literal over a register window (`lane_new_object_literal`).
+    NewObjectLiteral => lane_new_object_literal::<H>,
+    /// A closure over the frame's environment (`lane_new_closure`).
+    NewClosure => lane_new_closure::<H>,
+    /// A literal template's value (`lane_new_template`).
+    NewTemplate => lane_new_template::<H>,
+    /// A string concatenation of pure parts (`lane_new_concat`).
+    NewConcat => lane_new_concat::<H>,
+    /// A regexp literal's fresh object of its site's template (`lane_new_regexp`).
+    NewRegExp => lane_new_regexp::<H>,
 }
 
 /// Makes the frames of a chain of native activations, outer to inner, above the payload's

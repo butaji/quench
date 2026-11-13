@@ -4,7 +4,8 @@
 use super::EmitFrame;
 use super::super::{emit_js_guard, emit_lane_helper_call, Emit, EmitProof, LaneHelper};
 use super::{BindingTime, Fact, Proof, Projection, RegisterFact, Representation, Type};
-use crate::bytecode::Register;
+use crate::bytecode::{Register, RegisterWindow};
+use crate::staged::Allocation;
 use cranelift_codegen::ir;
 use crate::Value;
 use cranelift_codegen::ir::{types, InstBuilder, condcodes::IntCC};
@@ -88,6 +89,59 @@ pub(super) fn finish_allocation(stage: &mut Emit<'_, '_>, frame: &mut EmitFrame<
         RegisterFact::definition(Type::ANY, Representation::Tagged));
 }
 
+/// The address of a stack run holding the tagged words of `registers`, which an allocator
+/// reads as the parts of a literal or a concatenation.
+fn register_words(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, registers: impl ExactSizeIterator<Item = Register>) -> ir::Value {
+    let word = types::I64.bytes();
+    let slot = stage.builder.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,
+        word * (registers.len() as u32).max(1), word.trailing_zeros() as u8));
+    for (index, register) in registers.enumerate() {
+        let value = <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::tagged(frame, stage, register);
+        stage.builder.ins().stack_store(types::I64, value, slot, (word as usize * index) as i32);
+    }
+    stage.builder.ins().stack_addr(types::I64, slot, 0)
+}
+
+/// The parts address and count an allocator takes for `window` (`register_words`).
+fn window_arguments(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, window: RegisterWindow) -> [ir::Value; 2] {
+    [register_words(frame, stage, window.base..window.base + window.count), immediate(stage, i64::from(window.count))]
+}
+
+/// An allocation row by the lane's own allocator of it (`LaneHelper::NewObject`, `NewArray`, `NewRegExp`, `NewConstArray`,
+/// `NewObjectPair`, `NewObjectLiteral`, `NewClosure`, `NewTemplate`, `NewConcat`): each leaves for a due collection first, and a
+/// DELETED answer leaves at the proof's miss edge.
+pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
+    allocation: Allocation, proof: EmitProof) -> Option<ir::Value> {
+    let (helper, arguments) = match allocation {
+        Allocation::Empty => (LaneHelper::NewObject, vec![]),
+        Allocation::Array { length } =>
+            (LaneHelper::NewArray, vec![immediate(stage, i64::from(length)), immediate(stage, 0)]),
+        Allocation::ArrayOf { elements } => {
+            let registers = elements.registers();
+            let words = register_words(frame, stage, registers.iter().copied());
+            (LaneHelper::NewArray, vec![immediate(stage, registers.len() as i64), words])
+        }
+        Allocation::RegExp { site } => (LaneHelper::NewRegExp, vec![immediate(stage, i64::from(site))]),
+        Allocation::ConstArray { constant, count } =>
+            (LaneHelper::NewConstArray, vec![immediate(stage, i64::from(constant)), immediate(stage, i64::from(count))]),
+        Allocation::ObjectPair { site, first, second } => {
+            let first = <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::tagged(frame, stage, first);
+            let second = <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::tagged(frame, stage, second);
+            (LaneHelper::NewObjectPair, vec![immediate(stage, i64::from(site)), first, second])
+        }
+        Allocation::ObjectLiteral { site, window } => {
+            let [parts, count] = window_arguments(frame, stage, window);
+            (LaneHelper::NewObjectLiteral, vec![immediate(stage, i64::from(site)), parts, count])
+        }
+        Allocation::Closure { function } => (LaneHelper::NewClosure, vec![immediate(stage, i64::from(function))]),
+        Allocation::Template { template } => (LaneHelper::NewTemplate, vec![immediate(stage, i64::from(template))]),
+        Allocation::Concat { window } => {
+            (LaneHelper::NewConcat, window_arguments(frame, stage, window).to_vec())
+        }
+    };
+    frame.allocate(stage, helper, destination, &arguments, proof)
+}
+
 /// The VM's field-store hit (`LaneHelper::FieldSet`): its false answer leaves at the miss edge.
 pub(in super::super) fn field_store_miss(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value,
     atom: u32, site: u16, value: ir::Value, proof: EmitProof) -> Option<()> {
@@ -148,7 +202,7 @@ fn guard_word(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, word: ir::Val
 /// value is the destination's tagged word.
 fn global_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
     atom: u32, site: u16, ty: Type, proof: EmitProof) -> Option<()> {
-    let EmitProof::GlobalRead { miss: Some(miss) } = proof else { return None };
+    let EmitProof::GlobalRead { miss: Some(miss), .. } = proof else { return None };
     let value = global_word(frame, stage, atom, site);
     guard_word(frame, stage, value, IntCC::NotEqual, Value::DELETED, miss);
     let fact = if ty == Type::ANY { RegisterFact::definition(ty, Representation::Tagged) } else {
@@ -192,13 +246,19 @@ fn global_held(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination:
 /// A whole-program value the read checks: a changed binding leaves, then the checked constant is held.
 fn global_frozen(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
     (atom, site): (u32, u16), (value, ty): (Value, Type), proof: EmitProof) -> Option<()> {
-    let EmitProof::GlobalRead { miss: Some(miss) } = proof else { return None };
+    let EmitProof::GlobalRead { miss: Some(miss), .. } = proof else { return None };
     let actual = global_word(frame, stage, atom, site);
     guard_word(frame, stage, actual, IntCC::Equal, value, miss);
     global_held(frame, stage, destination, value, ty)
 }
 
 impl crate::staged::GlobalFrame<Emit<'_, '_>> for EmitFrame<'_> {
+    fn global_binding(&mut self, proof: EmitProof) -> crate::staged::GlobalBinding {
+        match proof {
+            EmitProof::GlobalRead { binding, .. } => binding,
+            _ => crate::staged::GlobalBinding::Dynamic,
+        }
+    }
     fn global_constant(&mut self, stage: &mut Emit<'_, '_>, destination: Register, value: Value) -> Option<()> { global_constant(self, stage, destination, value) }
     fn global_held(&mut self, stage: &mut Emit<'_, '_>, destination: Register, value: Value, ty: Type) -> Option<()> { global_held(self, stage, destination, value, ty) }
     fn global_frozen(&mut self, stage: &mut Emit<'_, '_>, destination: Register, atom: u32, site: u16, value: Value, ty: Type, proof: EmitProof) -> Option<()> {

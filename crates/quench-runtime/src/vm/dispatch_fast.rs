@@ -29,7 +29,8 @@ use crate::heap::InlineObjectHeader;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::*;
 use crate::bytecode::index as opc;
-use crate::bytecode::{Class, Traits};
+use crate::bytecode::{Class, RegisterList, Traits};
+use crate::staged::Allocation;
 use crate::bytecode::{
     FieldLayout, FieldStore, Function, ImmediateLayout, ImmediateRole, InstructionField, StoreReceiver, WideInstruction,
 };
@@ -386,7 +387,7 @@ pub(super) struct LaneView {
     /// hold, whose own-field hints a shape compaction clears.
     field_records: Box<[u32]>,
     /// The by-name load and store records past the loop headers its sites hold, whose
-    /// global-object hints (`lane_load_global_name`, `lane_store_global_name`) a shape
+    /// global-object hints (`lane_load_name_bound`, `lane_store_global_name`) a shape
     /// compaction clears, and a change of the global
     /// lexical names they answer past (`LaneView::clear_name_hints`).
     name_records: Box<[u32]>,
@@ -1044,7 +1045,7 @@ impl LaneView {
         self.held_hints(&self.field_records)
     }
 
-    /// How many of its by-name loads hold a global-object hint (`lane_load_global_name`).
+    /// How many of its by-name loads hold a global-object hint (`lane_load_name_bound`).
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn held_name_hints(&self) -> usize {
         self.held_hints(&self.name_records)
@@ -2700,7 +2701,7 @@ mod lane_frame;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_object_coercible, staged_to_numeric, staged_typeof_index};
+use lane_frame::{lane_load_const, lane_move, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_object_coercible, staged_to_numeric, staged_typeof_index};
 
 lane_handler! {
     fn lane_load_local_plain<>(cx, r, ip, i, view) {
@@ -3224,14 +3225,13 @@ script_handler! {
         };
         // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
         // running function's view.
-        let (code, pc, program) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize, (*cx).program) };
+        let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
         let body = code.function(function as usize);
         let wide = decoded_instruction(body, body.code[pc]);
-        let Some(value) = vm.const_array_value(program, wide.constant_index(), usize::from(wide.element_count())) else {
+        let (_, allocation) = Allocation::decode(wide, &[]).expect("a constant array decodes");
+        if !staged_allocate(cx, r, i.a, allocation) {
             return exit(ip);
-        };
-        note_allocation(vm);
-        r.set(i.a, value);
+        }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -3309,7 +3309,7 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
         .and_then(|row| row.call_out()).expect("a result step is a call-out row");
     let operands = operation.operands().map(|register| register.map(|register| r.get(register)));
     let Some(value) = lane_in_place(cx, ip, |vm, code| {
-        let site = super::call_out::CallSite { frame: vm.frames.len() - 1, resume: pc + 1 };
+        let site = super::call_out::CallSite { frame: vm.frames.len() - 1, function, resume: pc + 1 };
         vm.call_out(code, site, operation, operands)
     }) else {
         return Resumed::Exit(exit(ip));
@@ -4594,25 +4594,13 @@ script_handler! {
 }
 
 script_handler! {
-    /// `delete base[key]` of a string key on an ordinary object, which runs no guest code:
-    /// the deletion's `true`. A refused deletion (a non-configurable property) has changed
-    /// nothing and takes the general path, which strict code makes an error; so does any
-    /// other base or key.
+    /// `delete base[key]` by the staged row: a string key on an ordinary object runs no guest
+    /// code (`lane_delete_value`); any other deletion takes the general path.
     #[inline(never)]
     fn lane_delete<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let (base, key) = (r.get(i.b), r.get(i.c));
-        let plain = base.direct_object_index().is_some()
-            && vm.heap.string(key).is_some()
-            && vm
-                .object_data(base)
-                .is_some_and(|data| !data.is_module_namespace() && !data.is_arguments_object());
-        if !plain || !vm.object_delete_property(code, &[base, key]).is_ok_and(|deleted| deleted == Value::TRUE) {
+        if !lane_frame::staged_delete(cx, r, [i.a, i.b, i.c], i.imm() != 0) {
             return exit(ip);
         }
-        r.set(i.a, Value::TRUE);
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -5272,21 +5260,19 @@ fn lane_body_callee_env<H: Host>() -> Option<Value> {
 script_handler! {
     /// `CreateRegExpLiteral` (`Vm::regexp_literal`), which allocates and runs no guest code.
     fn lane_regexp_literal<>(cx, r, ip, i, view) {
-        let Some(value) = lane_regexp_literal_value(cx, i) else {
+        if !staged_allocate(cx, r, i.a, Allocation::RegExp { site: i.imm() }) {
             return exit(ip);
-        };
-        r.set(i.a, value);
+        }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
 script_handler! {
-    /// `MakeClosure` in a frame's own lane run (`lane_closure_value`).
+    /// `MakeClosure` in a frame's own lane run: the staged closure row (`lane_closure_value_of`).
     fn lane_make_closure<>(cx, r, ip, i, view) {
-        let Some(value) = lane_closure_value(cx, i) else {
+        if !staged_allocate(cx, r, i.a, Allocation::Closure { function: i.imm() }) {
             return exit(ip);
-        };
-        r.set(i.a, value);
+        }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -5295,12 +5281,6 @@ script_handler! {
 /// run of a function with no binding sites outside a module's root: its environment is the
 /// frame's, promoted once, and making it allocates and runs no guest code. Any other
 /// closure takes the general path; a promotion made first is idempotent.
-#[inline(never)]
-fn lane_closure_value<H: Host>(cx: *mut LaneContext<H>, i: &LaneInstruction) -> Option<Value> {
-    lane_closure_value_of(cx, i.imm())
-}
-
-/// `lane_closure_value` of function `id`.
 #[inline(never)]
 fn lane_closure_value_of<H: Host>(cx: *mut LaneContext<H>, id: u32) -> Option<Value> {
     let vm = unsafe { vm(cx) };
@@ -5330,14 +5310,11 @@ fn lane_closure_value_of<H: Host>(cx: *mut LaneContext<H>, id: u32) -> Option<Va
 /// run; inside a lane activation, `None` leaves it to the general path, which raises the
 /// same error from the site's cached record.
 #[inline(never)]
-fn lane_regexp_literal_value<H: Host>(
-    cx: *mut LaneContext<H>,
-    i: &LaneInstruction,
-) -> Option<Value> {
+fn lane_regexp_literal_value<H: Host>(cx: *mut LaneContext<H>, site: u32) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
-    let result = vm.regexp_literal_of(code, program, i.imm() as usize);
+    let result = vm.regexp_literal_of(code, program, site as usize);
     note_allocation(vm);
     match result {
         Ok(value) => Some(value),
@@ -5353,8 +5330,9 @@ fn lane_regexp_literal_value<H: Host>(
 script_handler! {
     /// `MakeObject2`: a two-property literal allocates and runs no guest code.
     fn lane_make_object2<>(cx, r, ip, i, view) {
-        let value = lane_object_pair(cx, r, i);
-        r.set(i.a, value);
+        if !staged_allocate(cx, r, i.a, Allocation::ObjectPair { site: i.imm(), first: i.b, second: i.c }) {
+            return exit(ip);
+        }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -5363,22 +5341,30 @@ script_handler! {
     /// `MakeObjectLiteral`: an ordinary object of the literal site's shape holding the
     /// record's window of registers, as the general loop makes it.
     fn lane_make_object_literal<>(cx, r, ip, i, view) {
-        let value = lane_object_literal_value(cx, r, i);
-        r.set(i.a, value);
+        if !staged_allocate(cx, r, i.a, Allocation::ObjectLiteral { site: i.imm(), window: lane_literal_window(i) }) {
+            return exit(ip);
+        }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
-/// The object a `MakeObjectLiteral` record makes: its site's shape over the record's window
-/// of property values (`Vm::object_site_shape`).
+/// The window of property values a `MakeObjectLiteral` record reads.
 #[inline(always)]
-fn lane_object_literal_value<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Value {
+fn lane_literal_window(i: &LaneInstruction) -> crate::bytecode::RegisterWindow {
+    crate::bytecode::RegisterWindow { base: i.b, count: i.c }
+}
+
+/// The object a staged object literal row makes: its site's shape over the window of property
+/// values (`Vm::object_site_shape`).
+#[inline(always)]
+fn lane_object_literal_value<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: u32,
+    window: crate::bytecode::RegisterWindow) -> Value {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
-    let shape = vm.object_site_shape(unsafe { &*(*cx).code }, i.imm() as usize);
+    let shape = vm.object_site_shape(unsafe { &*(*cx).code }, site as usize);
     // SAFETY: `lane_fields_fit` admitted the window inside the register file, and no
     // other reference into it is live while the object is allocated.
-    let properties = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.b)), usize::from(i.c)) };
+    let properties = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window.base)), usize::from(window.count)) };
     let value = vm.heap.alloc_object_with_properties(vm.object_proto, shape, properties);
     note_allocation(vm);
     value
@@ -5387,7 +5373,9 @@ fn lane_object_literal_value<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: 
 script_handler! {
     /// `MakeObject`: an empty ordinary object (`Vm::object`), as the general loop makes it.
     fn lane_make_object<>(cx, r, ip, i, view) {
-        r.set(i.a, lane_new_object(unsafe { vm(cx) }));
+        if !staged_allocate(cx, r, i.a, Allocation::Empty) {
+            return exit(ip);
+        }
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
@@ -5395,30 +5383,35 @@ script_handler! {
 lane_handler! {
     /// `MakeArray`: a fresh array of the record's length in holes (`Vm::hole_array`).
     fn lane_make_array<>(cx, r, ip, i, view) {
-        r.set(i.a, lane_new_hole_array(unsafe { vm(cx) }, i.imm() as usize));
+        if !staged_allocate(cx, r, i.a, Allocation::Array { length: i.imm() }) {
+            return exit(ip);
+        }
         next!(cx, r, following(ip), view)
     }
 }
 
 lane_handler! {
     /// `MakeArray` whose literal's `DefineArrayElement` records follow it, one per index in
-    /// order (`specialize_array_literals`): the array made with those elements at once
-    /// (`Vm::literal_array`), as their definitions into its holes would leave it, and the
-    /// run goes on past them.
+    /// order (`specialize_array_literals`): the array made with those elements at once, as
+    /// their definitions into its holes would leave it, and the run goes on past them.
     fn lane_make_array_elements<>(cx, r, ip, i, view) {
         let length = i.imm() as usize;
-        r.set(i.a, lane_new_literal_array(unsafe { vm(cx) }, r, ip, length));
         // SAFETY: `specialize_array_literals` matched the `length` records after this one.
+        let elements = RegisterList::collect(length, |index| unsafe { (*ip.add(index + 1)).a })
+            .expect("a fused literal fits the window");
+        if !staged_allocate(cx, r, i.a, Allocation::ArrayOf { elements }) {
+            return exit(ip);
+        }
+        // SAFETY: as above.
         next!(cx, r, unsafe { ip.add(length + 1) }, view)
     }
 }
 
-/// `lane_make_array_elements`'s array of the `length` values the `DefineArrayElement` records
-/// after `ip` read, out of line as `lane_new_object`.
+/// The array of the values in `elements` (`Vm::literal_array`), out of line as `lane_new_object`.
 #[inline(never)]
-fn lane_new_literal_array<H: Host>(vm: &mut Vm<H>, r: Registers, ip: Ip, length: usize) -> Value {
-    // SAFETY: `specialize_array_literals` matched the `length` records after `ip`.
-    let value = vm.literal_array(length, |index| r.get(unsafe { (*ip.add(index + 1)).a }));
+fn lane_literal_array_value<H: Host>(vm: &mut Vm<H>, r: Registers, elements: RegisterList) -> Value {
+    let registers = elements.registers();
+    let value = vm.literal_array(registers.len(), |index| r.get(registers[index]));
     note_allocation(vm);
     value
 }
@@ -5441,17 +5434,12 @@ fn lane_new_hole_array<H: Host>(vm: &mut Vm<H>, length: usize) -> Value {
     value
 }
 
-/// The object a `MakeObject2` record makes (`Vm::object_pair`).
+/// The object of literal `site`'s shape holding registers `first` and `second` (`Vm::object_pair`).
 #[inline(always)]
-fn lane_object_pair<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Value {
+fn lane_object_pair<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: u32, [first, second]: [u16; 2]) -> Value {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
-    let value = vm.object_pair(
-        unsafe { &*(*cx).code },
-        i.imm() as usize,
-        r.get(i.b),
-        r.get(i.c),
-    );
+    let value = vm.object_pair(unsafe { &*(*cx).code }, site as usize, r.get(first), r.get(second));
     note_allocation(vm);
     value
 }
@@ -12282,74 +12270,119 @@ const LOAD_NAME_CALL: u8 = 1;
 /// `LOAD_NAME` for `LoadNameTypeof`.
 const LOAD_NAME_TYPEOF: u8 = 2;
 
-script_handler! {
-    /// A `LoadName`'s first run: a name the global object answers whenever no global
-    /// lexical binding shadows it (`Vm::names_resolve_to_global_object`: a function whose
-    /// unresolved names are global (`ProgramStore::names_are_global`) and resolve
-    /// statically, and a name no internal binding owns) takes `lane_load_global_name`; any
-    /// other always takes the general path. `KIND` is the load's (`LOAD_NAME`): a call's also
-    /// writes its receiver, `undefined` for a binding of the global object's environment.
-    #[inline(never)]
-    fn lane_load_name_first<KIND: u8>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let vm = unsafe { vm(cx) };
-        if vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
-            && let Some(native) =
-                crate::bytecode::intrinsic_name_native(&code.atoms[i.imm() as usize])
-        {
-            if !vm.intrinsic_natives.iter().any(|&(atom, _)| atom == i.imm()) {
-                vm.intrinsic_natives.push((i.imm(), native));
-            }
-            requicken::<H>(ip, lane_load_intrinsic_native::<H, KIND>);
-            sibling!(lane_load_intrinsic_native::<H, KIND>, r, ip, Carried::script(cx))
+/// What a by-name load's first run resolves its name to: the `lane_load_name_bound` instance its
+/// record runs from then on, which holds the binding.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum NameResolution {
+    /// The active realm's function for the native an internal name stands for
+    /// (`Vm::intrinsic_natives`), which no binding can shadow and no scope affects.
+    Native,
+    /// The global `undefined`, which is non-writable and non-configurable and which no global
+    /// lexical declaration may shadow (GlobalDeclarationInstantiation rejects a restricted
+    /// global property): a read of it is always `undefined`.
+    Undefined,
+    /// A name the global object answers whenever no global lexical binding shadows it: a function
+    /// whose unresolved names are global (`ProgramStore::names_are_global`) and resolve
+    /// statically, and a name no internal binding owns. Static resolution rules out a `with`
+    /// object, which the general search consults first.
+    Global,
+    /// An intrinsic name (`bytecode::is_intrinsic_name`), as the compiler emits for
+    /// `{ __proto__: v }` or `super`: the native it stands for (`Vm::intrinsic_name_value`).
+    Intrinsic,
+    /// Any other name, which the general path resolves.
+    General,
+}
+
+/// A `lane_load_name_bound` that reads the native an internal name stands for.
+const BOUND_NATIVE: u8 = 0;
+/// A `lane_load_name_bound` of the global `undefined`.
+const BOUND_UNDEFINED: u8 = 1;
+/// A `lane_load_name_bound` that reads the global object's own data field its record's hint names.
+const BOUND_GLOBAL: u8 = 2;
+/// A `lane_load_name_bound` of an intrinsic name.
+const BOUND_INTRINSIC: u8 = 3;
+
+/// The resolution of the by-name load of `atom` in the function `cx` runs. A native an internal
+/// name stands for is recorded for its reads (`Vm::intrinsic_natives`). An internal name is no
+/// binding source text can declare, except the internal globals the realm installs on its global
+/// object, which a static lookup reads as any other.
+fn lane_name_resolution<H: Host>(cx: *mut LaneContext<H>, atom: u32) -> NameResolution {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let vm = unsafe { vm(cx) };
+    let internal = vm.atom_class(atom).contains(AtomClass::INTERNAL);
+    if internal && let Some(native) = crate::bytecode::intrinsic_name_native(&code.atoms[atom as usize]) {
+        if !vm.intrinsic_natives.iter().any(|&(named, _)| named == atom) {
+            vm.intrinsic_natives.push((atom, native));
         }
-        // The running function decides the name's scope: a running leaf's is its
-        // materialized activation's.
-        lane_materialize_running_leaf(cx);
-        let function = lane_running_function(cx);
-        // An internal name is no binding source text can declare, except the internal globals
-        // the realm installs on its global object, which a static lookup reads as any other.
-        // Static resolution rules out a `with` object, which the general search consults first.
-        let statically = code
-            .function_get(function as usize)
-            .is_some_and(|function| function.names_resolve_statically(code));
-        let global = statically
-            && vm.programs.names_are_global(unsafe { (*cx).program })
-            && (!vm.atom_class(i.imm()).contains(AtomClass::INTERNAL)
-                || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&vm.atom_name(i.imm())));
-        // The global object's `undefined` is non-writable and non-configurable, and no global
-        // lexical declaration may shadow it (GlobalDeclarationInstantiation rejects a
-        // restricted global property), so a global read of it is always `undefined`.
-        if global && vm.atom_name(i.imm()) == UNDEFINED_GLOBAL {
-            requicken::<H>(ip, lane_load_undefined_global::<H, KIND>);
-            sibling!(lane_load_undefined_global::<H, KIND>, r, ip, Carried::script(cx))
-        }
-        if global {
-            requicken::<H>(ip, lane_load_global_name::<H, KIND>);
-            sibling!(lane_load_global_name::<H, KIND>, r, ip, Carried::script(cx))
-        }
-        if crate::bytecode::is_intrinsic_name(vm.atom_name(i.imm())) {
-            requicken::<H>(ip, lane_load_intrinsic_name::<H, KIND>);
-            sibling!(lane_load_intrinsic_name::<H, KIND>, r, ip, Carried::script(cx))
-        }
-        requicken::<H>(ip, lane_exit::<H>);
-        exit(ip)
+        return NameResolution::Native;
+    }
+    // The running function decides the name's scope: a running leaf's is its materialized
+    // activation's.
+    lane_materialize_running_leaf(cx);
+    let function = lane_running_function(cx);
+    let global = code.function_get(function as usize).is_some_and(|function| function.names_resolve_statically(code))
+        && vm.programs.names_are_global(unsafe { (*cx).program })
+        && (!internal || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&vm.atom_name(atom)));
+    match (global, vm.atom_name(atom)) {
+        (true, UNDEFINED_GLOBAL) => NameResolution::Undefined,
+        (true, _) => NameResolution::Global,
+        (false, name) if crate::bytecode::is_intrinsic_name(name) => NameResolution::Intrinsic,
+        (false, _) => NameResolution::General,
     }
 }
 
 script_handler! {
-    /// A `LoadName` of an intrinsic name its first read resolved (`lane_load_name_first`): the
-    /// active realm's function for the native it stands for (`Vm::intrinsic_natives`), which
-    /// no binding can shadow and no scope affects.
-    fn lane_load_intrinsic_native<KIND: u8>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let Some(&(_, native)) = vm.intrinsic_natives.iter().find(|&&(atom, _)| atom == i.imm()) else {
-            sibling!(lane_load_name_first::<H, KIND>, r, ip, view)
+    /// A by-name load's first run: the VM's resolution of its name (`lane_name_resolution`) fills
+    /// the record, whose handler from then on is the `lane_load_name_bound` instance holding the
+    /// binding, or leaves every run to the general path. `KIND` is the load's (`LOAD_NAME`).
+    #[inline(never)]
+    fn lane_load_name_resolve<KIND: u8>(cx, r, ip, i, view) {
+        let bound: Handler = match lane_name_resolution(cx, i.imm()) {
+            NameResolution::Native => lane_load_name_bound::<H, KIND, BOUND_NATIVE>,
+            NameResolution::Undefined => lane_load_name_bound::<H, KIND, BOUND_UNDEFINED>,
+            NameResolution::Global => lane_load_name_bound::<H, KIND, BOUND_GLOBAL>,
+            NameResolution::Intrinsic => lane_load_name_bound::<H, KIND, BOUND_INTRINSIC>,
+            NameResolution::General => {
+                requicken::<H>(ip, lane_exit::<H>);
+                return exit(ip);
+            }
         };
-        r.set(i.a, vm.native_value(native));
-        if KIND == LOAD_NAME_CALL {
-            r.set(i.b, Value::UNDEFINED);
+        requicken::<H>(ip, bound);
+        sibling!(bound, r, ip, Carried::script(cx))
+    }
+}
+
+/// The binding the record `i` of `lane_load_name_bound::<_, _, BOUND>` holds: a global's is its
+/// record's own-field hint.
+#[inline(always)]
+fn lane_name_binding<const BOUND: u8>(i: &LaneInstruction) -> NameBinding {
+    match BOUND {
+        BOUND_NATIVE => NameBinding::Read(NameRead::Native),
+        BOUND_UNDEFINED => NameBinding::Undefined,
+        BOUND_GLOBAL => NameBinding::Read(NameRead::Field(i.field_hint())),
+        BOUND_INTRINSIC => NameBinding::Read(NameRead::Intrinsic),
+        _ => unreachable!("a bound name load holds one of the BOUND_ bindings"),
+    }
+}
+
+script_handler! {
+    /// A by-name load whose first run resolved its name (`lane_load_name_resolve`): the staged
+    /// `LoadName` row over the binding `BOUND` names, whose call receiver (`LOAD_NAME_CALL`) is
+    /// `undefined`, as for any global. A global object's own data field is read through its
+    /// record's hint (`LaneInstruction::field_hint`): one shape test and one load, the hint set
+    /// only while no realm declares the name lexically (`Vm::global_name_hintable`), a
+    /// declaration clearing it (`Vm::note_global_lexical_names`), and the global object's
+    /// deletes, redefinitions and storage changes changing its exact shape. A read the binding
+    /// does not answer takes its residual: a global's `lane_load_global_name_refresh`, a native's
+    /// resolution again, and an intrinsic name's the general path.
+    fn lane_load_name_bound<KIND: u8, BOUND: u8>(cx, r, ip, i, view) {
+        if !staged_load_name(cx, r, i, KIND == LOAD_NAME_CALL, lane_name_binding::<BOUND>(i)) {
+            match BOUND {
+                BOUND_GLOBAL => sibling!(lane_load_global_name_refresh::<H, KIND>, r, ip, Carried::script(cx)),
+                BOUND_NATIVE => sibling!(lane_load_name_resolve::<H, KIND>, r, ip, view),
+                _ => return exit(ip),
+            }
         }
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -12362,12 +12395,12 @@ fn lane_running_function<H: Host>(cx: *mut LaneContext<H>) -> u32 {
     vm.lane_stack.activations.last().map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function)
 }
 
-/// The global value property `lane_load_name_first` answers without a lookup.
+/// The global value property `lane_name_resolution` answers without a lookup.
 const UNDEFINED_GLOBAL: &str = "undefined";
 
 script_handler! {
     /// A `StoreName`'s first run: an assignment to a name the global object answers whenever
-    /// no global lexical binding shadows it (as `lane_load_name_first` decides for a read)
+    /// no global lexical binding shadows it (as `lane_name_resolution` decides for a read)
     /// takes `lane_store_global_name`, a `var`'s initializer too, which stores as one: the
     /// declaration made the property, and a lexical binding is never hinted. Any other store
     /// always takes the general path.
@@ -12429,59 +12462,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// A `LoadName` of the global `undefined` (`lane_load_name_first`): its value, which no
-    /// binding can change.
-    fn lane_load_undefined_global<KIND: u8>(cx, r, ip, i, view) {
-        r.set(i.a, Value::UNDEFINED);
-        if KIND == LOAD_NAME_CALL {
-            r.set(i.b, Value::UNDEFINED);
-        }
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-script_handler! {
-    /// A `LoadName` of an intrinsic name (`bytecode::is_intrinsic_name`), as the compiler
-    /// emits for `{ __proto__: v }` or `super`: the native it stands for, which no binding
-    /// can shadow and no scope affects (`Vm::intrinsic_name_value`).
-    #[inline(never)]
-    fn lane_load_intrinsic_name<KIND: u8>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let Some(value) = vm.intrinsic_name_value(i.imm()) else {
-            return exit(ip);
-        };
-        r.set(i.a, value);
-        if KIND == LOAD_NAME_CALL {
-            r.set(i.b, Value::UNDEFINED);
-        }
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-script_handler! {
-    /// A `LoadName` where names resolve statically to global bindings (`lane_load_name_first`):
-    /// the global object's own data field its record's hint names (`LaneInstruction::field_hint`),
-    /// one shape test and one load. The hint is set only while no realm declares the name
-    /// lexically (`Vm::global_name_hintable`), and a declaration clears it
-    /// (`Vm::note_global_lexical_names`),
-    /// and the global object's deletes, redefinitions and storage changes change its exact
-    /// shape. Any other read takes `lane_load_global_name_refresh`. A `LoadNameCall`
-    /// (`LOAD_NAME_CALL`) also writes the call's receiver, `undefined` for a global binding.
-    fn lane_load_global_name<KIND: u8>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let Some(value) = vm.record_field_entry_hit(i.field_hint(), vm.realm.globals) else {
-            sibling!(lane_load_global_name_refresh::<H, KIND>, r, ip, Carried::script(cx))
-        };
-        r.set(i.a, value);
-        if KIND == LOAD_NAME_CALL {
-            r.set(i.b, Value::UNDEFINED);
-        }
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-script_handler! {
-    /// `lane_load_global_name` past its record's hint: an initialized global lexical binding of
+    /// `lane_load_name_bound` of a global past its record's hint: an initialized global lexical binding of
     /// the name, which the general path's search finds first there; else the global object's
     /// own data field, which becomes the hint (`Vm::own_data_field_hint`), or its cached field
     /// (`Vm::cached_field_hit`). Any other read takes `lane_load_global_name_miss`, or the general
@@ -17394,8 +17375,8 @@ script_handler! {
                 },
                 RETURNING_UNARY => lane_unary_value(cx, r, i),
                 RETURNING_BINARY => lane_returning_binary_value(cx, r, i),
-                RETURNING_OBJECT => Some(lane_object_pair(cx, r, i)),
-                RETURNING_OBJECT_LITERAL => Some(lane_object_literal_value(cx, r, i)),
+                RETURNING_OBJECT => Some(lane_object_pair(cx, r, i.imm(), [i.b, i.c])),
+                RETURNING_OBJECT_LITERAL => Some(lane_object_literal_value(cx, r, i.imm(), lane_literal_window(i))),
                 _ => lane_literal_value(cx, r, i),
             }
         };
@@ -18116,9 +18097,9 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::CallSpread => Some(lane_call_spread::<H>),
         Class::Delete => Some(lane_delete::<H>),
         Class::Construct => Some(lane_script_construct::<H>),
-        Class::LoadName => Some(lane_load_name_first::<H, LOAD_NAME>),
-        Class::LoadNameCall => Some(lane_load_name_first::<H, LOAD_NAME_CALL>),
-        Class::LoadNameTypeof => Some(lane_load_name_first::<H, LOAD_NAME_TYPEOF>),
+        Class::LoadName => Some(lane_load_name_resolve::<H, LOAD_NAME>),
+        Class::LoadNameCall => Some(lane_load_name_resolve::<H, LOAD_NAME_CALL>),
+        Class::LoadNameTypeof => Some(lane_load_name_resolve::<H, LOAD_NAME_TYPEOF>),
         Class::MakeObject2 => Some(lane_make_object2::<H>),
         Class::MakeClosure => Some(lane_make_closure::<H>),
         Class::MakeObjectLiteral => Some(lane_make_object_literal::<H>),
@@ -19596,7 +19577,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_constant_returns::<H>(&mut records);
         specialize_script_calls::<H>(&mut records);
         specialize_proved_arrays::<H>(&decoded, &mut records);
-        specialize_array_literals::<H>(&mut records);
+        specialize_array_literals::<H>(&decoded, &mut records);
     }
     let min_run = if closes_loop(&decoded, &exits) {
         LANE_ENTRY_MIN_RUN
@@ -19678,7 +19659,7 @@ fn derive_lane_view<'live, H: Host>(
 
 /// Whether a record holds an own-field hint (`LaneInstruction::field_hint`) in a `field`
 /// operand: every field read or store's of its receiver, and a global name access's or top-level
-/// `var` capture read's of the global object (`lane_load_global_name`, `lane_load_root_var`).
+/// `var` capture read's of the global object (`lane_load_name_bound`, `lane_load_root_var`).
 fn holds_field_hint(op: Op) -> bool {
     op.is_field_store() || op.is_get_field() || op.is_load_capture() || is_global_name_access(op)
 }
@@ -20414,23 +20395,15 @@ fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut 
 }
 
 /// Gives each `MakeArray` of a literal whose elements are defined by the records right after
-/// it, a `DefineArrayElement` of a register value for each index in order, the literal made
-/// at once (`lane_make_array_elements`). The definitions stay: nothing jumps between them,
-/// and a run entered past the `MakeArray` takes them as before.
-fn specialize_array_literals<H: Host>(records: &mut [LaneInstruction]) {
+/// it, a `DefineArrayElement` of a register value for each index in order (`Allocation::ArrayOf`),
+/// the literal made at once (`lane_make_array_elements`). The definitions stay: nothing jumps
+/// between them, and a run entered past the `MakeArray` takes them as before.
+fn specialize_array_literals<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
     let make = lane_make_array::<H> as Handler as *const ();
-    let define = lane_define_array_element::<H> as Handler as *const ();
     for pc in 0..records.len() {
-        if records[pc].handler != make {
-            continue;
-        }
-        let (array, length) = (records[pc].a, records[pc].imm() as usize);
-        let defines = records.get(pc + 1..pc + 1 + length).is_some_and(|elements| {
-            elements.iter().enumerate().all(|(index, element)| {
-                element.handler == define && element.b == array && element.a != array && element.imm() as usize == index
-            })
-        });
-        if defines {
+        if records[pc].handler == make
+            && matches!(Allocation::decode(decoded[pc], &decoded[pc + 1..]), Some((_, Allocation::ArrayOf { .. })))
+        {
             records[pc].handler = lane_make_array_elements::<H> as Handler as *const ();
         }
     }
