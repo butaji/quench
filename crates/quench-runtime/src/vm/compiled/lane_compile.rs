@@ -18,6 +18,9 @@ pub(super) struct LanePlan {
     /// Whether every call of it that has run is inlined or direct (`LaneMethod::closed`).
     pub(super) closed: bool,
     pub(super) function: u32,
+    /// Whether its inlined frames sit above an environment activation's window
+    /// (`lane_unit::frames_above_window`): only such a body's entries extend the live range.
+    pub(super) window_frames: bool,
     /// The word its publication sets when one of its Stable facts changes.
     pub(super) invalidation: crate::code_dependencies::Invalidation,
     /// The callee instructions its unit inlined at most (`lane_unit::with_budget`).
@@ -202,7 +205,8 @@ impl<H: Host> Vm<H> {
             &leaves, &direct_sites, &frame_captures, entry, &number_reads).or_else(|| { plan_miss(Miss::PlanNotLowered); None })?;
         if lowered.region.native == 0 { plan_miss(Miss::PlanNothingNative); return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
-        Some((LanePlan { unit, lowered, fields, direct, closed, function, invalidation, budget }, native))
+        let window_frames = lane_unit::frames_above_window(program, function, &unit);
+        Some((LanePlan { unit, lowered, fields, direct, closed, function, window_frames, invalidation, budget }, native))
     }
 
     /// Specialize `function` for lane activations, admitting a body only where its first
@@ -429,6 +433,7 @@ impl LanePlan {
         LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
         Some(LaneMethod {
             dependencies, stable, invalidation: self.invalidation, _code: memory, entry, recovery_space,
+            window_frames: self.window_frames,
             fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, inlined: self.unit.frames,

@@ -645,6 +645,13 @@ pub(crate) fn unit<'f>(
     with_budget(program, function_id, function, MAX_UNIT_INLINED_INSTRUCTIONS, targets, body)
 }
 
+/// Whether a body's inlined frames sit above an environment activation's window
+/// (`with_budget`'s frame base): the layout fact each of its entries makes live
+/// (`dispatch_fast::lane_body_frames_live`), derived once when the body is planned.
+pub(crate) fn frames_above_window(program: &crate::ResidualProgram, function: u32, unit: &Unit) -> bool {
+    !unit.frames.is_empty() && program.function(function as usize).call_plan(program).environment_activation
+}
+
 /// Plan the same unit under a smaller inlining budget after code-size rejection.
 pub(crate) fn with_budget<'f>(
     program: &crate::ResidualProgram,
@@ -655,7 +662,19 @@ pub(crate) fn with_budget<'f>(
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
     let caller_registers = function.registers;
-    let mut planner = Planner { program, targets: &|function, pc| targets(function, pc).into_iter().filter(|target| target.function != function_id).collect(), body, registers: u32::from(caller_registers), budget };
+    // An environment activation's window keeps its metadata, locals and the values passed
+    // past them after the function's registers (`lane_activate_environment`); an inlined
+    // frame's registers sit above that window, in the room every entry makes live
+    // (`lane_body_frames_live`), never over the window's slots.
+    let frame_base = if function.call_plan(program).environment_activation {
+        u32::from(caller_registers)
+            + u32::from(crate::vm::dispatch_fast::WINDOW_LOCALS)
+            + u32::from(function.locals)
+            + u32::from(function.params)
+    } else {
+        u32::from(caller_registers)
+    };
+    let mut planner = Planner { program, targets: &|function, pc| targets(function, pc).into_iter().filter(|target| target.function != function_id).collect(), body, registers: frame_base, budget };
     let plan = planner.plan(function_id, decoded(function), function.strict, 0);
     let registers = u16::try_from(planner.registers).ok()?;
     let mut emitter = Emitter {

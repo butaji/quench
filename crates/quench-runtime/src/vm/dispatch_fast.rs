@@ -14813,6 +14813,12 @@ script_handler! {
             }
             next!(cx, r, base, Carried::script(cx))
         }
+        // The body's inlined frames sit above an environment activation's window: its live
+        // range reaches past them, so no nested window takes their registers.
+        if method.window_frames() && !lane_body_frames_live(cx, r, &method, function) {
+            drop(method);
+            next!(cx, r, base, Carried::script(cx))
+        }
         // A frame activation keeps its `this` in the frame (`lane_this`); an uninitialized
         // one stays `DELETED`, at which the body's `LoadThis` leaves for the general path.
         // SAFETY: the activation just set the context to its own receiver and frame.
@@ -15294,6 +15300,32 @@ fn lane_materialize_frames<H: Host>(
     innermost
 }
 
+/// Makes the room a body's inlined frames need live above `registers`, an environment
+/// activation's window base, in the room the entry proved (`lane_body_admits`). The layout
+/// fact is the activation's own: `ScriptActivation::environment` says its metadata, locals and
+/// passed values follow its registers, and an environment body's frames sit above all of
+/// them (`lane_unit::with_budget`). Another activation lays its window out differently, and a
+/// run without one has no window to extend: both run the function in the lane instead.
+pub(in crate::vm::dispatch_fast) fn lane_body_frames_live<H: Host>(cx: *mut LaneContext<H>, registers: Registers, method: &super::compiled::LaneMethod, function: u32) -> bool {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let body = code.function(function as usize);
+    let Some(top) = vm.lane_stack.activations.last() else { return false };
+    let ActivationKind::Script(script) = &top.kind else { return false };
+    if !script.environment || top.function != function || top.native.window != registers.0 as usize { return false }
+    let window = usize::from(method.caller_registers()) + usize::from(WINDOW_LOCALS)
+        + usize::from(body.locals) + usize::from(body.params);
+    let end = unsafe { registers.0.add(window + method.scratch_width()) };
+    let live = vm.lane_stack.values.top();
+    if end <= live { return true }
+    // SAFETY: `end` lies within the values' allocation only when the room covers it.
+    let needed = (end as usize - live as usize) / size_of::<Value>();
+    if vm.lane_stack.values.room() < needed { return false }
+    unsafe { vm.lane_stack.values.set_top(end) };
+    true
+}
+
 /// Whether a run of `own`'s specialized body may start: the one thing per run it cannot
 /// prove at specialization, that the lane can make the activation of a call it inlines
 /// should it leave inside one (`lane_body_inlined_activation`).
@@ -15712,6 +15744,11 @@ fn lane_body_activate<H: Host>(
         unsafe { (*cx).callee_warming = own.warming() };
         return leave(start, Value::UNDEFINED);
     };
+    if method.window_frames() && !lane_body_frames_live(cx, registers, &method, target.function) {
+        drop(method);
+        unsafe { (*cx).callee_warming = own.warming() };
+        return leave(start, Value::UNDEFINED);
+    }
     let receiver = if target.this_binding == ThisBinding::Lexical || this.is_deleted() { Value::DELETED } else { this };
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
     let captures = capture_reads(unsafe { (*cx).capture });

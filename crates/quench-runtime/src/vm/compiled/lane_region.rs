@@ -807,6 +807,13 @@ impl<'a, 'f> Lowering<'a, 'f> {
         Some(true)
     }
 
+    /// Whether the instruction at `pc` is the entry function's own: the environment window is
+    /// the entry's, and an inlined callee keeps its own environment, which no window holds, so
+    /// only the caller's records address it.
+    fn caller_body(&self, pc: usize) -> bool {
+        matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_)))
+    }
+
     fn set_tagged(&mut self, state: &mut State, register: Register, bits: ir::Value) {
         self.define(state, register, bits, RegisterFact::definition(Type::ANY, Representation::Tagged));
     }
@@ -2818,10 +2825,10 @@ impl Lowering<'_, '_> {
             // A lane body's own activation has the window metadata these rows address; a
             // loop region runs on the registers alone (`Completion::StatusAndPc`).
             Class::LoadEnvLocal if plain && self.environment && self.completion == Completion::Body
-                && self.unit.frames.is_empty() && instruction.local_slot() <= usize::from(u16::MAX) =>
+                && self.caller_body(pc) && instruction.local_slot() <= usize::from(u16::MAX) =>
                 self.env_local_get(state, pc32, instruction),
             Class::StoreEnvLocal if self.environment && self.completion == Completion::Body
-                && self.unit.frames.is_empty() && instruction.local_slot() <= usize::from(u16::MAX) =>
+                && self.caller_body(pc) && instruction.local_slot() <= usize::from(u16::MAX) =>
                 self.env_local_set(state, pc, instruction),
             Class::MakeClosure if plain && self.environment && self.completion == Completion::Body
                 && self.unit.frames.is_empty() => self.env_closure(state, pc32, instruction),

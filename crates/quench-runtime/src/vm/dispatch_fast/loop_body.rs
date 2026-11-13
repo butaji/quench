@@ -130,6 +130,10 @@ pub(super) fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
         return None;
     };
     if !lane_body_admits(cx, &method) { return None; }
+    // A hot loop reached from a general frame runs on that frame's registers, which no
+    // activation window owns: a body whose frames sit above one is entered only from its
+    // own activation (`lane_body_frames_live`), and this run keeps the lane's records.
+    if method.window_frames() && !super::lane_body_frames_live(cx, r, &method, site.function) { return None; }
     // SAFETY: the context's program outlives the lane run; the activation owns its receiver
     // and captures, as at its body's prologue.
     let (program, code, receiver) = unsafe { ((*cx).program, &*(*cx).code, lane_this(cx).unwrap_or(Value::DELETED)) };

@@ -6678,6 +6678,9 @@ pub(super) struct LaneMethod {
     /// per register of the inlined callees, the unit's past the caller's.
     scratch_width: usize,
     caller_registers: u16,
+    /// Whether its inlined frames sit above an environment activation's window
+    /// (`lane_unit::frames_above_window`): only then does an entry extend the live range.
+    window_frames: bool,
     /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
     amortizes: bool,
     /// The callees it calls by their compiled entries, which its code names.
@@ -6693,6 +6696,18 @@ impl LaneMethod {
     /// The registers of the function it runs, which an inlined callee's follow.
     pub(super) fn caller_registers(&self) -> u16 {
         self.caller_registers
+    }
+
+    /// The registers its inlined callees hold, one per register of theirs: the unit's past
+    /// the caller's, where an environment activation puts its frames.
+    pub(super) fn scratch_width(&self) -> usize {
+        self.scratch_width
+    }
+
+    /// Whether those frames sit above an environment activation's window, which an entry
+    /// extends the live range over (`dispatch_fast::lane_body_frames_live`).
+    pub(super) fn window_frames(&self) -> bool {
+        self.window_frames
     }
 
     /// The address of its compiled entry, which a direct caller calls (`DirectCallee`).
