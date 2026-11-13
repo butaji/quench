@@ -45,7 +45,7 @@ impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
 
     fn memory_load(&mut self, access: Access, index: ir::Value, offset: u32) -> ir::Value {
         let host = self.host_address(index, offset);
-        let flags = self.flags(Region::LinearMemory);
+        let flags = self.load_flags();
         let kind = Kind::of(access.ty).expect("a scalar access");
         let ty = kind.ir();
         let ins = self.body.core.builder.ins();
@@ -121,6 +121,19 @@ impl<H: Host> WasmMemoryGrow for Emitter<'_, '_, H> {
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
+    /// The flags of a linear-memory load. Where the reservation guards the access it is the bound
+    /// check, so it keeps a trap code: even a load whose result is unused must fault before later
+    /// effects (`vector_address`).
+    fn load_flags(&self) -> MemFlagsData {
+        if !self.guarded {
+            return self.flags(Region::LinearMemory);
+        }
+        MemFlagsData::new()
+            .with_trap_code(Some(ir::TrapCode::HEAP_OUT_OF_BOUNDS))
+            .with_endianness(ir::Endianness::Little)
+            .with_alias_region(Some(self.regions[Region::LinearMemory as usize]))
+    }
+
     /// The host address of the memory's byte at `index + offset`.
     fn host_address(&mut self, index: ir::Value, offset: u32) -> ir::Value {
         let host = self.body.core.builder.ins().iadd(self.base, index);
