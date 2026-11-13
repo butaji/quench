@@ -71,8 +71,8 @@ mod tests {
     fn every_call_row_is_built_with_its_contract_holes() {
         for row in rows() {
             let stencil = stencil(row).unwrap_or_else(|e| panic!("{row:?}: {e}"));
-            let successors: Vec<u32> = stencil.relocs.iter().filter(|r| r.pc_relative).map(|r| r.index).collect();
-            let values: Vec<u32> = stencil.relocs.iter().filter(|r| !r.pc_relative).map(|r| r.index).collect();
+            let successors: Vec<u32> = stencil.relocs.iter().filter(|r| crate::class::is_successor(r.class)).map(|r| r.index).collect();
+            let values: Vec<u32> = stencil.relocs.iter().filter(|r| !crate::class::is_successor(r.class)).map(|r| r.index).collect();
             match row {
                 CallRow::Helper => {
                     assert!([NEXT, EXIT, EXIT + 1].iter().all(|s| successors.contains(s)), "{successors:?}");

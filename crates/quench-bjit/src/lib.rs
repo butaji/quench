@@ -218,7 +218,7 @@ mod rustc_tests {
             let mut values: Vec<u32> = stencil.imm32.iter().map(|field| field.index).collect();
             values.sort_unstable();
             values.dedup();
-            let successors: Vec<u32> = stencil.relocs.iter().filter(|reloc| reloc.pc_relative).map(|reloc| reloc.index).collect();
+            let successors: Vec<u32> = stencil.relocs.iter().filter(|reloc| crate::class::is_successor(reloc.class)).map(|reloc| reloc.index).collect();
             (values, successors)
         };
         assert_eq!(row(IC_GET_ROW, false).0, [0, 1, 2, 3]);
