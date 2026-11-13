@@ -112,6 +112,11 @@ pub const INSTANCEOF_ROW: u8 = 27;
 /// marker (a dead zone, a slot the environment took) leaves through EXIT0 into it.
 pub const ENV_ROW: u8 = 46;
 pub const ENV_SET_ROW: u8 = 47;
+/// The definition of a slot of that storage (`staged::environment::environment_slot_define`): a binding's first value
+/// (hole 0 the value operand, holes 1 and 2 the slot as `ENV_SET_ROW`'s), over its dead zone or an earlier value, which
+/// `InitializeTdz` (the hole as the operand) and a declaration's store make. A hit continues at TAKEN; a slot past the run
+/// or another environment's shared slot leaves through EXIT0 into the helper step.
+pub const ENV_DEFINE_ROW: u8 = 48;
 /// The inline-cache rows (`ic_rows.rs`): a read of the receiver's own flat slot, a read of the slot its
 /// prototype holds, and a store of a Number into the receiver's own flat slot, whose slot type is `ANY` or
 /// `NUMBER` (`IC_SET_ROW`) or `INT32` (`IC_SET_INT_ROW`).

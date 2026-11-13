@@ -40,6 +40,7 @@ pub(in crate::vm) use function::inlined_exit_key;
 mod globals;
 mod link;
 mod locals;
+pub(in crate::vm::compiled) use locals::env_owned;
 mod plan;
 mod repr;
 mod residuals;

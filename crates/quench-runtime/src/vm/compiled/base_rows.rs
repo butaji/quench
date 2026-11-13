@@ -62,6 +62,10 @@ pub(super) enum Heap {
     /// The register at hole 0 stored to that slot where its binding is initialized, else the row leaves into the helper
     /// step after it; the slot is hole 1 and its byte offset hole 2. It continues at TAKEN.
     EnvStore(u16),
+    /// The register at hole 0 defined as that slot's value, over a dead zone or any value but a shared slot (`InitializeTdz`
+    /// passes the hole), else the row leaves into the helper step; the slot is hole 1 and its byte offset hole 2.
+    /// It continues at TAKEN.
+    EnvDefine(u16),
     /// The first operand written to the activation's local slot `slot`, whose number is hole 2. It continues at TAKEN
     /// (`continues_at_taken`): as a fast arm it hops past the helper step, in a loop region it branches to the next
     /// instruction.
@@ -172,6 +176,7 @@ impl Heap {
             Heap::CaptureSet(_) => library::CAPTURE_SET_ROW,
             Heap::EnvLocal(_) => library::ENV_ROW,
             Heap::EnvStore(_) => library::ENV_SET_ROW,
+            Heap::EnvDefine(_) => library::ENV_DEFINE_ROW,
             Heap::SiteStore => library::SITE_STORE_ROW,
             Heap::ThisStore => library::THIS_STORE_ROW,
             Heap::This => library::THIS_ROW,
@@ -203,14 +208,14 @@ impl Heap {
     /// Whether a hit continues at the row's TAKEN exit, not its NEXT: the rows of one convention with the fast arms, whose
     /// hit hops past the step laid out after them (`base_region::steps::plan_fast`).
     pub(super) fn continues_at_taken(self) -> bool {
-        matches!(self, Heap::StoreLocal(_) | Heap::Capture(_) | Heap::CaptureSet(_) | Heap::EnvLocal(_) | Heap::EnvStore(_))
+        matches!(self, Heap::StoreLocal(_) | Heap::Capture(_) | Heap::CaptureSet(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::EnvDefine(_))
     }
 
     /// Whether the row reads a snapshot of the heap the loop's entry took (the record's captures,
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
     /// slots, which every run reads live, and the rows that read no heap.
     pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::Identity | Heap::Live | Heap::Realm | Heap::Word | Heap::Object | Heap::Key | Heap::Append | Heap::Add { .. } | Heap::ForIn | Heap::Name { .. } | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::EnvDefine(_) | Heap::Identity | Heap::Live | Heap::Realm | Heap::Word | Heap::Object | Heap::Key | Heap::Append | Heap::Add { .. } | Heap::ForIn | Heap::Name { .. } | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),

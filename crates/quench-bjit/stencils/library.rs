@@ -172,7 +172,7 @@ pub fn heap_canonical((heap, entry, dst, a, b): HeapCode) -> HeapCode {
         IC_GET_ROW | IC_GET_HOLDER_ROW => (heap, entry, dst, MEM, MEM),
         IC_SET_ROW | IC_SET_INT_ROW => (heap, entry, MEM, a, MEM),
         STORE_ROW => (heap, entry, MEM, a, b),
-        STORE_LOCAL_ROW | STORE_CHECKED_ROW | CAPTURE_SET_ROW | ENV_SET_ROW | SITE_STORE_ROW | THIS_STORE_ROW | APPEND_ROW => (heap, false, MEM, a, MEM),
+        STORE_LOCAL_ROW | STORE_CHECKED_ROW | CAPTURE_SET_ROW | ENV_SET_ROW | ENV_DEFINE_ROW | SITE_STORE_ROW | THIS_STORE_ROW | APPEND_ROW => (heap, false, MEM, a, MEM),
         ADD_PACKED_ROW | ADD_ARENA_ROW | ADD_EITHER_ROW | THIS_ADD_PACKED_ROW | THIS_ADD_ARENA_ROW | THIS_ADD_EITHER_ROW => (heap, entry, MEM, MEM, MEM),
         _ => (heap, false, MEM, MEM, MEM),
     }
@@ -216,7 +216,7 @@ pub fn heap_library() -> Vec<HeapCode> {
     for &dst in &dsts {
         rows.extend([THIS_ROW, LOAD_LOCAL_ROW, LOAD_CHECKED_ROW, ENV_ROW].map(|heap| heap_canonical((heap, false, dst, MEM, MEM))));
     }
-    for heap in [STORE_LOCAL_ROW, STORE_CHECKED_ROW, CAPTURE_SET_ROW, ENV_SET_ROW, SITE_STORE_ROW, THIS_STORE_ROW, APPEND_ROW] {
+    for heap in [STORE_LOCAL_ROW, STORE_CHECKED_ROW, CAPTURE_SET_ROW, ENV_SET_ROW, ENV_DEFINE_ROW, SITE_STORE_ROW, THIS_STORE_ROW, APPEND_ROW] {
         rows.extend(srcs.iter().map(|&a| heap_canonical((heap, false, MEM, a, MEM))));
     }
     for heap in ADD_ROWS {

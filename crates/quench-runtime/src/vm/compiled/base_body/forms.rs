@@ -1,6 +1,7 @@
 //! The forms a whole-function body makes in place: each has its row (or its helper step), and a body
 //! that holds it runs as the interpreter does, with the interpreter's step behind a fast arm.
-use super::tests::run_both;
+use super::tests::{run_both, run_in};
+use crate::JitMode;
 use crate::bytecode::Op;
 use crate::vm::compiled::base_region::fast_rows;
 
@@ -186,5 +187,57 @@ fn an_environment_activation_runs_as_a_body_over_its_window() {
     assert!(runs > 100, "the bodies ran {runs} times");
     for (op, before) in ops.into_iter().zip(before) {
         assert!(fast_rows(op) > before, "{op:?} has no fast row");
+    }
+}
+
+/// A closure-heavy function whose let/const bindings closures capture runs its hot loop as one body in every tier: the
+/// dead zone opens and each declaration defines its binding in the window's storage (`ENV_DEFINE_ROW`, or the u-jit's
+/// staged rows), the reads and assignments go through it, and no run of the body leaves before it completes.
+#[test]
+fn environment_declarations_and_reads_run_in_a_body_without_leaving() {
+    let source = "function tally(n) {
+           let c = 0; const step = () => { c = c + 1; return c; };
+           let d = 0;
+           for (let i = 0; i < n; i++) { let e = i + 1; const f = e * 2; d = d + f; c = c + e; }
+           return d + c + step();
+         }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + tally(8 + k % 5)) | 0;
+         print(t); print(tally(3));";
+    for mode in [JitMode::BaseOnly, JitMode::UltraOnly] {
+        let (interpreted, compiled, [runs, returns]) = run_in(mode, source);
+        assert_eq!(interpreted, compiled, "{mode:?}");
+        assert!(runs > 100, "{mode:?}: the bodies ran {runs} times");
+        assert_eq!(runs, returns, "{mode:?}: a body run left before completing");
+    }
+}
+
+/// A read of an environment binding in its dead zone raises the interpreter's `ReferenceError`, in every tier.
+#[test]
+fn an_environment_binding_in_its_dead_zone_raises_as_the_interpreter_does() {
+    let source = "function dead(n) {
+           const g = () => z; let s = 0;
+           for (let i = 0; i < n; i++) { try { s = s + z; } catch (e) { s = s + (e instanceof ReferenceError ? 1 : 100); } }
+           let z = 1; return s + g();
+         }
+         let t = 0; for (let k = 0; k < 300; k++) t = (t + dead(k % 4)) | 0;
+         print(t); print(dead(3));";
+    for mode in [JitMode::BaseOnly, JitMode::UltraOnly] {
+        let (interpreted, compiled, [runs, _]) = run_in(mode, source);
+        assert_eq!(interpreted, compiled, "{mode:?}");
+        assert!(runs > 0, "{mode:?}: no body ran");
+    }
+}
+
+/// `new` of a constructor whose locals closures capture activates it as an environment activation and runs its body.
+#[test]
+fn new_of_a_constructor_that_captures_variables_runs_as_a_body() {
+    let source = "function Counter(n) { let c = n; this.bump = () => { c = c + 1; return c; }; for (let i = 0; i < n; i++) c = c + i; this.start = c; }
+         class Box { constructor(n) { let v = n; this.get = () => v; for (let i = 0; i < n; i++) v = v + 1; this.v = v; } }
+         let t = 0; for (let k = 0; k < 300; k++) { const a = new Counter(k % 5); const b = new Box(k % 4); t = (t + a.bump() + a.start + b.get() + b.v) | 0; }
+         print(t); print(new Counter(3).bump()); print(new Box(2).get());";
+    for mode in [JitMode::BaseOnly, JitMode::UltraOnly] {
+        let (interpreted, compiled, [runs, _]) = run_in(mode, source);
+        assert_eq!(interpreted, compiled, "{mode:?}");
+        assert!(runs > 100, "{mode:?}: the bodies ran {runs} times");
     }
 }
