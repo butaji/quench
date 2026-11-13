@@ -4,6 +4,8 @@ use oxc_ast::ast::UnaryOperator;
 
 #[path = "switch_selection.rs"]
 mod switch_selection;
+#[path = "strict_equality.rs"]
+mod strict_equality;
 
 /// V8's TypeError for ToNumber of a BigInt, unary plus included.
 const BIGINT_TO_NUMBER: &str = "Cannot convert a BigInt value to a number";
@@ -402,25 +404,6 @@ impl<H: Host> Vm<H> {
             return left == right;
         }
         a == b || self.heap_values_strictly_equal(a, b)
-    }
-
-    /// `strict_equal` of two values that are no Numbers and not identical: equal strings or
-    /// BigInts, of equal contents.
-    #[inline(always)]
-    pub(super) fn heap_values_strictly_equal(&self, a: Value, b: Value) -> bool {
-        a.is_heap() && b.is_heap() && self.distinct_heap_values_equal(a, b)
-    }
-
-    /// `heap_values_strictly_equal` of two distinct heap values, as the lane's `===` proved
-    /// them before it left a pair of strings or BigInt cells here.
-    #[inline(always)]
-    pub(super) fn distinct_heap_values_equal(&self, a: Value, b: Value) -> bool {
-        use crate::value::DistinctHeapPair::{Slots, Strings, Unequal};
-        match a.distinct_heap_pair(b) {
-            Unequal => false,
-            Strings => matches!((self.heap.string(a), self.heap.string(b)), (Some(a), Some(b)) if a == b),
-            Slots => matches!((self.heap.get(a), self.heap.get(b)), (Some(Cell::BigInt(a)), Some(Cell::BigInt(b))) if a == b),
-        }
     }
 
     #[inline(always)]
