@@ -9,6 +9,8 @@
 //! for any body. The function itself compiles from its real body. A body that fails an
 //! early check alone makes the compilation fail, and the program compiles again eagerly,
 //! so its diagnostics are the eager ones.
+mod facts;
+pub(super) use facts::{BodyFacts, parse_collecting};
 mod reparse;
 pub(super) use reparse::{Nesting, reparse};
 use oxc_allocator::Allocator;
@@ -209,16 +211,18 @@ pub(super) fn verify(name: &str, source: &str, program: &Program<'_>) {
 const STAND_IN_CALLEE: &str = "eval";
 
 /// `source` parsed as a compilation parses it, with the bodies of functions starting at or
-/// after `lazy_from` parsed lazily when set, each checked by `check` before it is released.
+/// after `lazy_from` parsed lazily when set, each skimmed by `skim` or else checked by `check`
+/// before it is released.
 pub(super) fn parse<'a>(
     allocator: &'a Allocator,
     source: &'a str,
     source_type: SourceType,
     lazy_from: Option<u32>,
     check: Option<oxc_parser::LazyBodyCheck>,
+    skim: Option<oxc_parser::LazyBodySkim>,
     inherited_strict: bool,
 ) -> oxc_parser::ParserReturn<'a> {
-    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check, inherited_strict);
+    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check, skim, inherited_strict);
     if !parsed.lazy_function_bodies.is_empty() {
         let starts: FxHashSet<u32> = parsed.lazy_function_bodies.iter().copied().collect();
         stand_in(allocator, &mut parsed.program, &starts);
@@ -265,85 +269,6 @@ impl<'a> VisitMut<'a> for StandIns<'_, 'a> {
             return;
         }
         walk_mut::walk_function_body(self, body);
-    }
-}
-
-/// What the whole program's analysis would have found inside its lazily parsed bodies, with
-/// every position an offset into the program's text.
-#[derive(Default)]
-pub(super) struct BodyFacts {
-    /// Private names, numbered from 0 in source order; a compilation numbers them on from
-    /// the program's (`private_name_ids`).
-    pub(super) private_name_ids: rustc_hash::FxHashMap<(u32, u32), u32>,
-    pub(super) private_name_labels: rustc_hash::FxHashMap<(u32, u32), String>,
-    /// Function expressions whose `prototype` no program text observes (`call_only`), unless
-    /// `call_only_deferred`.
-    pub(super) prototype_unobservable: FxHashSet<u32>,
-    /// The functions may compile on first call: their call-only facts wait for the
-    /// compilation that reads them (`call_only::deferred`), unless their load compiles them.
-    pub(super) call_only_deferred: bool,
-    /// The functions whose call-only facts are found, by source range.
-    pub(super) call_only_found: Vec<(u32, u32)>,
-    next_private_id: u32,
-    /// Some body failed an early check alone.
-    pub(super) failed: bool,
-    /// Each body's free names (`first_call::free_names`).
-    pub(super) free_names: super::first_call::FreeNames,
-    #[cfg(feature = "aot")]
-    pub(super) native_source_requests: Option<(bool, Vec<super::NativeSourceKey>)>,
-}
-
-impl BodyFacts {
-    /// No facts yet, the call-only ones `deferred` or not.
-    pub(super) fn deferring(call_only_deferred: bool) -> Self {
-        Self { call_only_deferred, ..Self::default() }
-    }
-
-    /// Checks one function the parser hands over before releasing its body
-    /// (`ParseOptions::lazy_body_check`), alone with the strictness it inherits and the
-    /// bodies inside it whole, and adds its facts. The facts are gathered before code
-    /// generation: an analysis per function between the records code generation keeps left
-    /// the heap their holes (JetStream +2-3% max RSS).
-    pub(super) fn check(&mut self, oxc_parser::LazyBody { program, call_assignment_targets, in_function }: oxc_parser::LazyBody<'_, '_>, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) {
-        if self.failed {
-            return;
-        }
-        // Its early errors are OXC's alone: the program carries the strictness the body
-        // inherits as a directive, which `early::program_early_errors` exists to supply where
-        // OXC cannot see it (a whole program in inherited strict code).
-        if super::stack::validate(program).is_err()
-            || call_assignment_targets && super::annex_b_targets::invalid_target(program).is_some()
-        {
-            self.failed = true;
-            return;
-        }
-        let built = super::semantic_stats::builder(program).with_check_syntax_error(true).build(program);
-        if !built.diagnostics.is_empty() {
-            self.failed = true;
-            return;
-        }
-        #[cfg(feature = "aot")]
-        if let Some((specialized, requests)) = &mut self.native_source_requests {
-            requests.extend(super::Engine::native_source_requests(program, built.semantic.scoping(), *specialized, global_script_calls));
-        }
-        self.add_facts(&built.semantic, program, in_function);
-    }
-
-    /// Adds the facts of a checked body: its private names, its free names, and its
-    /// call-only facts unless they wait for a compilation that may never come.
-    fn add_facts(&mut self, semantic: &oxc_semantic::Semantic<'_>, program: &oxc_ast::ast::Program<'_>, in_function: bool) {
-        let first_id = self.next_private_id;
-        for (span, id) in super::private_name_ids(semantic) {
-            self.private_name_ids.insert(span, first_id + id);
-            self.next_private_id = self.next_private_id.max(first_id + id + 1);
-        }
-        self.private_name_labels.extend(super::private_name_labels(semantic));
-        let free_names = super::first_call::free_names(program, semantic.scoping());
-        if !self.call_only_deferred || super::call_only::compiles_at_load(program, in_function && free_names.is_none(), self.next_private_id != first_id) {
-            self.prototype_unobservable.extend(super::call_only::prototype_unobservable_functions(semantic, program));
-            self.call_only_found.push((program.span.start, program.span.end));
-        }
-        self.free_names.extend(free_names);
     }
 }
 

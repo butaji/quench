@@ -17,7 +17,7 @@ mod append;
 mod room;
 pub(crate) mod nested;
 pub(crate) use nested::{FirstCallScopes, FirstCallStubs};
-pub(in crate::compile) use nested::{FreeNameCheck, FreeNames, free_names};
+pub(in crate::compile) use nested::{FreeNameCheck, FreeNames, free_names, skimmed_free_names};
 pub(in crate::compile) use room::ChunkRoom;
 
 impl ReplayViews {

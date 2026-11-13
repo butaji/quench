@@ -306,6 +306,13 @@ pub struct ParseOptions {
     /// Default: `None`
     pub lazy_body_check: Option<LazyBodyCheck>,
 
+    /// Called with each plain function whose body the parser skimmed without building a tree
+    /// (see `LazyBodySkim`), in place of `lazy_body_check`; it says whether it took the
+    /// function, and if not the body is parsed whole and checked as without this option.
+    ///
+    /// Default: `None`
+    pub lazy_body_skim: Option<LazyBodySkim>,
+
     /// The program inherits strict mode (eval code in strict code) without a directive of its
     /// own: lazily parsed bodies are checked as strict code (`lazy_body_check`).
     ///
@@ -325,6 +332,45 @@ pub struct LazyBody<'p, 'a> {
     pub call_assignment_targets: bool,
     /// The function lies in another function's body.
     pub in_function: bool,
+}
+
+/// A borrowed consumer of each skimmed function (`ParseOptions::lazy_body_skim`).
+#[derive(Clone, Copy)]
+pub struct LazyBodySkim(std::ptr::NonNull<dyn for<'x> FnMut(SkimmedBody<'x>) -> bool>);
+
+/// A function whose body was found valid by one scan of its tokens, with what a stub of it needs.
+pub struct SkimmedBody<'s> {
+    /// The function's source range.
+    pub start: u32,
+    pub end: u32,
+    /// A declaration's name, which the scope around it binds.
+    pub id: Option<&'s str>,
+    /// The names the function reads from outside itself, sorted and without repeats.
+    pub free_names: &'s [&'s str],
+    /// The function lies in another function's body.
+    pub in_function: bool,
+}
+
+impl LazyBodySkim {
+    /// # Safety
+    /// `skim` must outlive every parse given these options.
+    pub unsafe fn new<'c>(skim: &'c mut (dyn for<'x> FnMut(SkimmedBody<'x>) -> bool + 'c)) -> Self {
+        // SAFETY: the caller keeps `skim` alive while it is called.
+        Self(unsafe { std::mem::transmute::<std::ptr::NonNull<dyn for<'x> FnMut(SkimmedBody<'x>) -> bool + 'c>, std::ptr::NonNull<dyn for<'x> FnMut(SkimmedBody<'x>) -> bool>>(std::ptr::NonNull::from(skim)) })
+    }
+
+    /// # Safety
+    /// The skim given to `new` is alive and not otherwise borrowed.
+    pub(crate) unsafe fn call(self, body: SkimmedBody<'_>) -> bool {
+        // SAFETY: the caller's contract.
+        unsafe { (*self.0.as_ptr())(body) }
+    }
+}
+
+impl std::fmt::Debug for LazyBodySkim {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LazyBodySkim")
+    }
 }
 
 impl LazyBodyCheck {
@@ -361,6 +407,7 @@ impl Default for ParseOptions {
             enable_ident_hashes: true,
             lazy_function_bodies: None,
             lazy_body_check: None,
+            lazy_body_skim: None,
             inherited_strict: false,
         }
     }

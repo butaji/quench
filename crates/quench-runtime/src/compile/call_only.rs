@@ -13,7 +13,7 @@
 //! which hands the binding's value nowhere new.
 
 mod deferred;
-pub(super) use deferred::compiles_at_load;
+pub(super) use deferred::{compiles_at_load, invoked_where_made};
 
 use oxc_ast::ast::{
     AssignmentExpression, AssignmentOperator, AssignmentTarget, CallExpression, Expression,

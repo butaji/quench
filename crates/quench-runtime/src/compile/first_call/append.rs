@@ -33,7 +33,7 @@ impl Engine {
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
         let window = ChunkWindow { source, start: chunk.start, outer, line_starts, utf16_excess };
         let allocator = lazy_bodies::sized_arena(&chunk.text);
-        let mut parsed = lazy_bodies::parse(&allocator, &chunk.text, SourceType::script(), None, None, false);
+        let mut parsed = lazy_bodies::parse(&allocator, &chunk.text, SourceType::script(), None, None, None, false);
         let name = program.source_name.as_str();
         let mut prototype_unobservable = chunk_analysis(&parsed, name)?;
         let mut compiler = window.compiler(name, SpecializationMode::of(atom_prefix), atom_prefix, &mut parsed.program, Default::default(), &mut Default::default(), &mut prototype_unobservable);

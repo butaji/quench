@@ -1117,13 +1117,11 @@ impl Engine {
         .flatten();
         let parsed_text = located.as_ref().map_or(&*normalized, |literal| literal.substituted.as_str());
         let allocator = lazy_bodies::sized_arena(parsed_text);
-        let mut facts = lazy_bodies::BodyFacts::deferring(expected_shape.stubs_functions(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names)));
+        let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(expected_shape.stubs_functions(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names))));
         #[cfg(feature = "aot")]
-        { facts.native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
-        let mut check = |body: oxc_parser::LazyBody<'_, '_>| facts.check(body, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
-        // SAFETY: `check` lives through the parse, which alone calls it.
-        let check = lazy.then(|| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) });
-        let mut parsed = lazy_bodies::parse(&allocator, parsed_text, source_type, lazy.then_some(0), check, inherited_strict);
+        { facts.borrow_mut().native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
+        let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, lazy, &facts, inherited_strict, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
+        let mut facts = facts.into_inner();
         let data_literal = match &located {
             Some(literal) if parsed.diagnostics.is_empty()
                 && data_literal::is_top_level_value(&parsed.program, literal.start) => Some(literal.start),

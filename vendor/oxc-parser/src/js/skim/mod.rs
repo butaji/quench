@@ -1,0 +1,212 @@
+//! A syntax-only pass over the body of a lazily parsed function: one scan of the tokens, no
+//! tree. It accepts exactly the bodies whose syntax and early errors it can decide alone
+//! (`Seen::None` anywhere means "not decided": the caller parses the body whole, as before),
+//! and leaves the names the body reads from outside itself, which is what a stub of the
+//! function needs. Declarations and references are tracked as in a pre-parser: each scope
+//! knows its names, each reference is settled when its scope closes.
+//!
+//! Not decided here, so always parsed whole: classes, `async`, generators, `super`, private
+//! names, `with`, `import`/`export`, `let`/`yield`/`await`/`static`... as identifiers, a
+//! `"use strict"` prologue, duplicate declarations of any kind in one scope that a sloppy
+//! program may repeat, and legacy octal literals and escapes.
+use crate::{ParserConfig as Config, ParserImpl, lexer::Kind};
+use oxc_ast::ast::FormalParameters;
+use oxc_span::GetSpan;
+
+mod binding;
+mod class;
+mod expr;
+mod flow;
+mod for_loop;
+mod function;
+mod object;
+mod primary;
+mod scope;
+mod stmt;
+
+use flow::Flow;
+use scope::Scopes;
+
+/// `Some` when the construct was decided valid, `None` when it was not decided.
+type Seen<T = ()> = Option<T>;
+
+/// Nesting of statements and expressions beyond which a body is not skimmed: the whole parse
+/// reports stack exhaustion with its own accounting.
+const MAX_DEPTH: u32 = 160;
+
+/// The names a function reads from outside itself.
+pub(crate) struct Skimmed<'a> {
+    pub(crate) free_names: Vec<&'a str>,
+    /// The directives of the skimmed function's own body, as the start of each, the end of its
+    /// string and the end of its statement; none has an escape.
+    pub(crate) directives: Vec<(u32, u32, u32)>,
+}
+
+struct Skim<'p, 'a, C: Config> {
+    p: &'p mut ParserImpl<'a, C>,
+    scopes: Scopes<'a>,
+    flow: Flow<'a>,
+    strict: bool,
+    depth: u32,
+    /// Shorthand properties with an initializer (`{a = 1}`) read so far that no assignment
+    /// has yet turned into a pattern.
+    pending_cover: u32,
+    /// The assignment expression about to parse is an element of an array or object literal,
+    /// which an enclosing assignment may turn into a pattern.
+    in_cover: bool,
+    /// `in` is not an operator here: the head of a `for`.
+    no_in: bool,
+    /// The identifier last read as a reference or a label.
+    last_ident: &'a str,
+    ctx: FnCtx,
+    /// The directives of the first function body read, which is the skimmed function's own.
+    directives: Vec<(u32, u32, u32)>,
+    directives_read: bool,
+}
+
+/// What the code of a function may use that the function around it decides.
+#[derive(Clone, Copy)]
+struct FnCtx {
+    /// `super.x` is valid: in a method, or an arrow inside one.
+    super_property: bool,
+    /// `super(...)` is valid: in the constructor of a derived class, or an arrow inside it.
+    super_call: bool,
+    /// `yield` is an operator: in a generator.
+    generator: bool,
+}
+
+impl FnCtx {
+    const PLAIN: Self = Self { super_property: false, super_call: false, generator: false };
+
+    fn function(generator: bool) -> Self {
+        Self { generator, ..Self::PLAIN }
+    }
+
+    fn method(super_call: bool, generator: bool) -> Self {
+        Self { super_property: true, super_call, generator }
+    }
+}
+
+impl<'a, C: Config> ParserImpl<'a, C> {
+    /// The names the function body at the current `{` reads from outside the function whose
+    /// simple `params` it has, when the body is decided valid; the parser then stands after
+    /// the closing `}`. Otherwise the parser may stand anywhere in the body: the caller rewinds.
+    pub(crate) fn skim_function_body(&mut self, params: &FormalParameters<'a>) -> Option<Skimmed<'a>> {
+        let names = self.simple_param_names(params)?;
+        let strict = self.strict;
+        let mut skim = Skim {
+            p: self,
+            scopes: Scopes::default(),
+            flow: Flow::default(),
+            strict,
+            depth: 0,
+            pending_cover: 0,
+            in_cover: false,
+            no_in: false,
+            last_ident: "",
+            ctx: FnCtx::PLAIN,
+            directives: Vec::new(),
+            directives_read: false,
+        };
+        skim.scopes.enter(true);
+        for name in names {
+            skim.scopes.declare_param(name)?;
+        }
+        skim.function_body(true)?;
+        skim.scopes.exit();
+        Some(Skimmed { free_names: std::mem::take(&mut skim.scopes.refs), directives: skim.directives })
+    }
+
+    /// The names of `params` when each is a plain identifier: no pattern, default, rest or
+    /// repeat, and none `eval` or `arguments`.
+    fn simple_param_names(&self, params: &FormalParameters<'a>) -> Option<Vec<&'a str>> {
+        if params.rest.is_some() {
+            return None;
+        }
+        let mut names = Vec::with_capacity(params.items.len());
+        for param in &params.items {
+            let oxc_ast::ast::BindingPattern::BindingIdentifier(identifier) = &param.pattern else { return None };
+            let span = identifier.span();
+            let name = self.source_text.get(span.start as usize..span.end as usize)?;
+            if param.initializer.is_some() || name.len() != identifier.name.len() || names.contains(&name) || is_restricted(name) {
+                return None;
+            }
+            names.push(name);
+        }
+        Some(names)
+    }
+}
+
+/// `eval` and `arguments` cannot be bound or assigned in strict code.
+fn is_restricted(name: &str) -> bool {
+    matches!(name, "eval" | "arguments")
+}
+
+/// Whether `kind` is an identifier that is valid as a name in any code: not reserved, not
+/// reserved in strict code, not `async`.
+fn is_plain_identifier(kind: Kind) -> bool {
+    kind.is_identifier() && !kind.is_strict_mode_contextual_keyword() && kind != Kind::Async
+}
+
+impl<'a, C: Config> Skim<'_, 'a, C> {
+    fn kind(&self) -> Kind {
+        self.p.cur_kind()
+    }
+
+    fn bump(&mut self) {
+        self.p.bump_any();
+    }
+
+    fn eat(&mut self, kind: Kind) -> bool {
+        let at = self.kind() == kind;
+        if at {
+            self.bump();
+        }
+        at
+    }
+
+    fn expect(&mut self, kind: Kind) -> Seen {
+        self.eat(kind).then_some(())
+    }
+
+    /// The current token has a line break before it.
+    fn newline(&self) -> bool {
+        self.p.cur_token().is_on_new_line()
+    }
+
+    /// Runs `f` one nesting level deeper.
+    fn deeper<T>(&mut self, f: impl FnOnce(&mut Self) -> Seen<T>) -> Seen<T> {
+        if self.depth >= MAX_DEPTH {
+            return None;
+        }
+        self.depth += 1;
+        let seen = f(self);
+        self.depth -= 1;
+        seen
+    }
+
+    /// The end of a statement: `;`, or the automatic one before `}`, the end of the text or a
+    /// line break.
+    fn semicolon(&mut self) -> Seen {
+        (self.eat(Kind::Semicolon) || matches!(self.kind(), Kind::RCurly | Kind::Eof) || self.newline()).then_some(())
+    }
+
+    /// The current token as a plain identifier (see `is_plain_identifier`), read.
+    /// Runs `f` in function context `ctx`.
+    fn with_ctx<T>(&mut self, ctx: FnCtx, f: impl FnOnce(&mut Self) -> Seen<T>) -> Seen<T> {
+        let saved = std::mem::replace(&mut self.ctx, ctx);
+        let seen = f(self);
+        self.ctx = saved;
+        seen
+    }
+
+    fn identifier(&mut self) -> Seen<&'a str> {
+        let token = self.p.cur_token();
+        if !is_plain_identifier(token.kind()) || token.escaped() {
+            return None;
+        }
+        let name = self.p.cur_src();
+        self.bump();
+        Some(name)
+    }
+}

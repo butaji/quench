@@ -61,7 +61,7 @@ pub(crate) struct FirstCallScopes {
 /// by name (direct `eval`, `with`), whose captures its names do not bound.
 pub(in crate::compile) fn free_names(program: &Program<'_>, scoping: &oxc_semantic::Scoping) -> Option<(u32, Box<[Box<str>]>)> {
     let text = program.source_text.get(program.span.start as usize..program.span.end as usize)?;
-    if text.contains("eval") || text.contains("with") {
+    if reaches_scopes_by_name(text) {
         return None;
     }
     let (start, own) = match program.body.first()? {
@@ -85,6 +85,24 @@ pub(in crate::compile) fn free_names(program: &Program<'_>, scoping: &oxc_semant
     Some((start, names.into_boxed_slice()))
 }
 
+/// Whether the source of a function may reach its scopes by name (direct `eval`, `with`), which
+/// its free names do not bound.
+fn reaches_scopes_by_name(text: &str) -> bool {
+    text.contains("eval") || text.contains("with")
+}
+
+/// The free names of `body`, a function the parser skimmed in `text`: those of `free_names` of
+/// its tree. None where that has none.
+pub(in crate::compile) fn skimmed_free_names(body: &oxc_parser::SkimmedBody<'_>, text: &str) -> Option<Box<[Box<str>]>> {
+    if text.get(body.start as usize..body.end as usize).is_none_or(reaches_scopes_by_name) {
+        return None;
+    }
+    let mut names: Vec<Box<str>> = body.free_names.iter().copied().filter(|name| *name != "arguments").chain(body.id).map(Box::from).collect();
+    names.sort_unstable();
+    names.dedup();
+    Some(names.into_boxed_slice())
+}
+
 /// The free names of the bodies a parse of one function's text releases, added to `found` at
 /// their places in the program's text, `delta` past their places in the parsed text.
 pub(in crate::compile) struct FreeNameCheck<'f> {
@@ -95,6 +113,14 @@ pub(in crate::compile) struct FreeNameCheck<'f> {
 impl<'f> FreeNameCheck<'f> {
     pub(in crate::compile) fn new(found: &'f mut FreeNames, delta: u32) -> Self {
         Self { found, delta }
+    }
+
+    /// Adds the free names of `body`, a function the parser skimmed in `text`: it takes it.
+    pub(in crate::compile) fn skim(&mut self, body: oxc_parser::SkimmedBody<'_>, text: &str) -> bool {
+        if let Some(names) = skimmed_free_names(&body, text) {
+            self.found.insert(body.start.wrapping_add(self.delta), names);
+        }
+        true
     }
 
     /// Adds the free names of `body`, as the parser releases it.

@@ -2,7 +2,7 @@ use oxc_allocator::{ArenaBox, ArenaVec, GetAllocator};
 use oxc_ast::ast::*;
 use oxc_span::{GetSpan, Span};
 
-use super::FunctionKind;
+use super::{FunctionKind, skim::Skimmed};
 use crate::{
     Context, ParserConfig as Config, ParserImpl, StatementContext, diagnostics,
     lexer::Kind,
@@ -57,6 +57,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// A function body parsed, then released from the arena and kept as its directives,
     /// unless its parse left state that outlives it (`LazyBodyCheckpoint`).
     fn parse_lazy_function_body(&mut self, function: LazyFunction<'_, 'a>) -> ArenaBox<'a, FunctionBody<'a>> {
+        if let Some(body) = self.skim_lazy_function_body(&function) {
+            return body;
+        }
         let allocator = self.allocator();
         let inherited_strict = self.strict;
         // The arena allocates downward: everything the body allocates lies before this.
@@ -108,6 +111,70 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.lazy_function_bodies.push(span.start);
         let directives = ArenaVec::from_iter_in(directives, &self.ast);
         FunctionBody::boxed(span, directives, ArenaVec::new_in(self), self)
+    }
+
+    /// The body kept as its directives after one scan of its tokens (`ParseOptions::lazy_body_skim`),
+    /// when the scan finds it valid, leaves no state behind and the consumer takes the function.
+    /// Otherwise the parser is as it was and the body parses whole.
+    fn skim_lazy_function_body(&mut self, function: &LazyFunction<'_, 'a>) -> Option<ArenaBox<'a, FunctionBody<'a>>> {
+        let skim = self.options.lazy_body_skim?;
+        if function.r#async || function.generator || function.expression && function.id.is_some() || !self.at(Kind::LCurly) {
+            return None;
+        }
+        let allocator = self.allocator();
+        let marker = std::ptr::NonNull::from(allocator.alloc(0u8));
+        let mut before = LazyBodyCheckpoint::of(self);
+        let capacity = before.arena_capacity;
+        let checkpoint = self.checkpoint();
+        let inherited_strict = self.strict;
+        let start = self.cur_start();
+        let skimmed = self.skim_function_body(function.params);
+        before.arena_capacity = allocator.capacity();
+        let taken = skimmed.filter(|_| before == LazyBodyCheckpoint::of(self)).filter(|skimmed| {
+            let end = self.prev_token_end;
+            let body = crate::SkimmedBody {
+                start: function.start,
+                end,
+                id: function.id.map(|id| id.name.as_str()),
+                free_names: &skimmed.free_names,
+                in_function: self.ctx.has_return(),
+            };
+            // SAFETY: `ParseOptions::lazy_body_skim` outlives the parse.
+            unsafe { skim.call(body) }
+        });
+        self.strict = inherited_strict;
+        let Some(Skimmed { directives: skimmed_directives, .. }) = taken else {
+            self.rewind(checkpoint);
+            return None;
+        };
+        let span = Span::new(start, self.prev_token_end);
+        self.release_skimmed_strings(span, marker, capacity);
+        self.lazy_function_bodies.push(span.start);
+        let mut directives = ArenaVec::new_in(self);
+        for (start, literal_end, end) in skimmed_directives {
+            let text = &self.source_text[start as usize + 1..literal_end as usize - 1];
+            let literal = StringLiteral::new(Span::new(start, literal_end), text, None, self);
+            directives.push(Directive::new(Span::new(start, end), literal, text, self));
+        }
+        Some(FunctionBody::boxed(span, directives, ArenaVec::new_in(self), self))
+    }
+
+    /// The arena the skim used is released, with the escaped strings and templates it decoded
+    /// inside `span`, unless one past it shares the arena region.
+    fn release_skimmed_strings(&mut self, span: Span, marker: std::ptr::NonNull<u8>, capacity: usize) {
+        let escaped_after = self.lexer.escaped_strings.keys().any(|start| *start >= span.end)
+            || self.lexer.escaped_templates.keys().any(|start| *start >= span.end);
+        if escaped_after {
+            return;
+        }
+        let inside = |start: &u32| (span.start..span.end).contains(start);
+        self.lexer.escaped_strings.retain(|start, _| !inside(start));
+        self.lexer.escaped_templates.retain(|start, _| !inside(start));
+        if self.allocator().capacity() == capacity {
+            // SAFETY: as in `parse_lazy_function_body`: the arena has the chunk of `marker`, and
+            // nothing allocated after it is referenced any more.
+            unsafe { self.allocator().set_cursor_ptr(marker) };
+        }
     }
 
     /// Calls `check` with `function` and its `body` alone as a program, as its source

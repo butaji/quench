@@ -51,14 +51,17 @@ pub(in crate::compile) fn reparse<'a>(
     source_type: SourceType,
     nesting: Nesting<'_>,
 ) -> Option<Reparsed<'a>> {
-    let (mut names, recorded) = match nesting {
+    let (names, recorded) = match nesting {
         Nesting::Parse(found) => (Some(FreeNameCheck::new(found, delta)), None),
         Nesting::Recorded(starts) => (None, Some(starts)),
     };
     let lazy_from = names.is_some().then_some(offset + 1);
-    let mut check = |body: oxc_parser::LazyBody<'_, '_>| if let Some(names) = &mut names { names.check(body) };
-    // SAFETY: `check` lives through the parse, which alone calls it.
-    let mut parsed = parse(allocator, text, source_type, lazy_from, lazy_from.map(|_| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) }), false);
+    let names = std::cell::RefCell::new(names);
+    let mut check = |body: oxc_parser::LazyBody<'_, '_>| if let Some(names) = names.borrow_mut().as_mut() { names.check(body) };
+    let mut skim = |body: oxc_parser::SkimmedBody<'_>| names.borrow_mut().as_mut().is_some_and(|names| names.skim(body, text));
+    // SAFETY: `check` and `skim` live through the parse, which alone calls them.
+    let hooks = lazy_from.map(|_| unsafe { (oxc_parser::LazyBodyCheck::new(&mut check), oxc_parser::LazyBodySkim::new(&mut skim)) });
+    let mut parsed = parse(allocator, text, source_type, lazy_from, hooks.map(|hooks| hooks.0), hooks.map(|hooks| hooks.1), false);
     if let Some(starts) = recorded {
         // The function's own body compiles from this parse.
         let own = Reparsed::function_of(&parsed.program).and_then(|function| function.body.as_ref()).map(|body| body.span.start);
