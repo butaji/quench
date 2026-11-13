@@ -16087,6 +16087,78 @@ fn shared_osr_compiles_numeric_truthiness_branches() {
     }
 }
 
+/// A loop whose hot reads are captures of an enclosing function iterates natively: the
+/// region resolves a deeper capture through the lane's own lookup at the instruction, so the
+/// loop's entry does not carry it. EarleyBoyer's Scheme-compiled loops are this shape, and
+/// previously every one was rejected at its first `LoadCapture`.
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_iterates_a_loop_over_outer_captures() {
+    let program = Engine::compile(crate::ExecutionRequest::script(
+        r#"
+          function outer() {
+            let acc = 0;
+            function middle() {
+              function spin(n) {
+                let i = 0;
+                while (i < n) { acc = acc + i; i = i + 1; }
+                return acc;
+              }
+              return spin;
+            }
+            return middle();
+          }
+          let spin = outer();
+          let result = 0;
+          for (let call = 0; call < 300; call++) result = spin(100) & 0xffff;
+          print(result);
+        "#,
+        "osr-outer-captures.js",
+    ))
+    .unwrap();
+    let function_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function
+                .header()
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "spin")
+        })
+        .expect("outer-capture loop function");
+    let interpreted_output = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(interpreted_output.clone())).execute(&program).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
+    let views = vm
+        .programs
+        .lane_views(super::program_store::ProgramId::MAIN)
+        .expect("main program lane views");
+    let view = views
+        .get(function_id)
+        .and_then(super::program_store::derived_lane_view)
+        .expect("hot outer-capture loop lane view");
+    let diagnostics = view.osr_diagnostics();
+    assert_eq!(
+        diagnostics.admitted_sites, 1,
+        "the outer-capture loop is admitted: rejects={:?}",
+        diagnostics.analysis_rejections,
+    );
+    assert_eq!(
+        diagnostics.currently_compiled_sites, 1,
+        "OSR diagnostics: plain={}, admitted={}, attempts={}, successes={}, native={}, rejects={:?}",
+        diagnostics.plain_backward_jump_sites,
+        diagnostics.admitted_sites,
+        diagnostics.compile_attempts,
+        diagnostics.compile_successes,
+        diagnostics.native_region_runs,
+        diagnostics.analysis_rejections,
+    );
+}
+
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {

@@ -2397,11 +2397,18 @@ fn admit(
             }
         }
         Class::LoadCapture => {
-            (instruction.capture_depth() == 0 && instruction.result_flags() == 0).then_some(())?;
+            (instruction.result_flags() == 0).then_some(())?;
             admit_loaded(admission, instruction, tagged)?;
-            let slot = instruction.capture_slot();
-            if !admission.captures.contains(&slot) {
-                admission.captures.push(slot);
+            // A depth-0 slot is the activation's own, which the entry snapshot holds (or,
+            // where the region also stores it, the lane's lookup reads). A deeper one the
+            // lane's own lookup resolves from the running activation at the instruction
+            // (`Lowering::capture_get`), so no entry word carries it: a loop whose hot
+            // reads are outer captures still iterates natively.
+            if instruction.capture_depth() == 0 {
+                let slot = instruction.capture_slot();
+                if !admission.captures.contains(&slot) {
+                    admission.captures.push(slot);
+                }
             }
         }
         Class::Binary | Class::NumericAdd | Class::NumericMultiply => {
@@ -2744,9 +2751,9 @@ fn lowered_natively(instruction: WideInstruction) -> bool {
             .is_some() || bitwise_condition(instruction).is_some()
             || super::super::operations::equality_operator(instruction.binary_operator_field()).is_some()
             || instruction.binary_operator_field() == oxc_ast::ast::BinaryOperator::Instanceof as u32,
-        // A capture read at depth 0 is the activation's own slot; a deeper one takes the
-        // lane's environment lookup, so the region leaves at it.
-        Class::LoadCapture => instruction.capture_depth() == 0,
+        // A capture read is the activation's own slot at depth 0 and the lane's environment
+        // lookup deeper, which the region's capture helper resolves at the instruction.
+        Class::LoadCapture => instruction.result_flags() == 0,
         class => matches!(class,
             Class::LoadConst | Class::Move | Class::LoadCapture | Class::StoreCapture | Class::LoadName
             | Class::Binary | Class::NumericAdd
