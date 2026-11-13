@@ -92,8 +92,8 @@ pub(super) fn membership_row(known: Known, pc: u32, instruction: WideInstruction
 /// (`Known::instanceofs`): the value and constructor registers are its operands, the constructor's identity its
 /// `hole`, with the helper step behind it as the slow arm. Any other row is as it is.
 pub(super) fn instanceof_arm(known: Known, pc: u32, instruction: WideInstruction, row: Decoded) -> Decoded {
-    let operands = instruction.operand_b().register_index().zip(instruction.operand_c().register_index());
-    let proved = known.instanceofs.zip(operands).filter(|_| is_instanceof(instruction) && row.step == Some(Step::Helper) && row.dst.is_some());
+    let operands = is_instanceof(instruction).then(|| instruction.operand_b().register_index().zip(instruction.operand_c().register_index())).flatten();
+    let proved = known.instanceofs.zip(operands).filter(|_| row.step == Some(Step::Helper) && row.dst.is_some());
     let Some((proved, (value, constructor))) = proved.and_then(|(facts, operands)| facts(pc as usize).map(|found| (found, operands))) else { return row };
     let hole = proved.0.to_bits();
     Decoded { step: Some(Step::Fast(Heap::Instanceof)), a: Some(Source::Register(value)), b: Some(Source::Register(constructor)), hole, instanceof: Some(proved), ..row }

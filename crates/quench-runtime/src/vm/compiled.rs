@@ -1629,7 +1629,8 @@ pub(super) fn names_length(program: &ResidualProgram, atom: Atom) -> bool {
 /// Whether `instruction` is a plain read of `length`, which its lowering answers for any base
 /// (`Lowering::array_length`), so the base needs no object record.
 pub(super) fn reads_length(program: &ResidualProgram, instruction: WideInstruction) -> bool {
-    !instruction.writes_current_this() && !instruction.returns_from_frame()
+    instruction.op().immediate_role() == crate::bytecode::ImmediateRole::FieldLookup
+        && !instruction.writes_current_this() && !instruction.returns_from_frame()
         && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { atom, .. }) if names_length(program, atom))
 }
 
