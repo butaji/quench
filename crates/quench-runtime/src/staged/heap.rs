@@ -66,7 +66,8 @@ fn global_row<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         GlobalBinding::Constant(value) => frame.global_constant(stage, destination, value),
         GlobalBinding::Held { value, ty } => frame.global_held(stage, destination, value, ty),
         GlobalBinding::Frozen { value, ty } => frame.global_frozen(stage, destination, atom, site, value, ty, proof),
-        GlobalBinding::Dynamic => frame.global_read(stage, destination, atom, site, proof),
+        GlobalBinding::Dynamic => frame.global_read(stage, destination, atom, site, Type::ANY, proof),
+        GlobalBinding::Typed { ty } => frame.global_read(stage, destination, atom, site, ty, proof),
     }
 }
 

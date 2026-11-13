@@ -1,5 +1,5 @@
 //! Darwin arm64 native-entry recovery. Only owned guard/poll faults are ours.
-use super::{ACTIVE_CONTEXT, CallContext, Entry, GuardSupport, TERMINATED_STATUS, trap_status};
+use super::{ACTIVE_CONTEXT, CallContext, GuardSupport, TERMINATED_STATUS, WasmEntry, trap_status};
 use std::sync::OnceLock;
 
 // AAPCS64 preserves x19..x28, fp/lr and the low halves of v8..v15.
@@ -12,7 +12,7 @@ const FRAME_BYTES: usize = VECTOR_BASE + VECTOR_PAIRS * PAIR_BYTES;
 
 #[unsafe(naked)]
 unsafe extern "C" fn trampoline(
-    _: *mut CallContext, _: u64, _: u64, _: *const u64, _: *mut u64, _: Entry,
+    _: *mut CallContext, _: u64, _: u64, _: *const u64, _: *mut u64, _: WasmEntry,
 ) -> u32 {
     core::arch::naked_asm!(
         "stp x29, x30, [sp, #-{frame}]!",
@@ -134,7 +134,7 @@ mod tests {
         assert_eq!(bytes, unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize);
         interrupt.request_termination();
         for guard in [false, true] {
-            let mut context = CallContext::native_adapter(std::ptr::null_mut(), interrupt.atomic_flag(),
+            let mut context = CallContext::native_adapter(std::ptr::null_mut(), interrupt.attention_flag(),
                 (!guard).then_some((page, bytes)));
             if guard { context.guard_start = page; context.guard_end = page + bytes; }
             let outer = ACTIVE_CONTEXT.with(|active| active.replace(&mut context));
@@ -177,8 +177,8 @@ mod tests {
             // SAFETY: the outer entry lends its interrupt owner and protected page.
             let mut child = CallContext::native_adapter(std::ptr::null_mut(), unsafe { (*context).interrupt },
                 Some((page as usize, bytes as usize)));
-            let status = unsafe { super::super::enter_native(&mut child, page, bytes,
-                std::ptr::null(), std::ptr::null_mut(), super::super::NativeEntryMode::Resumable, clobber_and_poll) };
+            let status = unsafe { super::super::enter_wasm(&mut child, page, bytes,
+                std::ptr::null(), std::ptr::null_mut(), clobber_and_poll) };
             assert_eq!(i64::from(status), TERMINATED_STATUS);
             assert_eq!(ACTIVE_CONTEXT.with(std::cell::Cell::get), context);
             unsafe { out.write(42); }
@@ -187,11 +187,11 @@ mod tests {
         let interrupt = crate::ExecutionInterrupt::default();
         let (page, bytes) = interrupt.poll_page().unwrap();
         interrupt.request_termination();
-        let mut context = CallContext::native_adapter(std::ptr::null_mut(), interrupt.atomic_flag(), None);
+        let mut context = CallContext::native_adapter(std::ptr::null_mut(), interrupt.attention_flag(), None);
         let before = ACTIVE_CONTEXT.with(std::cell::Cell::get);
         let mut result = 0;
-        let status = unsafe { super::super::enter_native(&mut context, page as u64, bytes as u64,
-            std::ptr::null(), &mut result, super::super::NativeEntryMode::Resumable, nested) };
+        let status = unsafe { super::super::enter_wasm(&mut context, page as u64, bytes as u64,
+            std::ptr::null(), &mut result, nested) };
         assert_eq!(status, 0);
         assert_eq!(result, 42);
         assert_eq!(ACTIVE_CONTEXT.with(std::cell::Cell::get), before);

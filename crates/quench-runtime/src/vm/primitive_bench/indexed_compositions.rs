@@ -257,7 +257,7 @@ fn fractional_stencil(b: &mut Bencher, pattern: StencilPattern, aliased: bool, s
             ("store_move", lane_set_index_move_proved::<TestHost> as Handler as *const (), true),
         ];
         let mut counts = vec![0; kinds.len()];
-        for record in &view.records {
+        for record in view.records.iter() {
             let ip = record.get();
             // SAFETY: validation has returned; the view owns these live records and
             // their loop headers. No VM execution runs during this inspection.

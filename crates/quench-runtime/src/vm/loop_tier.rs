@@ -20,87 +20,62 @@ pub(super) struct LoopTier {
     /// Native runs of the region and the iterations they took: the loop's mean trip count.
     runs: u32,
     iterations: u64,
+    /// Entries the guards declined: each paid for the entry's guards and ran no iteration.
+    declined: u32,
     /// Each operation the code left at, with its leaves so far; and those whose int32
     /// speculation the next compilation drops (`lane_region`'s `generic`), sorted.
     leaves: Vec<(u32, u16)>,
     widened: Vec<usize>,
     /// The element reads among them that left again as Numbers, which the next compilation reads untyped.
     abandoned: Vec<usize>,
-    /// The lane's nanoseconds per loop iteration over the entries before the region compiled
-    /// (`lane_trial_start`/`lane_trial_end`); 0 until measured.
-    lane_ns: u32,
-    lane_started: u64,
-    /// A published region's trial: the thread CPU nanoseconds and iterations of its first runs,
-    /// and whether the trial judged it (`LoopTier::weigh_trial`).
-    trial_ns: u64,
-    trial_iterations: u64,
-    trial_runs: u32,
-    judged: bool,
+    /// The cache site the latest run left at, which the interpreter then ran and whose entry
+    /// the next entry re-patches (`lane_loop_repatch`).
+    miss: Option<u32>,
 }
 
 impl LoopTier {
-    /// Starts timing the lane's own loop iterations, which a published region's trial is judged
-    /// against.
-    pub(super) fn lane_trial_start(&mut self) {
-        if self.lane_started == 0 {
-            self.lane_started = super::dispatch_fast::lane_body_tier::thread_cpu_ns();
-        }
-    }
-
-    /// Ends the lane timing after `iterations` iterations: their rate is the region trial's
-    /// baseline.
-    pub(super) fn lane_trial_end(&mut self, iterations: u32) {
-        let started = std::mem::replace(&mut self.lane_started, 0);
-        if started == 0 || iterations == 0 { return; }
-        let ns = super::dispatch_fast::lane_body_tier::thread_cpu_ns().saturating_sub(started) / u64::from(iterations);
-        self.lane_ns = u32::try_from(ns).unwrap_or(u32::MAX);
-    }
-
-    /// Whether the published region still takes trial runs.
-    pub(super) fn trial_pending(&self) -> bool {
-        !self.judged && self.lane_ns != 0 && self.trial_runs < TIERS.loops.native_trial_runs
-    }
-
-    /// Weighs a native run of `ns` CPU nanoseconds that took `iterations` iterations; at
-    /// `native_trial_runs` it judges the region's per-iteration cost against the lane's: a
-    /// region no faster keeps neither its entry nor its compile, and the loop runs in the lane.
-    pub(super) fn weigh_trial(&mut self, ns: u64, iterations: u64, function: u32, header: u32) {
-        if self.judged || self.lane_ns == 0 { return; }
-        self.trial_ns = self.trial_ns.saturating_add(ns);
-        self.trial_iterations = self.trial_iterations.saturating_add(iterations);
-        self.trial_runs = self.trial_runs.saturating_add(1);
-        if self.trial_runs < TIERS.loops.native_trial_runs { return; }
-        self.judged = true;
-        if self.trial_iterations == 0 { return; }
-        let native = u128::from(self.trial_ns / self.trial_iterations);
-        let lane = u128::from(self.lane_ns);
-        if crate::trace::Channel::JsJit.on() {
-            eprintln!("QUENCH_LOOP_TRIAL {{\"function\":{function},\"header\":{header},\"runs\":{},\"iterations\":{},\"lane_ns\":{lane},\"native_ns\":{native}}}",
-                self.trial_runs, self.trial_iterations);
-        }
-        if native * 1000 < lane * u128::from(TIERS.loops.native_slow_permille) { return; }
-        if let Some(code) = self.code.take() { code.retire(); }
-        self.compilations = TIERS.loops.max_compilations;
-    }
-
     pub(super) fn weigh_run(&mut self, backedges: u64) {
         self.runs = self.runs.saturating_add(1);
         self.iterations = self.iterations.saturating_add(backedges);
     }
+
+    pub(super) fn weigh_decline(&mut self) {
+        self.declined = self.declined.saturating_add(1);
+    }
+
+    /// The entries made, native runs and declined ones, and the iterations the runs took.
+    pub(super) fn entries(&self) -> u64 { u64::from(self.runs) + u64::from(self.declined) }
+
+    pub(super) fn iterations(&self) -> u64 { self.iterations }
 
     /// Iterations per native run, or `None` before the first run.
     pub(super) fn mean_trip(&self) -> Option<u64> {
         self.iterations.checked_div(u64::from(self.runs))
     }
 
+    /// Whether the site's published code is UltraJIT's, which the loop's body does not pass.
+    pub(super) fn is_ultra(&self) -> bool {
+        self.code.as_ref().and_then(|code| code.lease()).is_some_and(|region| region.is_ultra())
+    }
+
     pub(super) fn is_published(&self) -> bool {
         self.code.as_ref().is_some_and(|code| code.is_published())
+    }
+
+    /// Whether published code can re-enter `region` at `pc` (`CompiledOsrRegion::can_run_from`).
+    pub(super) fn resumable(&self, region: &LoopRegion, pc: u32) -> bool {
+        self.code.as_ref().and_then(|code| code.lease()).is_some_and(|code| code.can_run_from(region, pc))
     }
 
     /// Makes the compile under way stale where its code names shape ids, which a shape
     /// compaction renumbers.
     pub(super) fn retire_named_shapes(&self) {
         if let Some(pending) = &self.pending { pending.retire_named_shapes(); }
+    }
+
+    /// Notes that the code left at the field access of `pc`.
+    pub(super) fn missed_at(&mut self, pc: u32) {
+        self.miss = Some(pc);
     }
 
     /// Counts a run of the code that left at `pc`. An operation or element read left `widen_after_leaves`
@@ -179,21 +154,75 @@ impl LoopTier {
         if self.pending.is_none() {
             self.compilations = TIERS.loops.max_compilations;
             // A declined or failed region retires the site now: later entries build no entry record.
-            site.declines.set(TIERS.loops.max_declines);
+            site.entering.set(false);
         }
         self.awaits_code(heap, site);
     }
 
     /// Publishes `region` while the facts its code names hold.
-    fn publish(&mut self, heap: &mut crate::heap::Heap, region: super::super::compiled::CompiledOsrRegion) {
-        (self.trial_ns, self.trial_iterations, self.trial_runs, self.judged) = (0, 0, 0, false);
+    fn publish(&mut self, heap: &mut crate::heap::Heap, mut region: super::super::compiled::CompiledOsrRegion) {
+        let roots = std::mem::take(&mut region.facts.roots);
         let publication = Rc::new(crate::code_dependencies::PublishedCode::new(region));
+        publication.hold_roots(roots, heap);
         let code = publication.lease().expect("new publication");
         let dependent: Rc<dyn crate::code_dependencies::DependentCode> = publication.clone();
         if !code.facts.subscribe(&dependent, heap) {
             publication.retire();
         }
         self.code = Some(publication);
+    }
+}
+
+/// A named field access: its cache site and atom, and whether it reads.
+struct FieldAccess {
+    site: u16,
+    atom: crate::bytecode::Atom,
+    read: bool,
+    /// The register a read's receiver was in, where it names one.
+    base: Option<crate::bytecode::Register>,
+}
+
+impl FieldAccess {
+    fn of(instruction: &WideInstruction) -> Option<Self> {
+        let op = instruction.op();
+        if matches!(op.class(), Class::GetField) {
+            let Some(crate::bytecode::FieldLookup::Atom { atom, cache_site, base }) = instruction.field_lookup() else { return None };
+            return Some(Self { site: cache_site, atom, read: true, base: base.register_index() });
+        }
+        op.is_field_store().then(|| Self { site: instruction.cache_site_index(), atom: instruction.atom_index(), read: false, base: None })
+    }
+}
+
+/// Answers the miss the code left at (`LoopTier::missed_at`), which the interpreter has run:
+/// the site's entry is re-patched to the shape the interpreter's cache holds now, so the loop
+/// runs natively again. A leave that patched nothing counts toward widening the read
+/// (`LoopTier::left_at`).
+#[inline(always)]
+pub(super) fn lane_loop_repatch<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &LoopSite) {
+    let missed = site.tier.borrow_mut().miss.take();
+    if let Some(pc) = missed {
+        repatch_miss(cx, r, site, pc);
+    }
+}
+
+#[cold]
+fn repatch_miss<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &LoopSite, pc: u32) {
+    // SAFETY: the lane's VM is live, and nothing borrows it across the call.
+    let machine = unsafe { vm(cx) };
+    let access = machine.programs.get(machine.active_program).as_deref().and_then(|program| {
+        let body = program.function(site.function() as usize);
+        body.code.get(pc as usize).and_then(|packed| FieldAccess::of(&decoded_instruction(body, *packed)))
+    });
+    let Some(access) = access else { return };
+    let mut tier = site.tier.borrow_mut();
+    let patched = tier.code.clone().and_then(|publication| {
+        let region = publication.lease()?;
+        let watch: Rc<dyn crate::code_dependencies::DependentCode> = publication;
+        let load = machine.native_field_load_of(access.site, access.base.map(|base| r.get(base)))?;
+        Some(region.repatch(pc, access.atom, &load, &watch, &mut machine.heap))
+    });
+    if patched != Some(super::super::compiled::base_region::Repatch::Patched) && access.read {
+        tier.left_at(pc, false);
     }
 }
 
@@ -206,7 +235,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     region: &super::super::compiled::LoopRegion,
     tier: &mut LoopTier,
     number_arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)],
-    int_entries: &[crate::bytecode::Register],
+    int_entries: &[(crate::bytecode::Register, crate::typed_ir::IntRange)],
     typed_captures: &[u16],
     int_captures: &[u16],
 ) {
@@ -227,8 +256,9 @@ pub(super) fn lane_loop_compile<H: Host>(
         let value = r.get(register);
         value.as_number().is_some() && value.as_int().is_none()
     });
+    let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
-        int_registers: &ints, double_registers: &doubles };
+        int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds };
     let policy = machine.heap.memory_policy();
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
         &observation, policy, program, function, helpers,
@@ -386,8 +416,10 @@ pub(super) fn sample_array<H: Host>(vm: &Vm<H>, value: Value) -> Option<crate::t
     else { sample.iter().all(|value| value.as_number().is_some()).then_some(Type::NUMBER) }
 }
 
-/// The registers of the running activation that hold int32s at entry and that the loop writes:
-/// an observation the compiled code's entry contract checks, as `number_arrays`'.
-pub(super) fn int_entries(r: Registers, region: &LoopRegion) -> Vec<Register> {
-    region.entry_registers().filter(|register| r.get(*register).as_int().is_some()).collect()
+/// The registers of the running activation that hold int32s at entry and that the loop writes,
+/// each with the range its value gives the entry (`IntRange::entering`): an observation the
+/// compiled code's entry contract checks, as `number_arrays`'.
+pub(super) fn int_entries(r: Registers, region: &LoopRegion) -> Vec<(Register, crate::typed_ir::IntRange)> {
+    region.entry_registers().filter_map(|register| r.get(register).as_int()
+        .map(|value| (register, crate::typed_ir::IntRange::entering(value)))).collect()
 }

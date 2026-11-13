@@ -11,7 +11,6 @@ use mru_chain::record_mru_entry;
 /// (`Vm::note_field_leave`), written on that path only and kept across refills.
 pub(super) const FIELD_LEAVES_WORD: usize = 2;
 pub(super) const FIELD_LEAVES_SHIFT: u32 = 24;
-pub(super) const FIELD_CLASS_BYTE: usize = 2;
 pub(super) const FIELD_BYTE: u32 = 0xff;
 
 #[cfg(all(test, feature = "aot"))]
@@ -1577,6 +1576,17 @@ impl<H: Host> Vm<H> {
             ty: self.heap.slot_type(cache.receiver, usize::from(cache.slot)),
             inherited: None, function_shape: false,
         })
+    }
+
+    /// The own-field load the site's caches hold for `receiver`'s shape, which a polymorphic
+    /// site keeps beside its first entry; the first entry's where `receiver` names no shape.
+    pub(super) fn native_field_load_of(&self, site: u16, receiver: Option<Value>) -> Option<super::compiled::NativeFieldLoad> {
+        let shape = receiver.and_then(|receiver| self.heap.object_record(receiver)).map(Object::exact_shape);
+        let held = shape.and_then(|shape| self.megamorphic_field_cache(usize::from(site), shape, NO_FIELD_HOLDER));
+        match held {
+            Some(entry) => self.native_field_entry(entry),
+            None => self.native_field_load_descriptor(site, receiver),
+        }
     }
 
     /// Every holderless exact shape and slot the site's caches prove, for generated code to

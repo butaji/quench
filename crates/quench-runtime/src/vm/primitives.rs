@@ -1,26 +1,9 @@
 use super::*;
 
 mod in_place;
-
-fn is_ecma_whitespace(unit: u16) -> bool {
-    matches!(
-        unit,
-        0x0009..=0x000D
-            | 0x0020
-            | 0x00A0
-            | 0x1680
-            | 0x2000..=0x200A
-            | 0x2028..=0x2029
-            | 0x202F
-            | 0x205F
-            | 0x3000
-            | 0xFEFF
-    )
-}
-
-pub(super) fn is_ecma_whitespace_character(character: char) -> bool {
-    u16::try_from(u32::from(character)).is_ok_and(is_ecma_whitespace)
-}
+mod whitespace;
+pub(super) use whitespace::is_ecma_whitespace_character;
+use whitespace::is_ecma_whitespace;
 
 impl<H: Host> Vm<H> {
     pub(super) fn call_target(&self, callee: Value) -> Result<CallTarget, JsError> {
@@ -674,10 +657,15 @@ impl<H: Host> Vm<H> {
     /// The string of the one code unit `unit`, when it is ASCII (`Heap::ascii_unit_strings`).
     pub(super) fn ascii_unit_string(&mut self, unit: u16) -> Option<Value> {
         let byte = u8::try_from(unit).ok().filter(u8::is_ascii)?;
+        Some(self.ascii_byte_string(byte))
+    }
+
+    /// The string of the one ASCII byte `byte`.
+    pub(super) fn ascii_byte_string(&mut self, byte: u8) -> Value {
         let byte = [byte];
-        // SAFETY: an ASCII byte is UTF-8.
+        // SAFETY: the caller's byte is ASCII, so UTF-8.
         let text = super::wtf16::JsString::from_str(unsafe { std::str::from_utf8_unchecked(&byte) });
-        Some(self.heap.alloc_string(text))
+        self.heap.alloc_string(text)
     }
 }
 

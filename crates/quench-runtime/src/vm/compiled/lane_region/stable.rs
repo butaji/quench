@@ -13,6 +13,13 @@ pub(crate) struct StableFacts {
     pub(crate) atoms: Box<[Atom]>,
     /// Global cells whose values it holds (`heap::subscribe_global_value`).
     pub(crate) globals: Box<[crate::heap::GlobalFact]>,
+    /// The heap identities its code names (`Lowering::is_identity`), which its publication keeps alive.
+    pub(crate) roots: crate::folded_roots::FoldedRoots,
+    /// Global objects whose layout it holds (`heap::subscribe_global_layout`).
+    pub(crate) layouts: Box<[crate::heap::GlobalLayoutFact]>,
+    /// Global slots it stores to, or reads the `typeof` of, by the slot's observed type
+    /// (`Heap::subscribe_slot_observation`).
+    pub(crate) slots: Box<[crate::code_dependencies::SlotDependency]>,
 }
 
 /// The Stable facts a lowering folded so far.
@@ -24,6 +31,12 @@ pub(super) struct StableUses {
     atoms: BTreeSet<Atom>,
     /// Global cells whose values the code took as constants.
     globals: BTreeSet<crate::heap::GlobalFact>,
+    /// The heap identities the code embeds: callees, prototypes' values, constants.
+    pub(super) roots: crate::folded_roots::FoldedRoots,
+    /// Global objects whose layout the code held.
+    layouts: BTreeSet<crate::heap::GlobalLayoutFact>,
+    /// Global slots whose observed type the code relied on, each once.
+    slots: Vec<crate::code_dependencies::SlotDependency>,
     /// Loops, by header and backedge, entered only through forward edges that proved the realm
     /// (`Lowering::hoist_stable`): their blocks hold the proof.
     realm_loops: Vec<(usize, usize)>,
@@ -39,7 +52,9 @@ impl StableUses {
     pub(super) fn take(&mut self) -> StableFacts {
         StableFacts { holders: std::mem::take(&mut self.holders).into_iter().collect(),
             atoms: std::mem::take(&mut self.atoms).into_iter().collect(),
-            globals: std::mem::take(&mut self.globals).into_iter().collect() }
+            globals: std::mem::take(&mut self.globals).into_iter().collect(), roots: std::mem::take(&mut self.roots),
+            layouts: std::mem::take(&mut self.layouts).into_iter().collect(),
+            slots: std::mem::take(&mut self.slots).into_iter().collect() }
     }
 }
 
@@ -54,10 +69,22 @@ impl Lowering<'_, '_> {
         }
     }
 
+    /// Whether `held` is `identity`, a heap value the code names: a callee, a native, a folded value.
+    pub(super) fn is_identity(&mut self, held: ir::Value, identity: Value) -> ir::Value {
+        let word = self.stable.roots.embed_heap_identity(identity);
+        self.word_cmp_imm(IntCC::Equal, held, word as i64)
+    }
+
+    /// `value`, a heap value or an immediate, as a constant the code names.
+    pub(super) fn identity_constant(&mut self, value: Value) -> ir::Value {
+        let word = self.stable.roots.embed_heap_identity(value);
+        self.word_const(word as i64)
+    }
+
     /// The code's invalidation word, as it is now (`code_dependencies::Invalidation`).
     fn invalidation_word(&mut self, online: OnlineFacts<'_>) -> ir::Value {
         let address = self.reloc(RelocKind::Invalidation, 0, online.invalidation as u64);
-        self.ins().load(types::I64, MemFlagsData::trusted(), address, 0)
+        self.word_load(address, 0)
     }
 
     /// Holds every Stable fact the code folded from here to the block's next helper that may
@@ -75,7 +102,7 @@ impl Lowering<'_, '_> {
     pub(super) fn read_invalidation(&mut self, state: &mut State, exit: ir::Block) {
         let online = self.vm.online.expect("only a division with Stable facts reads the word");
         let invalidated = self.invalidation_word(online);
-        let held = self.ins().icmp_imm_u(IntCC::Equal, invalidated, 0);
+        let held = self.word_cmp_imm(IntCC::Equal, invalidated, 0);
         emit_js_guard(&mut self.builder, held, exit);
         state.proofs.stable = true;
     }
@@ -97,6 +124,18 @@ impl Lowering<'_, '_> {
         self.prove_realm(state, exit, realm);
     }
 
+    /// Holds the layout of the global object `realm` names (`hold_stable`) and, where the slot
+    /// `slot` was typed when the code was compiled, that type: the code stores to the slot, or
+    /// reads its `typeof`, with no check but the invalidation word and the realm proof.
+    pub(super) fn hold_global_slot(&mut self, state: &mut State, exit: ir::Block, slot: crate::vm::global_facts::GlobalSlot) {
+        self.hold_stable(state, exit);
+        self.stable.layouts.insert(slot.layout);
+        if let Some(dependency) = slot.dependency && !self.stable.slots.contains(&dependency) {
+            self.stable.slots.push(dependency);
+        }
+        self.prove_realm(state, exit, (slot.global, slot.realm_offset));
+    }
+
     /// Proves the realm of global object `global` active, from the VM's field at `realm_offset`.
     /// A call returns to its caller's realm, so the proof outlives every call.
     pub(super) fn prove_realm(&mut self, state: &mut State, exit: ir::Block, realm: (Value, i32)) {
@@ -109,8 +148,8 @@ impl Lowering<'_, '_> {
     /// The realm test of `prove_realm`, made here.
     pub(super) fn test_realm(&mut self, state: &mut State, exit: ir::Block, (global, realm_offset): (Value, i32)) {
         let vm = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, vm));
-        let active = self.ins().load(types::I64, MemFlagsData::trusted(), vm, realm_offset);
-        let same = self.ins().icmp_imm_u(IntCC::Equal, active, global.to_bits() as i64);
+        let active = self.word_load(vm, realm_offset);
+        let same = self.word_cmp_imm(IntCC::Equal, active, global.to_bits() as i64);
         emit_js_guard(&mut self.builder, same, exit);
         state.proofs.realm = true;
     }
@@ -122,7 +161,7 @@ impl Lowering<'_, '_> {
         let online = self.vm.online.filter(|online| !online.names(atom))?;
         self.stable.atoms.insert(atom);
         let invalidated = self.invalidation_word(online);
-        let held = self.builder.ins().icmp_imm_u(IntCC::Equal, invalidated, 0);
+        let held = self.word_cmp_imm(IntCC::Equal, invalidated, 0);
         Some(self.builder.ins().band(specialized, held))
     }
 
@@ -147,7 +186,7 @@ impl Lowering<'_, '_> {
             Class::LoadName | Class::LoadNameCall => self.global_reads.contains_key(&pc),
             Class::GetField => !instruction.writes_current_this(),
             Class::GetIndex => true,
-            Class::Call => self.intrinsics.get(pc).is_some_and(Option::is_some),
+            Class::Call => super::native_calls::keeps_arrays(&self.intrinsics, pc),
             _ if instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary => true,
             _ => reads_only(&self.program.constants, instruction),
         }

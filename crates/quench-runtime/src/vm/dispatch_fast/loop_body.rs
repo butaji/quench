@@ -32,7 +32,7 @@ impl LoopBody {
     pub(super) const IDLE: Self = Self::Idle { stuck: LaneLeaves::NONE, attempts: 0 };
 
     /// A new loop site's body: none is planned where the process runs no Cranelift function tiers (`--b-jit`).
-    pub(super) fn initial() -> Self { if crate::jit_mode::function_tiers() { Self::IDLE } else { Self::Declined } }
+    pub(super) fn initial() -> Self { if crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) { Self::IDLE } else { Self::Declined } }
 
     /// Records that a run left at `exit`: taken often, where they are few, the leaves are the
     /// next body's feedback (a failed entry contract drops the contract), until the bodies
@@ -112,15 +112,69 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
         None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, called: false, caller: own, arrays: &arrays },
     };
     let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc),
-        &|callee| lane_callee_captures(cx, callee), &direct, work, Some(site.header));
+        &|function, header| lane_unit_trips(cx, function, header), &|callee| lane_callee_captures(cx, callee), &direct, work, Some(site.header));
     *body = LoopBody::after(outcome, stuck, attempts);
+    if matches!(*body, LoopBody::Ready { .. }) { raise_tier_up(vm, site); }
+}
+
+/// The running regions leave at their next backward jump (`left_for_tier_up`), and the header
+/// dispatch (`lane_loop_enter_body`) takes the body that published.
+fn raise_tier_up<H: Host>(vm: &Vm<H>, site: &LoopSite) {
+    vm.execution_interrupt.request_tier_up();
+    if site.diagnostics { site.tier_ups.set(site.tier_ups.get().saturating_add(1)); }
+}
+
+/// Whether a region's exit at `pc` is its poll's tier-up leave: at the loop's unconditional
+/// backward jump (no guard of it can fail) while a tier-up is requested and no termination,
+/// which the jump's own safepoint ends. The lane resumes at the header, which dispatches.
+pub(super) fn left_for_tier_up<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32) -> bool {
+    let vm = unsafe { vm(cx) };
+    if pc != site.backedge || !vm.execution_interrupt.tier_up_requested() || vm.execution_interrupt.is_termination_requested() {
+        return false;
+    }
+    vm.programs.get(vm.active_program).as_deref().is_some_and(|program| {
+        let body = program.function(site.function() as usize);
+        body.code.get(pc as usize).is_some_and(|packed| matches!(decoded_instruction(body, *packed).op().class(), Class::Jump))
+    })
+}
+
+/// Where a body that left at `pc` resumes when a tier-up is pending: the header of the loop
+/// whose backward jump `pc` is, which dispatches the ready body, once that header runs the
+/// dispatch (`held`); otherwise the leave's own PC, whose jump record dispatches it.
+const fn tier_up_resume(header: u32, backedge: u32, pc: u32, held: bool, ready: bool) -> Option<u32> {
+    if pc == backedge && held && ready { Some(header) } else { None }
+}
+
+/// The leave of any body at a loop's backward jump (`LaneExit::At(backedge)`, whichever tier
+/// compiled it): while a tier-up is requested for a loop whose body has published, the lane
+/// resumes at that loop's header, as a region's leave does (`left_for_tier_up`). The leaving
+/// body stays published for its other entries.
+pub(super) fn header_for_tier_up<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, pc: usize) -> Option<usize> {
+    let pc = u32::try_from(pc).ok()?;
+    let site = &own.loops[*own.loop_at_backedge.get(pc as usize).filter(|&&index| index != NO_LOOP)? as usize];
+    if !left_for_tier_up(cx, site, pc) { return None; }
+    let ready = matches!(*site.body.borrow(), LoopBody::Ready { .. });
+    tier_up_resume(site.header, site.backedge, pc, !site.header_handler.get().is_null(), ready).map(|header| header as usize)
+}
+
+/// The header dispatch rule, at a loop's backward jump and at its held header: a `Ready` body
+/// (leased) runs first, else the site's region (UltraJIT's before BaseJIT's), else the
+/// interpreter. A body is planned once the loop is hot, where function tiers run and the
+/// region is absent or BaseJIT's, so an UltraJIT body can pass a BaseJIT region.
+pub(super) fn lane_loop_enter_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
+    let vm = unsafe { vm(cx) };
+    vm.execution_interrupt.clear_tier_up();
+    if !vm.programs.js_jit_lane_methods_enabled() || !site.is_hot() || site.tier.borrow().is_ultra() {
+        return None;
+    }
+    lane_loop_body::<H>(cx, r, ip, site)
 }
 
 /// Runs the lane body planned to start at `site`'s header, on the activation's registers
 /// `r`: a hot loop reaching its backward jump enters native code that inlines its calls as
 /// a lane body does, and the lane resumes where the body leaves. `None` where no body runs
 /// (still planning or compiling, or declined): the loop's other tiers take it.
-pub(super) fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
+fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)?;
@@ -129,11 +183,7 @@ pub(super) fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
         if !matches!(*site.body.borrow(), LoopBody::Declined | LoopBody::Compiling { wait: 1.., .. }) { plan_loop_body(cx, r, own, site); }
         return None;
     };
-    if !lane_body_admits(cx, &method) { return None; }
-    // A hot loop reached from a general frame runs on that frame's registers, which no
-    // activation window owns: a body whose frames sit above one is entered only from its
-    // own activation (`lane_body_frames_live`), and this run keeps the lane's records.
-    if method.window_frames() && !super::lane_body_frames_live(cx, r, &method, site.function) { return None; }
+    if !lane_body_admits(cx, &method, NO_PENDING_ACTIVATIONS) { return None; }
     // SAFETY: the context's program outlives the lane run; the activation owns its receiver
     // and captures, as at its body's prologue.
     let (program, code, receiver) = unsafe { ((*cx).program, &*(*cx).code, lane_this(cx).unwrap_or(Value::DELETED)) };
@@ -141,15 +191,11 @@ pub(super) fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
     let exit = vm.run_lane_method(&method, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
     unsafe { (*cx).callee_warming = false };
     // A failed entry contract resumes at the loop's header, not at the function's first record.
-    let resume = if exit == LaneExit::Entry { LaneExit::At(site.header as usize) } else { exit };
+    let resume = if matches!(exit, LaneExit::Entry | LaneExit::Stub) { LaneExit::At(site.header as usize) } else { exit };
     let (resumed, _) = lane_body_left(cx, r, own, &method, resume);
-    let inside = match resume {
-        LaneExit::At(pc) => (site.header..=site.backedge).contains(&(pc as u32)),
-        LaneExit::Returned { .. } | LaneExit::Terminated => false,
-        _ => true,
-    };
-    if inside { site.body.borrow_mut().note_leave(exit); }
+    if resume.inside(site.header..=site.backedge) { site.body.borrow_mut().note_leave(exit); }
     drop(method);
+    if site.diagnostics { site.body_runs.set(site.body_runs.get().saturating_add(1)); }
     Some(match resumed {
         LaneBodyLeft::Terminated => LoopAttempt::Leave(super::exit(ip)),
         // A callee's run that left the lane for the general path leaves it at its record.
@@ -157,4 +203,17 @@ pub(super) fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
         LaneBodyLeft::Resume(registers, next, carried) => LoopAttempt::Carry(registers, next, carried),
         LaneBodyLeft::Completed(record, value) => LoopAttempt::Resumed(lane_return_value_general::<H>(cx, record, value)),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tier_up_resume;
+
+    #[test]
+    fn a_leave_at_a_held_loops_backedge_resumes_at_its_header() {
+        assert_eq!(tier_up_resume(4, 9, 9, true, true), Some(4));
+        assert_eq!(tier_up_resume(4, 9, 7, true, true), None, "a guard inside the loop keeps its own PC");
+        assert_eq!(tier_up_resume(4, 9, 9, false, true), None, "an unheld header would not dispatch");
+        assert_eq!(tier_up_resume(4, 9, 9, true, false), None, "no published body to dispatch");
+    }
 }

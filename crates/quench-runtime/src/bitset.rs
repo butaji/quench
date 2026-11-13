@@ -120,6 +120,7 @@ impl BitSet {
     }
 
     /// Adds every member of `other`; whether this set grew.
+    #[cfg(test)]
     pub(crate) fn union_with(&mut self, other: &Self) -> bool {
         let mut grew = false;
         for (word, other) in self.words.iter_mut().zip(&other.words) {
@@ -131,6 +132,7 @@ impl BitSet {
     }
 
     /// Removes every member of `other`.
+    #[cfg(test)]
     pub(crate) fn subtract(&mut self, other: &Self) {
         for (word, other) in self.words.iter_mut().zip(&other.words) {
             *word &= !other;

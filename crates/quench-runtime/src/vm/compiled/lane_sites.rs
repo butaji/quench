@@ -10,6 +10,12 @@ impl<H: Host> Vm<H> {
     /// cell it reads now as a Stable fact (`Vm::stable_global_read`).
     pub(in crate::vm) fn lane_global_reads(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit)
         -> crate::vm::global_facts::GlobalReads {
+        // Before the loads hold their cells: a store reaches a cell no code holds, and the loads of
+        // a name the unit stores read its slot (`stored`), typed by the slot's dependency, not folded
+        // as a fact the store would retire each time.
+        let slots = self.lane_global_slots(program, function, unit);
+        let stored: Vec<(crate::bytecode::Atom, GlobalRead)> = slots.iter().filter(|(_, store, _)| *store)
+            .map(|(pc, _, slot)| (unit.instructions[*pc].atom_index(), *slot)).collect();
         let global = |function: u32| program.function_get(function as usize)
             .is_some_and(|body| body.names_resolve_statically(program))
             && self.programs.names_are_global(self.active_program);
@@ -30,16 +36,65 @@ impl<H: Host> Vm<H> {
             .map(|(pc, atom, site)| {
                 let name = self.atom_name(atom);
                 let immutable = super::super::builtins::immutable_globals().into_iter().find(|(global, _)| *global == name);
-                (pc, immutable.map_or_else(|| self.stable_global_read(program, atom, site), |(_, value)| GlobalRead::Constant(value)))
+                let read = match immutable {
+                    Some((_, value)) => GlobalRead::Constant(value),
+                    None => match stored.iter().find(|(stored, _)| *stored == atom) {
+                        Some((_, slot)) => *slot,
+                        None => self.stable_global_read(program, atom, site),
+                    },
+                };
+                (pc, read)
             })
             .collect();
         let members: Vec<(usize, GlobalRead)> = reads.iter().filter_map(|(pc, read)| self.native_member(unit, *pc, read)).collect();
-        reads.into_iter().chain(members).collect()
+        let methods: Vec<(usize, GlobalRead)> = unit.instructions.iter().enumerate()
+            .filter_map(|(pc, instruction)| Some((pc, self.method_native(instruction)?))).collect();
+        reads.into_iter().chain(members).chain(methods).chain(slots.into_iter().map(|(pc, _, read)| (pc, read))).collect()
+    }
+
+    /// The field read `instruction` of a method of strings or arrays that a call runs inline
+    /// (`lane_region::native_calls`), where the realm's prototype holds that native as an own
+    /// data property now. The receiver is not known: the call guards the callee it reads.
+    fn method_native(&mut self, instruction: &crate::bytecode::WideInstruction) -> Option<GlobalRead> {
+        /// The methods a call runs inline, by name.
+        const METHODS: [(&str, crate::vm::Native); 4] = [("charCodeAt", crate::vm::Native::StringCharCodeAt), ("charAt", crate::vm::Native::StringCharAt),
+            ("push", crate::vm::Native::ArrayPush), ("pop", crate::vm::Native::ArrayPop)];
+        if !instruction.op().is_get_field() { return None; }
+        let Some(crate::bytecode::FieldLookup::Atom { atom, .. }) = instruction.field_lookup() else { return None };
+        let name = self.atom_name(atom);
+        let (_, native) = METHODS.iter().find(|(method, _)| *method == name)?;
+        let holder = if matches!(native, crate::vm::Native::ArrayPush | crate::vm::Native::ArrayPop) { self.array_proto } else { self.string_proto };
+        let value = self.own_plain_data(holder, atom)??;
+        let crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(held), .. } = self.heap.function(value)? else { return None };
+        let native = *native;
+        (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder })
+    }
+
+    /// The PCs of `unit` whose `StoreName` (not a declaration's) or `LoadNameTypeof` reaches the
+    /// global scope as `lane_global_reads` decides for a load, each with the global object's
+    /// slot it holds (`Vm::stable_global_slot`), where it holds one.
+    fn lane_global_slots(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> Vec<(usize, bool, GlobalRead)> {
+        let sites: Vec<(usize, crate::bytecode::Atom, bool)> = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
+            let store = match crate::staged::Operation::<(), ()>::decode(*instruction, |_| None)? {
+                crate::staged::Operation::GlobalWrite { initialize: false, .. } => true,
+                crate::staged::Operation::GlobalTypeof { .. } => false,
+                _ => return None,
+            };
+            let function = match unit.origins[pc] {
+                lane_unit::Origin::Caller(_) => function,
+                lane_unit::Origin::Inlined { frame, .. } => unit.frames[frame].target.function,
+            };
+            let statically_global = program.function_get(function as usize).is_some_and(|body| body.names_resolve_statically(program))
+                && self.programs.names_are_global(self.active_program);
+            (statically_global && !self.atom_class(instruction.atom_index()).contains(super::super::object::AtomClass::INTERNAL))
+                .then_some((pc, instruction.atom_index(), store))
+        }).collect();
+        sites.into_iter().filter_map(|(pc, atom, store)| Some((pc, store, GlobalRead::Slot(self.stable_global_slot(atom, store)?)))).collect()
     }
 
     /// The field read that follows the global read `read` at `pc` and reads its register, where
     /// the member it names is an own data property holding a native function now.
-    fn native_member(&self, unit: &lane_unit::Unit, pc: usize, read: &GlobalRead) -> Option<(usize, GlobalRead)> {
+    fn native_member(&mut self, unit: &lane_unit::Unit, pc: usize, read: &GlobalRead) -> Option<(usize, GlobalRead)> {
         let (GlobalRead::Constant(object) | GlobalRead::Stable { value: object, .. }) = *read else { return None };
         let (base, member) = (unit.instructions.get(pc)?.result_register(), unit.instructions.get(pc + 1)?);
         if !member.op().is_get_field() { return None; }
@@ -47,6 +102,14 @@ impl<H: Host> Vm<H> {
         if read_base.register_index() != Some(base) { return None; }
         let value = self.own_plain_data(object, atom)??;
         let crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(native), .. } = self.heap.function(value)? else { return None };
-        Some((pc + 1, GlobalRead::NativeMember { value, native: *native }))
+        let native = *native;
+        Some((pc + 1, GlobalRead::NativeMember { value, native, holder: self.native_holder(object)? }))
+    }
+
+    /// The exact shape of `holder`, an object whose own native functions code calls inline,
+    /// made a watched prototype so that a write to one of its values retires that code.
+    fn native_holder(&mut self, holder: Value) -> Option<u32> {
+        self.heap.mark_prototype(holder);
+        Some(self.object_data(holder)?.shape())
     }
 }

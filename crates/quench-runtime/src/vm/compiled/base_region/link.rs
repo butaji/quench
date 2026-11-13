@@ -1,14 +1,12 @@
 use super::*;
-use quench_bjit::HOLES;
+use quench_bjit::{exit_stub, padded_holes, patch_successor, EXIT_STUB_LEN, HOLES};
 
-/// `push imm32` and `jmp rel32`: a row's exit stub, which names its PC and the routine that
-/// writes the live registers back.
-pub(super) const PUSH_IMM32: u8 = 0x68;
-pub(super) const JMP_REL32: u8 = 0xe9;
-pub(super) const EXIT_STUB_LEN: usize = 2 * (1 + std::mem::size_of::<u32>());
+/// `jmp rel32`: a resume stub's last row, which jumps to its PC's first row.
+pub(super) use quench_bjit::stub::JMP_REL32;
+pub(super) const JUMP_LEN: usize = 1 + std::mem::size_of::<u32>();
 
 /// A routine of the stencil build (`quench-bjit/stencils/entry.rs`) by name.
-fn routine(name: &str) -> Result<Stencil, String> {
+pub(super) fn routine(name: &str) -> Result<Stencil, String> {
     quench_bjit::rustc::stencil(name).ok_or_else(|| format!("no stencil routine {name}"))
 }
 
@@ -18,8 +16,7 @@ pub(super) fn thunk(rows_at: usize) -> Result<Vec<u8>, String> {
     let mut code = stencil.code.clone();
     for reloc in &stencil.relocs {
         let at = reloc.offset as usize;
-        let displacement = rows_at as i64 + reloc.addend - at as i64;
-        code[at..at + std::mem::size_of::<i32>()].copy_from_slice(&(displacement as i32).to_le_bytes());
+        patch_successor(&mut code, at, reloc.class, rows_at as i64 + reloc.addend - at as i64).map_err(|error| format!("entry thunk: {error:?}"))?;
     }
     Ok(code)
 }
@@ -85,18 +82,17 @@ impl Layout<'_> {
     }
 }
 
-/// The entry rows: each pinned register live at the header loads its int32, each int slot is
+/// The entry rows: each pinned register live at the header (or, for a resume stub, at its PC; `entered` are the webs live there) loads its int32, each int slot is
 /// checked (or, dead there, tagged), and each other Number register live there is checked, so a
 /// loop whose values are no Numbers is never entered.
-pub(super) fn entry_rows(layout: &Layout) -> Result<Vec<(&'static Stencil, [u64; HOLES])>, String> {
+pub(super) fn entry_rows(layout: &Layout, entered: &[usize]) -> Result<Vec<(&'static Stencil, [u64; HOLES])>, String> {
     let region = layout.region;
     let guard = |kind, dst, offset: u64| {
         numeric::stencil(numeric::Row { kind, dst, a: Place::Mem, b: Place::Mem, speculate: true }).map(|stencil| {
-            (stencil, if kind == Kind::TagInit { [offset, 0, 0] } else { [0, offset, 0] })
+            (stencil, padded_holes(if kind == Kind::TagInit { [offset, 0, 0] } else { [0, offset, 0] }))
         })
     };
     let mut rows = Vec::new();
-    let entered = layout.webs.entry_live(region);
     let slot = |web: Register| u64::from(layout.homes.orig[usize::from(web)]) * SLOT;
     for (pin, web) in layout.homes.pins.iter().filter(|(_, web)| entered.contains(&usize::from(*web))) {
         rows.push(guard(Kind::Guard, Place::Pin(*pin as u8), slot(*web))?);
@@ -151,40 +147,51 @@ fn row_starts(planned: &[Planned]) -> Vec<usize> {
         .collect()
 }
 
-/// Lays the entry rows, rows and leave stubs out as one code buffer behind the entry thunk.
-pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<Vec<u8>, String> {
+/// The hole values of the chain's rows, as the closures `copy_patch` reads them through.
+type HoleFns<'a> = Vec<Box<dyn Fn(u32) -> u64 + 'a>>;
+
+/// The leave stubs (the fall-through past the backedge, the failed entry with nothing to write
+/// back, then each branch target outside the region) and each body row's branch target row.
+fn branch_targets(layout: &Layout, body: &[&Planned], starts: &[usize], g: usize) -> Result<(Vec<(u64, Vec<u8>)>, Vec<Option<usize>>), String> {
     let (header, backedge) = (layout.header, layout.backedge);
-    // A row's own rows run before and after it at its PC: a branch to the PC lands on the first.
-    let body: Vec<&Planned> = planned.iter().flat_map(|row| row.pre.iter().chain(std::iter::once(row)).chain(&row.post)).collect();
-    let starts = row_starts(planned);
-    let entry = entry_rows(layout)?;
-    // Leave stubs: the fall-through past the backedge, the failed entry (nothing to write
-    // back), then each branch target outside the region.
-    let mut leaves: Vec<(u64, Vec<u8>)> = vec![
-        (u64::from(backedge) + 1, layout.exit_code(backedge + 1, u64::from(backedge) + 1)?),
-        (super::super::LaneExit::Entry.word(), leave_chain(&[], "leave_word", super::super::LaneExit::Entry.word())?),
-    ];
-    let (g, n) = (entry.len(), body.len());
-    let mut targets: Vec<Option<usize>> = Vec::with_capacity(n);
-    for row in &body {
+    let entered = super::super::LaneExit::Entry.word();
+    let mut leaves = vec![(u64::from(backedge) + 1, layout.exit_code(backedge + 1, u64::from(backedge) + 1)?), (entered, leave_chain(&[], "leave_word", entered)?)];
+    let mut targets: Vec<Option<usize>> = Vec::with_capacity(body.len());
+    for row in body {
         targets.push(match row.target {
             Some(pc) if (header..=backedge).contains(&pc) => Some(g + starts[(pc - header) as usize]),
-            Some(pc) => Some(g + n + leaf_index(layout, &mut leaves, pc)?),
+            Some(pc) => Some(g + body.len() + leaf_index(layout, &mut leaves, pc)?),
             None => None,
         });
     }
+    Ok((leaves, targets))
+}
+
+/// Lays the entry rows, rows, leave stubs and resume stubs out as one code buffer behind the
+/// entry thunk, with the table of the resume stubs and the cache entries a miss may re-patch.
+pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<(Vec<u8>, ResumeTable, CacheSites), String> {
+    // A row's own rows run before and after it at its PC: a branch to the PC lands on the first.
+    let body: Vec<&Planned> = planned.iter().flat_map(|row| row.pre.iter().chain(std::iter::once(row)).chain(&row.post)).collect();
+    let starts = row_starts(planned);
+    let entry = entry_rows(layout, &layout.webs.entry_live(layout.region))?;
+    let (g, n) = (entry.len(), body.len());
+    let (leaves, targets) = branch_targets(layout, &body, &starts, g)?;
     let leave_stencils: Vec<Stencil> = leaves.into_iter().map(|(_, code)| leave_row(code)).collect();
+    let jump = leave_row([&[JMP_REL32][..], &[0; JUMP_LEN - 1]].concat());
+    let stubs = resume_stubs(layout, g, &starts)?;
     let mut holes: Vec<[u64; HOLES]> = entry.iter().map(|(_, holes)| *holes).collect();
     holes.extend(body.iter().map(|row| row.holes));
     holes.extend(std::iter::repeat_n([0; HOLES], leave_stencils.len()));
-    let hole_fns: Vec<Box<dyn Fn(u32) -> u64 + '_>> =
-        holes.iter().map(|h| Box::new(move |i: u32| h[i as usize]) as Box<dyn Fn(u32) -> u64>).collect();
+    holes.extend(stubs.iter().flat_map(Stub::holes));
+    let hole_fns: HoleFns<'_> = holes.iter().map(|h| Box::new(move |i: u32| h[i as usize]) as Box<dyn Fn(u32) -> u64>).collect();
     let mut rows: Vec<Placed> = Vec::with_capacity(g + n + leave_stencils.len());
     rows.extend(entry.iter().enumerate().map(|(k, (stencil, _))| Placed { stencil, hole: &*hole_fns[k], taken: Some(g + n + 1) }));
     rows.extend(body.iter().enumerate().map(|(k, row)| Placed { stencil: row.stencil, hole: &*hole_fns[g + k], taken: targets[k] }));
     rows.extend(leave_stencils.iter().enumerate().map(|(k, stencil)| Placed { stencil, hole: &*hole_fns[g + n + k], taken: None }));
+    let jumps = place_stubs(&mut rows, &stubs, &jump, &hole_fns, g + n + 1);
     let (exits, routines) = exit_routines(layout, &body, g)?;
-    place_rows(&rows, &exits, &routines)
+    let (code, offsets, thunk) = place_rows(&rows, &exits, &routines, &jumps)?;
+    Ok((code, ResumeTable::of(thunk, &stubs, &jumps, &offsets)?, CacheSites::collect(&body, g, &offsets)))
 }
 
 pub(super) fn leaf_index(layout: &Layout, leaves: &mut Vec<(u64, Vec<u8>)>, pc: u32) -> Result<usize, String> {
@@ -199,10 +206,13 @@ pub(super) fn leaf_index(layout: &Layout, leaves: &mut Vec<(u64, Vec<u8>)>, pc: 
 /// Copies the rows behind the thunk, then the exit routines and each row's stub, patching each
 /// row's exit to its stub; the code is position independent, so the buffer can move to
 /// executable memory.
-pub(super) fn place_rows(rows: &[Placed], exits: &[(usize, u32, usize)], routines: &[Vec<u8>]) -> Result<Vec<u8>, String> {
+/// Also the code offset of each row and of the resume thunk (`entry_resume`), which follows
+/// the stubs; each resume stub's jump is patched to its row.
+pub(super) fn place_rows(rows: &[Placed], exits: &[(usize, u32, usize)], routines: &[Vec<u8>], jumps: &[Jump]) -> Result<(Vec<u8>, Vec<usize>, usize), String> {
     let head = thunk(0)?.len();
+    let resume = routine("entry_resume")?.code;
     let bound: usize = rows.iter().map(|row| row.stencil.code.len()).sum();
-    let tail: usize = routines.iter().map(Vec::len).sum::<usize>() + exits.len() * EXIT_STUB_LEN;
+    let tail: usize = routines.iter().map(Vec::len).sum::<usize>() + exits.len() * EXIT_STUB_LEN + resume.len();
     let mut code = vec![0u8; head + bound + tail];
     let base = code.as_mut_ptr();
     // SAFETY: `base + head` has room for every stencil's full length, which bounds the rows.
@@ -217,15 +227,22 @@ pub(super) fn place_rows(rows: &[Placed], exits: &[(usize, u32, usize)], routine
     let mut addresses = vec![base as usize; rows.len()];
     for (row, pc, routine) in exits {
         addresses[*row] = base as usize + at;
-        let displacement = routine_at[*routine] as i64 - (at + EXIT_STUB_LEN) as i64;
-        let stub: Vec<u8> = [&[PUSH_IMM32][..], &pc.to_le_bytes(), &[JMP_REL32], &(displacement as i32).to_le_bytes()].concat();
+        let stub = exit_stub(*pc, routine_at[*routine] as i64 - at as i64).map_err(|error| format!("exit stub: {error:?}"))?;
         code[at..at + EXIT_STUB_LEN].copy_from_slice(&stub);
         at += EXIT_STUB_LEN;
     }
     // SAFETY: as above; the stubs lie after the copied code inside `code`.
-    unsafe { quench_bjit::copy_patch(rows, base.add(head), |row, _| addresses[row]) };
+    let (_, starts) = unsafe { quench_bjit::copy_patch(rows, base.add(head), |row, _| addresses[row]) };
+    for jump in jumps {
+        let displacement = starts[jump.target] as i64 - (starts[jump.row] + JUMP_LEN) as i64;
+        let operand = head + starts[jump.row] + 1;
+        code[operand..operand + JUMP_LEN - 1].copy_from_slice(&(displacement as i32).to_le_bytes());
+    }
     let thunk_bytes = thunk(head)?;
     code[..head].copy_from_slice(&thunk_bytes);
+    code[at..at + resume.len()].copy_from_slice(&resume);
+    let resume_at = at;
+    at += resume.len();
     code.truncate(at);
-    Ok(code)
+    Ok((code, starts.iter().map(|start| head + start).collect(), resume_at))
 }

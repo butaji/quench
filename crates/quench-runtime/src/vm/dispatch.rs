@@ -627,70 +627,10 @@ impl<H: Host> Vm<H> {
             }
             Op::StoreEnvLocal => {
                 let value = self.read(f, i.register_a());
-                let slot = i.local_slot();
-                let function = &p.function(self.frames[f].function as usize);
-                let atom = function.local_atoms.get(slot).copied();
-                if let Some(atom) = atom
-                    && self.store_with_binding(p, f, atom, value, function.strict)?
+                let initialize = i.boolean_field(crate::bytecode::InstructionField::C).unwrap_or(false);
+                if self.store_env_local(p, f, i.local_slot(), value, initialize)?
+                    && let Some(register) = i.optional_register_b()
                 {
-                    if let Some(register) = i.optional_register_b() {
-                        self.write(f, register, value);
-                    }
-                    return Ok(StepResult::Continue);
-                }
-                self.check_local_assignment_initialized(
-                    p,
-                    f,
-                    slot,
-                    i.boolean_field(crate::bytecode::InstructionField::C)
-                        .unwrap_or(false),
-                )?;
-                if let Some(atom) = atom
-                    && function.declares_global_immutable(atom)
-                    && !i
-                        .boolean_field(crate::bytecode::InstructionField::C)
-                        .unwrap_or(false)
-                {
-                    return Err(self.type_error(p, "assignment to constant binding".into()));
-                }
-                if function.is_self_binding_slot(slot) {
-                    if function.strict {
-                        return Err(
-                            self.type_error(p, "assignment to function name binding".into())
-                        );
-                    }
-                    return Ok(StepResult::Continue);
-                }
-                let global_var = self.root_global_var_atom(
-                    p,
-                    self.frames[f].program,
-                    self.frames[f].function,
-                    slot,
-                );
-                if let Some(atom) = global_var {
-                    let written = self.set_property_with_receiver(
-                        p,
-                        self.realm.globals,
-                        atom,
-                        value,
-                        self.realm.globals,
-                    )?;
-                    if !written && p.function(self.frames[f].function as usize).strict {
-                        return Err(
-                            self.type_error(p, "cannot assign to read-only global binding".into())
-                        );
-                    }
-                    if let Some(register) = i.optional_register_b() {
-                        self.write(f, register, value);
-                    }
-                    return Ok(StepResult::Continue);
-                }
-                self.mirror_global_lexical_binding(p, f, slot, value);
-                *self
-                    .frame_binding_mut(p, f, slot)
-                    .ok_or_else(|| JsError("invalid local environment".into()))? = value;
-                self.mapped_argument_store(p, f, slot, value);
-                if let Some(register) = i.optional_register_b() {
                     self.write(f, register, value);
                 }
             }
@@ -1052,10 +992,7 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_c()),
             )?,
             Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart => {
-                let [a, b] = value_step_operands(i).map(|register| register.map(|register| self.read(f, register)));
-                if let Some(value) = self.value_step(p, i, a, b)? {
-                    self.write(f, i.result_register(), value);
-                }
+                self.staged_value_step(p, super::call_out::CallSite { frame: f, resume: *pc }, i)?;
             }
             Op::RequireObjectCoercible => {
                 self.require_object_coercible(p, self.read(f, i.register_b()))?;
@@ -1825,6 +1762,7 @@ impl<H: Host> Vm<H> {
     /// callee, argument window, receiver and completion. `getter` and `this` are what the step
     /// found running: a getter read's function, and a construction's or getter's receiver.
     /// Frame recovery (`compiled::recover_call`) rebuilds a native activation's frame from it.
+    #[cfg(feature = "native-execution")]
     pub(super) fn pushed_frame(&self, caller: usize, i: WideInstruction, getter: Value, this: Value)
         -> (Value, crate::bytecode::RegisterWindow, Value, CallCompletion) {
         match i.op() {
@@ -1837,57 +1775,6 @@ impl<H: Host> Vm<H> {
             // A getter's activation: its receiver bound as passed, no arguments (`general_getter`).
             Op::GetField => (getter, crate::bytecode::RegisterWindow { base: 0, count: 0 }, this, CallCompletion::Value),
             _ => (self.read(caller, i.register_b()), i.call_window(), self.read(caller, i.register_c()), CallCompletion::Value),
-        }
-    }
-}
-
-/// The operand registers `Vm::value_step` reads for `i`: `AppendArray`'s array and optional
-/// element, or the one operand of `ToPropertyKey` and `GetIterator`.
-pub(super) fn value_step_operands(i: WideInstruction) -> [Option<crate::bytecode::Register>; 2] {
-    match i.op() {
-        Op::AppendArray => [Some(i.register_a()), i.optional_register_b()],
-        _ => [None, Some(i.register_b())],
-    }
-}
-
-/// The register a value step writes its result to: every one but `AppendArray`, which has none.
-pub(super) fn value_step_result(i: WideInstruction) -> Option<crate::bytecode::Register> {
-    (i.op() != Op::AppendArray).then(|| i.result_register())
-}
-
-impl<H: Host> Vm<H> {
-    /// `ToPropertyKey`, `GetIterator`, `ForInStart`, `IteratorClose` or `AppendArray` of its operand values
-    /// (`value_step_operands`): the value it writes to its result register, if any. The
-    /// general step and a frameless activation's (`lane_step_beside_activations`) share it.
-    pub(super) fn value_step(
-        &mut self,
-        p: &ResidualProgram,
-        i: WideInstruction,
-        a: Option<Value>,
-        b: Option<Value>,
-    ) -> Result<Option<Value>, JsError> {
-        let operand = b.unwrap_or(Value::UNDEFINED);
-        match i.op() {
-            Op::ToPropertyKey => self.to_property_key(p, operand).map(Some),
-            Op::GetIterator => self.get_iterator(p, operand).map(Some),
-            Op::ForInStart => self.for_in_start(p, operand).map(Some),
-            Op::IteratorClose => self.iterator_close(p, operand).map(Some),
-            Op::AppendArray => {
-                let array = a.expect("AppendArray names its array");
-                self.append_array_literal_holes(array, i.array_length())?;
-                if let Some(value) = b {
-                    let spread = i
-                        .boolean_field(crate::bytecode::InstructionField::C)
-                        .expect("validated boolean field");
-                    if spread {
-                        self.spread_into_array(p, array, value)?;
-                    } else {
-                        self.append_array_literal_elements(p, array, [value])?;
-                    }
-                }
-                Ok(None)
-            }
-            op => unreachable!("{op:?} is no value step"),
         }
     }
 }

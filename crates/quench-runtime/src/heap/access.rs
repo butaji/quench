@@ -1,7 +1,6 @@
 use super::{
     ArrayObject, AwaitState, Cell, EnvironmentBindings, FunctionRecord, IteratorRecord,
     PromiseCell, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
-    RecordClaimFacts,
 };
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
@@ -715,12 +714,6 @@ impl Heap {
     ///
     /// A native reader may combine this with an ID from a current live, rooted direct-object
     /// Value. It must end before any safepoint and must not retain a record pointer afterward.
-    /// The object record-claim fast path's live fields and block geometry
-    /// (`RecordClaimFacts`): the staged record-claim row's inputs.
-    pub(crate) fn record_claim_facts(&self) -> RecordClaimFacts {
-        self.object_records.claim_facts()
-    }
-
     pub(crate) fn object_record_base(&self) -> Option<*const Object> {
         self.object_records.base_ptr()
     }
@@ -749,11 +742,6 @@ impl Heap {
     /// reborrow the same allocation provenance rather than a shared header view.
     pub(crate) const PROPERTY_BUFFER_OFFSET: usize = std::mem::offset_of!(Self, properties)
         + crate::value_vec::ValueArena::BUFFER_OFFSET;
-
-    /// Offsets of the charged allocation weight and the weight a collection is due at
-    /// (`Heap::should_collect`), which native back edges compare to reach a safepoint.
-    pub(crate) const ALLOCATED_OFFSET: usize = std::mem::offset_of!(Self, allocated);
-    pub(crate) const COLLECT_AT_OFFSET: usize = std::mem::offset_of!(Self, collect_at);
 
     /// The object of an object, array or promise record, whose field reads the field cache
     /// answers by shape alone (a promise's internal slots change no object operation). A

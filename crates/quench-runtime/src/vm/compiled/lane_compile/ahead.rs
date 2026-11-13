@@ -43,6 +43,38 @@ mod tests {
         assert_eq!(registers[0], receiver);
     }
 
+    /// The program's output with `images` loaded (none: the interpreter alone), the functions
+    /// run hot enough that a compile would publish their bodies.
+    fn output_with(source: &str, images: Option<&[u8]>) -> Vec<String> {
+        let program = crate::Engine::specialize(source, "ahead-run.js").unwrap();
+        let lines = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(lines.clone()));
+        if let Some(file) = images {
+            vm.set_execution_mode(crate::ExecutionMode::Compiled);
+            vm.load_ahead_images(AheadImages::from_bytes(file).unwrap());
+        }
+        vm.execute(&program).unwrap();
+        let lines = lines.borrow().clone();
+        lines
+    }
+
+    /// An ahead-compiled numeric function and a property-reading function print what the
+    /// interpreter prints, whichever of their guards leave for the generic path.
+    #[test]
+    fn ahead_compiled_numeric_and_property_functions_match_the_interpreter() {
+        let source = "function mix(a,b){let t=0;for(let i=0;i<a;i=i+1){t=t+i*b-(i%3);}return t;}\n\
+            function read(p){return p.x+p.y;}\n\
+            let o={x:1.5,y:2};let total=0;\n\
+            for(let i=0;i<3000;i=i+1){total=total+mix(10,0.5)+read(o);}\n\
+            print(total);print(mix(7,3));print(read({x:'a',y:1}));print(read({y:4,x:6}));";
+        let program = crate::Engine::specialize(source, "ahead-run.js").unwrap();
+        let images = AheadImages::compile(&program);
+        assert!(!images.is_empty(), "the numeric function has an ahead image");
+        let expected = output_with(source, None);
+        assert_eq!(expected.len(), 4);
+        assert_eq!(output_with(source, Some(&images.to_bytes())), expected);
+    }
+
     #[test]
     fn ahead_images_serve_only_the_program_they_were_compiled_from() {
         let program = crate::Engine::specialize("function add(a,b){return a+b;}", "ahead-a.js").unwrap();

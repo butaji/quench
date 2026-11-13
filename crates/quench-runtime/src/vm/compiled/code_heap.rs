@@ -7,6 +7,7 @@
 //! block goes on its size class's free list for the next body of that size or smaller, and a
 //! chunk whose last body is freed returns its pages to the system.
 
+mod retire;
 mod views;
 
 use std::cell::Cell;
@@ -321,6 +322,8 @@ fn record_publication(pointer: *mut u8, length: usize, site: &std::panic::Locati
 pub(in crate::vm) struct CodeMemory {
     pointer: *mut u8,
     length: usize,
+    /// The bytes of code written, which a re-patch must stay inside (`length` is the granted span).
+    used: usize,
     block: Block,
 }
 
@@ -333,6 +336,21 @@ impl CodeMemory {
     /// The bytes the zone holds for the body: its length rounded to the zone's granule.
     pub(in crate::vm) fn length(&self) -> usize {
         self.length
+    }
+
+    /// Rewrites the 32-bit field at `offset` of the published body through the write view; the
+    /// executable view is never writable. The patch must end inside the body's code
+    /// (`quench_bjit::patch_ends_inside`). Only the thread that runs the body may call it, while
+    /// the body is not running (`views::flush_icache` says why no fetch can see stale bytes).
+    pub(in crate::vm) fn write_imm32(&self, offset: usize, value: u32) {
+        let offset_u32 = u32::try_from(offset).expect("a body offset fits 32 bits");
+        quench_bjit::patch_ends_inside(offset_u32, quench_bjit::IMM32_WIDTH, self.used, "a re-patch");
+        let views = heap().regions[self.block.region as usize].views;
+        let at = self.block.offset as usize + offset;
+        // SAFETY: four bytes of the body's own span of the writable view, inside `used`.
+        Views::writing(|| unsafe { views.writer(at).cast::<u32>().write_unaligned(value) });
+        views.retire_writer(at, quench_bjit::IMM32_WIDTH);
+        views::flush_icache(self.pointer.wrapping_add(offset), quench_bjit::IMM32_WIDTH);
     }
 
     #[track_caller]
@@ -361,6 +379,7 @@ impl CodeMemory {
                 Self {
                     pointer,
                     length: granted,
+                    used: length,
                     block,
                 },
                 views,
@@ -370,7 +389,7 @@ impl CodeMemory {
         // SAFETY: `length <= granted` bytes of the writable view, owned by `memory`.
         let code = unsafe { std::slice::from_raw_parts_mut(views.writer(offset), length) };
         Views::writing(|| fill(memory.pointer, code))?;
-        views.retire_writer(offset, length);
+        retire::retire(views, offset, length);
         views::flush_icache(memory.pointer, length);
         record_publication(memory.pointer, length, std::panic::Location::caller());
         Ok(memory)
@@ -382,6 +401,9 @@ impl Drop for CodeMemory {
         heap().free(self.block, self.length);
     }
 }
+
+/// Retires the writable-view pages of code published since the last flush (`retire`).
+pub(in crate::vm) use retire::flush as flush_retired_writers;
 
 #[cfg(test)]
 mod tests;

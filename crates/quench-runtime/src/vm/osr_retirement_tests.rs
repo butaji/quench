@@ -66,6 +66,7 @@ fn osr_site(vm: &Vm<TestHost>, function_id: usize) -> crate::vm::dispatch_fast::
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_receiver_shape_departures_between_runs_do_not_exhaust_compilations() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(SOURCE, "osr-receiver-shape-departure.js")).unwrap();
     let function_id = function_named(&program, "sum");
     let mut vm = test_vm();
@@ -118,7 +119,7 @@ fn shared_osr_sum_that_overflows_int32_each_iteration_widens_and_stays_native() 
     assert_eq!(compiled, interpreted, "the widened loop computes the interpreter's sum");
     let site = osr_site(&vm, function_named(&program, "f"));
     assert!(
-        site.native_region_runs > 0 && site.exits < u64::from(crate::vm::compiled::tier_policy::TIERS.loops.max_exits),
+        site.native_region_runs > 0 && site.exits <= u64::from(crate::vm::compiled::tier_policy::TIERS.loops.max_compilations),
         "a sum that overflows on every run widens instead of exhausting the site: {site:?}"
     );
 }
@@ -126,6 +127,7 @@ fn shared_osr_sum_that_overflows_int32_each_iteration_widens_and_stays_native() 
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_appends_match_the_interpreter_across_growth_doubles_and_prototype_setters() {
+    crate::vm::compiled::tier_policy::force_admission();
     // Appends at the length store in place within the proved room and reserve past it: into
     // `[]` and a `slice(0)` copy, across capacity growths, of doubles, and after
     // `Array.prototype` gains an indexed setter between runs, which the next reserve sees.
@@ -232,6 +234,8 @@ fn printed_run(program: &crate::bytecode::ResidualProgram, mode: crate::Executio
 /// interpreter prints, and each loop of `native` (one per function) runs natively wherever
 /// the policy compiles loops. The throughput run's VM.
 fn assert_typed_osr(source: &str, native: &[&str]) -> Vm<TestHost> {
+    // The fixtures are too small to repay a compile at the wall-clock cost the model has learned.
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(source, "osr-typed.js")).unwrap();
     let (expected, _) = printed_run(&program, crate::ExecutionMode::Interpreted, crate::MemoryPolicy::Throughput);
     for policy in crate::MemoryPolicy::ALL {
@@ -369,6 +373,7 @@ fn shared_osr_array_literals_allocate_in_native_loops() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_counted_loops_leave_at_nested_for_of_and_builtin_calls() {
+    crate::vm::compiled::tier_policy::force_admission();
     // A `for...of` over an Array, then a Set, and a builtin method call, each on a path some
     // iterations take: the counted loop leaves there, and the iterator protocol and the call
     // run in the interpreter.
@@ -384,6 +389,7 @@ fn shared_osr_counted_loops_leave_at_nested_for_of_and_builtin_calls() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_leave_inside_an_inlined_callee_makes_its_activation() {
+    crate::vm::compiled::tier_policy::force_admission();
     // The callee's loop overflows int32 (from `x = 72086`) on the last iterations of the
     // caller's native loop: the region leaves inside the inlined callee, whose live registers
     // make its activation.
@@ -394,4 +400,68 @@ fn shared_osr_leave_inside_an_inlined_callee_makes_its_activation() {
       function plain() { let s = 0; for (let i = 52000; i < 72200; i++) { s = (s + g(i)) | 0; } return s; }
       print([method(o), plain()].join(","));
     "#, &["method", "plain"]);
+}
+
+const REPATCH_SOURCE: &str = r#"
+    function sum(list, n) {
+      let total = 0;
+      for (let i = 0; i < n; i++) {
+        let node = list[i & 0];
+        total = (total + node.value) | 0;
+      }
+      return total;
+    }
+    var anchor = { value: 1, second: 2, third: 3 };
+    var list = [anchor];
+"#;
+
+/// The leaves a BaseJIT region makes in one `sum` call after `anchor` changes shape `changes`
+/// times in a row, one call to each: the exits and native runs that call added.
+fn repatch_leaves(changes: i32) -> Vec<(u64, u64)> {
+    crate::jit_mode::JitMode::BaseOnly.with_mode(|| repatch_leaves_in_mode(changes))
+}
+
+fn repatch_leaves_in_mode(changes: i32) -> Vec<(u64, u64)> {
+    let program = Engine::compile(crate::ExecutionRequest::script(REPATCH_SOURCE, "bjit-repatch.js")).unwrap();
+    let function_id = function_named(&program, "sum");
+    let mut vm = test_vm();
+    vm.execute(&program).unwrap();
+    let (sum, anchor, list) = sum_and_objects(&mut vm);
+    let call = |vm: &mut Vm<TestHost>| {
+        assert_eq!(vm.call_value(&program, sum, Value::UNDEFINED, &[list, Value::number(3000.0)]).unwrap(), Value::number(3000.0));
+        let site = osr_site(vm, function_id);
+        (site.exits, site.native_region_runs)
+    };
+    (0..4).for_each(|_| { call(&mut vm); });
+    let mut shape = vm.heap.object(anchor).unwrap().exact_shape();
+    let mut last = call(&mut vm);
+    assert!(last.1 > 0, "the field loop runs natively before the shape changes");
+    let mut leaves = Vec::new();
+    for round in 0..changes {
+        shape = depart(&mut vm, anchor, shape, round);
+        let now = call(&mut vm);
+        leaves.push((now.0 - last.0, now.1 - last.1));
+        last = now;
+    }
+    leaves
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn bjit_loop_whose_receiver_shape_changes_once_runs_native_again_after_one_leave() {
+    crate::vm::compiled::tier_policy::force_admission();
+    let (exits, runs) = repatch_leaves(1)[0];
+    assert_eq!(exits, 1, "the miss leaves once; the re-patched entry then hits");
+    assert!(runs >= 2, "the region runs again after the leave: {runs} runs");
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn bjit_site_whose_receiver_shape_changes_past_the_patch_bound_goes_generic() {
+    crate::vm::compiled::tier_policy::force_admission();
+    use crate::vm::compiled::base_region::MAX_REPATCHES_PER_SITE;
+    let leaves = repatch_leaves(i32::from(MAX_REPATCHES_PER_SITE) + 1);
+    let (patched, generic) = leaves.split_at(usize::from(MAX_REPATCHES_PER_SITE));
+    assert!(patched.iter().all(|(exits, _)| *exits == 1), "each change within the bound leaves once: {leaves:?}");
+    assert!(generic[0].0 > 1, "the change past the bound misses on every iteration: {leaves:?}");
 }

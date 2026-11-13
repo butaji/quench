@@ -9,10 +9,29 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::Jump => Step::Control(frame.jump(stage)),
         Operation::JumpIf { register, taken } => super::heap::jump_if(stage, frame, register, taken),
         Operation::Number(operation) => numeric::step(stage, frame, operation),
-        Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
-        Operation::LoadThis { destination } => load_this(stage, frame, destination),
+        Operation::Call(operation) => super::protocol::step(stage, frame.miss(), operation),
+        Operation::Void { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. } | Operation::Binary { .. } => super::generic::step(stage, frame, operation),
         Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
             | Operation::LogicalNot { .. } | Operation::Safepoint { .. } => register_step(stage, frame, operation),
+        Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
+            | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::Protocol { .. }
+            | Operation::ForInNext { .. } => super::names::step(stage, frame, operation),
+        value => value_step(stage, frame, value),
+    }
+}
+
+/// The value-level operations, then the heap's (`step`).
+#[inline(always)]
+fn value_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    match operation {
+        Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
+        Operation::LoadThis { destination } => load_this(stage, frame, destination),
+        Operation::TypeofIndex { destination, source } => super::control::typeof_index(stage, frame, destination, source),
+        Operation::LoadCapture { depth, slot } => match frame.capture(stage, depth, slot, frame.miss()) {
+            Some(value) => Step::Value(value),
+            None => Step::Unresolved,
+        },
+        Operation::Return { register } => return_number(stage, frame, register),
         heap => super::heap::heap_step(stage, frame, heap),
     }
 }
@@ -83,6 +102,19 @@ fn load_this<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             frame.define_this(stage, destination, this);
             Step::Value(this)
         }
+        None => Step::Unresolved,
+    }
+}
+
+/// Leave the function returning Number `register`; any other value, or a frame with no
+/// numeric completion, is unresolved.
+#[inline(always)]
+fn return_number<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    register: Register) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    if frame.prove_number(stage, register, miss).is_none() { return Step::Unresolved; }
+    match frame.ret(stage, register) {
+        Some(control) => Step::Control(control),
         None => Step::Unresolved,
     }
 }

@@ -1,6 +1,6 @@
 //! By-name loads that read the global scope (`Vm::lane_global_reads`).
 use super::*;
-use crate::vm::global_facts::GlobalRead;
+use crate::vm::global_facts::{GlobalRead, GlobalSlot};
 use crate::staged::GlobalBinding;
 
 impl Lowering<'_, '_> {
@@ -10,16 +10,13 @@ impl Lowering<'_, '_> {
     /// the lane's own read, which leaves where it misses.
     pub(super) fn global_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let register = instruction.result_register();
-        let (binding, held, exit) = match self.global_reads[&pc] {
-            GlobalRead::Constant(value) => (GlobalBinding::Constant(value), None, None),
-            GlobalRead::Stable { value, ty, fact, global, realm_offset } if self.division().folds(BindingTime::Stable) =>
-                (GlobalBinding::Held { value, ty }, Some((fact, global, realm_offset)), Some(self.guard_exit(state, pc as u32))),
-            GlobalRead::Frozen { value, ty } => (GlobalBinding::Frozen { value, ty }, None, Some(self.guard_exit(state, pc as u32))),
-            GlobalRead::Stable { .. } | GlobalRead::Dynamic | GlobalRead::NativeMember { .. } =>
-                (GlobalBinding::Dynamic, None, Some(self.guard_exit(state, pc as u32))),
-        };
+        let (binding, held) = self.global_binding(pc);
+        let exit = (!matches!(binding, GlobalBinding::Constant(_))).then(|| self.guard_exit(state, pc as u32));
         if let (Some((fact, global, realm_offset)), Some(exit)) = (held, exit) {
             self.hold_global(state, exit, fact, (global, realm_offset));
+        }
+        if let (GlobalBinding::Typed { .. }, Some(&GlobalRead::Slot(slot)), Some(exit)) = (binding, self.global_reads.get(&pc), exit) {
+            self.hold_global_slot(state, exit, slot);
         }
         let proof = super::EmitProof::GlobalRead { miss: exit };
         let edges = exit.map_or(frame::Edges::Value, |miss| frame::Edges::ValueGuarded { miss });
@@ -30,6 +27,36 @@ impl Lowering<'_, '_> {
             self.define_immediate(state, instruction.register_b(), Value::UNDEFINED);
         }
         true
+    }
+
+    /// The binding `pc`'s read takes, and the fact that holds it: what the read's own binding
+    /// time (`GlobalBinding::time`) leaves this lowering's division to fold, else the lane's read.
+    fn global_binding(&self, pc: usize) -> (GlobalBinding, Option<(crate::heap::GlobalFact, Value, i32)>) {
+        let (binding, held) = match self.global_reads[&pc] {
+            GlobalRead::Constant(value) => (GlobalBinding::Constant(value), None),
+            GlobalRead::Stable { value, ty, fact, global, realm_offset } =>
+                (GlobalBinding::Held { value, ty }, Some((fact, global, realm_offset))),
+            GlobalRead::Frozen { value, ty } => (GlobalBinding::Frozen { value, ty }, None),
+            GlobalRead::Slot(slot) if slot.dependency.is_some() => (GlobalBinding::Typed { ty: slot.ty }, None),
+            GlobalRead::Slot(_) | GlobalRead::Dynamic | GlobalRead::NativeMember { .. } => (GlobalBinding::Dynamic, None),
+        };
+        if self.division().folds(binding.time()) { (binding, held) } else { (GlobalBinding::Dynamic, None) }
+    }
+
+    /// The global slot a `StoreName` or `LoadNameTypeof` at `pc` holds directly
+    /// (`Vm::stable_global_slot`), after taking its dependencies: the layout and the slot's
+    /// type, and the realm that names the global object (`hold_global_slot`); a store also holds
+    /// that no method cache names its atom (`emit_store_atom_admitted`).
+    pub(super) fn global_cell(&mut self, state: &mut State, pc: usize, row: &crate::staged::Operation<ir::Value, EmitProof>, exit: ir::Block)
+        -> Option<GlobalSlot> {
+        let GlobalRead::Slot(slot) = *self.global_reads.get(&pc)? else { return None };
+        if !self.division().folds(BindingTime::Stable) { return None; }
+        self.hold_global_slot(state, exit, slot);
+        if let crate::staged::Operation::GlobalWrite { atom, .. } = *row {
+            let admitted = self.emit_store_atom_admitted(atom);
+            emit_js_guard(&mut self.builder, admitted, exit);
+        }
+        Some(slot)
     }
 
     /// Defines `register` as the immediate `value`, of its own type.

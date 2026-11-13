@@ -79,9 +79,9 @@ fn the_interpreter_reading_of_own_layout_matches_the_object_model_in_every_form(
 
 /// A concrete register frame: the interpreter keeps no facts about its registers. A heap
 /// value whose cell decides its truthiness reads the cell through `heap`, as the lane does.
-struct ConcreteFrame<'a> {
-    registers: Vec<u64>,
-    heap: Option<&'a Heap>,
+pub(super) struct ConcreteFrame<'a> {
+    pub(super) registers: Vec<u64>,
+    pub(super) heap: Option<&'a Heap>,
 }
 
 impl Frame<Concrete> for ConcreteFrame<'_> {
@@ -190,6 +190,55 @@ fn staged_logical_not_is_the_javascript_truthiness_negation() {
     }
 }
 
+/// The `typeof` name index the row defines for `value`, or `None` where it leaves for the
+/// value's cell.
+fn typeof_index_of(value: Value) -> Option<u64> {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = ConcreteFrame { registers: vec![value.to_bits(), 0], heap: None };
+    match step(&mut stage, &mut frame, Operation::TypeofIndex { destination: 1, source: 0 }) {
+        Step::Value(word) => {
+            assert_eq!(frame.registers[1], word, "{value:?}");
+            Some(word)
+        }
+        Step::Unresolved => None,
+        Step::Control(_) => panic!("typeof transfers no control"),
+    }
+}
+
+/// `typeof` of every value its own word decides names what the interpreter names, and a heap
+/// value (whose cell decides, the IsHTMLDDA object included) is left to the host.
+#[test]
+fn staged_typeof_index_names_every_immediate_and_leaves_heap_values() {
+    let name = |text: &str| crate::bytecode::typeof_name_index(text).map(|index| index as u64);
+    let mut heap = Heap::new();
+    let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+    let text = heap.alloc_string("x".into());
+    let cases = [
+        (Value::number(0.0), "number"), (Value::number(-0.0), "number"), (Value::number(1.5), "number"),
+        (Value::number(f64::NAN), "number"), (Value::number(f64::INFINITY), "number"),
+        (Value::integer(0), "number"), (Value::integer(i32::MIN), "number"), (Value::integer(7), "number"),
+        (Value::TRUE, "boolean"), (Value::FALSE, "boolean"), (Value::NULL, "object"),
+        (Value::UNDEFINED, "undefined"), (Value::DELETED, "undefined"),
+    ];
+    for (value, expected) in cases {
+        assert_eq!(typeof_index_of(value), name(expected), "{value:?}");
+    }
+    assert_eq!(typeof_index_of(object), None);
+    assert_eq!(typeof_index_of(text), None);
+}
+
+/// `~x` of an int32 is `-1 - x`: no overflow, every int32 stays an int32.
+#[test]
+fn staged_bitwise_not_of_an_int32_is_its_complement() {
+    let mut stage = Concrete::new(std::ptr::null());
+    for value in [0, 1, -1, 7, i32::MAX, i32::MIN] {
+        let mut frame = ConcreteFrame { registers: vec![Value::integer(value).to_bits(), 0], heap: None };
+        let operation = Operation::Number(NumberOperation::BitwiseNot { destination: 1, source: Operand::register(0) });
+        assert!(matches!(step(&mut stage, &mut frame, operation), Step::Value(_)));
+        assert_eq!(frame.registers[1] as u32 as i32, !value, "~{value}");
+    }
+}
+
 /// The catalog's staged set and `Operation::decode` agree: every opcode the catalog marks
 /// `Staged` decodes to one operation, and every other opcode is explicitly `Exact`.
 #[test]
@@ -198,10 +247,11 @@ fn every_staged_opcode_decodes_to_one_operation() {
     let constants = [Constant::untyped(Value::number(1.0))];
     let staged = [Op::Move, Op::LoadConst, Op::LoadLocalPlain, Op::StoreLocalPlain,
         Op::Jump, Op::JumpFalse, Op::JumpTrue, Op::LoadThis, Op::RequireObjectCoercible,
-        Op::ToNumeric];
+        Op::ToNumeric, Op::ToPropertyKey, Op::LoadEnvLocal, Op::StoreEnvLocal, Op::ArgumentsLength, Op::LoadNameTypeof,
+        Op::StoreName, Op::ForInNext, Op::ForInStart, Op::GetIterator, Op::IteratorClose, Op::AppendArray, Op::LoadCapture, Op::Return];
     for op in staged {
         assert_eq!(op.semantics(), Semantics::Staged, "{op:?}");
-        let instruction = WideInstruction::new(op, 1, 2, 3, 0);
+        let instruction = WideInstruction::new(op, 1, 1, 1, 0);
         assert!(Operation::<u64, ()>::decode(instruction, |index| constants.get(index).copied()).is_some(),
             "{op:?} must decode to a staged operation");
     }

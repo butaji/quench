@@ -1,3 +1,4 @@
+#[cfg(feature = "native-execution")]
 mod native_operands;
 mod shape_lookup; mod string_wrapper;
 #[cfg(feature = "native-execution")]
@@ -20,6 +21,7 @@ pub use compiled::NativeFaultHandler;
 mod native_op_profile;
 mod js_compiled;
 mod jit_backend;
+mod tier_machine;
 mod shape_transitions;
 mod snapshot;
 mod startup_intrinsics;
@@ -125,6 +127,7 @@ mod builtins;
 mod call_arguments;
 mod call_printer;
 pub(crate) use call_printer::{freeze_call_sites, freeze_source_call_sites};
+mod call_out;
 mod coercion;
 mod collections;
 mod construction;
@@ -199,6 +202,9 @@ mod object_keys;
 mod object_static;
 mod object_symbols;
 #[cfg(test)] mod lane_loop_tests;
+#[cfg(test)] mod lane_native_callback_tests;
+#[cfg(test)] mod lane_entry_tests;
+#[cfg(test)] mod call_out_tests;
 #[cfg(test)] mod object_tests;
 mod property_key;
 use call_arguments::CallArguments;
@@ -233,6 +239,8 @@ pub(crate) mod value_serializer;
 mod owned_clone_native;
 mod superinstruction;
 mod symbol;
+mod well_known_symbols;
+pub(crate) use well_known_symbols::{WellKnownSymbol, WellKnownSymbols};
 mod temporal;
 mod temporal_date;
 mod temporal_date_arithmetic;
@@ -1137,113 +1145,6 @@ impl ProgramCacheLayout {
             .then(|| field_base + usize::from(crate::bytecode::SHARED_UNCACHED_SITE))
     }
 }
-/// The well-known symbols (ECMA-262 Table 1), in their installation order on `Symbol`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum WellKnownSymbol {
-    AsyncDispose,
-    AsyncIterator,
-    Dispose,
-    HasInstance,
-    IsConcatSpreadable,
-    Iterator,
-    Match,
-    MatchAll,
-    Metadata,
-    Replace,
-    Search,
-    Species,
-    Split,
-    ToPrimitive,
-    ToStringTag,
-    Unscopables,
-}
-
-impl WellKnownSymbol {
-    pub(crate) const ALL: [Self; 16] = [
-        Self::AsyncDispose,
-        Self::AsyncIterator,
-        Self::Dispose,
-        Self::HasInstance,
-        Self::IsConcatSpreadable,
-        Self::Iterator,
-        Self::Match,
-        Self::MatchAll,
-        Self::Metadata,
-        Self::Replace,
-        Self::Search,
-        Self::Species,
-        Self::Split,
-        Self::ToPrimitive,
-        Self::ToStringTag,
-        Self::Unscopables,
-    ];
-
-    /// The property name on `Symbol`; the description is `Symbol.` and this name.
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::AsyncDispose => "asyncDispose",
-            Self::AsyncIterator => "asyncIterator",
-            Self::Dispose => "dispose",
-            Self::HasInstance => "hasInstance",
-            Self::IsConcatSpreadable => "isConcatSpreadable",
-            Self::Iterator => "iterator",
-            Self::Match => "match",
-            Self::MatchAll => "matchAll",
-            Self::Metadata => "metadata",
-            Self::Replace => "replace",
-            Self::Search => "search",
-            Self::Species => "species",
-            Self::Split => "split",
-            Self::ToPrimitive => "toPrimitive",
-            Self::ToStringTag => "toStringTag",
-            Self::Unscopables => "unscopables",
-        }
-    }
-}
-
-/// The realm-independent well-known symbol values, one slot per `WellKnownSymbol`, empty
-/// until `Symbol` is installed.
-#[derive(Clone, Default)]
-pub(crate) struct WellKnownSymbols([Option<Value>; WellKnownSymbol::ALL.len()]);
-
-impl WellKnownSymbols {
-    #[inline(always)]
-    pub(crate) fn get(&self, symbol: WellKnownSymbol) -> Option<Value> {
-        self.0[symbol as usize]
-    }
-    pub(crate) fn insert(&mut self, symbol: WellKnownSymbol, value: Value) {
-        self.0[symbol as usize] = Some(value);
-    }
-    /// The symbol whose `Symbol` property name is `name`.
-    pub(crate) fn named(&self, name: &str) -> Option<Value> {
-        WellKnownSymbol::ALL
-            .into_iter()
-            .find(|symbol| symbol.name() == name)
-            .and_then(|symbol| self.get(symbol))
-    }
-    /// The installed symbols with their names, in `WellKnownSymbol::ALL` order.
-    pub(crate) fn entries(&self) -> impl Iterator<Item = (&'static str, Value)> + '_ {
-        WellKnownSymbol::ALL
-            .into_iter()
-            .filter_map(|symbol| self.get(symbol).map(|value| (symbol.name(), value)))
-    }
-    pub(crate) fn values(&self) -> impl Iterator<Item = Value> + '_ {
-        self.0.iter().flatten().copied()
-    }
-    pub(crate) fn clear(&mut self) {
-        self.0 = [None; WellKnownSymbol::ALL.len()];
-    }
-}
-
-impl std::ops::Index<WellKnownSymbol> for WellKnownSymbols {
-    type Output = Value;
-    fn index(&self, symbol: WellKnownSymbol) -> &Value {
-        self.0[symbol as usize]
-            .as_ref()
-            .expect("well-known symbols are installed with Symbol")
-    }
-}
-
 /// Entries of the in-loop call target cache, indexed by the callee's heap index.
 const CALL_TARGET_CACHE_SIZE: usize = 64;
 const _: () = assert!(CALL_TARGET_CACHE_SIZE.is_power_of_two());
@@ -1790,6 +1691,7 @@ enum CallTarget {
 pub(super) enum StepResult {
     Continue,
     TailCall,
+    #[cfg_attr(not(feature = "native-execution"), allow(dead_code))]
     ResumeFrames(Box<dispatch_frame::RecoveredCalls>),
     PushFrame {
         destination: Register,
@@ -1979,12 +1881,15 @@ pub(crate) struct Vm<H> {
     /// Idle JS entry contexts, one per nesting level reached: an entry takes one and a
     /// reentrant entry under it another, so nested native calls allocate none.
     #[allow(clippy::vec_box)]
+    #[cfg_attr(not(feature = "native-execution"), allow(dead_code))]
     js_native_contexts: Vec<Box<compiled::CallContext>>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
     native_execution_rejections: u64,
+    /// Numeric function bodies whose compile runs on the code generator's thread (`Vm::js_tier_compile`).
+    js_tier_pending: FxHashMap<(ProgramId, u32), jit_backend::Pending<Option<compiled::NumericImage>>>,
     #[cfg(feature = "native-execution")]
     native_program_resolver: Option<Box<native_program::NativeProgramResolver<H>>>,
     execution_interrupt: crate::ExecutionInterrupt,
@@ -2048,6 +1953,9 @@ pub(crate) struct Vm<H> {
     /// `field_base`), re-derived by `refresh_active_field_entries` whenever the active program
     /// changes or the table grows: a site's entry is then one load from it.
     active_field_entries: *const <FieldCache as site_table::SiteEntry>::Stored,
+    /// The number of times the field cache table's mapping moved (`field_caches_moved`): a run
+    /// that kept a pointer into it across code that may install a program compares it.
+    field_entries_epoch: u64,
     active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
@@ -3157,7 +3065,7 @@ impl<H: Host> Vm<H> {
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
         };
         self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
-        self.refresh_active_field_entries();
+        self.field_caches_moved();
         self.field_cache_writes = Some(Vec::new());
         program.prime_loop_decoding();
         self.heap.dependencies_mut().clear_inherited();
@@ -3235,7 +3143,7 @@ impl<H: Host> Vm<H> {
     /// keeps them, from its shape table and what its live objects hold: once its builtins
     /// exist or its realm is restored.
     pub(super) fn keep_slot_representations(&mut self) {
-        if self.programs.js_jit_lane_methods_enabled() && crate::jit_mode::function_tiers() {
+        if self.programs.js_jit_lane_methods_enabled() && crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) {
             let layouts = self.shape_layouts();
             self.heap.track_slot_representations(&layouts);
         }
@@ -3336,7 +3244,7 @@ impl<H: Host> Vm<H> {
         });
         let fields = usize::from(sites.fields);
         self.field_caches.extend_empty(fields);
-        self.refresh_active_field_entries();
+        self.field_caches_moved();
         self.megamorphic_field_indices.extend_empty(fields);
         self.field_add_indices.extend_empty(fields);
         self.inherited_field_indices.extend_empty(fields);
@@ -3401,6 +3309,17 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn refresh_active_field_entries(&mut self) {
         self.active_field_entries = self.field_caches.entries_from(self.active_layout.field_base);
+    }
+
+    /// The field cache table grew or was replaced: the only events that move its mapping, and so
+    /// every pointer into it. The ones the VM keeps re-derive here, once, so no reader checks
+    /// them: the active program's (`active_field_entries`), the lane frame's payload word
+    /// generated code reads (`rebind_lane_field_entries`), and the epoch a run that kept one
+    /// across a program install compares (`run_nested_lane_method`).
+    fn field_caches_moved(&mut self) {
+        self.field_entries_epoch += 1;
+        self.refresh_active_field_entries();
+        self.rebind_lane_field_entries();
     }
 
     /// Constant `index` of the active program.

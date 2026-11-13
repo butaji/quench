@@ -113,6 +113,7 @@ syn = { version = "2", features = ["full", "visit-mut"] }
 phf = { version = "0.14", features = ["macros"] }
 
 [dev-dependencies]
+quench-tier-corpus = { path = "../quench-tier-corpus" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -1,5 +1,5 @@
 //! Every tier's one table of native calls that complete in place: no guest code, no raised
-//! error. The lane and the general tier both read it (`Vm::in_place_native_value`); a case
+//! error. The lane and the interpreter both read it (`Vm::in_place_native_value`); a case
 //! may allocate, and each caller notes that its own way.
 use super::*;
 

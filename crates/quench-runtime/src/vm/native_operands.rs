@@ -13,7 +13,7 @@ pub struct NativeJsOperands {
 }
 
 impl NativeJsOperands {
-    const REGISTER_BITS: u32 = u16::BITS;
+        const REGISTER_BITS: u32 = u16::BITS;
 
     #[cfg(feature = "aot")]
     pub const fn new(a: u16, b: u16, c: u16, immediate: u32) -> Self {
@@ -38,7 +38,7 @@ impl NativeJsOperands {
         bytes.extend_from_slice(&self.immediate.to_ne_bytes());
     }
 
-    pub(super) fn instruction(&self, opcode: Op) -> WideInstruction {
+        pub(super) fn instruction(&self, opcode: Op) -> WideInstruction {
         WideInstruction::new(
             opcode,
             self.registers as u16,

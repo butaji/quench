@@ -9,6 +9,9 @@ impl<H: Host> Vm<H> {
         host: H,
         execution_interrupt: crate::ExecutionInterrupt,
     ) -> Self {
+        // A test's tier decisions are its own compiles': the model is process-wide.
+        #[cfg(test)]
+        super::compiled::tier_model_reset_for_tests();
         Self {
             host,
             native_microtask_running: false,
@@ -83,6 +86,7 @@ impl<H: Host> Vm<H> {
             lane_stack: Default::default(),
             execution_mode: ExecutionMode::default(),
             native_execution_rejections: 0,
+            js_tier_pending: FxHashMap::default(),
             #[cfg(feature = "native-execution")]
             native_program_resolver: None,
             execution_interrupt,
@@ -106,6 +110,7 @@ impl<H: Host> Vm<H> {
             active_layout: Default::default(),
             active_constants: &[],
             active_field_entries: std::ptr::null(),
+            field_entries_epoch: 0,
             active_program: ProgramId::MAIN,
             profile: Default::default(),
             shape_slot_memo: Default::default(),

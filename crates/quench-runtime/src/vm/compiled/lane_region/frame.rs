@@ -1,10 +1,11 @@
 //! The lane specializer's register frame: `staged` register operations over the SSA homes.
 use super::*;
-use crate::staged::Stage;
+use crate::vm::compiled::regions;
 #[path = "frame_calls.rs"] pub(super) mod calls;
+#[path = "frame_call_out.rs"] pub(super) mod call_out;
 #[path = "frame_truthiness.rs"] mod truthiness;
 #[path = "frame_operands.rs"] mod operands;
-pub(in crate::vm) use operands::{operand_int, operand_number};
+pub(in crate::vm) use operands::{operand_int, operand_number, register_int_value, register_number_value};
 use truthiness::register_truthiness;
 
 /// The control edges a `step` transfers to, and the exit a value's cell truthiness leaves at.
@@ -40,6 +41,14 @@ pub(super) struct EmitFrame<'a> {
     pub(super) helpers: LaneHelpers,
     /// The poll instructions a fault-polling body records for later patching.
     pub(super) polls: &'a mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
+    /// The heap identities the emitted code names (`FoldedRoots::embed_heap_identity`).
+    pub(super) roots: &'a mut crate::folded_roots::FoldedRoots,
+    /// The dense capture run (values address, length) a capture read resolved.
+    pub(super) captures: Option<(ir::Value, ir::Value)>,
+    /// The Number return edges, joined at the end of the body.
+    pub(super) number_returns: &'a mut smallvec::SmallVec<[NumberReturn; 1]>,
+    /// The record a call-out calls for, where the lowering made one (`call_outs`).
+    pub(super) call_out: Option<&'a call_out::CallOutSite>,
 }
 
 impl EmitFrame<'_> {
@@ -47,19 +56,6 @@ impl EmitFrame<'_> {
     fn native_locals(&self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
         self.locals.then(|| super::super::emit_js_payload_word(stage.builder, self.payload,
             std::mem::offset_of!(super::super::JsStepDispatch, native_locals)))
-    }
-}
-
-impl EmitFrame<'_> {
-    /// A literal's allocation by the lane's own `helper`, whose DELETED answer leaves at the proof's miss edge.
-    fn allocate(&mut self, stage: &mut Emit<'_, '_>, helper: LaneHelper, destination: Register, arguments: &[ir::Value],
-        proof: EmitProof) -> Option<ir::Value> {
-        let EmitProof::Allocation { miss } = proof else { return None };
-        let payload = self.payload;
-        let address = self.helpers.address(&mut stage.builder, helper);
-        let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[&[payload], arguments].concat());
-        calls::finish_allocation(stage, self, destination, value, miss);
-        Some(value)
     }
 }
 
@@ -117,12 +113,19 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         } else if let Some(number) = constant.value.as_number() {
             (Representation::Float64, stage.builder.ins().f64const(number))
         } else {
-            (Representation::Tagged, stage.builder.ins().iconst(types::I64, constant.value.to_bits() as i64))
+            (Representation::Tagged, stage.builder.ins().iconst(types::I64, self.roots.embed_heap_identity(constant.value) as i64))
         };
         let fact = RegisterFact::admit(Fact { ty: constant.ty, representation,
             binding: BindingTime::Static, proof: Proof::Static, projection: Projection::Exact })
             .expect("constant's canonical semantic type");
         (value, fact)
+    }
+
+    /// A row's slow case: the lane's own helper makes the VM's operation in place (`call_out::vm_step`).
+    #[inline(always)]
+    fn vm_step(&mut self, stage: &mut Emit<'_, '_>, _operation: crate::staged::CallOut, result: Option<Register>)
+        -> Option<(ir::Value, RegisterFact)> {
+        call_out::vm_step(self, stage, result)
     }
 
     /// A proven-slot read: the `CheckedObject` projection carries the layout and the slot
@@ -143,7 +146,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         let EmitProof::Field(proof) = proof else { return None };
         let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = self.edges else { return None };
         let address = proof.arena_address(stage.builder, slot, miss)?;
-        stage.builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+        stage.builder.ins().store(regions::object_slots(), value, address, 0);
         Some(())
     }
 
@@ -151,15 +154,15 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     /// the proof's cold block, exactly as the lowering's cold path did.
     #[inline(always)]
     fn index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
-        let EmitProof::Index { view, absent } = proof else { return None };
-        Some(super::super::emit_dense_element(stage.builder, view, index, absent).1)
+        let EmitProof::Index { view, absent, in_bounds } = proof else { return None };
+        Some(super::super::emit_dense_element(stage.builder, view, index, absent, in_bounds).1)
     }
 
     #[inline(always)]
     fn index_write(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, value: ir::Value,
         proof: EmitProof) -> Option<()> {
-        let EmitProof::Index { view, absent } = proof else { return None };
-        let (address, old) = super::super::emit_dense_element(stage.builder, view, index, absent);
+        let EmitProof::Index { view, absent, in_bounds } = proof else { return None };
+        let (address, old) = super::super::emit_dense_element(stage.builder, view, index, absent, in_bounds);
         super::super::emit_dense_element_replace(stage.builder, view, address, old, value);
         Some(())
     }
@@ -182,25 +185,11 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         calls::safepoint(self, stage, proof)
     }
 
-    /// An object literal: the staged record claim (`staged::records`) over the payload's
-    /// pointers, then the empty object written over the claimed record. A due collection
-    /// leaves at the proof's miss edge before a record is claimed.
+    /// An object literal: the lane's own allocator, whose DELETED answer (a due collection)
+    /// leaves at the proof's miss edge.
     #[inline(always)]
     fn allocate_object(&mut self, stage: &mut Emit<'_, '_>, destination: Register, proof: EmitProof) -> Option<ir::Value> {
-        use std::mem::offset_of;
-        let EmitProof::Allocation { miss } = proof else { return None };
-        let payload = self.payload;
-        let allocated = super::super::emit_js_payload_word(stage.builder, payload, offset_of!(super::super::JsStepDispatch, allocated));
-        let collect_at = super::super::emit_js_payload_word(stage.builder, payload, offset_of!(super::super::JsStepDispatch, collect_at));
-        let now = stage.load_u64(allocated, 0);
-        let limit = stage.load_u64(collect_at, 0);
-        let room = stage.ult(now, limit);
-        stage.guard(room, miss)?;
-        let id = crate::staged::records::claim(stage, self, miss, crate::heap::RECORD_SPACE_CAPACITY as u64)?;
-        let address = self.helpers.address(stage.builder, LaneHelper::FinishObject);
-        let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[id]);
-        calls::finish_allocation(stage, self, destination, value, miss);
-        Some(value)
+        self.allocate(stage, LaneHelper::NewObject, destination, &[], proof)
     }
 
     /// An array literal: the lane's own allocator, with its holes or its written elements.
@@ -274,12 +263,22 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     }
 
     #[inline(always)]
+    fn capture(&mut self, stage: &mut Emit<'_, '_>, depth: u16, slot: u16, miss: ir::Block) -> Option<ir::Value> {
+        calls::capture(self, stage, depth, slot, miss)
+    }
+
+    #[inline(always)]
+    fn ret(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<()> {
+        calls::number_return(self, stage, register)
+    }
+
+    #[inline(always)]
     fn load_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, _miss: Option<ir::Block>)
         -> Option<(ir::Value, RegisterFact)> {
         let locals = self.native_locals(stage)?;
         let address = stage.builder.ins().iadd_imm_s(locals,
             i64::from(slot) * std::mem::size_of::<Value>() as i64);
-        let value = stage.builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
+        let value = stage.builder.ins().load(types::I64, regions::frame(), address, 0);
         Some((value, RegisterFact::canonical()))
     }
 
@@ -289,7 +288,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         let Some(locals) = self.native_locals(stage) else { return false };
         let address = stage.builder.ins().iadd_imm_s(locals,
             i64::from(slot) * std::mem::size_of::<Value>() as i64);
-        stage.builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+        stage.builder.ins().store(regions::frame(), value, address, 0);
         true
     }
 }
@@ -317,17 +316,7 @@ pub(super) fn register_tagged(builder: &mut FunctionBuilder<'_>, registers: &mut
     let fact = state.values[index];
     if let TaggedView::Value(value) = fact.tagged { return value; }
     if !fact.tagged.current() {
-        let bits = match fact.value.representation {
-            Representation::Int32 => {
-                let int = { let variable = register_int(builder, registers, index); builder.use_var(variable) };
-                int_tagged(builder, int)
-            }
-            Representation::Float64 => {
-                let number = { let variable = register_float(builder, registers, index); builder.use_var(variable) };
-                emit_js_box_number(builder, number)
-            }
-            Representation::Tagged => unreachable!("tagged view is current"),
-        };
+        let bits = super::number_domains::box_unboxed(builder, registers, fact.value.representation, index);
         builder.def_var(registers.tagged[index], bits);
         state.values[index].tagged = TaggedView::Value(bits);
         return bits;
@@ -370,6 +359,7 @@ pub(super) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
     builder.def_var(variable, value);
     if fact.value.representation == Representation::Tagged { fact.tagged = TaggedView::Value(value); }
     state.values[index] = fact;
+    state.proofs.homed.remove(index);
     state.proofs.headers[index] = None;
     state.proofs.layouts.retain(|(owner, _), _| *owner != Some(register));
     state.proofs.receivers.remove(&register);
@@ -443,148 +433,5 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
 
     fn number_fact(&self) -> RegisterFact {
         RegisterFact::definition(Type::NUMBER, Representation::Float64)
-    }
-}
-
-/// `register`'s int32 value, proving it where the fact does not.
-pub(super) fn register_int_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
-    let index = usize::from(register);
-    let fact = state.values[index];
-    let int = match fact.value.representation {
-        Representation::Int32 => {
-            let variable = register_int(builder, registers, index);
-            return builder.use_var(variable);
-        }
-        Representation::Float64 if !fact.tagged.current() => {
-            let variable = register_float(builder, registers, index);
-            let number = builder.use_var(variable);
-            let (int, exact) = emit_js_exact_int32(builder, number);
-            if !fact.value.ty.is_subtype(Type::INT32) {
-                emit_js_guard(builder, exact, otherwise);
-            }
-            int
-        }
-        Representation::Tagged | Representation::Float64 => {
-            let bits = register_tagged(builder, registers, state, register);
-            if !fact.value.ty.is_subtype(Type::INT32) {
-                let integer = is_int_tagged(builder, bits);
-                emit_js_guard(builder, integer, otherwise);
-            }
-            builder.ins().ireduce(types::I32, bits)
-        }
-    };
-    let variable = register_int(builder, registers, index);
-    builder.def_var(variable, int);
-    state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-        ..RegisterFact::definition(Type::INT32, Representation::Int32) };
-    int
-}
-
-/// `register`'s binary64 value, proving Number where the fact does not.
-pub(super) fn register_number_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
-    state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
-    let index = usize::from(register);
-    let fact = state.values[index].value;
-    match fact.representation {
-        Representation::Float64 => {
-            let variable = register_float(builder, registers, index);
-            builder.use_var(variable)
-        }
-        Representation::Int32 => {
-            let variable = register_int(builder, registers, index);
-            let int = builder.use_var(variable);
-            builder.ins().fcvt_from_sint(types::F64, int)
-        }
-        Representation::Tagged => {
-            let bits = register_tagged(builder, registers, state, register);
-            let number = if fact.ty.is_subtype(Type::NUMBER) {
-                emit_known_number(builder, bits)
-            } else {
-                emit_js_tagged_number(builder, bits, otherwise)
-            };
-            let variable = register_float(builder, registers, index);
-            builder.def_var(variable, number);
-            state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-                ..RegisterFact::definition(Type::NUMBER, Representation::Float64) };
-            number
-        }
-    }
-}
-
-/// The record-claim row's Emit projection (`staged::records`): the payload's pointers and the
-/// block words, with the cold path through the allocator helper.
-impl crate::staged::records::ClaimFrame<Emit<'_, '_>> for EmitFrame<'_> {
-    fn claim_words(&mut self, stage: &mut Emit<'_, '_>) -> crate::staged::records::ClaimWords<ir::Value> {
-        use std::mem::offset_of;
-        use crate::staged::records::ClaimWords;
-        let payload = self.payload;
-        let pointer = |stage: &mut Emit<'_, '_>, field: usize| super::super::emit_js_payload_word(stage.builder, payload, field);
-        let free_word = pointer(stage, offset_of!(super::super::JsStepDispatch, record_free_word));
-        let free_cursor = pointer(stage, offset_of!(super::super::JsStepDispatch, record_free_cursor));
-        let next_id = pointer(stage, offset_of!(super::super::JsStepDispatch, record_next_id));
-        let live = pointer(stage, offset_of!(super::super::JsStepDispatch, record_live));
-        let _ = live;
-        ClaimWords {
-            free_word: stage.load_u64(free_word, 0),
-            free_cursor: stage.load_u32(free_cursor, 0),
-            next_id: stage.load_u32(next_id, 0),
-            block_count: pointer(stage, offset_of!(super::super::JsStepDispatch, record_block_count)),
-            blocks: pointer(stage, offset_of!(super::super::JsStepDispatch, record_blocks)),
-            reserved: pointer(stage, offset_of!(super::super::JsStepDispatch, record_reserved)),
-        }
-    }
-
-    fn claim_geometry(&self) -> (u32, u32, u64) {
-        (crate::heap::OCCUPANCY_WORD_BITS as u32,
-            crate::heap::RECORDS_PER_BLOCK.trailing_zeros(),
-            crate::heap::NATIVE_RECORD_BLOCK_SIZE as u64)
-    }
-
-    fn claim_block(&mut self, stage: &mut Emit<'_, '_>, words: crate::staged::records::ClaimWords<ir::Value>,
-        block: ir::Value, record: ir::Value, miss: ir::Block) -> Option<()> {
-        let (word_bits, _, block_size) = self.claim_geometry();
-        let word_index = stage.shr_imm(record, u64::from(word_bits.trailing_zeros()));
-        let shift = stage.constant(3);
-        let byte = stage.shl(word_index, shift);
-        let base = stage.mul_imm(block, block_size);
-        let within = stage.add(words.blocks, base);
-        let address = stage.add(within, byte);
-        let word = stage.load_u64(address, 0);
-        let index = stage.and_imm(record, u64::from(word_bits - 1));
-        let one = stage.constant(1);
-        let bit = stage.shl(one, index);
-        let set = stage.or(word, bit);
-        let held = stage.and(word, bit);
-        let clear = stage.eq_imm(held, 0u64);
-        stage.guard(clear, miss)?;
-        stage.store_u64(address, 0, set);
-        Some(())
-    }
-
-    fn commit_fresh(&mut self, stage: &mut Emit<'_, '_>, next_id: ir::Value) -> ir::Value {
-        use std::mem::offset_of;
-        let payload = self.payload;
-        let pointer = |stage: &mut Emit<'_, '_>, field: usize| super::super::emit_js_payload_word(stage.builder, payload, field);
-        let next = pointer(stage, offset_of!(super::super::JsStepDispatch, record_next_id));
-        let id = stage.load_u32(next, 0);
-        let bumped = stage.add_imm(id, 1u64);
-        stage.store_u32(next, 0, bumped);
-        let live = pointer(stage, offset_of!(super::super::JsStepDispatch, record_live));
-        let runs = stage.load_u64(live, 0);
-        let count = stage.add_imm(runs, 1u64);
-        stage.store_u64(live, 0, count);
-        next_id
-    }
-
-    fn claim_cold(&mut self, stage: &mut Emit<'_, '_>, _words: crate::staged::records::ClaimWords<ir::Value>,
-        miss: ir::Block) -> Option<ir::Value> {
-        let payload = self.payload;
-        let address = self.helpers.address(stage.builder, LaneHelper::ClaimObjectRecord);
-        let id = super::super::emit_lane_helper_call(stage.builder, payload, address, &[payload]);
-        let failed = stage.eq_imm(id, u64::MAX);
-        let ok = stage.not(failed);
-        stage.guard(ok, miss)?;
-        Some(id)
     }
 }

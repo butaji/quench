@@ -2,7 +2,7 @@
 //! These notifications do not turn observations into unchecked read permissions.
 
 use std::{num::NonZeroU32, rc::{Rc, Weak}};
-use crate::typed_ir::Type;
+use crate::{folded_roots::{FoldedRoots, RootedCode}, typed_ir::Type};
 
 pub(crate) trait DependentCode {
     fn is_published(&self) -> bool;
@@ -37,6 +37,8 @@ pub(crate) struct PublishedCode<T> {
     invalidation: Invalidation,
     /// The entry word to put back (`stub`) if it still holds this code's `entry`.
     entry_link: std::cell::Cell<Option<(*const std::cell::Cell<usize>, usize, usize)>>,
+    /// The heap identities its code embeds, kept alive while it is published (`hold_roots`).
+    roots: std::cell::RefCell<FoldedRoots>,
 }
 
 impl<T> PublishedCode<T> {
@@ -47,12 +49,21 @@ impl<T> PublishedCode<T> {
     pub(crate) fn new(code: T) -> Self { Self::with_invalidation(code, Invalidation::default()) }
     /// Code compiled to read `invalidation` at its invalidation points.
     pub(crate) fn with_invalidation(code: T, invalidation: Invalidation) -> Self {
-        Self { code: std::cell::RefCell::new(Some(Rc::new(code))), invalidation, entry_link: std::cell::Cell::new(None) }
+        Self { code: std::cell::RefCell::new(Some(Rc::new(code))), invalidation, entry_link: std::cell::Cell::new(None), roots: Default::default() }
+    }
+    /// Keeps `roots`, the heap identities its code embeds, alive until it retires: `heap` roots
+    /// them at every collection (`Heap::extend_folded_roots`).
+    pub(crate) fn hold_roots(self: &Rc<Self>, roots: FoldedRoots, heap: &mut crate::heap::Heap) where T: 'static {
+        if roots.is_empty() { return; }
+        *self.roots.borrow_mut() = roots.settled();
+        let code: Rc<dyn RootedCode> = self.clone();
+        heap.hold_folded_roots(&code);
     }
     pub(crate) fn lease(&self) -> Option<Rc<T>> { self.code.borrow().clone() }
     pub(crate) fn is_published(&self) -> bool { self.code.borrow().is_some() }
     pub(crate) fn retire(&self) {
         self.invalidation.set();
+        *self.roots.borrow_mut() = FoldedRoots::default();
         if let Some((word, entry, stub)) = self.entry_link.take() {
             // SAFETY: the word is a view's, which outlives the publications it names (the
             // view owns its body and its pins).
@@ -66,6 +77,11 @@ impl<T> PublishedCode<T> {
 impl<T> DependentCode for PublishedCode<T> {
     fn is_published(&self) -> bool { self.is_published() }
     fn retire(&self) { self.retire(); }
+}
+
+impl<T> RootedCode for PublishedCode<T> {
+    fn is_published(&self) -> bool { self.is_published() }
+    fn extend_roots(&self, roots: &mut Vec<crate::Value>) { self.roots.borrow().extend_roots(roots); }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

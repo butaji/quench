@@ -62,6 +62,14 @@ impl FunctionCompiler<'_, '_> {
         binding_time::expression_in(value, &mut |name| self.static_constant(name))
     }
 
+    /// The exits of a test whose truthiness is known before run time (`binding_time`): none
+    /// where it is true, so control falls through, else the one jump that always leaves.
+    /// `None` where the test is dynamic.
+    pub(super) fn constant_exits(&mut self, value: &Expression<'_>) -> Option<super::expression::ConditionExits> {
+        let truthy = binding_time::to_boolean(&self.static_value(value)?)?;
+        Some(if truthy { Default::default() } else { smallvec::smallvec![self.emit(Op::Jump, 0, 0, 0, 0)] })
+    }
+
     pub(super) fn static_binary(&mut self, value: &BinaryExpression<'_>) -> Option<Constant> {
         binding_time::binary_in(value, &mut |name| self.static_constant(name))
     }

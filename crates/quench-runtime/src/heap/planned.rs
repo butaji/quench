@@ -57,21 +57,6 @@ impl Heap {
         self.insert_admitted_object_record(object)
     }
 
-    /// Writes the empty object over record `id`, which the staged claim row claimed
-    /// (`staged::records`), and counts it: `alloc_empty_object` without the claim.
-    pub(crate) fn finish_empty_object(&mut self, id: u32, prototype: Value) -> Value {
-        let object = Object::new(prototype);
-        debug_assert!(object.exact_shape() == object.shape() && self.properties.shape_length(object.exact_shape()) == 0);
-        self.mark_prototype(prototype);
-        self.allocated += 1;
-        // SAFETY: the claim row left this record claimed and unwritten.
-        unsafe { self.object_records.record_ptr(id).write(object) };
-        let value = Value::direct_object(id);
-        #[cfg(feature = "profile-memory")]
-        self.profile_allocation(value);
-        value
-    }
-
     /// Where compiled code finds the fast claim of a direct object record, as byte offsets from
     /// the `Heap`: with `free_word` nonzero, id = `free_word_base + 63 - lzcnt(free_word)`;
     /// clear that bit of `free_word`, set it in the word `*free_word_occupied`, add 1 to

@@ -29,7 +29,7 @@ impl Lowering<'_, '_> {
         if self.vm.online.is_some() && !self.vm.frozen {
             return;
         }
-        for (shape, slot, domain) in store_domains(instructions, |site| self.fields.get(&site).map(Vec::as_slice)) {
+        for (shape, slot, domain) in store_domains(instructions, |site| super::site_loads(self.fields, site).map(Vec::as_slice)) {
             let exit = *miss.get_or_insert_with(|| self.builder.create_block());
             let shape = self.builder.ins().iconst(types::I64, i64::from(shape));
             let slot = self.builder.ins().iconst(types::I64, i64::from(slot));

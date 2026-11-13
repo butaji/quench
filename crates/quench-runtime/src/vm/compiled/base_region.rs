@@ -10,7 +10,9 @@
 //! jump when an interrupt is requested so the interpreter's safepoint runs, and an entry guard
 //! that finds a register that is no Number returns `LaneExit::Entry`.
 
-use super::osr_loop::LoopRegion;
+use super::osr_loop::{FieldReceiver, LoopRegion};
+use super::NativeFieldLoad;
+use crate::vm::dispatch_fast::operand_feedback::OperandKinds;
 use crate::bytecode::{Class, OperandKind, Register, WideInstruction};
 use crate::value::Value;
 use oxc_ast::ast::BinaryOperator;
@@ -20,15 +22,30 @@ use quench_bjit::{PINNED, PINNED_F, Row as Placed, Stencil};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+// The call planner: consumed by the whole-function b-jit planner, which names its chains.
+#[allow(dead_code)]
+mod call_plan;
+mod cache;
 mod decode;
 mod link;
+mod patch;
 mod plan;
 mod repr;
+mod residuals;
+mod resume;
+mod tile;
 mod webs;
+use cache::*;
 use decode::*;
 use link::*;
+pub(in crate::vm) use patch::{CacheSites, Repatch};
+#[cfg(test)]
+pub(in crate::vm) use patch::MAX_REPATCHES_PER_SITE;
+use patch::SiteEntry;
 use plan::*;
 use repr::*;
+pub(in crate::vm) use resume::ResumeTable;
+use resume::*;
 use webs::*;
 
 /// Bytes of a register slot in the activation's register file.
@@ -86,9 +103,23 @@ pub(in crate::vm) fn leave(function: u32, pc: u32, op: crate::bytecode::Op) {
     }
 }
 
-/// Counts `event` where the trace channel is on.
+/// Whether regions and events are counted: a report that reads them is on (`report`, `census`).
+fn counted() -> bool {
+    static COUNTED: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| crate::trace::Channel::JsJit.on() || crate::trace::Channel::Census.on());
+    *COUNTED
+}
+
+/// What regions did, for the tier census: regions built, the instructions they cover, and runs that
+/// entered published code. All zero unless a report is on.
+pub(in crate::vm) fn census() -> (u64, u64, u64) {
+    let regions = TOTALS.lock().map_or((0, 0), |totals| (totals.regions, totals.ops));
+    (regions.0, regions.1, EVENTS[Event::Entered as usize].load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Counts `event` where a report is on.
 pub(in crate::vm) fn count(event: Event) {
-    if !crate::trace::Channel::JsJit.on() {
+    if !counted() {
         return;
     }
     REPORT.call_once(|| {
@@ -99,6 +130,9 @@ pub(in crate::vm) fn count(event: Event) {
 }
 
 extern "C" fn report() {
+    if !crate::trace::Channel::JsJit.on() {
+        return;
+    }
     let (Ok(totals), Ok(rejects)) = (TOTALS.lock(), REJECTS.lock()) else { return };
     let ops = totals.ops.max(1);
     eprintln!(
@@ -123,7 +157,7 @@ extern "C" fn report() {
 }
 
 fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
-    if !crate::trace::Channel::JsJit.on() {
+    if !counted() {
         return;
     }
     REPORT.call_once(|| {
@@ -136,16 +170,17 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
 }
 
 /// The machine code of `region`, entered at the shared native entry ABI, or the instruction that
-/// has no row. `ints` are the registers that held an int32 as the compile began; `widened` lists the PCs whose int32 speculation failed: they take general rows.
-pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<(Vec<u8>, bool), String> {
+/// has no row. `ints` are the registers that held an int32 as the compile began; `widened` lists the PCs whose int32 speculation failed: they take general rows,
+/// as do those whose `kinds` (per instruction from the header) record a declined int32 step.
+pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], kinds: &[OperandKinds], loads: &[Vec<NativeFieldLoad>]) -> Result<Built, String> {
     let started = std::time::Instant::now();
-    let built = assemble(region, dense, widened, seen);
+    let built = assemble(region, dense, widened, seen, kinds, loads);
     let nanos = started.elapsed().as_nanos() as u64;
     note(|totals, rejects| match &built {
-        Ok((code, _)) => {
+        Ok(built) => {
             totals.regions += 1;
             totals.ops += u64::from(region.backedge - region.header) + 1;
-            totals.bytes += code.len() as u64;
+            totals.bytes += built.code.len() as u64;
             totals.nanos += nanos;
         }
         Err(name) => {
@@ -156,19 +191,30 @@ pub(super) fn build(region: &LoopRegion, dense: bool, widened: &[usize], seen: [
     built
 }
 
-/// The code, and whether it reads no heap row: such a region needs from its payload only the entry
-/// record's address (`Crossing::Bare`).
-fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN]) -> Result<(Vec<u8>, bool), String> {
+/// A built region: its code, whether it reads no heap row (such a region needs from its payload
+/// only the entry record's address, `Crossing::Bare`), and the inline-cache entries its code
+/// embeds, whose shapes and slots it depends on (`OsrFacts::of_loads`).
+pub(super) struct Built {
+    pub(super) code: Vec<u8>,
+    pub(super) bare: bool,
+    /// Where a run that left the region at a PC re-enters it.
+    pub(super) resumes: ResumeTable,
+    pub(super) embedded: Vec<NativeFieldLoad>,
+    /// Where each re-patchable cache entry's shape and slot sit in `code`.
+    pub(super) sites: CacheSites,
+}
+
+fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Register]; SEEN], kinds: &[OperandKinds], loads: &[Vec<NativeFieldLoad>]) -> Result<Built, String> {
     let (header, backedge) = (region.header, region.backedge);
     let count = (backedge - header) as usize + 1;
     let instructions = region.instructions().get(..count).ok_or("region instructions")?;
-    let decoded = instructions.iter().enumerate().map(|(k, instruction)| decode(region, dense, header + k as u32, *instruction)).collect::<Result<Vec<_>, _>>()?;
+    let decoded = instructions.iter().enumerate().map(|(k, instruction)| decode(region, dense, header + k as u32, *instruction, loads)).collect::<Result<Vec<_>, _>>()?;
     // A register with several webs may not have a web in an int slot, whose writes keep a
     // tagged word's high half; such a register is left whole.
     let mut merged: std::collections::BTreeSet<Register> = Default::default();
     let (reprs, homes, webs, decoded) = loop {
         let (webs, renamed) = Webs::split(region, &decoded, &merged);
-        let reprs = representations(region, &renamed, widened, seen, &webs);
+        let reprs = representations(region, &renamed, widened, seen, kinds, &webs);
         let homes = Homes::of(&ranked(&renamed, &reprs, Repr::Int), &ranked(&renamed, &reprs, Repr::Double), webs.orig.clone(), &webs.clashes(region, &renamed));
         let split: Vec<Register> = homes.slots.iter().map(|web| webs.orig[usize::from(*web)]).filter(|register| webs.count(*register) > 1).collect();
         if split.is_empty() {
@@ -177,18 +223,11 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
         merged.extend(split);
     };
     let layout = Layout { header, backedge, homes, webs, region };
-    let mut body = Vec::with_capacity(count);
-    for (k, row) in decoded.iter().enumerate() {
-        body.push(plan(row, &layout.homes, header + k as u32, is_general(row, &reprs))?);
-    }
+    let general = crate::bitset::BitSet::from_fn(decoded.len(), |k| is_general(&decoded[k], &reprs));
+    let body = tile::plan_all(&layout, &decoded, &general, kinds)?;
     let bare = decoded.iter().all(|row| row.heap.is_none());
-    Ok((link(&layout, &body)?, bare))
-}
-
-impl<H: crate::Host> crate::vm::Vm<H> {
-    /// Whether the JavaScript function tiers compile function bodies: they run (`js_tier_runs`) and the process runs
-    /// Cranelift function tiers at all (not `--b-jit`, whose loop sites are still admitted by `js_tier_runs`).
-    pub(in crate::vm) fn js_function_compiles(&self) -> bool {
-        self.js_tier_runs() && crate::jit_mode::function_tiers()
-    }
+    let embedded = decoded.iter().filter_map(|row| row.field_entry.as_ref()).flat_map(|cache| cache.loads.iter().copied()).collect();
+    let (code, resumes, sites) = link(&layout, &body)?;
+    residuals::report_rows(&layout, &decoded, &body, code.len());
+    Ok(Built { code, bare, resumes, embedded, sites })
 }

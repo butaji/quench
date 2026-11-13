@@ -44,8 +44,18 @@ pub(crate) trait NumericStage: Stage {
     /// The truncated remainder of two int32 words, `right` nonzero: the dividend's sign, and
     /// `i32::MIN % -1` is zero rather than a trap.
     fn int_remainder(&mut self, left: Self::Word, right: Self::Word) -> Self::Word;
+    /// `operation` of a binary64 word (`staged::math::float_unary`).
+    fn float_unary(&mut self, operation: super::math::FloatUnary, value: Self::Word) -> Self::Word;
+    /// `Math.max` (`maximum`) or `Math.min` of two binary64 words (`staged::math::float_extreme`).
+    fn float_extreme(&mut self, maximum: bool, left: Self::Word, right: Self::Word) -> Self::Word;
+    /// The wrapping product of two int32 words (`Math.imul`; `staged::math::int_multiply`).
+    fn int_multiply(&mut self, left: Self::Word, right: Self::Word) -> Self::Word;
     /// The int32 word holding `value`.
     fn i32_constant(&mut self, value: i32) -> Self::Word;
+    /// The binary64 word holding `value`.
+    fn f64_constant(&mut self, value: f64) -> Self::Word;
+    /// The int32 word holding the low 32 bits of the 64-bit word `value`.
+    fn narrow(&mut self, value: Self::Word) -> Self::Word;
     fn i32_to_f64(&mut self, value: Self::Word) -> Self::Word;
     fn i32_is_zero(&mut self, value: Self::Word) -> Self::Cond;
     fn i32_is_negative(&mut self, value: Self::Word) -> Self::Cond;
@@ -73,6 +83,11 @@ pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> {
     #[inline(always)]
     fn local_miss(&self) -> Option<S::Miss> { Some(self.miss()) }
 
+    /// The word `write` takes for the int32 `word` this frame defines with `int_fact`: the
+    /// int32 word itself, unless the frame keeps its registers tagged.
+    #[inline(always)]
+    fn int_result(&mut self, _stage: &mut S, word: S::Word) -> S::Word { word }
+
     fn int_fact(&self) -> Self::Fact;
     fn number_fact(&self) -> Self::Fact;
 }
@@ -92,6 +107,8 @@ pub(crate) enum NumberOperation {
     IncDec { destination: Register, source: Register, decrement: bool, overflow: Overflow },
     /// `+source` or `-source` of a Number `source`, in `domain`; any other value leaves.
     Unary { destination: Register, source: Operand, operation: NumberUnary, domain: Domain },
+    /// `~source` of an int32 `source`; any other value leaves.
+    BitwiseNot { destination: Register, source: Operand },
     /// ToNumeric of a Number `source` into `destination`; any other value leaves.
     ToNumeric { destination: Register, source: Register },
 }
@@ -109,6 +126,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             remainder(stage, frame, destination, left, right, domain),
         NumberOperation::IncDec { destination, source, decrement, overflow } =>
             increment(stage, frame, destination, source, decrement, overflow),
+        NumberOperation::BitwiseNot { destination, source } => bitwise_not(stage, frame, destination, source),
         NumberOperation::ToNumeric { destination, source } => to_numeric(stage, frame, destination, source),
         NumberOperation::Unary { destination, source, operation, domain } =>
             unary(stage, frame, destination, source, operation, domain),
@@ -148,6 +166,16 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             }
         }
     }
+}
+
+/// `~source` of an int32 `source`: `-1 - source`, which never overflows.
+fn bitwise_not<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, source: Operand) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    let value = frame.int_operand(stage, source, miss);
+    let all_ones = stage.i32_constant(-1);
+    int_arithmetic_result(stage, frame, destination, all_ones, value,
+        NumberArithmetic::Subtract, Overflow::Exit, miss)
 }
 
 /// A relation of two operands in `domain`; its predicate word.
@@ -338,7 +366,18 @@ impl NumericStage for super::Concrete {
     fn int_remainder(&mut self, left: u64, right: u64) -> u64 {
         u64::from(int32(left).wrapping_rem(int32(right)) as u32)
     }
+    fn float_unary(&mut self, operation: super::math::FloatUnary, value: u64) -> u64 {
+        super::math::float_unary(operation, f64::from_bits(value)).to_bits()
+    }
+    fn float_extreme(&mut self, maximum: bool, left: u64, right: u64) -> u64 {
+        super::math::float_extreme(maximum, f64::from_bits(left), f64::from_bits(right)).to_bits()
+    }
+    fn int_multiply(&mut self, left: u64, right: u64) -> u64 {
+        u64::from(super::math::int_multiply(int32(left), int32(right)) as u32)
+    }
     fn i32_constant(&mut self, value: i32) -> u64 { u64::from(value as u32) }
+    fn f64_constant(&mut self, value: f64) -> u64 { value.to_bits() }
+    fn narrow(&mut self, value: u64) -> u64 { u64::from(value as u32) }
     fn i32_to_f64(&mut self, value: u64) -> u64 { f64::from(int32(value)).to_bits() }
     fn i32_is_zero(&mut self, value: u64) -> bool { int32(value) == 0 }
     fn i32_is_negative(&mut self, value: u64) -> bool { int32(value) < 0 }

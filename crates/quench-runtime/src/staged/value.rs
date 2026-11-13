@@ -24,9 +24,15 @@ pub(crate) fn is_direct_object<S: Stage>(stage: &mut S, bits: S::Word) -> S::Con
     family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG)
 }
 
+/// Whether `bits` is an int32 (`Value::as_int`); an int32 has one tagged form, so two
+/// distinct int-tagged words are two distinct values.
+#[inline(always)]
+pub(crate) fn is_int<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
+    stage.eq_imm(tag, ValueLayout::INT_TAG)
+}
+
 /// Whether `bits` is a direct string reference (`Value::as_direct_string`).
-// Read by the u-jit and b-jit projections of GetField on string receivers (threads 13 and 7).
-#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn is_direct_string<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     let family = stage.and_imm(bits, ValueLayout::HEAP_FAMILY_MASK);
