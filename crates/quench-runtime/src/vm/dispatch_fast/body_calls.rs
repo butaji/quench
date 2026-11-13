@@ -326,7 +326,7 @@ fn construct_activated<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, callee
     // The activation of the lane's own construction (`lane_script_construct`): a target that
     // keeps or gathers values, or is passed more than it has parameters, by the keeping form.
     let how = match lane_call_activation(&target, call.argc()) {
-        Some(LaneActivation::Environment) | None => return miss(Miss::ConstructEntryNotActivation),
+        None => return miss(Miss::ConstructEntryNotActivation),
         Some(how) => how,
     };
     if matches!(how, LaneActivation::Plain) && !lane_activation_room(vm, &target) { return miss(Miss::ConstructNoActivationRoom); }
@@ -425,7 +425,7 @@ fn lane_body_push<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: &Sc
         LaneActivation::Environment => {
             // SAFETY: the call's values are registers of the running function.
             let values = unsafe { call.values() };
-            lane_activate_environment(cx, call.registers, call.ip, target, &values, this).map_err(|_| refused())?.0
+            lane_activate_environment(cx, call.registers, call.ip, target, &values, (this, constructs)).map_err(|_| refused())?.0
         }
     })
 }

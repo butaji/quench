@@ -5,19 +5,26 @@ use super::{Concrete, Stage};
 use super::region::Region;
 use crate::value::ValueLayout;
 
-/// The address and value of `slot` of the dense run of `len` environment values at `values`:
-/// `None` (leaving at `miss`) past the run or where the slot holds an internal marker
-/// (`Value::is_internal_marker`: a shared slot or an uninitialized binding), which the caller
-/// resolves the long way.
+/// The address of `slot` of the dense run of `len` environment values at `values`, or `None` (leaving at `miss`) past
+/// the run.
 #[inline(always)]
-fn dense_slot<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16, miss: S::Miss) -> Option<(S::Word, S::Word)> {
+fn slot_address<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
     let slot = u64::from(slot);
     // The slot is a per-site operand: one hole for the bounds test, one for the address.
     let bound = stage.site(slot);
     let in_bounds = stage.ugt_imm(len, bound);
     stage.guard(in_bounds, miss)?;
     let offset = stage.site(slot * std::mem::size_of::<crate::Value>() as u64);
-    let address = stage.add_imm(values, offset);
+    Some(stage.add_imm(values, offset))
+}
+
+/// The address and value of `slot` of the dense run of `len` environment values at `values`:
+/// `None` (leaving at `miss`) past the run or where the slot holds an internal marker
+/// (`Value::is_internal_marker`: a shared slot or an uninitialized binding), which the caller
+/// resolves the long way.
+#[inline(always)]
+fn dense_slot<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16, miss: S::Miss) -> Option<(S::Word, S::Word)> {
+    let address = slot_address(stage, values, len, slot, miss)?;
     let value = stage.load_u64(Region::Cells.mutable(), address, 0);
     let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
     let ordinary = stage.ne_imm(tag, ValueLayout::INTERNAL_TAG);
@@ -104,6 +111,34 @@ pub(crate) fn environment_slot_store<S: Stage>(stage: &mut S, storage: S::Word, 
     Some(())
 }
 
+/// Defines slot `slot` of the dense environment storage whose word `storage` holds (`storage_run`) as `value`: the
+/// first value of a `let`, `const` or class binding, over its dead zone (the hole `Value::DELETED`) or the value an
+/// earlier iteration of its scope left, which a scope's `InitializeTdz` and its declaration's store make. A leave at
+/// `miss` past the run or at a slot another environment shares (any other internal marker), nothing written. The store
+/// has no barrier of its own, as `environment_slot_store`'s: an activation's environment lives only within a lane run,
+/// which collects nothing, so it is young or remembered (`dispatch_fast::lane_store_window_local_window` asserts it).
+#[inline(always)]
+pub(crate) fn environment_slot_define<S: Stage>(stage: &mut S, storage: S::Word, slot: u16, value: S::Word, miss: S::Miss) -> Option<()> {
+    let (values, len) = storage_run(stage, storage, miss)?;
+    let address = slot_address(stage, values, len, slot, miss)?;
+    let current = stage.load_u64(Region::Cells.mutable(), address, 0);
+    let tag = stage.and_imm(current, ValueLayout::TAG_MASK);
+    let ordinary = stage.ne_imm(tag, ValueLayout::INTERNAL_TAG);
+    let hole = stage.eq_imm(current, crate::Value::DELETED.to_bits());
+    let definable = stage.any(ordinary, hole);
+    stage.guard(definable, miss)?;
+    stage.store_u64(Region::Cells.mutable(), address, 0, value);
+    Some(())
+}
+
+/// Opens the dead zone of slot `slot` of the dense environment storage whose word `storage` holds (`InitializeTdz`):
+/// the hole defined as its value (`environment_slot_define`).
+#[inline(always)]
+pub(crate) fn environment_slot_open<S: Stage>(stage: &mut S, storage: S::Word, slot: u16, miss: S::Miss) -> Option<()> {
+    let hole = stage.constant(crate::Value::DELETED.to_bits());
+    environment_slot_define(stage, storage, slot, hole, miss)
+}
+
 /// The interpreter's `environment_slot` over the storage at `storage`.
 ///
 /// # Safety
@@ -122,6 +157,26 @@ pub(crate) unsafe fn concrete_environment_slot(storage: *const crate::heap::Envi
 pub(crate) unsafe fn concrete_environment_slot_store(storage: *mut crate::heap::EnvironmentSlots, slot: u16, value: crate::Value) -> bool {
     let mut stage = Concrete::new(std::ptr::null());
     environment_slot_store(&mut stage, storage as u64, slot, value.to_bits(), ()).is_some()
+}
+
+/// The interpreter's `environment_slot_define` over the storage at `storage`: whether it wrote.
+///
+/// # Safety
+/// As `concrete_environment_slot_store`.
+#[inline(always)]
+pub(crate) unsafe fn concrete_environment_slot_define(storage: *mut crate::heap::EnvironmentSlots, slot: u16, value: crate::Value) -> bool {
+    let mut stage = Concrete::new(std::ptr::null());
+    environment_slot_define(&mut stage, storage as u64, slot, value.to_bits(), ()).is_some()
+}
+
+/// The interpreter's `environment_slot_open` over the storage at `storage`: whether it wrote.
+///
+/// # Safety
+/// As `concrete_environment_slot_store`.
+#[inline(always)]
+pub(crate) unsafe fn concrete_environment_slot_open(storage: *mut crate::heap::EnvironmentSlots, slot: u16) -> bool {
+    let mut stage = Concrete::new(std::ptr::null());
+    environment_slot_open(&mut stage, storage as u64, slot, ()).is_some()
 }
 
 #[cfg(test)]
@@ -180,5 +235,25 @@ mod tests {
             let read = unsafe { concrete_environment_slot(&slots, slot) };
             assert_eq!(read.map(Value::to_bits), dense.dense_plain(usize::from(slot)).map(Value::to_bits), "slot {slot}");
         }
+    }
+
+    /// A binding's first value defines over its dead zone or an earlier iteration's value; a slot another environment shares
+    /// or past the run leaves, nothing written; opening the dead zone writes the hole.
+    #[test]
+    fn an_environment_slot_defines_over_a_hole_or_a_value_and_opens_its_dead_zone() {
+        use crate::heap::EnvironmentSlots;
+        let owner = Value::shared_environment_slot(Value::from_bits(crate::value::ValueLayout::HEAP_TAG | 1));
+        let mut slots = EnvironmentSlots::from_values([Value::DELETED, Value::number(7.0), owner].into_iter());
+        // SAFETY: `slots` is live and unborrowed.
+        let define = |slots: &mut EnvironmentSlots, slot| unsafe { concrete_environment_slot_define(slots, slot, Value::number(9.0)) };
+        assert!(define(&mut slots, 0), "a dead zone takes the first value");
+        assert!(define(&mut slots, 1), "an earlier iteration's value is replaced");
+        assert!(!define(&mut slots, 2), "a shared slot is the helper's");
+        assert!(!define(&mut slots, 3), "past the run leaves");
+        // SAFETY: as above.
+        assert!(unsafe { concrete_environment_slot_open(&mut slots, 0) });
+        let dense = slots.dense().expect("a new storage is dense");
+        assert_eq!(dense.dense_plain(0).map(Value::to_bits), None, "the dead zone is open");
+        assert_eq!(dense.dense_plain(1).map(Value::to_bits), Some(Value::number(9.0).to_bits()));
     }
 }
