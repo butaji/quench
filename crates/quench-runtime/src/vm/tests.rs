@@ -14499,6 +14499,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_captured_and_parameter_callees_preserve_gc_throw_and_coercion_once() {
+    crate::vm::compiled::tier_policy::force_admission();
     for scoped in [false, true] {
         for captured in [false, true] {
             let call = if captured { "f()" } else { "g()" };
@@ -14711,6 +14712,7 @@ fn shared_osr_inlines_plain_captured_callee_with_identity_guard() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_call_result_is_not_an_incoming_number() {
+    crate::vm::compiled::tier_policy::force_admission();
     for bypass in [false, true] {
         let call = if bypass {
             "let value = 1; if (i < 5) value = g();"
@@ -15849,6 +15851,7 @@ fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_compiles_strict_inequality_branches_for_null_and_undefined() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function count(value) {
@@ -15907,6 +15910,7 @@ fn shared_osr_compiles_strict_inequality_branches_for_null_and_undefined() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_exits_at_effectful_calls_with_live_state_written_back() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           let calls = 0;

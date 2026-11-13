@@ -79,26 +79,4 @@ impl FunctionCompiler<'_, '_> {
         );
         result
     }
-
-        /// `inner.key` (`a.b.c`, `this.b.c`) as one nested site: both fields read in order
-        /// (getters, throws and their order included), and the intermediate value never made.
-        pub(super) fn field_chain(&mut self, inner: &StaticMemberExpression<'_>, key: &str) -> Register {
-            let base = if matches!(&inner.object, Expression::ThisExpression(_)) {
-                self.this_override
-                    .map(FieldBase::register)
-                    .unwrap_or(FieldBase::THIS)
-            } else {
-                FieldBase::register(self.expression(&inner.object))
-            };
-            let dst = self.reg();
-            let first = self.owner.atom(inner.property.name.as_str());
-            let second = self.owner.atom(key);
-            let site = self.owner.cache_site();
-            let second_site = self.owner.cache_site();
-            let access = self.field_site(base, (first, site), Some((second, second_site)));
-            let first_position = self.owner.source_position(inner.property.span.start);
-            self.owner.field_sites[access as usize].sources[0] = Some((first_position.line, first_position.column));
-            self.emit(Op::GetField, dst, FieldBase::NESTED, 0, access);
-            dst
-        }
 }

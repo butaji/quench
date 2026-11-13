@@ -587,12 +587,20 @@ impl FunctionCompiler<'_, '_> {
             let receiver = self.reg();
             self.emit(Op::LoadThis, receiver, 0, 0, 0);
         }
-        // An optional link short-circuits the chain, so it keeps its own read and jump.
         if let Expression::StaticMemberExpression(inner) = object
-            && !inner.optional
-            && !matches!(&inner.object, Expression::Super(_))
+            && matches!(&inner.object, Expression::ThisExpression(_))
+            && self.this_override.is_none()
         {
-            return self.field_chain(inner, key);
+            let dst = self.reg();
+            let first = self.owner.atom(inner.property.name.as_str());
+            let second = self.owner.atom(key);
+            let site = self.owner.cache_site();
+            let second_site = self.owner.cache_site();
+            let access = self.field_site(FieldBase::THIS, (first, site), Some((second, second_site)));
+            let first_position = self.owner.source_position(inner.property.span.start);
+            self.owner.field_sites[access as usize].sources[0] = Some((first_position.line, first_position.column));
+            self.emit(Op::GetField, dst, FieldBase::NESTED, 0, access);
+            return dst;
         }
         let dst = self.reg();
         let atom = self.owner.atom(key);

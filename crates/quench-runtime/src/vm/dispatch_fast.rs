@@ -945,7 +945,10 @@ impl LaneView {
     /// Whether its entry cell holds a published body rather than the stub.
     #[inline(always)]
     fn entry_published(&self) -> bool {
-        self.entry.entry.get() != super::compiled::entry_cell::EntryCell::stub()
+        // The body word, not the entry word: the stub is a private function whose address the
+        // linker may fold into more than one copy, so comparing entry words by identity reports
+        // a withdrawn cell as published (and a published body's pointer as absent).
+        self.entry.body.get() != 0
     }
 
     /// The address of its entry cell, which native callers name (`compiled::DirectCallee::cell`).
@@ -14910,11 +14913,11 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     assert!(leaf_body.calls_only_natively());
     let code = program.function(root_target.function as usize);
     let pc = code.instructions().position(|instruction| instruction.op().is_call()).unwrap();
-    let mut direct = vec![None; code.code.len()];
+    let mut direct = vec![super::compiled::DirectCandidates::new(); code.code.len()];
     // Resolve the capture view exactly as production direct-call publication does.
     let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
         .unwrap_or((std::ptr::null(), 0));
-    direct[pc] = Some(super::compiled::DirectCallee {
+    direct[pc].push(super::compiled::DirectCallee {
         target, method: Some(leaf_publication.clone()), body: Some(leaf_body.clone()),
         call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(), cell: unsafe { &*target.view }.entry_cell(),
         callee: leaf, registers: target.registers,

@@ -449,6 +449,8 @@ fn repatch_leaves_in_mode(changes: i32) -> Vec<(u64, u64)> {
 #[test]
 #[cfg(not(quench_profiled))]
 fn bjit_loop_whose_receiver_shape_changes_once_runs_native_again_after_one_leave() {
+    // The base tier's stencil rows are x86-64's.
+    if !cfg!(target_arch = "x86_64") { return; }
     crate::vm::compiled::tier_policy::force_admission();
     let (exits, runs) = repatch_leaves(1)[0];
     assert_eq!(exits, 1, "the miss leaves once; the re-patched entry then hits");
@@ -458,6 +460,8 @@ fn bjit_loop_whose_receiver_shape_changes_once_runs_native_again_after_one_leave
 #[test]
 #[cfg(not(quench_profiled))]
 fn bjit_site_whose_receiver_shape_changes_past_the_patch_bound_goes_generic() {
+    // The base tier's stencil rows are x86-64's.
+    if !cfg!(target_arch = "x86_64") { return; }
     crate::vm::compiled::tier_policy::force_admission();
     use crate::vm::compiled::base_region::MAX_REPATCHES_PER_SITE;
     let leaves = repatch_leaves(i32::from(MAX_REPATCHES_PER_SITE) + 1);

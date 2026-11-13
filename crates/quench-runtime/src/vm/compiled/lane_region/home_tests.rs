@@ -16,7 +16,7 @@ pub(super) fn lower_loop(source: &str, file: &str) -> ir::Function {
     let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
     let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
         &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[],
-        Coverage::PrefixFrom(header), Completion::StatusAndPc, ElementViews::Dense).expect("loop region");
+        Coverage::PrefixFrom(header), Completion::Body, ElementViews::Dense).expect("loop region");
     cranelift_codegen::verify_function(&region.function, &*isa).unwrap();
     region.function
 }

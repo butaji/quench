@@ -2810,6 +2810,7 @@ pub(super) struct LaneViews {
 /// a handful of views, which this keeps in one allocation of 704 bytes.
 const LANE_VIEW_FIRST_CHUNK: usize = 8;
 
+
 /// One function's derived lane view, in its program's arena (`LaneViews::arena`).
 pub(super) type LaneViewCell = std::cell::OnceCell<std::ptr::NonNull<super::dispatch_fast::LaneView>>;
 
@@ -2875,7 +2876,8 @@ impl LaneViews {
         }
         let chunk = arena.last_mut().expect("the arena has a chunk with room");
         chunk.push(view);
-        std::ptr::NonNull::from(chunk.last().expect("the view just stored"))
+        let stored = std::ptr::NonNull::from(chunk.last().expect("the view just stored"));
+        stored
     }
 }
 
