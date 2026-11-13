@@ -2330,6 +2330,7 @@ impl Lowering<'_, '_> {
                     let base = self.field_base(pc, *instruction);
                     base.and_then(|base| if base == crate::bytecode::FieldBase::THIS { Some(count) }
                         else { base.register_index().map(usize::from) })
+                        .filter(|_| self.reads_own_field(*instruction))
                 }
                 _ if instruction.op().is_field_store() => Some(match (instruction.field_store_register(), self.unit.origins[pc]) {
                     (Some(register), _) => usize::from(register),
@@ -4266,6 +4267,14 @@ impl Lowering<'_, '_> {
             }
             Some(read)
         })
+    }
+
+    /// Whether the read `instruction` makes has an own-field entry to fold: a read of prototype
+    /// holders only (a method of an array, a `Map`) proves no record at entry, which such a
+    /// receiver would fail at every run, and asks the VM's entries on a guard miss instead.
+    fn reads_own_field(&self, instruction: WideInstruction) -> bool {
+        let Some(FieldLookup::Atom { cache_site, .. }) = instruction.field_lookup() else { return true };
+        self.fields.get(&cache_site).is_none_or(|loads| loads.iter().any(|load| load.holder.is_none()))
     }
 
     /// Whether `register`, whose type no object proof covers, may hold a receiver the object
