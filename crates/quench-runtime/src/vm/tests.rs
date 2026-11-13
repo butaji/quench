@@ -13100,6 +13100,7 @@ fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_array_alias_lifetimes_preserve_coercion_throw_and_collection() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
       function expandWords(seed, count) {
         const words = seed.slice();
@@ -13171,6 +13172,7 @@ fn shared_osr_array_alias_lifetimes_preserve_coercion_throw_and_collection() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_remainder_preserves_number_edges_and_coercion() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
       function remainderLoop(left, right) {
         let result = 0;
@@ -13218,6 +13220,7 @@ fn shared_osr_remainder_preserves_number_edges_and_coercion() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_number_comparison_results_are_booleans() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
       function compareLoop(left, right) {
         let answer = false;
@@ -13270,6 +13273,7 @@ fn shared_osr_number_comparison_results_are_booleans() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_compiles_a_guarded_numeric_field_loop() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
       function sum(item) {
         let total = 0;
@@ -13315,6 +13319,7 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
+    crate::vm::compiled::tier_policy::force_admission();
     // The loop reads `src.n`, `src.scale` and a named property of the very array it stores
     // into: in-bounds element stores leave every named property as it was.
     let source = r#"
@@ -13355,6 +13360,7 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
       function fill(item, limit) {
         for (let index = 0; index < limit; index++) {
@@ -13438,6 +13444,7 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_keeps_a_mutated_numeric_field_in_ssa() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
       function update(item, limit, delta) {
         let total = 0;
@@ -13516,6 +13523,7 @@ fn shared_osr_keeps_a_mutated_numeric_field_in_ssa() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_numeric_mask_branches_preserve_conversion_and_nested_reads() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
       function maskedScan(values, mask) {
         let sum = 0;
@@ -13584,6 +13592,7 @@ fn shared_osr_numeric_mask_branches_preserve_conversion_and_nested_reads() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_nested_array_reads_reload_receivers_and_preserve_effects() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
       function nestedGrow(rows, target, count, key) {
         let sum = 0;
@@ -13672,6 +13681,7 @@ fn shared_osr_nested_array_reads_reload_receivers_and_preserve_effects() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_append_growth_refreshes_aliases_and_recovers_gc_debt() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
       function growAliases(a, b, reader, count) {
         let sum = 0;
@@ -13733,6 +13743,7 @@ fn shared_osr_append_growth_refreshes_aliases_and_recovers_gc_debt() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_append_growth_preserves_key_effects_and_rejected_receivers() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
       function writeAt(a, key) {
         'use strict';
@@ -13785,6 +13796,7 @@ fn shared_osr_append_growth_preserves_key_effects_and_rejected_receivers() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_appends_and_fills_holes_in_place() {
+    crate::vm::compiled::tier_policy::force_admission();
     // The loops append at the length while the backing has room and fill holes below it.
     // Once a prototype holds an index, the entry declines, and the setter it defines runs.
     let source = r#"
@@ -13834,6 +13846,7 @@ fn shared_osr_appends_and_fills_holes_in_place() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_wavefront_pairs_keep_stencil_sweep_results() {
+    crate::vm::compiled::tier_policy::force_admission();
     // A Gauss-Seidel sweep's row loop runs natively: each case reads what program order
     // reads, bit for bit: an odd last row, integral results,
     // signed zeros and NaN, an element whose `valueOf` runs (which restores the pair and
@@ -13900,6 +13913,7 @@ fn shared_osr_wavefront_pairs_keep_stencil_sweep_results() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_stores_fields_of_receivers_the_loop_redefines() {
+    crate::vm::compiled::tier_policy::force_admission();
     // A loop walks a list, storing a field of each node it reaches and reading the same name
     // through the node it moved to (V8-v7 Splay's `splay_` rotations): each store goes through
     // the cached store at its instruction and each read sees the current slot; a node of
@@ -13953,6 +13967,7 @@ fn shared_osr_stores_fields_of_receivers_the_loop_redefines() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
+    crate::vm::compiled::tier_policy::force_admission();
     // Each call appends to a fresh array past its backing's capacity (V8-v7 Crypto's
     // `bnpMultiplyTo` into a new `BigInteger`): the general path grows the backing and the
     // region keeps running natively, through more such exits than a region may take of
@@ -13996,6 +14011,7 @@ fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
 
 #[test]
 fn shared_osr_int32_element_scans_keep_nested_loop_results() {
+    crate::vm::compiled::tier_policy::force_admission();
     // A nested loop reads arrays entry scanned to hold only `i32`s, without a tag guard
     // per read: a double, a hole past a grown length and a negative zero each fail the
     // scan, which widens the array's reads for the next compilation; results match Node.
@@ -14034,6 +14050,7 @@ print(h + " " + out.slice(-6).join(","));
 
 #[test]
 fn shared_osr_inner_loops_park_outer_registers_through_exits() {
+    crate::vm::compiled::tier_policy::force_admission();
     // The inner loop names none of `p`, `q`, `t`, `u`: it parks them (`Parking`), and both
     // its exit to the outer loop and a guard leaving inside it (a double, then a string
     // element) give them back; results match Node.
@@ -14076,6 +14093,7 @@ print(out.slice(-3).join(";") + " " + out[100] + " " + out[250] + " " + out[270]
 
 #[test]
 fn shared_osr_reads_fields_of_receivers_the_loop_loads() {
+    crate::vm::compiled::tier_policy::force_admission();
     // A receiver an indexed read loads, moved into its variable, is a tagged value whose
     // field reads load natively: inline storage (two fields, negative integers), an object
     // whose double moves its values out of inline storage and one of another shape leave
@@ -14112,6 +14130,7 @@ print(out.slice(-3).join(",") + " " + out[100] + " " + out[200] + " " + out[250]
 
 #[test]
 fn shared_osr_indexes_arrays_the_loop_loads() {
+    crate::vm::compiled::tier_policy::force_admission();
     // `row` is an array the loop reads from `m` each iteration: each access reads it from
     // its record (`LoopRegion::dynamic_arrays`). A hole, a frozen row, a copied row, a row
     // that is a plain object and one with an indexed descriptor each leave for the lane at
@@ -14185,6 +14204,7 @@ print(out.join("|"));
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_returns_inside_a_loop_resume_the_lane_at_the_return() {
+    crate::vm::compiled::tier_policy::force_admission();
     // A loop that returns from inside its body runs natively and leaves at the `Return`,
     // which the lane runs with the state written back; leaving so never retires the loop.
     let source = r#"
@@ -14230,6 +14250,7 @@ fn shared_osr_returns_inside_a_loop_resume_the_lane_at_the_return() {
 
 #[test]
 fn shared_osr_indexes_the_row_a_loop_reads_each_iteration() {
+    crate::vm::compiled::tier_policy::force_admission();
     // `a[e][f] = x` in a loop over `e` indexes the row `a[e]` the iteration read, not the
     // row the region entered with: the region declines an indexed register it defines
     // (sjcl's AES table setup, stanford-crypto-aes under `--jit`).
@@ -14266,6 +14287,7 @@ fn shared_osr_indexes_the_row_a_loop_reads_each_iteration() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_indexes_arrays_that_field_reads_give() {
+    crate::vm::compiled::tier_policy::force_admission();
     // Each iteration reads the arrays from fields of `this` and of an argument, then reads
     // and stores their elements: the arrays are those the fields held at entry.
     let source = r#"
@@ -14310,6 +14332,7 @@ fn shared_osr_indexes_arrays_that_field_reads_give() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_gives_a_loop_storing_a_captured_binding_each_iteration_to_the_lane_body() {
+    crate::vm::compiled::tier_policy::force_admission();
     // A nested closure retains the mutable binding, so the loop reads and updates it through
     // the environment. The store leaves to the interpreter on every iteration, so no region
     // is worth entering: the loop runs in the function's lane body.
@@ -14496,6 +14519,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_captured_and_parameter_callees_preserve_gc_throw_and_coercion_once() {
+    crate::vm::compiled::tier_policy::force_admission();
     for scoped in [false, true] {
         for captured in [false, true] {
             let call = if captured { "f()" } else { "g()" };
@@ -14651,6 +14675,7 @@ fn shared_nested_captured_store_loop_reaches_native_body() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_inlines_plain_captured_callee_with_identity_guard() {
+    crate::vm::compiled::tier_policy::force_admission();
     for strict in [false, true] {
         let source = r#"
           (function scope() {
@@ -14708,6 +14733,7 @@ fn shared_osr_inlines_plain_captured_callee_with_identity_guard() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_call_result_is_not_an_incoming_number() {
+    crate::vm::compiled::tier_policy::force_admission();
     for bypass in [false, true] {
         let call = if bypass {
             "let value = 1; if (i < 5) value = g();"
@@ -14790,6 +14816,7 @@ fn shared_osr_call_result_is_not_an_incoming_number() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_projected_capture_observes_aliasing_global_field_stores() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
         var captured = 1;
         function run(object) {
@@ -14824,6 +14851,7 @@ fn shared_osr_projected_capture_observes_aliasing_global_field_stores() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_captured_array_replacement_preserves_reads_and_stores_after_gc() {
+    crate::vm::compiled::tier_policy::force_admission();
     for writing in [false, true] {
         let store = if writing { "values[0] = index;" } else { "" };
         let source = format!(r#"
@@ -14861,6 +14889,7 @@ fn shared_osr_captured_array_replacement_preserves_reads_and_stores_after_gc() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
+    crate::vm::compiled::tier_policy::force_admission();
     // Copying the array into a callback argument is a tagged Move; its call is an exact-PC
     // boundary, so the callback may mutate the array before the next native entry reloads it.
     let source = r#"
@@ -14925,6 +14954,7 @@ fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_reads_tagged_dense_values_and_falls_back_on_array_holes() {
+    crate::vm::compiled::tier_policy::force_admission();
     // A dense indexed read may produce any JS value. Native code can carry that boxed word
     // through a Move, but a hole must leave at GetIndex so prototype lookup stays in the VM.
     let source = r#"
@@ -14990,6 +15020,7 @@ fn shared_osr_reads_tagged_dense_values_and_falls_back_on_array_holes() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_exact_effect_exit_preserves_prefix_across_gc_and_throw() {
+    crate::vm::compiled::tier_policy::force_admission();
     // The hot loop has a long numeric prefix and one call site whose callee collects and
     // throws a unique object. An exact-PC exit must preserve the numeric prefix, run the
     // ordinary call once, and deliver that same thrown object to the surrounding catch.
@@ -15253,6 +15284,7 @@ print(log + " " + hole + " " + a.length + " " + inherited + " " + fill([], 40)[7
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_bounded_entries_prove_products_and_widen_beyond_their_bound() {
+    crate::vm::compiled::tier_policy::force_admission();
     // `xh` is an `i32` the loop never writes, a factor of products with 14-bit values: a
     // bound checked at entry proves them exact. A later call's `xh` beyond that bound must
     // still give the exact (non-`i32`) products, through the widened recompilation.
@@ -15369,6 +15401,7 @@ print(t);
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_widens_an_int32_field_that_holds_a_double() {
+    crate::vm::compiled::tier_policy::force_admission();
     // `o.k` holds an `i32` while the loop compiles; once it holds 0.5 the entry declines,
     // naming the field, and the next compilation holds it as an `f64`.
     let source = r#"
@@ -15414,6 +15447,7 @@ fn shared_osr_widens_an_int32_field_that_holds_a_double() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_drops_only_the_int32_guards_ranges_and_reads_cover() {
+    crate::vm::compiled::tier_policy::force_admission();
     // `m`'s products and sums stay in range and are read only by sums and bitwise
     // operators; `p` is read by a division, which tells -0 from +0, and `big` overflows.
     let source = r#"
@@ -15452,6 +15486,7 @@ print(out);
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_wrapping_left_shift_preserves_negative_zero_products() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
 function shiftedZero(a, n) {
   var negatives = 0;
@@ -15491,6 +15526,7 @@ print(result);
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_wraps_sums_only_int32_conversions_read() {
+    crate::vm::compiled::tier_policy::force_admission();
     // `u` leaves the `i32`s but is read only by `|` and `>>`, which see it modulo 2^32;
     // `v`, the same sum, is compared, so it must hold the exact Number.
     let source = r#"
@@ -15526,6 +15562,7 @@ print(out);
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_counts_loops_whose_bodies_branch_forward() {
+    crate::vm::compiled::tier_policy::force_admission();
     // The loop's body clamps a double and branches on an element, and `continue` skips its
     // tail on some iterations: `pos` and `i` still step by one on every path, so the proof
     // covers the indexed accesses through them, while `odd`, which the paths step apart,
@@ -15567,6 +15604,7 @@ print(t + " " + s.toFixed(6));
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_bounds_an_index_sum_with_its_read() {
+    crate::vm::compiled::tier_policy::force_admission();
     // `j + k` feeds the element read right after it: one check below the length proves the
     // sum an `i32` too. A `k` that takes the sum past the `i32`s reads `undefined`, as the
     // general path does.
@@ -15602,6 +15640,7 @@ print(out.slice(45, 52).join(" "));
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_indexes_from_negative_carried_roots() {
+    crate::vm::compiled::tier_policy::force_admission();
     // Loop-carried `i32`s below zero key reads at constant offsets from them (`r + 2`,
     // `++r`): their views hold them sign-extended, so a key folds its offset into the
     // access from the root's own 64 bits.
@@ -15637,6 +15676,7 @@ print(out.slice(290).join(" "));
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function countNegative() {
@@ -15846,6 +15886,7 @@ fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_compiles_strict_inequality_branches_for_null_and_undefined() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function count(value) {
@@ -15904,6 +15945,7 @@ fn shared_osr_compiles_strict_inequality_branches_for_null_and_undefined() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_exits_at_effectful_calls_with_live_state_written_back() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           let calls = 0;
@@ -16032,6 +16074,7 @@ fn shared_osr_reads_initialized_captured_environment_locals_and_deopts_non_numbe
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function sumList(node) {
@@ -16163,6 +16206,7 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_shape_invalidation_retires_only_dependent_code() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::specialize(r#"
         function sum(node) {
             let result = 0;
@@ -16420,6 +16464,7 @@ fn shared_osr_compiles_loose_nullish_equality_without_coercion() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function sumList(node) {
@@ -16511,6 +16556,7 @@ fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_float_unary_uses_shared_number_denotation() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function negate(value) {
@@ -20282,6 +20328,7 @@ fn global_declarations_survive_abrupt_script_evaluation() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_guards_replaced_nested_array_receivers() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function fill(rows, column) {
