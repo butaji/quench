@@ -1578,6 +1578,17 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// The own-field load the site's caches hold for `receiver`'s shape, which a polymorphic
+    /// site keeps beside its first entry; the first entry's where `receiver` names no shape.
+    pub(super) fn native_field_load_of(&self, site: u16, receiver: Option<Value>) -> Option<super::compiled::NativeFieldLoad> {
+        let shape = receiver.and_then(|receiver| self.heap.object_record(receiver)).map(Object::exact_shape);
+        let held = shape.and_then(|shape| self.megamorphic_field_cache(usize::from(site), shape, NO_FIELD_HOLDER));
+        match held {
+            Some(entry) => self.native_field_entry(entry),
+            None => self.native_field_load_descriptor(site, receiver),
+        }
+    }
+
     /// Every holderless exact shape and slot the site's caches prove, for generated code to
     /// read by a shape switch: the primary entry, or a polymorphic site's own entries while
     /// they stay inline (`tier_policy::POLYMORPHISM`); none for a megamorphic site.

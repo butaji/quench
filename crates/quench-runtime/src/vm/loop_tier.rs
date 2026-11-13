@@ -178,16 +178,18 @@ struct FieldAccess {
     site: u16,
     atom: crate::bytecode::Atom,
     read: bool,
+    /// The register a read's receiver was in, where it names one.
+    base: Option<crate::bytecode::Register>,
 }
 
 impl FieldAccess {
     fn of(instruction: &WideInstruction) -> Option<Self> {
         let op = instruction.op();
         if matches!(op.class(), Class::GetField) {
-            let Some(crate::bytecode::FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup() else { return None };
-            return Some(Self { site: cache_site, atom, read: true });
+            let Some(crate::bytecode::FieldLookup::Atom { atom, cache_site, base }) = instruction.field_lookup() else { return None };
+            return Some(Self { site: cache_site, atom, read: true, base: base.register_index() });
         }
-        op.is_field_store().then(|| Self { site: instruction.cache_site_index(), atom: instruction.atom_index(), read: false })
+        op.is_field_store().then(|| Self { site: instruction.cache_site_index(), atom: instruction.atom_index(), read: false, base: None })
     }
 }
 
@@ -196,14 +198,15 @@ impl FieldAccess {
 /// runs natively again. A leave that patched nothing counts toward widening the read
 /// (`LoopTier::left_at`).
 #[inline(always)]
-pub(super) fn lane_loop_repatch<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite) {
-    if let Some(pc) = site.tier.borrow_mut().miss.take() {
-        repatch_miss(cx, site, pc);
+pub(super) fn lane_loop_repatch<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &LoopSite) {
+    let missed = site.tier.borrow_mut().miss.take();
+    if let Some(pc) = missed {
+        repatch_miss(cx, r, site, pc);
     }
 }
 
 #[cold]
-fn repatch_miss<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32) {
+fn repatch_miss<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &LoopSite, pc: u32) {
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
     let access = machine.programs.get(machine.active_program).as_deref().and_then(|program| {
@@ -215,7 +218,7 @@ fn repatch_miss<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32) {
     let patched = tier.code.clone().and_then(|publication| {
         let region = publication.lease()?;
         let watch: Rc<dyn crate::code_dependencies::DependentCode> = publication;
-        let load = machine.native_field_load_descriptor(access.site, None)?;
+        let load = machine.native_field_load_of(access.site, access.base.map(|base| r.get(base)))?;
         Some(region.repatch(pc, access.atom, &load, &watch, &mut machine.heap))
     });
     if patched != Some(super::super::compiled::base_region::Repatch::Patched) && access.read {

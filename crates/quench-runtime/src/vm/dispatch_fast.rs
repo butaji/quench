@@ -8127,7 +8127,7 @@ fn lane_loop_native<H: Host>(
     if site.tier.borrow_mut().awaits_code(&mut unsafe { vm(cx) }.heap, site) {
         return LoopAttempt::Declined;
     }
-    loop_tier::lane_loop_repatch(cx, site);
+    loop_tier::lane_loop_repatch(cx, r, site);
     let mut entry = super::compiled::LoopEntry::new();
     let Some(views) = lane_loop_entry(cx, r, region, &mut entry) else {
         site.note_decline();
