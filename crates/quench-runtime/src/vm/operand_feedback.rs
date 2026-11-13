@@ -298,11 +298,11 @@ mod tests {
         assert!(kinds.iter().any(|kinds| kinds.class() == OperandClass::Any && kinds.has_string()), "{kinds:?}");
     }
 
-    /// Two int32s whose int32 step declines (an inexact quotient; an overflowing sum or product
+    /// Two int32s whose int32 step declines (a remainder by zero; an overflowing sum or product
     /// the handler completes itself) widen the site without a double operand.
     #[test]
-    fn an_inexact_int32_quotient_widens_the_site() {
-        let kinds = run_with("let s = 7; for (let i = 0; i < n; i++) { s = s / x; } return s;", "2");
+    fn an_int32_remainder_by_zero_widens_the_site() {
+        let kinds = run_with("let s = 7; for (let i = 0; i < n; i++) { s = s % x; } return s;", "0");
         assert!(kinds.iter().any(|kinds| kinds.contains(OperandKinds::WIDENED) && kinds.class() == OperandClass::Number), "{kinds:?}");
     }
 
