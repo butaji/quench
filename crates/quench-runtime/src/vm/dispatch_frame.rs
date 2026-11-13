@@ -1362,7 +1362,10 @@ impl<H: Host> Vm<H> {
     ) {
         match outcome {
             Ok(FrameOutcome::Await { .. } | FrameOutcome::Yield { .. }) => {
-                frame.with_objects = self.with_stack.split_off(frame.with_base);
+                // Without `with` scopes the activation entered, its (empty) list stays.
+                if self.with_stack.len() > frame.with_base {
+                    frame.with_objects = self.with_stack.split_off(frame.with_base);
+                }
             }
             _ => self.finish_frame_scopes(frame),
         }

@@ -6932,7 +6932,7 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     assert!(vm.heap.is_live(original));
     assert!(vm.heap.is_live(scope));
     let take = |vm: &mut Vm<TestHost>| match vm.heap.await_state_mut(state) {
-        Some(state) => state.take_function_continuation().map(|continuation| *continuation),
+        Some(state) => state.take_function_continuation(),
         _ => panic!("await state"),
     };
     assert_eq!(take(&mut vm).unwrap().frame.original_arguments, [original]);
@@ -9352,7 +9352,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
             }
             let value = vm.heap.root_value(owner).unwrap();
             let resumed = if let Some(state) = vm.heap.await_state_mut(value) {
-                *state.take_function_continuation().unwrap()
+                state.take_function_continuation().unwrap()
             } else {
                 match vm.heap.iterator_mut(value) {
                 Some(crate::heap::IteratorRecord { ext, .. }) => ext
