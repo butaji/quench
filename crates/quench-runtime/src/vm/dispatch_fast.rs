@@ -8008,7 +8008,7 @@ script_handler! {
         }
         // A loop whose body is still to come keeps its backward jump, which a loop no region
         // runs would otherwise retire before the body is planned.
-        if site.body.borrow().pending() && site.region.get().is_none() {
+        if unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled() && site.body.borrow().pending() && site.region.get().is_none() {
             next!(cx, r, header, Carried::script(cx))
         }
         // A loop no region runs takes its plain jump from now on.
@@ -8408,6 +8408,10 @@ fn lane_loop_run<H: Host>(
             LoopOutcome::Resume(_) | LoopOutcome::Returned { .. } | LoopOutcome::Callee => {
                 site.native_region_runs
                     .set(site.native_region_runs.get().saturating_add(1));
+            }
+            // The poll's leave for a published body is a handover, not a guard's exit.
+            LoopOutcome::Exit(pc) if loop_body::left_for_tier_up(cx, site, pc) => {
+                site.native_region_runs.set(site.native_region_runs.get().saturating_add(1));
             }
             LoopOutcome::Exit(pc) => {
                 site.native_region_runs

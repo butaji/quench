@@ -63,6 +63,7 @@ impl<H: Host> Vm<H> {
     /// running frame; `value` is the operand a store takes.
     fn name_step(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut, value: Option<Value>)
         -> Result<Option<Value>, JsError> {
+        let site = if operation.reads_frame_locals() { self.own_frame(site) } else { site };
         let CallSite { frame, resume } = site;
         let value = value.unwrap_or(Value::UNDEFINED);
         match operation {
@@ -123,6 +124,15 @@ impl<H: Host> Vm<H> {
         *self.frame_binding_mut(p, f, slot).ok_or_else(|| JsError("invalid local environment".into()))? = value;
         self.mapped_argument_store(p, f, slot, value);
         Ok(true)
+    }
+
+    /// `site` in the running function's own frame. A step made beside frameless activations
+    /// (`lane_in_place`) has the caller's frame innermost, which holds none of the function's
+    /// locals: the activations become frames first, as guest code would make them.
+    fn own_frame(&mut self, site: CallSite) -> CallSite {
+        if self.lane_deferred.is_none() { return site; }
+        self.materialize_deferred_lane();
+        CallSite { frame: self.frames.len() - 1, ..site }
     }
 
     /// `action` with `resume` as the frame's binding-site PC, restored after.

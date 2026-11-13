@@ -50,6 +50,11 @@ pub(crate) enum CallOut {
 }
 
 impl CallOut {
+    /// Whether the step reads or writes the locals of the running function's own frame.
+    pub(crate) fn reads_frame_locals(self) -> bool {
+        matches!(self, Self::LoadEnvLocal { .. } | Self::StoreEnvLocal { .. } | Self::ArgumentsLength { .. })
+    }
+
     /// The registers the VM reads, in the order its operation takes them: the first operand
     /// then the second, which is the only one an operation of a single operand has.
     pub(crate) fn operands(self) -> [Option<Register>; 2] {
