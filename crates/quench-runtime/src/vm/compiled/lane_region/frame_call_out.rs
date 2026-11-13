@@ -63,7 +63,8 @@ pub(super) fn site_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, sit
     let completed = stage.builder.create_block();
     let plain = stage.eq_imm(status, LANE_CALL_COMPLETED as u64);
     let done = match holds { Some(holds) => stage.or(plain, holds), None => plain };
-    stage.guard(done, completed)?;
+    let incomplete = stage.not(done);
+    stage.guard(incomplete, completed)?;
     let unmissed = stage.ne_imm(status, LANE_CALL_MISSED as u64);
     stage.guard(unmissed, miss)?;
     stage.jump(site.stop, &[status]);
