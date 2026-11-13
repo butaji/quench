@@ -148,7 +148,8 @@ fn outcome<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, co
         Comparison::Equality { strict, negated } => equality(stage, frame, [left, right], (strict, negated)),
         Comparison::Nullish { expected, strict, negated } => {
             let equal_edge = if negated == negate { Edge::Target } else { Edge::Following };
-            nullish(stage, frame, left, (expected, strict), equal_edge)
+            let equal = nullish(stage, frame, left, (expected, strict), equal_edge)?;
+            Some(if negated { stage.not(equal) } else { equal })
         }
         Comparison::Boolean { expected, negated } => identity(stage, frame, left, Value::boolean(expected), negated),
         Comparison::Bitwise(operation) => bitwise(stage, frame, [left, right], operation),
