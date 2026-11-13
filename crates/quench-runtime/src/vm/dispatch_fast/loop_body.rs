@@ -203,7 +203,7 @@ fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: 
         LaneBodyLeft::Resume(registers, next, carried) => LoopAttempt::Carry(registers, next, carried),
         LaneBodyLeft::Raised(record) => LoopAttempt::Leave(lane_raised_exit(cx, record)),
         LaneBodyLeft::Completed(record, value) => LoopAttempt::Resumed(lane_return_value_general::<H>(cx, record, value)),
-    }
+    })
 }
 
 #[cfg(test)]

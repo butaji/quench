@@ -11308,14 +11308,14 @@ impl<H: Host> Vm<H> {
                     // passed them all to parameter registers.
                     let passed = if script.forwards {
                         // SAFETY: the window holds the registers, then the `argc` kept values.
-                        &unsafe { activation.window(count + argc) }[count..]
+                        &(unsafe { activation.window(count + argc) })[count..]
                     } else if script.environment {
                         // After its environment and locals (`lane_activate_environment`).
                         let kept = count
                             + usize::from(WINDOW_LOCALS)
                             + usize::from(code.function(activation.function as usize).locals);
                         // SAFETY: the window holds them, then the `argc` kept values.
-                        &unsafe { activation.window(kept + argc) }[kept..]
+                        &(unsafe { activation.window(kept + argc) })[kept..]
                     } else {
                         &window[..argc]
                     };
@@ -15492,7 +15492,7 @@ fn lane_body_left<H: Host>(
         }
         // SAFETY: the record that completes the activation is one of its function's.
         super::compiled::LaneExit::Returned { pc, value } => LaneBodyLeft::Completed(unsafe { base.add(pc) }, value),
-    }
+    }, feedback)
 }
 
 /// Where the lane continues after a body left at `pc` of `own`'s function on registers `r`: in

@@ -33,8 +33,6 @@ mod delete;
 mod decode;
 mod captures;
 pub(crate) mod compare;
-mod names;
-mod callout;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::{CallOut, OperandValues};
@@ -85,7 +83,6 @@ pub(crate) use property::{NoPlans, PropertyFrame};
 pub(crate) mod value;
 mod steps;
 mod control;
-mod generic;
 mod generic;
 pub(crate) use steps::step;
 pub(crate) mod effects;
@@ -562,5 +559,3 @@ mod wasm_call_tests;
 mod wasm_simd_tests;
 #[cfg(test)]
 mod instanceof_tests;
-#[cfg(test)]
-mod generic_tests;
