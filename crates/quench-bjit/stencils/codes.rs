@@ -114,56 +114,53 @@ pub const ENV_SET_ROW: u8 = 26;
 /// continues at TAKEN; a cell the walk does not follow, another constructor or a longer chain leaves through EXIT0 into
 /// the helper step after the row.
 pub const INSTANCEOF_ROW: u8 = 27;
+/// The inline-cache rows (`ic_rows.rs`): a read of the receiver's own flat slot, a read of the slot its
+/// prototype holds, and a store of a Number into the receiver's own flat slot, whose slot type is `ANY` or
+/// `NUMBER` (`IC_SET_ROW`) or `INT32` (`IC_SET_INT_ROW`).
+pub const IC_GET_ROW: u8 = 42;
+pub const IC_GET_HOLDER_ROW: u8 = 43;
+pub const IC_SET_ROW: u8 = 44;
+pub const IC_SET_INT_ROW: u8 = 45;
 /// Bits below the environment view's payload byte offset in an environment row's hole 0, which carries the frame offset
 /// of the row's destination (`ENV_ROW`) or value operand (`ENV_SET_ROW`) beneath it.
 pub const ENV_VIEW_AT: u32 = 32;
-/// Branches to its taken successor (an entry's failure) unless the word at the byte offset in hole 1
-/// of the VM the payload names is the word of hole 2: the active realm's global object, which the
-/// code was compiled against.
-pub const REALM_ROW: u8 = 17;
 /// The global object's slot, read into the destination (hole 1: the object's record id, hole 2: the
 /// slot's byte offset), or written from the first operand (hole 0: the record id, hole 2: the byte
 /// offset; the `entry` variant takes the store gate, for a value that may be a heap reference).
-pub const GLOBAL_READ_ROW: u8 = 17;
-pub const GLOBAL_STORE_ROW: u8 = 18;
+pub const GLOBAL_READ_ROW: u8 = 29;
+pub const GLOBAL_STORE_ROW: u8 = 30;
 /// The destination takes the tagged word of hole 1.
-pub const CONSTANT_ROW: u8 = 19;
+pub const CONSTANT_ROW: u8 = 31;
 /// Leaves through the taken successor unless the VM's active realm (the word at the byte offset of
 /// hole 1 behind the payload's VM) names the global object word of hole 2: the proof once at entry.
-pub const REALM_ROW: u8 = 20;
-/// A fast arm of an instruction whose full operation a helper step makes (`staged::iteration`): the
-/// frame slot at hole 1 holds a direct object or array record (`RequireIteratorResult`), or a direct
-/// string, which is copied to the slot at hole 0 (`ToPropertyKey`). A hit continues at TAKEN, past the
-/// helper step laid out after the row; a miss leaves through EXIT0 into it.
-pub const OBJECT_ROW: u8 = 17;
-pub const KEY_ROW: u8 = 18;
+pub const REALM_ROW: u8 = 28;
 /// `AppendArray`'s fast arm: the Number operand (hole 1) appended to the unique writable dense array at the
 /// frame slot of hole 0 where the backing's capacity word proves room (`elements::append_in_room`). A hit
 /// continues at TAKEN, past the helper step laid out after the row (which grows the backing); a miss
 /// leaves through EXIT0 into it.
-pub const APPEND_ROW: u8 = 19;
+pub const APPEND_ROW: u8 = 32;
 /// The property-add rows (`staged::add::site_add`): an object register's or the activation's receiver
 /// (`THIS_ADD_*`) gains the value operand (hole 1) by the transition the holes carry, one row per storage
 /// form the slot admits (`staged::object::Form`). A hit continues at TAKEN, past the helper step laid
 /// out after the row (or the leave a guarded row's miss makes); a miss leaves through EXIT0 into it.
-pub const ADD_PACKED_ROW: u8 = 20;
-pub const ADD_ARENA_ROW: u8 = 21;
-pub const ADD_EITHER_ROW: u8 = 22;
-pub const THIS_ADD_PACKED_ROW: u8 = 23;
-pub const THIS_ADD_ARENA_ROW: u8 = 24;
-pub const THIS_ADD_EITHER_ROW: u8 = 25;
+pub const ADD_PACKED_ROW: u8 = 33;
+pub const ADD_ARENA_ROW: u8 = 34;
+pub const ADD_EITHER_ROW: u8 = 35;
+pub const THIS_ADD_PACKED_ROW: u8 = 36;
+pub const THIS_ADD_ARENA_ROW: u8 = 37;
+pub const THIS_ADD_EITHER_ROW: u8 = 38;
 /// `ForInNext`'s fast arm (`staged::iteration::for_in_next`): the for-in state in the frame slot of hole 1
 /// yields its next key to the slot of hole 0 where its memo proves the snapshot current. A hit continues
 /// at TAKEN, past the helper step laid out after the row, which also takes the exhausted step's jump; a
 /// miss leaves through EXIT0 into it.
-pub const FOR_IN_ROW: u8 = 26;
+pub const FOR_IN_ROW: u8 = 39;
 /// `SetFunctionName`'s fast arm (`staged::naming::site_name`): the function in the frame slot whose offset
 /// hole 2 carries (above `NAME_FUNCTION_AT`) takes the name word of hole 1 in the slot hole 2 carries (low
 /// `ADD_SLOT_BITS`), moving from the before-shape to the after-shape hole 0 carries as an add's does, where it
 /// held the empty name. One row per storage form the slot admits. A hit continues at TAKEN, past the helper
 /// step laid out after the row; a miss leaves through EXIT0 into it.
-pub const NAME_EITHER_ROW: u8 = 27;
-pub const NAME_ARENA_ROW: u8 = 28;
+pub const NAME_EITHER_ROW: u8 = 40;
+pub const NAME_ARENA_ROW: u8 = 41;
 /// Every naming row's code.
 pub const NAME_ROWS: [u8; 2] = [NAME_EITHER_ROW, NAME_ARENA_ROW];
 /// Bits below the function register's frame offset in a naming row's hole 2, which carries the slot beneath it.
@@ -206,3 +203,7 @@ pub const fn is_compare(kind: u8) -> bool {
 pub const fn holds_int(place: u8) -> bool {
     matches!(place, PIN..=LAST_INT_PIN | MEMINT)
 }
+
+/// What a supernode row runs first: a Number row or a heap row (`supernodes.rs`).
+pub const FIRST_NUMBER: u8 = 0;
+pub const FIRST_HEAP: u8 = 1;

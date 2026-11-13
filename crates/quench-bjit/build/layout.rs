@@ -18,12 +18,10 @@ use std::ops::Range;
 /// A relocation as `build.rs` reads it: (offset, class, hole index, addend).
 pub(crate) type Reloc = (u16, u8, u8, i32);
 
-/// The relocation class of a pc-relative 32-bit successor hole, and the `HOLE_NEXT` index.
-pub(crate) const SUCCESSOR: u8 = 1;
-pub(crate) const NEXT: u32 = 0;
-/// The hole index of a successor relocation to the row's own code: its addend is the target's
-/// offset in the row's code (hot part, then cold part).
-pub(crate) const LOCAL: u8 = u8::MAX;
+use crate::class::{LOCAL as LOCAL_INDEX, NEXT, REL32 as SUCCESSOR};
+
+/// The hole index of a successor relocation to the row's own code (`class::LOCAL`), as a relocation tuple carries it.
+pub(crate) const LOCAL: u8 = LOCAL_INDEX as u8;
 
 const BITNESS: u32 = 64;
 /// Where the decoder puts the built code: not zero, which the encoder reads as "no address".
@@ -33,6 +31,7 @@ const HOT_BASE: u64 = 0;
 const COLD_BASE: u64 = 1 << 30;
 const REL32_BYTES: usize = 4;
 /// The pc-relative addend of a rel32 field that ends its instruction.
+#[cfg(test)]
 const REL32_ADDEND: i32 = -(REL32_BYTES as i32);
 const JMP_REL32: u8 = 0xe9;
 const JMP_LEN: usize = 1 + REL32_BYTES;
@@ -163,7 +162,7 @@ fn fold_trampolines(ops: &mut Vec<Op>) {
 fn runs(ops: &[Op]) -> Option<Vec<Range<usize>>> {
     let mut runs = Vec::new();
     let mut start = 0;
-    for (at, op) in ops.iter().enumerate().filter(|(_, op)| matches!(op.flow, Flow::Jump(_))) {
+    for at in (0..ops.len()).filter(|at| matches!(ops[*at].flow, Flow::Jump(_))) {
         runs.push(start..at + 1);
         start = at + 1;
     }

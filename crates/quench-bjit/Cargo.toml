@@ -14,7 +14,7 @@ doctest = false
 
 [build-dependencies]
 # Decoder and block encoder only: `build/layout.rs` reorders each stencil's basic blocks.
-iced-x86 = { version = "1.22", default-features = false, features = ["std", "decoder", "block_encoder"] }
+iced-x86 = { version = "1.22", default-features = false, features = ["std", "decoder", "block_encoder", "instr_info"] }
 
 [lints]
 workspace = true
@@ -22,4 +22,4 @@ workspace = true
 [dev-dependencies]
 libc = "0.2"
 # The build's layout tests (`build/layout.rs`) run in the lib's test binary.
-iced-x86 = { version = "1.22", default-features = false, features = ["std", "decoder", "block_encoder"] }
+iced-x86 = { version = "1.22", default-features = false, features = ["std", "decoder", "block_encoder", "instr_info"] }

@@ -3,7 +3,12 @@
 //! frame, no red-zone spill), and its hot path ends with the continuation jump, so the stitcher
 //! can drop that jump when the next row follows.
 
-use crate::{CALL_ROW_PREFIX, ENTRY_PREFIX, LEAVE_PREFIX, NEXT, SUCCESSOR};
+use crate::class::{NEXT, REL32 as SUCCESSOR};
+
+/// The routines around the rows (`stencils/entry.rs`) and the rows that may make a call (`stencils/call_rows.rs`).
+const ENTRY_PREFIX: &str = "entry_";
+const LEAVE_PREFIX: &str = "leave_";
+const CALL_ROW_PREFIX: &str = "call_";
 
 /// `jmp rel32`.
 const JMP_REL32: u8 = 0xe9;

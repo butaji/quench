@@ -31,3 +31,6 @@ pub const TAKEN: u32 = 1;
 /// Exit hole indexes start here: exit `kind` is hole `EXIT + kind`, so each guard kind reaches
 /// its own exit stub (an `ExitSite` id), not one shared hole.
 pub const EXIT: u32 = 2;
+/// The successor hole index of a relocation to the row's own code: its addend is the target's
+/// offset in the stencil's `code` (`build/layout.rs`).
+pub const LOCAL: u32 = u8::MAX as u32;
