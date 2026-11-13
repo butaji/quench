@@ -60,6 +60,7 @@ impl Stage for Trace {
     fn and_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("and_imm w{a} {}", Self::operand(imm.into()))) }
     fn or_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("or_imm w{a} {}", Self::operand(imm.into()))) }
     fn shr_imm(&mut self, a: u32, shift: impl Into<Imm>) -> u32 { self.word(format!("shr_imm w{a} {}", Self::operand(shift.into()))) }
+    fn shl(&mut self, a: u32, b: u32) -> u32 { self.word(format!("shl w{a} w{b}")) }
     fn sar32_imm(&mut self, a: u32, shift: u32) -> u32 { self.word(format!("sar32_imm w{a} {shift}")) }
     fn eq_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("eq_imm w{a} {}", Self::operand(imm.into()))) }
     fn ne_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("ne_imm w{a} {}", Self::operand(imm.into()))) }

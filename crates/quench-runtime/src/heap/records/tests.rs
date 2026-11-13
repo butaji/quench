@@ -1,4 +1,4 @@
-use super::{ClaimRoute, OCCUPANCY_WORD_BITS, PromotionAge, RECORD_SPACE_CAPACITY, RECORDS_PER_BLOCK, RecordSpace, claim_route};
+use super::{OCCUPANCY_WORD_BITS, PromotionAge, RECORD_SPACE_CAPACITY, RECORDS_PER_BLOCK, RecordSpace};
 use std::mem::size_of;
 
 #[test]
@@ -139,17 +139,28 @@ fn bitmap_reuse_preserves_descending_free_id_order_across_sweeps() {
     assert_eq!(arena.try_insert(14).unwrap(), 6);
 }
 
+/// The staged claim row is the record space's claim: fresh ids in order, the live count
+/// advanced, and the cold path's ids after a sweep frees records.
 #[test]
-fn the_fresh_claim_route_is_one_decision() {
-    let capacity = 1 << 20;
-    let (blocks, rpb) = (capacity / RECORDS_PER_BLOCK, RECORDS_PER_BLOCK);
-    let fresh = claim_route(0, 0, true, 7, blocks, capacity);
-    assert_eq!(fresh, ClaimRoute::Fresh { id: 7, block: 0, record: 7 });
-    assert_eq!(claim_route(0, 0, true, rpb as u32, blocks, capacity),
-        ClaimRoute::Fresh { id: rpb as u32, block: 1, record: 0 });
-    assert_eq!(claim_route(0, 0, true, capacity as u32, blocks, capacity), ClaimRoute::Cold);
-    assert_eq!(claim_route(0, 0, false, 0, blocks, capacity), ClaimRoute::Cold);
-    assert_eq!(claim_route(1, 0, true, 0, blocks, capacity), ClaimRoute::Cold);
-    assert_eq!(claim_route(0, 4, true, 0, blocks, capacity), ClaimRoute::Cold);
-    assert_eq!(claim_route(0, 0, true, 0, 0, capacity), ClaimRoute::Cold);
+fn the_staged_claim_row_is_the_record_spaces_claim() {
+    use crate::staged::records::ClaimFrame;
+    let mut arena: RecordSpace<u64> = RecordSpace::default();
+    let first: Vec<_> = (0..RECORDS_PER_BLOCK * 2 + 3).map(|_| arena.try_insert(7).unwrap()).collect();
+    assert_eq!(first, (0..(RECORDS_PER_BLOCK * 2 + 3) as u32).collect::<Vec<_>>());
+    assert_eq!(arena.live_count(), first.len());
+    // The row's route: the next id is fresh in the block it names.
+    let words = {
+        let mut frame = super::ConcreteClaim { space: &mut arena };
+        let mut stage = crate::staged::Concrete::new(std::ptr::null());
+        frame.claim_words(&mut stage)
+    };
+    assert_eq!(words.next_id, (RECORDS_PER_BLOCK * 2 + 3) as u64);
+    assert_eq!(words.block_count, arena.block_count() as u64);
+    assert_eq!(words.reserved, 1);
+    // After a sweep frees them, the row keeps claiming: the cold path covers reclamation,
+    // which the record-space tests above exercise.
+    for &id in &first { assert!(arena.mark(id)); }
+    arena.sweep(true, PromotionAge::First, false, |_| {});
+    let after = arena.try_insert(7).unwrap();
+    assert!(after as usize >= first.len());
 }

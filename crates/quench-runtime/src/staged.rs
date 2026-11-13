@@ -34,6 +34,7 @@ pub(crate) mod holder;
 pub(crate) mod call; pub(crate) mod frame;
 pub(crate) mod construct;
 pub(crate) mod plan_fields;
+pub(crate) mod records;
 pub(crate) mod value;
 mod steps;
 pub(crate) use steps::step;

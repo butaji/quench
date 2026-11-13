@@ -249,25 +249,54 @@ pub(crate) struct RecordClaimFacts {
     pub(crate) block_size: usize,
 }
 
-/// The record-claim fast path's decision, as data: a fresh id and where it lives, or the cold
-/// path (a loaded free word, a free cursor scan, an unreserved space, or no room). One home
-/// for the condition the staged claim row's Emit projection repeats.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ClaimRoute {
-    Fresh { id: u32, block: usize, record: usize },
-    Cold,
+/// `staged::records::ClaimFrame` over a record space: the row's concrete projection. The
+/// occupancy bit is computed as the emitted one is (`1 << (record & (word bits - 1))`).
+struct ConcreteClaim<'a, T, const CAPACITY: usize> {
+    space: &'a mut RecordSpace<T, CAPACITY>,
 }
 
-/// `ClaimRoute` of a record space's live fields.
-#[inline(always)]
-pub(crate) fn claim_route(free_word: u64, free_cursor: u32, reserved: bool, next_id: u32,
-    block_count: usize, capacity: usize) -> ClaimRoute {
-    if free_word != 0 || free_cursor != 0 || !reserved || (next_id as usize) >= capacity {
-        return ClaimRoute::Cold;
+impl<T, const CAPACITY: usize> crate::staged::records::ClaimFrame<crate::staged::Concrete>
+    for ConcreteClaim<'_, T, CAPACITY>
+{
+    fn claim_words(&mut self, _stage: &mut crate::staged::Concrete) -> crate::staged::records::ClaimWords<u64> {
+        crate::staged::records::ClaimWords {
+            free_word: self.space.free_word,
+            free_cursor: u64::from(self.space.free_cursor),
+            next_id: u64::from(self.space.next_id),
+            block_count: self.space.blocks.len() as u64,
+            reserved: u64::from(self.space.is_reserved()),
+        }
     }
-    let (block, record) = (next_id as usize / RECORDS_PER_BLOCK, next_id as usize % RECORDS_PER_BLOCK);
-    if block >= block_count { return ClaimRoute::Cold; }
-    ClaimRoute::Fresh { id: next_id, block, record }
+
+    fn claim_geometry(&self) -> (u32, u32, u64) {
+        (OCCUPANCY_WORD_BITS as u32, RECORDS_PER_BLOCK.trailing_zeros(), size_of::<RecordBlock>() as u64)
+    }
+
+    fn claim_block(&mut self, stage: &mut crate::staged::Concrete, _words: crate::staged::records::ClaimWords<u64>,
+        block: u64, record: u64) -> Option<()> {
+        use crate::staged::Stage;
+        let word = stage.shr_imm(record, 6u64) as usize;
+        let index = stage.and_imm(record, 63u64);
+        let mask = stage.shl(1u64, index);
+        let occupied = &mut self.space.blocks[block as usize].occupied[word];
+        if *occupied & mask != 0 { return None; }
+        *occupied |= mask;
+        Some(())
+    }
+
+    fn commit_fresh(&mut self, _stage: &mut crate::staged::Concrete, next_id: u64) -> u64 {
+        debug_assert_eq!(u64::from(self.space.next_id), next_id);
+        self.space.next_id += 1;
+        self.space.live += 1;
+        next_id
+    }
+
+    fn claim_cold(&mut self, _stage: &mut crate::staged::Concrete, _words: crate::staged::records::ClaimWords<u64>,
+        _miss: ()) -> Option<u64> {
+        let id = if self.space.free_word != 0 { self.space.take_free_word_id() } else { self.space.claim_slow()? };
+        self.space.live += 1;
+        Some(u64::from(id))
+    }
 }
 
 impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
@@ -438,20 +467,15 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     /// uninitialized, to be written before the next safepoint (`try_insert` writes it at once).
     #[inline(always)]
     pub(super) fn claim_uninit(&mut self) -> Option<RecordId> {
-        // The common allocation, inline: a fresh id per `claim_route`, else the loaded free
-        // word or `claim_slow` (which names no value: no address of the caller's stack).
-        let id = match claim_route(self.free_word, self.free_cursor, self.is_reserved(),
-            self.next_id, self.blocks.len(), CAPACITY) {
-            ClaimRoute::Fresh { id, block, record } => {
-                if !self.blocks[block].claim(record) { return None; }
-                self.next_id += 1;
-                id
-            }
-            ClaimRoute::Cold if self.free_word != 0 => self.take_free_word_id(),
-            ClaimRoute::Cold => self.claim_slow()?,
-        };
-        self.live += 1;
-        Some(id)
+        self.claim_uninit_staged(CAPACITY)
+    }
+
+    /// `claim`'s concrete projection: the row over this space's fields (`staged::records`),
+    /// the same decision `claim_route` names.
+    fn claim_uninit_staged(&mut self, capacity: usize) -> Option<RecordId> {
+        let mut frame = ConcreteClaim { space: self };
+        let mut stage = crate::staged::Concrete::new(std::ptr::null());
+        crate::staged::records::claim(&mut stage, &mut frame, (), capacity as u64).map(|id| id as RecordId)
     }
 
     #[inline(always)]

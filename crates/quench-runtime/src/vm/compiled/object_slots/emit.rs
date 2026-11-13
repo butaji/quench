@@ -58,6 +58,7 @@ impl Stage for Emit<'_, '_> {
     }
     fn add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().iadd(a, b) }
     fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
+    fn shl(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().ishl(a, b) }
     fn add_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
         self.builder.ins().iadd(a, v)

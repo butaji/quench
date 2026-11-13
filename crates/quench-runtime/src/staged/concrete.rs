@@ -71,6 +71,8 @@ impl Stage for Concrete {
     #[inline(always)]
     fn shr_imm(&mut self, a: u64, shift: impl Into<u64>) -> u64 { a >> shift.into() }
     #[inline(always)]
+    fn shl(&mut self, a: u64, b: u64) -> u64 { a << (b & 63) }
+    #[inline(always)]
     fn sar32_imm(&mut self, a: u64, shift: u32) -> u64 { u64::from(((a as u32 as i32) >> shift) as u32) }
     #[inline(always)]
     fn eq_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { let imm = imm.into(); a == imm }
