@@ -1,6 +1,7 @@
 //! The specializer's Cranelift stage: `crate::staged` operations emitted as IR.
 
 use super::*;
+use crate::staged::region::Mutability;
 use crate::staged::{Access, Domain, NumericStage, Stage, Table};
 use crate::staged::flow::FlowStage;
 use crate::vm::compiled::regions;
@@ -13,6 +14,9 @@ pub(in crate::vm::compiled) struct Emit<'a, 'b> {
     /// The property arena's value base (`Table::PropertyValues`), where the operation
     /// addresses a run; a read through a proved layout already holds its address.
     pub(in crate::vm::compiled) property_values: Option<ir::Value>,
+    /// The dispatch payload that holds the object marks the store barrier's test reads, where
+    /// the operation stores (`Stage::store_gate`).
+    pub(in crate::vm::compiled) gate: Option<ir::Value>,
 }
 
 /// An immediate of the Cranelift stage: a constant, or a value the caller holds as one (a stencil's
@@ -51,8 +55,16 @@ impl Stage for Emit<'_, '_> {
     fn shape_in_site(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value { self.shape_in(shape, shapes) }
 
     fn constant(&mut self, bits: u64) -> ir::Value { self.builder.ins().iconst(types::I64, bits as i64) }
+    /// A read-only word is a plain `load` and a `uextend`: the egraph merges and hoists only
+    /// plain loads, and the extend folds into the target's zero-extending load.
     fn load_u32(&mut self, at: Access, base: ir::Value, offset: i32) -> ir::Value {
-        self.builder.ins().uload32(regions::flags(at), base, offset)
+        match at.mutability {
+            Mutability::Readonly => {
+                let word = self.builder.ins().load(types::I32, regions::flags(at), base, offset);
+                self.builder.ins().uextend(types::I64, word)
+            }
+            Mutability::Mutable => self.builder.ins().uload32(regions::flags(at), base, offset),
+        }
     }
     fn load_u64(&mut self, at: Access, base: ir::Value, offset: i32) -> ir::Value {
         self.builder.ins().load(types::I64, regions::flags(at), base, offset)
@@ -93,6 +105,7 @@ impl Stage for Emit<'_, '_> {
         let shifted = self.builder.ins().sshr_imm_u(low, i64::from(shift));
         self.widen(shifted)
     }
+    /// Compared at `a`'s width: a record's 32-bit shape word against a shape id is a 32-bit test.
     fn eq_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
         self.compare(IntCC::Equal, a, v)
@@ -111,9 +124,22 @@ impl Stage for Emit<'_, '_> {
     fn store_u64(&mut self, at: Access, base: ir::Value, offset: i32, value: ir::Value) {
         self.builder.ins().store(regions::flags(at), value, base, offset);
     }
-    fn store_gate(&mut self, record_id: ir::Value, _value: ir::Value) -> ir::Value {
-        // Native code keeps the helper for stores: an id is never below itself.
-        self.ult(record_id, record_id)
+    /// Whether the store needs no barrier log: the shared tag and mark test. A value the frame
+    /// proved immediate never asks (`staged::store`); a stage with no payload answers no, and
+    /// the store leaves at its miss.
+    fn store_gate(&mut self, record_id: ir::Value, value: ir::Value) -> ir::Value {
+        let Some(payload) = self.gate else { return self.ult(record_id, record_id) };
+        let (logged, join) = (self.builder.create_block(), self.builder.create_block());
+        self.builder.set_cold_block(logged);
+        let open = self.builder.append_block_param(join, types::I8);
+        super::super::emit_unlogged_property_store_guard(self.builder, payload, record_id, value, logged);
+        let yes = self.builder.ins().iconst(types::I8, 1);
+        self.builder.ins().jump(join, &[ir::BlockArg::Value(yes)]);
+        self.builder.switch_to_block(logged);
+        let no = self.builder.ins().iconst(types::I8, 0);
+        self.builder.ins().jump(join, &[ir::BlockArg::Value(no)]);
+        self.builder.switch_to_block(join);
+        open
     }
     fn number_operator(&mut self, _operator: EmitImm, _passed: ir::Value, _constant: ir::Value) -> (ir::Value, ir::Value) {
         // Native arithmetic for computed initializer fields is the construct lowering's (thread 13): until it lands the field leaves.
@@ -262,7 +288,8 @@ impl NumericStage for Emit<'_, '_> {
 mod tests {
     use super::*;
     use crate::heap::{Cell, Heap, Object, PlainPropertyStorage};
-    use crate::staged::{Form, PackedAccess};
+    use crate::staged::object::{own_layout, read_slot, Form, PackedAccess};
+    use crate::staged::Region;
 
     /// Objects of every storage form, with their values: narrow and wide, inline and spilled,
     /// plain and marked as prototypes.
@@ -300,11 +327,11 @@ mod tests {
         builder.switch_to_block(entry);
         let [record, base] = builder.block_params(entry).try_into().unwrap();
         let miss = builder.create_block();
-        let mut stage = Emit { builder: &mut builder, property_values: Some(base) };
+        let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None };
         let inline = crate::staged::object::inline_storage(&mut stage, record);
-        let layout = crate::staged::own_layout(&mut stage, record, inline, form,
+        let layout = own_layout(&mut stage, record, inline, form,
             usize::from(slot) + 1, PackedAccess::Reload, miss).unwrap();
-        let value = crate::staged::read_slot(&mut stage, layout, slot);
+        let value = read_slot(&mut stage, layout, slot);
         builder.ins().return_(&[value]);
         builder.switch_to_block(miss);
         let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
@@ -363,7 +390,7 @@ mod tests {
         builder.switch_to_block(entry);
         let [records, string, index] = builder.block_params(entry).try_into().unwrap();
         let miss = builder.create_block();
-        let mut stage = Emit { builder: &mut builder, property_values: None };
+        let mut stage = Emit { builder: &mut builder, property_values: None, gate: None };
         let flat = crate::staged::strings::flat_string(&mut stage, records, string, miss).unwrap();
         let code = crate::staged::strings::string_char_code_at(&mut stage, flat, index, miss).unwrap();
         builder.ins().return_(&[code]);
@@ -403,6 +430,162 @@ mod tests {
                 let read = Value::from_bits(unsafe { run(records, string.to_bits(), index.to_bits()) });
                 assert_eq!(read, expected, "{:#x} at {:#x}", string.to_bits(), index.to_bits());
             }
+        }
+    }
+
+    /// A function summing the 32-bit word at offset 8 of its first parameter, read through
+    /// `Emit` in the body of a counted loop over its second.
+    fn word_summed_in_a_loop(isa: &dyn cranelift_codegen::isa::TargetIsa, at: Access) -> ir::Function {
+        let mut signature = Signature::new(isa.default_call_conv());
+        signature.params.extend([AbiParam::new(types::I64); 2]);
+        signature.returns.push(AbiParam::new(types::I64));
+        let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+        regions::declare_regions(&mut function);
+        let mut context = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut function, &mut context);
+        let (entry, header, body, exit) =
+            (builder.create_block(), builder.create_block(), builder.create_block(), builder.create_block());
+        builder.append_block_params_for_function_params(entry);
+        let (sum, index) = (builder.append_block_param(header, types::I64), builder.append_block_param(header, types::I64));
+        let total = builder.append_block_param(exit, types::I64);
+        builder.switch_to_block(entry);
+        let [base, count] = builder.block_params(entry).try_into().unwrap();
+        let zero = builder.ins().iconst(types::I64, 0);
+        builder.ins().jump(header, &[zero.into(), zero.into()]);
+        builder.switch_to_block(header);
+        let more = builder.ins().icmp(IntCC::UnsignedLessThan, index, count);
+        builder.ins().brif(more, body, &[], exit, &[sum.into()]);
+        builder.switch_to_block(body);
+        let word = Emit { builder: &mut builder, property_values: None, gate: None }.load_u32(at, base, 8);
+        let next_sum = builder.ins().iadd(sum, word);
+        let next_index = builder.ins().iadd_imm_u(index, 1);
+        builder.ins().jump(header, &[next_sum.into(), next_index.into()]);
+        builder.switch_to_block(exit);
+        builder.ins().return_(&[total]);
+        builder.seal_all_blocks();
+        builder.finalize(isa.frontend_config());
+        function
+    }
+
+    /// The opcode and flags of every memory access of `function`.
+    fn accesses(function: &ir::Function) -> Vec<(ir::Opcode, MemFlagsData)> {
+        function.layout.blocks().flat_map(|block| function.layout.block_insts(block))
+            .filter_map(|inst| function.dfg.insts[inst].memflags_data(&function.dfg)
+                .map(|flags| (function.dfg.insts[inst].opcode(), flags)))
+            .collect()
+    }
+
+    /// A read-only word in a loop is a plain, trusted `load` tagged with its region and
+    /// movable, the one kind of load the egraph hoists and merges.
+    #[test]
+    fn a_readonly_word_read_in_a_loop_is_a_movable_plain_load() {
+        let isa = super::super::super::super::jit_backend::target_isa().unwrap();
+        let function = word_summed_in_a_loop(&*isa, Region::LoopEntry.readonly());
+        cranelift_codegen::verify_function(&function, &*isa).unwrap();
+        let [(opcode, flags)] = accesses(&function)[..] else { panic!("one access") };
+        assert_eq!(opcode, ir::Opcode::Load);
+        assert!(flags.readonly() && flags.can_move() && flags.notrap() && flags.aligned());
+        assert_eq!(flags.alias_region(), regions::flags(Region::LoopEntry.readonly()).alias_region());
+    }
+
+    /// A word a store can change keeps its place: not movable, still tagged with its region.
+    #[test]
+    fn a_mutable_word_read_in_a_loop_stays_in_the_loop() {
+        let isa = super::super::super::super::jit_backend::target_isa().unwrap();
+        let function = word_summed_in_a_loop(&*isa, Region::ObjectSlots.mutable());
+        let [(opcode, flags)] = accesses(&function)[..] else { panic!("one access") };
+        assert_eq!(opcode, ir::Opcode::Uload32);
+        assert!(!flags.readonly() && !flags.can_move() && flags.notrap());
+        assert_eq!(flags.alias_region(), regions::flags(Region::ObjectSlots.mutable()).alias_region());
+    }
+
+    /// The barrier-log path of a store's gate is a guard failure: the only cold block the
+    /// gate adds.
+    #[test]
+    fn the_barrier_log_path_of_a_store_gate_is_cold() {
+        let isa = super::super::super::super::jit_backend::target_isa().unwrap();
+        let mut signature = Signature::new(isa.default_call_conv());
+        signature.params.extend([AbiParam::new(types::I64); 3]);
+        signature.returns.push(AbiParam::new(types::I64));
+        let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+        regions::declare_regions(&mut function);
+        let mut context = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut function, &mut context);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        let [payload, record, value] = builder.block_params(entry).try_into().unwrap();
+        let open = Emit { builder: &mut builder, property_values: None, gate: Some(payload) }.store_gate(record, value);
+        let open = builder.ins().uextend(types::I64, open);
+        builder.ins().return_(&[open]);
+        builder.seal_all_blocks();
+        builder.finalize(isa.frontend_config());
+        cranelift_codegen::verify_function(&function, &*isa).unwrap();
+        assert_eq!(function.layout.blocks().filter(|block| function.layout.is_cold(*block)).count(), 1);
+    }
+    /// A loop that reads the object record base in its body, with or without a helper call
+    /// beside the read, optimized by Cranelift; the base loads it keeps, in the loop and out.
+    fn record_base_loads_after_optimizing(isa: &dyn cranelift_codegen::isa::TargetIsa, with_call: bool) -> (usize, usize) {
+        let mut signature = Signature::new(isa.default_call_conv());
+        signature.params.extend([AbiParam::new(types::I64); 2]);
+        signature.returns.push(AbiParam::new(types::I64));
+        let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature.clone());
+        regions::declare_regions(&mut function);
+        let mut context = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut function, &mut context);
+        let helper = builder.import_signature(signature);
+        let (entry, header, body, exit) =
+            (builder.create_block(), builder.create_block(), builder.create_block(), builder.create_block());
+        builder.append_block_params_for_function_params(entry);
+        let (sum, index) = (builder.append_block_param(header, types::I64), builder.append_block_param(header, types::I64));
+        let total = builder.append_block_param(exit, types::I64);
+        builder.switch_to_block(entry);
+        let [payload, count] = builder.block_params(entry).try_into().unwrap();
+        let zero = builder.ins().iconst(types::I64, 0);
+        builder.ins().jump(header, &[zero.into(), zero.into()]);
+        builder.switch_to_block(header);
+        let more = builder.ins().icmp(IntCC::UnsignedLessThan, index, count);
+        builder.ins().brif(more, body, &[], exit, &[sum.into()]);
+        builder.switch_to_block(body);
+        let base = super::super::emit_js_record_base(&mut builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, object_record_base));
+        let record = builder.ins().iadd(base, index);
+        let field = Emit { builder: &mut builder, property_values: None, gate: None }.load_u64(Region::ObjectSlots.mutable(), record, 8);
+        let sum_next = builder.ins().iadd(sum, field);
+        if with_call {
+            let target = builder.ins().iconst(types::I64, 8);
+            builder.ins().call_indirect(helper, target, &[payload, index]);
+        }
+        let index_next = builder.ins().iadd_imm_u(index, 1);
+        builder.ins().jump(header, &[sum_next.into(), index_next.into()]);
+        builder.switch_to_block(exit);
+        builder.ins().return_(&[total]);
+        builder.seal_all_blocks();
+        builder.finalize(isa.frontend_config());
+        let mut compiling = cranelift_codegen::Context::for_function(function);
+        compiling.optimize(isa, &mut cranelift_codegen::control::ControlPlane::default()).unwrap();
+        compiling.flowgraph();
+        compiling.compute_loop_analysis();
+        let record_base = regions::record_base().alias_region();
+        let (mut inside, mut outside) = (0, 0);
+        for block in compiling.func.layout.blocks() {
+            for inst in compiling.func.layout.block_insts(block) {
+                let flags = compiling.func.dfg.insts[inst].memflags_data(&compiling.func.dfg);
+                if flags.is_some_and(|flags| flags.alias_region() == record_base) {
+                    if compiling.loop_analysis.innermost_loop(block).is_some() { inside += 1 } else { outside += 1 }
+                }
+            }
+        }
+        (inside, outside)
+    }
+
+    /// The base of a record reservation is read once, before the loop, whether or not the
+    /// loop calls a helper: a reservation does not move while a run executes, so there is
+    /// no reload after the call.
+    #[test]
+    fn a_record_base_is_read_once_outside_a_loop_with_or_without_a_call() {
+        let isa = super::super::super::super::jit_backend::target_isa().unwrap();
+        for with_call in [false, true] {
+            assert_eq!(record_base_loads_after_optimizing(&*isa, with_call), (0, 1), "call: {with_call}");
         }
     }
 }

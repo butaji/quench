@@ -44,12 +44,12 @@ impl Lowering<'_, '_> {
         let site = frame::call_out::CallOutSite { record, stop: self.call_out_stop(), registers: self.registers_base,
             properties: self.entry.as_ref().expect("entry facts").receiver.properties, spill: self.spilled(pc), cell };
         if !matches!(row, crate::staged::Operation::ForInNext { .. }) {
-            self.step_with(state, frame::Edges::ValueGuarded { miss }, None, Some(&site), row);
+            self.step_with(state, frame::Edges::ValueGuarded { miss }, row, StepWith { call_out: Some(&site), ..StepWith::default() });
             state.call_effect();
             return true;
         }
         let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
-        self.step_with(state, frame::Edges::Branch { target: taken, following: fall, miss }, None, Some(&site), row);
+        self.step_with(state, frame::Edges::Branch { target: taken, following: fall, miss }, row, StepWith { call_out: Some(&site), ..StepWith::default() });
         state.call_effect();
         self.continue_branch(state, pc, instruction.jump_target() as usize, taken, fall);
         false

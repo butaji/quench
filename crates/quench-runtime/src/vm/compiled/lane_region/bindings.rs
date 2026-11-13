@@ -42,9 +42,9 @@ impl Lowering<'_, '_> {
         let offset = self.ins().imul_imm_u(slot, std::mem::size_of::<Target>() as i64);
         let entry = self.ins().iadd(table, offset);
         let field = |offset: usize| i32::try_from(offset).expect("call target field offset");
-        let named = self.builder.ins().load(types::I64, MemFlagsData::trusted(), entry, field(std::mem::offset_of!(Target, callee)));
-        let owner = self.builder.ins().uload32(MemFlagsData::trusted(), entry, field(std::mem::offset_of!(Target, program)));
-        let body = self.builder.ins().uload32(MemFlagsData::trusted(), entry, field(std::mem::offset_of!(Target, function)));
+        let named = self.builder.ins().load(types::I64, regions::heap_meta(), entry, field(std::mem::offset_of!(Target, callee)));
+        let owner = self.builder.ins().uload32(regions::heap_meta(), entry, field(std::mem::offset_of!(Target, program)));
+        let body = self.builder.ins().uload32(regions::heap_meta(), entry, field(std::mem::offset_of!(Target, function)));
         let same = self.ins().icmp(IntCC::Equal, named, callee);
         let owned = self.ins().icmp(IntCC::Equal, owner, program);
         let bound = self.ins().icmp(IntCC::Equal, body, function);
@@ -52,7 +52,7 @@ impl Lowering<'_, '_> {
         let hit = self.ins().band(hit, bound);
         if self.fault_poll { return hit; }
         let flag = self.interrupt;
-        let requested = self.ins().atomic_load(types::I8, MemFlagsData::trusted(), flag);
+        let requested = self.ins().atomic_load(types::I8, regions::dispatch(), flag);
         let clear = self.ins().icmp_imm_u(IntCC::Equal, requested, 0);
         self.ins().band(hit, clear)
     }

@@ -740,11 +740,10 @@ pub(super) struct DenseArrayView {
     pub(super) uncounted: bool,
 }
 
-/// The emission proofs a staged value operation carries: a field projection or a dense
-/// array view with the cold block a hole or miss continues at.
+/// The emission proofs a staged value operation carries: a dense array view with the cold
+/// block a hole or miss continues at.
 #[derive(Clone, Copy)]
 pub(in crate::vm::compiled) enum EmitProof {
-    Field(object_slots::CheckedObject),
     /// `in_bounds`: the index is proved below the view's length, so only a hole leaves at `absent`.
     Index { view: DenseArrayView, absent: ir::Block, in_bounds: bool },
     TypedIndex { values: ir::Value, length: ir::Value, kind: ir::Value, absent: ir::Block }, Allocation { miss: ir::Block },
@@ -762,7 +761,7 @@ pub(super) fn emit_dense_array_view(
 ) -> DenseArrayView {
     let record_base = builder.ins().load(types::I64, MemFlagsData::trusted(), payload,
         std::mem::offset_of!(JsStepDispatch, array_record_base) as i32);
-    let mut stage = object_slots::Emit { builder, property_values: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
     let backing = crate::staged::elements::array_backing(&mut stage, record_base, base, fallback)
         .expect("the emit stage continues past its guards");
     let crate::staged::elements::Backing { values, length, .. } = backing;
@@ -800,7 +799,7 @@ pub(super) fn emit_dense_element(
     fallback: ir::Block,
     in_bounds: bool,
 ) -> (ir::Value, ir::Value) {
-    let mut stage = object_slots::Emit { builder, property_values: None };
+    let mut stage = object_slots::emit(builder);
     let element = if in_bounds {
         crate::staged::elements::present_element(&mut stage, view.values, index, fallback)
     } else {
@@ -821,7 +820,7 @@ pub(super) fn emit_dense_element_replace(
     value: ir::Value,
 ) {
     debug_assert!(view.writable, "an in-place replacement needs a writable view");
-    let mut stage = object_slots::Emit { builder, property_values: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
     if view.uncounted {
         crate::staged::elements::replace_uncounted_element(&mut stage, address, value);
     } else {
@@ -1086,15 +1085,22 @@ fn emit_js_cached_field_slot(
 /// A word of the running dispatch's payload (`JsStepDispatch`).
 fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
     let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
-    builder.ins().load(types::I64, MemFlagsData::trusted(), payload, offset)
+    builder.ins().load(types::I64, regions::dispatch(), payload, offset)
+}
+
+/// A record reservation's base in the dispatch payload (`JsStepDispatch::object_record_base`,
+/// `function_record_base`): fixed for a whole native run, so the load merges and hoists.
+fn emit_js_record_base(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
+    let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
+    builder.ins().load(types::I64, regions::record_base(), payload, offset)
 }
 
 fn emit_js_property_values(builder: &mut FunctionBuilder<'_>, payload: ir::Value) -> (ir::Value, ir::Value) {
     let header = builder.ins().load(types::I64, invariant(), payload,
         std::mem::offset_of!(JsStepDispatch, property_buffer) as i32);
     let layout = crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT;
-    let values = builder.ins().load(types::I64, MemFlagsData::trusted(), header, layout.base as i32);
-    let length = builder.ins().load(types::I64, MemFlagsData::trusted(), header, layout.length as i32);
+    let values = builder.ins().load(types::I64, regions::heap_meta(), header, layout.base as i32);
+    let length = builder.ins().load(types::I64, regions::heap_meta(), header, layout.length as i32);
     (values, length)
 }
 
@@ -1127,9 +1133,8 @@ fn emit_lane_helper_call(
 /// compilation. Otherwise the caller must perform the logged store.
 fn emit_unlogged_property_store_guard(
     builder: &mut FunctionBuilder<'_>, payload: ir::Value, record_id: ir::Value,
-    value: ir::Value, ty: typed_ir::Type, fallback: ir::Block,
+    value: ir::Value, fallback: ir::Block,
 ) {
-    if ty.is_subtype(typed_ir::Type::NUMBER) { return; }
     use crate::value::ValueLayout;
     let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
     let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
@@ -1212,45 +1217,6 @@ fn emit_narrow_integer_write(builder: &mut FunctionBuilder<'_>, value: ir::Value
     builder.ins().bor_imm_u(shifted, i64::from(NARROW::INTEGER_FLAG))
 }
 
-/// The integer and direct-object cases of `Value::to_narrow_reference`.
-/// Other values and overflowing indices retain the shared store's fallback.
-fn emit_narrow_store_value(builder: &mut FunctionBuilder<'_>, value: ir::Value,
-    ty: typed_ir::Type, fallback: ir::Block) -> ir::Value {
-    if ty.is_subtype(typed_ir::Type::INT32) {
-        return emit_narrow_integer_write(builder, value, fallback, None);
-    }
-    use crate::value::NarrowLayout as N;
-    let joined = (!ty.is_direct_object_family()).then(|| {
-        let integer = builder.create_block();
-        let reference = builder.create_block();
-        let done = builder.create_block();
-        let result = builder.append_block_param(done, types::I32);
-        let is_integer = lane_region::is_int_tagged(builder, value);
-        builder.ins().brif(is_integer, integer, &[], reference, &[]);
-        builder.switch_to_block(integer);
-        let narrow = emit_narrow_integer_write(builder, value, fallback, None);
-        builder.ins().jump(done, &[ir::BlockArg::Value(narrow)]);
-        builder.switch_to_block(reference);
-        (done, result)
-    });
-    let upper = builder.ins().ushr_imm_u(value, i64::from(u32::BITS));
-    let direct = builder.ins().icmp_imm_u(IntCC::Equal, upper, (N::DIRECT_OBJECT_UPPER >> u32::BITS) as i64);
-    emit_js_guard(builder, direct, fallback);
-    let index = builder.ins().ireduce(types::I32, value);
-    let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, index, 1_i64 << N::INDEX_BITS);
-    emit_js_guard(builder, fits, fallback);
-    let shifted = builder.ins().ishl_imm_u(index, i64::from(N::INDEX_SHIFT));
-    let narrow = builder.ins().bor_imm_u(shifted, i64::from(N::DIRECT_OBJECT_CODE << N::CODE_SHIFT));
-    match joined {
-        Some((done, result)) => {
-            builder.ins().jump(done, &[ir::BlockArg::Value(narrow)]);
-            builder.switch_to_block(done);
-            result
-        }
-        None => narrow,
-    }
-}
-
 /// Binding time changes the table address, never the packed-value semantics.
 #[derive(Clone, Copy)]
 enum NarrowTable {
@@ -1277,7 +1243,7 @@ fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
         }
     };
     let narrow = builder.ins().uextend(types::I64, narrow);
-    let mut stage = object_slots::Emit { builder, property_values: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
     let encoded = crate::staged::object::decode_narrow_through(&mut stage, narrow, table);
     builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
 }
@@ -11634,13 +11600,9 @@ mod tests {
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         let value = builder.block_params(entry)[0];
-        let fallback = builder.create_block();
-        let encoded = emit_narrow_store_value(&mut builder, value, typed_ir::Type::ANY, fallback);
-        let encoded = builder.ins().uextend(types::I64, encoded);
+        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None };
+        let encoded = crate::staged::store::narrow_form(&mut stage, value, typed_ir::Type::ANY);
         builder.ins().return_(&[encoded]);
-        builder.switch_to_block(fallback);
-        let rejected = builder.ins().iconst(types::I64, -1);
-        builder.ins().return_(&[rejected]);
         builder.seal_all_blocks();
         builder.finalize(isa.frontend_config());
         let memory = compile_native_function(function, &*isa, usize::MAX, CodeMemory::new).unwrap();
@@ -11652,9 +11614,7 @@ mod tests {
         values.extend([i32::MIN, -limit - 1, -limit, -1, 0, 1, limit - 1, limit, i32::MAX].map(Value::integer));
         values.extend([0, 1, (1 << N::INDEX_BITS) - 1, 1 << N::INDEX_BITS, u32::MAX].map(Value::direct_object));
         for value in values {
-            let admitted = value.as_int().is_some()
-                || value.to_bits() >> u32::BITS == N::DIRECT_OBJECT_UPPER >> u32::BITS;
-            let expected = admitted.then(|| value.to_narrow_reference()).flatten().map(u64::from).unwrap_or(u64::MAX);
+            let expected = value.to_narrow().map_or(u64::MAX, u64::from);
             assert_eq!(unsafe { encode(value.to_bits()) }, expected, "{value:?}");
         }
     }

@@ -1,39 +1,19 @@
-//! The staged heap operations: field reads and writes, dense/typed element access and
-//! literal allocation, each over the frame's proof.
+//! The staged heap operations: literal allocation, the host helpers and dense/typed element
+//! access, each over the frame's proof.
 
 use super::*;
 
-/// The heap operations: a field read or write. A frame with no heap for the operation leaves
-/// it `Unresolved` for its host path.
+/// The heap operations: literal allocation, the host helpers and element access. A frame with
+/// no heap for the operation leaves it `Unresolved` for its host path.
 #[inline(always)]
 pub(super) fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
-        field @ (Operation::ReadField { .. } | Operation::WriteField { .. }) =>
-            field_step(stage, frame, field),
         literal @ (Operation::MakeObject { .. } | Operation::MakeArray { .. } | Operation::MakeConstArray { .. } | Operation::MakeObjectPair { .. }) =>
             allocation_step(stage, frame, literal),
         helper @ (Operation::IndexSetHelper { .. } | Operation::GlobalRead { .. }
             | Operation::FieldStoreMiss { .. }) => helper_step(stage, frame, helper),
         index => index_step(stage, frame, index),
-    }
-}
-
-/// A field read or write over a frame's object proof.
-#[inline(always)]
-fn field_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    match operation {
-        Operation::ReadField { base, slot, ty, proof } => match frame.field_read(stage, base, slot, ty, proof) {
-            Some((value, _)) => Step::Value(value),
-            None => Step::Unresolved,
-        },
-        Operation::WriteField { base, slot, ty, value, proof } =>
-            match frame.field_write(stage, base, slot, ty, value, proof) {
-                Some(()) => Step::Value(value),
-                None => Step::Unresolved,
-            },
-        _ => Step::Unresolved,
     }
 }
 

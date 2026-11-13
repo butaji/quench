@@ -47,6 +47,8 @@ pub(super) struct EmitFrame<'a> {
     pub(super) captures: Option<(ir::Value, ir::Value)>,
     /// The Number return edges, joined at the end of the body.
     pub(super) number_returns: &'a mut smallvec::SmallVec<[NumberReturn; 1]>,
+    /// What a named field access is proved under (`PropertyFrame`); none for any other step.
+    pub(super) fields: Option<super::frame_fields::FieldFacts<'a>>,
     /// The record a call-out calls for, where the lowering made one (`call_outs`).
     pub(super) call_out: Option<&'a call_out::CallOutSite>,
 }
@@ -126,28 +128,6 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     fn vm_step(&mut self, stage: &mut Emit<'_, '_>, _operation: crate::staged::CallOut, result: Option<Register>)
         -> Option<(ir::Value, RegisterFact)> {
         call_out::vm_step(self, stage, result)
-    }
-
-    /// A proven-slot read: the `CheckedObject` projection carries the layout and the slot
-    /// read, so the frame adds no second decode.
-    #[inline(always)]
-    fn field_read(&mut self, stage: &mut Emit<'_, '_>, _base: Register, slot: u16, ty: Type,
-        proof: EmitProof) -> Option<(ir::Value, RegisterFact)> {
-        let EmitProof::Field(proof) = proof else { return None };
-        Some((proof.read(stage.builder, slot),
-            RegisterFact::definition(ty, Representation::Tagged)))
-    }
-
-    /// A proven-slot write: the projection's arena address, with the miss edge its layout
-    /// guard uses.
-    #[inline(always)]
-    fn field_write(&mut self, stage: &mut Emit<'_, '_>, _base: Register, slot: u16, _ty: Type,
-        value: ir::Value, proof: EmitProof) -> Option<()> {
-        let EmitProof::Field(proof) = proof else { return None };
-        let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = self.edges else { return None };
-        let address = proof.arena_address(stage.builder, slot, miss)?;
-        stage.builder.ins().store(regions::object_slots(), value, address, 0);
-        Some(())
     }
 
     /// A dense element under the view proof; a hole or an index past the view continues at

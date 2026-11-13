@@ -60,6 +60,12 @@ impl Frame<Concrete> for Probe {
     }
 }
 
+impl crate::staged::PropertyFrame<Concrete> for Probe {
+    type Plans = crate::staged::NoPlans;
+
+    fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
+}
+
 impl GlobalFrame<Concrete> for Probe {
     fn global_write(&mut self, _stage: &mut Concrete, _source: Register, atom: u32, site: u16, value: u64, initialize: bool) -> Option<()> {
         self.answers().then(|| self.global_writes.push((atom, site, value, initialize)))

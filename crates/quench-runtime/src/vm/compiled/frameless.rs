@@ -11,8 +11,9 @@
 use super::{emit_js_payload_word, emit_lane_helper_call, JsStepDispatch};
 #[cfg(feature = "native-execution")]
 use super::{Host, JsNativeStep, ResidualProgram, Vm};
+use crate::vm::compiled::regions;
 use crate::Value;
-use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
+use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder};
 use cranelift_frontend::FunctionBuilder;
 
 #[path = "frameless/admission.rs"] mod admission;
@@ -133,8 +134,8 @@ pub(super) fn emit_admitted_captures(builder: &mut FunctionBuilder<'_>, payload:
     builder.switch_to_block(bound);
     let entry = emit_entry(builder, payload, callee, declined);
     let word = |field: usize| i32::try_from(field).expect("entry field offset fits i32");
-    (builder.ins().load(types::I64, MemFlagsData::trusted(), entry, word(std::mem::offset_of!(CallEntry, capture_values))),
-        builder.ins().load(types::I64, MemFlagsData::trusted(), entry, word(std::mem::offset_of!(CallEntry, capture_len))))
+    (builder.ins().load(types::I64, regions::heap_meta(), entry, word(std::mem::offset_of!(CallEntry, capture_values))),
+        builder.ins().load(types::I64, regions::heap_meta(), entry, word(std::mem::offset_of!(CallEntry, capture_len))))
 }
 
 /// The cache entry admitting `callee` in this epoch, asking `general_frameless_admit` on a
@@ -144,8 +145,8 @@ fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir:
     let slot = builder.ins().band_imm_u(callee, (CACHE_ENTRIES - 1) as i64);
     let offset = builder.ins().imul_imm_u(slot, size_of::<CallEntry>() as i64);
     let cached = builder.ins().iadd(cache, offset);
-    let named = builder.ins().load(types::I64, MemFlagsData::trusted(), cached, std::mem::offset_of!(CallEntry, callee) as i32);
-    let epoch = builder.ins().load(types::I64, MemFlagsData::trusted(), cached, std::mem::offset_of!(CallEntry, epoch) as i32);
+    let named = builder.ins().load(types::I64, regions::heap_meta(), cached, std::mem::offset_of!(CallEntry, callee) as i32);
+    let epoch = builder.ins().load(types::I64, regions::heap_meta(), cached, std::mem::offset_of!(CallEntry, epoch) as i32);
     let current = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, epoch));
     let same = builder.ins().icmp(IntCC::Equal, named, callee);
     let fresh = builder.ins().icmp(IntCC::Equal, epoch, current);

@@ -14,7 +14,8 @@ pub(crate) enum Region {
     ShapeWord,
     /// Dense and typed array elements, and the backing header that counts them.
     Elements,
-    /// Heap bookkeeping: allocation runs, tables, collection state, site cache entries.
+    /// Heap bookkeeping: allocation runs, tables, collection state, site cache entries, the
+    /// property arena's header and the call-target cache.
     HeapMeta,
     /// Per-site feedback counters.
     MissCounters,
@@ -26,7 +27,8 @@ pub(crate) enum Region {
     Payload,
     /// Environment storage: a captured-variable run and its header.
     Cells,
-    /// A function's entry cell, which native callers read to admit a call.
+    /// A function's entry cell, which native callers read to admit a call, and the recovery
+    /// space it names.
     EntryCell,
     /// The loop entry record a loop's run reads: written before the run, never during it.
     LoopEntry,
@@ -34,6 +36,11 @@ pub(crate) enum Region {
     Dispatch,
     /// The frozen constant pool an image materializes once at load.
     Constants,
+    /// The code's invalidation word: written only by a retirement.
+    Invalidation,
+    /// The dispatch's record-reservation bases: set when a native run is entered, and a
+    /// reservation never moves while the run executes.
+    RecordBases,
 }
 
 /// Whether any operation can change the memory an access reads while compiled code runs.
@@ -57,7 +64,7 @@ impl Region {
     pub(crate) const ALL: &'static [Region] = &[
         Self::Frame, Self::ObjectSlots, Self::ShapeWord, Self::Elements, Self::HeapMeta, Self::MissCounters,
         Self::Records, Self::Payload, Self::Cells, Self::EntryCell, Self::LoopEntry, Self::Dispatch,
-        Self::Constants,
+        Self::Constants, Self::Invalidation, Self::RecordBases,
     ];
 
     pub(crate) const fn mutable(self) -> Access {

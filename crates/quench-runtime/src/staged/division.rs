@@ -115,10 +115,16 @@ impl<W, P> Operation<W, P> {
     /// The heap operations' operands (`operand_times`).
     fn heap_operand_times(&self) -> OperandTimes {
         match self {
-            Self::ReadField { .. } => SmallVec::from_slice(&[("base", REGISTER), ("slot", FIELD_LAYOUT),
-                ("ty", FIELD_LAYOUT), ("proof", PROOF)]),
-            Self::WriteField { .. } => SmallVec::from_slice(&[("base", REGISTER), ("slot", FIELD_LAYOUT),
-                ("ty", FIELD_LAYOUT), ("value", VALUE), ("proof", PROOF)]),
+            Self::GetField { .. } => SmallVec::from_slice(&[("base", REGISTER), ("lookup", SITE)]),
+            Self::SetField { .. } => SmallVec::from_slice(&[("value", REGISTER), ("base", REGISTER),
+                ("atom", BYTECODE), ("site", SITE)]),
+            Self::StoreField { .. } => SmallVec::from_slice(&[("base", REGISTER), ("value", VALUE),
+                ("fact", FIELD_LAYOUT), ("atom", BYTECODE), ("site", SITE)]),
+            Self::FieldGetHost { .. } => SmallVec::from_slice(&[("object", VALUE), ("atom", BYTECODE), ("site", SITE)]),
+            Self::FieldAdd { .. } => SmallVec::from_slice(&[("object", VALUE), ("atom", BYTECODE), ("site", SITE),
+                ("value", VALUE)]),
+            Self::Delete { .. } => SmallVec::from_slice(&[("base", REGISTER), ("key", REGISTER), ("strict", BYTECODE)]),
+            Self::IndexGetHost { .. } => SmallVec::from_slice(&[("base", VALUE), ("key", VALUE)]),
             Self::IndexRead { .. } | Self::TypedIndexRead { .. } => SmallVec::from_slice(&[("index", VALUE), ("proof", PROOF)]),
             Self::IndexWrite { .. } | Self::TypedIndexWrite { .. } =>
                 SmallVec::from_slice(&[("index", VALUE), ("value", VALUE), ("proof", PROOF)]),
@@ -151,6 +157,7 @@ impl<W, P> Operation<W, P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bytecode::{FieldBase, FieldLookup};
     use crate::staged::Constant;
     use crate::{typed_ir::Type, Value};
 
@@ -171,8 +178,13 @@ mod tests {
                 overflow: crate::staged::Overflow::Exit }),
             Op::RequireObjectCoercible { register: 0 },
             Op::LogicalNot { destination: 0, source: 1 },
-            Op::ReadField { base: 0, slot: 0, ty: Type::ANY, proof: () },
-            Op::WriteField { base: 0, slot: 0, ty: Type::ANY, value: 0, proof: () },
+            Op::GetField { base: FieldBase(FieldBase::NESTED), lookup: FieldLookup::Site(0) },
+            Op::SetField { value: 0, base: None, atom: 0, site: 0 },
+            Op::StoreField { base: None, value: 0, fact: Type::ANY, atom: 0, site: 0 },
+            Op::FieldGetHost { object: 0, atom: 0, site: 0 },
+            Op::FieldAdd { object: 0, atom: 0, site: 0, value: 1 },
+            Op::Delete { base: 0, key: 1, strict: false },
+            Op::IndexGetHost { base: 0, key: 1 },
             Op::IndexRead { index: 0, proof: () },
             Op::IndexWrite { index: 0, value: 0, proof: () },
             Op::TypedIndexRead { index: 0, proof: () },
@@ -204,11 +216,10 @@ mod tests {
 
     #[test]
     fn only_stage_words_are_dynamic_and_offline_folds_no_stable_operand() {
-        let read = Op::ReadField { base: 0, slot: 3, ty: Type::ANY, proof: () }.operand_times();
-        assert!(!folded(&read, Division::Offline).any(|name| name == "slot"));
-        assert!(folded(&read, Division::Online).any(|name| name == "slot"));
-        let write = Op::WriteField { base: 0, slot: 3, ty: Type::ANY, value: 7, proof: () }.operand_times();
-        assert!(!folded(&write, Division::Online).any(|name| name == "value"));
+        let store = Op::StoreField { base: None, value: 7, fact: Type::ANY, atom: 0, site: 0 }.operand_times();
+        assert!(!folded(&store, Division::Offline).any(|name| name == "fact"));
+        assert!(folded(&store, Division::Online).any(|name| name == "fact"));
+        assert!(!folded(&store, Division::Online).any(|name| name == "value"));
     }
 
     #[test]

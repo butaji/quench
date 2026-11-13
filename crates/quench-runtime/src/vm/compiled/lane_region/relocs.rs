@@ -51,13 +51,6 @@ impl Lowering<'_, '_> {
         self.reloc(RelocKind::Atom, atom, u64::from(atom))
     }
 
-    /// The word `(atom << 16) | site` the field helpers take.
-    pub(super) fn atom_site_word(&mut self, atom: u32, site: u16) -> ir::Value {
-        if !self.helpers.links() { return self.word_const((u64::from(atom) << u16::BITS | u64::from(site)) as i64); }
-        let atom = self.atom_word(atom);
-        crate::vm::jit_backend::symbol_words::atom_site_word(&mut self.builder, atom, site)
-    }
-
     /// Whether no method cache names `atom`, from the payload's atom bits.
     pub(super) fn atom_unnamed(&mut self, atom: u32) -> ir::Value {
         if !self.helpers.links() { return super::super::general_store::emit_atom_unnamed(&mut self.builder, self.payload, atom); }

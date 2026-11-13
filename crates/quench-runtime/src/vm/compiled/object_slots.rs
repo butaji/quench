@@ -149,7 +149,7 @@ impl ObjectHeader {
 
 /// The stage whose residual `staged` operations that address no arena emit into `builder`.
 pub(super) fn emit<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> Emit<'a, 'b> {
-    Emit { builder, property_values: None }
+    Emit { builder, property_values: None, gate: None }
 }
 
 /// `staged::object::inline_storage`'s residual for the record at `record`.
@@ -445,8 +445,7 @@ mod tests {
     }
 }
 
-pub(super) use crate::staged::PackedAccess;
-use crate::staged::{Form, Layout, Slots};
+use crate::staged::{Layout, Slots};
 mod emit;
 pub(super) use emit::Emit;
 
@@ -456,7 +455,8 @@ pub(super) use emit::Emit;
 pub(super) struct CheckedObject(Layout<ir::Value, ir::Value>);
 
 impl CheckedObject {
-    pub(super) fn storage_len(self) -> usize { self.0.storage_len }
+    /// The proof of a layout a staged read established.
+    pub(super) fn of(layout: Layout<ir::Value, ir::Value>) -> Self { Self(layout) }
 
     /// A flat store can reuse the range proof; packed writes use the VM's
     /// narrow-value encoder and layout-preserving barrier helper instead.
@@ -475,35 +475,15 @@ impl CheckedObject {
             i64::from(slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64))
     }
 
-    /// The caller proves receiver identity and exact shape before this operation; `inline`
-    /// is the record's inline-storage bits (`ObjectRecord::header`), `base` the arena's.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn prove(
-        builder: &mut FunctionBuilder<'_>,
-        record: ir::Value,
-        inline: ir::Value,
-        base: ir::Value,
-        plan: NativeFieldLoad,
-        access: PackedAccess,
-        miss: ir::Block,
-    ) -> Option<Self> {
-        if !plan.valid() { return None; }
-        let mut stage = Emit { builder, property_values: Some(base) };
-        crate::staged::own_layout(&mut stage, record, inline, Form::of(plan.storage, plan.storage_len),
-            plan.storage_len, access, miss).map(Self)
-    }
-
     /// The projection of the record `record` whose `storage_len` values the arena at `base` holds
     /// behind its extras (`staged::arena_extras_layout`), as a global object by name does: its
     /// shape is held by a dependency, so only the representation is tested.
     pub(super) fn prove_arena_extras(builder: &mut FunctionBuilder<'_>, record: ir::Value, inline: ir::Value,
         base: ir::Value, storage_len: usize, miss: ir::Block) -> Option<Self> {
-        let mut stage = Emit { builder, property_values: Some(base) };
+        let mut stage = Emit { builder, property_values: Some(base), gate: None };
         crate::staged::arena_extras_layout(&mut stage, record, inline, storage_len, miss).map(Self)
     }
 
-    /// Read fresh contents using only the established layout and slot bound.
-    pub(super) fn read(self, builder: &mut FunctionBuilder<'_>, slot: u16) -> ir::Value {
-        crate::staged::read_slot(&mut Emit { builder, property_values: None }, self.0, slot)
-    }
+    /// The layout this proof carries, for a staged read of fresh contents through it.
+    pub(super) fn layout(self) -> Layout<ir::Value, ir::Value> { self.0 }
 }

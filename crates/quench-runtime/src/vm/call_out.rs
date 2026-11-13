@@ -236,6 +236,12 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
 
 impl<H: Host> GlobalFrame<Concrete> for HostFrame<'_, H> {}
 
+impl<H: Host> crate::staged::PropertyFrame<Concrete> for HostFrame<'_, H> {
+    type Plans = crate::staged::NoPlans;
+
+    fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
+}
+
 impl<H: Host> NumericFrame<Concrete> for HostFrame<'_, H> {
     fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 {
         unreachable!("a call-out row has no numeric operand")

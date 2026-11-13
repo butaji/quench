@@ -104,6 +104,12 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 
 impl<const ACC: u8> crate::staged::GlobalFrame<Concrete> for LaneFrame<ACC> {}
 
+impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
+    type Plans = crate::staged::NoPlans;
+
+    fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
+}
+
 impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
         let register = operand.register_index().expect("a staged numeric operand is a register");

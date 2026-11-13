@@ -90,14 +90,23 @@ impl<W, P> Operation<W, P> {
     /// Effects of the field, element and allocation operations.
     const fn memory_effects(&self) -> Option<Effects> {
         Some(match self {
-            Self::ReadField { .. } => Effects { reads: RegionSet::of(Region::ObjectSlots).with(Region::ShapeWord)
-                .with(Region::Records).with(Region::Payload), ..Effects::NONE },
-            Self::WriteField { .. } => Effects { writes: RegionSet::of(Region::ObjectSlots).with(Region::Payload), ..Effects::NONE },
             Self::IndexRead { .. } | Self::TypedIndexRead { .. } => Effects::reads(Region::Elements),
             Self::IndexWrite { .. } | Self::TypedIndexWrite { .. } => Effects::writes(Region::Elements),
             Self::MakeObject { .. } | Self::MakeArray { .. } | Self::MakeConstArray { .. } | Self::MakeObjectPair { .. } => Effects {
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots).with(Region::Records)
                 .with(Region::Payload), may_alloc: true, ..Effects::NONE },
+            _ => return self.property_effects(),
+        })
+    }
+
+    /// Effects of the property operations: a plan's reads and stores touch object slots and
+    /// shapes; a host callout may run guest code (a getter, a proxy trap) or reshape objects.
+    const fn property_effects(&self) -> Option<Effects> {
+        Some(match self {
+            Self::GetField { .. } => Effects { reads: RegionSet::of(Region::ObjectSlots).with(Region::ShapeWord)
+                .with(Region::Records).with(Region::Payload), may_call_js: true, may_throw: true, ..Effects::NONE },
+            Self::SetField { .. } | Self::StoreField { .. } | Self::FieldAdd { .. } | Self::Delete { .. } => Effects::ANY,
+            Self::FieldGetHost { .. } | Self::IndexGetHost { .. } => Effects::ANY,
             _ => return None,
         })
     }

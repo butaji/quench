@@ -104,7 +104,7 @@ impl Inline {
 
     /// The operation on `numbers`: a Float64 value; `Imul` is lowered by the caller.
     fn emit(self, builder: &mut FunctionBuilder<'_>, numbers: &[ir::Value]) -> ir::Value {
-        let mut stage = super::super::object_slots::Emit { builder, property_values: None };
+        let mut stage = super::super::object_slots::emit(builder);
         match (self, numbers) {
             (Self::Unary(operation), &[value]) => crate::staged::math::unary(&mut stage, operation, value),
             (Self::Extreme(maximum), &[left, right]) => crate::staged::math::extreme(&mut stage, maximum, left, right),
@@ -171,7 +171,7 @@ impl Lowering<'_, '_> {
         let result = instruction.result_register();
         if let Inline::Imul = inline {
             let [left, right] = [numbers[0], numbers[1]].map(|number| self.number_to_int32(number, exit));
-            let mut stage = super::super::object_slots::Emit { builder: &mut self.builder, property_values: None };
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
             let product = crate::staged::math::multiply(&mut stage, left, right);
             self.set_int(state, result, product);
         } else {

@@ -7,7 +7,8 @@ use super::{BindingTime, Fact, Proof, Projection, RegisterFact, Representation, 
 use crate::bytecode::Register;
 use cranelift_codegen::ir;
 use crate::Value;
-use cranelift_codegen::ir::{types, InstBuilder, MemFlagsData, condcodes::IntCC};
+use cranelift_codegen::ir::{types, InstBuilder, condcodes::IntCC};
+use crate::vm::compiled::regions;
 
 /// A fault-polling body records its poll instruction; any other leaves at the miss edge when
 /// the flag is set.
@@ -50,7 +51,7 @@ pub(in super::super) fn safepoint_parts(builder: &mut cranelift_frontend::Functi
     polls: &mut smallvec::SmallVec<[cranelift_codegen::ir::Inst; super::super::INLINE_EFFECT_EDGES]>,
     proof: EmitProof) -> Option<()> {
     let EmitProof::Safepoint { interrupt, miss, fault_poll } = proof else { return None };
-    let requested = builder.ins().atomic_load(types::I8, MemFlagsData::trusted(), interrupt);
+    let requested = builder.ins().atomic_load(types::I8, regions::dispatch(), interrupt);
     if fault_poll {
         let cranelift_codegen::ir::ValueDef::Result(inst, _) = builder.func.dfg.value_def(requested) else { return None };
         polls.push(inst);
@@ -88,7 +89,7 @@ pub(super) fn finish_allocation(stage: &mut Emit<'_, '_>, frame: &mut EmitFrame<
 }
 
 /// The VM's field-store hit (`LaneHelper::FieldSet`): its false answer leaves at the miss edge.
-pub(super) fn field_store_miss(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value,
+pub(in super::super) fn field_store_miss(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value,
     atom: u32, site: u16, value: ir::Value, proof: EmitProof) -> Option<()> {
     let EmitProof::FieldStoreMiss { miss } = proof else { return None };
     let payload = frame.payload;
@@ -99,6 +100,35 @@ pub(super) fn field_store_miss(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '
     let ok = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
     emit_js_guard(stage.builder, ok, miss);
     Some(())
+}
+
+/// The word `(atom << 16) | site` the field helpers take.
+fn atom_site_word(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, atom: u32, site: u16) -> ir::Value {
+    if !frame.helpers.links() { return immediate(stage, (u64::from(atom) << u16::BITS | u64::from(site)) as i64); }
+    let atom = atom_word(frame, stage, atom);
+    crate::vm::jit_backend::symbol_words::atom_site_word(stage.builder, atom, site)
+}
+
+/// The VM's cached read of `atom` of `object` through `site` (`LaneHelper::FieldGet`): a
+/// DELETED answer leaves at `miss`.
+pub(in super::super) fn field_get_host(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32,
+    site: u16, miss: ir::Block) -> ir::Value {
+    let packed = atom_site_word(frame, stage, atom, site);
+    let get = frame.helpers.address(&mut stage.builder, LaneHelper::FieldGet);
+    let value = emit_lane_helper_call(stage.builder, frame.payload, get, &[object, packed]);
+    guard_word(frame, stage, value, IntCC::NotEqual, Value::DELETED, miss);
+    value
+}
+
+/// The VM's own, polymorphic and adding store entries (`LaneHelper::FieldAdd`): a false
+/// answer leaves at `miss`.
+pub(in super::super) fn field_add(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32,
+    site: u16, value: ir::Value, miss: ir::Block) {
+    let write = atom_site_word(frame, stage, atom, site);
+    let add = frame.helpers.address(&mut stage.builder, LaneHelper::FieldAdd);
+    let stored = emit_lane_helper_call(stage.builder, frame.payload, add, &[frame.payload, object, write, value]);
+    let hit = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
+    emit_js_guard(stage.builder, hit, miss);
 }
 
 /// The lane's own global-name read word (`LaneHelper::GlobalGet`): `Value::DELETED` where it misses.

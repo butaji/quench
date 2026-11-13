@@ -85,6 +85,64 @@ fn object_shape_proofs_survive_verified_control_flow_edges() {
     assert_eq!(shapes, 2, "the CFG must carry the proven shape:\n{native}");
 }
 
+/// The loads of the object mark blocks (the store barrier's test) in the lowering of
+/// `source`'s `write`, whose one store site folds an own slot of type `slot`.
+fn barrier_tests(source: &str, slot: Type) -> usize {
+    let program = crate::Engine::specialize(source, "store-barrier.js").unwrap();
+    let function = program.function(1);
+    let fields = flat_table(function.instructions().filter(|instruction| instruction.op().is_set_field())
+        .map(|instruction| (usize::from(instruction.cache_site_index()), vec![NativeFieldLoad {
+            shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: slot, inherited: None, function_shape: false,
+        }])));
+    let isa = super::super::super::jit_backend::target_isa().unwrap();
+    let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
+    let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
+        &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[],
+        Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
+    let native = region.function;
+    native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+        .filter(|instruction| matches!(native.dfg.insts[*instruction], ir::InstructionData::Load { offset, .. }
+            if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, object_mark_blocks) as i32)).count()
+}
+
+#[test]
+fn a_number_store_emits_no_barrier_and_a_heap_value_store_emits_one() {
+    assert_eq!(barrier_tests("function write(o) { o.value=1; }", Type::INT32), 0, "an int32 fact folds the barrier away");
+    assert_eq!(barrier_tests("function write(o, v) { o.value=v; }", Type::ANY), 1, "an unknown value is tested once");
+}
+
+/// The shape tests (an int32 shape word compared for equality) of the lowering of `source`'s
+/// `subject`, whose sites read `names` as own slots of one shape.
+fn shape_tests(source: &str, names: &[&str]) -> usize {
+    let program = crate::Engine::specialize(source, "shape-tests.js").unwrap();
+    let function = program.function(1);
+    let fields = flat_table(function.instructions().filter_map(|instruction| {
+        if instruction.op().class().eq(Class::GetField)
+            && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
+            && let Some(slot) = names.iter().position(|name| *name == &program.atoms[atom as usize]) {
+            Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: names.len(),
+                storage: None, ty: Type::ANY, inherited: None, function_shape: false }]))
+        } else { None }
+    }));
+    let isa = super::super::super::jit_backend::target_isa().unwrap();
+    let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
+    let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
+        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense).unwrap();
+    let native = region.function;
+    native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+        .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::IntCompare { cond: IntCC::Equal, args, .. }
+            if native.dfg.value_type(args[0]) == types::I32)).count()
+}
+
+#[test]
+fn a_shape_the_owner_already_proved_is_not_tested_again() {
+    let names = ["left", "right"];
+    let once = shape_tests("function subject(o) { return o.left; }", &names);
+    let twice = shape_tests("function subject(o) { return o.left + o.right; }", &names);
+    assert!(once > 0, "the first read tests the shape");
+    assert_eq!(twice, once, "the second read of the same object tests nothing");
+}
+
 #[test]
 fn own_field_reads_take_no_arena_bound() {
     let program = crate::Engine::specialize(

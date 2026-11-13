@@ -7,6 +7,7 @@ use super::object::{arena_run, inline_storage, plain_payload};
 use super::region::Region;
 use super::Stage;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+use crate::typed_ir::Type;
 
 /// The payload word of the record at `record` (id `record_id`) once a store of `value` may
 /// proceed: its exact shape is `shape`, the store gate admits the write and its values are
@@ -18,8 +19,26 @@ pub(crate) fn admitted_payload<S: Stage>(stage: &mut S, record: S::Word, record_
     let shape = stage.site(u64::from(shape));
     let same = stage.eq_imm(exact, shape);
     stage.guard(same, miss)?;
+    gated_payload(stage, record, record_id, (value, Type::ANY), miss)
+}
+
+/// Continues where a store of `value`, which the frame proved of type `fact`, into record
+/// `record_id` needs no barrier log. An immediate type (`Type::IMMEDIATE`) names no heap
+/// record, so the decision folds at specialization and no test is made; any other value asks
+/// the stage's gate.
+#[inline(always)]
+pub(crate) fn gate_open<S: Stage>(stage: &mut S, record_id: S::Word, (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
+    if fact.is_subtype(Type::IMMEDIATE) { return Some(()); }
     let open = stage.store_gate(record_id, value);
-    stage.guard(open, miss)?;
+    stage.guard(open, miss)
+}
+
+/// The payload word of the record at `record` once the gate admits `value` (of `fact`) and its
+/// values are plain (no extras); the exact shape is the caller's proof (`property_write::in_place`).
+#[inline(always)]
+pub(crate) fn gated_payload<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, value: (S::Word, Type),
+    miss: S::Miss) -> Option<S::Word> {
+    gate_open(stage, record_id, value, miss)?;
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;

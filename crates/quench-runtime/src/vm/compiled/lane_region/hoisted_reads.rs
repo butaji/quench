@@ -5,7 +5,7 @@ use super::*;
 impl Lowering<'_, '_> {
     /// `instruction`, whose value `read` holds since the loop's preheader: its register
     /// takes the held value and facts, and the receiver the facts the read proved.
-    pub(super) fn hoisted_read(&mut self, state: &mut State, instruction: WideInstruction, read: LoopRead) {
+    pub(super) fn hoisted_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, read: LoopRead) {
         let LoopRead { value: variable, ty, representation, receiver, header } = read;
         if let Some(receiver) = receiver {
             prove_receiver(state, instruction, receiver, header);
@@ -18,15 +18,22 @@ impl Lowering<'_, '_> {
             self.native += 1;
             return;
         }
-        let value = if representation == Representation::Int32 { int_tagged(&mut self.builder, raw) } else { raw };
         let destination = instruction.result_register();
-        if instruction.op().class().eq(Class::GetField)
-            && let Some(FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup() {
-            #[cfg(test)]
-            record_hoisted_field(cache_site, representation);
-            #[cfg(not(test))] let _ = cache_site;
-            state.proofs.fields.push(FieldValue { owner: base.register_index(), atom, value, ty });
-        }
+        let value = match instruction.field_lookup() {
+            Some(lookup @ FieldLookup::Atom { atom, base, cache_site }) if instruction.op().class().eq(Class::GetField) => {
+                let exit = self.guard_exit(state, pc as u32);
+                let held = HeldRead { hoisted: Some(read), ..HeldRead::default() };
+                let value = self.field_value(state, (base, lookup), &[], held, exit)
+                    .expect("a hoisted read answers from its variable");
+                #[cfg(test)]
+                record_hoisted_field(cache_site, representation);
+                #[cfg(not(test))] let _ = cache_site;
+                state.proofs.fields.push(FieldValue { owner: base.register_index(), atom, value, ty });
+                value
+            }
+            _ if representation == Representation::Int32 => int_tagged(&mut self.builder, raw),
+            _ => raw,
+        };
         self.define(state, destination, value, RegisterFact::definition(ty, Representation::Tagged));
         if ty == Type::INT32 {
             let int = if representation == Representation::Int32 { raw } else { self.ins().ireduce(types::I32, value) };
@@ -43,7 +50,7 @@ fn prove_receiver(state: &mut State, instruction: WideInstruction, (owner, ty): 
         _ => owner,
     };
     let fact = &mut state.values[usize::from(owner)];
-    // An unboxed register has no tagged view to keep (`Lowering::refine_owner`).
+    // An unboxed register has no tagged view to keep (`headers::object_header`).
     if fact.tagged.current() { *fact = RegisterFact { tagged: fact.tagged, ..RegisterFact::definition(ty, Representation::Tagged) }; }
     if let Some(header) = header {
         state.proofs.headers[usize::from(owner)] = Some(header);

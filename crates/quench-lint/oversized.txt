@@ -2822,7 +2822,6 @@ function-lines crates/quench-runtime/src/vm/compiled/facts.rs::analyze 59
 function-lines crates/quench-runtime/src/vm/compiled/facts.rs::transfer 68
 function-lines crates/quench-runtime/src/vm/compiled/guard_aarch64.rs::tests::fault_recovery_preserves_all_callee_saved_words_and_vectors 42
 function-lines crates/quench-runtime/src/vm/compiled/guard_aarch64.rs::tests::unrelated_signals_reach_the_previous_handlers 65
-function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::base_field_read 43
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::binary 198
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::entry_facts 199
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::equality 82

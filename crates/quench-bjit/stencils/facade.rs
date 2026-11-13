@@ -27,6 +27,9 @@ pub(crate) mod typed_ir {
     pub(crate) struct Type;
     impl Type {
         pub(crate) const ANY: Self = Self;
+        pub(crate) const IMMEDIATE: Self = Self;
+        /// A stencil proves no subtype: every gate is the stage's.
+        pub(crate) const fn is_subtype(self, _of: Self) -> bool { false }
     }
 }
 

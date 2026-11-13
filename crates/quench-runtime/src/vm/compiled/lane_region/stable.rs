@@ -2,6 +2,7 @@
 //! invalidation points where it learns that one changed.
 
 use super::*;
+use crate::vm::compiled::regions;
 
 /// The Stable facts a region's code folded (`typed_ir::BindingTime::Stable`), each the subject
 /// of a code dependency its publication takes (`ProgramStore::publish_lane_method`).
@@ -26,7 +27,7 @@ pub(crate) struct StableFacts {
 #[derive(Default)]
 pub(super) struct StableUses {
     /// Holder shapes whose prototypes' values the code took as constants.
-    holders: BTreeSet<u32>,
+    pub(super) holders: BTreeSet<u32>,
     /// Atoms it stores directly because no method cache named them.
     atoms: BTreeSet<Atom>,
     /// Global cells whose values the code took as constants.
@@ -43,7 +44,7 @@ pub(super) struct StableUses {
     /// Loops, likewise, entered only through forward edges that read the invalidation word, whose
     /// bodies change no Stable fact's subject (`keeps_stable_facts`): their blocks hold every
     /// Stable fact, which a change made elsewhere retires before the loop is entered again.
-    stable_loops: Vec<(usize, usize)>,
+    pub(super) stable_loops: Vec<(usize, usize)>,
     /// The PC a run of the body starts at.
     pub(super) start: usize,
 }
@@ -56,6 +57,41 @@ impl StableUses {
             layouts: std::mem::take(&mut self.layouts).into_iter().collect(),
             slots: std::mem::take(&mut self.slots).into_iter().collect() }
     }
+}
+
+impl StableHold<'_> {
+    /// Holds the values of prototypes of exact shape `holder` from the instruction at `at`: an
+    /// invalidation point unless the block or loop holds every Stable fact already
+    /// (`Lowering::hold_stable`). Nothing where the code takes no dependencies on the VM.
+    pub(super) fn hold_holder(&mut self, (builder, helpers): (&mut FunctionBuilder<'_>, LaneHelpers),
+        state: &mut State, exit: ir::Block, holder: u32) -> Option<()> {
+        let online = self.online?;
+        let held = state.proofs.stable || self.loops.iter().any(|(header, end)| (*header..=*end).contains(&self.at));
+        if !held { read_invalidation_word(builder, helpers, online, state, exit); }
+        self.holders.insert(holder);
+        Some(())
+    }
+}
+
+/// The code's invalidation word, as it is now (`code_dependencies::Invalidation`): its address
+/// for a live lowering, a symbol the loader resolves for a linking one.
+fn invalidation_word(builder: &mut FunctionBuilder<'_>, helpers: LaneHelpers, online: OnlineFacts<'_>) -> ir::Value {
+    let address = if helpers.links() {
+        crate::vm::jit_backend::symbol_address(builder, types::I64, RelocKind::Invalidation as u32, 0)
+    } else {
+        builder.ins().iconst(types::I64, online.invalidation as i64)
+    };
+    builder.ins().load(types::I64, regions::invalidation(), address, 0)
+}
+
+/// The invalidation point: the word read once, leaving through `exit` where a change retired
+/// the code; the block then holds every Stable fact until a helper that may change one.
+fn read_invalidation_word(builder: &mut FunctionBuilder<'_>, helpers: LaneHelpers, online: OnlineFacts<'_>,
+    state: &mut State, exit: ir::Block) {
+    let invalidated = invalidation_word(builder, helpers, online);
+    let held = builder.ins().icmp_imm_u(IntCC::Equal, invalidated, 0);
+    emit_js_guard(builder, held, exit);
+    state.proofs.stable = true;
 }
 
 impl Lowering<'_, '_> {
@@ -81,12 +117,6 @@ impl Lowering<'_, '_> {
         self.word_const(word as i64)
     }
 
-    /// The code's invalidation word, as it is now (`code_dependencies::Invalidation`).
-    fn invalidation_word(&mut self, online: OnlineFacts<'_>) -> ir::Value {
-        let address = self.reloc(RelocKind::Invalidation, 0, online.invalidation as u64);
-        self.word_load(address, 0)
-    }
-
     /// Holds every Stable fact the code folded from here to the block's next helper that may
     /// change one: an invalidation point, which reads the word once and leaves through `exit`
     /// where a change retired the code (Execution laws 2: the change triggers, a use checks
@@ -101,17 +131,14 @@ impl Lowering<'_, '_> {
     /// The invalidation point of `hold_stable`, made here.
     pub(super) fn read_invalidation(&mut self, state: &mut State, exit: ir::Block) {
         let online = self.vm.online.expect("only a division with Stable facts reads the word");
-        let invalidated = self.invalidation_word(online);
-        let held = self.word_cmp_imm(IntCC::Equal, invalidated, 0);
-        emit_js_guard(&mut self.builder, held, exit);
-        state.proofs.stable = true;
+        read_invalidation_word(&mut self.builder, self.helpers, online, state, exit);
     }
-
 
     /// Holds the values of prototypes of exact shape `holder` (`hold_stable`).
     pub(super) fn hold_holder(&mut self, state: &mut State, exit: ir::Block, holder: u32) {
-        self.hold_stable(state, exit);
-        self.stable.holders.insert(holder);
+        let mut hold = StableHold { holders: &mut self.stable.holders, loops: &self.stable.stable_loops,
+            online: self.vm.online, at: self.at };
+        hold.hold_holder((&mut self.builder, self.helpers), state, exit, holder).expect("only a division with Stable facts holds a prototype");
     }
 
     /// Holds the value of global cell `fact` (`hold_stable`), read from the global object
@@ -148,7 +175,7 @@ impl Lowering<'_, '_> {
     /// The realm test of `prove_realm`, made here.
     pub(super) fn test_realm(&mut self, state: &mut State, exit: ir::Block, (global, realm_offset): (Value, i32)) {
         let vm = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, vm));
-        let active = self.word_load(vm, realm_offset);
+        let active = self.ins().load(types::I64, regions::dispatch(), vm, realm_offset);
         let same = self.word_cmp_imm(IntCC::Equal, active, global.to_bits() as i64);
         emit_js_guard(&mut self.builder, same, exit);
         state.proofs.realm = true;
@@ -160,7 +187,7 @@ impl Lowering<'_, '_> {
     pub(super) fn store_held_unnamed(&mut self, atom: Atom, specialized: ir::Value) -> Option<ir::Value> {
         let online = self.vm.online.filter(|online| !online.names(atom))?;
         self.stable.atoms.insert(atom);
-        let invalidated = self.invalidation_word(online);
+        let invalidated = invalidation_word(&mut self.builder, self.helpers, online);
         let held = self.word_cmp_imm(IntCC::Equal, invalidated, 0);
         Some(self.builder.ins().band(specialized, held))
     }

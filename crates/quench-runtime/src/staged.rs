@@ -14,7 +14,7 @@
 //! (`docs/v2/specialization.md`). `staged_coverage` in this module's tests keeps hand-written
 //! decodes of the same layouts from reappearing elsewhere.
 
-use crate::bytecode::{Op, Operand, Register, WideInstruction};
+use crate::bytecode::{FieldBase, FieldLookup, Op, Operand, Register, WideInstruction};
 use crate::typed_ir::Type;
 
 mod concrete;
@@ -27,6 +27,7 @@ pub(crate) mod division;
 pub(crate) mod math;
 mod names;
 mod callout;
+mod admission;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::CallOut;
@@ -47,6 +48,9 @@ pub(crate) mod construct;
 pub(crate) mod protocol;
 pub(crate) use protocol::{CallOperation, Invocation, WindowFill};
 pub(crate) mod plan_fields;
+pub(crate) mod property;
+mod property_write;
+pub(crate) use property::{NoPlans, PropertyFrame};
 pub(crate) mod value;
 mod steps;
 mod control;
@@ -61,8 +65,7 @@ pub(crate) use effects::{CallTarget, Effects, Region, RegionSet};
 #[allow(unused_imports)]
 pub(crate) use region::Access;
 pub(crate) use ic::concrete_own_field_hit;
-pub(crate) use object::{Form, Layout, PackedAccess, Slots, concrete_own_read,
-    arena_extras_layout, own_layout, read_slot};
+pub(crate) use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
 
 mod stage;
 pub(crate) use stage::{Stage, Table};
@@ -123,20 +126,6 @@ pub(crate) trait Frame<S: Stage> {
 
     /// `register`'s value from `constant`, with the fact the stage keeps of it.
     fn constant(&mut self, stage: &mut S, constant: Constant) -> (S::Word, Self::Fact);
-
-    /// The proven slot `slot` of `base`'s object, with the fact the read proves; `None` where
-    /// the frame has no heap or the slot is not proved, leaving the instruction to the host.
-    #[inline(always)]
-    fn field_read(&mut self, _stage: &mut S, _base: Register, _slot: u16, _ty: Type, _proof: S::Proof) -> Option<(S::Word, Self::Fact)> {
-        None
-    }
-
-    /// Write `value` to the proven slot; `None` where the frame has no heap or the slot is
-    /// not writable, leaving the instruction to the host.
-    #[inline(always)]
-    fn field_write(&mut self, _stage: &mut S, _base: Register, _slot: u16, _ty: Type, _value: S::Word, _proof: S::Proof) -> Option<()> {
-        None
-    }
 
     /// The dense array element at `index`, under the proof; a hole, a miss or an index past
     /// the view leaves `None` to the caller's cold path.
@@ -290,10 +279,6 @@ pub(crate) enum Operation<W, P> {
     /// Define `destination` with the `typeof` name index (int32) of register `source`'s value
     /// where its own word decides it; a heap value leaves at the frame's miss edge.
     TypeofIndex { destination: Register, source: Register },
-    /// The proven slot `slot` of `base`'s object, under `proof`, as a value (`Frame::field_read`).
-    ReadField { base: Register, slot: u16, ty: Type, proof: P },
-    /// Write `value` to the proven slot `slot` of `base`'s object under `proof`.
-    WriteField { base: Register, slot: u16, ty: Type, value: W, proof: P },
     /// A dense array element at `index`, under `proof`; a hole or miss leaves `Unresolved`.
     IndexRead { index: W, proof: P },
     /// Store `value` at dense array element `index`, under `proof`.
@@ -354,7 +339,28 @@ pub(crate) enum Operation<W, P> {
     /// at the jump target once none is left.
     ForInNext { destination: Register, state: Register },
     /// The VM field-store helper for `object.atom = value` through cache `site`.
+    #[cfg_attr(not(test), allow(dead_code))] // no tier builds it until the call-out rows land
     FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
+    /// The value `base.name` reads through `lookup`'s plan (`property::read_with`); the tier
+    /// defines the result register.
+    GetField { base: FieldBase, lookup: FieldLookup },
+    /// `base.atom = value` through cache `site`'s store plan (`property_write::set_field`);
+    /// `base` is `this` for `None`.
+    SetField { value: Register, base: Option<Register>, atom: u32, site: u16 },
+    /// `base.atom = value` of a word no register names, of type `fact`, through cache site
+    /// `site`'s store plan (`property_write::store_word`); `base` is `this` for `None`.
+    StoreField { base: Option<Register>, value: W, fact: Type, atom: u32, site: u16 },
+    /// The VM's read of `atom` of `object`, a value no register names, through `site`
+    /// (`PropertyFrame::field_probe`).
+    FieldGetHost { object: W, atom: u32, site: u16 },
+    /// The VM's adding store of `value` to `atom` of `object` (`PropertyFrame::field_add`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    FieldAdd { object: W, atom: u32, site: u16, value: W },
+    /// `delete base[key]`, throwing on a refusal where `strict` (`PropertyFrame::delete_property`).
+    Delete { base: Register, key: Register, strict: bool },
+    /// `base[key]` past the dense and typed element reads (`PropertyFrame::index_get_host`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    IndexGetHost { base: W, key: W },
     /// A step of the call protocol: admission, `this` binding, the callee's window, completion
     /// (`protocol`).
     Call(CallOperation<W>),
@@ -379,11 +385,38 @@ impl<W, P> Operation<W, P> {
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
             Op::Binary | Op::ToPropertyKey => return Self::decode_generic(instruction),
-            Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::LoadCapture | Op::Return => return Self::decode_value(instruction),
+            Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::IncDec | Op::LoadCapture | Op::Return => return Self::decode_value(instruction),
             Op::Call | Op::CallForwardingArguments | Op::Construct =>
                 Self::Call(CallOperation::Site(Invocation::of(instruction)?)),
+            Op::GetField | Op::Delete => return Self::decode_property(instruction),
+            op if op.is_field_store() => return Self::decode_property(instruction),
             _ => return names::decode(instruction),
         })
+    }
+
+    /// The property operations of `decode`: a plain named read, a named store and `delete`.
+    fn decode_property(instruction: WideInstruction) -> Option<Self> {
+        match instruction.op() {
+            Op::GetField => Self::decode_get_field(instruction),
+            Op::Delete => Some(Self::Delete { base: instruction.register_b(), key: instruction.register_c(),
+                strict: instruction.boolean_flag()? }),
+            op if op.is_field_store() => Some(Self::SetField { value: instruction.register_a(),
+                base: instruction.field_store_register(), atom: instruction.atom_index(),
+                site: instruction.cache_site_index() }),
+            _ => None,
+        }
+    }
+
+    /// A named read that completes no frame and writes no `this`; a nested lookup's base is the
+    /// tier's own (`FieldBase::NESTED`).
+    fn decode_get_field(instruction: WideInstruction) -> Option<Self> {
+        if instruction.result_flags() != 0 { return None; }
+        let lookup = instruction.field_lookup()?;
+        let base = match lookup {
+            FieldLookup::Atom { base, .. } => base,
+            FieldLookup::Site(_) => FieldBase(FieldBase::NESTED),
+        };
+        Some(Self::GetField { base, lookup })
     }
 
     /// The value-level operations of `decode`.
@@ -399,6 +432,9 @@ impl<W, P> Operation<W, P> {
                 register: instruction.register_b() },
             Op::ToNumeric => Self::Number(NumberOperation::ToNumeric {
                 destination: instruction.result_register(), source: instruction.register_b() }),
+            Op::IncDec if instruction.numeric_local_target().is_none() => Self::Number(NumberOperation::IncDec {
+                destination: instruction.result_register(), source: instruction.register_b(),
+                decrement: instruction.boolean_flag()?, overflow: Overflow::Exit }),
             Op::Unary => return Self::decode_unary(instruction),
             _ => return None,
         })
@@ -456,6 +492,8 @@ pub(crate) enum Step<W, C> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod property_tests;
 #[cfg(test)]
 mod coverage_tests;
 #[cfg(test)]

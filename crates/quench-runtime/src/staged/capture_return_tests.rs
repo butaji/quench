@@ -40,6 +40,12 @@ impl Frame<Concrete> for ScopeFrame {
     }
 }
 
+impl crate::staged::PropertyFrame<Concrete> for ScopeFrame {
+    type Plans = crate::staged::NoPlans;
+
+    fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
+}
+
 impl GlobalFrame<Concrete> for ScopeFrame {}
 
 impl NumericFrame<Concrete> for ScopeFrame {

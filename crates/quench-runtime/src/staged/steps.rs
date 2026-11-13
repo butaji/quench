@@ -10,6 +10,9 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::JumpIf { register, taken } => super::heap::jump_if(stage, frame, register, taken),
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         Operation::Call(operation) => super::protocol::step(stage, frame.miss(), operation),
+        property @ (Operation::GetField { .. } | Operation::SetField { .. } | Operation::StoreField { .. } | Operation::FieldGetHost { .. }
+            | Operation::FieldAdd { .. } | Operation::Delete { .. }
+            | Operation::IndexGetHost { .. }) => super::property::property_step(stage, frame, property),
         Operation::Void { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. } | Operation::Binary { .. } => super::generic::step(stage, frame, operation),
         Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
             | Operation::LogicalNot { .. } | Operation::Safepoint { .. } => register_step(stage, frame, operation),
@@ -90,15 +93,22 @@ fn local_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     }
 }
 
+/// The activation's `this` word where it holds one; an unbound `this` leaves at `miss`.
+#[inline(always)]
+pub(super) fn bound_this<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss) -> Option<S::Word> {
+    let this = frame.this(stage);
+    let bound = stage.ne_imm(this, crate::Value::DELETED.to_bits());
+    stage.guard(bound, miss)?;
+    Some(this)
+}
+
 /// The activation's `this` into `destination`, where the activation holds it.
 #[inline(always)]
 fn load_this<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
-    let this = frame.this(stage);
-    let bound = stage.ne_imm(this, crate::Value::DELETED.to_bits());
-    match stage.guard(bound, miss) {
-        Some(()) => {
+    match bound_this(stage, frame, miss) {
+        Some(this) => {
             frame.define_this(stage, destination, this);
             Step::Value(this)
         }

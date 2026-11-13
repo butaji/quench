@@ -4,6 +4,7 @@
 //! (`staged::protocol`), stepped as rows (`call_row`); the lowering owns where the words live.
 
 use super::*;
+use crate::vm::compiled::regions;
 use super::super::entry_cell::LANE_BODY_NOT_ENTERED;
 use super::direct_admission::dispatch_offset;
 use crate::staged::{CallOperation, Invocation};
@@ -17,10 +18,10 @@ impl Lowering<'_, '_> {
     /// stack takes `helper`. The caller wrote back its registers.
     pub(super) fn direct_call(&mut self, state: &mut State, site: Invocation, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
         let base = self.registers_base;
-        let held = self.word_load(base, register_offset(site.callee));
+        let held = self.word_load(regions::frame(), base, register_offset(site.callee));
         let expected = self.stable.roots.embed_heap_identity(callee.callee);
         self.call_row(state, helper, CallOperation::Callee { held, expected });
-        let receiver = self.word_load(base, register_offset(site.receiver.expect("a call has a receiver register")));
+        let receiver = self.word_load(regions::frame(), base, register_offset(site.receiver.expect("a call has a receiver register")));
         let sloppy = callee.sloppy.map(|global| self.stable.roots.embed_heap_identity(global));
         let this = self.call_row(state, helper, CallOperation::BindThis { receiver, sloppy });
         let cell = self.reloc(RelocKind::EntryCell, callee.target.function, callee.cell as u64);
@@ -37,7 +38,7 @@ impl Lowering<'_, '_> {
     /// hold, or no room takes `helper`.
     pub(super) fn direct_construct(&mut self, state: &mut State, site: Invocation, callee: &DirectCallee, helper: ir::Block, completed: ir::Block) {
         let (base, payload) = (self.registers_base, self.payload);
-        let constructor = self.word_load(base, register_offset(site.callee));
+        let constructor = self.word_load(regions::frame(), base, register_offset(site.callee));
         let expected = self.stable.roots.embed_heap_identity(callee.callee);
         self.call_row(state, helper, CallOperation::Callee { held: constructor, expected });
         let allocated = self.helper_call(LaneHelper::ConstructReceiver, &[payload, constructor]);
@@ -57,15 +58,15 @@ impl Lowering<'_, '_> {
         self.builder.set_cold_block(left);
         self.builder.set_cold_block(missed);
         let value = super::super::unforced(|| self.call_row(state, check, CallOperation::Complete { status, value: word, receiver, returned: LANE_BODY_RETURNED }));
-        self.word_store(shadow, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
-        self.word_store(value, base, register_offset(site.result));
+        self.word_store(regions::dispatch(), shadow, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
+        self.word_store(regions::frame(), value, base, register_offset(site.result));
         self.word_jump(completed, &[]);
         // The cell held the stub: nothing ran, so the call takes the helper path.
         self.builder.switch_to_block(check);
         let not_entered = self.word_cmp_imm(IntCC::Equal, status, i64::from(LANE_BODY_NOT_ENTERED));
         self.word_brif(not_entered, missed, &[], left, &[]);
         self.builder.switch_to_block(missed);
-        self.word_store(shadow, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
+        self.word_store(regions::dispatch(), shadow, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
         self.word_jump(helper, &[]);
         // A leave inside the callee stops the caller with it: the lane makes the frames'
         // activations and continues in the innermost (`dispatch_fast::lane_body_left`).
