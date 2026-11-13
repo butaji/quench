@@ -84,7 +84,11 @@ fn chain_stores<H: Host>(
     if *realm != vm.realm.globals || classes == SUPER_CHAIN_CLASSES {
         return None;
     }
-    let (program, code) = (*program, vm.programs.residual(*program)?);
+    // A class of another program than the running one builds a receiver other than the general
+    // path's in WSL (each class file its own program; JetStream's WSL reads an undefined type
+    // argument from the objects those constructions made), so its chain is left to the general
+    // path until that divergence is found.
+    let (program, code) = (*program, vm.programs.residual(*program).filter(|_| *program == vm.active_program)?);
     let body = code.function_get(*function as usize).filter(|_| code.kind != crate::bytecode::ProgramKind::Wasm)?;
     if !body.derived_constructor {
         let own = body.initializer_stores(&code.constants).or_else(|| body.only_returns_undefined(&code.constants).then_some(&[]));
