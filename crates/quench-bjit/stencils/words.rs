@@ -9,14 +9,21 @@ pub(crate) const HIGH_SHIFT: u32 = 32;
 pub(crate) const INT_HIGH: u64 = INT_TAG >> HIGH_SHIFT;
 /// Byte offset of the upper half of a tagged word.
 pub(crate) const HIGH_HALF_AT: usize = 4;
+/// The last value hole a row may name (`quench_bjit::HOLES` - 1).
+pub(crate) const LAST_HOLE: u8 = 4;
 /// The holes of the first and second operand.
 pub(crate) const HOLE_A: u8 = 1;
 pub(crate) const HOLE_B: u8 = 2;
+/// The value holes after the operands' (`HOLE_V0`..`HOLE_V4` are 0..=`LAST_HOLE`).
+pub(crate) const HOLE_THIRD: u8 = 2;
+pub(crate) const HOLE_FOURTH: u8 = 3;
 
 unsafe extern "C" {
     pub(crate) static HOLE_V0: u8;
     static HOLE_V1: u8;
     static HOLE_V2: u8;
+    static HOLE_V3: u8;
+    static HOLE_V4: u8;
 }
 
 /// The frame, the context and the pinned registers: ints and doubles.
@@ -34,29 +41,83 @@ pub(crate) enum Out {
     Exit(S),
 }
 
-/// The value of hole `H` as a 32-bit field or a displacement.
-#[inline(always)]
-pub(crate) fn hole<const H: u8>() -> usize {
-    match H {
-        0 => &raw const HOLE_V0 as usize,
-        1 => &raw const HOLE_V1 as usize,
-        _ => &raw const HOLE_V2 as usize,
-    }
+/// A 64-bit value hole as the form the target patches (the relocation `build.rs` reads):
+/// x86-64 a `movabs` immediate (`R_X86_64_64`); AArch64 ELF four `movz`/`movk` groups
+/// (`R_AARCH64_MOVW_UABS_G0_NC`..`G3`); AArch64 Mach-O, which has no `MOVW` relocation, a literal
+/// word the code loads and branches over (`ARM64_RELOC_UNSIGNED`).
+#[cfg(target_arch = "x86_64")]
+macro_rules! hole_word {
+    ($sym:ident) => {{
+        let v: u64;
+        core::arch::asm!("movabs {v}, offset {h}", v = out(reg) v, h = sym $sym, options(pure, nomem, nostack, preserves_flags));
+        v
+    }};
+}
+#[cfg(all(target_arch = "aarch64", not(target_vendor = "apple")))]
+macro_rules! hole_word {
+    ($sym:ident) => {{
+        let v: u64;
+        core::arch::asm!(
+            "movz {v}, #:abs_g3:{h}",
+            "movk {v}, #:abs_g2_nc:{h}",
+            "movk {v}, #:abs_g1_nc:{h}",
+            "movk {v}, #:abs_g0_nc:{h}",
+            v = out(reg) v, h = sym $sym, options(pure, nomem, nostack, preserves_flags)
+        );
+        v
+    }};
+}
+#[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
+macro_rules! hole_word {
+    ($sym:ident) => {{
+        let v: u64;
+        core::arch::asm!(
+            "ldr {v}, 2f",
+            "b 3f",
+            "2:",
+            ".quad {h}",
+            "3:",
+            v = out(reg) v, h = sym $sym, options(pure, nomem, nostack, preserves_flags)
+        );
+        v
+    }};
 }
 
 /// The value of hole `H` as a 64-bit constant (a tagged word).
 #[inline(always)]
 pub(crate) fn hole64<const H: u8>() -> u64 {
-    let v: u64;
-    // SAFETY: `movabs` of a symbol's address into a register: an R_X86_64_64 relocation.
+    const { assert!(H <= LAST_HOLE) };
+    // SAFETY: the template only materializes a symbol's value in a register.
     unsafe {
         match H {
-            0 => core::arch::asm!("movabs {v}, offset {h}", v = out(reg) v, h = sym HOLE_V0, options(pure, nomem, nostack, preserves_flags)),
-            1 => core::arch::asm!("movabs {v}, offset {h}", v = out(reg) v, h = sym HOLE_V1, options(pure, nomem, nostack, preserves_flags)),
-            _ => core::arch::asm!("movabs {v}, offset {h}", v = out(reg) v, h = sym HOLE_V2, options(pure, nomem, nostack, preserves_flags)),
+            0 => hole_word!(HOLE_V0),
+            1 => hole_word!(HOLE_V1),
+            HOLE_THIRD => hole_word!(HOLE_V2),
+            HOLE_FOURTH => hole_word!(HOLE_V3),
+            _ => hole_word!(HOLE_V4),
         }
     }
-    v
+}
+
+/// The value of hole `H` as a 32-bit field or a displacement: on x86-64 the address of the hole
+/// symbol itself (a 32-bit relocation LLVM folds into the using instruction), on AArch64 the
+/// 64-bit hole (an address would be `adrp`/`add`, which no patch can fill).
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub(crate) fn hole<const H: u8>() -> usize {
+    const { assert!(H <= LAST_HOLE) };
+    match H {
+        0 => &raw const HOLE_V0 as usize,
+        1 => &raw const HOLE_V1 as usize,
+        HOLE_THIRD => &raw const HOLE_V2 as usize,
+        HOLE_FOURTH => &raw const HOLE_V3 as usize,
+        _ => &raw const HOLE_V4 as usize,
+    }
+}
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+pub(crate) fn hole<const H: u8>() -> usize {
+    hole64::<H>() as usize
 }
 
 #[inline(always)]

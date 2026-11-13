@@ -84,6 +84,8 @@ setting! {
         OsrReject = "osr-reject",
         JitPeak = "jit-peak",
         JitDump = "jit-dump",
+        /// Per-loop residual counts of each compiled hot loop (`quench-bench --residuals`).
+        Residuals = "residuals",
         PerfMap = "perf-map",
         NameAtoms = "name-atoms",
         FieldPrimitives = "field-primitives",
@@ -108,10 +110,6 @@ setting! {
     "QUENCH_DEV", Dev {
         /// The memory-first heap policy in place of the default.
         MemoryFirst = "memory-first",
-        /// JavaScript functions promote to the general native dispatch tier.
-        JsGeneralDispatch = "js-general-dispatch",
-        /// That tier promotes once hot instead of once its entries pay for the compile.
-        JsUnpricedGeneralDispatch = "js-unpriced-general-dispatch",
         /// The lane prologue specializes declined functions into frameless lane bodies.
         JsLaneMethods = "js-lane-methods",
         /// A requested compile runs on the requesting thread and installs at once, as in tests:

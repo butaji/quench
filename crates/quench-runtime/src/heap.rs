@@ -4,9 +4,8 @@ use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueArena, ValueVec};
 use rayon::prelude::*;
 use rayon::ThreadPool;
 use rustc_hash::FxHashMap;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use rc_drop::{StoppedCellDrop, cell_rc_drop_lock};
 mod access;
 mod array_elements;
 mod dense_growth;
@@ -14,8 +13,7 @@ pub(crate) use dense_growth::dense_write_gap_limit;
 mod store_gate;
 pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod array_proofs;
-pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope};
-use array_proofs::retire_array_storage_proofs;
+pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope, retire_array_storage_proofs};
 mod cell;
 mod dependencies;
 pub(crate) use dependencies::{
@@ -38,6 +36,7 @@ mod pacing;
 mod parallel_mark; mod planned;
 mod promise_record;
 pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionPhase, PromiseRejectionState, PromiseState};
+mod rc_drop;
 mod records;
 mod root;
 mod slots;
@@ -88,6 +87,9 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) object_offset: usize,
     /// The meta bit of a frozen array.
     pub(crate) frozen_mask: u32,
+    /// The meta bits of an array whose elements may not all be added or removed: frozen, or
+    /// not extensible.
+    pub(crate) integrity_mask: u32,
 }
 
 /// The native reader's view of a function record: its own properties are the `Object` at
@@ -116,6 +118,7 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     header_owners_offset: array_elements::NATIVE_HEADER_OWNERS_OFFSET,
     object_offset: cell::NATIVE_ARRAY_OBJECT_OFFSET,
     frozen_mask: crate::value_vec::VALUE_VEC_FROZEN,
+    integrity_mask: crate::value_vec::VALUE_VEC_INTEGRITY_BITS,
 };
 
 /// Which invariants an existing-slot store must preserve. Native views cannot
@@ -284,7 +287,6 @@ const PARALLEL_MARK_MAX_THREADS: usize = 4;
 const PARALLEL_MARK_SPLIT_THRESHOLD: usize = 16;
 const PARALLEL_MARK_STACK_SIZE_BYTES: usize = 256 * 1024;
 const PARALLEL_SWEEP_SLAB_BATCH_SIZE: usize = 8;
-const RC_DROP_LOCK_STRIPES: usize = 64;
 
 /// The word and bit of slot `index` in a bit-per-slot vector (`Heap::marks`, `Heap::aged`,
 /// `Heap::remembered_marks`).
@@ -428,93 +430,6 @@ struct SweepOutput {
     swept_slots: usize,
 }
 
-static SHARED_RC_DROP_LOCK: Mutex<()> = Mutex::new(());
-static RC_DROP_LOCKS: [Mutex<()>; RC_DROP_LOCK_STRIPES] =
-    [const { Mutex::new(()) }; RC_DROP_LOCK_STRIPES];
-
-/// A dead cell moved from a sweep worker to the collector thread. Rc-bearing
-/// cells are released by that owner after the sweep batch joins; the
-/// destructor's lock is a safe fallback if a transfer cannot be completed.
-struct StoppedCellDrop(Option<Cell>);
-
-// SAFETY: a sweep worker only moves the detached Cell into this wrapper and
-// reads an Rc allocation pointer to classify it. It does not clone, inspect or
-// drop any Rc payload. The collector thread drops transferred cells after the
-// sweep batch joins; the fallback Drop path serializes worker-side destruction.
-unsafe impl Send for StoppedCellDrop {}
-
-impl StoppedCellDrop {
-    fn drop_on_owner(mut self) {
-        if let Some(cell) = self.0.take() {
-            drop(cell);
-        }
-    }
-}
-
-impl Drop for StoppedCellDrop {
-    fn drop(&mut self) {
-        let Some(cell) = self.0.take() else {
-            return;
-        };
-        let Some(lock) = cell_rc_drop_lock(&cell) else {
-            drop(cell);
-            return;
-        };
-
-        let guard = lock
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if cell_has_shared_rc_payload(&cell) {
-            drop(cell);
-            drop(guard);
-        } else {
-            drop(guard);
-            drop(cell);
-        }
-    }
-}
-
-fn cell_rc_drop_lock(cell: &Cell) -> Option<&'static Mutex<()>> {
-    match cell {
-        Cell::Array { object } => {
-            Some(&RC_DROP_LOCKS[rc_drop_lock_index(object.elements().as_ptr() as usize)])
-        }
-        Cell::ArrayBuffer { bytes, .. } => Some(if bytes.holds_external_rc() {
-            &SHARED_RC_DROP_LOCK
-        } else {
-            &RC_DROP_LOCKS[rc_drop_lock_index(bytes.as_ptr() as usize)]
-        }),
-        Cell::WasmHostFunction { signature, .. } => {
-            Some(&RC_DROP_LOCKS[rc_drop_lock_index(Rc::as_ptr(signature) as usize)])
-        }
-        Cell::Iterator { .. }
-        | Cell::WasmGc { .. }
-        | Cell::WasmGlobal { .. }
-        | Cell::WasmTable { .. }
-        | Cell::WasmTag { .. }
-        | Cell::RegExp { .. } => Some(&SHARED_RC_DROP_LOCK),
-        _ => None,
-    }
-}
-
-fn cell_has_shared_rc_payload(cell: &Cell) -> bool {
-    match cell {
-        Cell::Array { object } => object.elements().owner_count() > 1,
-        Cell::ArrayBuffer { bytes, .. } => bytes.is_shared(),
-        Cell::WasmHostFunction { signature, .. } => Rc::strong_count(signature) > 1,
-        Cell::Iterator { .. }
-        | Cell::WasmGc { .. }
-        | Cell::WasmGlobal { .. }
-        | Cell::WasmTable { .. }
-        | Cell::WasmTag { .. }
-        | Cell::RegExp { .. } => true,
-        _ => false,
-    }
-}
-
-fn rc_drop_lock_index(address: usize) -> usize {
-    (address >> 4) & (RC_DROP_LOCK_STRIPES - 1)
-}
 /// The record families `Heap::record_families` lists.
 const RECORD_FAMILIES: usize = 8;
 
@@ -685,6 +600,8 @@ pub(crate) struct Heap {
     prototypes: Vec<(Value, u32)>,
     /// The proofs that rely on prototypes' layouts, each retired when one it read changes.
     dependencies: dependencies::Dependencies,
+    /// The published code whose generated code embeds heap identities, which every collection roots.
+    folded: crate::folded_roots::FoldedRegistry,
     peak_live: usize,
     /// The last collection's emptied mark stack, the next one's root buffer: a fresh one was
     /// mapped and faulted in by every collection (dotnet-aot-wasm: 2 MB each, 95K faults).
@@ -2016,7 +1933,7 @@ impl Heap {
         self.carried_owners.clear();
         self.young.clear();
         self.young_weak.clear();
-        self.roots.clear();
+        self.roots.clear(); self.folded = Default::default(); // the discarded heap's identities root nothing
         self.sparse_arrays = None;
         // The shared unit strings name cells of the discarded heap.
         self.ascii_unit_strings = None;
@@ -2231,6 +2148,14 @@ impl Heap {
 
     /// The emptied buffer a collection's roots go into, kept from the last collection.
     pub(crate) fn take_mark_stack(&mut self) -> Vec<Value> { std::mem::take(&mut self.mark_stack) }
+
+    /// Roots `code`'s folded identities at every collection while it is published.
+    pub(crate) fn hold_folded_roots(&mut self, code: &std::rc::Rc<dyn crate::folded_roots::RootedCode>) {
+        self.folded.register(code);
+    }
+
+    /// Appends the identities every published code of this heap embeds to a collection's `roots`.
+    pub(crate) fn extend_folded_roots(&mut self, roots: &mut Vec<Value>) { self.folded.extend_roots(roots); }
 
     pub(crate) fn collect_with_object_roots(
         &mut self,

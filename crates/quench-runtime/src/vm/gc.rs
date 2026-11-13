@@ -445,6 +445,7 @@ impl<H: Host> Vm<H> {
         // collection's mark stack, which holds as many already.
         let mut roots = self.heap.take_mark_stack();
         self.programs.extend_roots(&mut roots, full, self.heap.promotion_age());
+        self.heap.extend_folded_roots(&mut roots);
         roots.extend(self.wasm_js.roots());
         roots.extend([
             self.realm.globals,

@@ -301,6 +301,7 @@ impl<H: Host> Vm<H> {
             lane_stack: _,
             execution_mode: _,
             native_execution_rejections: _,
+            js_tier_pending: _,
             #[cfg(feature = "native-execution")]
             native_program_resolver: _,
             execution_interrupt: _,
@@ -319,9 +320,7 @@ impl<H: Host> Vm<H> {
             lane_returned,
             lane_native,
             lane_native_returned,
-            active_layout: _,
-            active_constants: _,
-            active_field_entries: _,
+            active_layout: _, active_constants: _, active_field_entries: _, field_entries_epoch: _,
             active_program: _,
             profile: _,
             shapes,

@@ -24,7 +24,6 @@
     "jit"
   ],
   "jit_environment": {
-    "QUENCH_DEV": "js-general-dispatch,js-unpriced-general-dispatch",
     "QUENCH_TRACE": "js-jit"
   },
   "fixtures": [

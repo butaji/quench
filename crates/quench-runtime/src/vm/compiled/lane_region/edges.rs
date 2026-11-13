@@ -45,3 +45,10 @@ fn rotated_bodies(instructions: &[WideInstruction]) -> CompoundBitSet {
     }
     bodies
 }
+
+/// Whether no lowered instruction transfers to `start`: only the native entry reaches it, so
+/// the entry's registers, read from the lane frame, hold there.
+pub(super) fn entered_once(instructions: &[WideInstruction], start: usize, lowered: impl Fn(usize) -> bool) -> bool {
+    instructions.iter().enumerate().filter(|(pc, _)| lowered(*pc))
+        .all(|(pc, instruction)| successors(pc, *instruction).into_iter().flatten().all(|target| target != start))
+}

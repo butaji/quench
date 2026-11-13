@@ -9,6 +9,8 @@ use crate::shape::is_test;
 
 const OPCODE_OWNERS: &[&str] = &["Op", "Class"];
 const BYTECODE_OWNER: &[&str] = &["Op"];
+const CLASS_OWNER: &[&str] = &["Class"];
+const DECODER_ROW_FUNCTIONS: &[&str] = &["numeric_row", "heap_row"];
 const OPCODE_TABLE_MACRO: &str = "opcodes";
 const STAGED_OPERATION: &str = "Operation";
 const LANE_EXIT: &str = "LaneExit";
@@ -18,6 +20,7 @@ const EXIT_SUFFIXES: &[&str] = &["_EXIT", "_STATUS"];
 const FRAME_NAMES: &[&str] = &["Frame", "Activation", "ShadowFrame"];
 const FRAME_SUFFIX: &str = "Frame";
 const COMMENT_PREFIX: &str = "#";
+const UNTAGGED_FLAGS: [&str; 2] = ["MemFlagsData", "trusted"];
 
 /// The items of a module tree, nested inline modules flattened, test modules left out.
 pub fn module_items(items: &[Item]) -> Vec<&Item> {
@@ -187,11 +190,44 @@ pub fn entry_uses(file: &syn::File) -> usize {
     uses.0
 }
 
-/// The distinct row kinds (`Op::X` paths) a stencil library names.
-pub fn stencil_kinds(file: &syn::File) -> usize {
-    let mut found = PatternPaths(BYTECODE_OWNER, Vec::new());
+/// The distinct opcode classes the b-jit decoder turns into a row: the `Class::X` arms of its
+/// row functions (an arm that only rejects is not a row).
+pub fn decoder_classes(file: &syn::File) -> usize {
+    let mut arms = Arms::new(CLASS_OWNER);
+    for item in module_items(&file.items) {
+        if let Item::Fn(found) = item
+            && DECODER_ROW_FUNCTIONS.iter().any(|name| found.sig.ident == name)
+        {
+            arms.visit_item_fn(found);
+        }
+    }
+    arms.variants.len()
+}
+
+struct UntaggedFlags(usize);
+
+impl<'ast> Visit<'ast> for UntaggedFlags {
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(callee) = &*call.func {
+            let names: Vec<String> = callee.path.segments.iter().map(|segment| segment.ident.to_string()).collect();
+            self.0 += usize::from(names.ends_with(&UNTAGGED_FLAGS.map(String::from)));
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+
+    fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
+        if !is_test(&module.attrs) {
+            syn::visit::visit_item_mod(self, module);
+        }
+    }
+}
+
+/// Native memory accesses built from `MemFlagsData::trusted()`, which name no alias region
+/// (the tagged ones go through `vm/compiled/regions.rs`), outside test modules.
+pub fn untagged_memory_accesses(file: &syn::File) -> usize {
+    let mut found = UntaggedFlags(0);
     found.visit_file(file);
-    found.1.into_iter().collect::<BTreeSet<_>>().len()
+    found.0
 }
 
 #[cfg(test)]
@@ -257,7 +293,21 @@ mod tests {
     }
 
     #[test]
-    fn stencil_kinds_are_distinct_op_paths() {
-        assert_eq!(stencil_kinds(&parse("const R: &[Op] = &[Op::Add, Op::Sub, Op::Add];")), 2);
+    fn decoder_classes_are_distinct_arms_of_the_row_functions() {
+        let file = parse(
+            "fn numeric_row(i: I) { match i.class() { Class::A | Class::B => 1, _ => 2 } }
+             fn heap_row(i: I) { match i.class() { Class::B => 1, Class::C if x => 2, _ => 3 } }
+             fn reject(i: I) { match i.class() { Class::D => 1, _ => 2 } }",
+        );
+        assert_eq!(decoder_classes(&file), 3);
+    }
+
+    #[test]
+    fn untagged_accesses_are_trusted_flags_calls_outside_tests() {
+        let file = parse(
+            "fn f() { b.load(t, MemFlagsData::trusted(), a, 0); b.store(ir::MemFlagsData::trusted(), v, a, 0); regions::frame(); }
+             #[cfg(test)] mod tests { fn g() { MemFlagsData::trusted(); } }",
+        );
+        assert_eq!(untagged_memory_accesses(&file), 2);
     }
 }

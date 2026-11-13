@@ -1,6 +1,7 @@
 //! Constructions in a lane region: `new callee(...)` by the callee's construct plan.
 
 use super::*;
+use crate::vm::compiled::regions;
 
 impl Lowering<'_, '_> {
     /// `new callee(...)` by the callee's construct plan (`compiled::lane_construct`): the
@@ -50,7 +51,7 @@ impl Lowering<'_, '_> {
             let base = self.registers_base;
             for register in registers {
                 let bits = self.tagged(state, register);
-                self.ins().store(MemFlagsData::trusted(), bits, base, register_offset(register));
+                self.ins().store(regions::frame(), bits, base, register_offset(register));
             }
             return self.ins().iadd_imm_u(base, i64::from(register_offset(window.base)));
         }

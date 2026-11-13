@@ -71,6 +71,7 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) header_owners_offset: usize,
     pub(crate) object_offset: usize,
     pub(crate) frozen_mask: u32,
+    pub(crate) integrity_mask: u32,
 }
 
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
@@ -84,6 +85,7 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     header_owners_offset: 0,
     object_offset: 0,
     frozen_mask: 2147483648,
+    integrity_mask: 3221225472,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,7 +163,36 @@ pub(crate) mod words {
 /// Byte offsets of the fields of the compiled-code context (`CallContext`) and the dispatch
 /// payload (`JsStepDispatch`, behind the context's `adapter_payload`) the rows read.
 pub(crate) const CALL_CONTEXT_ADAPTER_PAYLOAD: usize = 248;
+/// The lane-call protocol, shared with the host (`quench_bjit::call_record`).
+#[path = "../src/call_record.rs"]
+pub(crate) mod call_record;
 pub(crate) const JS_STEP_LOOP_ENTRY: usize = 0;
-pub(crate) const JS_STEP_CAPTURE_VALUES: usize = 96;
-pub(crate) const JS_STEP_CAPTURE_LEN: usize = 104;
-pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = 112;
+pub(crate) const JS_STEP_CAPTURE_VALUES: usize = 80;
+pub(crate) const JS_STEP_CAPTURE_LEN: usize = 88;
+pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = 96;
+
+/// More `JsStepDispatch` fields the call rows read: the lane body's VM, residual and lane
+/// context (a helper call's first three arguments), the lane stack's free span and the shadow
+/// frames' span. Checked against the runtime by `stencil_layout_matches`.
+pub(crate) const JS_STEP_VM: usize = 184;
+pub(crate) const JS_STEP_RESIDUAL: usize = 192;
+pub(crate) const JS_STEP_LANE_CONTEXT: usize = 224;
+pub(crate) const JS_STEP_NATIVE_TOP: usize = 240;
+pub(crate) const JS_STEP_NATIVE_END: usize = 248;
+pub(crate) const JS_STEP_SHADOW_TOP: usize = 256;
+pub(crate) const JS_STEP_SHADOW_END: usize = 264;
+
+/// The entry cell's entry, recovery and body words (`EntryCell`), and the recovery space's
+/// values and activations (`LaneRecoverySpace`).
+pub(crate) const CELL_ENTRY_AT: usize = 0;
+pub(crate) const CELL_RECOVERY_AT: usize = 8;
+pub(crate) const CELL_BODY_AT: usize = 16;
+pub(crate) const RECOVERY_VALUES_AT: usize = 0;
+pub(crate) const RECOVERY_ACTIVATIONS_AT: usize = 8;
+pub(crate) const JS_STEP_OBJECT_RECORD_BASE: usize = 104;
+pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = 136;
+pub(crate) const JS_STEP_METHOD_CACHE_ATOMS: usize = 152;
+pub(crate) const JS_STEP_METHOD_CACHE_ATOM_WORDS: usize = 160;
+pub(crate) const JS_STEP_STORES_SPECIALIZED: usize = 168;
+/// Where the property arena's header (`PropertyBuffer`) keeps the address of its first value.
+pub(crate) const PROPERTY_BUFFER_BASE: usize = 0;

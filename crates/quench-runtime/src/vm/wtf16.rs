@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 mod append_buffer;
 mod short_ascii;
+pub(crate) mod native_string;
 mod concat_all;
 mod parts;
 mod payload;
@@ -111,17 +112,18 @@ const _: () = assert!(size_of::<JsString>() == size_of::<FlatUnits>());
 /// Flat code units. A string whose units are all ASCII is stored `Short` when they fit;
 /// longer ASCII text is `Ascii`, or an `AsciiSlice` of another string's `Ascii` storage.
 #[derive(Clone)]
+#[repr(u8)]
 pub(crate) enum FlatUnits {
     /// ASCII text held in the string's own allocation: most property names and tokens fit,
     /// and need no second allocation.
-    Short(ShortAscii),
-    Ascii(Rc<str>),
+    Short(ShortAscii) = native_string::TAG_SHORT,
+    Ascii(Rc<str>) = native_string::TAG_ASCII,
     /// A run of longer ASCII storage, shared instead of copied, as V8's sliced strings are:
     /// taking the rest of a scanned text costs one small record, not a copy of the rest.
     AsciiSlice(Rc<AsciiSlice>),
     /// UTF-16 units, at least one of them non-ASCII: all-ASCII text is always stored narrow
     /// (`flat_units`, `flattened`), which the regexp subject relies on (`regexp_subject`).
-    Wide(Rc<[u16]>),
+    Wide(Rc<[u16]>) = native_string::TAG_WIDE,
     /// A run of longer `Wide` storage, shared instead of copied as `AsciiSlice` shares ASCII
     /// storage. Its units may all be ASCII (the tail of a text whose only wide units lie
     /// before it), so, like `Wide`, it is never taken to be ASCII.
@@ -157,6 +159,7 @@ pub(crate) struct AsciiSlice {
 
 /// ASCII text of at most `SHORT_ASCII_CAPACITY` bytes, stored inline.
 #[derive(Clone, Copy)]
+#[repr(C)]
 pub(crate) struct ShortAscii {
     length: u8,
     bytes: [u8; SHORT_ASCII_CAPACITY],

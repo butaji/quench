@@ -1,7 +1,9 @@
 //! The specializer's Cranelift stage: `crate::staged` operations emitted as IR.
 
 use super::*;
-use crate::staged::{Domain, NumericStage, Stage, Table};
+use crate::staged::{Access, Domain, NumericStage, Stage, Table};
+use crate::staged::flow::FlowStage;
+use crate::vm::compiled::regions;
 use crate::vm::operations::{NumberArithmetic, NumberRelation};
 
 /// The specializer's stage (`crate::staged`): each operation emits its residual as Cranelift
@@ -28,6 +30,8 @@ impl Emit<'_, '_> {
     fn word(&mut self, imm: EmitImm) -> ir::Value {
         match imm { EmitImm::Const(bits) => self.constant(bits) }
     }
+    fn compare(&mut self, condition: IntCC, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().icmp(condition, a, b) }
+    fn widen(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().uextend(types::I64, a) }
 }
 
 impl Stage for Emit<'_, '_> {
@@ -39,28 +43,34 @@ impl Stage for Emit<'_, '_> {
     type Imm = EmitImm;
 
     fn site(&mut self, v: u64) -> EmitImm { EmitImm::Const(v) }
-    fn load_site(&mut self, base: ir::Value, offset: EmitImm) -> ir::Value {
+    fn load_site(&mut self, at: Access, base: ir::Value, offset: EmitImm) -> ir::Value {
         match offset {
-            EmitImm::Const(bits) => self.load_u64(base, bits as i32),
+            EmitImm::Const(bits) => self.load_u64(at, base, bits as i32),
         }
     }
     fn shape_in_site(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value { self.shape_in(shape, shapes) }
 
     fn constant(&mut self, bits: u64) -> ir::Value { self.builder.ins().iconst(types::I64, bits as i64) }
-    fn load_u32(&mut self, base: ir::Value, offset: i32) -> ir::Value {
-        self.builder.ins().uload32(MemFlagsData::trusted(), base, offset)
+    fn load_u32(&mut self, at: Access, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().uload32(regions::flags(at), base, offset)
     }
-    fn load_u64(&mut self, base: ir::Value, offset: i32) -> ir::Value {
-        self.builder.ins().load(types::I64, MemFlagsData::trusted(), base, offset)
+    fn load_u64(&mut self, at: Access, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().load(types::I64, regions::flags(at), base, offset)
     }
-    fn load_table(&mut self, address: ir::Value) -> ir::Value {
-        self.builder.ins().load(types::I64, MemFlagsData::trusted().with_readonly().with_can_move(), address, 0)
+    fn load_u8(&mut self, at: Access, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().uload8(types::I64, regions::flags(at), base, offset)
+    }
+    fn load_u16(&mut self, at: Access, base: ir::Value, offset: i32) -> ir::Value {
+        self.builder.ins().uload16(types::I64, regions::flags(at), base, offset)
+    }
+    fn load_table(&mut self, at: Access, address: ir::Value) -> ir::Value {
+        self.load_u64(at, address, 0)
     }
     fn add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().iadd(a, b) }
     fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
     fn add_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
-        self.builder.ins().iadd(a, v)
+        self.add(a, v)
     }
     fn mul_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
@@ -72,34 +82,34 @@ impl Stage for Emit<'_, '_> {
     }
     fn or_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
-        self.builder.ins().bor(a, v)
+        self.or(a, v)
     }
     fn shr_imm(&mut self, a: ir::Value, shift: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(shift.into());
         self.builder.ins().ushr(a, v)
     }
     fn sar32_imm(&mut self, a: ir::Value, shift: u32) -> ir::Value {
-        let low = self.builder.ins().ireduce(types::I32, a);
+        let low = self.narrow(a);
         let shifted = self.builder.ins().sshr_imm_u(low, i64::from(shift));
-        self.builder.ins().uextend(types::I64, shifted)
+        self.widen(shifted)
     }
     fn eq_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
-        self.builder.ins().icmp(IntCC::Equal, a, v)
+        self.compare(IntCC::Equal, a, v)
     }
     fn ne_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
-        self.builder.ins().icmp(IntCC::NotEqual, a, v)
+        self.compare(IntCC::NotEqual, a, v)
     }
     fn sub(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().isub(a, b) }
     fn select(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
         self.builder.ins().select(cond, then, otherwise)
     }
-    fn store_u32(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
-        self.builder.ins().istore32(MemFlagsData::trusted(), value, base, offset);
+    fn store_u32(&mut self, at: Access, base: ir::Value, offset: i32, value: ir::Value) {
+        self.builder.ins().istore32(regions::flags(at), value, base, offset);
     }
-    fn store_u64(&mut self, base: ir::Value, offset: i32, value: ir::Value) {
-        self.builder.ins().store(MemFlagsData::trusted(), value, base, offset);
+    fn store_u64(&mut self, at: Access, base: ir::Value, offset: i32, value: ir::Value) {
+        self.builder.ins().store(regions::flags(at), value, base, offset);
     }
     fn store_gate(&mut self, record_id: ir::Value, _value: ir::Value) -> ir::Value {
         // Native code keeps the helper for stores: an id is never below itself.
@@ -117,22 +127,22 @@ impl Stage for Emit<'_, '_> {
         self.ne_imm(zero, 0u32)
     }
     fn ult(&mut self, a: ir::Value, b: ir::Value) -> ir::Value {
-        self.builder.ins().icmp(IntCC::UnsignedLessThan, a, b)
+        self.compare(IntCC::UnsignedLessThan, a, b)
     }
     fn uextend32(&mut self, a: ir::Value) -> ir::Value {
-        if self.builder.func.dfg.value_type(a) == types::I32 { self.builder.ins().uextend(types::I64, a) } else { a }
+        if self.builder.func.dfg.value_type(a) == types::I32 { self.widen(a) } else { a }
     }
     fn ugt_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
-        self.builder.ins().icmp(IntCC::UnsignedGreaterThan, a, v)
+        self.compare(IntCC::UnsignedGreaterThan, a, v)
     }
-    fn not(&mut self, cond: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, cond, 0) }
-    fn any(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
+    fn not(&mut self, cond: ir::Value) -> ir::Value { self.i32_is_zero(cond) }
+    fn any(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.or(a, b) }
     fn pick(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
-        self.builder.ins().select(cond, then, otherwise)
+        self.select(cond, then, otherwise)
     }
     fn shape_in(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value {
-        let word = if self.builder.func.dfg.value_type(shape) == types::I32 { shape } else { self.builder.ins().ireduce(types::I32, shape) };
+        let word = if self.builder.func.dfg.value_type(shape) == types::I32 { shape } else { self.narrow(shape) };
         super::shape_in_set(self.builder, word, shapes)
     }
     fn number_truthy(&mut self, bits: ir::Value) -> ir::Value {
@@ -141,8 +151,45 @@ impl Stage for Emit<'_, '_> {
     }
     fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
         otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
+        self.choose_arms(cond, then, otherwise, false)
+    }
+    fn guard(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
+        emit_js_guard(self.builder, cond, miss);
+        Some(())
+    }
+    fn known(&self, _cond: ir::Value) -> Option<bool> { None }
+    fn table(&mut self, table: Table) -> ir::Value {
+        match table { Table::PropertyValues => self.property_values.expect("an operation addressing the arena has its base") }
+    }
+}
+
+impl FlowStage for Emit<'_, '_> {
+    type Block = ir::Block;
+    fn jump(&mut self, block: ir::Block, args: &[ir::Value]) {
+        let args: Vec<ir::BlockArg> = args.iter().map(|value| ir::BlockArg::Value(*value)).collect();
+        self.builder.ins().jump(block, &args);
+    }
+    #[cfg(feature = "aot")]
+    fn branch(&mut self, cond: ir::Value, then: (ir::Block, &[ir::Value]), otherwise: (ir::Block, &[ir::Value])) {
+        let arguments = |values: &[ir::Value]| values.iter().map(|value| ir::BlockArg::Value(*value)).collect::<Vec<_>>();
+        self.builder.ins().brif(cond, then.0, &arguments(then.1), otherwise.0, &arguments(otherwise.1));
+    }
+    #[cfg(feature = "aot")]
+    fn ret(&mut self, values: &[ir::Value]) { self.builder.ins().return_(values); }
+}
+
+impl Emit<'_, '_> {
+    /// `choose` whose `then` arm is out of line: the path that rarely runs (a call to the VM).
+    pub(in crate::vm::compiled) fn choose_cold(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
+        otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
+        self.choose_arms(cond, then, otherwise, true)
+    }
+
+    fn choose_arms(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
+        otherwise: impl FnOnce(&mut Self) -> ir::Value, cold_then: bool) -> ir::Value {
         let (then_block, else_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         let value = self.builder.append_block_param(join, types::I64);
+        if cold_then { self.builder.set_cold_block(then_block); }
         self.builder.ins().brif(cond, then_block, &[], else_block, &[]);
         self.builder.switch_to_block(then_block);
         self.builder.seal_block(then_block);
@@ -155,14 +202,6 @@ impl Stage for Emit<'_, '_> {
         self.builder.switch_to_block(join);
         self.builder.seal_block(join);
         value
-    }
-    fn guard(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
-        emit_js_guard(self.builder, cond, miss);
-        Some(())
-    }
-    fn known(&self, _cond: ir::Value) -> Option<bool> { None }
-    fn table(&mut self, table: Table) -> ir::Value {
-        match table { Table::PropertyValues => self.property_values.expect("an operation addressing the arena has its base") }
     }
 }
 
@@ -188,12 +227,23 @@ impl NumericStage for Emit<'_, '_> {
     fn int_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
         self.builder.ins().srem(left, right)
     }
+    fn float_unary(&mut self, operation: crate::staged::math::FloatUnary, value: ir::Value) -> ir::Value {
+        crate::vm::compiled::lane_region::emit_float_unary(self.builder, operation, value)
+    }
+    fn int_multiply(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
+        crate::vm::compiled::lane_region::emit_int_multiply(self.builder, left, right)
+    }
+    fn float_extreme(&mut self, maximum: bool, left: ir::Value, right: ir::Value) -> ir::Value {
+        crate::vm::compiled::lane_region::emit_float_extreme(self.builder, maximum, left, right)
+    }
     fn i32_constant(&mut self, value: i32) -> ir::Value { self.builder.ins().iconst(types::I32, i64::from(value)) }
+    fn f64_constant(&mut self, value: f64) -> ir::Value { self.builder.ins().f64const(value) }
+    fn narrow(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().ireduce(types::I32, a) }
     fn i32_to_f64(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().fcvt_from_sint(types::F64, a) }
     fn i32_is_zero(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, 0) }
     fn i32_is_negative(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, a, 0) }
     fn both(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().band(a, b) }
-    fn either(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
+    fn either(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.or(a, b) }
     fn cond_word(&mut self, cond: ir::Value) -> ir::Value { cond }
     fn guard_false(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
         let passed = self.builder.create_block();
@@ -296,6 +346,62 @@ mod tests {
                     let expected = if handles(form, storage) { *expected } else { Value::DELETED };
                     assert_eq!(read, expected, "{form:?} slot {slot} {storage:?}");
                 }
+            }
+        }
+    }
+    /// Native code running `string_char_code_at` of the string value over the string records,
+    /// or `DELETED` where a row leaves.
+    fn compiled_char_code_at(isa: &dyn cranelift_codegen::isa::TargetIsa) -> CodeMemory {
+        let mut signature = Signature::new(isa.default_call_conv());
+        signature.params.extend([AbiParam::new(types::I64); 3]);
+        signature.returns.push(AbiParam::new(types::I64));
+        let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+        let mut context = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut native, &mut context);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        let [records, string, index] = builder.block_params(entry).try_into().unwrap();
+        let miss = builder.create_block();
+        let mut stage = Emit { builder: &mut builder, property_values: None };
+        let flat = crate::staged::strings::flat_string(&mut stage, records, string, miss).unwrap();
+        let code = crate::staged::strings::string_char_code_at(&mut stage, flat, index, miss).unwrap();
+        builder.ins().return_(&[code]);
+        builder.switch_to_block(miss);
+        let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
+        builder.ins().return_(&[deleted]);
+        builder.seal_all_blocks();
+        builder.finalize(isa.frontend_config());
+        compile_native_function(native, isa, usize::MAX, CodeMemory::new).unwrap()
+    }
+
+    /// The residual of `strings::flat_string` and `string_char_code_at` reads what the
+    /// interpreter's reading of the same rows reads, for each form of string record, and leaves
+    /// where the rows leave (a slice, a double index, a value that is no string).
+    #[test]
+    fn emitted_string_reads_agree_with_the_interpreter_or_leave() {
+        use crate::staged::{Concrete, strings};
+        use crate::vm::wtf16::{JsString, SHORT_ASCII_CAPACITY};
+        let isa = super::super::super::super::jit_backend::target_isa().unwrap();
+        let memory = compiled_char_code_at(&*isa);
+        // SAFETY: the function reads the string record and the units its form names, all live.
+        let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64, u64, u64) -> u64>(memory.pointer()) };
+        let mut heap = Heap::new();
+        let long = JsString::from_str(&"q".repeat(SHORT_ASCII_CAPACITY + 4));
+        let strings_of_every_form = [
+            heap.alloc_string(JsString::from_str("")), heap.alloc_string(JsString::from_str("abc")),
+            heap.alloc_string(JsString::from_units(&[0x61, 0x20ac])), heap.alloc_string(long.substring(1..20)),
+            heap.alloc_string(long), Value::integer(1),
+        ];
+        let records = heap.string_record_base().map_or(0, |base| base as u64);
+        for string in strings_of_every_form {
+            for index in [Value::integer(0), Value::integer(1), Value::integer(2), Value::integer(-1), Value::number(0.5), Value::UNDEFINED] {
+                let mut stage = Concrete::new(std::ptr::null());
+                let expected = strings::flat_string(&mut stage, records, string.to_bits(), ())
+                    .and_then(|flat| strings::string_char_code_at(&mut stage, flat, index.to_bits(), ()))
+                    .map_or(Value::DELETED, Value::from_bits);
+                let read = Value::from_bits(unsafe { run(records, string.to_bits(), index.to_bits()) });
+                assert_eq!(read, expected, "{:#x} at {:#x}", string.to_bits(), index.to_bits());
             }
         }
     }

@@ -1,11 +1,10 @@
-//! A field store's in-place case in general dispatch code: an own data slot of its site's
+//! A field store's in-place case in native code: an own data slot of its site's
 //! cached exact shape in plain arena storage, for a value of the class the site's last
 //! helper store proved its slot representation already holds (`record_store_class`). Slot
 //! representations only widen (`ValueArena::note_slot_value`), and rewriting or invalidating
 //! the entry clears the class, so the proof holds until then. Any other store takes the
 //! helper (`lane_field_set`), which records the proof.
-use super::{emit_js_cached_field_slot, emit_js_guard, emit_js_payload_word, emit_lane_helper_call, emit_unlogged_property_store_guard, Host,
-    JsFieldReceiver, JsStepDispatch, Vm};
+use super::{emit_js_payload_word, Host, JsStepDispatch, Vm};
 use super::super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 use crate::bytecode::Atom;
 use crate::value::ValueLayout;
@@ -21,7 +20,6 @@ use cranelift_frontend::FunctionBuilder;
 enum StoreClass { Int32 = 1, DirectObject, Null, Undefined }
 
 impl StoreClass {
-    const ALL: [Self; 4] = [Self::Int32, Self::DirectObject, Self::Null, Self::Undefined];
     /// The proof's place above the slot in its entry's slot word, whose low half the slot fills.
     const SHIFT: u32 = u16::BITS;
     /// The entry's slot word among its stored words.
@@ -79,101 +77,6 @@ pub(super) fn record_store_class<H: Host>(vm: &mut Vm<H>, site: u16, value: Valu
         *word = recorded;
         vm.note_field_cache_write(index);
     }
-}
-
-/// The in-place store of `value` into `receiver`'s field `atom` at `site` (the module's case),
-/// continuing at `done`; any other store continues at `helper`. Packed inline storage takes
-/// the value's narrow form (`Value::to_narrow`), a value without one the helper.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn emit_store(builder: &mut FunctionBuilder<'_>, (arguments, payload): (ir::Value, ir::Value),
-    receiver: ir::Value, atom: Atom, site: u16, value: ir::Value, done: ir::Block, helper: ir::Block) {
-    let admitted = emit_store_admitted(builder, payload, atom);
-    let probe = builder.create_block();
-    builder.ins().brif(admitted, super::forced_or(probe, helper), &[], helper, &[]);
-    builder.switch_to_block(probe);
-    let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_entries));
-    let entry = usize::from(site) * CACHE.entry_size + CACHE.slot_offset;
-    // The class is byte 2 of the slot word (byte 3 counts the site's leaves), so one byte load reads it.
-    let recorded = builder.ins().uload8(types::I32, MemFlagsData::trusted(), entries,
-        i32::try_from(entry + super::super::object::FIELD_CLASS_BYTE).expect("field entry offset fits i32"));
-    let classes = StoreClass::ALL.map(|class| (class, class.emit_holds(builder, value)));
-    let both: Vec<ir::Value> = classes.iter().map(|&(class, holds)| {
-        let named = builder.ins().icmp_imm_u(IntCC::Equal, recorded, i64::from(class as u32));
-        builder.ins().band(named, holds)
-    }).collect();
-    let proved = emit_any(builder, both);
-    emit_js_guard(builder, proved, helper);
-    let packed = builder.create_block();
-    let packed_address = builder.append_block_param(packed, types::I64);
-    let (address, record) = emit_js_cached_field_slot(builder, arguments, payload, JsFieldReceiver::Value(receiver),
-        site, false, helper, None, None, Some(packed));
-    emit_unlogged_property_store_guard(builder, payload, record, value, crate::typed_ir::Type::ANY, helper);
-    builder.ins().store(MemFlagsData::trusted(), value, address, 0);
-    builder.ins().jump(done, &[]);
-    builder.switch_to_block(packed);
-    let narrow = emit_narrow(builder, value, classes, helper);
-    emit_unlogged_property_store_guard(builder, payload, record, value, crate::typed_ir::Type::ANY, helper);
-    builder.ins().store(MemFlagsData::trusted(), narrow, packed_address, 0);
-    builder.ins().jump(done, &[]);
-}
-
-/// The narrow form (`Value::to_narrow`) of `value`, whose class `classes` decides; `helper` for
-/// an integer or object index too wide for one.
-fn emit_narrow(builder: &mut FunctionBuilder<'_>, value: ir::Value, classes: [(StoreClass, ir::Value); 4],
-    helper: ir::Block) -> ir::Value {
-    use crate::value::{DIRECT_OBJECT_NARROW_CODE, DIRECT_OBJECT_UPPER, NARROW_CODE_SHIFT, NARROW_INDEX_BITS,
-        NARROW_INDEX_SHIFT, NARROW_INTEGER_BITS, NARROW_INTEGER_FLAG};
-    let constant = |builder: &mut FunctionBuilder<'_>, value: Value| {
-        let narrow = value.to_narrow().expect("a nullish constant has a narrow form");
-        builder.ins().iconst(types::I32, i64::from(narrow))
-    };
-    let lower = builder.ins().ireduce(types::I32, value);
-    // An integer within the narrow range: its bias by half the range is below the range.
-    let (range, half) = (1_i64 << NARROW_INTEGER_BITS, 1_i64 << (NARROW_INTEGER_BITS - 1));
-    let biased = builder.ins().iadd_imm_s(lower, half);
-    let integer_fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, biased, range);
-    let shifted = builder.ins().ishl_imm_u(lower, i64::from(NARROW_CODE_SHIFT));
-    let integer = builder.ins().bor_imm_u(shifted, i64::from(NARROW_INTEGER_FLAG));
-    // An object whose handle word is exact and whose record index fits the narrow index.
-    let upper = builder.ins().band_imm_u(value, !i64::from(u32::MAX));
-    let handle = builder.ins().icmp_imm_u(IntCC::Equal, upper, DIRECT_OBJECT_UPPER as i64);
-    let wide = builder.ins().ushr_imm_u(lower, i64::from(NARROW_INDEX_BITS));
-    let index_fits = builder.ins().icmp_imm_u(IntCC::Equal, wide, 0);
-    let object_fits = builder.ins().band(handle, index_fits);
-    let shifted = builder.ins().ishl_imm_u(lower, i64::from(NARROW_INDEX_SHIFT));
-    let object = builder.ins().bor_imm_u(shifted, i64::from(DIRECT_OBJECT_NARROW_CODE << NARROW_CODE_SHIFT));
-    let [(_, is_integer), (_, is_object), (_, is_null), _] = classes;
-    let (null, undefined) = (constant(builder, Value::NULL), constant(builder, Value::UNDEFINED));
-    let nullish = builder.ins().select(is_null, null, undefined);
-    let reference = builder.ins().select(is_object, object, nullish);
-    let narrow = builder.ins().select(is_integer, integer, reference);
-    let one = builder.ins().iconst(types::I8, 1);
-    let reference_fits = builder.ins().select(is_object, object_fits, one);
-    let fits = builder.ins().select(is_integer, integer_fits, reference_fits);
-    emit_js_guard(builder, fits, helper);
-    narrow
-}
-
-/// The helper's store of `value` into `receiver`'s field `atom` at `site`, or its add by the
-/// site's cached transition (`general_field_store`), continuing at `done`; a store neither
-/// takes continues at `fallback`.
-pub(super) fn emit_helper_store(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
-    (receiver, atom, site, value): (ir::Value, Atom, u16, ir::Value), (done, fallback): (ir::Block, ir::Block)) {
-    let write = builder.ins().iconst(types::I64, (i64::from(atom) << u16::BITS) | i64::from(site));
-    let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_store));
-    let stored = emit_lane_helper_call(builder, payload, helper, &[payload, receiver, write, value]);
-    let stored = builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
-    emit_js_guard(builder, stored, fallback);
-    builder.ins().jump(done, &[]);
-}
-
-/// Whether a cached store of `atom` may run in place (`Vm::primary_own_field_store_hit`): the
-/// VM and program run specialized and no method cache names `atom`, read from the payload.
-pub(super) fn emit_store_admitted(builder: &mut FunctionBuilder<'_>, payload: ir::Value, atom: Atom) -> ir::Value {
-    let specialized = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
-    let specialized = builder.ins().icmp_imm_u(IntCC::NotEqual, specialized, 0);
-    let unnamed = emit_atom_unnamed(builder, payload, atom);
-    builder.ins().band(specialized, unnamed)
 }
 
 /// Whether no method cache names `atom` (`Vm::method_caches_may_name`), from the payload's

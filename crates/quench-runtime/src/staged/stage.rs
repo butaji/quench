@@ -3,7 +3,7 @@
 //! specializers use.
 
 use crate::typed_ir::Type;
-use super::effects::Region;
+use super::region::Access;
 
 /// A binding-time domain: the 64-bit words an operation computes on, its conditions, and where
 /// a failed guard goes. A 32-bit load zero-extends.
@@ -23,12 +23,19 @@ pub(crate) trait Stage {
     /// site reaches the stage through here.
     fn site(&mut self, v: u64) -> Self::Imm;
     fn constant(&mut self, bits: u64) -> Self::Word;
-    fn load_u32(&mut self, base: Self::Word, offset: i32) -> Self::Word;
-    fn load_u64(&mut self, base: Self::Word, offset: i32) -> Self::Word;
+    /// The loads and stores say which alias region they touch and whether it can change while
+    /// code runs (`Access`): a specializer tags the access so Cranelift may reorder and hoist
+    /// it, and Concrete and the stencil stage ignore it.
+    fn load_u32(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
+    fn load_u64(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
+    /// An 8-bit load, zero-extended (a narrow string's unit).
+    fn load_u8(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
+    /// A 16-bit load, zero-extended (a wide string's unit).
+    fn load_u16(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
     /// A 64-bit load at the per-site offset `offset` (`site`).
-    fn load_site(&mut self, base: Self::Word, offset: Self::Imm) -> Self::Word;
+    fn load_site(&mut self, at: Access, base: Self::Word, offset: Self::Imm) -> Self::Word;
     /// A load from a table that never changes while the process runs.
-    fn load_table(&mut self, address: Self::Word) -> Self::Word;
+    fn load_table(&mut self, at: Access, address: Self::Word) -> Self::Word;
     fn add(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     fn or(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     fn add_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
@@ -50,8 +57,8 @@ pub(crate) trait Stage {
     /// `then` where `cond` holds, else `otherwise`, both already computed.
     fn select(&mut self, cond: Self::Cond, then: Self::Word, otherwise: Self::Word) -> Self::Word;
     /// Stores the low 32 bits of `value`.
-    fn store_u32(&mut self, base: Self::Word, offset: i32, value: Self::Word);
-    fn store_u64(&mut self, base: Self::Word, offset: i32, value: Self::Word);
+    fn store_u32(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
+    fn store_u64(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
     /// Whether a store of `value` into object record `record_id` may proceed unobserved and
     /// without a barrier log: no slot representation observes the write, and the record is not
     /// one the barrier logs for this value. The one place the store barrier's layout is read;
@@ -103,21 +110,6 @@ pub(crate) trait Stage {
     fn table(&mut self, table: Table) -> Self::Word;
 
     // Stage v2: additions with defaults, so a stage written before them is unchanged.
-
-    /// `load_u64` from `region`, which a specializer tags on the access so a load survives
-    /// a store to another region. A stage with no alias information ignores it.
-    #[inline(always)]
-    #[allow(dead_code)]
-    fn load_in(&mut self, _region: Region, base: Self::Word, offset: i32) -> Self::Word {
-        self.load_u64(base, offset)
-    }
-
-    /// `store_u64` to `region`.
-    #[inline(always)]
-    #[allow(dead_code)]
-    fn store_in(&mut self, _region: Region, base: Self::Word, offset: i32, value: Self::Word) {
-        self.store_u64(base, offset, value)
-    }
 
     /// The fact this stage keeps of `word`; the interpreter keeps none.
     #[inline(always)]

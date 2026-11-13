@@ -1,0 +1,21 @@
+[package]
+name = "quench-stencil-mine"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Offline miner that ranks candidate bytecode supernodes (stencil library entries) from real workloads"
+
+[lib]
+doctest = false
+
+[[bin]]
+name = "quench-stencil-mine"
+path = "src/main.rs"
+
+[dependencies]
+quench-runtime = { path = "../quench-runtime", default-features = false }
+serde_json = "1"
+
+[lints]
+workspace = true

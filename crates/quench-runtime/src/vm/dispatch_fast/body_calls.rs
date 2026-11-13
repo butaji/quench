@@ -4,6 +4,7 @@
 //! callers return into compiled code whatever tier the callee ran in).
 use super::*;
 use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT};
+use super::lane_body_tier::{audit_nanos, Timed};
 
 /// The end of a nested run at the return with `value` of `activation`, popped with its
 /// caller's state restored: a native's callback's (`Completion::ReturnsToNative`), whose
@@ -73,12 +74,26 @@ fn leave<H: Host>(cx: *mut LaneContext<H>, resume: Ip, acc: Value) -> u64 {
 /// too, at the record the lane left at (`left_lane`), as does a call no nested run takes:
 /// one below such a leave, or without native stack.
 pub(super) fn finish<H: Host>(cx: *mut LaneContext<H>, depth: usize, resume: Ip, acc: Value, constructs: bool) -> u64 {
-    let vm = unsafe { vm(cx) };
     let (plain, nested) = if constructs { (Completion::Constructs, Completion::ConstructsToBody) } else { (Completion::Plain, Completion::ReturnsToBody) };
     let Ok(_stack) = crate::stack::StackGuard::enter() else { return leave(cx, resume, acc) };
     if left_lane(resume) || !recomplete(cx, depth, plain, nested) {
         return leave(cx, resume, acc);
     }
+    let left = run_nested(cx, resume, acc);
+    recomplete(cx, depth, nested, plain);
+    ended(cx, left)
+}
+
+/// The status of a body's call whose nested run ended as `run_nested` says.
+fn ended<H: Host>(cx: *mut LaneContext<H>, left: Option<Ip>) -> u64 {
+    left.map_or(LANE_CALL_COMPLETED, |left| leave(cx, exit(left), Value::UNDEFINED))
+}
+
+/// The lane run from `resume` with accumulator `acc`, nested under the running body: `None`
+/// where it ended with a value for the body's call (`ends_run`), else the record the lane
+/// left at.
+fn run_nested<H: Host>(cx: *mut LaneContext<H>, resume: Ip, acc: Value) -> Option<Ip> {
+    let vm = unsafe { vm(cx) };
     unsafe {
         (*cx).resumed_acc = Slot::of(acc);
         (*cx).memory = MemoryView::script(cx);
@@ -86,9 +101,47 @@ pub(super) fn finish<H: Host>(cx: *mut LaneContext<H>, depth: usize, resume: Ip,
     let outer = vm.lane_stack.body_boundary.take();
     let left = lane_dispatch(cx, resume);
     vm.lane_stack.body_boundary = outer;
-    recomplete(cx, depth, nested, plain);
-    if vm.lane_native_returned.take().is_some() {
-        return LANE_CALL_COMPLETED;
+    vm.lane_native_returned.take().is_none().then_some(left)
+}
+
+/// A body's call of an array callback method whose first callback's activation the body made
+/// (`array_steps::lane_body_array_iteration`), its record `resume`: run in the lane until the
+/// iteration completes the call (`LANE_CALL_COMPLETED`); a run that leaves the lane for the
+/// general path leaves the body at the record it left at.
+pub(super) fn finish_array_iteration<H: Host>(cx: *mut LaneContext<H>, resume: Ip) -> u64 {
+    ended(cx, run_nested(cx, resume, Value::UNDEFINED))
+}
+
+/// An entry of the function `own` views that `timed` (`LaneView::audit_entry`) put on the
+/// interpreter's side: `Err` with the record the lane continues at after the entry ran
+/// interpreted and timed (the activation, run from its first record `start` nested to its
+/// return, completed, so its caller continues after the call, or left the lane, the exit
+/// record); `Ok` for an entry that runs its body, timed or not. An interpreted side runs only
+/// for the innermost activation of a plain call or construction of this function whose call
+/// keeps its result; any other entry runs its body untimed.
+pub(super) fn audited<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u32, start: Ip, timed: Option<Timed>) -> Result<(), Ip> {
+    if timed != Some(Timed::Interpreter) {
+        return Ok(());
     }
-    leave(cx, exit(left), Value::UNDEFINED)
+    let vm = unsafe { vm(cx) };
+    let Some(depth) = vm.lane_stack.activations.len().checked_sub(1) else { return Ok(()) };
+    let top = &vm.lane_stack.activations[depth];
+    let constructs = match top.script().map(|script| script.completion) {
+        Some(Completion::Plain) => false,
+        Some(Completion::Constructs) => true,
+        _ => return Ok(()),
+    };
+    let call = top.call;
+    // SAFETY: the call record belongs to the caller's live view.
+    if top.function != function || unsafe { (*call).a } & crate::bytecode::RETURN_REGISTER != 0 {
+        return Ok(());
+    }
+    let started = std::time::Instant::now();
+    if finish(cx, depth, start, Value::UNDEFINED, constructs) == LANE_CALL_COMPLETED {
+        own.audit_record(Timed::Interpreter, audit_nanos(started));
+        return Err(following(call));
+    }
+    // SAFETY: `finish` set it before it left.
+    let resume = unsafe { (*cx).callee_resume };
+    if left_lane(resume) { Err(resume) } else { Ok(()) }
 }

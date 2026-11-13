@@ -44,9 +44,11 @@ pub use execution_interrupt::ExecutionInterrupt;
 pub use vm::NativeFaultHandler;
 mod bigint;
 mod bitset;
+mod dense_map;
 mod bytecode;
 mod compile;
 mod code_dependencies;
+mod folded_roots;
 mod float_layout;
 mod heap;
 #[cfg_attr(
@@ -86,7 +88,7 @@ pub use wasm::{
 };
 
 pub use vm::AheadImages;
-pub use bytecode::{KeptBytes, ResidualProgram, ModuleRequest, ModuleRequestPhase};
+pub use bytecode::{KeptBytes, ResidualProgram, ModuleRequest, ModuleRequestPhase, FlowFunction, FlowInstruction};
 pub use module_identity::normalized_text as normalized_module_name;
 pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
 pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId};

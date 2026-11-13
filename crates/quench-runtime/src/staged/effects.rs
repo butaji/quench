@@ -5,24 +5,8 @@
 
 #![allow(dead_code)] // Stage v2 vocabulary; first consumers are the rows moving under `Concrete` next.
 
-use super::Operation;
-
-/// An alias region of memory: an access to one never aliases an access to another.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Region {
-    /// The activation's register and local slots.
-    Frame,
-    /// Property slots of objects.
-    ObjectSlots,
-    /// A shape word: written only by a shape change, so a load of it is read-only.
-    ShapeWord,
-    /// Dense and typed array elements.
-    Elements,
-    /// Heap bookkeeping: allocation runs, tables, collection state.
-    HeapMeta,
-    /// Per-site feedback counters.
-    MissCounters,
-}
+use super::{CallOperation, Operation};
+pub(crate) use super::region::Region;
 
 /// A set of regions, one bit each, so a fact's invalidation is a mask intersection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -82,6 +66,18 @@ pub(crate) enum CallTarget<W> {
     Builtin(u32),
 }
 
+impl<W> CallOperation<W> {
+    /// The effect row of a call-protocol step: the guards leave and write nothing, the window
+    /// writes the callee's registers, and a site names a call, which may run anything.
+    const fn effects(&self) -> Effects {
+        match self {
+            Self::Callee { .. } | Self::Receiver { .. } | Self::BindThis { .. } | Self::Room { .. } | Self::Complete { .. } => Effects::NONE,
+            Self::Window { .. } => Effects::writes(Region::Frame),
+            Self::Site(_) => Effects::ANY,
+        }
+    }
+}
+
 impl<W, P> Operation<W, P> {
     /// The effect row of the operation, from its variant alone.
     pub(crate) const fn effects(&self) -> Effects {
@@ -94,12 +90,14 @@ impl<W, P> Operation<W, P> {
     /// Effects of the field, element and allocation operations.
     const fn memory_effects(&self) -> Option<Effects> {
         Some(match self {
-            Self::ReadField { .. } => Effects { reads: RegionSet::of(Region::ObjectSlots).with(Region::ShapeWord), ..Effects::NONE },
-            Self::WriteField { .. } => Effects::writes(Region::ObjectSlots),
+            Self::ReadField { .. } => Effects { reads: RegionSet::of(Region::ObjectSlots).with(Region::ShapeWord)
+                .with(Region::Records).with(Region::Payload), ..Effects::NONE },
+            Self::WriteField { .. } => Effects { writes: RegionSet::of(Region::ObjectSlots).with(Region::Payload), ..Effects::NONE },
             Self::IndexRead { .. } | Self::TypedIndexRead { .. } => Effects::reads(Region::Elements),
             Self::IndexWrite { .. } | Self::TypedIndexWrite { .. } => Effects::writes(Region::Elements),
             Self::MakeObject { .. } | Self::MakeArray { .. } | Self::MakeConstArray { .. } | Self::MakeObjectPair { .. } => Effects {
-                writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots), may_alloc: true, ..Effects::NONE },
+                writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots).with(Region::Records)
+                .with(Region::Payload), may_alloc: true, ..Effects::NONE },
             _ => return None,
         })
     }
@@ -112,6 +110,7 @@ impl<W, P> Operation<W, P> {
             Self::Jump | Self::JumpIf { .. } | Self::LogicalNot { .. } | Self::Number(_) => Effects::NONE,
             Self::RequireObjectCoercible { .. } => Effects { may_throw: true, ..Effects::NONE },
             Self::Safepoint { .. } => Effects { may_collect: true, ..Effects::NONE },
+            Self::Call(operation) => operation.effects(),
             // The memory operations answered in `memory_effects`; anything else is conservative.
             _ => Effects::ANY,
         }

@@ -21,6 +21,8 @@ pub(in crate::vm) struct LaneBodyStats {
     pub(in crate::vm) refused: std::cell::Cell<u32>,
     /// Why its body declined (`decline`).
     pub(in crate::vm) declined: std::cell::Cell<&'static str>,
+    /// The audit's verdict (`LaneView::audit_verdict`): `None` while it runs.
+    pub(in crate::vm) audit: std::cell::Cell<Option<super::lane_body_tier::Verdict>>,
 }
 
 impl LaneBodyStats {
@@ -35,8 +37,13 @@ impl LaneBodyStats {
         }).collect::<Vec<_>>().join(" ");
     }
 
+    /// Runs of the body, however they ended (`ends`): the tier census's entries.
+    pub(in crate::vm) fn runs(&self) -> u64 {
+        self.ends.iter().map(|end| u64::from(end.get())).sum()
+    }
+
     /// `frames`, the body's inlined calls, name the function a leave inside one was in.
-    pub(in crate::vm) fn ended(&self, exit: super::super::compiled::LaneExit, frames: &[super::super::compiled::InlinedCall], line: u64) {
+    pub(in crate::vm) fn ended(&self, exit: super::super::compiled::LaneExit, exits: &super::super::compiled::ExitTable, frames: &[super::super::compiled::InlinedCall], line: u64) {
         let index = End::of(exit) as usize;
         self.ends[index].set(self.ends[index].get() + 1);
         // Prefixed by the compile that left there, the first being `c1`.
@@ -49,7 +56,7 @@ impl LaneBodyStats {
             super::super::compiled::LaneExit::At(pc) => format!("{compile} {pc}#{}@{pc}", self.function.get()),
             super::super::compiled::LaneExit::Entry => format!("{compile} entry#{}", self.function.get()),
             super::super::compiled::LaneExit::Inlined { frame, pc } => match frames.get(frame) {
-                Some(call) => format!("{compile} {frame}:{pc}#{}@{pc}", call.target.function),
+                Some(call) => format!("{compile} {frame}:{pc}{}#{}@{pc}", exits.describe(exit), call.target.function),
                 None => format!("{compile} {frame}:{pc}"),
             },
             _ => return,
@@ -79,8 +86,9 @@ impl LaneBodyStats {
                 };
                 format!("[\"{place}\",{count}]")
             }).collect::<Vec<_>>().join(",");
+            let audit = self.audit.get().map_or(String::from("null"), |verdict| verdict.report());
             format!(
-                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"shape\":\"{}\",\"compiled_at\":{:?},\"state\":\"{state}\",\"refused\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
+                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"shape\":\"{}\",\"compiled_at\":{:?},\"state\":\"{state}\",\"refused\":{},\"audit\":{audit},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
                 self.compiles.get(), self.frames.get(), self.shape.borrow(), self.compiled_at.borrow(), self.refused.get(),
             )
         })
@@ -99,7 +107,7 @@ impl End {
         use super::super::compiled::LaneExit;
         match exit {
             LaneExit::Returned { .. } => Self::Completed,
-            LaneExit::At(_) | LaneExit::Entry => Self::LeftAt,
+            LaneExit::At(_) | LaneExit::Entry | LaneExit::Stub => Self::LeftAt,
             LaneExit::Inlined { .. } => Self::LeftInlined,
             LaneExit::Callee => Self::LeftInCallee,
             LaneExit::Terminated => Self::Terminated,
@@ -153,7 +161,7 @@ miss_reasons! {
     PlanDependencies => "plan:dependencies",
     NativeReturning => "native:returning",
     NativeNotNative => "native:not-native",
-    NativeInPlaceDeclined => "native:in-place-declined",
+    NativeNotCompleted => "native:not-completed",
 }
 static MISSES: [std::sync::atomic::AtomicU64; MISS_NAMES.len()] = [const { std::sync::atomic::AtomicU64::new(0) }; MISS_NAMES.len()];
 

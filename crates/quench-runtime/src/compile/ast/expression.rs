@@ -846,7 +846,7 @@ impl FunctionCompiler<'_, '_> {
     /// and `!` become jumps between their operands' own tests instead of a materialized
     /// result tested once more (`false_exits`, `true_exits`).
     pub(super) fn condition(&mut self, value: &Expression<'_>) -> ConditionExits {
-        self.false_exits(value)
+        match self.constant_exits(value) { Some(exits) => exits, None => self.false_exits(value) }
     }
 
     /// The jumps taken when `value` is falsy; control falls through when it is truthy.

@@ -223,16 +223,12 @@ impl NativeCompileRejection {
         }
     }
 
+    #[cfg(feature = "aot")]
     pub(super) const fn reason(self) -> &'static str {
         match self {
-            #[cfg(any(feature = "jit", feature = "aot"))]
             Self::Cranelift => "cranelift-compile-error",
-            #[cfg(not(any(feature = "jit", feature = "aot")))]
-            Self::BackendUnavailable => "native-backend-unavailable",
             Self::Relocations => "unresolved-relocations",
-            #[cfg(any(feature = "jit", feature = "aot"))]
             Self::EmptyCode => "empty-code",
-            #[cfg(any(feature = "jit", feature = "aot"))]
             Self::CodeSizeBudget => "code-size-budget",
             Self::Publish => "code-publication-failed",
         }
@@ -252,6 +248,7 @@ pub(super) fn compile_function<T>(
         &cranelift_codegen::ir::Function,
     ) -> Result<T, NativeCompileRejection>,
 ) -> Result<T, NativeCompileRejection> {
+    super::compiled::regions::declare_regions(&mut function);
     select::convert(&mut function);
     let mut context = COMPILE_CONTEXT.with(|held| held.take()).unwrap_or_else(cranelift_codegen::Context::new);
     let instructions = function.dfg.num_insts();

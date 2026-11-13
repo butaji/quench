@@ -83,6 +83,7 @@ impl<H: Host> Vm<H> {
             lane_stack: Default::default(),
             execution_mode: ExecutionMode::default(),
             native_execution_rejections: 0,
+            js_tier_pending: FxHashMap::default(),
             #[cfg(feature = "native-execution")]
             native_program_resolver: None,
             execution_interrupt,
@@ -106,6 +107,7 @@ impl<H: Host> Vm<H> {
             active_layout: Default::default(),
             active_constants: &[],
             active_field_entries: std::ptr::null(),
+            field_entries_epoch: 0,
             active_program: ProgramId::MAIN,
             profile: Default::default(),
             shape_slot_memo: Default::default(),

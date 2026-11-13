@@ -153,6 +153,8 @@ pub fn heap_canonical((heap, entry, dst, a, b): HeapCode) -> HeapCode {
     match heap {
         CAPTURE_ROW | FIELD_ROW => (heap, false, dst, MEM, MEM),
         INDEX_ROW => (heap, entry, dst, MEM, b),
+        IC_GET_ROW | IC_GET_HOLDER_ROW => (heap, entry, dst, MEM, MEM),
+        IC_SET_ROW | IC_SET_INT_ROW => (heap, entry, MEM, a, MEM),
         STORE_ROW => (heap, entry, MEM, a, b),
         _ => (heap, false, MEM, MEM, MEM),
     }
@@ -161,6 +163,19 @@ pub fn heap_canonical((heap, entry, dst, a, b): HeapCode) -> HeapCode {
 /// The name of a heap row's stencil symbol.
 pub fn heap_name((heap, entry, dst, a, b): HeapCode) -> String {
     format!("h_{heap}_{}_{dst}_{a}_{b}", u8::from(entry))
+}
+
+/// The inline-cache rows (`ic_rows.rs`), each as the last entry of its site (`entry` false) and
+/// as an entry followed by another (`entry` true, which hands a miss to the next row).
+fn cache_rows(dsts: &[u8], srcs: &[u8], rows: &mut BTreeSet<HeapCode>) {
+    for chained in [false, true] {
+        for &dst in dsts {
+            rows.extend([IC_GET_ROW, IC_GET_HOLDER_ROW].map(|heap| heap_canonical((heap, chained, dst, MEM, MEM))));
+        }
+        for &a in srcs {
+            rows.extend([IC_SET_ROW, IC_SET_INT_ROW].map(|heap| heap_canonical((heap, chained, MEM, a, MEM))));
+        }
+    }
 }
 
 /// Every heap row the library holds, canonical, once.
@@ -180,5 +195,6 @@ pub fn heap_library() -> Vec<HeapCode> {
         }
     }
     rows.insert(heap_canonical((ARRAY_ROW, false, MEM, MEM, MEM)));
+    cache_rows(&dsts, &srcs, &mut rows);
     rows.into_iter().collect()
 }

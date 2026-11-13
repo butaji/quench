@@ -113,3 +113,19 @@ fn published_code_executes_from_the_executable_view() {
         assert_eq!(function(), 42);
     }
 }
+
+#[test]
+fn an_immediate_patched_through_the_write_view_is_seen_by_the_executable_view() {
+    let body = [0u8; 16];
+    let code = CodeMemory::new(&body).unwrap();
+    code.write_imm32(4, 0xdead_beef);
+    // SAFETY: four bytes inside the published body, read through its executable view.
+    let seen = unsafe { code.pointer().add(4).cast::<u32>().read_unaligned() };
+    assert_eq!(seen, 0xdead_beef);
+}
+
+#[test]
+#[should_panic(expected = "a re-patch patch ends past its row's code")]
+fn a_patch_ending_past_the_body_is_refused() {
+    CodeMemory::new(&[0u8; 8]).unwrap().write_imm32(6, 1);
+}

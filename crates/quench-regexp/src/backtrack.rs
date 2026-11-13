@@ -16,9 +16,13 @@ use std::ops::Range;
 mod dispatch;
 pub mod native;
 mod scan;
+// The per-instruction semantics over a stage trait; a child module so it sees this module's private items.
+#[path = "specialize.rs"]
+mod specialize;
 mod workspace;
 use dispatch::Dispatch;
 use native::NativeSlot;
+use specialize::{replay, step, Concrete, Cursor, Replay, Step};
 use workspace::{AnchoredRun, ClassRun, anchored_run_of, class_run_of};
 
 use super::{
@@ -1546,352 +1550,43 @@ impl Program {
     }
 
     /// Runs from `pc` at `position` until a `Match` or `LookSucceed`, whose position it
-    /// returns, or until backtracking reaches the run's barrier.
-    #[allow(clippy::too_many_lines)]
+    /// returns, or until backtracking reaches the run's barrier. Each instruction's meaning is
+    /// `specialize::step` on the `Concrete` stage.
     fn run<T: Text + ?Sized>(
         &self,
         text: &T,
-        (mut pc, mut start, mut position): (u32, usize, usize),
+        (pc, mut start, position): (u32, usize, usize),
         search: Option<Search>,
         registers: &mut [usize],
         stack: &mut Vec<Frame>,
     ) -> Option<(usize, usize)> {
-        let length = text.len();
-        let set = |registers: &mut [usize], stack: &mut Vec<Frame>, register: u32, value| {
-            let slot = &mut registers[register as usize];
-            stack.push(Frame::Restore {
-                register,
-                value: *slot,
-            });
-            *slot = value;
-        };
-        let set_capture = |registers: &mut [usize], stack: &mut Vec<Frame>, capture: u32, start, end| {
-            let bound = 2 * capture as usize;
-            stack.push(Frame::RestoreCapture {
-                capture,
-                start: registers[bound],
-                end: registers[bound + 1],
-            });
-            registers[bound] = start;
-            registers[bound + 1] = end;
-        };
+        let mut stage = Concrete { program: self, text, registers, stack };
+        let mut at = Cursor::at(pc, position);
         loop {
-            let advanced = match self.instructions[pc as usize] {
-                Inst::Unit(test) => {
-                    if position < length && self.test(test, text.unit(position)) {
-                        position += 1;
-                        pc += 1;
-                        true
-                    } else {
-                        false
-                    }
-                }
-                Inst::UnitRepeat {
-                    test,
-                    min,
-                    max,
-                    greedy,
-                } => {
-                    // `UNBOUNDED` exceeds any subject's length, so the minimum is then `length`.
-                    let ceiling = position.saturating_add(max as usize).min(length);
-                    let floor = position + min as usize;
-                    if floor > length {
-                        false
-                    } else if greedy {
-                        let end = self.run_end(test, text, position, ceiling);
-                        if end < floor {
-                            false
-                        } else {
-                            if end > floor {
-                                stack.push(Frame::Greedy {
-                                    pc: pc + 1,
-                                    floor,
-                                    position: end,
-                                });
-                            }
-                            position = end;
-                            pc += 1;
-                            true
-                        }
-                    } else {
-                        let end = self.run_end(test, text, position, floor);
-                        if end < floor {
-                            false
-                        } else {
-                            if end < ceiling {
-                                stack.push(Frame::Lazy {
-                                    pc: pc + 1,
-                                    test,
-                                    ceiling,
-                                    position: end,
-                                });
-                            }
-                            position = end;
-                            pc += 1;
-                            true
-                        }
-                    }
-                }
-                Inst::Assert(test) => {
-                    if assertion_holds(test, text, position) {
-                        pc += 1;
-                        true
-                    } else {
-                        false
-                    }
-                }
-                Inst::Split { alternative } => {
-                    stack.push(Frame::Choice { pc: alternative, position });
-                    pc += 1;
-                    true
-                }
-                Inst::GuardedSplit { alternative, guard } => {
-                    let admitted = self.guards[guard as usize].admits(text, position);
-                    stack.extend(admitted.then_some(Frame::Choice { pc: alternative, position }));
-                    pc = if admitted { pc + 1 } else { alternative };
-                    true
-                }
-                Inst::Dispatch { table } => self.dispatch_target(table, text, position, stack).map(|target| pc = target).is_some(),
-                Inst::Jump(target) => {
-                    pc = target;
-                    true
-                }
-                Inst::CaptureOpen { temporary, restores } => {
-                    if restores {
-                        set(registers, stack, temporary, position);
-                    } else {
-                        registers[temporary as usize] = position;
-                    }
-                    pc += 1;
-                    true
-                }
-                Inst::CaptureClose { capture, temporary } => {
-                    let start = registers[temporary as usize];
-                    set_capture(registers, stack, capture, start, position);
-                    pc += 1;
-                    true
-                }
-                Inst::ResetCaptures { first, count } => {
-                    for &capture in &self.lists[first as usize..(first + count) as usize] {
-                        if registers[2 * capture as usize] != UNSET {
-                            set_capture(registers, stack, capture, UNSET, UNSET);
-                        }
-                    }
-                    pc += 1;
-                    true
-                }
-                Inst::LoopInit { counter } => {
-                    set(registers, stack, counter, 0);
-                    pc += 1;
-                    true
-                }
-                Inst::LoopHead {
-                    counter,
-                    min,
-                    max,
-                    greedy,
-                    exit,
-                } => {
-                    let count = registers[counter as usize];
-                    if count < min as usize {
-                        pc += 1;
-                    } else if max != UNBOUNDED && count >= max as usize {
-                        pc = exit;
-                    } else if greedy {
-                        stack.push(Frame::Choice { pc: exit, position });
-                        pc += 1;
-                    } else {
-                        stack.push(Frame::Choice {
-                            pc: pc + 1,
-                            position,
-                        });
-                        pc = exit;
-                    }
-                    true
-                }
-                Inst::LoopIterate { start } => {
-                    set(registers, stack, start, position);
-                    pc += 1;
-                    true
-                }
-                Inst::EmptyCheck { start } => {
-                    if position == registers[start as usize] {
-                        false
-                    } else {
-                        pc += 1;
-                        true
-                    }
-                }
-                Inst::LoopTail {
-                    counter,
-                    start,
-                    min,
-                    head,
-                } => {
-                    let count = registers[counter as usize];
-                    // RepeatMatcher's continuation: once the minimum is met, an iteration
-                    // that consumed nothing fails.
-                    if count >= min as usize && position == registers[start as usize] {
-                        false
-                    } else {
-                        set(registers, stack, counter, count + 1);
-                        pc = head;
-                        true
-                    }
-                }
-                Inst::Backreference {
-                    first,
-                    count,
-                    ignore_case,
-                    unicode,
-                } => {
-                    let captured = self.lists[first as usize..(first + count) as usize]
-                        .iter()
-                        .map(|capture| 2 * *capture as usize)
-                        .find(|bound| registers[*bound] != UNSET)
-                        .map(|bound| registers[bound]..registers[bound + 1]);
-                    match captured {
-                        None => {
-                            pc += 1;
-                            true
-                        }
-                        Some(range) => {
-                            let width = range.end - range.start;
-                            let matches = position + width <= length
-                                && range.clone().zip(position..).all(|(expected, actual)| {
-                                    equal(
-                                        text.unit(expected),
-                                        text.unit(actual),
-                                        ignore_case,
-                                        unicode,
-                                    )
-                                });
-                            if matches {
-                                position += width;
-                                pc += 1;
-                            }
-                            matches
-                        }
-                    }
-                }
-                Inst::Look { negative, end } => {
-                    let base = stack.len();
-                    stack.push(Frame::Barrier);
-                    let found = self.run(text, (pc + 1, position, position), None, registers, stack);
-                    match (found.is_some(), negative) {
-                        (true, false) => {
-                            // A lookahead is atomic: its choices go, the restores of its
-                            // captures stay for backtracking past it.
-                            let mut kept = base;
-                            for index in base + 1..stack.len() {
-                                if let Frame::Restore { .. } | Frame::RestoreCapture { .. } = stack[index] {
-                                    stack[kept] = stack[index];
-                                    kept += 1;
-                                }
-                            }
-                            stack.truncate(kept);
-                            pc = end;
-                            true
-                        }
-                        (true, true) => {
-                            while stack.len() > base {
-                                if let Some(frame) = stack.pop() {
-                                    restore(registers, frame);
-                                }
-                            }
-                            false
-                        }
-                        (false, false) => false,
-                        (false, true) => {
-                            pc = end;
-                            true
-                        }
-                    }
-                }
-                Inst::LookSucceed | Inst::Match => {
-                    return Some((start, position));
-                }
-            };
-            if advanced {
-                continue;
-            }
-            // Backtrack to the latest choice of this run.
-            loop {
-                match stack.pop() {
-                    None | Some(Frame::Barrier) => {
-                        // A search moves on to its next start; a run of a body fails.
-                        let next = search.and_then(|search| self.next_start(text, start + 1, search.last))?;
-                        stack.push(Frame::Barrier);
-                        start = next;
-                        (pc, position) = self.entry(text, next);
-                        break;
-                    }
-                    Some(frame @ (Frame::Restore { .. } | Frame::RestoreCapture { .. })) => {
-                        restore(registers, frame);
-                    }
-                    Some(Frame::Choice {
-                        pc: resume,
-                        position: at,
-                    }) => {
-                        pc = resume;
-                        position = at;
-                        break;
-                    }
-                    Some(Frame::Greedy {
-                        pc: resume,
-                        floor,
-                        position: at,
-                    }) => {
-                        let at = at - 1;
-                        if at > floor {
-                            stack.push(Frame::Greedy {
-                                pc: resume,
-                                floor,
-                                position: at,
-                            });
-                        }
-                        pc = resume;
-                        position = at;
-                        break;
-                    }
-                    Some(Frame::Lazy {
-                        pc: resume,
-                        test,
-                        ceiling,
-                        position: at,
-                    }) => {
-                        if !self.test(test, text.unit(at)) {
-                            continue;
-                        }
-                        let at = at + 1;
-                        if at < ceiling {
-                            stack.push(Frame::Lazy {
-                                pc: resume,
-                                test,
-                                ceiling,
-                                position: at,
-                            });
-                        }
-                        pc = resume;
-                        position = at;
-                        break;
-                    }
-                }
+            match step(&mut stage, self.instructions[at.pc() as usize], at) {
+                Step::Continue(next) => at = next,
+                Step::Accept => return Some((start, at.position())),
+                Step::Fail => at = self.resume(&mut stage, search, &mut start)?,
             }
         }
     }
-}
 
-/// The registers a restore entry puts back; any other entry restores nothing.
-fn restore(registers: &mut [usize], frame: Frame) {
-    match frame {
-        Frame::Restore { register, value } => registers[register as usize] = value,
-        Frame::RestoreCapture { capture, start, end } => {
-            let bound = 2 * capture as usize;
-            registers[bound] = start;
-            registers[bound + 1] = end;
+    /// Backtracks to the latest choice of this run (`specialize::replay`): at the run's barrier
+    /// a search moves on to its next start while a run of a body fails.
+    fn resume<T: Text + ?Sized>(&self, stage: &mut Concrete<'_, T>, search: Option<Search>, start: &mut usize) -> Option<Cursor> {
+        loop {
+            match replay(stage) {
+                Replay::Undone => {}
+                Replay::Resume(at) => return Some(at),
+                Replay::Exhausted => {
+                    let next = search.and_then(|search| self.next_start(stage.text, *start + 1, search.last))?;
+                    stage.stack.push(Frame::Barrier);
+                    *start = next;
+                    let (pc, position) = self.entry(stage.text, next);
+                    return Some(Cursor::at(pc, position));
+                }
+            }
         }
-        _ => {}
     }
 }
 

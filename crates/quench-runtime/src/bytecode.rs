@@ -1,57 +1,7 @@
 use smallvec::SmallVec;
 
-pub(crate) const INTRINSIC_REGEXP_BINDING: &str = "\0quench:intrinsic-regexp";
-/// Internal global bindings, which compiled code loads by name and no source text can
-/// declare: iterator closing and `with` scope exit (`WITH_ENTER_BINDING` enters).
-pub(crate) const ITERATOR_CLOSE_BINDING: &str = "\0quench:iterator-close";
-/// The intrinsic a `super` access reads its home's parent with (`Native::ReflectGetPrototypeOf`).
-pub(crate) const SUPER_BASE_BINDING: &str = "\0quench:super-base";
-pub(crate) const WITH_EXIT_BINDING: &str = "\0quench:with-exit";
-/// Every internal global the realm installs on its global object.
-pub(crate) const INTERNAL_GLOBAL_BINDINGS: [&str; 3] = [
-    ITERATOR_CLOSE_BINDING,
-    WITH_ENTER_BINDING,
-    WITH_EXIT_BINDING,
-];
-
-/// The native an engine-internal intrinsic name stands for: a by-name read of it resolves to
-/// that native before consulting any binding (`Vm::intrinsic_name_value`), and no source
-/// identifier can spell it, so the read observes no scope.
-pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
-    use crate::heap::Native;
-    Some(match name {
-        "\0quench:dynamic-import" => Native::DynamicImport,
-        "\0quench:intrinsic-promise" => Native::Promise,
-        "\0quench:super-get" => Native::ReflectGet,
-        "\0quench:super-set" => Native::SuperSet,
-        SUPER_BASE_BINDING => Native::ReflectGetPrototypeOf,
-        "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
-        "\0quench:object-literal-create" => Native::ObjectLiteralCreate,
-        "\0quench:object-define-property" => Native::ObjectDefineProperty,
-        "\0quench:object-freeze" => Native::ObjectFreeze,
-        // What the compiler's own throws, class setup and `using` declarations call: the
-        // realm's intrinsics, which a binding of the same name in scope does not replace.
-        INTRINSIC_TYPE_ERROR_BINDING => Native::TypeError,
-        INTRINSIC_REFERENCE_ERROR_BINDING => Native::ReferenceError,
-        INTRINSIC_SET_PROTOTYPE_OF_BINDING => Native::ObjectSetPrototypeOf,
-        INTRINSIC_DISPOSABLE_STACK_BINDING => Native::DisposableStack,
-        // The iteration helpers each realm also installs on its global object.
-        ITERATOR_CLOSE_BINDING => Native::IteratorClose,
-        _ => return None,
-    })
-}
-
-/// Whether a by-name read of `name` is an intrinsic's (`intrinsic_name_native` or the RegExp
-/// intrinsic), which reads no binding.
-pub(crate) fn is_intrinsic_name(name: &str) -> bool {
-    name == INTRINSIC_REGEXP_BINDING || intrinsic_name_native(name).is_some()
-}
-pub(crate) const INTRINSIC_TYPE_ERROR_BINDING: &str = "\0quench:intrinsic-type-error";
-pub(crate) const INTRINSIC_REFERENCE_ERROR_BINDING: &str = "\0quench:intrinsic-reference-error";
-pub(crate) const INTRINSIC_SET_PROTOTYPE_OF_BINDING: &str = "\0quench:intrinsic-set-prototype-of";
-pub(crate) const INTRINSIC_DISPOSABLE_STACK_BINDING: &str = "\0quench:intrinsic-disposable-stack";
-/// The engine-internal global a `with` statement calls to enter its object scope.
-pub(crate) const WITH_ENTER_BINDING: &str = "\0quench:with-enter";
+mod internal_bindings;
+pub(crate) use internal_bindings::*;
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
 pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
 
@@ -867,17 +817,17 @@ opcodes!($;
     LoadLocal => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
     StoreLocal => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
     StoreVarBinding => CALL_EFFECT; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, Unused, Unused),
-    LoadEnvLocal => Effect::READS_HEAP; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
-    StoreEnvLocal => Effect::WRITES_HEAP; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
-    LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot; js CapturedValue, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadEnvLocal => Effect::READS_HEAP; layout Scalar; meaning LocalSlot; semantics Staged, @ Register, @ fields(ResultRegister, Unused, Unused),
+    StoreEnvLocal => Effect::WRITES_HEAP; layout Scalar; meaning LocalSlot; semantics Staged, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
+    LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot; js CapturedValue; semantics Staged, @ Register, @ fields(ResultRegister, Unused, Unused),
     StoreCapture => Effect::WRITES_HEAP; layout CaptureDepthAndSlot, @ Register, @ fields(Register, Unused, Unused),
     LoadName => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
     LoadNameCall => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, WriteRegister, CacheSiteIndex),
-    LoadNameTypeof => Effect::READS_HEAP; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
+    LoadNameTypeof => Effect::READS_HEAP; layout Scalar; meaning AtomIndex; semantics Staged, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
     ResolveName => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, BooleanFlag, CacheSiteIndex),
     LoadResolvedName => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Register, BooleanFlag),
     DeleteName => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    StoreName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
+    StoreName => WRITE_THROW; layout Scalar; meaning AtomIndex; semantics Staged, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
     StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, BooleanFlag),
     LoadThis => READ_THROW; layout Scalar; meaning Unused; semantics Staged, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadCallee => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
@@ -894,22 +844,22 @@ opcodes!($;
     MakeObject2 => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, Register, Register),
     MakeObjectLiteral => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     SuperConstArrayObject2 => CALL_EFFECT; layout Scalar; meaning SuperinstructionIndex, @ Returnable, @ fields(ResultRegister, Unused, Unused),
-    GetIterator => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    GetIterator => READ_THROW; layout Scalar; meaning Unused; semantics Staged, @ Register, @ fields(ResultRegister, Register, Unused),
     GetAsyncIterator => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     CreateRegExpLiteral => CALL_EFFECT; layout Scalar; meaning RegExpLiteralSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    IteratorClose => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    IteratorClose => READ_THROW; layout Scalar; meaning Unused; semantics Staged, @ Register, @ fields(ResultRegister, Register, Unused),
     // ArrayAccumulation past a literal's static prefix: `length` elisions, then the optional
     // value (iterated when the flag marks a spread), appended at the array's length.
-    AppendArray => CALL_EFFECT; layout Scalar; meaning ArrayLength, @ Register, @ fields(Register, OptionalReadRegister, BooleanFlag),
+    AppendArray => CALL_EFFECT; layout Scalar; meaning ArrayLength; semantics Staged, @ Register, @ fields(Register, OptionalReadRegister, BooleanFlag),
     RequireObjectCoercible => READ_THROW; layout Scalar; meaning Unused; semantics Staged, @ Register, @ fields(Unused, Register, Unused),
     RequireIteratorResult => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Register, Unused),
     SuperCallCheck => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
     IteratorCleanupPush => Effect::CONTROL; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Unused),
     IteratorCleanupPop => Effect::CONTROL; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
     // `a` = the next key of the for-in state `b` (`Vm::for_in_next`) that is still an enumerable property; to `imm` once none is left.
-    ForInNext => CALL_EFFECT; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(ResultRegister, Register, Unused),
+    ForInNext => CALL_EFFECT; layout Scalar; meaning JumpTarget; flow ConditionalJump; semantics Staged, @ Register, @ fields(ResultRegister, Register, Unused),
     // `a` = the for-in state over `b` (`Vm::for_in_start`): its key snapshot, at the first key.
-    ForInStart => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    ForInStart => CALL_EFFECT; layout Scalar; meaning Unused; semantics Staged, @ Register, @ fields(ResultRegister, Register, Unused),
     SetFunctionName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
     SetFunctionNameKey => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning FunctionNamePrefix, @ Register, @ fields(Register, Register, Unused),
     InitializeTdz => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Unused, Unused, Unused),
@@ -918,7 +868,7 @@ opcodes!($;
     YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair, @ RegisterReadWrite, @ fields(ResultRegister, Register, ReadWriteRegister),
     GetField => READ_THROW; layout Scalar; meaning FieldLookup; js GetField, @ ReturnableAndThis, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
     GetIndex => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, NumericIndexOperand, NumericIndexOperand),
-    ToPropertyKey => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    ToPropertyKey => READ_THROW; layout Scalar; meaning Unused; semantics Staged, @ Register, @ fields(ResultRegister, Register, Unused),
     ToNumeric => READ_THROW; layout Scalar; meaning Unused; semantics Staged, @ Register, @ fields(ResultRegister, Register, Unused),
     CopyDataProperties => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
     MarkPrivateName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Unused, Register, Register),
@@ -948,7 +898,7 @@ opcodes!($;
     Jump => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow Jump; js Jump; semantics Staged, @ Register, @ fields(Unused, Unused, Unused),
     JumpFalse => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; semantics Staged, @ Register, @ fields(Register, Unused, Unused),
     JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(BinaryOperator, Operand, Operand),
-    Return => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal; js Return, @ Register, @ fields(Register, Unused, Unused),
+    Return => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal; js Return; semantics Staged, @ Register, @ fields(Register, Unused, Unused),
     Throw => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Register, Unused, Unused),
     NumericAdd => READ_THROW; layout Scalar; meaning AdditionOperator; js NumericBinary, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
     NumericMultiply => READ_THROW; layout Scalar; meaning MultiplicationOperator; js NumericBinary, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
@@ -1148,7 +1098,7 @@ opcodes!($;
     // an unmaterialized binding answers from the values its activation kept
     // (`Function::kept_arguments`); any other value is read as `GetField` and
     // `GetIndex` read it.
-    ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
+    ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot; semantics Staged, @ Register, @ fields(ResultRegister, Unused, Unused),
     ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Register, Unused),
     // A first-call stub's body: calls its chunk with its arguments and `new.target` (`Vm::call_first_chunk`).
     CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
@@ -4164,6 +4114,8 @@ mod closure_reads;
 pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts};
 pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis, LoadEncoding, LoadRecords};
 mod disassemble;
+mod flow_view;
+pub use flow_view::{FlowFunction, FlowInstruction};
 #[cfg(test)]
 mod tests;
 mod validate;

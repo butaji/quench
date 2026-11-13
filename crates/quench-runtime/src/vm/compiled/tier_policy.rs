@@ -14,6 +14,13 @@ pub(in crate::vm) struct Tiers {
     pub(in crate::vm) priors: Priors,
 }
 
+/// The priors the model tests pin their arithmetic to.
+#[cfg(test)]
+pub(in crate::vm) const TEST_PRIORS: Priors = Priors {
+    interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
+    region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800,
+};
+
 /// Parts per thousand, the unit of a prior's share.
 pub(in crate::vm) const PER_MILLE: u64 = 1000;
 
@@ -22,37 +29,42 @@ pub(in crate::vm) const PER_MILLE: u64 = 1000;
 pub(in crate::vm) struct Priors {
     /// Nanoseconds an interpreted lane bytecode takes.
     pub(in crate::vm) interpreter_ns: u64,
-    /// A body's per-bytecode time as a share of the interpreter's, in thousandths.
+    /// A u-jit body's per-bytecode time as a share of the interpreter's, in thousandths: bodies
+    /// run 2 to 5 times faster per entry than the interpreter once entered (inclusive timing).
     pub(in crate::vm) body_share: u64,
-    /// Nanoseconds the second core takes to compile one IR instruction.
+    /// Nanoseconds the code generator takes to compile one IR instruction, until the process's
+    /// own compiles replace it (`tier_model::CompileCost`).
     pub(in crate::vm) compile_ns_per_ir: u64,
-    /// The same for a Quick compile, and the share of the interpreter's time its code still takes.
-    pub(in crate::vm) quick_compile_ns_per_ir: u64,
-    pub(in crate::vm) quick_body_share: u64,
     /// The part per thousand of a compile's time that waits on the running program: compiles run
     /// on the code generator's thread, so most of their time overlaps it (two cores).
     pub(in crate::vm) compile_wall_permille: u64,
-    /// Nanoseconds entering a loop region from the lane costs per call, and a body's entry.
+    /// Nanoseconds entering a loop region from the lane costs per call, and a body's entry
+    /// (measured about 300 ns: some 1,100 instructions at 0.3 ns).
     pub(in crate::vm) region_entry_ns: u64,
     pub(in crate::vm) body_entry_ns: u64,
-    /// The divisor of the entries so far that gives the credible lower bound of the entries to come.
+    /// The divisor of the entries so far that gives the credible lower bound of the entries to
+    /// come, where the decision (a compile) is irreversible.
     pub(in crate::vm) remaining_divisor: u64,
+    /// The forgetting factor of the compile-cost running ratio, per mille per compile, and the
+    /// weight of its prior in IR instructions (eight compiles of a hundred).
+    pub(in crate::vm) compile_forgetting_permille: u64,
+    pub(in crate::vm) compile_prior_ir: u64,
 }
 
 /// The loop tier (OSR regions at backward jumps).
 pub(in crate::vm) struct Loops {
-    /// Backward jumps a loop takes in the interpreter before it compiles: enough that loops
-    /// which run briefly never pay the compilation.
-    pub(in crate::vm) threshold: u32,
-    /// Native runs that complete no iteration, less the iterations other runs complete, before
-    /// the site stops entering native code: a loop whose runs keep leaving before their
-    /// backward jump (a guard that fails each iteration, a loop that seldom iterates) is the
-    /// interpreter's. Richards --jit entered one list walk 6M times for 0.02 iterations a run.
-    pub(in crate::vm) max_exits: u32,
-    /// Entries a site's guards may decline in a row before it stops trying: a field whose cache
-    /// never hits at entry (an array's `length`) made V8-v7 Crypto's sum loop decline at each of
-    /// its iterations.
-    pub(in crate::vm) max_declines: u32,
+    /// The backward jumps a loop takes in the interpreter before the tier model weighs its
+    /// compile (`loop_model`): a resource and correctness floor, enough that the call sites of
+    /// its body have linked their targets (which the region inlines) and its entry facts are
+    /// observed. The model asks more where the compile does not yet pay.
+    pub(in crate::vm) warmup_taken: u32,
+    /// IR instructions a bytecode of a loop's span compiles to, which prices the compile before
+    /// it runs (its own census replaces the guess in the learned cost per IR instruction).
+    pub(in crate::vm) ir_per_bytecode: u64,
+    /// The weight of the prior that a site's native entries repay themselves, in entries: the
+    /// site's measured runs outweigh it as they mount (`loop_model::repays`), and it stops
+    /// entering where its entries cost more than the iterations they ran save.
+    pub(in crate::vm) prior_runs: u64,
     /// Runs that leave at one operation before the site compiles again with that operation's
     /// int32 speculation dropped (`LoopTier::left_at`): a sum that overflows on most runs
     /// (SHA-256's rounds) is a double's, and one that overflowed once is not.
@@ -60,12 +72,6 @@ pub(in crate::vm) struct Loops {
     /// Compilations a site may make: each after the first widens a value the last one held as
     /// an `i32`, and a region has few such values.
     pub(in crate::vm) max_compilations: u32,
-    /// The work, in interpreted-instruction units (`LaneBody::compile_cost_per_ir`), a loop
-    /// region's entry costs a call of its function: about 140 ns of entry and exit plumbing per
-    /// entry (V8-v7 Crypto's `am3`, 4.3M entries) at the 50 ns that constant counts an interpreted
-    /// instruction at. A function whose region enters weighs its body compile against that saving
-    /// alone (`pays_compile`): the region already runs the loop.
-    pub(in crate::vm) region_entry_work: u64,
 }
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
@@ -111,50 +117,24 @@ pub(in crate::vm) struct LaneBody {
     /// a hot loop while the code compiles (Richards' first body: 300 ms); the code waits at
     /// most this many entries once ready.
     pub(in crate::vm) compile_poll_interval: u16,
-    /// What compiling one IR instruction of a body costs, in interpreted-instruction units: the
-    /// V8-v7 compiles took 7 us an IR instruction (`QUENCH_LANE_COMPILE`), an interpreted
-    /// instruction some 50 ns.
-    pub(in crate::vm) compile_cost_per_ir: u64,
-    /// The share of a function's interpreted work its compiled body saves, as a fraction.
-    pub(in crate::vm) saved_share: (u64, u64),
-    /// How many times the compile's cost the saved work must reach before the body compiles.
-    pub(in crate::vm) benefit_over_cost: u64,
+    /// The entries between timed runs of a published body's function, which alternate the body
+    /// and the interpreter (`LaneView::audit_entry`): one in this many entries pays a clock
+    /// read pair, and half of those run interpreted.
+    pub(in crate::vm) audit_period: u32,
+    /// The timed runs each side needs before the verdict (`LaneView::audit_verdict`).
+    pub(in crate::vm) audit_samples: u16,
+    /// How much faster, per thousand, the body's mean timed run must be than the interpreter's
+    /// for the body to stay: a body only as fast pays its compile and its entry for nothing.
+    pub(in crate::vm) audit_margin_permille: u64,
 }
 
-/// The per-function JavaScript tiers: the numeric optimizing tier and the general
-/// tagged-dispatch baseline.
+/// The per-function JavaScript tier: the numeric optimizing tier.
 pub(in crate::vm) struct JsFunction {
     /// Prespecified looks for the Number-entry profile. Critical counts are the exact
     /// one-sided Binomial( n, 0.80 ) cutoffs at alpha = 0.05 / 4 per look. A union bound caps
     /// false promotion at 5% across looks for one function under a stationary Bernoulli model;
     /// it is not a VM-wide multiple-test bound.
     pub(in crate::vm) promotion_looks: [(u8, u8); 4],
-    /// Entries after which a function is hot enough to price its general tagged-dispatch
-    /// baseline (`GeneralPromotionPending`); unlike the optimizing tier, the baseline needs no
-    /// numeric arguments or bytecode-shape candidate.
-    pub(in crate::vm) general_promotion_entries: u8,
-    /// A specialized artifact that repeatedly rejects entry values is useful only for its
-    /// matching profile. Eight confirmed misses cap this experiment before paying for the
-    /// complete-semantics baseline.
-    pub(in crate::vm) specialized_guard_misses: u8,
-    /// The general baseline's compile cost in interpreted-instruction units: a fixed part and
-    /// a part per bytecode instruction. Measured on Linux x86_64 with `QUENCH_TRACE=js-jit`
-    /// against roughly 50 ns per interpreted instruction: requiring jackspeak, about 0.8 ms
-    /// plus 32 µs per instruction; npm's semver scenario, 1.4 ms for a four-instruction body
-    /// and 40 to 76 µs per instruction for 160 to 200.
-    pub(in crate::vm) general_compile_fixed_cost: u64,
-    pub(in crate::vm) general_compile_cost_per_instruction: u64,
-    /// The share of an entry's interpreted instructions the baseline saves, as a fraction. It
-    /// keeps the interpreter's tagged semantics and calls back into the VM for most operations
-    /// (`js_step_callout` was 11% of npm browserslist with it on), so a quarter until the
-    /// baseline's savings are measured.
-    pub(in crate::vm) general_saved_share: (u64, u64),
-    /// What each native entry of the baseline costs beyond a frameless lane activation, in
-    /// interpreted-instruction units: a due function's calls take a VM frame and the general
-    /// loop (`Vm::js_tier_needs_general_entry`). Measured on npm's browserslist scenario: a
-    /// six-instruction body's 72,427 native entries cost about 650 machine instructions each
-    /// more than its lane calls, some 32 lane-interpreted instructions.
-    pub(in crate::vm) general_entry_overhead: u64,
 }
 
 /// The Wasm function and module tiers.
@@ -181,10 +161,31 @@ pub(in crate::vm) struct Wasm {
 /// the generic case: the width of every polymorphic cache and of each guarded switch a tier
 /// specializes a site into. One bound for every lattice of site feedback.
 pub(in crate::vm) const POLYMORPHISM: usize = 4;
-/// The bodies a field site's leaves may have named (`Vm::field_site_leaves`) before a plan reads
-/// it as a probed read rather than a shape proof: a site that left in one body may have met its
-/// second shape by chance.
-pub(in crate::vm) const UNSTABLE_SITE_LEAVES: u8 = 2;
+/// What a speculated fact costs and saves, in nanoseconds, from which a site's break-even rate
+/// derives (`site_posterior::break_even`) with the posterior's quantile (`tier-decision-rule-v1`
+/// section 4). Per execution a speculating read pays `guard_read_ns` when the fact holds and
+/// `guard_exit_ns` (the leave, the interpreter's replay and the re-entry) when it does not; the
+/// in-place generic read (`field_probe`) pays `probe_read_ns` either way. Speculation wins when
+/// `p (probe - guard) > (1 - p) (exit - probe)`, so the break-even rate is
+/// `(exit - probe) / (exit - guard)`.
+pub(in crate::vm) struct Speculation {
+    pub(in crate::vm) guard_read_ns: u32,
+    pub(in crate::vm) probe_read_ns: u32,
+    pub(in crate::vm) guard_exit_ns: u32,
+    /// The standard-normal deviate of the posterior's lower 5% quantile: the Beta's quantile is
+    /// taken as mean minus this many standard deviations (conservative for a skewed Beta).
+    pub(in crate::vm) lower_quantile_z: f64,
+}
+
+/// A guarded read is a load and a compare; the probe is the VM cache's hit path; an exit costs
+/// the region entry and exit plumbing (`Priors::region_entry_ns`, 140 ns) and the replayed
+/// instructions of the leave.
+pub(in crate::vm) const SPECULATION: Speculation =
+    Speculation { guard_read_ns: 1, probe_read_ns: 6, guard_exit_ns: 200, lower_quantile_z: 1.645 };
+/// The trips a loop is assumed to take, in weighing the call sites it holds (`lane_unit`'s
+/// inlining plan), before a native run of it has measured its mean: enough that a site in a loop
+/// outweighs one outside it, and that nesting orders deeper sites first.
+pub(in crate::vm) const ASSUMED_LOOP_TRIP: u64 = 8;
 
 /// A `tier-stress` build: the floor row, and every JavaScript compilation arm on, so its
 /// Test262 run and `tests/tier_differential.rs` check each tier against the interpreter.
@@ -194,6 +195,21 @@ pub(in crate::vm) const STRESS: bool = cfg!(feature = "tier-stress");
 /// (`regexp_native`): compiling costs about what this many searches of a small program do.
 pub(in crate::vm) const REGEXP_NATIVE_RUNS: u32 = if STRESS { 1 } else { 2000 };
 
+#[cfg(test)]
+thread_local! { static FORCED_ADMISSION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+/// Makes this thread's tier models admit every eligible compile, as `tier-stress` does for the
+/// process: for tests of what compiled code does, on fixtures too small to repay a compile.
+#[cfg(test)]
+pub(in crate::vm) fn force_admission() { FORCED_ADMISSION.set(true); }
+
+/// Whether the tier models admit every eligible compile (`tier-stress`, or a test that forced it).
+pub(in crate::vm) fn admits_every_compile() -> bool {
+    #[cfg(test)]
+    if FORCED_ADMISSION.get() { return true; }
+    STRESS
+}
+
 /// The thresholds every tier controller compares against: the measured row, or under
 /// `STRESS` the floor row, which makes every eligible site compile on its first chance.
 pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };
@@ -201,18 +217,18 @@ pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };
 /// Each threshold at the least value its controller accepts. Thresholds only price
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
-    loops: Loops { threshold: 2, ..MEASURED.loops },
-    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, ..MEASURED.lane_body },
-    js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)], general_promotion_entries: 1, general_compile_fixed_cost: 0, general_compile_cost_per_instruction: 0, ..MEASURED.js_function },
+    loops: Loops { warmup_taken: 2, ..MEASURED.loops },
+    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, audit_period: u32::MAX, ..MEASURED.lane_body },
+    js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)] },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
-    priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },
+    priors: MEASURED.priors,
 };
 
 /// The base a share in percent is a share of.
 pub(in crate::vm) const PERCENT: u64 = 100;
 
 const MEASURED: Tiers = Tiers {
-    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8, region_entry_work: 3 },
+    loops: Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 128, widen_after_leaves: 4, max_compilations: 8 },
     lane_body: LaneBody {
         warmup_entries: 400,
         reoptimize_share: 1,
@@ -227,21 +243,13 @@ const MEASURED: Tiers = Tiers {
         late_call_calls: 4096,
         min_instructions: 40,
         compile_poll_interval: 64,
-        compile_cost_per_ir: 5,
-        saved_share: (1, 2),
-        benefit_over_cost: 1,
+        audit_period: 16,
+        audit_samples: 16,
+        audit_margin_permille: 50,
     },
-    js_function: JsFunction {
-        promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)],
-        general_promotion_entries: 32,
-        specialized_guard_misses: 8,
-        general_compile_fixed_cost: 16_000,
-        general_compile_cost_per_instruction: 1_200,
-        general_saved_share: (1, 4),
-        general_entry_overhead: 32,
-    },
+    js_function: JsFunction { promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)] },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
-    priors: Priors { interpreter_ns: 10, body_share: 200, compile_ns_per_ir: 3000, quick_compile_ns_per_ir: 2100, compile_wall_permille: 100, quick_body_share: 220, region_entry_ns: 140, body_entry_ns: 20, remaining_divisor: 1 },
+    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800 },
 };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)
@@ -264,11 +272,11 @@ pub(in crate::vm) struct PolicyTiers {
     /// 2026-10-24). Compiling at `none`, without the e-graph pass, saved only 576 KiB on
     /// Crypto and 648 on NavierStokes (`tod137-loop-tier-opt-level-…`).
     pub(in crate::vm) loop_tier: bool,
-    /// Whether the JavaScript function tiers (the per-function tier and the general-dispatch
-    /// tier, and the loop tier's site analysis) compile. Memory-first compiles none, on the
+    /// Whether the JavaScript function tiers (the per-function tier and the loop tier's site
+    /// analysis) compile. Memory-first compiles none, on the
     /// owner's direction that it may trade Score for memory under `--jit` (TOD-123). Under
-    /// memory-first their code and regalloc2 state set the `--jit` peaks: the general-dispatch
-    /// tier took V8-v7 Crypto `--jit` from 3220 to 5496 KiB (median, bolted static x86_64).
+    /// memory-first their code and regalloc2 state set the `--jit` peaks: the function tiers
+    /// took V8-v7 Crypto `--jit` from 3220 to 5496 KiB (median, bolted static x86_64).
     /// With both off, every V8-v7 `--jit` row peaked 84-380 KiB lower, at its no-JIT level.
     /// Scores moved both ways: EarleyBoyer +125%, Splay +15%, RayTrace +11%, NavierStokes +8%,
     /// but DeltaBlue -9%, Richards -7%, RegExp -7% (same unbolted static binary, 5 runs,
@@ -281,6 +289,12 @@ const BY_POLICY: [PolicyTiers; crate::MemoryPolicy::ALL.len()] = [
     PolicyTiers { loop_tier: true, js_function_tiers: true },
     PolicyTiers { loop_tier: false, js_function_tiers: false },
 ];
+
+/// The one tier predicate: whether any of `tiers` may run for a function under `policy` and the
+/// process's JIT mode (`jit_mode::tiers_allowed`).
+pub(in crate::vm) fn tier_may_run(policy: crate::MemoryPolicy, tiers: &[crate::jit_mode::Tier]) -> bool {
+    by_policy(policy).js_function_tiers && crate::jit_mode::tiers_allowed(tiers)
+}
 
 /// What `policy` lets the tiers compile.
 pub(in crate::vm) const fn by_policy(policy: crate::MemoryPolicy) -> &'static PolicyTiers {
@@ -302,8 +316,6 @@ mod tests {
         let looks = TIERS.js_function.promotion_looks;
         assert!(looks.windows(2).all(|pair| pair[0].0 < pair[1].0), "looks grow");
         assert!(looks.iter().all(|(observations, minimum)| minimum <= observations));
-        let (saved, of) = TIERS.js_function.general_saved_share;
-        assert!(saved > 0 && saved < of);
         for policy in crate::MemoryPolicy::ALL {
             let row = by_policy(policy);
             // The loop tier's site analysis belongs to the function tiers.

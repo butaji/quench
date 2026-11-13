@@ -28,6 +28,8 @@
 //! thread-exit destructors) uses one shared heap behind a lock.
 
 mod large;
+mod scratch;
+pub use scratch::{adopt as adopt_scratch_thread, release as release_scratch};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::{Cell, UnsafeCell};
 use std::ptr;
@@ -160,7 +162,7 @@ const DECOMMITTED_CAPACITY: usize = CHUNK_BYTES / PAGE_BYTES / 4;
 /// faster (254 -> 150 ns), the other ops and JetStream splay, richards, earley-boyer, raytrace
 /// and delta-blue within noise, at the same peak RSS (release build, x86_64 4 vCPU, 2026-11-07).
 /// The host's collection-time release of read-only pages measured 10 ms as the pace past which
-/// what stays resident is the run's working set (`COLLECTION_RELEASE_INTERVAL`).
+/// what stays resident is the run's working set.
 pub const PURGE_DELAY: Duration = Duration::from_millis(10);
 
 /// A heap and the flag that serializes its use, for heaps no single thread owns.
@@ -396,6 +398,13 @@ impl QuenchAlloc {
             return None;
         }
         class_of(layout.size())
+    }
+
+    /// Whether a block this allocator does not own stays the system allocator's when resized to
+    /// `new_layout`: no small class takes it and no scratch region does.
+    fn system_keeps(block: *mut u8, new_layout: Layout) -> bool {
+        let moves_here = ENABLED.load(Ordering::Relaxed) && Self::small_class(new_layout).is_some();
+        !moves_here && !scratch::owns(block) && !scratch::applies(new_layout)
     }
 
     /// `alloc` once the switch is on: a small request from its class, any other (or one no
@@ -724,6 +733,12 @@ unsafe impl GlobalAlloc for QuenchAlloc {
     #[inline]
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         if ENABLED.load(Ordering::Relaxed) {
+            let block = scratch::alloc_for(layout);
+            if !block.is_null() {
+                // SAFETY: the block holds at least `layout.size()` bytes.
+                unsafe { block.write_bytes(0, layout.size()) };
+                return block;
+            }
             if let Some(class) = Self::small_class(layout) {
                 // SAFETY: a small class.
                 let block = unsafe { allocate(class) };
@@ -760,15 +775,13 @@ unsafe impl GlobalAlloc for QuenchAlloc {
             // SAFETY: the system allocator's block, and it serves every request.
             return unsafe { System.realloc(block, layout, new_size) };
         }
-        let new_layout = match Layout::from_size_align(new_size, layout.align()) {
-            Ok(new_layout) => new_layout,
-            Err(_) => return ptr::null_mut(),
+        let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
+            return ptr::null_mut();
         };
-        let stays_here = ENABLED.load(Ordering::Relaxed) && Self::small_class(new_layout).is_some();
         if owned && Self::small_class(layout) == Self::small_class(new_layout) {
             return block;
         }
-        if !owned && !stays_here {
+        if !owned && Self::system_keeps(block, new_layout) {
             // SAFETY: both sides are the system allocator's.
             return unsafe { System.realloc(block, layout, new_size) };
         }

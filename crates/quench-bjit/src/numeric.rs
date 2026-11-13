@@ -1,6 +1,6 @@
 //! Number rows for loops over tagged `Value` words, the vocabulary the planner names them in
 //! (the semantics are `stencils/numeric.rs`). A row names where each operand lives: a frame slot holding a tagged word (hole: byte offset), a pinned register
-//! holding a raw int32 (r14, r15, rdi, rsi through the whole chain of stencils: no tag, no
+//! holding a raw int32 (the first integer registers of the row convention, through the whole chain of stencils: no tag, no
 //! store-forwarding), an immediate int32 (hole) or a constant tagged word (hole). A row applies
 //! the interpreter's Number semantics (`Value::number` canonicalization) and continues at the
 //! next row. Speculating rows take int32 operands only: anything else, an overflow, or a result
@@ -97,6 +97,8 @@ pub struct Row {
 
 #[path = "../stencils/library.rs"]
 pub mod library;
+#[path = "../stencils/supernodes.rs"]
+pub mod supernodes;
 
 impl Place {
     /// The code of this place in `library` and the stencil rows.
@@ -133,4 +135,28 @@ pub fn stencil(row: Row) -> Result<&'static Stencil, String> {
     let stencil: &'static Stencil = Box::leak(Box::new(found));
     table.insert(code, stencil);
     Ok(stencil)
+}
+
+/// The stencil of the supernode row computing `nodes` (`supernodes.rs`), built at compile time by
+/// rustc and shared for the life of the process; `None` for a pair the library does not hold (the
+/// pair is then planned as single rows). Misses are remembered too.
+pub fn supernode_stencil(nodes: [supernodes::Node; supernodes::NODES]) -> Option<&'static Stencil> {
+    type Table = Mutex<HashMap<[supernodes::Node; supernodes::NODES], Option<&'static Stencil>>>;
+    static TABLE: OnceLock<Table> = OnceLock::new();
+    let mut table = TABLE.get_or_init(Default::default).lock().ok()?;
+    *table.entry(nodes).or_insert_with(|| crate::rustc::stencil(&supernodes::name(&nodes)).map(|found| &*Box::leak(Box::new(found))))
+}
+
+#[cfg(test)]
+mod supernode_tests {
+    use super::{supernode_stencil, supernodes};
+
+    /// Every supernode the library names was built, and has the successors a row chains by.
+    #[test]
+    fn the_supernodes_are_built() {
+        for nodes in supernodes::instances() {
+            let stencil = supernode_stencil(nodes).unwrap_or_else(|| panic!("{nodes:?}"));
+            assert!(stencil.relocs.iter().any(|reloc| crate::class::is_successor(reloc.class)), "{nodes:?}");
+        }
+    }
 }

@@ -10,7 +10,7 @@ use std::cell::Cell;
 use std::ptr;
 use std::sync::atomic::Ordering;
 
-use super::ENABLED;
+use super::{scratch, ENABLED};
 
 /// The process's mmap threshold: smaller blocks are the arena's and are already reused.
 const LARGE_MIN_BYTES: usize = 1 << 20;
@@ -118,6 +118,10 @@ fn eligible(layout: Layout) -> bool {
 /// # Safety
 /// As `GlobalAlloc::alloc`.
 pub(crate) unsafe fn alloc(layout: Layout) -> *mut u8 {
+    let scratch = scratch::alloc_for(layout);
+    if !scratch.is_null() {
+        return scratch;
+    }
     let block = take(layout);
     if !block.is_null() {
         return block;
@@ -132,6 +136,10 @@ pub(crate) unsafe fn alloc(layout: Layout) -> *mut u8 {
 /// # Safety
 /// As `GlobalAlloc::dealloc`, for a block of the system allocator.
 pub(crate) unsafe fn free(block: *mut u8, layout: Layout) {
+    if scratch::owns(block) {
+        scratch::free(block, layout);
+        return;
+    }
     if ENABLED.load(Ordering::Relaxed) && keep(block, layout) {
         return;
     }

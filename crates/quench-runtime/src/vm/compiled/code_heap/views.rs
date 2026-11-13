@@ -163,8 +163,7 @@ fn page_span(offset: usize, bytes: usize) -> (usize, usize) {
 }
 
 /// The system page size, which every region and chunk is a multiple of.
-#[cfg(target_os = "linux")]
-fn page_bytes() -> usize {
+pub(super) fn page_bytes() -> usize {
     static PAGE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     // SAFETY: `sysconf` has no preconditions.
     *PAGE.get_or_init(|| {
@@ -175,6 +174,18 @@ fn page_bytes() -> usize {
 /// Makes `bytes` just written at `code` visible to instruction fetch on this core. Data and
 /// instruction caches are coherent on x86-64; on AArch64 a reused block may hold stale
 /// instructions until its lines are cleaned to the point of unification and invalidated.
+///
+/// Why x86-64 needs no flush for an immediate patched in place through the write view. The two
+/// views alias the same physical pages, and x86 instruction fetch is coherent with stores by
+/// physical address, so a store through the write mapping invalidates any stale copy of that
+/// line in the fetching core's pipeline and instruction cache (Intel SDM vol. 3, 8.1.3 on
+/// self-modifying and cross-modifying code; AMD APM vol. 2, 7.6.1). The serializing instruction
+/// that section asks for protects a *different* core executing the bytes while they change.
+/// A patch here is made by the one thread that runs the body, while the body is not running (the
+/// miss helper runs between the leave and the next entry, which is an indirect call), so no
+/// core can be mid-fetch of the patched bytes, and the entry's call and return serialize
+/// speculation past them. Only immediates are patched, never an opcode or a length. AArch64 has
+/// split caches: it cleans the data line and invalidates the instruction line (below).
 pub(super) fn flush_icache(code: *mut u8, bytes: usize) {
     #[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
     {

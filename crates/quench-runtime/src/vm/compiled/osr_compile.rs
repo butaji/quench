@@ -3,7 +3,7 @@
 
 use super::{
     compile_native_function, dump_native_bytes, dump_native_code, names_length, native_dump_directory, lane_unit, osr_loop,
-    publish_entry, tier_policy, CompiledOsrRegion, FieldReceiver, LaneHelpers, LoopRegion,
+    publish_body, tier_policy, CompiledOsrRegion, FieldReceiver, LaneHelpers, LoopRegion,
     NativeCompileRejection, NativeFieldLoad, Observation, VmFacts,
 };
 use crate::bytecode::{FieldLookup, Function, Op, ResidualProgram, WideInstruction};
@@ -21,6 +21,8 @@ pub(in crate::vm) struct OsrFacts {
     /// departure discards the compile.
     departure_shapes: Vec<u32>,
     slot_dependencies: Vec<crate::code_dependencies::SlotDependency>,
+    /// The heap identities the code names (a call's callee), which its publication keeps alive.
+    pub(in crate::vm) roots: crate::folded_roots::FoldedRoots,
 }
 
 impl OsrFacts {
@@ -46,6 +48,10 @@ pub(in crate::vm) struct PendingOsrRegion {
     facts: OsrFacts,
     /// What a run of the code builds around it.
     crossing: super::Crossing,
+    /// Where a run may re-enter the code mid-region.
+    resumes: super::base_region::ResumeTable,
+    /// The inline-cache entries of BaseJIT code that a miss may re-patch in place.
+    sites: super::base_region::CacheSites,
 }
 
 /// What a background loop-region compile came to.
@@ -131,13 +137,12 @@ fn localized_jumps(region: &LoopRegion) -> Vec<WideInstruction> {
 /// The region's static field reads, by the unit PC each instruction took, answered from
 /// the entry record: an instruction at region offset `o` moved past every marker at or
 /// before it (`inserted`).
-fn inlined_entry_fields(region: &LoopRegion, program: &ResidualProgram, inserted: &[(usize, u32)]) -> BTreeMap<usize, u32> {
+fn inlined_entry_fields(region: &LoopRegion, program: &ResidualProgram, inserted: &[(usize, u32)]) -> Vec<Option<u32>> {
     let unit_pc = |offset: usize| offset + inserted.iter().filter(|(at, _)| *at <= offset).count();
-    region.field_reads().iter()
+    super::lane_region::flat_table(region.field_reads().iter()
         .filter(|(_, index)| entry_read(region, **index, program))
         .filter_map(|(offset, index)| Some((unit_pc(*offset as usize),
-            u32::try_from(osr_loop::field_word(region, *index)).ok()?)))
-        .collect()
+            u32::try_from(osr_loop::field_word(region, *index)).ok()?))))
 }
 
 /// Inserts each frame's call marker: a `Nop` where its body begins, at which the lane binds the
@@ -169,7 +174,7 @@ fn insert_markers(instructions: &mut Vec<WideInstruction>, origins: &mut Vec<lan
 /// Map an inlining loop region onto the lane unit: its instructions' jump targets become
 /// unit PCs, its origins name the caller/inlined frame of each instruction, and its frames
 /// carry the callee identity, function, call window and result.
-fn inlining_unit(region: &LoopRegion, program: &ResidualProgram) -> Option<(lane_unit::Unit, BTreeMap<usize, u32>)> {
+fn inlining_unit(region: &LoopRegion, program: &ResidualProgram) -> Option<(lane_unit::Unit, Vec<Option<u32>>)> {
     let inlining = region.inlining.as_deref()?;
     let count = region.instructions().len();
     let mut instructions = localized_jumps(region);
@@ -202,44 +207,44 @@ fn entry_read(region: &LoopRegion, index: usize, program: &ResidualProgram) -> b
 
 /// A plain loop unit's static field reads, by the unit PC each instruction keeps, answered
 /// from the entry record.
-fn plain_entry_fields(region: &LoopRegion, program: &ResidualProgram) -> BTreeMap<usize, u32> {
+fn plain_entry_fields(region: &LoopRegion, program: &ResidualProgram) -> Vec<Option<u32>> {
     let header = region.header as usize;
-    region.field_reads().iter()
+    super::lane_region::flat_table(region.field_reads().iter()
         .filter(|(_, index)| entry_read(region, **index, program))
         .filter_map(|(offset, index)| Some((header + *offset as usize,
-            u32::try_from(osr_loop::field_word(region, *index)).ok()?)))
-        .collect()
+            u32::try_from(osr_loop::field_word(region, *index)).ok()?))))
 }
 
 /// The loop's cached field reads, keyed by their field-cache site: the lane specializer's
 /// field-site map, from the observation's descriptors.
 fn loop_fields(region: &LoopRegion, observation: &Observation<'_>)
-    -> BTreeMap<u16, Vec<NativeFieldLoad>> {
-    let mut fields = BTreeMap::new();
-    for (&offset, &index) in region.field_reads() {
+    -> Vec<Option<Vec<NativeFieldLoad>>> {
+    super::lane_region::flat_table(region.field_reads().iter().filter_map(|(&offset, &index)| {
         let Some(FieldLookup::Atom { cache_site, .. }) =
-            region.instructions()[offset as usize].field_lookup() else { continue };
-        if let Some(loads) = observation.native_field_loads.get(index) {
-            fields.insert(cache_site, loads.clone());
-        }
-    }
-    fields
+            region.instructions()[offset as usize].field_lookup() else { return None };
+        Some((usize::from(cache_site), observation.native_field_loads.get(index)?.clone()))
+    }))
 }
 
 impl OsrFacts {
     /// The facts the observation's field descriptors embed in code compiled from it.
     fn observed(observation: &Observation<'_>) -> Self {
-        let loads = || observation.native_field_loads.iter().flatten();
-        let mut shape_dependencies: Vec<_> = loads().flat_map(|field| std::iter::once(field.shape).chain(field.holder)).collect();
+        Self::of_loads(observation.native_field_loads.iter().flatten())
+    }
+
+    /// The facts the descriptors `loads` embed in code that took them.
+    pub(super) fn of_loads<'a>(loads: impl IntoIterator<Item = &'a NativeFieldLoad>) -> Self {
+        let loads: Vec<&NativeFieldLoad> = loads.into_iter().collect();
+        let mut shape_dependencies: Vec<_> = loads.iter().flat_map(|field| std::iter::once(field.shape).chain(field.holder)).collect();
         shape_dependencies.sort_unstable();
         shape_dependencies.dedup();
-        let mut departure_shapes: Vec<_> = loads().filter_map(|field| field.holder).collect();
+        let mut departure_shapes: Vec<_> = loads.iter().filter_map(|field| field.holder).collect();
         departure_shapes.sort_unstable();
         departure_shapes.dedup();
-        let mut slot_dependencies: Vec<_> = loads().filter_map(|field| field.slot_dependency()).collect();
+        let mut slot_dependencies: Vec<_> = loads.iter().filter_map(|field| field.slot_dependency()).collect();
         slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
         slot_dependencies.dedup();
-        Self { shape_dependencies, departure_shapes, slot_dependencies }
+        Self { shape_dependencies, departure_shapes, slot_dependencies, roots: Default::default() }
     }
 }
 
@@ -266,7 +271,7 @@ pub(super) fn observed_reads(unit: &lane_unit::Unit, number_arrays: &[(crate::by
 /// lowering with its own facts, widenings and entry record.
 struct LoopPlanner<'a> {
     observation: &'a Observation<'a>,
-    fields: &'a BTreeMap<u16, Vec<NativeFieldLoad>>,
+    fields: &'a super::lane_region::FieldSites,
     isa: &'a dyn cranelift_codegen::isa::TargetIsa,
     program: &'a ResidualProgram,
     function_id: u32,
@@ -280,7 +285,7 @@ impl LoopPlanner<'_> {
     /// that plan, used only where the general plan declines; an inlined callee the region
     /// cannot prove exactly then costs the region nothing but the inlining.
     fn plan(&self, global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads,
-        unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, (header, backedge): (usize, usize),
+        unit: &lane_unit::Unit, entry_fields: &super::lane_region::EntryWords, (header, backedge): (usize, usize),
         generic: &[usize]) -> Option<super::lane_region::LoweredRegion> {
         let number_reads = observed_reads(unit, self.observation.number_arrays, self.observation.abandoned, generic);
         super::lane_region::RegionSpecializer {
@@ -291,7 +296,7 @@ impl LoopPlanner<'_> {
             entry_fields,
             plan: super::lane_region::RegionPlan {
                 coverage: super::lane_region::Coverage::Loop { header, backedge, poll: false },
-                completion: super::lane_region::Completion::StatusAndPc, views: self.views,
+                completion: super::lane_region::Completion::Body, views: self.views,
             },
         }.specialize(self.program).ok().filter(|lowered| self.views == super::ElementViews::Dense || lowered.hoists_arrays)
     }
@@ -312,15 +317,37 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, widened: &[usiz
         return base_only.then_some(None);
     }
     let built = super::base_region::build(region, views == super::ElementViews::Dense, widened,
-        [observation.int_registers, observation.double_registers]);
-    let Ok((code, bare)) = built else { return base_only.then_some(None) };
+        [observation.int_registers, observation.double_registers], observation.operand_kinds, observation.native_field_loads);
+    let Ok(super::base_region::Built { code, bare, resumes, embedded, sites }) = built else { return base_only.then_some(None) };
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, region.header, &code, None, "");
     }
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
     let code = super::super::jit_backend::run_in_background(move || Ok(code));
-    Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean },
-        facts: OsrFacts { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new() } }))
+    Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean }, resumes,
+        facts: OsrFacts::of_loads(&embedded), sites }))
+}
+
+/// Lowers the loop: the inlined unit where the region has one, else (or where that plan
+/// declines) the function's own unit over the loop. One plan lowers a loop, the region
+/// specializer, the same plan a lane body and a static typed region use; a region it declines
+/// stays in the interpreter, with no second lowering with its own facts, widenings and entry
+/// record.
+fn lower_loop(planner: &LoopPlanner<'_>, region: &LoopRegion,
+    global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads, widened: &[usize],
+) -> Option<super::lane_region::LoweredRegion> {
+    let program = planner.program;
+    let mut plan = |unit: &lane_unit::Unit, entry_fields: &super::lane_region::EntryWords, header: usize, backedge: usize, generic: &[usize]|
+        planner.plan(&mut *global_reads, unit, entry_fields, (header, backedge), generic);
+    let inlined = region.inlining.is_some().then(|| inlining_unit(region, program)).flatten();
+    inlined
+        .as_ref()
+        .and_then(|(unit, fields)| plan(unit, fields.as_slice(), 0, unit.instructions.len().saturating_sub(1), &[]))
+        .or_else(|| {
+            let plain = loop_unit(program.function(planner.function_id as usize));
+            // The plain unit's PCs are the function's, which the site's leaves name.
+            plan(&plain, plain_entry_fields(region, program).as_slice(), region.header as usize, region.backedge as usize, widened)
+        })
 }
 
 /// Starts compiling `region`'s code over its entry's element `views` from `observation`, or
@@ -340,34 +367,27 @@ pub(in crate::vm) fn start_osr_region(
         return decided;
     }
     let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views };
-    let mut plan = |unit: &lane_unit::Unit, entry_fields: &BTreeMap<usize, u32>, header: usize, backedge: usize, generic: &[usize]|
-        planner.plan(&mut *global_reads, unit, entry_fields, (header, backedge), generic);
-    let inlined = region.inlining.is_some().then(|| inlining_unit(region, program)).flatten();
-    let lane = inlined
-        .as_ref()
-        .and_then(|(unit, fields)| plan(unit, fields, 0, unit.instructions.len().saturating_sub(1), &[]))
-        .or_else(|| {
-            let plain = loop_unit(program.function(function_id as usize));
-            // The plain unit's PCs are the function's, which the site's leaves name.
-            plan(&plain, &plain_entry_fields(region, program), region.header as usize, region.backedge as usize, widened)
-        });
-    // One plan lowers a loop: the region specializer, the same plan a lane body and a static
-    // typed region use. A region it declines stays in the interpreter; there is no second
-    // lowering with its own facts, widenings and entry record.
-    let function = lane?.function;
+    let lowered = lower_loop(&planner, region, global_reads, widened)?;
+    let function = lowered.function;
+    super::residuals::report_clif(region.header, &function);
     let clif = native_dump_directory().map(|_| function.display().to_string());
-    let facts = OsrFacts::observed(observation);
+    let facts = OsrFacts { roots: lowered.stable.roots, ..OsrFacts::observed(observation) };
+    let ir = function.dfg.num_insts();
     let code = super::super::jit_backend::run_in_background(move || {
-        compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()))
+        let started = std::time::Instant::now();
+        let code = compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()));
+        super::tier_model::note_compile(started.elapsed(), ir);
+        code
     });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
-    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General })
+    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General, resumes: super::base_region::ResumeTable::empty(), sites: Default::default() })
 }
 
 impl PendingOsrRegion {
 
     /// Subscribes its watch to the facts its code names; whether they hold.
     pub(in crate::vm) fn watch(&self, heap: &mut crate::heap::Heap) -> bool {
+        self.watch.hold_roots(self.facts.roots.clone(), heap);
         let watch: Rc<dyn crate::code_dependencies::DependentCode> = self.watch.clone();
         self.facts.subscribe(&watch, heap)
     }
@@ -385,12 +405,12 @@ impl PendingOsrRegion {
             std::task::Poll::Ready(Some(Ok(code))) => code,
             std::task::Poll::Ready(_) => return Ok(OsrCompile::Failed),
         };
-        let Self { header, clif, facts, crossing, .. } = *self;
-        let Some((memory, entry)) = publish_entry(&code) else { return Ok(OsrCompile::Failed) };
+        let Self { header, clif, facts, crossing, resumes, sites, .. } = *self;
+        let Some((memory, entry)) = publish_body(&code) else { return Ok(OsrCompile::Failed) };
         if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
             dump_native_code(directory, header, &memory, &clif);
         }
-        Ok(OsrCompile::Done(CompiledOsrRegion { _code: memory, entry, facts, crossing }))
+        Ok(OsrCompile::Done(CompiledOsrRegion { code: memory, entry, facts, crossing, resumes, sites: sites.into() }))
     }
 }
 

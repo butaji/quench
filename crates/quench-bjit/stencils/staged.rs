@@ -1,12 +1,13 @@
 #[path = "../../quench-runtime/src/staged/stage.rs"] mod stage;
 pub(crate) use stage::{Stage, Table};
 pub(crate) type Concrete = crate::stage::StencilStage;
-pub(crate) mod effects {
-    #[derive(Clone, Copy)] pub(crate) enum Region { Frame, ObjectSlots, ShapeWord, Elements, HeapMeta, MissCounters }
-}
+#[path = "../../quench-runtime/src/staged/region.rs"] #[allow(dead_code)] pub(crate) mod region;
 #[path = "../../quench-runtime/src/staged/value.rs"] pub(crate) mod value;
 #[path = "../../quench-runtime/src/staged/object.rs"] pub(crate) mod object;
 #[path = "../../quench-runtime/src/staged/elements.rs"] pub(crate) mod elements;
 #[path = "../../quench-runtime/src/staged/environment.rs"] pub(crate) mod environment;
 #[path = "../../quench-runtime/src/staged/entry.rs"] pub(crate) mod entry;
 #[path = "../../quench-runtime/src/staged/frame.rs"] #[allow(dead_code)] pub(crate) mod frame;
+#[path = "../../quench-runtime/src/staged/call.rs"] pub(crate) mod call;
+#[path = "../../quench-runtime/src/staged/ic.rs"] pub(crate) mod ic;
+#[path = "../../quench-runtime/src/staged/slot_store.rs"] pub(crate) mod slot_store;

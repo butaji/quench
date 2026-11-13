@@ -66,7 +66,7 @@ fn refusals(source: &str) -> usize {
 }
 
 /// The families the catalog gives the generic native form of a value step (`LANE_RESULT_STEP`,
-/// `Vm::value_step`), each lowered by one helper of the interpreter's definition.
+/// `Vm::call_out`), each lowered by one helper of the interpreter's definition.
 fn generic_steps(catalog: &str) -> Vec<String> {
     catalog.lines().filter(|line| line.contains("LANE_RESULT_STEP") && line.contains("=>"))
         .filter_map(|line| Some(line.split_once('(')?.1.split_once(')')?.0.trim().to_string())).collect()

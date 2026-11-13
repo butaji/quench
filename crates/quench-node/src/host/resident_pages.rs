@@ -156,31 +156,18 @@ pub fn release_read_only_pages() {
     }
 }
 
-/// The least time between collection-time trims (`release_at_collection`), whose freed pages refault (no-JIT x86_64,
-/// 2026-11-08, minor faults 10 -> 100 ms: Sunspider 62K -> 49K, Air 16.5K -> 9K, npm sharp 61K -> 41K; same RSS).
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const COLLECTION_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
-
 /// A collection boundary's release (`at_collection_boundary`). Memory-first returns the
-/// read-only pages and the system allocator's free pages at every boundary. The default only
-/// trims, paced, and keeps the code a run executes again right after: releasing it lowered no
-/// JetStream 3 peak RSS (8 tests, x86_64, 2026-11-07) and cost Babylon 12% of its score.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub fn release_at_collection(returns_pages: bool) {
-    static LAST_TRIM: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
-    let mut last = LAST_TRIM.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if returns_pages || last.is_none_or(|last| last.elapsed() >= COLLECTION_RELEASE_INTERVAL) {
-        *last = Some(std::time::Instant::now());
-        if returns_pages {
-            release_read_only_pages();
-        }
-        release_free_heap_pages();
-    }
-}
-
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+/// read-only pages and the system allocator's free pages at every boundary. The default
+/// releases nothing: it keeps the code a run executes again right after (releasing it lowered no
+/// JetStream 3 peak RSS, 8 tests, x86_64, 2026-11-07, and cost Babylon 12% of its score), and a
+/// `malloc_trim` advises every free run of every arena with its own `madvise`, each a TLB
+/// shootdown that interrupts the thread beside the code generator: with the paced trim removed,
+/// earley-boyer's CPU time fell 8% with no peak-RSS change on earley-boyer, raytrace or splay
+/// (V8-v7, JIT, x86_64, 2026-11-12; ~5,700 of its ~7,500 `madvise` calls).
 pub fn release_at_collection(returns_pages: bool) {
     if returns_pages {
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        release_read_only_pages();
         release_free_heap_pages();
     }
 }

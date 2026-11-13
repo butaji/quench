@@ -52,6 +52,8 @@ const MAX_REGION_FIELDS: usize = 16;
 const MAX_REGION_FIELD_STORES: usize = 16;
 pub(crate) use crate::vm::js_compiled::MAX_CODE_BYTES;
 
+#[path = "osr_loop/inlining.rs"]
+mod inlining;
 #[path = "osr_loop/iteration.rs"]
 mod iteration;
 #[path = "osr_loop/receivers.rs"]
@@ -469,11 +471,20 @@ fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<
     nullish_constant.then_some(IdentityBranch { register })
 }
 
-/// Whether `register` has definitions in `instructions` and every one is a field read, which
-/// may give an object.
-fn field_reads_alone_define(instructions: &[WideInstruction], register: Register) -> bool {
+/// Whether `register` has definitions in `instructions` and every one is a `load`, which may
+/// give an object.
+fn loads_alone_define(instructions: &[WideInstruction], register: Register, load: fn(Op) -> bool) -> bool {
     let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(register)).peekable();
-    definitions.peek().is_some() && definitions.all(|definition| definition.op().is_get_field())
+    definitions.peek().is_some() && definitions.all(|definition| load(definition.op()))
+}
+
+fn field_reads_alone_define(instructions: &[WideInstruction], register: Register) -> bool {
+    loads_alone_define(instructions, register, Op::is_get_field)
+}
+
+/// A field read or an element read: the loads whose result a field read may take as its receiver.
+fn is_receiver_load(op: Op) -> bool {
+    op.is_get_field() || op.is_get_index()
 }
 
 /// Traces a tagged-register rejection at `offset` (`QUENCH_TRACE=osr-reject`).
@@ -589,10 +600,10 @@ fn tagged_registers_with_failure(
                 .then_some(instruction.result_register())
         }))
         .chain(held.iter().copied())
-        // A field receiver the region's field reads give holds an object.
+        // A field receiver the region's field or element reads give holds an object.
         .chain(instructions.iter().filter(|instruction| instruction.op().is_get_field()).filter_map(|instruction| {
             let receiver = object_reads(*instruction)?;
-            field_reads_alone_define(instructions, receiver).then_some(receiver)
+            loads_alone_define(instructions, receiver, is_receiver_load).then_some(receiver)
         }))
         // A branch on a value only field reads give tests its truthiness tagged:
         // a field may hold an object.
@@ -934,38 +945,13 @@ pub(super) fn inline_region<'a>(
     let mask = |pc: u32| live.get(pc as usize);
     let caller_registers = function.registers;
     let mut total = u32::from(caller_registers);
-    struct Site<'b> {
-        frame: InlineFrame,
-        callee: InlineCallee<'b>,
-        /// The path the callee's read reads it through, from a root the region does not
-        /// write (a receiver given its own register reads through its path).
-        callee_path: Option<FieldPath>,
-        /// Where leaving in the call's setup resumes: the receiver's own read, else the
-        /// callee's.
-        resume: u32,
-        window: Register,
-        result: Register,
-        reached: crate::bitset::BitSet,
-    }
-    let mut calls: std::collections::BTreeMap<u32, Site<'a>> = std::collections::BTreeMap::new();
+    let mut calls: std::collections::BTreeMap<u32, inlining::Site<'a>> = std::collections::BTreeMap::new();
     // The caller PCs whose instructions drop out, the setup PCs by the PC they resume at, and
     // the caller instructions the region runs rewritten.
     let mut dropped = std::collections::BTreeSet::new();
     let mut setup: std::collections::BTreeMap<u32, u32> = std::collections::BTreeMap::new();
     let mut rewritten: std::collections::BTreeMap<u32, WideInstruction> = std::collections::BTreeMap::new();
-    // The names the loop stores: a receiver read through one changes in the loop.
-    let caller_stored: std::collections::BTreeSet<crate::bytecode::Atom> = caller
-        .iter()
-        .filter_map(|instruction| match instruction.op().class() {
-            _ if admitted_store(instruction.op()) => Some(instruction.atom_index()),
-            // A fused read the bytecode stores into a `this` field (`inlined_set_this`).
-            Class::GetField if instruction.writes_current_this() => match instruction.field_lookup()? {
-                FieldLookup::Site(index) => sites.get(index)?.sink.map(|(atom, _)| atom),
-                FieldLookup::Atom { .. } => None,
-            },
-            _ => None,
-        })
-        .collect();
+    let caller_stored = inlining::stored_names(caller, sites);
     let mut checked_reads: std::collections::BTreeMap<u32, u32> = std::collections::BTreeMap::new();
     let captured = receivers::captured(caller, mask(header)?);
     for (offset, instruction) in caller.iter().copied().enumerate() {
@@ -1035,35 +1021,9 @@ pub(super) fn inline_region<'a>(
                     .is_none_or(|register| !crate::compile::liveness::register_in(at_resume, usize::from(register)))
             }))
         .then_some(())?;
-        // The callee as the read finds it now.
-        let mut chain = Vec::new();
-        if let Some(path) = &callee_path { intern_field(&mut chain, path, true); }
-        let callee = resolve(&chain, capture)?;
-        (callee.params == argc && usize::from(argc) <= MAX_INLINE_PARAMS).then_some(())?;
-        let reached = crate::bytecode::reachable_from(&callee.instructions, [0]);
-        let body = || callee.instructions.iter().copied().enumerate().filter(|(pc, _)| reached.contains(*pc)).map(|(_, instruction)| instruction);
-        body().all(|instruction| inlinable(instruction.op()) && (instruction.result_flags() == 0 || inlined_returning(instruction) || inlined_set_this(instruction, sites).is_some())).then_some(())?;
-        // A captured call may bind undefined to the global receiver. Keep this slice
-        // receiver-independent; recovery still performs the ordinary binding below.
-        if capture.is_some() {
-            body().all(|instruction| !instruction.op().is_get_field()
-                || field_base(instruction, sites) != Some(FieldBase::THIS)).then_some(())?;
-        }
-        // A parameter read as an object is bound to the caller register its argument was
-        // moved from in the setup, which the region never writes; any other is a Number it
-        // copies.
-        let mut bound = [None; MAX_INLINE_PARAMS];
-        for parameter in 0..argc {
-            if !body().any(|instruction| object_reads(instruction) == Some(parameter)) {
-                continue;
-            }
-            body().all(|instruction| instruction.defined_register() != Some(parameter)).then_some(())?;
-            let argument = window + parameter;
-            let moved = (read_offset + 1..offset).rev().find(|index| caller[*index].defined_register() == Some(argument))?;
-            (caller[moved].op().is_move() && !defines(caller[moved].register_b())).then_some(())?;
-            bound[usize::from(parameter)] = Some(caller[moved].register_b());
-            dropped.insert(header + moved as u32);
-        }
+        let (callee, reached) = inlining::admitted_callee(resolve, callee_path.as_ref(), capture, argc, sites)?;
+        let first = read + 1;
+        let bound = inlining::bound_parameters(&caller[read_offset + 1..offset], first, window, &callee, &reached, &defines, &mut dropped)?;
         if !checked {
             dropped.insert(read);
         }
@@ -1075,7 +1035,7 @@ pub(super) fn inline_region<'a>(
         (total <= RegisterSet::BITS).then_some(())?;
         calls.insert(
             pc,
-            Site {
+            inlining::Site {
                 frame: InlineFrame {
                     call: pc,
                     callee: callee.callee,
@@ -1100,170 +1060,22 @@ pub(super) fn inline_region<'a>(
         );
     }
     (!calls.is_empty()).then_some(())?;
-    // Region PCs: each kept caller instruction takes one, a call its numeric parameters'
-    // moves and its callee's reached instructions, each `Return` two (the result's move and
-    // the jump past the call). A dropped instruction's PC is the next instruction's.
-    let mut caller_flat = Vec::with_capacity(caller.len());
-    let mut callee_flat: std::collections::BTreeMap<u32, Vec<u32>> = std::collections::BTreeMap::new();
-    let mut length = 0u32;
-    for (offset, caller_instruction) in caller.iter().enumerate() {
-        let pc = header + offset as u32;
-        caller_flat.push(header + length);
-        if dropped.contains(&pc) {
-            continue;
-        }
-        let Some(site) = calls.get(&pc) else {
-            // A fused field read the caller stores into its `this` field runs as its parts,
-            // each leaving at the caller's PC, which reruns the pure read.
-            length += inlined_set_this(*caller_instruction, sites).map_or(1, |parts| parts.len() as u32);
-            continue;
-        };
-        length += site.frame.bound[..usize::from(site.callee.params)].iter().filter(|bound| bound.is_none()).count() as u32;
-        let mut flat = Vec::with_capacity(site.callee.instructions.len());
-        for (index, instruction) in site.callee.instructions.iter().enumerate() {
-            flat.push(header + length);
-            if site.reached.contains(index) {
-                length += if instruction.op().is_return() {
-                    2
-                } else if inlined_returning(*instruction) {
-                    3
-                } else {
-                    inlined_set_this(*instruction, sites).map_or(1, |parts| parts.len() as u32)
-                };
-            }
-        }
-        callee_flat.insert(pc, flat);
-    }
-    (length as usize <= MAX_REGION_INSTRUCTIONS).then_some(())?;
-    let mut callee_captures: Vec<(usize, u16)> = Vec::new();
-    let mut origins: Vec<Origin> = Vec::with_capacity(length as usize);
-    let mut masks: Vec<RegisterSet> = Vec::with_capacity(length as usize);
-    let mut leaves: Vec<u32> = Vec::new();
-    let mut instructions = Vec::with_capacity(length as usize);
-    let caller_target = |target: u32, leaves: &mut Vec<u32>| -> u32 {
-        if (header..=backedge).contains(&target) {
-            return caller_flat[(target - header) as usize];
-        }
-        let index = leaves.iter().position(|leave| *leave == target).unwrap_or_else(|| {
-            leaves.push(target);
-            leaves.len() - 1
-        });
-        header + length + index as u32
-    };
-    for (offset, instruction) in caller.iter().copied().enumerate() {
-        let pc = header + offset as u32;
-        if dropped.contains(&pc) {
-            continue;
-        }
-        // A setup instruction leaves as the first of its run does.
-        let resumes = setup.get(&pc).copied().unwrap_or(pc);
-        let instruction = rewritten.get(&pc).copied().unwrap_or(instruction);
-        let Some(site) = calls.get(&pc) else {
-            // A caller instruction keeps its registers; a jump takes the region PC of its target.
-            let renamed = if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
-                let target = caller_target(instruction.imm(), &mut leaves);
-                WideInstruction::new(instruction.op(), instruction.a(), instruction.b(), instruction.c(), target)
-            } else {
-                instruction
-            };
-            let parts = inlined_set_this(renamed, sites).unwrap_or_else(|| vec![renamed]);
-            let resume_mask = mask(resumes)?;
-            for part in parts {
-                instructions.push(part);
-                origins.push(Origin::Caller(resumes));
-                masks.push(resume_mask);
-            }
-            continue;
-        };
-        let frame = site.frame;
-        let index = calls.keys().position(|key| *key == pc)? as u16;
-        let flat = &callee_flat[&pc];
-        let register = |register: Register| match frame.bound.get(usize::from(register)).copied().flatten() {
-            Some(source) => source,
-            None => frame.base + register,
-        };
-        // A callee's live registers there, in the region, with the caller's live past the call.
-        let after = mask(pc + 1)? & !RegisterSet::bit(usize::from(site.result));
-        let frame_mask = |callee_pc: usize| -> Option<RegisterSet> {
-            let own = site.callee.live.get(callee_pc)?;
-            let mut set = after;
-            for callee_register in 0..site.callee.registers {
-                if crate::compile::liveness::register_in(own, usize::from(callee_register)) {
-                    set |= RegisterSet::bit(usize::from(register(callee_register)));
-                }
-            }
-            Some(set)
-        };
-        for parameter in 0..site.callee.params {
-            if frame.bound[usize::from(parameter)].is_some() {
-                continue;
-            }
-            instructions.push(WideInstruction::new(Op::Move, frame.base + parameter, site.window + parameter, 0, 0));
-            origins.push(Origin::Caller(site.resume));
-            masks.push(mask(site.resume)?);
-        }
-        let continuation = caller_flat.get(offset + 1).copied().unwrap_or_else(|| caller_target(pc + 1, &mut leaves));
-        for (callee_pc, instruction) in site.callee.instructions.iter().copied().enumerate() {
-            if !site.reached.contains(callee_pc) {
-                continue;
-            }
-            let origin = Origin::Inlined { frame: index, pc: callee_pc as u32 };
-            let set = frame_mask(callee_pc)?;
-            if instruction.op().is_return() {
-                instructions.push(WideInstruction::new(Op::Move, site.result, register(instruction.register_a()), 0, 0));
-                instructions.push(WideInstruction::new(Op::Jump, 0, 0, 0, continuation));
-                origins.extend([origin, origin]);
-                masks.extend([set, set]);
-                continue;
-            }
-            let target = |target: u32| flat.get(target as usize).copied().filter(|_| site.reached.contains(target as usize));
-            // A returning instruction (`result = op; return result`) computes into its own
-            // register, then completes the call as the callee's `Return` does.
-            if inlined_returning(instruction) {
-                let plain = WideInstruction::new(instruction.op(), instruction.result_register(), instruction.b(), instruction.c(), instruction.imm());
-                instructions.push(renamed(plain, &register, frame.receiver, &target)?);
-                instructions.push(WideInstruction::new(Op::Move, site.result, register(instruction.result_register()), 0, 0));
-                instructions.push(WideInstruction::new(Op::Jump, 0, 0, 0, continuation));
-                origins.extend([origin, origin, origin]);
-                masks.extend([set, set, set]);
-                continue;
-            }
-            // A fused read stored into a `this` field runs as its read, then the store.
-            let parts = inlined_set_this(instruction, sites).unwrap_or_else(|| vec![instruction]);
-            for instruction in parts {
-                // A callee's own capture reads its environment, which its identity guard fixes
-                // and no instruction of the region stores: the entry snapshots it.
-                let instruction = if instruction.op().is_load_capture() {
-                    (instruction.capture_depth() == 0 && instruction.capture_slot() < CALLEE_CAPTURE).then_some(())?;
-                    let capture = (usize::from(index), instruction.capture_slot());
-                    let position = callee_captures.iter().position(|existing| *existing == capture).unwrap_or_else(|| {
-                        callee_captures.push(capture);
-                        callee_captures.len() - 1
-                    });
-                    let slot = CALLEE_CAPTURE | u16::try_from(position).ok().filter(|position| *position < CALLEE_CAPTURE)?;
-                    WideInstruction::new(Op::LoadCapture, instruction.a(), instruction.b(), instruction.c(), ImmediateLayout::capture_immediate(0, slot))
-                } else {
-                    instruction
-                };
-                // The callee's `this` is the call's receiver, a caller register: its store of a
-                // `this` field is a store to that register's object.
-                let renamed_instruction = if instruction.op().is_set_this_field() {
-                    let store = renamed(WideInstruction::new(Op::SetField, instruction.a(), 0, instruction.c(), instruction.imm()), &register, frame.receiver, &target)?;
-                    WideInstruction::new(Op::SetField, store.a(), frame.receiver, store.c(), store.imm())
-                } else {
-                    renamed(instruction, &register, frame.receiver, &target)?
-                };
-                instructions.push(renamed_instruction);
-                origins.push(origin);
-                masks.push(set);
-            }
-        }
-    }
-    debug_assert_eq!(instructions.len(), length as usize);
-    for target in &leaves {
-        origins.push(Origin::Leave(*target));
-        masks.push(mask(*target)?);
-    }
+    let layout = inlining::layout(caller, header, &dropped, &calls, sites);
+    (layout.length as usize <= MAX_REGION_INSTRUCTIONS).then_some(())?;
+    let mut emission = inlining::Emission::new(inlining::Plan {
+        header,
+        backedge,
+        caller,
+        sites,
+        live,
+        calls: &calls,
+        dropped: &dropped,
+        setup: &setup,
+        rewritten: &rewritten,
+        layout: &layout,
+    });
+    emission.run()?;
+    let inlining::Emission { instructions, origins, masks, callee_captures, .. } = emission;
     // A checked callee's register holds the function its read gives, an object.
     let receivers = calls
         .iter()
@@ -1294,35 +1106,7 @@ pub(super) fn inline_region<'a>(
     // the region's held registers.
     let held: std::collections::BTreeMap<Register, FieldPath> =
         region.held.iter().map(|(register, (path, _))| (*register, path.clone())).chain(captured).collect();
-    let mut frames = Vec::with_capacity(calls.len());
-    for (call_pc, site) in calls.into_iter() {
-        let mut frame = site.frame;
-        if checked_reads.contains_key(&call_pc) {
-            frame.guard = InlineGuard::AtRead;
-            frames.push(frame);
-            continue;
-        }
-        let written = frame.receiver >= caller_registers || defines(frame.receiver);
-        (!written || held.contains_key(&frame.receiver)).then_some(())?;
-        let Some(FieldPath { root, steps }) = site.callee_path else {
-            frames.push(frame);
-            continue;
-        };
-        let path = match root {
-            FieldReceiver::Register(register) => match held.get(&register) {
-                Some(path) => FieldPath { root: path.root, steps: path.steps.iter().copied().chain(steps).collect() },
-                None => FieldPath { root, steps },
-            },
-            _ => FieldPath { root, steps },
-        };
-        // The root is `this`, or a register the region does not write (`field_path`).
-        if let FieldReceiver::Register(register) = path.root {
-            (!defines(register)).then_some(())?;
-        }
-        frame.guard = InlineGuard::Field(intern_field(&mut region.fields, &path, true));
-        frames.push(frame);
-    }
-    (region.fields.len() <= MAX_REGION_FIELDS).then_some(())?;
+    let frames = inlining::guarded_frames(calls, &checked_reads, &held, caller_registers, &defines, &mut region)?;
     region.inlining = Some(Box::new(Inlining { origins, frames, callee_captures, caller_registers, latch: backedge }));
     Some(region)
 }
@@ -2561,7 +2345,7 @@ pub(crate) struct Observation<'a> {
     pub(crate) abandoned: &'a [usize],
     /// The registers holding int32s at entry, whose loop may keep them as int32s where every
     /// definition in it yields one (`RegionSpecializer::int_entries`).
-    pub(crate) int_entries: &'a [Register],
+    pub(crate) int_entries: &'a [(Register, crate::typed_ir::IntRange)],
     /// The depth-zero capture slots holding typed arrays when compiled: a loop's array read
     /// through such a capture is viewed as a typed array (`LoopArray::views`).
     pub(crate) typed_captures: &'a [u16],
@@ -2569,6 +2353,10 @@ pub(crate) struct Observation<'a> {
     pub(crate) int_registers: &'a [Register],
     /// The registers that held a Number that is no int32.
     pub(crate) double_registers: &'a [Register],
+    /// What each instruction of the region, from its header, met where its int32 handler
+    /// declined (`Vm::region_operand_kinds`): the feedback the representations start from,
+    /// which the sample of the live registers above completes.
+    pub(crate) operand_kinds: &'a [crate::vm::dispatch_fast::operand_feedback::OperandKinds],
     /// The depth-zero capture slots holding int32s when compiled: a read of such a capture
     /// takes the checked integer view where its uses are integer arithmetic.
     pub(crate) int_captures: &'a [u16],
