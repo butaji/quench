@@ -24,7 +24,7 @@
 //! instruction.
 
 use crate::layout::{
-    ENV_VIEW_LEN, ENV_VIEW_STORES, ENV_VIEW_VALUES, CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_EPOCH, JS_STEP_EMPTY_STRING, JS_STEP_FIELD_ENTRIES, JS_STEP_FUNCTION_RECORD_BASE, JS_STEP_LOOP_ENTRY,
+    CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_EPOCH, JS_STEP_EMPTY_STRING, JS_STEP_FIELD_ENTRIES, JS_STEP_FUNCTION_RECORD_BASE, JS_STEP_LOOP_ENTRY,
     JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_STRING_RECORD_BASE, JS_STEP_VM, PROPERTY_BUFFER_BASE,
 };
 use crate::ic_rows;
@@ -41,7 +41,7 @@ use crate::staged::{Frame, RecordSpace, Stage, Step, add, elements, entry, envir
 pub(crate) use crate::codes::{
     ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, CONSTANT_ROW, FIELD_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM,
     SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
-    STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, ENV_ROW, ENV_SET_ROW, ENV_VIEW_AT, INSTANCEOF_ROW, APPEND_ROW,
+    STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, INSTANCEOF_ROW, APPEND_ROW,
     ADD_AFTER_AT, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_LINK_AT, ADD_LINK_BITS, ADD_OBJECT_AT, ADD_PACKED_ROW, ADD_SLOT_BITS, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW,
     THIS_ADD_PACKED_ROW, FOR_IN_ROW, NAME_ARENA_ROW, NAME_EITHER_ROW, NAME_FUNCTION_AT,
     IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_INT_ROW, IC_SET_ROW,
@@ -124,38 +124,6 @@ fn capture_set_row<const A: u8>(s: S, payload: usize) -> Out {
     let slots = (word_at(payload, JS_STEP_CAPTURE_VALUES), word_at(payload, JS_STEP_CAPTURE_LEN), word_at(payload, JS_STEP_CAPTURE_STORES));
     need!(s, environment::dense_capture_store(&mut stage, slots, 0, tagged_place::<A, 0>(&s), ()));
     Out::Next(s)
-}
-
-/// The dense environment view the row names: its payload byte offset sits `ENV_VIEW_AT` bits above the frame offset in
-/// hole 0.
-#[inline(always)]
-fn env_view(payload: usize) -> usize {
-    payload + (hole64::<0>() >> ENV_VIEW_AT) as usize
-}
-
-/// A fast arm's read of slot (hole 1, its byte offset hole 2) of the dense environment view, an initialized slot
-/// (`environment::dense_capture`) written to the destination (hole 0) or the row leaves.
-#[inline(always)]
-fn env_row(s: S, payload: usize) -> Out {
-    let mut stage = StencilStage::from_hole(HOLE_A);
-    let view = env_view(payload);
-    let word = need!(s, environment::dense_capture(&mut stage, word_at(view, ENV_VIEW_VALUES), word_at(view, ENV_VIEW_LEN), 0, ()));
-    match deliver::<MEM>(s, word) {
-        Out::Next(s) => Out::Taken(s),
-        left => left,
-    }
-}
-
-/// A fast arm's store of the value operand (hole 0) to slot (hole 1, its byte offset hole 2) of the dense environment
-/// view where the view admits every direct store, whose barrier its admission took once
-/// (`environment::dense_capture_store`), else the row leaves into the helper step.
-#[inline(always)]
-fn env_set_row<const A: u8>(s: S, payload: usize) -> Out {
-    let mut stage = StencilStage::from_hole(HOLE_A);
-    let view = env_view(payload);
-    let slots = (word_at(view, ENV_VIEW_VALUES), word_at(view, ENV_VIEW_LEN), word_at(view, ENV_VIEW_STORES));
-    need!(s, environment::dense_capture_store(&mut stage, slots, 0, tagged_place::<A, 0>(&s), ()));
-    Out::Taken(s)
 }
 
 #[inline(always)]
@@ -539,8 +507,6 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
     match KIND {
         CAPTURE_ROW => capture_row::<D>(s, payload),
         CAPTURE_SET_ROW => capture_set_row::<A>(s, payload),
-        ENV_ROW => env_row(s, payload),
-        ENV_SET_ROW => env_set_row::<A>(s, payload),
         INSTANCEOF_ROW => instanceof_row(s, payload),
         FIELD_ROW => field_row::<D>(s, payload),
         SITE_ROW => site_row::<D, ENTRY>(s, payload, register_object(&s)),

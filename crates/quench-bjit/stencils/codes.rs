@@ -97,16 +97,6 @@ pub const STORE_CHECKED_ROW: u8 = 23;
 /// whose tag decides its index, the entry of the table of result strings at hole 2 at that index, to the
 /// destination (hole 0). A hit continues at TAKEN; a heap value leaves through EXIT0 into the helper step.
 pub const TYPEOF_STRING_ROW: u8 = 24;
-/// A fast arm of `LoadEnvLocal` (`staged::environment::dense_capture` over the frame's environment view): slot
-/// hole 1 of the dense run the view at payload byte offset hole 2 names, written to the destination (hole 0). A hit
-/// continues at TAKEN; a slot past the run or holding an internal marker (a dead zone, a slot the environment took),
-/// or no view, leaves through EXIT0 into the helper step after the row.
-pub const ENV_ROW: u8 = 25;
-/// A fast arm of `StoreEnvLocal` over the same view where it admits every direct store
-/// (`staged::environment::dense_capture_store`): the value operand at hole 0 (below the view's payload offset, which
-/// sits `ENV_VIEW_AT` bits above it), slot hole 1 of the run. A hit continues at TAKEN; a slot past the run or holding
-/// an internal marker, or a view that admits no store, leaves through EXIT0 into the helper step after the row.
-pub const ENV_SET_ROW: u8 = 26;
 /// A fast arm of `Binary`'s `instanceof` of a constructor the code holds (`staged::object::instanceof_by_words`): the
 /// frame slot named by the value operand's offset above the destination's in hole 0 is walked along its prototype chain
 /// for the link above `HELD_LINK_AT` in hole 1, whose low half is the constructor operand's frame offset; hole 2 is the
@@ -121,9 +111,6 @@ pub const IC_GET_ROW: u8 = 42;
 pub const IC_GET_HOLDER_ROW: u8 = 43;
 pub const IC_SET_ROW: u8 = 44;
 pub const IC_SET_INT_ROW: u8 = 45;
-/// Bits below the environment view's payload byte offset in an environment row's hole 0, which carries the frame offset
-/// of the row's destination (`ENV_ROW`) or value operand (`ENV_SET_ROW`) beneath it.
-pub const ENV_VIEW_AT: u32 = 32;
 /// The global object's slot, read into the destination (hole 1: the object's record id, hole 2: the
 /// slot's byte offset), or written from the first operand (hole 0: the record id, hole 2: the byte
 /// offset; the `entry` variant takes the store gate, for a value that may be a heap reference).

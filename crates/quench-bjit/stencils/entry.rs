@@ -4,12 +4,10 @@
 //! runtime copies them like any stencil (`entry_*` may `call`, `leave_*` may `ret`; `build.rs`
 //! allows nothing else to).
 //!
-//! Entry ABI: (rdi = context, rcx = the frame, r8 = result pointer). The thunk moves the
-//! context to r13 and loads the frame's window of registers (`staged::frame::WINDOW`) into r12
-//! (the row convention), calls the first row
-//! (`HOLE_NEXT`), stores the word the chain returned through the result pointer and returns the
-//! status the chain left in edx: `NATIVE_JS_STOPPED` from a region's own leaves (`leave_word`, `leave_pop`), the
-//! status of the call that ended the run from `leave_status` (`call_rows.rs`).
+//! Entry ABI: the lane body ABI (rdi = context, rcx = the register file). The thunk moves the
+//! context to r13 and the register file to r12 (the row convention), calls the first row
+//! (`HOLE_NEXT`) and returns (status, word) in (eax, rdx): `NATIVE_JS_STOPPED` from a region's own leaves
+//! (`leave_word`, `leave_pop`), the status of the call that ended the run from `leave_status` (`call_rows.rs`).
 //!
 //! A function body (`entry_body`, the lane body ABI of `lane_body_abi.rs`) is entered as
 //! (rdi = context, rsi = receiver, rdx = captures, rcx = the register file) and returns the
@@ -28,7 +26,6 @@ use crate::layout::{
     JS_STEP_RECEIVER, JS_STEP_RETURNED_PC,
 };
 use crate::layout::call_record::NATIVE_JS_STOPPED;
-use crate::staged::frame;
 use crate::words::HOLE_V0;
 
 unsafe extern "C" {
@@ -37,9 +34,10 @@ unsafe extern "C" {
     static HOLE_V2: u8;
 }
 
-/// The thunk around a call of the row chain: saves rbp, rbx, r12-r15 and the result pointer r8, calls the chain
-/// through `$call`, stores its word through the result pointer and returns the status the chain left in edx.
-/// Written once for both entries.
+/// The thunk around a call of the row chain: saves rbp, rbx, r12-r15, takes the context in r13 and the register file
+/// in r12 (the row convention), calls the chain through `$call` and returns (status, word) as the lane body ABI's
+/// (eax, rdx): the chain leaves them in (rdx, rax). The pad keeps the stack 16-byte aligned at the call, as the six
+/// pushes and the return address leave it 8 off. Written once for both entries.
 macro_rules! thunk {
     ($call:literal $(, $($binding:tt)*)?) => {
         core::arch::naked_asm!(
@@ -49,21 +47,19 @@ macro_rules! thunk {
             "push r13",
             "push r14",
             "push r15",
-            "push r8",
             "mov r13, rdi",
-            "mov r12, [rcx + {window}]",
+            "mov r12, rcx",
+            "sub rsp, 8",
             $call,
-            "pop r8",
-            "mov [r8], rax",
+            "add rsp, 8",
             "pop r15",
             "pop r14",
             "pop r13",
             "pop r12",
             "pop rbx",
             "pop rbp",
-            "mov eax, edx",
-            "ret",
-            window = const frame::WINDOW
+            "xchg rax, rdx",
+            "ret"
             $(, $($binding)*)?
         )
     };
