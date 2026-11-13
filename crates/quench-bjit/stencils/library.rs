@@ -170,7 +170,8 @@ pub fn heap_canonical((heap, entry, dst, a, b): HeapCode) -> HeapCode {
         SITE_ROW | THIS_SITE_ROW | HELD_ROW => (heap, entry, dst, MEM, MEM),
         INDEX_ROW => (heap, entry, dst, MEM, b),
         STORE_ROW => (heap, entry, MEM, a, b),
-        STORE_LOCAL_ROW | STORE_CHECKED_ROW | CAPTURE_SET_ROW | ENV_SET_ROW | SITE_STORE_ROW | THIS_STORE_ROW => (heap, false, MEM, a, MEM),
+        STORE_LOCAL_ROW | STORE_CHECKED_ROW | CAPTURE_SET_ROW | ENV_SET_ROW | SITE_STORE_ROW | THIS_STORE_ROW | APPEND_ROW => (heap, false, MEM, a, MEM),
+        ADD_PACKED_ROW | ADD_ARENA_ROW | ADD_EITHER_ROW | THIS_ADD_PACKED_ROW | THIS_ADD_ARENA_ROW | THIS_ADD_EITHER_ROW => (heap, entry, MEM, MEM, MEM),
         _ => (heap, false, MEM, MEM, MEM),
     }
 }
@@ -200,9 +201,13 @@ pub fn heap_library() -> Vec<HeapCode> {
     for &dst in &dsts {
         rows.extend([THIS_ROW, LOAD_LOCAL_ROW, LOAD_CHECKED_ROW].map(|heap| heap_canonical((heap, false, dst, MEM, MEM))));
     }
-    for heap in [STORE_LOCAL_ROW, STORE_CHECKED_ROW, CAPTURE_SET_ROW, ENV_SET_ROW, SITE_STORE_ROW, THIS_STORE_ROW] {
+    for heap in [STORE_LOCAL_ROW, STORE_CHECKED_ROW, CAPTURE_SET_ROW, ENV_SET_ROW, SITE_STORE_ROW, THIS_STORE_ROW, APPEND_ROW] {
         rows.extend(srcs.iter().map(|&a| heap_canonical((heap, false, MEM, a, MEM))));
     }
-    rows.extend([ARRAY_ROW, IDENTITY_ROW, LIVE_ROW, REALM_ROW, OBJECT_ROW, KEY_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, ENV_ROW, INSTANCEOF_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW].map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
+    for heap in ADD_ROWS {
+        rows.extend([false, true].map(|chained| heap_canonical((heap, chained, MEM, MEM, MEM))));
+    }
+    rows.extend(NAME_ROWS.map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
+    rows.extend([ARRAY_ROW, IDENTITY_ROW, LIVE_ROW, REALM_ROW, OBJECT_ROW, KEY_ROW, FOR_IN_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, ENV_ROW, INSTANCEOF_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW].map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
     rows.into_iter().collect()
 }

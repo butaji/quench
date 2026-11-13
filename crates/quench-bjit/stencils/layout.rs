@@ -18,6 +18,7 @@ pub(crate) struct NativeObjectLayout {
     pub(crate) array_mask: u32,
     pub(crate) storage_start_mask: u32,
     pub(crate) dictionary_mask: u32,
+    pub(crate) integrity_mask: u32,
     pub(crate) inline_property_count: usize,
     pub(crate) extras_tag: u64,
     pub(crate) extras_tag_mask: u64,
@@ -45,6 +46,7 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     array_mask: 268435456,
     storage_start_mask: 1073741823,
     dictionary_mask: 2147483648,
+    integrity_mask: 3221225472,
     inline_property_count: 2,
     extras_tag: 9223090561878065152,
     extras_tag_mask: 18446462598732840960,
@@ -60,6 +62,17 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeFunctionLayout {
+    pub(crate) record_size: usize,
+    pub(crate) object_offset: usize,
+}
+
+pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLayout {
+    record_size: 48,
+    object_offset: 0,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeArrayLayout {
     pub(crate) record_capacity: usize,
     pub(crate) record_size: usize,
@@ -69,6 +82,8 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) header_length_offset: usize,
     pub(crate) header_values_offset: usize,
     pub(crate) header_owners_offset: usize,
+    pub(crate) header_capacity_offset: usize,
+    pub(crate) capacity_mask: u32,
     pub(crate) object_offset: usize,
     pub(crate) frozen_mask: u32,
 }
@@ -82,6 +97,8 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     header_length_offset: 4,
     header_values_offset: 16,
     header_owners_offset: 0,
+    header_capacity_offset: 8,
+    capacity_mask: 2147483647,
     object_offset: 0,
     frozen_mask: 2147483648,
 };
@@ -192,8 +209,19 @@ pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = 152;
 pub(crate) const JS_STEP_OBJECT_MARK_BLOCKS: usize = 136;
 pub(crate) const JS_STEP_OBJECT_MARK_BLOCK_COUNT: usize = 144;
 pub(crate) const JS_STEP_SLOTS_TRACKED: usize = 528;
+/// The heap's collection epoch as of the last refresh (`JsStepDispatch::epoch`), which a for-in step
+/// compares to the epoch its state's snapshot was listed in (`staged::iteration::for_in_next`).
+pub(crate) const JS_STEP_EPOCH: usize = 472;
 /// The string record range's base, which a string `length` read finds the record from.
 pub(crate) const JS_STEP_STRING_RECORD_BASE: usize = JS_STEP_SLOTS_TRACKED + core::mem::size_of::<usize>();
+/// What a store into a function's own properties reads (`RecordSpace::Function`): the function
+/// records' mark blocks and their count, as the object records' (`JS_STEP_OBJECT_MARK_BLOCKS`); and the
+/// empty string's word, which a function's inferred name replaces (`staged::naming`).
+pub(crate) const JS_STEP_FUNCTION_MARK_BLOCKS: usize = JS_STEP_STRING_RECORD_BASE + core::mem::size_of::<usize>();
+pub(crate) const JS_STEP_FUNCTION_MARK_BLOCK_COUNT: usize = JS_STEP_FUNCTION_MARK_BLOCKS + core::mem::size_of::<usize>();
+pub(crate) const JS_STEP_EMPTY_STRING: usize = JS_STEP_FUNCTION_MARK_BLOCK_COUNT + core::mem::size_of::<usize>();
+/// The function record reservation's base (`JsStepDispatch::function_record_base`).
+pub(crate) const JS_STEP_FUNCTION_RECORD_BASE: usize = 128;
 pub(crate) const JS_STEP_FIELD_ENTRIES: usize = 160;
 pub(crate) const PROPERTY_BUFFER_BASE: usize = 0;
 /// Bits of a body's capture word that hold the dense slots' address; the slot count sits above

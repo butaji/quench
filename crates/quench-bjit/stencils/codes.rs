@@ -131,6 +131,55 @@ pub const CONSTANT_ROW: u8 = 19;
 /// Leaves through the taken successor unless the VM's active realm (the word at the byte offset of
 /// hole 1 behind the payload's VM) names the global object word of hole 2: the proof once at entry.
 pub const REALM_ROW: u8 = 20;
+/// A fast arm of an instruction whose full operation a helper step makes (`staged::iteration`): the
+/// frame slot at hole 1 holds a direct object or array record (`RequireIteratorResult`), or a direct
+/// string, which is copied to the slot at hole 0 (`ToPropertyKey`). A hit continues at TAKEN, past the
+/// helper step laid out after the row; a miss leaves through EXIT0 into it.
+pub const OBJECT_ROW: u8 = 17;
+pub const KEY_ROW: u8 = 18;
+/// `AppendArray`'s fast arm: the Number operand (hole 1) appended to the unique writable dense array at the
+/// frame slot of hole 0 where the backing's capacity word proves room (`elements::append_in_room`). A hit
+/// continues at TAKEN, past the helper step laid out after the row (which grows the backing); a miss
+/// leaves through EXIT0 into it.
+pub const APPEND_ROW: u8 = 19;
+/// The property-add rows (`staged::add::site_add`): an object register's or the activation's receiver
+/// (`THIS_ADD_*`) gains the value operand (hole 1) by the transition the holes carry, one row per storage
+/// form the slot admits (`staged::object::Form`). A hit continues at TAKEN, past the helper step laid
+/// out after the row (or the leave a guarded row's miss makes); a miss leaves through EXIT0 into it.
+pub const ADD_PACKED_ROW: u8 = 20;
+pub const ADD_ARENA_ROW: u8 = 21;
+pub const ADD_EITHER_ROW: u8 = 22;
+pub const THIS_ADD_PACKED_ROW: u8 = 23;
+pub const THIS_ADD_ARENA_ROW: u8 = 24;
+pub const THIS_ADD_EITHER_ROW: u8 = 25;
+/// `ForInNext`'s fast arm (`staged::iteration::for_in_next`): the for-in state in the frame slot of hole 1
+/// yields its next key to the slot of hole 0 where its memo proves the snapshot current. A hit continues
+/// at TAKEN, past the helper step laid out after the row, which also takes the exhausted step's jump; a
+/// miss leaves through EXIT0 into it.
+pub const FOR_IN_ROW: u8 = 26;
+/// `SetFunctionName`'s fast arm (`staged::naming::site_name`): the function in the frame slot whose offset
+/// hole 2 carries (above `NAME_FUNCTION_AT`) takes the name word of hole 1 in the slot hole 2 carries (low
+/// `ADD_SLOT_BITS`), moving from the before-shape to the after-shape hole 0 carries as an add's does, where it
+/// held the empty name. One row per storage form the slot admits. A hit continues at TAKEN, past the helper
+/// step laid out after the row; a miss leaves through EXIT0 into it.
+pub const NAME_EITHER_ROW: u8 = 27;
+pub const NAME_ARENA_ROW: u8 = 28;
+/// Every naming row's code.
+pub const NAME_ROWS: [u8; 2] = [NAME_EITHER_ROW, NAME_ARENA_ROW];
+/// Bits below the function register's frame offset in a naming row's hole 2, which carries the slot beneath it.
+pub const NAME_FUNCTION_AT: u32 = ADD_SLOT_BITS;
+/// Every add row's code.
+pub const ADD_ROWS: [u8; 6] = [ADD_PACKED_ROW, ADD_ARENA_ROW, ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW];
+/// Bits below the after-shape in an add row's hole 0, which carries the before-shape beneath it.
+pub const ADD_AFTER_AT: u32 = 32;
+/// An add row's hole 2: the slot in its low `ADD_SLOT_BITS`, the prototype link a chained add proves
+/// (a 28-bit header field, `OBJECT.proto_mask`) from `ADD_LINK_AT`, and the object register's frame
+/// offset from `ADD_OBJECT_AT` (`ADD_OBJECT_BITS` of it: a register file's byte span fits).
+pub const ADD_SLOT_BITS: u32 = u16::BITS;
+pub const ADD_LINK_AT: u32 = ADD_SLOT_BITS;
+pub const ADD_LINK_BITS: u32 = 28;
+pub const ADD_OBJECT_AT: u32 = ADD_LINK_AT + ADD_LINK_BITS;
+pub const ADD_OBJECT_BITS: u32 = u64::BITS - ADD_OBJECT_AT;
 /// Bits below the prototype link in a folded read's hole 1, which carries the receiver's exact shape beneath it.
 pub const HELD_LINK_AT: u32 = 32;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries

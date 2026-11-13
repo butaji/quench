@@ -2,12 +2,9 @@
 //! a value at a slot, whichever of the two plain storage forms it keeps its values in. The
 //! interpreter runs it on `Concrete`; a specializer emits it from the same rows.
 
-use super::object::{arena_run, inline_storage, packed_form, plain_payload};
-use super::Stage;
+use super::object::{HALF_BYTES, arena_run, inline_storage, packed_form, plain_payload};
+use super::{RecordSpace, Stage};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-
-/// Bytes in one half of a packed payload word.
-const HALF_BYTES: u64 = std::mem::size_of::<u32>() as u64;
 
 /// Stores `value` at `slot` of the object record at `record` (id `record_id`) where its exact
 /// shape is `shape`, its values are plain (packed in its payload word or a run in the arena,
@@ -20,7 +17,7 @@ pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::
     let shape = stage.site(u64::from(shape));
     let same = stage.eq_imm(exact, shape);
     stage.guard(same, miss)?;
-    let open = stage.store_gate(record_id, value);
+    let open = stage.store_gate(RecordSpace::Object, record_id, value);
     stage.guard(open, miss)?;
     let payload = stage.load_u64(record, OBJECT.payload_offset as i32);
     let plain = plain_payload(stage, payload);

@@ -6,9 +6,9 @@
 
 use crate::layout::{
     words::{HEAP_TAG, TAG_MASK},
-    JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT, JS_STEP_SLOTS_TRACKED, NATIVE_OBJECT_LAYOUT as OBJECT,
+    JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT, JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT, JS_STEP_SLOTS_TRACKED, NATIVE_OBJECT_LAYOUT as OBJECT,
 };
-use crate::staged::{Stage, Table};
+use crate::staged::{RecordSpace, Stage, Table};
 use crate::typed_ir::Type;
 use crate::staged::effects::Region;
 
@@ -156,7 +156,7 @@ impl Stage for StencilStage {
         unsafe { (base.wrapping_add(offset as i64 as u64) as *mut u64).write(value) }
     }
     #[inline(always)]
-    fn store_gate(&mut self, record_id: u64, value: u64) -> bool {
+    fn store_gate(&mut self, space: RecordSpace, record_id: u64, value: u64) -> bool {
         let word = |offset: usize| {
             // SAFETY: a payload word at a layout offset; a row that stores was given the live payload.
             unsafe { ((self.payload + offset) as *const u64).read() }
@@ -168,13 +168,17 @@ impl Stage for StencilStage {
         if value & TAG_MASK != HEAP_TAG {
             return true;
         }
+        let (blocks_at, count_at) = match space {
+            RecordSpace::Object => (JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT),
+            RecordSpace::Function => (JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
+        };
         let block = record_id >> OBJECT.mark_records_per_block.trailing_zeros();
-        if block >= word(JS_STEP_OBJECT_MARK_BLOCK_COUNT) {
+        if block >= word(count_at) {
             return false;
         }
         let within = record_id & (OBJECT.mark_records_per_block as u64 - 1);
         let words = within / OBJECT.mark_word_bits as u64 * core::mem::size_of::<u64>() as u64;
-        let marks = word(JS_STEP_OBJECT_MARK_BLOCKS) + block * OBJECT.mark_block_size as u64 + words + OBJECT.mark_offset as u64;
+        let marks = word(blocks_at) + block * OBJECT.mark_block_size as u64 + words + OBJECT.mark_offset as u64;
         // SAFETY: the record's block lies below the block count, and its marks are a word of that block.
         let marked = unsafe { (marks as *const u64).read() } >> (within % OBJECT.mark_word_bits as u64) & 1;
         marked == 0

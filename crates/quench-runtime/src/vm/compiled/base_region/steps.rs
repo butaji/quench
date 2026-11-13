@@ -61,6 +61,12 @@ pub(super) enum Step {
     Fast(Heap),
     /// `LaneHelper::VmStep` makes the record's call-out in place (`staged::CallOut`) and the region continues.
     CallOut,
+    /// The heap row is the record's fast arm over its operand's frame slot, with `Helper` behind it
+    /// as the slow arm.
+    Fast(Heap),
+    /// `Fast` in a region whose heap rows read snapshots (`settle`): a helper's effects would not
+    /// reach them, so the slow arm is the leave at the record, which the interpreter runs.
+    Guard(Heap),
     /// The region leaves at the record.
     Leave,
     /// The activation completes with the register the row reads (a body's `Return`).
@@ -203,7 +209,8 @@ pub(super) fn decode_step(pc: u32, instruction: WideInstruction, (helpers, polls
 
 /// A helper step, alone or behind a fast arm, may write any heap value, which the snapshots a heap row reads (the entry
 /// record's captures, fields and array views) would not see: where the region has a heap row its
-/// helper steps leave instead.
+/// helper steps leave instead. A fast arm stays: its hit stores as a `Store` row does, in the
+/// backing the views read live, and only its slow arm becomes the leave (`Step::Guard`).
 pub(super) fn settle(decoded: &mut [Decoded]) {
     if decoded.iter().any(|row| row.heap.is_some_and(Heap::reads_snapshot)) {
         decoded.iter_mut().filter(|row| row.step.is_some_and(Step::runs_helper)).for_each(|row| row.step = Some(Step::Leave));
@@ -356,6 +363,48 @@ fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, helpers: L
 /// `fast` with the run `slow` laid out behind it: the slow run's parts follow the fast row, so the
 /// parts that name another part of their run are renumbered past it.
 fn behind(mut fast: Planned, mut slow: Planned) -> Planned {
+    let (lead, tail) = (std::mem::take(&mut slow.pre), std::mem::take(&mut slow.post));
+    fast.owned = slow.owned.take();
+    fast.post = lead.into_iter().chain(std::iter::once(slow)).chain(tail).map(|mut part| {
+        part.branch = part.branch.map(|branch| match branch {
+            Branch::Part(index) => Branch::Part(index + 1),
+            pc @ Branch::Pc(_) => pc,
+        });
+        part
+    }).collect();
+    fast
+}
+
+/// The run of a fast arm at `pc`: the heap row `fast` over the operand's frame slot, whose hit hops
+/// past the rest of the run to the next instruction, and behind it the slow arm (`slow`: the helper
+/// step) the row leaves into where its proof fails, or, with none (`Step::Guard`), the leave at `pc`
+/// the row's own miss makes. An operand or result held outside
+/// its frame slot (a pinned register holds a Number, which no fast arm takes but an append's
+/// element) has the slow arm alone, or the leave. An append's frame slot is its array's, a Number element read
+/// from wherever it lives; any other arm writes its destination's.
+fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, slow: Option<Planned>) -> Result<Planned, String> {
+    let homes = &layout.homes;
+    let appends = fast == Heap::Append;
+    let (read, read_hole) = operand(homes, decoded.a);
+    let slot = if appends { decoded.base } else { decoded.dst };
+    let (written, written_hole) = operand(homes, slot.map(Source::Register));
+    if written != Place::Mem || (read != Place::Mem && !appends) {
+        return slow.map_or_else(|| leave(pc), Ok);
+    }
+    let row = HeapRow { heap: fast, dst: written, a: read, b: Place::Mem, entry: false };
+    let mut run = Planned::single(base_rows::stencil(row)?, [written_hole, read_hole, 0], Some(pc + 1), slow.is_none().then_some(pc));
+    Ok(match slow {
+        Some(slow) => {
+            run.exits = vec![Exit::Ahead(1)];
+            behind(run, slow)
+        }
+        None => run,
+    })
+}
+
+/// `fast` with the run `slow` laid out behind it: the slow run's parts follow the fast row, so the
+/// parts that name another part of their run are renumbered past it.
+pub(super) fn behind(mut fast: Planned, mut slow: Planned) -> Planned {
     let (lead, tail) = (std::mem::take(&mut slow.pre), std::mem::take(&mut slow.post));
     fast.owned = slow.owned.take();
     fast.post = lead.into_iter().chain(std::iter::once(slow)).chain(tail).map(|mut part| {

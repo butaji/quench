@@ -96,9 +96,13 @@ impl<H: Host> Vm<H> {
         let globals = folds.then(|| self.global_table(program, function, &super::osr_compile::loop_unit(body), GlobalTable::Base));
         let reads = |site: u16| self.native_field_read_descriptors(site);
         let instanceofs = |pc: usize| constructors.get(pc).copied().flatten().and_then(|constructor| self.instanceof_fact(constructor).map(|fact| (constructor, fact)));
+        let adds = |site: u16, atom, chained| self.native_field_add(site, atom, chained);
+        let names = |site: u16, atom| self.native_function_name(site, atom);
         let known = Known {
             program, stores: folds.then(|| self.method_cache_atoms.bits()),
             reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
+            adds: folds.then_some(&adds as &dyn Fn(u16, crate::bytecode::Atom, bool) -> Option<crate::staged::add_plan::AddSite>),
+            names: folds.then_some(&names as &dyn Fn(u16, crate::bytecode::Atom) -> Option<(crate::staged::add_plan::Transition, u64)>),
             invalidation: Some(invalidation.address()),
             constants: self.programs.constants(self.active_program),
             typeof_names: &self.typeof_names,

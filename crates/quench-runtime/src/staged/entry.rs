@@ -4,8 +4,8 @@
 //! the entry's address, so the code never changes when the site's feedback does (the entry
 //! record is the one feedback authority).
 
-use super::object::{arena_run, decode_narrow, extras_pointer, has_extras, inline_storage, packed_form, plain_payload};
-use super::Stage;
+use super::object::{Form, arena_run, decode_narrow, extras_pointer, has_extras, inline_storage, plain_payload, store_slot};
+use super::{RecordSpace, Stage};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::vm::NATIVE_FIELD_CACHE_LAYOUT as ENTRY;
 
@@ -45,7 +45,7 @@ fn entry_slot<S: Stage>(stage: &mut S, entry: S::Word) -> S::Word {
 /// (leaving at `miss`) where its values are not plain (extras displaced them). Packed values
 /// decode from the record, flat ones read from the arena run.
 #[inline(always)]
-fn plain_value<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub(super) fn plain_value<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
     let payload = stage.load_u64(record, OBJECT.payload_offset as i32);
     let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
@@ -129,7 +129,7 @@ fn site_tables<S: Stage>(stage: &mut S, (entries, records): (S::Word, S::Word), 
 /// The id and object record that `object` names in the record table at `records`, whose presence
 /// the caller proved: `None` (leaving at `miss`) where the word is no direct object.
 #[inline(always)]
-fn direct_record<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, miss: S::Miss) -> Option<(S::Word, S::Word)> {
+pub(super) fn direct_record<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let direct = super::value::is_direct_object(stage, object);
     stage.guard(direct, miss)?;
     let id = super::value::direct_object_id(stage, object);
@@ -197,30 +197,16 @@ pub(crate) fn site_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), ob
     site_read_in(stage, tables, middle, second, miss)
 }
 
-/// Stores `value` at `slot` of the plain object record at `record`, whose shape the caller proved
-/// and whose store gate (`Stage::store_gate`) admitted the write: a packed slot takes the value's
-/// narrow form, a flat one the value; `None` (leaving at `miss`) where its values are not plain or
-/// a packed slot cannot hold the value, nothing written.
+/// Stores `value` at `slot` of the object record at `record`, whose shape the caller proved and
+/// whose store gate (`Stage::store_gate`) admitted the write: a packed slot takes the value's
+/// narrow form, a flat one the value (`store_slot`); `None` (leaving at `miss`) where its values are
+/// not plain or a packed slot cannot hold the value, nothing written.
 #[inline(always)]
 fn plain_store<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, value: S::Word, miss: S::Miss) -> Option<()> {
     let payload = stage.load_u64(record, OBJECT.payload_offset as i32);
     let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
-    let inline = inline_storage(stage, record);
-    let narrow = packed_form(stage, inline, value, miss)?;
-    stage.choose(inline, |stage| {
-        let half = stage.mul_imm(slot, std::mem::size_of::<u32>() as u64);
-        let address = stage.add(record, half);
-        stage.store_u32(address, OBJECT.payload_offset as i32, narrow);
-        stage.constant(0)
-    }, |stage| {
-        let run = arena_run(stage, payload);
-        let offset = stage.mul_imm(slot, OBJECT.property_value_size as u64);
-        let address = stage.add(run, offset);
-        stage.store_u64(address, 0, value);
-        stage.constant(0)
-    });
-    Some(())
+    store_slot(stage, record, payload, slot, Form::Either, value, miss)
 }
 
 /// A store of `value` through the cache entry `offset` bytes into the field cache table `entries`
@@ -237,7 +223,7 @@ pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), ob
     let own = own_entry(stage, entry);
     stage.guard(own, miss)?;
     shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
-    let open = stage.store_gate(id, value);
+    let open = stage.store_gate(RecordSpace::Object, id, value);
     stage.guard(open, miss)?;
     let slot = entry_slot(stage, entry);
     plain_store(stage, record, slot, value, miss)

@@ -1,7 +1,7 @@
 use super::property_key::PropertyKey;
 use std::ops::ControlFlow;
 use super::*;
-use crate::heap::PrivateBrand;
+use crate::heap::PrivateAtom;
 mod plain_key_set;
 mod proxy_get;
 
@@ -981,27 +981,27 @@ impl<H: Host> Vm<H> {
     /// name. A target without the field, or whose element is a method or accessor, answers
     /// `None`, leaving the access to the general path, which throws or calls it.
     pub(super) fn private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom) -> Option<Value> {
-        let home = self.private_name_home(p, atom)?;
-        self.object_data(target)?.private_field(PrivateBrand { home, name: atom })
+        let atom = self.private_name_atom(p, atom)?;
+        self.private_field_in(target, atom)
     }
 
-    /// The private brand of `atom` that function `function` of the running program, whose
-    /// frame would capture from `environment`, names when it has no binding sites: the home a
-    /// run of it with a frame found (`private_name_home`'s memo), else the initialized home
-    /// binding its static name binding reads from `environment` (`direct_capture`'s read), as
-    /// an arrow field's closure of each new instance finds its class's. `None` leaves the
-    /// access to the general path, which finds the home.
-    pub(super) fn memoized_private_brand(
+    /// The private atom of `atom` that function `function` of the running program, whose
+    /// frame would capture from `environment`, names when it has no binding sites: the atom of
+    /// the home a run of it with a frame found (`private_name_home`'s memo), else of the
+    /// initialized home binding its static name binding reads from `environment`
+    /// (`direct_capture`'s read), as an arrow field's closure of each new instance finds its
+    /// class's. `None` leaves the access to the general path, which finds the home.
+    pub(super) fn memoized_private_atom(
         &self,
         p: &ResidualProgram,
         environment: Value,
         function: u32,
         atom: Atom,
-    ) -> Option<PrivateBrand> {
+    ) -> Option<PrivateAtom> {
         let body = p.function_get(function as usize).filter(|body| body.binding_sites.is_empty())?;
         let key = PrivateHomeKey { environment, program: self.active_program, function, name: atom };
         if let Some(home) = self.private_homes.get(&key) {
-            return Some(PrivateBrand { home: *home, name: atom });
+            return self.home_private_atom(*home, atom);
         }
         let binding = body
             .name_bindings
@@ -1011,24 +1011,25 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let (slots, root) = self.environment_capture_slots(environment, false, depth)?;
-        Some(PrivateBrand { home: self.owned_capture(slots, root, slot)?, name: atom })
+        self.home_private_atom(self.owned_capture(slots, root, slot)?, atom)
     }
 
-    /// The private method or accessor that `object`, which carries `brand`, reads at lane site
-    /// `site`: the element the site recorded under the brand's home (`PrivateSiteHomes::element`), else the one `[[Get]]`'s walk of the
-    /// object's chain meets, recorded for the next read. `None` leaves the read to the general
-    /// path: a missing getter, a proxy on the chain, or a site without a recorded home.
+    /// The private method or accessor that `object`, which carries private atom `atom` of the
+    /// name `name`, reads at lane site `site`: the element the site recorded under the atom
+    /// (`PrivateSiteHomes::element`), else the one `[[Get]]`'s walk of the object's chain meets,
+    /// recorded for the next read. `None` leaves the read to the general path: a missing getter,
+    /// a proxy on the chain, or a site without a recorded atom.
     pub(super) fn site_private_element(
         &self,
         site: usize,
-        brand: PrivateBrand,
+        (atom, name): (PrivateAtom, Atom),
         object: Value,
     ) -> Option<super::private_site_home::PrivateElement> {
         use super::private_site_home::PrivateElement;
-        if let Some(element) = self.private_site_homes.element(site, brand.home) {
+        if let Some(element) = self.private_site_homes.element(site, atom) {
             return Some(element);
         }
-        let key = PropertyKey::string(brand.name);
+        let key = PropertyKey::string(name);
         let mut link = object;
         let element = loop {
             if matches!(self.heap.get(link), Some(Cell::Proxy { .. })) {
@@ -1038,7 +1039,7 @@ impl<H: Host> Vm<H> {
                 break if attributes.accessor {
                     PrivateElement::Getter(attributes.getter?)
                 } else {
-                    PrivateElement::Method(self.own_property(link, brand.name)?)
+                    PrivateElement::Method(self.own_property(link, name)?)
                 };
             }
             link = self.object_data(link)?.proto();
@@ -1046,11 +1047,11 @@ impl<H: Host> Vm<H> {
                 return None;
             }
         };
-        self.private_site_homes.record_element(site, brand.home, element);
+        self.private_site_homes.record_element(site, atom, element);
         Some(element)
     }
 
-    /// `private_field_value` through `memoized_private_brand`.
+    /// `private_field_value` through `memoized_private_atom`.
     pub(super) fn memoized_private_field_value(
         &self,
         p: &ResidualProgram,
@@ -1059,16 +1060,16 @@ impl<H: Host> Vm<H> {
         target: Value,
         atom: Atom,
     ) -> Option<Value> {
-        let brand = self.memoized_private_brand(p, environment, function, atom)?;
-        self.object_data(target)?.private_field(brand)
+        let atom = self.memoized_private_atom(p, environment, function, atom)?;
+        self.private_field_in(target, atom)
     }
 
     /// The store of private field `atom` of `target` under the running frame's home for the
     /// name: `false` for a target without the field, or whose element is a method or
     /// accessor, which the general path throws for or calls.
     pub(super) fn set_private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom, value: Value) -> bool {
-        let Some(home) = self.private_name_home(p, atom) else { return false; };
-        self.object_data_mut(target).is_some_and(|object| object.set_private_field(PrivateBrand { home, name: atom }, value))
+        let Some(atom) = self.private_name_atom(p, atom) else { return false; };
+        self.set_private_field_in(target, atom, value)
     }
 
     /// Whether `object` may gain a private element: always, unless the host applies
@@ -1077,6 +1078,8 @@ impl<H: Host> Vm<H> {
         object.is_extensible() || !self.host.nonextensible_applies_to_private()
     }
 
+    /// `DefinePrivateField`: `target` gains private field `name` of the class evaluation `home`
+    /// declared, a shape transition by its private atom with `value` at the new slot.
     pub(super) fn initialize_private_field(&mut self, p: &ResidualProgram, target: Value, home: Value, atom: Atom, value: Value) -> Result<(), JsError> {
         let Some(addable) = self.object_data(target).map(|object| self.private_element_addable(object)) else {
             return Err(self.type_error(p, "Cannot add private field to a non-object".into()));
@@ -1084,9 +1087,9 @@ impl<H: Host> Vm<H> {
         if !addable {
             return Err(self.type_error(p, "Cannot add private field to a non-extensible object".into()));
         }
-        if let Some(object) = self.object_data_mut(target)
-            && object.initialize_private_field(PrivateBrand { home, name: atom }, value)
-        {
+        let private = self.home_private_atom(home, atom).ok_or_else(|| JsError("private name is not declared by its class".into()))?;
+        if !self.has_private_slot(target, private) {
+            self.add_private_slot(target, private, value, true);
             return Ok(());
         }
         let name = crate::bytecode::private_identity_label(self.atom_name(atom)).unwrap_or_else(|| self.atom_name(atom)).to_owned();
@@ -1097,9 +1100,9 @@ impl<H: Host> Vm<H> {
     /// `home` (PrivateMethodOrAccessorAdd), which raises for a non-extensible object or one
     /// already branded; the class itself, as its own home, takes its static methods' brand.
     pub(super) fn mark_private_name(&mut self, p: &ResidualProgram, object: Value, home: Value, atom: Atom) -> Result<(), JsError> {
-        let brand = PrivateBrand { home, name: atom };
+        let private = self.home_private_atom(home, atom).ok_or_else(|| JsError("private name is not declared by its class".into()))?;
         if object != home {
-            let Some((addable, branded)) = self.object_data(object).map(|data| (self.private_element_addable(data), data.has_private_name(brand))) else {
+            let Some((addable, branded)) = self.object_data(object).map(|data| (self.private_element_addable(data), self.has_private_slot(object, private))) else {
                 return Err(self.type_error(p, "Cannot add private method to a non-extensible object".into()));
             };
             if !addable {
@@ -1109,8 +1112,8 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, "Cannot add private method to an object that already has it".into()));
             }
         }
-        if let Some(object) = self.object_data_mut(object) {
-            object.add_private_name(brand);
+        if !self.has_private_slot(object, private) && self.object_data(object).is_some() {
+            self.add_private_slot(object, private, Value::UNDEFINED, false);
         }
         Ok(())
     }
@@ -1176,9 +1179,16 @@ impl<H: Host> Vm<H> {
         atom: Atom,
     ) -> Option<Value> {
         let home = self.private_name_home(p, atom)?;
-        self.object_data(target)
-            .is_some_and(|object| object.has_private_name(PrivateBrand { home, name: atom }))
-            .then_some(home)
+        let private = self.home_private_atom(home, atom)?;
+        self.has_private_slot(target, private).then_some(home)
+    }
+
+    /// The private atom of `atom` as seen from the running frame: the one the home that declares
+    /// the name (`private_name_home`, the private environment chain, eval-introduced bindings
+    /// included) made for its class evaluation.
+    pub(super) fn private_name_atom(&mut self, p: &ResidualProgram, atom: Atom) -> Option<PrivateAtom> {
+        let home = self.private_name_home(p, atom)?;
+        self.home_private_atom(home, atom)
     }
 
     /// The home object that declares private name `atom` for the running frame: the nearest
@@ -1272,14 +1282,7 @@ impl<H: Host> Vm<H> {
             }
             environment = *parent;
         }
-        let home = homes.into_iter().map(|(_, home)| home).find(|home| {
-            self.object_data(*home).is_some_and(|object| {
-                object.has_private_name(PrivateBrand {
-                    home: *home,
-                    name: atom,
-                })
-            })
-        })?;
+        let home = homes.into_iter().map(|(_, home)| home).find(|home| self.home_private_atom(*home, atom).is_some())?;
         // Eval-introduced private bindings live only in environments made for that eval, so
         // a cached chain never gains a nearer one.
         self.private_homes.insert(key, home);

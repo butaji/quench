@@ -36,6 +36,7 @@ mod global_reads;
 mod stable;
 #[path = "lane_region/polls.rs"]
 mod polls;
+#[path = "lane_region/function_names.rs"] mod function_names;
 #[path = "lane_region/literals.rs"] mod literals;
 #[path = "lane_region/edges.rs"] mod edges;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
@@ -2684,6 +2685,7 @@ impl Lowering<'_, '_> {
             }
             Class::SetIndex if [instruction.register_a(), instruction.register_b(), instruction.register_c()]
                 .iter().all(|register| *register < self.unit.registers) => Some(self.element_store(state, pc32, instruction)),
+            Class::SetFunctionName if plain && self.completion.status_and_pc() => self.function_name(state, pc, instruction),
             _ if matches!((plain, instruction.op().field_store()), (true, Some(_))) => self.set_field(state, pc, instruction),
             _ if instruction.op().js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.operator(state, pc, instruction).or_else(|| self.binary_call_out(state, pc, instruction))
@@ -3058,7 +3060,7 @@ impl Lowering<'_, '_> {
     fn step_at(&mut self, state: &mut State, edges: frame::Edges, call_out: Option<&frame::call_out::CallOutSite>,
         operation: crate::staged::Operation<ir::Value, EmitProof>) -> crate::staged::Step<ir::Value, ()> {
         let locals = self.completion != Completion::Number;
-        let mut stage = Emit { builder: &mut self.builder, property_values: None };
+        let mut stage = Emit { builder: &mut self.builder, property_values: None, gate: None };
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
             payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls, call_out };
@@ -4510,7 +4512,7 @@ impl Lowering<'_, '_> {
         if !field.valid() { return None; }
         let load = IcOp::LoadSlot { slot: field.slot, form: crate::staged::Form::of(field.storage, field.storage_len),
             storage_len: field.storage_len };
-        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
+        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties), gate: None };
         let ops: &[IcOp<'_>] = match members { Some(members) => &[IcOp::GuardShapes(members), load], None => &[load] };
         crate::staged::ic::run(&mut stage, ops, at, None, exit)
     }
@@ -4605,7 +4607,7 @@ impl Lowering<'_, '_> {
         // The prototype's run lies inside the arena, as every live flat object's does
         // (`object_slots::arena_range`).
         let properties = self.builder.use_var(self.entry.as_ref().expect("entry facts").receiver.properties);
-        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties) };
+        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties), gate: None };
         use crate::staged::ic::IcOp;
         crate::staged::ic::run(&mut stage, &[IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(field.slot)],
             crate::staged::ic::Reached { record, shape: None, inline: None }, Some(records), exit)
@@ -4764,7 +4766,7 @@ impl Lowering<'_, '_> {
         // again.
         if self.generic.contains(&pc) && self.completion.status_and_pc() {
             let object = self.owner_bits(state, register);
-            self.field_add(object, instruction.atom_index(), instruction.cache_site_index(), value, exit);
+            self.field_add(state, object, (instruction.atom_index(), instruction.cache_site_index()), value, exit);
             self.reshaped(state);
             self.reload_receiver();
             return Some(true);
@@ -4928,7 +4930,7 @@ impl Lowering<'_, '_> {
         let record_id = self.ins().ireduce(types::I32, object_bits);
         let record_id = self.ins().uextend(types::I64, record_id);
         let payload = self.payload;
-        emit_unlogged_property_store_guard(&mut self.builder, payload, record_id, value, direct_ty, general);
+        emit_unlogged_property_store_guard(&mut self.builder, crate::staged::RecordSpace::Object, payload, record_id, value, direct_ty, general);
         // The admitted write domain and barrier above also cover packed
         // references. Encoding support is shared with bound native stores.
         if (direct_ty.is_subtype(Type::INT32)
@@ -5032,7 +5034,7 @@ impl Lowering<'_, '_> {
             emit_js_guard(&mut self.builder, allowed, slow);
             let (address, record) = emit_js_cached_field_slot(&mut self.builder, self.registers_base, self.payload,
                 JsFieldReceiver::Value(object), site, false, slow, Some(binding), header, Some(packed));
-            emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, ty, slow);
+            emit_unlogged_property_store_guard(&mut self.builder, crate::staged::RecordSpace::Object, self.payload, record, value, ty, slow);
             self.ins().store(MemFlagsData::trusted(), value, address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(packed);
@@ -5041,7 +5043,7 @@ impl Lowering<'_, '_> {
             // mark bit as the arena path; a reference needing logging uses the VM.
             let record = self.ins().ireduce(types::I32, object);
             let record = self.ins().uextend(types::I64, record);
-            emit_unlogged_property_store_guard(&mut self.builder, self.payload, record, value, ty, slow);
+            emit_unlogged_property_store_guard(&mut self.builder, crate::staged::RecordSpace::Object, self.payload, record, value, ty, slow);
             self.ins().store(MemFlagsData::trusted(), narrow, packed_address, 0);
             self.ins().jump(done, &[]);
             self.builder.switch_to_block(slow);

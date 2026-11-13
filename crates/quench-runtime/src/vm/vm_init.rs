@@ -191,6 +191,7 @@ impl<H: Host> Vm<H> {
             function_values: Default::default(),
             wasm_exported_functions: FxHashMap::default(),
             private_homes: FxHashMap::default(),
+            next_private_atom: 0,
             default_collation: None,
             wasm_js: Default::default(),
             direct_eval: false,

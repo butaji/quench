@@ -14,6 +14,8 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::RequireIteratorResult { register } => iteration::require_iterator_result(stage, frame, register, frame.miss()),
         Operation::ToPropertyKey { destination, source } => iteration::to_property_key(stage, frame, destination, source, frame.miss()),
         Operation::Void { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. } | Operation::Binary { .. } => super::generic::step(stage, frame, operation),
+        Operation::RequireIteratorResult { register } => iteration::require_iterator_result(stage, frame, register, frame.miss()),
+        Operation::ToPropertyKey { destination, source } => iteration::to_property_key(stage, frame, destination, source, frame.miss()),
         Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
             | Operation::LogicalNot { .. } | Operation::Safepoint { .. } => register_step(stage, frame, operation),
         Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }

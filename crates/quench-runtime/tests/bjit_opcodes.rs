@@ -24,6 +24,12 @@ class K { x = 1; #p = 2; static s = 3; get y() { return this.#p; } has(o) { retu
 function* gen(n) { for (var j = 0; j < n; j++) yield j; }
 var kk = new K();
 globalThis.gcount = 0;
+function P2(a, b) { this.a = a; this.b = b; }
+function Q(v) { this.f = v; }
+var setterHits = 0;
+var mkClass = () => class { #n = 1; #m() { return 2; } static #s = 3; bump() { return this.#n++; } call() { return this.#m(); } static has(o) { return #n in o; } static sget() { return this.#s; } };
+var PA = mkClass(), PB = mkClass();
+var pa = new PA(), pb = new PB();
 ";
 
 /// (opcode family, loop body over `i` with the locals `acc`, `s`, `t`, `o` and `arr`).
@@ -61,6 +67,21 @@ const FAMILIES: &[(&str, &str)] = &[
     ("define-field-shape-change", "class B { constructor(n) { if (n) this.pre = 1; } } class D extends B { a = i; b = 2; } t = new D(i % 50 === 0); acc += t.a + t.b + ('pre' in t ? 1 : 0);"),
     ("append-array-non-dense-spread", "var sp = i % 40 === 0 ? [1, , 3] : i % 40 === 1 ? 'ab' : arr; t = [0, ...sp, 9]; acc += t.length;"),
     ("for-in-mutated-object", "var m = {a: 1, b: 2, c: 3}; for (var key in m) { if (key === 'a') { delete m.b; m.d = 4; } acc += key.length; }"),
+    ("property-key-string-int-symbol-object", "var key = i % 4 === 0 ? i : i % 4 === 1 ? 'k' + (i & 3) : i % 4 === 2 ? Symbol.for('s') : { toString() { return 'ts'; } }; t = {[key]: i}; acc += Reflect.ownKeys(t).length;"),
+    ("property-key-flips-from-string-to-int", "var key = i < 1500 ? 'k' + (i & 3) : i; t = {[key]: i}; acc += Object.keys(t).length + (typeof Object.keys(t)[0] === 'string' ? 1 : 0);"),
+    ("iterator-result-primitive-and-function", "try { for (var v of { [Symbol.iterator]() { return { next() { return i % 3 === 0 ? 1 : i % 3 === 1 ? function () {} : { done: true }; } }; } }) acc += 1; } catch (e) { acc += e instanceof TypeError ? 2 : 3; }"),
+    ("iterator-result-record-then-done", "var n = 0; for (var v of { [Symbol.iterator]() { return { next() { return n++ < 3 ? { value: n, done: false } : { done: true }; } }; } }) acc += v;"),
+    ("define-field-shape-change", "class B { constructor(n) { if (n) this.pre = 1; } } class D extends B { a = i; b = 2; } t = new D(i % 50 === 0); acc += t.a + t.b + ('pre' in t ? 1 : 0);"),
+    ("append-array-non-dense-spread", "var sp = i % 40 === 0 ? [1, , 3] : i % 40 === 1 ? 'ab' : arr; t = [0, ...sp, 9]; acc += t.length;"),
+    ("append-array-element-after-spread-hits-and-misses", "t = [...arr, i, i / 4, i & 1 ? 'x' : i, {a: i}]; acc += t.length + t[4] + (typeof t[6] === 'string' ? 1 : 0);"),
+    ("append-array-grows-past-capacity", "t = [...arr, ...arr, ...arr, i, i, i, i, i]; acc += t.length + t[12];"),
+    ("append-array-in-region-with-field-reads", "t = [o.p, o.q, i, i / 4]; acc += t.length + t[3] + o.p;"),
+    ("append-array-miss-after-field-read", "t = [o.p, i & 1 ? 'x' : i, {a: o.q}, ...arr, i]; acc += t.length + o.q;"),
+    ("for-in-mutated-object", "var m = {a: 1, b: 2, c: 3}; for (var key in m) { if (key === 'a') { delete m.b; m.d = 4; } acc += key.length; }"),
+    ("for-in-memoized-shape-steps", "var m = {a: 1, b: 2, c: 3}; for (var key in m) { if (key === 'b') continue; acc += key.length + m[key]; }"),
+    ("for-in-memoized-then-shape-change", "var m = i % 100 === 0 ? {a: 1, b: 2, c: i} : {a: 1, b: 2}; for (var key in m) acc += m[key];"),
+    ("for-in-nested-memoized", "for (var a in {x: 1, y: 2}) for (var b in {x: 1, y: 2}) acc += a.length + b.length;"),
+    ("for-in-key-deleted-after-first-step", "var m = {a: 1, b: 2, c: 3}; for (var key in m) { delete m.c; acc += key.length; }"),
     ("for-of-break", "for (var v of arr) { if (v > 2) break; acc += v; }"),
     ("array-spread", "t = [...arr, i]; acc += t.length;"),
     ("object-spread", "t = {...o, z: i}; acc += t.z + t.p;"),
@@ -122,6 +143,21 @@ const FAMILIES: &[(&str, &str)] = &[
     ("non-number-constants", "var u = undefined, w = null, bl = false, st = 'k'; t = [u, w, bl, st]; acc += t.length + (u === undefined ? 1 : 0) + (st === 'k' ? 2 : 0);"),
     ("local-initialization-and-dead-zone", "{ let a = i & 3; acc += a; } try { acc += qq; let qq = 1; } catch (e) { acc += e instanceof ReferenceError ? 1 : 0; } { let b2; acc += b2 === undefined ? 1 : 0; b2 = i; acc += b2; }"),
     ("typeof-fast-arm-test-switch-and-flip", "var tv = i < 1500 ? i : i % 2 ? 'k' : {}; switch (typeof tv) { case 'number': acc += 1; break; case 'string': acc += 2; break; default: acc += 3; } acc += (typeof tv === 'object' ? 4 : 0) + (typeof tv !== 'number' ? 8 : 0);"),
+    ("add-this-field-constructor", "t = new P2(i, i / 4); acc += t.a + t.b;"),
+    ("add-field-prototype-setter-installed-late", "if (i === 1500) Object.defineProperty(Q.prototype, 'f', { set(v) { setterHits += v; }, get() { return 7; }, configurable: true }); t = new Q(i); acc += t.f + setterHits;"),
+    ("add-after-prevent-extensions", "var e = {}; if (i % 40 === 0) Object.preventExtensions(e); e.z = i; acc += 'z' in e ? 1 : 2;"),
+    ("add-wide-object-narrow-then-wide-values", "var w = {}; w.a = i; w.b = 'x'; w.c = i / 4; w.d = {}; w.e = 5; w.f = 6; acc += w.e + w.f + Object.keys(w).length;"),
+    ("define-field-wide-class", "t = new (class { a = 1; b = 2; c = 3; d = 4; e = i; f = i / 4; })(); acc += t.e + t.f;"),
+    ("set-function-name-anonymous-closures", "var f1 = function () { return i; }; var f2 = () => i; acc += f1.name.length + f2.name.length + f1() % 3;"),
+    ("set-function-name-object-and-default", "var h = { m: function () {}, n: () => 1 }; var { d = function () {} } = {}; acc += h.m.name.length + h.n.name.length + d.name.length;"),
+    ("set-function-name-late-class-static-name", "var kc = i === 1500 ? class { static name() { return 3; } } : class {}; acc += typeof kc.name === 'function' ? 2 : kc.name.length + 1;"),
+    ("set-function-name-after-name-redefined", "var fn = function () {}; if (i % 50 === 0) Object.defineProperty(fn, 'name', { value: 'z' + i }); acc += fn.name.length;"),
+    ("private-field-read-write-two-evaluations", "acc += pa.bump() % 7 + pb.bump() % 5;"),
+    ("private-method-call-two-evaluations", "acc += pa.call() + pb.call();"),
+    ("private-brand-check-across-evaluations", "acc += (PA.has(pa) ? 1 : 0) + (PA.has(pb) ? 10 : 0) + (PB.has(pb) ? 100 : 0);"),
+    ("private-static-read-two-evaluations", "acc += PA.sget() + PB.sget();"),
+    ("private-brand-after-late-evaluation", "if (i === 1200) { PB = mkClass(); pb = new PB(); } acc += PB.has(pb) ? 1 : 2;"),
+    ("private-access-wrong-receiver-throws", "try { PA.prototype.bump.call(pb); acc += 1; } catch (e) { acc += e instanceof TypeError ? 2 : 3; }"),
     ("async-function", "(async function () { await 0; acc += 1; })();"),
     ("global-counter", "gcount = (gcount + i) | 0; acc += gcount & 255;"),
     ("global-typeof", "s = typeof gcount + typeof captured + typeof noSuchGlobal; gcount = i;"),

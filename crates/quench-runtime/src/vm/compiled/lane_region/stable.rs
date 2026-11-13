@@ -98,6 +98,16 @@ impl Lowering<'_, '_> {
         self.stable.holders.insert(holder);
     }
 
+    /// Holds what an add row (`staged::add::site_add`) relies on: that no method cache names `atom` and that the
+    /// prototype chain proved for the add (its before-shape `owner`) intercepts no store, until a prototype's
+    /// layout changes. An invalidation point made here whatever the block proved before: an add's sibling
+    /// blocks (a shape switch's cases) each hold their own.
+    pub(super) fn hold_add(&mut self, state: &mut State, exit: ir::Block, atom: Atom, owner: u32) {
+        self.read_invalidation(state, exit);
+        self.stable.atoms.insert(atom);
+        self.stable.holders.insert(owner);
+    }
+
     /// Holds the value of global cell `fact` (`hold_stable`), read from the global object
     /// `global` of the realm compiled against: a realm reads its own global's cells, so a block
     /// first proves that realm active (`prove_realm`).

@@ -35,13 +35,11 @@ struct Header {
 /// updates preserve it until the backing's values are counted again.
 pub(crate) const OTHERS_UNKNOWN: u32 = u32::MAX;
 
-
 use crate::staged::elements::{concrete_other as other, concrete_recount as recounted};
 
 fn others(values: &[Value]) -> u32 {
     values.iter().map(|value| other(*value)).sum()
 }
-
 
 /// The values start right after the header, at their own alignment.
 const VALUES_OFFSET: usize = size_of::<Header>();
@@ -67,7 +65,6 @@ static EMPTY: Header = Header {
 };
 
 /// The `Header::capacity` flag of a backing whose header moved past dropped front values.
-/// Native code never reads the capacity word, so the flag changes no native layout.
 const BIASED: u32 = 1 << 31;
 
 /// The shortest backing whose front removal moves its header instead of its values: V8
@@ -100,6 +97,10 @@ pub(super) const NATIVE_HEADER_POINTER_OFFSET: usize =
     std::mem::offset_of!(ArrayElements, header);
 pub(super) const NATIVE_HEADER_LENGTH_OFFSET: usize = std::mem::offset_of!(Header, len);
 pub(super) const NATIVE_HEADER_OWNERS_OFFSET: usize = std::mem::offset_of!(Header, owners);
+/// The byte offset of the `u32` capacity word, which only the backing's allocator and growth change.
+pub(super) const NATIVE_HEADER_CAPACITY_OFFSET: usize = std::mem::offset_of!(Header, capacity);
+/// The capacity word's bits that count values: those left once the `BIASED` flag is dropped.
+pub(super) const NATIVE_HEADER_CAPACITY_MASK: u32 = !BIASED;
 pub(super) const NATIVE_HEADER_VALUES_OFFSET: usize = VALUES_OFFSET;
 
 const _: () = assert!(NATIVE_HEADER_POINTER_OFFSET == 0);
@@ -277,7 +278,6 @@ impl ArrayElements {
             _ => self.allocation().1.size(),
         }
     }
-
 
     /// Whether every value is an int32 (so none is a hole, and none a heap reference).
     #[inline]

@@ -1060,10 +1060,11 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn invalidate_method_caches_for_key(&mut self, key: PropertyKey) {
         match key {
-            PropertyKey::String(atom) | PropertyKey::Private(atom) => {
+            PropertyKey::String(atom) => {
                 self.invalidate_method_caches_for_atom(atom);
             }
-            PropertyKey::Symbol(_) => {}
+            // Method caches name string atoms; a private atom is of its own space.
+            PropertyKey::Symbol(_) | PropertyKey::Private(_) => {}
         }
     }
     #[inline(always)]
@@ -1965,20 +1966,36 @@ impl<H: Host> Vm<H> {
         else {
             return false;
         };
-        let (target_shape, slot) = (cache.target_shape, usize::from(cache.slot));
+        let transition = cache.transition();
         if !cache.proof_holds(receiver.proto_link())
             || !receiver.admits_cached_add()
             || self.method_caches_may_name(atom)
         {
             return false;
         }
-        if !(receiver.admits_plain_append(slot, value)
-            && self.heap.record_property_append_plain(record_id, slot, value, target_shape))
-        {
-            self.heap.record_property_add_moving(object, slot, value, target_shape);
-        }
+        self.add_by_transition(object, record_id, transition, value);
         self.profile.field_cache_hit(0, 0);
         true
+    }
+
+    /// The add of `value` to `object`, the direct object record `record_id` the caller admitted
+    /// (`Object::admits_cached_add`), along the cached `transition`: the staged add row first
+    /// (`staged::add`, which proves the before-shape and plain storage and needs no call), then,
+    /// where the store gate is closed (slot representations are tracked, or the barrier would log
+    /// the value), the plain append that observes the write, else the add that moves storage or
+    /// allocates (`Heap::record_property_add_moving`).
+    #[inline(always)]
+    fn add_by_transition(&mut self, object: Value, record_id: u32, transition: Transition, value: Value) {
+        // SAFETY: `record_id` names the live record of `object`; the row proves the rest.
+        if unsafe { concrete_add_property(&mut self.heap, record_id, transition, value) } {
+            return;
+        }
+        let (slot, shape) = (usize::from(transition.slot), transition.after);
+        if !(self.heap.object_record_by_id(record_id).admits_plain_append(slot, value)
+            && self.heap.record_property_append_plain(record_id, slot, value, shape))
+        {
+            self.heap.record_property_add_moving(object, slot, value, shape);
+        }
     }
 
     /// `define_field_cached`'s hit inline, for an object record: the site's add entry for its
@@ -2003,17 +2020,28 @@ impl<H: Host> Vm<H> {
         let Some((_, cache)) = self.field_add_entry(self.field_cache_index(site), receiver.exact_shape(), atom) else {
             return false;
         };
-        let (target_shape, slot) = (cache.target_shape, usize::from(cache.slot));
+        let transition = cache.transition();
         if self.method_caches_may_name(atom) {
             return false;
         }
-        if !(receiver.admits_plain_append(slot, value)
-            && self.heap.record_property_append_plain(record_id, slot, value, target_shape))
-        {
-            self.heap.record_property_add_moving(object, slot, value, target_shape);
-        }
+        self.add_by_transition(object, record_id, transition, value);
         self.profile.field_cache_hit(0, 0);
         true
+    }
+
+    /// The add `atom`'s site recorded that compiled code may run (`staged::add::site_add`): a define's
+    /// (`chained` false) needs no chain proof, an adding store's needs the entry whose prototype chain
+    /// is proved now (`FieldAddCache::proof_holds`), whose link the code then tests per receiver and
+    /// whose proof it holds as a Stable fact. `None` where the site recorded none.
+    pub(super) fn native_field_add(&self, site: u16, atom: Atom, chained: bool) -> Option<AddSite> {
+        let set = self.field_add_indices.get(self.field_cache_index(site));
+        if set == NO_FIELD_ADD_SET {
+            return None;
+        }
+        self.field_add_sets[set as usize].entries().filter(|cache| cache.atom == atom).find_map(|cache| {
+            let link = chained.then_some(cache.proved_prototype);
+            link.is_none_or(|link| cache.proof_holds(link)).then_some(AddSite { transition: cache.transition(), link: link.map(ProtoLink::bits) })
+        })
     }
 
     /// Whether the site has recorded a cached property add (`try_cached_field_add`).
@@ -4215,7 +4243,7 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn record_field_add_cache(&mut self, site: usize, cache: FieldAddCache) {
+    pub(super) fn record_field_add_cache(&mut self, site: usize, cache: FieldAddCache) {
         if !self.field_cache_records(site) {
             return;
         }
@@ -4255,7 +4283,7 @@ impl<H: Host> Vm<H> {
     /// The add entry of cache site index `site` for receivers of `shape` adding `atom`, with
     /// the index of the site's set.
     #[inline(always)]
-    fn field_add_entry(&self, site: usize, shape: u32, atom: Atom) -> Option<(usize, &FieldAddCache)> {
+    pub(super) fn field_add_entry(&self, site: usize, shape: u32, atom: Atom) -> Option<(usize, &FieldAddCache)> {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors; every non-sentinel
         // index was installed together with its set.
         let set = unsafe { self.field_add_indices.get_unchecked(site) };

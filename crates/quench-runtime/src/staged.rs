@@ -26,6 +26,8 @@ mod callout;
 pub(crate) use global::{GlobalBinding, GlobalFrame};
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
+pub(crate) mod add;
+pub(crate) mod add_plan;
 pub(crate) mod elements;
 pub(crate) mod entry;
 pub(crate) mod environment;
@@ -34,6 +36,8 @@ pub(crate) mod object;
 pub(crate) mod store;
 pub(crate) mod strings;
 pub(crate) mod holder;
+pub(crate) mod iteration;
+pub(crate) mod naming;
 pub(crate) mod iteration;
 pub(crate) mod call; pub(crate) mod frame;
 pub(crate) mod construct;
@@ -53,7 +57,7 @@ pub(crate) use object::{Form, Layout, PackedAccess, Slots, concrete_own_read,
     arena_extras_layout, own_layout, read_slot};
 
 mod stage;
-pub(crate) use stage::{Stage, Table};
+pub(crate) use stage::{RecordSpace, Stage, Table};
 
 mod register_frame;
 pub(crate) use register_frame::{CallOut, Constant, Frame, Protocol, Step, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};

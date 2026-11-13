@@ -76,6 +76,11 @@ pub(super) struct Decoded {
     pub(super) atom: Option<Atom>,
     /// The receiver a folded prototype-held read stands on, with its value in `hole`.
     pub(super) folded: Option<Folded>,
+    /// The recorded transition an add row runs (`adds`), with the form its storage takes and whether
+    /// the receiver is the activation's `this`.
+    pub(super) add: Option<adds::Add>,
+    /// The recorded naming a `SetFunctionName` row runs (`names`).
+    pub(super) name: Option<names::Name>,
     /// A `ToNumeric` copy: its operand is no Number until the row proves it (a loop's entry guards
     /// prove the registers it names; a function's registers are not proved).
     pub(super) checked: bool,
@@ -285,7 +290,7 @@ fn field_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instructi
 /// entry (`entry::site_store`), where the store may run in place (`Known::stores_in_place`).
 fn field_store_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
     let atom = instruction.atom_index();
-    if !known.stores_in_place(atom) || instruction.returns_from_frame() || instruction.writes_current_this() {
+    if !known.stores_in_place(atom) || instruction.returns_from_frame() || instruction.writes_current_this() || adds::of(known, instruction).is_some() {
         return None;
     }
     let (heap, base) = match instruction.field_store_register() {
@@ -309,10 +314,12 @@ pub(super) fn distinct<T: Ord>(facts: impl Iterator<Item = T>) -> Box<[T]> {
     facts.into()
 }
 
-/// The exact shapes of the holders whose values the rows hold folded (`Decoded::folded`): the Stable
-/// facts the code takes, which a change of a value a prototype of that shape holds retires it.
+/// The exact shapes of the holders whose values the rows hold folded (`Decoded::folded`), and the owners
+/// of the chain proofs the adding stores hold (`adds::Add::chain_owner`): the Stable facts the code
+/// takes, which a change of a value a prototype of that shape holds, or of any prototype's layout, retires it.
 pub(super) fn held_holders(decoded: &[Decoded]) -> Box<[u32]> {
-    distinct(decoded.iter().filter_map(|row| row.folded.map(|folded| folded.holder)))
+    let chained = decoded.iter().filter_map(|row| row.add.and_then(adds::Add::chain_owner));
+    distinct(decoded.iter().filter_map(|row| row.folded.map(|folded| folded.holder)).chain(chained))
 }
 
 /// The atoms the rows hold unnamed by method caches (`Decoded::atom`): the Stable facts the code

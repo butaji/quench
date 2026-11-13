@@ -148,7 +148,7 @@ impl ObjectHeader {
 
 /// The stage whose residual `staged` operations that address no arena emit into `builder`.
 pub(super) fn emit<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> Emit<'a, 'b> {
-    Emit { builder, property_values: None }
+    Emit { builder, property_values: None, gate: None }
 }
 
 /// `staged::object::inline_storage`'s residual for the record at `record`.
@@ -487,7 +487,7 @@ impl CheckedObject {
         miss: ir::Block,
     ) -> Option<Self> {
         if !plan.valid() { return None; }
-        let mut stage = Emit { builder, property_values: Some(base) };
+        let mut stage = Emit { builder, property_values: Some(base), gate: None };
         crate::staged::own_layout(&mut stage, record, inline, Form::of(plan.storage, plan.storage_len),
             plan.storage_len, access, miss).map(Self)
     }
@@ -503,6 +503,6 @@ impl CheckedObject {
 
     /// Read fresh contents using only the established layout and slot bound.
     pub(super) fn read(self, builder: &mut FunctionBuilder<'_>, slot: u16) -> ir::Value {
-        crate::staged::read_slot(&mut Emit { builder, property_values: None }, self.0, slot)
+        crate::staged::read_slot(&mut Emit { builder, property_values: None, gate: None }, self.0, slot)
     }
 }

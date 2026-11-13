@@ -35,6 +35,7 @@ mod wasm_table;
 use crate::Value;
 use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
     NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
+use crate::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_set_function_name};
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
@@ -140,6 +141,7 @@ mod dynamic_strings;
 mod lane_exits;
 mod embedding;
 mod provenance;
+mod private_slots;
 mod inspection;
 mod environment;
 mod equality;
@@ -973,6 +975,11 @@ impl FieldAddCache {
     fn prototype_shapes(&self) -> &[u32] {
         &self.prototype_shapes[..usize::from(self.prototype_depth)]
     }
+    /// The shape transition the entry caches, as the staged add row takes it.
+    #[inline(always)]
+    fn transition(&self) -> Transition {
+        Transition { before: self.source_shape, after: self.target_shape, slot: self.slot }
+    }
     /// Whether the chain proof (`proved_epoch`, `proved_prototype`) holds for a receiver
     /// whose prototype `link` names: then the chain needs no walk.
     #[inline(always)]
@@ -1388,6 +1395,17 @@ const DEFAULT_DATA_ATTRIBUTES: DataAttributes = DataAttributes {
     writable: true,
     enumerable: true,
     configurable: true,
+};
+/// A private field's slot (`private_slots`): writable, and neither enumerable nor configurable.
+const PRIVATE_FIELD_ATTRIBUTES: DataAttributes = DataAttributes {
+    writable: true,
+    enumerable: false,
+    configurable: false,
+};
+/// A private method's or accessor's brand: a field's attributes but read-only, which tells the two apart.
+const PRIVATE_BRAND_ATTRIBUTES: DataAttributes = DataAttributes {
+    writable: false,
+    ..PRIVATE_FIELD_ATTRIBUTES
 };
 /// The attributes of a function's own `length` and `name`.
 const FUNCTION_INFO_ATTRIBUTES: DataAttributes = DataAttributes {
@@ -2240,6 +2258,9 @@ pub(crate) struct Vm<H> {
     /// Private-name home objects found by `private_name_home`, kept while their starting
     /// environment is live.
     private_homes: FxHashMap<PrivateHomeKey, Value>,
+    /// The raw id of the next private atom a class evaluation declares (`Vm::fresh_private_atom`);
+    /// ids are never reused, so a shape's private key names one evaluation's name for good.
+    next_private_atom: u32,
     /// The collation `String.prototype.localeCompare` resolves without locales or options
     /// (`Vm::locale_compare_collation`); the host's default locale fixes it.
     default_collation: Option<std::rc::Rc<intl_collator::Collation>>,

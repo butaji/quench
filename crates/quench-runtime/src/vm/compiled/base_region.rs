@@ -28,6 +28,8 @@ use super::LaneHelpers;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+mod adds;
+mod names;
 mod call_plan;
 mod sites;
 pub(in crate::vm::compiled) mod callees;

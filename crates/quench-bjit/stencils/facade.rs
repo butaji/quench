@@ -81,7 +81,7 @@ pub(crate) mod value_vec {
 }
 
 pub(crate) mod heap {
-    pub(crate) use crate::layout::{LENGTH_FROM_VALUES, NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_OBJECT_LAYOUT, OTHERS_FROM_VALUES, OTHERS_UNKNOWN};
+    pub(crate) use crate::layout::{LENGTH_FROM_VALUES, NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, OTHERS_FROM_VALUES, OTHERS_UNKNOWN};
     #[derive(Clone, Copy)]
     pub(crate) enum PlainPropertyStorage {
         PackedInline,

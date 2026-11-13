@@ -3,7 +3,6 @@
 //! `opcodes!` table expands into `Op::class` and `Op::traits`.
 use super::Op;
 pub(crate) use super::opcode_table::{OPCODE_COUNT, opcode_name};
-
 /// A tier's operation family, declared once by the catalog (`Op::class`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -94,6 +93,7 @@ pub(crate) enum Class {
     DefineField,
     DefinePrivateField,
     MarkPrivateName,
+    ForInNext,
     YieldStar,
     DefinePropertyRecord,
     Delete,
@@ -112,6 +112,8 @@ pub(crate) enum Class {
     MakeObject2,
     MakeObjectLiteral,
     PrivateIn,
+    SetFunctionName,
+    AppendArray,
     RequireIteratorResult,
     StoreCapture,
     StoreEnvLocal,
@@ -221,6 +223,7 @@ macro_rules! class_of {
     (CopyDataProperties) => { Class::CopyDataProperties };
     (CreateRegExpLiteral) => { Class::CreateRegExpLiteral };
     (DefineField) => { Class::DefineField };
+    (ForInNext) => { Class::ForInNext };
     (DefinePrivateField) => { Class::DefinePrivateField };
     (MarkPrivateName) => { Class::MarkPrivateName };
     (DefinePropertyRecord) => { Class::DefinePropertyRecord };
@@ -240,6 +243,8 @@ macro_rules! class_of {
     (MakeObject2) => { Class::MakeObject2 };
     (MakeObjectLiteral) => { Class::MakeObjectLiteral };
     (PrivateIn) => { Class::PrivateIn };
+    (SetFunctionName) => { Class::SetFunctionName };
+    (AppendArray) => { Class::AppendArray };
     (RequireIteratorResult) => { Class::RequireIteratorResult };
     (StoreCapture) => { Class::StoreCapture };
     (StoreEnvLocal) => { Class::StoreEnvLocal };
@@ -369,6 +374,7 @@ macro_rules! traits_of {
     (CheckPrivate) => { Traits::LANE_IN_PLACE };
     (PrivateIn) => { Traits::LANE_IN_PLACE };
     (MarkPrivateName) => { Traits::LANE_IN_PLACE };
+    (DeclarePrivateName) => { Traits::LANE_IN_PLACE };
     (SetFunctionName) => { Traits::LANE_IN_PLACE };
     (SetFunctionNameKey) => { Traits::LANE_IN_PLACE };
     (SetFunctionDebugName) => { Traits::LANE_IN_PLACE };
@@ -407,7 +413,6 @@ macro_rules! traits_of {
     (WasmIndirectTarget) => { Traits::UNROLL_EXCLUDED };
     ($other:ident) => { Traits::NONE };
 }
-
 
 pub(crate) use super::denotation::JsDenotation;
 

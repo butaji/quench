@@ -9,6 +9,7 @@
 //! 0, takes the narrow upper-word table in 1 and the cache entry's byte offset in 2). Every failed proof leaves through exit 0 with nothing written, so the interpreter
 //! runs the instruction.
 
+use crate::staged::Form;
 use quench_bjit::numeric::{library, Place};
 use quench_bjit::Stencil;
 use std::collections::HashMap;
@@ -122,7 +123,36 @@ pub(super) enum Heap {
     /// The realm proof entry rows make once: the VM's active realm field (hole 1: its byte offset) names the
     /// global object word of hole 2; a mismatch fails the entry.
     Realm,
+    /// The fast arm of `RequireIteratorResult` (`staged::iteration`): the register at the frame offset
+    /// of hole 1 holds a direct object or array record, else the row leaves into the helper step after it.
+    Object,
+    /// The fast arm of `ToPropertyKey`: the register at hole 1 holds a direct string, which is copied to
+    /// the register at hole 0, else the row leaves into the helper step after it.
+    Key,
+    /// The fast arm of `AppendArray` (`elements::append_in_room`): the Number operand at hole 1 is appended to
+    /// the unique writable dense array in the frame slot of hole 0 where the backing's capacity word proves
+    /// room, else the row leaves into the helper step after it, which grows the backing.
+    Append,
+    /// The property add of a `DefineField` or an adding `SetField` (`staged::add::site_add`): the value
+    /// operand (hole 1) joins the object register (its frame offset in hole 2) or, with `this`, the
+    /// activation's receiver, by the transition holes 0 and 2 carry (`library::ADD_AFTER_AT`,
+    /// `ADD_OBJECT_AT`), where the receiver holds the before-shape in `form`'s storage and, for the
+    /// row's `entry` variant, the prototype link hole 2 names. A hit continues at TAKEN; a miss leaves
+    /// into the helper step after the row, or the leave a guarded row makes.
+    Add { form: Form, this: bool },
+    /// The fast arm of `ForInNext` (`staged::iteration::for_in_next`): the for-in state in the frame slot of
+    /// hole 1 yields its next key to the slot of hole 0 where its memo proves the snapshot current, else the row
+    /// leaves into the helper step after it, which takes any other step and the exhausted one's jump.
+    ForIn,
+    /// The fast arm of `SetFunctionName` (`staged::naming::site_name`): the function in the frame slot
+    /// whose offset hole 2 carries (`library::NAME_FUNCTION_AT`) takes the name word of hole 1 in the slot
+    /// hole 2 names, moving between the shapes of hole 0 (`library::ADD_AFTER_AT`), where it holds the empty
+    /// name in `form`'s storage. A hit continues at TAKEN; a miss leaves into the helper step after the row.
+    Name { form: Form },
 }
+
+/// The storage forms an add row exists for, in the order of `library::ADD_ROWS` (packed, arena, either).
+pub(super) const FORMS: [Form; 3] = [Form::Packed, Form::Arena, Form::Either];
 
 /// A heap row: its operation and where its operands and destination live.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -173,6 +203,12 @@ impl Heap {
             Heap::GlobalStore => library::GLOBAL_STORE_ROW,
             Heap::Word => library::CONSTANT_ROW,
             Heap::Realm => library::REALM_ROW,
+            Heap::Object => library::OBJECT_ROW,
+            Heap::Key => library::KEY_ROW,
+            Heap::Append => library::APPEND_ROW,
+            Heap::ForIn => library::FOR_IN_ROW,
+            Heap::Name { form } => library::NAME_ROWS[usize::from(form == Form::Arena)],
+            Heap::Add { form, this } => library::ADD_ROWS[usize::from(this) * FORMS.len() + FORMS.iter().position(|known| *known == form).unwrap_or_default()],
         }
     }
 
@@ -234,6 +270,7 @@ mod tests {
         use stencil_layout as mirror;
         eprintln!("OFFSETS {} {} {} {} {} {}", std::mem::offset_of!(CallContext, adapter_payload), std::mem::offset_of!(JsStepDispatch, loop_entry), std::mem::offset_of!(JsStepDispatch, capture_values), std::mem::offset_of!(JsStepDispatch, capture_len), std::mem::offset_of!(JsStepDispatch, array_record_base), std::mem::offset_of!(JsStepDispatch, returned_pc));
         assert_eq!(format!("{:?}", crate::heap::NATIVE_OBJECT_LAYOUT), format!("{:?}", mirror::NATIVE_OBJECT_LAYOUT));
+        assert_eq!(format!("{:?}", crate::heap::NATIVE_FUNCTION_LAYOUT), format!("{:?}", mirror::NATIVE_FUNCTION_LAYOUT));
         assert_eq!(format!("{:?}", crate::heap::NATIVE_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_ARRAY_LAYOUT));
         assert_eq!(format!("{:?}", crate::heap::NATIVE_ENVIRONMENT_LAYOUT), format!("{:?}", mirror::NATIVE_ENVIRONMENT_LAYOUT));
         let (cache, copy) = (crate::vm::NATIVE_FIELD_CACHE_LAYOUT, mirror::NATIVE_FIELD_CACHE_LAYOUT);
@@ -265,9 +302,9 @@ mod tests {
         );
         assert_eq!(
             [std::mem::offset_of!(JsStepDispatch, object_record_base), std::mem::offset_of!(JsStepDispatch, property_buffer), std::mem::offset_of!(JsStepDispatch, field_entries), crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, super::super::entry_cell::CAPTURE_ADDRESS_BITS as usize, std::mem::offset_of!(JsStepDispatch, capture_stores), super::super::super::dispatch_fast::CAPTURE_STORES,
-             std::mem::offset_of!(JsStepDispatch, object_mark_blocks), std::mem::offset_of!(JsStepDispatch, object_mark_block_count), std::mem::offset_of!(JsStepDispatch, slots_tracked), std::mem::offset_of!(JsStepDispatch, string_record_base), std::mem::offset_of!(JsStepDispatch, receiver), std::mem::offset_of!(JsStepDispatch, native_locals), std::mem::offset_of!(JsStepDispatch, local_count)],
+             std::mem::offset_of!(JsStepDispatch, object_mark_blocks), std::mem::offset_of!(JsStepDispatch, object_mark_block_count), std::mem::offset_of!(JsStepDispatch, slots_tracked), std::mem::offset_of!(JsStepDispatch, string_record_base), std::mem::offset_of!(JsStepDispatch, receiver), std::mem::offset_of!(JsStepDispatch, native_locals), std::mem::offset_of!(JsStepDispatch, local_count), std::mem::offset_of!(JsStepDispatch, epoch), std::mem::offset_of!(JsStepDispatch, function_mark_blocks), std::mem::offset_of!(JsStepDispatch, function_mark_block_count), std::mem::offset_of!(JsStepDispatch, empty_string), std::mem::offset_of!(JsStepDispatch, function_record_base)],
             [mirror::JS_STEP_OBJECT_RECORD_BASE, mirror::JS_STEP_PROPERTY_BUFFER, mirror::JS_STEP_FIELD_ENTRIES, mirror::PROPERTY_BUFFER_BASE, mirror::CAPTURE_ADDRESS_BITS as usize, mirror::JS_STEP_CAPTURE_STORES, mirror::CAPTURE_STORES_BIT as usize,
-             mirror::JS_STEP_OBJECT_MARK_BLOCKS, mirror::JS_STEP_OBJECT_MARK_BLOCK_COUNT, mirror::JS_STEP_SLOTS_TRACKED, mirror::JS_STEP_STRING_RECORD_BASE, mirror::JS_STEP_RECEIVER, mirror::JS_STEP_NATIVE_LOCALS, mirror::JS_STEP_LOCAL_COUNT]
+             mirror::JS_STEP_OBJECT_MARK_BLOCKS, mirror::JS_STEP_OBJECT_MARK_BLOCK_COUNT, mirror::JS_STEP_SLOTS_TRACKED, mirror::JS_STEP_STRING_RECORD_BASE, mirror::JS_STEP_RECEIVER, mirror::JS_STEP_NATIVE_LOCALS, mirror::JS_STEP_LOCAL_COUNT, mirror::JS_STEP_EPOCH, mirror::JS_STEP_FUNCTION_MARK_BLOCKS, mirror::JS_STEP_FUNCTION_MARK_BLOCK_COUNT, mirror::JS_STEP_EMPTY_STRING, mirror::JS_STEP_FUNCTION_RECORD_BASE]
         );
         use super::super::general_capture::EnvView;
         assert_eq!([std::mem::offset_of!(EnvView, values), std::mem::offset_of!(EnvView, len), std::mem::offset_of!(EnvView, stores)], [mirror::ENV_VIEW_VALUES, mirror::ENV_VIEW_LEN, mirror::ENV_VIEW_STORES]);

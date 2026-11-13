@@ -22,7 +22,7 @@
 //! instruction.
 
 use crate::layout::{
-    ENV_VIEW_LEN, ENV_VIEW_STORES, ENV_VIEW_VALUES, CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY,
+    ENV_VIEW_LEN, ENV_VIEW_STORES, ENV_VIEW_VALUES, CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_EPOCH, JS_STEP_EMPTY_STRING, JS_STEP_FIELD_ENTRIES, JS_STEP_FUNCTION_RECORD_BASE, JS_STEP_LOOP_ENTRY,
     JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_STRING_RECORD_BASE, JS_STEP_VM, PROPERTY_BUFFER_BASE,
 };
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole, hole64, index_of, number_word};
@@ -30,13 +30,15 @@ use crate::places::{DEST, LEFT, Places, Rep, tagged_place};
 use crate::stage::StencilStage;
 use crate::value::ValueLayout;
 use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-use crate::staged::object::{self, Layout, Slots};
-use crate::staged::{Frame, Stage, Step, elements, entry, environment, iteration, load_this, read_initialized_local, read_local, strings, value, write_initialized_local, write_local};
+use crate::staged::object::{self, Form, Layout, Slots};
+use crate::staged::{Frame, Stage, Step, add, elements, entry, environment, iteration, load_this, naming, read_initialized_local, read_local, strings, value, write_initialized_local, write_local};
 
 pub(crate) use crate::codes::{
     ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, CONSTANT_ROW, FIELD_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM,
     SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
-    STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, ENV_ROW, ENV_SET_ROW, ENV_VIEW_AT, INSTANCEOF_ROW,
+    STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, ENV_ROW, ENV_SET_ROW, ENV_VIEW_AT, INSTANCEOF_ROW, APPEND_ROW,
+    ADD_AFTER_AT, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_LINK_AT, ADD_LINK_BITS, ADD_OBJECT_AT, ADD_PACKED_ROW, ADD_SLOT_BITS, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW,
+    THIS_ADD_PACKED_ROW, FOR_IN_ROW, NAME_ARENA_ROW, NAME_EITHER_ROW, NAME_FUNCTION_AT,
 };
 
 unsafe extern "C" {
@@ -405,6 +407,50 @@ fn typeof_is_row<const NEGATED: bool>(s: S) -> Out {
     finish_fast(frame, done)
 }
 
+/// A fast arm's row: where its proof held and its places fit it continues at TAKEN, past the
+/// helper step laid out after it, else it leaves into that step.
+#[inline(always)]
+fn finish_fast<const D: u8, const A: u8>(frame: Places<D, A, MEM>, done: bool) -> Out {
+    match finish(frame, done) {
+        Out::Next(s) => Out::Taken(s),
+        left => left,
+    }
+}
+
+/// `RequireIteratorResult`'s fast arm: the operand (hole 1) is a direct object or array record
+/// (`iteration::require_iterator_result`).
+#[inline(always)]
+fn object_row(s: S) -> Out {
+    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let done = matches!(iteration::require_iterator_result(&mut StencilStage::from_hole(0), &mut frame, LEFT, ()), Step::Value(_));
+    finish_fast(frame, done)
+}
+
+/// `ToPropertyKey`'s fast arm: a direct string operand (hole 1) is copied to the destination
+/// (hole 0, `iteration::to_property_key`).
+#[inline(always)]
+fn key_row(s: S) -> Out {
+    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let done = matches!(iteration::to_property_key(&mut StencilStage::from_hole(0), &mut frame, DEST, LEFT, ()), Step::Value(_));
+    finish_fast(frame, done)
+}
+
+/// `ForInNext`'s fast arm: the for-in state (hole 1) yields its next key to the destination (hole 0)
+/// where the state's memo proves the snapshot current (`iteration::for_in_next`), which moves the state's
+/// cursor; a hit continues at TAKEN.
+#[inline(always)]
+fn for_in_row(s: S, payload: usize) -> Out {
+    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let mut stage = StencilStage::from_hole(0);
+    let state = frame.tagged(&mut stage, LEFT);
+    let tables = (word_at(payload, JS_STEP_ARRAY_RECORD_BASE), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
+    let key = iteration::for_in_next(&mut stage, tables, state, word_at(payload, JS_STEP_EPOCH), ());
+    if let Some(key) = key {
+        frame.write(&mut stage, DEST, key, Rep::Tagged);
+    }
+    finish_fast(frame, key.is_some())
+}
+
 /// The activation's `this` into the destination (`staged::load_this`).
 #[inline(always)]
 fn this_row<const D: u8>(s: S) -> Out {
@@ -483,6 +529,60 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
     Out::Next(s)
 }
 
+/// `AppendArray`'s fast arm: the Number operand (hole 1) appended to the array at hole 0 where its
+/// backing is writable and its capacity word has room (`elements::append_in_room`); a hit continues at TAKEN.
+#[inline(always)]
+fn append_row<const A: u8>(s: S, payload: usize) -> Out {
+    let word = need!(s, number_word::<A, HOLE_A>(&s));
+    let (_, _, backing) = need!(s, backing::<false, 0, true>(&s, payload));
+    let mut stage = StencilStage::from_hole(ELEMENT_SITES);
+    need!(s, elements::append_in_room(&mut stage, backing, word, ()));
+    Out::Taken(s)
+}
+
+/// The add row of `form`: the value operand (hole 1) is added to `object` by the transition hole 0
+/// (before-shape below `ADD_AFTER_AT`, after-shape above) and hole 2 (slot, and with `CHAINED` the
+/// prototype link the receiver must have) name (`add::site_add`); a hit continues at TAKEN.
+#[inline(always)]
+fn add_row<const A: u8, const CHAINED: bool>(s: S, payload: usize, form: Form, object: impl FnOnce(u64) -> u64) -> Out {
+    let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
+    let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
+    let (shapes, site) = (hole64::<0>(), hole64::<HOLE_B>());
+    let edge = add::Edge { before: shapes & u64::from(u32::MAX), after: shapes >> ADD_AFTER_AT, slot: site & ((1 << ADD_SLOT_BITS) - 1) };
+    let link = CHAINED.then(|| (site >> ADD_LINK_AT) & ((1 << ADD_LINK_BITS) - 1));
+    let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
+    need!(s, add::site_add(&mut stage, records, object(site >> ADD_OBJECT_AT), (edge, link), form, tagged_place::<A, HOLE_A>(&s), ()));
+    Out::Taken(s)
+}
+
+/// The add row of `form` to the object register whose frame offset hole 2 carries.
+#[inline(always)]
+fn register_add_row<const A: u8, const CHAINED: bool>(s: S, payload: usize, form: Form) -> Out {
+    let frame = s.frame;
+    add_row::<A, CHAINED>(s, payload, form, |offset| word_at(frame, offset as usize))
+}
+
+/// The add row of `form` to the activation's receiver, which the payload holds.
+#[inline(always)]
+fn this_add_row<const A: u8, const CHAINED: bool>(s: S, payload: usize, form: Form) -> Out {
+    add_row::<A, CHAINED>(s, payload, form, |_| word_at(payload, JS_STEP_RECEIVER))
+}
+
+/// The naming row of `form`: the function in the frame slot hole 2 names takes the name word hole 1 holds
+/// in the slot hole 2 carries, along the shapes hole 0 carries (`naming::site_name`); a hit continues at TAKEN.
+#[inline(always)]
+fn name_row(s: S, payload: usize, form: Form) -> Out {
+    let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
+    let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
+    let (shapes, site) = (hole64::<0>(), hole64::<HOLE_B>());
+    let edge = add::Edge { before: shapes & u64::from(u32::MAX), after: shapes >> ADD_AFTER_AT, slot: site & ((1 << ADD_SLOT_BITS) - 1) };
+    let records = word_at(payload, JS_STEP_FUNCTION_RECORD_BASE);
+    let function = word_at(s.frame, (site >> NAME_FUNCTION_AT) as usize);
+    let empty = word_at(payload, JS_STEP_EMPTY_STRING);
+    need!(s, naming::site_name(&mut stage, records, function, (edge, empty), form, hole64::<HOLE_A>(), ()));
+    Out::Taken(s)
+}
+
 #[inline(always)]
 pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, const B: u8>(s: S) -> Out {
     let payload = payload(&s);
@@ -511,6 +611,18 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         TYPEOF_STRING_ROW => typeof_string_row(s),
         TYPEOF_IS_ROW => typeof_is_row::<false>(s),
         TYPEOF_ISNOT_ROW => typeof_is_row::<true>(s),
+        OBJECT_ROW => object_row(s),
+        KEY_ROW => key_row(s),
+        FOR_IN_ROW => for_in_row(s),
+        APPEND_ROW => append_row::<A>(s, payload),
+        ADD_PACKED_ROW => register_add_row::<A, ENTRY>(s, payload, Form::Packed),
+        ADD_ARENA_ROW => register_add_row::<A, ENTRY>(s, payload, Form::Arena),
+        ADD_EITHER_ROW => register_add_row::<A, ENTRY>(s, payload, Form::Either),
+        THIS_ADD_PACKED_ROW => this_add_row::<A, ENTRY>(s, payload, Form::Packed),
+        THIS_ADD_ARENA_ROW => this_add_row::<A, ENTRY>(s, payload, Form::Arena),
+        THIS_ADD_EITHER_ROW => this_add_row::<A, ENTRY>(s, payload, Form::Either),
+        NAME_EITHER_ROW => name_row(s, payload, Form::Either),
+        NAME_ARENA_ROW => name_row(s, payload, Form::Arena),
         IDENTITY_ROW => identity_row(s),
         THIS_ROW => this_row::<D>(s),
         LOAD_LOCAL_ROW => load_local_row::<D>(s),

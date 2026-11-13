@@ -91,7 +91,7 @@ impl Snap for property_key::PropertyKey {
             }
             Self::Private(atom) => {
                 writer.u8(property_key_tag::PRIVATE);
-                writer.u32(atom);
+                writer.u32(atom.raw());
             }
         }
         Ok(())
@@ -100,7 +100,7 @@ impl Snap for property_key::PropertyKey {
         Ok(match reader.u8()? {
             property_key_tag::STRING => Self::String(reader.u32()?),
             property_key_tag::SYMBOL => Self::Symbol(reader.value()?),
-            property_key_tag::PRIVATE => Self::Private(reader.u32()?),
+            property_key_tag::PRIVATE => Self::Private(crate::heap::PrivateAtom::from_raw(reader.u32()?)),
             _ => return Err(SnapshotError("invalid snapshot property key".into())),
         })
     }
@@ -409,6 +409,7 @@ impl<H: Host> Vm<H> {
             function_values,
             wasm_exported_functions,
             private_homes,
+            next_private_atom,
             default_collation: _,
             wasm_js,
             direct_eval,
@@ -513,6 +514,7 @@ impl<H: Host> Vm<H> {
             writer.values(&live);
         }
         private_homes.snap(&mut writer)?;
+        writer.u32(*next_private_atom);
         let wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag } = wasm_js;
         [*module, *instance, *memory, *table, *global, *tag, *js_tag].snap(&mut writer)?;
         writer.value(*instanceof_has_instance_holder);
@@ -608,6 +610,7 @@ impl<H: Host> Vm<H> {
             self.function_values.record(key, handles);
         }
         self.private_homes = Snap::unsnap(&mut reader)?;
+        self.next_private_atom = reader.u32()?;
         let [module, instance, memory, table, global, tag, js_tag] = <[Value; 7]>::unsnap(&mut reader)?;
         self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag };
         let holder = reader.value()?;
@@ -873,8 +876,14 @@ mod tests {
             #x;
             constructor(x) { this.#x = x; }
             get x() { return this.#x; }
-            static make(x) { return new Point(x); }
+            #twice() { return this.#x * 2; }
+            twice() { return this.#twice(); }
+            static #made = 0;
+            static make(x) { Point.#made++; return new Point(x); }
+            static has(object) { return #x in object; }
+            static get count() { return Point.#made; }
         };
+        var kept = new Point(9);
         let lexical = 'lexical';
         function readLexical() { return lexical; }
         var map = new Map([[1, 'one'], [2, 'two']]);
@@ -895,7 +904,7 @@ mod tests {
     /// The entry a restored runtime runs against the setup's realm.
     const ENTRY: &str = r#"
         print(bump(), bump(), bound(), resumed);
-        print(readLexical(), pattern.exec('xabbc')[1], Point.make(4).x, typeof Point);
+        print(readLexical(), pattern.exec('xabbc')[1], Point.make(4).x, typeof Point, Point.has(kept), Point.has({}), kept.x, kept.twice(), Point.count);
         print(map.get(2), set.has('member'), Symbol.for('registered') === registered);
         print(record[local], JSON.stringify(record), Object.getOwnPropertyNames(record).join());
         print(bytes.join(), epoch.toISOString(), weak.get(record), template.raw.join('|'));
