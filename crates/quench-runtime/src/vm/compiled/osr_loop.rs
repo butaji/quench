@@ -1056,7 +1056,9 @@ pub(super) fn inline_region<'a>(
         let mut chain = Vec::new();
         if let Some(path) = &callee_path { intern_field(&mut chain, path, true); }
         let callee = resolve(&chain, capture)?;
-        (callee.params == argc && usize::from(argc) <= MAX_INLINE_PARAMS).then_some(())?;
+        // A call may pass fewer arguments than the callee declares: the rest start
+        // undefined, as the activation's own window fills them (`passed_registers`).
+        (argc <= callee.params && usize::from(argc) <= MAX_INLINE_PARAMS).then_some(())?;
         let reached = crate::bytecode::reachable_from(&callee.instructions, [0]);
         let body = || callee.instructions.iter().copied().enumerate().filter(|(pc, _)| reached.contains(*pc)).map(|(_, instruction)| instruction);
         body().all(|instruction| inlinable(instruction.op()) && (instruction.result_flags() == 0 || inlined_returning(instruction) || inlined_set_this(instruction, sites).is_some())).then_some(())?;

@@ -14942,6 +14942,45 @@ fn shared_nested_captured_store_loop_reaches_native_body() {
     }
 }
 
+/// A call passing fewer arguments than the callee declares inlines: the parameters no
+/// argument reaches start undefined, as the activation's own window fills them. The site is
+/// no call boundary, so the loop stays native across the call.
+#[test]
+#[cfg(not(quench_profiled))]
+fn shared_osr_inlines_a_call_missing_parameters() {
+    let program = Engine::specialize(
+        r#"
+        (function () {
+          function leaf(a, b) { return a | 0; }
+          function run(n) { let s = 0; for (let i = 0; i < n; i++) s = (s + leaf(i)) | 0; return s; }
+          let t = 0;
+          for (let c = 0; c < 200; c++) t = (t + run(2000)) | 0;
+          print(t);
+        })();
+        "#,
+        "osr-missing-parameters.js",
+    )
+    .unwrap();
+    let function = program
+        .functions
+        .iter()
+        .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "run"))
+        .unwrap();
+    let expected = Rc::new(RefCell::new(Vec::new()));
+    Vm::new(TestHost::writing_to(expected.clone())).execute(&program).unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.execute(&program).unwrap();
+    assert_eq!(*output.borrow(), *expected.borrow());
+    let diagnostics = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+        .get(function).and_then(super::program_store::derived_lane_view).unwrap().osr_diagnostics();
+    assert_eq!(diagnostics.admitted_sites, 1, "{diagnostics:?}");
+    assert!(diagnostics.sites.iter().all(|site| site.call_boundary_pcs.is_empty()),
+        "a call missing parameters inlines, not leaves: {diagnostics:?}");
+    assert_eq!(diagnostics.currently_compiled_sites, 1, "{diagnostics:?}");
+}
+
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_inlines_plain_captured_callee_with_identity_guard() {
