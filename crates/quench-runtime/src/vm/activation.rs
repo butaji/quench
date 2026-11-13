@@ -172,10 +172,11 @@ pub(crate) struct Continuation {
     pub completion: Completion,
     pub resume_register: Option<u16>,
     pub promise: Value,
-    /// The registers live at the suspension, when liveness covers the function and every
-    /// other register was cleared there (`Vm::suspend_activation`): only these can name a
-    /// cell, so the GC traces them alone. `None` traces every register.
-    pub(super) live_registers: Option<crate::compile::liveness::RegisterSet>,
+    /// The registers live at the suspension, when liveness covers the function, every other
+    /// register was cleared there (`Vm::suspend_activation`) and the live ones are the first
+    /// `u64::BITS`: only these can name a cell, so the GC traces them alone. `None` traces
+    /// every register.
+    pub(super) live_registers: Option<u64>,
 }
 
 impl std::fmt::Debug for Continuation {

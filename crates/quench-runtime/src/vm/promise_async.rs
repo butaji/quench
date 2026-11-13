@@ -15,12 +15,10 @@ struct AwaitResume {
 }
 
 impl<H: Host> Vm<H> {
-    /// Clears the registers of a suspending frame that are dead where it resumes, the ones a
-    /// collection of it on the frame stack skips (its root mask at `frame.pc`): its
-    /// continuation then keeps alive only what the resumed code can read.
     /// `Continuation::suspend` of `frame` at an await or yield, with the registers liveness
-    /// finds dead there cleared first (`release_dead_registers`): a suspended activation is
-    /// traced whole, so a dead temporary otherwise stayed reachable until it resumed.
+    /// finds dead there (the ones a collection of it on the frame stack skips: its root mask
+    /// at `frame.pc`) cleared first (`release_dead_registers`): its continuation then keeps
+    /// alive only what the resumed code can read.
     pub(super) fn suspend_activation(
         &self,
         mut frame: Box<super::Frame>,
@@ -34,29 +32,27 @@ impl<H: Host> Vm<H> {
         continuation
     }
 
-    /// Clears the registers dead at `frame`'s suspension and returns the live ones, when
-    /// liveness covers its function.
-    fn release_dead_registers(&self, frame: &mut super::Frame) -> Option<crate::compile::liveness::RegisterSet> {
-        let masks = self.programs.residual(frame.program).and_then(|program| program.register_root_masks(frame.function))?;
-        if masks.is_windowed() { return None; } let mask = masks.get(frame.pc)?;
-        // The mask covers the first `RegisterSet::BITS` registers; every later one is dead.
+    /// Clears the registers dead at `frame`'s suspension and returns the live ones when they
+    /// are the first `u64::BITS` and liveness covers its function.
+    fn release_dead_registers(&self, frame: &mut super::Frame) -> Option<u64> {
         type RegisterSet = crate::compile::liveness::RegisterSet;
+        let masks = self.programs.residual(frame.program).and_then(|program| program.register_root_masks(frame.function))?;
+        if masks.is_windowed() {
+            return None;
+        }
+        let mask = masks.get(frame.pc)?;
+        // The mask covers the first `RegisterSet::BITS` registers; every later one is dead.
         let covered = frame.registers.len().min(RegisterSet::BITS as usize);
         let (low, high) = frame.registers.split_at_mut(covered);
         high.fill(Value::UNDEFINED);
-        // Dead registers come in runs (a statement's temporaries), each cleared as one span,
-        // found a machine word of the mask at a time.
         for (word, registers) in low.chunks_mut(u64::BITS as usize).enumerate() {
-            let live = mask.word(word);
-            let mut dead = !live & u64::MAX >> (u64::BITS as usize - registers.len());
+            let mut dead = !mask.word(word) & u64::MAX >> (u64::BITS as usize - registers.len());
             while dead != 0 {
-                let start = dead.trailing_zeros();
-                let end = start + (dead >> start).trailing_ones();
-                registers[start as usize..end as usize].fill(Value::UNDEFINED);
-                dead &= u64::MAX.checked_shl(end).unwrap_or(0);
+                registers[dead.trailing_zeros() as usize] = Value::UNDEFINED;
+                dead &= dead - 1;
             }
         }
-        Some(mask)
+        u64::try_from(mask).ok()
     }
 
     pub(super) fn call_user_maybe_async(
