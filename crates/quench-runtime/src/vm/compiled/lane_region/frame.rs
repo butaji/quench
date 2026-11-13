@@ -182,11 +182,25 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         calls::safepoint(self, stage, proof)
     }
 
-    /// An object literal: the lane's own allocator, whose DELETED answer (a due collection)
-    /// leaves at the proof's miss edge.
+    /// An object literal: the staged record claim (`staged::records`) over the payload's
+    /// pointers, then the empty object written over the claimed record. A due collection
+    /// leaves at the proof's miss edge before a record is claimed.
     #[inline(always)]
     fn allocate_object(&mut self, stage: &mut Emit<'_, '_>, destination: Register, proof: EmitProof) -> Option<ir::Value> {
-        self.allocate(stage, LaneHelper::NewObject, destination, &[], proof)
+        use std::mem::offset_of;
+        let EmitProof::Allocation { miss } = proof else { return None };
+        let payload = self.payload;
+        let allocated = super::super::emit_js_payload_word(stage.builder, payload, offset_of!(super::super::JsStepDispatch, allocated));
+        let collect_at = super::super::emit_js_payload_word(stage.builder, payload, offset_of!(super::super::JsStepDispatch, collect_at));
+        let now = stage.load_u64(allocated, 0);
+        let limit = stage.load_u64(collect_at, 0);
+        let room = stage.ult(now, limit);
+        stage.guard(room, miss)?;
+        let id = crate::staged::records::claim(stage, self, miss, crate::heap::RECORD_SPACE_CAPACITY as u64)?;
+        let address = self.helpers.address(stage.builder, LaneHelper::FinishObject);
+        let value = super::super::emit_lane_helper_call(stage.builder, payload, address, &[id]);
+        calls::finish_allocation(stage, self, destination, value, miss);
+        Some(value)
     }
 
     /// An array literal: the lane's own allocator, with its holes or its written elements.

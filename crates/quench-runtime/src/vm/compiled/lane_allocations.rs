@@ -1,4 +1,5 @@
-//! The lane helpers that allocate (`LaneHelper::NewObject`, `NewArray`, `Binary`): each
+//! The lane helpers that allocate (`LaneHelper::NewArray`, `Binary`, the staged claim's
+//! finish and cold paths): each
 //! leaves for a due collection first, and the dispatch then reads the moved arena bases again.
 
 use super::{Host, JsStepDispatch, ResidualProgram, Value, Vm};
@@ -15,15 +16,18 @@ pub(super) unsafe extern "C" fn lane_claim_object_record<H: Host>(vm: u64, _resi
     vm.heap.claim_record_id().map_or(u64::MAX, u64::from)
 }
 
-pub(super) unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64, payload: u64) -> u64 {
-    // SAFETY: the body passes its own dispatch; nothing else borrows the VM while it runs.
-    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
-    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
-    let object = vm.object();
+/// Writes the empty object over the record the staged claim row claimed (`id`) and returns it;
+/// the allocation is counted and the lane's collection flag noted.
+pub(super) unsafe extern "C" fn lane_finish_object<H: Host>(vm: u64, _residual: u64, id: u64) -> u64 {
+    // SAFETY: as `lane_new_object`.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    let realm = vm.realm.globals;
+    let prototype = vm.realm_object_prototype(realm);
+    let value = vm.heap.finish_empty_object(id as u32, prototype);
     super::dispatch_fast::note_allocation(vm);
-    dispatch.refresh_object_bases(vm);
-    object.to_bits()
+    value.to_bits()
 }
+
 
 /// A two-property object literal of literal `site`'s shape holding `first` and `second`, as
 /// the lane makes it (`dispatch_fast::lane_object_pair`); `DELETED` where a collection is due.
