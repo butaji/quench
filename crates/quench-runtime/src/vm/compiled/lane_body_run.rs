@@ -74,7 +74,8 @@ impl<H: Host> Vm<H> {
             (*frame).bind_run(bound, &self.execution_interrupt, || self.program_field_entries(run.program).unwrap_or(0));
             debug_assert_eq!((*dispatch).field_entries, self.program_field_entries(run.program).unwrap_or(0), "the run's field cache entries stand");
             (*dispatch).native_registers = run.registers;
-            ((*dispatch).native_locals, (*dispatch).local_count) = super::super::dispatch_fast::frame_locals::<H>(run.lane_context);
+            let locals = super::super::dispatch_fast::body_locals::<H>(run.lane_context);
+            ((*dispatch).native_locals, (*dispatch).local_count, (*dispatch).environment_storage) = (locals.locals, locals.count, locals.environment);
             (*dispatch).refresh_object_bases_at_entry(self);
             let vm = self as *mut Self;
             (*dispatch).bind_lane_storage(vm);

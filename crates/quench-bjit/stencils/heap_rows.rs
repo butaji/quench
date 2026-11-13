@@ -24,7 +24,7 @@
 //! instruction.
 
 use crate::layout::{
-    CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_EPOCH, JS_STEP_EMPTY_STRING, JS_STEP_FIELD_ENTRIES, JS_STEP_FUNCTION_RECORD_BASE, JS_STEP_LOOP_ENTRY,
+    CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_EPOCH, JS_STEP_EMPTY_STRING, JS_STEP_ENV_STORAGE, JS_STEP_FIELD_ENTRIES, JS_STEP_FUNCTION_RECORD_BASE, JS_STEP_LOOP_ENTRY,
     JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_STRING_RECORD_BASE, JS_STEP_VM, PROPERTY_BUFFER_BASE,
 };
 use crate::ic_rows;
@@ -39,7 +39,7 @@ use crate::staged::region::Region;
 use crate::staged::{Frame, RecordSpace, Stage, Step, add, elements, entry, environment, iteration, load_this, naming, read_initialized_local, read_local, string_length, value, write_initialized_local, write_local};
 
 pub(crate) use crate::codes::{
-    ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, CONSTANT_ROW, FIELD_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM,
+    ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, CONSTANT_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM,
     SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
     STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, INSTANCEOF_ROW, APPEND_ROW,
     ADD_AFTER_AT, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_LINK_AT, ADD_LINK_BITS, ADD_OBJECT_AT, ADD_PACKED_ROW, ADD_SLOT_BITS, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW,
@@ -125,6 +125,25 @@ fn capture_set_row<const A: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::from_hole(HOLE_A);
     let slots = (word_at(payload, JS_STEP_CAPTURE_VALUES), word_at(payload, JS_STEP_CAPTURE_LEN), word_at(payload, JS_STEP_CAPTURE_STORES));
     need!(s, environment::dense_capture_store(&mut stage, slots, 0, tagged_place::<A, 0>(&s), ()));
+    Out::Taken(s)
+}
+
+/// The slot (holes 1 and 2) of the environment window's storage the payload names, into the destination: the
+/// storage's own dense run, whether the window holds its locals in place or an environment's slots
+/// (`environment::environment_slot`). A hit continues at TAKEN, as a capture row does.
+#[inline(always)]
+fn env_row<const D: u8>(s: S, payload: usize) -> Out {
+    let mut stage = StencilStage::from_hole(HOLE_A);
+    let word = need!(s, environment::environment_slot(&mut stage, word_at(payload, JS_STEP_ENV_STORAGE), 0, ()));
+    hop(deliver::<D>(s, word))
+}
+
+/// A store of the value operand (hole 0) into the same slot of an initialized binding. Its caller proved the value
+/// no heap reference (`base_region::steps::plan_fast`), so the environment's write barrier has nothing to record.
+#[inline(always)]
+fn env_set_row<const A: u8>(s: S, payload: usize) -> Out {
+    let mut stage = StencilStage::from_hole(HOLE_A);
+    need!(s, environment::environment_slot_store(&mut stage, word_at(payload, JS_STEP_ENV_STORAGE), 0, tagged_place::<A, 0>(&s), ()));
     Out::Taken(s)
 }
 
@@ -516,6 +535,8 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
     match KIND {
         CAPTURE_ROW => capture_row::<D>(s, payload),
         CAPTURE_SET_ROW => capture_set_row::<A>(s, payload),
+        ENV_ROW => env_row::<D>(s, payload),
+        ENV_SET_ROW => env_set_row::<A>(s, payload),
         INSTANCEOF_ROW => instanceof_row(s, payload),
         FIELD_ROW => field_row::<D>(s, payload),
         SITE_ROW => site_row::<D, ENTRY>(s, payload, register_object(&s)),

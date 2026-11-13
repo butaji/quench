@@ -205,7 +205,6 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
 /// (`EnvironmentSlots::dense`, `dense_plain`): the storage word holds a pointer to the slice
 /// header; the header's top bit marks a sparse storage and the rest is the length; the
 /// slots follow the header, one `Value` word each.
-#[allow(dead_code)] // consumer: thread 13's Emit lowering of LoadEnvLocal in environment windows
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeEnvironmentLayout {
     /// Offset in the storage word of the header pointer.
@@ -217,13 +216,23 @@ pub(crate) struct NativeEnvironmentLayout {
     pub(crate) slot_size: u64,
 }
 
-#[allow(dead_code)] // consumer: thread 13's Emit lowering of LoadEnvLocal in environment windows
 pub(crate) const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvironmentLayout {
     header_pointer_offset: 0,
     sparse_mark: thin_slice::NATIVE_MARK_BIT,
     slots_offset: thin_slice::NATIVE_WORD_ELEMENTS_OFFSET as u64,
     slot_size: std::mem::size_of::<Value>() as u64,
 };
+
+/// The header of storage that holds no slot: marked sparse, so a dense read of it misses.
+static ABSENT_ENVIRONMENT_HEADER: u64 = thin_slice::NATIVE_MARK_BIT;
+/// The storage word that names that header, as an `EnvironmentSlots` names its own.
+static ABSENT_ENVIRONMENT_STORAGE: &u64 = &ABSENT_ENVIRONMENT_HEADER;
+
+/// The address of storage every native environment read misses at (`staged::environment::environment_slot`): the word
+/// a payload holds where its running body has no environment window.
+pub(crate) fn absent_environment_storage() -> u64 {
+    std::ptr::from_ref(&ABSENT_ENVIRONMENT_STORAGE).addr() as u64
+}
 
 const _: () =
     assert!(NATIVE_OBJECT_LAYOUT.record_size.is_multiple_of(NATIVE_OBJECT_LAYOUT.record_align));

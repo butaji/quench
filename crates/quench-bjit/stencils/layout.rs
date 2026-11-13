@@ -221,6 +221,10 @@ pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = 104;
 /// (`environment::dense_capture_store`); the bit of a body's capture word that says so
 /// (`dispatch_fast::CAPTURE_STORES`) moves here at its entry.
 pub(crate) const JS_STEP_CAPTURE_STORES: usize = 96;
+/// The storage word of the environment window the running activation holds its environment-owned locals in
+/// (`JsStepDispatch::environment_storage`), which the environment rows read their slots through
+/// (`staged::environment::environment_slot`).
+pub(crate) const JS_STEP_ENV_STORAGE: usize = 440;
 /// The running activation's receiver (`this`) word, `DELETED` where it has none: the entry of a
 /// lane body or loop region publishes the one it is entered with, for its run.
 pub(crate) const JS_STEP_RECEIVER: usize = 192;
