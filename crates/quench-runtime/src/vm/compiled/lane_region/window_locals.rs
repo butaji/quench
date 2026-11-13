@@ -48,7 +48,7 @@ impl Lowering<'_, '_> {
             Class::LoadLocal if !instruction.writes_numeric_local() => Access::Read(held(instruction.result_register())?),
             Class::StoreLocal if !function.is_self_binding_slot(instruction.local_slot()) => Access::Write {
                 source: held(instruction.register_a())?,
-                result: instruction.optional_register_b().map(held).transpose()?,
+                result: instruction.optional_register_b().map_or(Some(None), |register| held(register).map(Some))?,
                 define: instruction.boolean_field(InstructionField::C)?,
             },
             Class::InitializeTdz => Access::Open,
