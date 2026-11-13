@@ -50,6 +50,7 @@ use std::rc::Rc;
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 mod exit_protocol;
+mod region_lend;
 pub(super) use exit_protocol::ExitTable;
 mod region_lend; mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
 pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
@@ -3432,7 +3433,8 @@ impl CompiledOsrRegion {
     pub(super) fn is_ultra(&self) -> bool { self.crossing == Crossing::General }
 
     /// Runs the region on `registers` with `entry`'s record, through the lane body ABI
-    /// (`enter_body`), from its header or, where `can_run_from`, from the instruction at `from`.
+    /// (`enter_body`), from its header or, where `can_run_from`, from the instruction at `from`;
+    /// `lane` the lane context and whether the lane may make the activations of direct calls.
     ///
     /// # Safety
     /// `registers` is the running activation's register file, at least `Function::registers`
@@ -3450,13 +3452,13 @@ impl CompiledOsrRegion {
         function: u32,
         frame: usize,
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
-        lane_context: usize,
+        lane: (usize, bool),
         from: u32,
     ) -> LoopOutcome {
         let start = self.start_at(region, from);
         // SAFETY: the caller's contract; the region runs the same lane entry ABI.
         unsafe { if self.crossing == Crossing::Bare { stencil_run::run_bare(start, registers, entry, region, interrupt) }
-            else { self.run_lane(start, registers, entry, region, vm, program, function, frame, interrupt, lane_context) } }
+            else { self.run_lane(start, registers, entry, region, vm, program, function, frame, interrupt, lane) } }
     }
 
     /// Runs a loop compiled through the lane region specializer: the shared lane entry ABI,
@@ -3485,7 +3487,10 @@ impl CompiledOsrRegion {
             osr_lane::bind_loop(native, vm, region, entry, (frame, lane_context));
             let _captures = osr_lane::bind_captures::<H>(native, region, entry, lane_context);
             osr_lane::bind_frame(native, vm, (program, function, frame), registers);
-            osr_lane::enter(native, vm, region, program, (code, resume), registers, interrupt)
+            // A region that calls callees by their entries runs on the lane frame's payload, which their
+            // own helpers read (`region_lend`).
+            let lend = self.calls.enters_callees().then_some(direct_calls);
+            osr_lane::enter(native, vm, region, program, (code, resume), registers, interrupt, (lane_context, lend))
         }) }.unwrap_or(LoopOutcome::Terminated)
     }
 
@@ -3703,10 +3708,10 @@ struct JsStepDispatch {
     native_end: usize,
     shadow_top: usize,
     shadow_end: usize,
-    /// The first native frame's address (the lane stack's activations' end); `shadow_top`
-    /// equals it while no native frame lives.
-    shadow_base: usize,
-    /// The words of a run's direct calls' stack tops, owned by the VM's `LaneStack` (`Vm::lane_stack_words`).
+    /// A lane run's lane stack, where a direct call places its callee's registers and its
+    /// native frame (`DirectCallee`): the words that hold the values' and the activations'
+    /// tops, which the VM's `LaneStack` owns (`Vm::lane_stack_words`), the end of the values'
+    /// capacity, and the end of the frames the run nests (`SHADOW_FRAMES`).
     lane_values_top: usize,
     lane_values_end: usize,
     lane_activations_top: usize,
@@ -3738,6 +3743,13 @@ struct JsStepDispatch {
     typed_view_directory: usize,
     typed_view_pages: usize,
     buffer_relocations: usize,
+    /// The function records' mark blocks and their count, which a store into a function's own
+    /// properties reads as the object records' are (`RecordSpace::Function`); and the empty
+    /// string's word, which a function's inferred name replaces (`staged::naming`). Last of the words
+    /// stencil rows read, so the words before them keep their offsets.
+    function_mark_blocks: usize,
+    function_mark_block_count: usize,
+    empty_string: u64,
     outcome: Option<JsNativeStep>,
 }
 
@@ -4321,7 +4333,7 @@ impl<H: Host> Vm<H> {
     /// leave inside one reads (`lane_scratch`), before the activations it makes overwrite them.
     pub(super) fn lane_adopt_window(registers: *const Value, from: usize) {
         let frame = lane_frame();
-        // SAFETY: as `take_shadow_frames`; the body's admission proved the room past the
+        // SAFETY: as `lane_stack_words`; the body's admission proved the room past the
         // activation's registers (`LaneRecoverySpace`), and no lane body runs while the lane reads it.
         unsafe {
             for (at, slot) in (*frame).scratch.iter_mut().enumerate() {
@@ -4365,13 +4377,12 @@ impl<H: Host> Vm<H> {
 
     /// Reloads the heap bases of the payload of the native loop region the lane entered, whose address the
     /// lane context holds (`dispatch_fast::lane_region_payload`; zero where none runs), as
-    /// `refresh_body_bases` does the body frame's.
-    pub(super) fn refresh_region_bases(&mut self, payload: usize) {
+    /// `refresh_body_bases` does the body frame's, and the lane stack's room the call may have moved
+    /// (`region_lend::bind_stacks`, `direct_calls` as the region was entered with).
+    pub(super) fn refresh_region_bases(&mut self, payload: usize, direct_calls: bool) {
         // SAFETY: a region's payload lives for its run, which the helper that calls this is made from.
         if let Some(payload) = unsafe { (payload as *mut JsStepDispatch).as_mut() } {
             payload.refresh_object_bases(self);
-            // The activation the call made is popped: a direct call's window and frame go where the lane's are now.
-            let direct_calls = payload.shadow_end != payload.shadow_base;
             region_lend::bind_stacks(self, payload, direct_calls);
         }
     }
@@ -4540,7 +4551,6 @@ impl LaneFrame {
                 method_cache_atom_words: 0,
                 stores_specialized: 0,
                 slots_tracked: 0,
-                string_record_base: 0,
                 function_mark_blocks: 0,
                 function_mark_block_count: 0,
                 empty_string: Value::DELETED.to_bits(),
@@ -4555,7 +4565,7 @@ impl LaneFrame {
                 native_top: 0,
                 native_end: 0,
                 shadow_top: 0,
-                shadow_end: 0, shadow_base: NO_LANE_RUN,
+                shadow_end: 0,
                 lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
                 outcome: None,
             },
@@ -4671,7 +4681,6 @@ impl JsNativeActivation {
             field_entries: 0, typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
             stores_specialized: 0,
             slots_tracked: 0,
-            string_record_base: 0,
             function_mark_blocks: 0,
             function_mark_block_count: 0,
             empty_string: Value::DELETED.to_bits(),
@@ -4686,7 +4695,7 @@ impl JsNativeActivation {
             native_top: 0,
             native_end: 0,
             shadow_top: 0,
-            shadow_end: 0, shadow_base: 0,
+            shadow_end: 0,
             lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
             outcome: None,
         }, _program: program };

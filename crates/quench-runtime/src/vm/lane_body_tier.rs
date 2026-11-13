@@ -134,7 +134,7 @@ impl LaneView {
     }
 
     /// Counts a leave inside this function's body that a native caller's run made, which no
-    /// handler entry notes (`lane_materialize_frames`): one add to the cell's word, on the leave.
+    /// handler entry notes (`native_frames::advance_into_frames`): one add to the cell's word, on the leave.
     pub(super) fn note_native_leave(&self) { self.entry.note_leave(); }
 
     /// Replaces the specialized `body` with `next`: its entry's handler runs no more, its entry

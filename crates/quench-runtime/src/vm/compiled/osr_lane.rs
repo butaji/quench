@@ -85,7 +85,10 @@ pub(super) unsafe fn bind_frame<H: Host>(
     native.dispatch.refresh_object_bases(vm);
 }
 
-/// Enters the region's body over the activation's dispatch and maps its exit.
+/// Enters the region's body over the activation's dispatch and maps its exit. A region that calls
+/// callees by their entries (`lend`: whether the lane may make their activations) runs on the lane
+/// frame's payload, which is named to the lane's helpers for the run (`dispatch_fast::lane_region_payload`):
+/// a leave inside a callee stays on the lane stack as its native frames (`LoopOutcome::Left`).
 ///
 /// # Safety
 /// As `CompiledOsrRegion::run`: `registers` is the live register file, and `vm` and
@@ -93,20 +96,33 @@ pub(super) unsafe fn bind_frame<H: Host>(
 pub(super) unsafe fn enter<H: Host>(
     native: &mut JsNativeActivation, vm: &mut Vm<H>, region: &LoopRegion, program: ProgramId,
     (code, resume): (BodyEntry, u64), registers: *mut crate::value::Value,
-    interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
+    interrupt: *const crate::execution_interrupt::ExecutionInterrupt, (lane_context, lend): (usize, Option<bool>),
 ) -> LoopOutcome {
     let mut context = CallContext::interrupt_only(unsafe { &*interrupt });
     context.vm = std::ptr::from_mut(vm).cast();
     context.program = program;
-    context.adapter_payload = (&mut native.dispatch as *mut JsStepDispatch).cast();
+    // SAFETY: the region runs on the lane's activation at the lane stack's top, and `reclaim` follows the run.
+    let payload: *mut JsStepDispatch = match lend {
+        Some(direct_calls) => unsafe { region_lend::lend(vm, &mut native.dispatch, direct_calls) },
+        None => &raw mut native.dispatch,
+    };
+    context.adapter_payload = payload.cast();
+    // The region's call rows reload its payload's heap bases after the callee ran (`lane_region_call`).
+    let outer = super::dispatch_fast::lane_region_payload::<H>(lane_context, payload.addr());
     // SAFETY: as the caller promises; the code reads the register file and returns
     // its status and result word.
     let BodyReturn { status, value: word } = unsafe {
         enter_body(&mut context, 0, resume, registers.cast::<u64>().cast_const(), code)
     };
+    super::dispatch_fast::lane_region_payload::<H>(lane_context, outer);
+    if lend.is_some() {
+        // SAFETY: `payload` is the one `lend` was given, and the run it lent for is over.
+        unsafe { region_lend::reclaim(&mut native.dispatch) };
+    }
     if let Some(Raised::Panic(panic)) = context.raised.take() {
         std::panic::resume_unwind(panic);
     }
     let exit = LaneExit::read(status, word, || native.dispatch.returned_pc);
-    LoopOutcome::of(exit, region)
+    // A leave with native frames on the lane stack is read in the innermost of them.
+    if vm.lane_stack.activations.native_depth() != 0 { LoopOutcome::Left { exit } } else { LoopOutcome::of(exit, region) }
 }

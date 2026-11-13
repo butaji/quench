@@ -165,6 +165,7 @@ impl<H: Host> Vm<H> {
             outer: NO_OUTER_WALK,
             frame_storage: NO_FRAME_STORAGE,
             proofs: crate::heap::ArrayStorageProofs::new(),
+            region_payload: 0,
         }
     }
 

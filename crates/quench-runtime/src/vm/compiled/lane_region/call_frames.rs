@@ -1,14 +1,14 @@
 //! The lane's call hooks (`staged::CallFrame`) and its return (`Frame::ret`): where a call's
 //! words live in a lane body, and where each of its statuses continues. The order of the call
 //! (identity, `this`, room, window, entry, completion) is `staged::invoke`; this file keeps the
-//! words it reads (the register file, the lane and shadow stacks, the callee's entry cell) and the
+//! words it reads (the register file, the lane stack's tops, the callee's entry cell) and the
 //! blocks the lowering made for its exits.
 
 use super::*;
 use super::frame::{Edges, EmitFrame};
 use super::relocs::address;
-use super::super::entry_cell::{capture_word, EntryCell, LANE_BODY_NOT_ENTERED};
-use super::super::super::dispatch_fast::LaneRecoverySpace;
+use super::super::entry_cell::{capture_word, EntryCell, LANE_BODY_NOT_ENTERED, RAISED_RUN};
+use super::super::super::dispatch_fast::{LaneRecoverySpace, KIND_NATIVE, KIND_OFFSET};
 use crate::staged::call::admit_room;
 use crate::staged::{Access, Region};
 use crate::staged::{plan_entry, CallEntry, CallFrame, CalleeKind, DirectPlan, Entered, Identity, Invocation, Resolved, Room, Stage};
@@ -39,10 +39,12 @@ pub(super) struct CallSite<'a> {
     pub(super) context: ir::Value,
     /// The base of the caller's registers, written back for the call.
     pub(super) registers: ir::Value,
-    /// A completed call continues at `completed`, a miss leaves at `missed`, and a leave in a
-    /// callee, or a termination, reaches `stop` with its status.
+    /// A completed call continues at `completed`, a miss leaves at `missed`, a callee that ended by
+    /// an exception (`Vm::lane_raised`) continues at `raised` (`Lowering::raised_call`), and a
+    /// leave in a callee, or a termination, reaches `stop` with its status.
     pub(super) completed: ir::Block,
     pub(super) missed: ir::Block,
+    pub(super) raised: ir::Block,
     pub(super) stop: ir::Block,
     pub(super) leave: Leave,
 }
@@ -100,45 +102,67 @@ impl EmitFrame<'_> {
         }
     }
 
-    /// The lane's stack top and end, and the shadow stack's top and end, in the dispatch.
+    /// A word of the dispatch: the addresses of the lane stack's tops and its ends.
     fn stack_word(&self, stage: &mut Emit<'_, '_>, offset: usize) -> ir::Value {
         stage.load_u64(DISPATCH, self.payload, field(offset))
     }
 
-    /// Admit the callee's window to the lane stack, and its recovery space to the lane and
-    /// shadow stacks, each a room row leaving at `miss`.
+    /// The lane stack's two tops, each read through the word that holds it (the values' and the
+    /// activations'): the callee's window and its frame begin there.
+    fn stack_tops(&self, stage: &mut Emit<'_, '_>) -> (ir::Value, ir::Value) {
+        let values = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, lane_values_top));
+        let activations = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, lane_activations_top));
+        (stage.load_u64(DISPATCH, values, 0), stage.load_u64(DISPATCH, activations, 0))
+    }
+
+    /// Writes `top` and `frame` back through the tops' words: the call's window and its frame pop.
+    fn set_stack_tops(&self, stage: &mut Emit<'_, '_>, (top, frame): (ir::Value, ir::Value)) {
+        let values = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, lane_values_top));
+        let activations = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, lane_activations_top));
+        stage.store_u64(DISPATCH, values, 0, top);
+        stage.store_u64(DISPATCH, activations, 0, frame);
+    }
+
+    /// Admit the callee's window to the lane stack's values, and its frame and recovery space to
+    /// its activations, each a room row leaving at `miss`.
     fn admit_stacks(&self, stage: &mut Emit<'_, '_>, callee: &DirectCallee, cell: ir::Value, miss: ir::Block) -> Option<Room<ir::Value>> {
         let word = std::mem::size_of::<Value>() as u64;
-        let top = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, native_top));
-        let end = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, native_end));
+        let (top, frame) = self.stack_tops(stage);
+        let end = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, lane_values_end));
         let next = stage.add_imm(top, u64::from(callee.registers) * word);
         let recovery = stage.load_u64(ENTRY_CELL, cell, field(std::mem::offset_of!(EntryCell, recovery)));
-        let values = stage.load_u64(ENTRY_CELL, recovery, field(std::mem::offset_of!(LaneRecoverySpace, values)));
-        let bytes = stage.mul_imm(values, word);
+        let recovered_values = stage.load_u64(ENTRY_CELL, recovery, field(std::mem::offset_of!(LaneRecoverySpace, values)));
+        let bytes = stage.mul_imm(recovered_values, word);
         let reserved = stage.add(next, bytes);
         admit_room(stage, end, reserved, miss)?;
-        let shadow = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, shadow_top));
-        let shadow_end = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, shadow_end));
+        let frames_end = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, lane_frames_end));
         let activations = stage.load_u64(ENTRY_CELL, recovery, field(std::mem::offset_of!(LaneRecoverySpace, activations)));
         let frames = stage.add_imm(activations, 1_u64);
         let frame_bytes = stage.mul_imm(frames, super::super::FRAME_BYTES as u64);
-        let recovered = stage.add(shadow, frame_bytes);
-        admit_room(stage, shadow_end, recovered, miss)?;
-        Some(Room { cell, top, next, shadow })
+        let recovered = stage.add(frame, frame_bytes);
+        admit_room(stage, frames_end, recovered, miss)?;
+        Some(Room { cell, top, next, shadow: frame })
     }
 
-    /// The callee's shadow frame pushed (`ShadowFrame`), which the lane makes an activation of
-    /// only should the callee leave, and the stacks' tops moved past its window.
-    fn push_shadow(&self, stage: &mut Emit<'_, '_>, callee: &DirectCallee, this: ir::Value, room: Room<ir::Value>) {
+    /// The callee's native frame pushed (`ShadowFrame` and `ActivationKind::Native`), which the lane
+    /// links only should a helper observe it or the callee leave, and the stacks' tops moved past
+    /// its window and its frame.
+    fn push_native(&self, stage: &mut Emit<'_, '_>, callee: &DirectCallee, this: ir::Value, room: Room<ir::Value>) {
         let descriptor = address(self.helpers, stage.builder, RelocKind::Descriptor, callee.target.function, callee as *const DirectCallee as u64);
         let body = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, body)));
         for (offset, value) in [(std::mem::offset_of!(ShadowFrame, callee), descriptor), (std::mem::offset_of!(ShadowFrame, this), this),
             (std::mem::offset_of!(ShadowFrame, body), body), (std::mem::offset_of!(ShadowFrame, window), room.top)] {
             stage.store_u64(DISPATCH, room.shadow, field(offset), value);
         }
+        let tag = stage.constant(u64::from(KIND_NATIVE));
+        stage.store_u64(DISPATCH, room.shadow, field(KIND_OFFSET), tag);
         let pushed = stage.add_imm(room.shadow, super::super::FRAME_BYTES as u64);
-        stage.store_u64(DISPATCH, self.payload, field(std::mem::offset_of!(JsStepDispatch, shadow_top)), pushed);
-        stage.store_u64(DISPATCH, self.payload, field(std::mem::offset_of!(JsStepDispatch, native_top)), room.next);
+        self.set_stack_tops(stage, (room.next, pushed));
+    }
+
+    /// Pops the callee's window and frame, where the call began (`Room`).
+    fn pop_native(&self, stage: &mut Emit<'_, '_>, room: Room<ir::Value>) {
+        self.set_stack_tops(stage, (room.top, room.shadow));
     }
 }
 
@@ -170,11 +194,12 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     }
 
     /// The call of the entry the callee's cell holds, with the lane context, the receiver, the
-    /// callee's captures and its window; the lane's top returns to the window's start after it.
+    /// callee's captures and its window; both tops stay pushed, which a completion pops and a leave keeps
+    /// for the lane to link.
     fn call_enter(&mut self, stage: &mut Emit<'_, '_>, this: ir::Value, room: Room<ir::Value>) -> Option<Entered<ir::Value, ir::Block>> {
         let call = self.call_site()?;
         let callee = call.callee?;
-        self.push_shadow(stage, callee, this, room);
+        self.push_native(stage, callee, this, room);
         let entry = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, entry)));
         let signature = lane_body_signature(types::I64, stage.builder.func.signature.call_conv);
         let signature = stage.builder.import_signature(signature);
@@ -182,31 +207,40 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
             capture_word(callee.capture_values, callee.capture_len) as u64);
         let entered = stage.builder.ins().call_indirect(signature, entry, &[call.context, this, captures, room.top]);
         let (status, word) = (stage.builder.inst_results(entered)[0], stage.builder.inst_results(entered)[1]);
-        stage.store_u64(DISPATCH, self.payload, field(std::mem::offset_of!(JsStepDispatch, native_top)), room.top);
         Some(Entered { status, word, unfinished: stage.builder.create_block() })
     }
 
-    /// A returned callee's value is the call's result, its shadow frame popped, and the call
-    /// continues at `completed`. A callee that never entered (the cell held the stub) takes the
-    /// VM's call; any other status is a leave in the callee, which stops the caller with it
-    /// (`dispatch_fast::lane_body_left`).
+    /// A returned callee's value is the call's result, its frame popped, and the call continues at
+    /// `completed`. A callee that never entered (the cell held the stub) takes the VM's call; one
+    /// that ended by an exception (`LANE_BODY_THREW`, in `Vm::lane_raised`) has its frame popped and
+    /// is counted in its cell, and the call continues at `raised`; any other status is a leave in
+    /// the callee, which stops the caller with it (`dispatch_fast::lane_body_left`).
     fn call_settle(&mut self, stage: &mut Emit<'_, '_>, site: &Invocation, entered: Entered<ir::Value, ir::Block>, room: Room<ir::Value>,
         value: ir::Value) -> Option<()> {
         let call = self.call_site()?;
         let helper = self.helper_block()?;
-        let shadow_top = field(std::mem::offset_of!(JsStepDispatch, shadow_top));
-        stage.store_u64(DISPATCH, self.payload, shadow_top, room.shadow);
+        self.pop_native(stage, room);
         stage.store_u64(FRAME, call.registers, register_offset(site.result), value);
         stage.builder.ins().jump(call.completed, &[]);
-        let (left, missed) = (stage.builder.create_block(), stage.builder.create_block());
-        stage.builder.set_cold_block(left);
-        stage.builder.set_cold_block(missed);
+        let (left, missed, threw, raised) = (stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block());
+        for block in [left, missed, threw, raised] {
+            stage.builder.set_cold_block(block);
+        }
         stage.builder.switch_to_block(entered.unfinished);
         let not_entered = stage.builder.ins().icmp_imm_u(IntCC::Equal, entered.status, i64::from(LANE_BODY_NOT_ENTERED));
-        stage.builder.ins().brif(not_entered, missed, &[], left, &[]);
+        stage.builder.ins().brif(not_entered, missed, &[], threw, &[]);
         stage.builder.switch_to_block(missed);
-        stage.store_u64(DISPATCH, self.payload, shadow_top, room.shadow);
+        self.pop_native(stage, room);
         stage.builder.ins().jump(helper, &[]);
+        stage.builder.switch_to_block(threw);
+        let did_raise = stage.builder.ins().icmp_imm_u(IntCC::Equal, entered.status, i64::from(LANE_BODY_THREW));
+        stage.builder.ins().brif(did_raise, raised, &[], left, &[]);
+        stage.builder.switch_to_block(raised);
+        let counters = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, counters)));
+        let counted = stage.add_imm(counters, RAISED_RUN);
+        stage.store_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, counters)), counted);
+        self.pop_native(stage, room);
+        stage.builder.ins().jump(call.raised, &[]);
         stage.builder.switch_to_block(left);
         call.leave.with(stage.builder, entered.status, Some(entered.word));
         Some(())
@@ -231,8 +265,11 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let (done, other) = (stage.builder.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_COMPLETED as i64), stage.builder.create_block());
         stage.builder.ins().brif(done, call.completed, &[], other, &[]);
         stage.builder.switch_to_block(other);
-        let missed = stage.builder.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_MISSED as i64);
-        stage.builder.ins().brif(missed, call.missed, &[], call.stop, &[ir::BlockArg::Value(status)]);
+        let (missed, unmissed) = (stage.builder.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_MISSED as i64), stage.builder.create_block());
+        stage.builder.ins().brif(missed, call.missed, &[], unmissed, &[]);
+        stage.builder.switch_to_block(unmissed);
+        let raised = stage.builder.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_RAISED as i64);
+        stage.builder.ins().brif(raised, call.raised, &[], call.stop, &[ir::BlockArg::Value(status)]);
         stage.builder.switch_to_block(call.completed);
         Some(stage.constant(0))
     }

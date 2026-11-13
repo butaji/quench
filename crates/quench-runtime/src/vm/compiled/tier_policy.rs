@@ -252,7 +252,7 @@ pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
     loops: Loops { warmup_taken: 2, ..MEASURED.loops },
-    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, audit_period: u32::MAX, ..MEASURED.lane_body },
+    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, audit_period: u32::MAX, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)] },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
     priors: MEASURED.priors,

@@ -46,6 +46,8 @@ pub(super) fn lane_loop_resume<H: Host>(cx: *mut LaneContext<H>, r: Registers, o
         // The backward jump's own record polls the interrupt.
         LoopContinuation::Safepoint => script(at(region.backedge)),
         LoopContinuation::Completed(next, value) => LaneBodyLeft::Completed(at(next), value),
+        LoopContinuation::Recovered(left) => left,
+        LoopContinuation::Threw(next) => LaneBodyLeft::Raised(at(next)),
         LoopContinuation::Callee => {
             let mut carried = Carried::script(cx);
             // SAFETY: `lane_body_call` set both before the region left.

@@ -12,8 +12,20 @@ use super::*;
 /// body at the next record. A decision (`CallOut::Decide`) completes with `LANE_CALL_HOLDS` where
 /// the comparison held.
 pub(in crate::vm) unsafe extern "C" fn lane_vm_step<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_LEFT, LANE_CALL_MISSED};
     let cx = context as usize as *mut LaneContext<H>;
+    let status = native_frames::in_innermost_frame(cx, || unsafe { lane_vm_step_in(cx, call_pc) });
+    // SAFETY: `context` is the running lane's; the step may have allocated or run guest code.
+    unsafe { refresh_body_bases::<H>(context) };
+    status
+}
+
+/// `lane_vm_step` with the context of the running body, which a native callee's frame made the
+/// innermost (`native_frames::in_innermost_frame`).
+///
+/// # Safety
+/// As `lane_vm_step`.
+unsafe fn lane_vm_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
+    use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_LEFT, LANE_CALL_MISSED};
     // The function's activation is the one the step reads (`activations.last`).
     lane_materialize_running_leaf(cx);
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
@@ -59,7 +71,7 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_string_concat<H: Host>(_vm: u64
     let r = unsafe { (*cx).registers };
     let function = match vm.lane_stack.activations.last() {
         Some(activation) => activation.function,
-        None => vm.frames[unsafe { (*cx).frame }].function,
+        None => vm.frames[unsafe { (*cx).frame() }].function,
     };
     // SAFETY: the context's program outlives the lane run.
     let body = unsafe { &*(*cx).code }.function(function as usize);

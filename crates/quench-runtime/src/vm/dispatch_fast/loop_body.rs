@@ -196,14 +196,21 @@ fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: 
     if resume.inside(site.header..=site.backedge) { site.body.borrow_mut().note_leave(exit); }
     drop(method);
     if site.diagnostics { site.body_runs.set(site.body_runs.get().saturating_add(1)); }
-    Some(match resumed {
+    Some(loop_attempt(cx, ip, resumed))
+}
+
+/// What a loop site's attempt leaves the lane to do after native code of its loop left, and the lane
+/// recovered `resumed` (`lane_body_left`, `lane_body_inlined_activation`): `ip` is the record the run
+/// was reached at.
+pub(super) fn loop_attempt<H: Host>(cx: *mut LaneContext<H>, ip: Ip, resumed: LaneBodyLeft) -> LoopAttempt {
+    match resumed {
         LaneBodyLeft::Terminated => LoopAttempt::Leave(super::exit(ip)),
         // A callee's run that left the lane for the general path leaves it at its record.
         LaneBodyLeft::Resume(_, next, _) if body_calls::left_lane(next) => LoopAttempt::Leave(next),
         LaneBodyLeft::Resume(registers, next, carried) => LoopAttempt::Carry(registers, next, carried),
         LaneBodyLeft::Raised(record) => LoopAttempt::Leave(lane_raised_exit(cx, record)),
         LaneBodyLeft::Completed(record, value) => LoopAttempt::Resumed(lane_return_value_general::<H>(cx, record, value)),
-    })
+    }
 }
 
 #[cfg(test)]

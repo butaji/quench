@@ -2394,8 +2394,9 @@ pub(super) fn capture_reads(capture: *const usize) -> *const usize {
 pub(super) unsafe fn frame_locals<H: Host>(cx: *mut ()) -> (*mut Value, usize) {
     std::ptr::NonNull::new(cx.cast::<LaneContext<H>>()).map_or((std::ptr::null_mut(), 0), |cx| {
         // SAFETY: the caller's contract; the VM and its frame outlive the lane run.
-        let frame = unsafe { &mut vm(cx.as_ptr()).frames[(*cx.as_ptr()).frame] };
-        (frame.locals.as_mut_ptr(), frame.locals.len())
+        let (frames, root) = unsafe { (&mut vm(cx.as_ptr()).frames, (*cx.as_ptr()).root) };
+        // A job's activations run in no frame (`LaneRoot::Job`).
+        root.frame().map_or((std::ptr::null_mut(), 0), |frame| (frames[frame].locals.as_mut_ptr(), frames[frame].locals.len()))
     })
 }
 
@@ -2844,7 +2845,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{lane_load_const, lane_move, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_object_coercible, staged_to_numeric, staged_typeof_index};
+use lane_frame::{lane_load_const, lane_move, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_iterator_result, staged_require_object_coercible, staged_to_numeric, staged_typeof_index};
 
 lane_handler! {
     fn lane_load_local_plain<>(cx, r, ip, i, view) {
@@ -2860,19 +2861,10 @@ lane_handler! {
     /// (`staged::read_initialized_local` over the binding, `lane_frame::staged_load_local_checked`); any other read
     /// takes the general path.
     fn lane_load_local<>(cx, r, ip, i, view) {
-        let loaded = unsafe { (*cx).env }.is_deleted()
+        if !(unsafe { (*cx).env }.is_deleted()
             && i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0
+            && lane_frame::staged_load_local_checked::<H, ACC_NONE>(cx, r, view, i.a, i.imm() as usize))
         {
-            // SAFETY: the context's program outlives the lane run.
-            (unsafe { vm(cx) }).initialized_frame_binding(
-                unsafe { &*(*cx).code },
-                unsafe { (*cx).frame() },
-                i.imm() as usize,
-            )
-        } else {
-            None
-        };
-        let Some(value) = value else {
             return exit(ip);
         }
         next!(cx, r, following(ip), view)
@@ -3324,15 +3316,6 @@ script_handler! {
     /// or format a float, takes the general step in place.
     fn lane_to_property_key<>(cx, r, ip, i, view) {
         if staged_property_key(r, Carried::script(cx), i.a, i.b) {
-            next!(cx, r, following(ip), Carried::script(cx))
-        }
-        if staged_to_property_key(r, Carried::script(cx), i.a, i.b) {
-            next!(cx, r, following(ip), Carried::script(cx))
-        }
-        if staged_property_key(r, Carried::script(cx), i.a, i.b) {
-            next!(cx, r, following(ip), Carried::script(cx))
-        }
-        if staged_to_property_key(r, Carried::script(cx), i.a, i.b) {
             next!(cx, r, following(ip), Carried::script(cx))
         }
         let vm = unsafe { vm(cx) };
@@ -8103,7 +8086,7 @@ fn lane_loop_run_native<H: Host>(
     region: &super::compiled::LoopRegion,
     entry: &mut super::compiled::LoopEntry,
 ) -> Option<LoopContinuation> {
-    if site.tier.borrow_mut().awaits_code(&mut unsafe { vm(cx) }.heap, site) {
+    if site.tier.borrow_mut().awaits_code(unsafe { vm(cx) }, site) {
         return None;
     }
     loop_tier::lane_loop_repatch(cx, r, site);
@@ -8355,7 +8338,7 @@ fn count_continuation(continuation: &LoopContinuation) {
     use super::compiled::base_region::{count, Event};
     count(match continuation {
         LoopContinuation::Jump | LoopContinuation::Compiling => Event::Declined,
-        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Safepoint | LoopContinuation::Callee | LoopContinuation::Threw(_) => Event::Left,
+        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Recovered(_) | LoopContinuation::Safepoint | LoopContinuation::Callee | LoopContinuation::Threw(_) => Event::Left,
         LoopContinuation::Resume(_) | LoopContinuation::Completed(..) => Event::Entered,
     });
 }
@@ -8407,9 +8390,7 @@ fn lane_loop_run<H: Host>(
     };
     // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the
     // callback executes no guest code, allocates nothing, and retains no VM references.
-    let outcome = unsafe {
-        code.run::<H>(r.0, entry, region, machine, program, site.function, (*cx).frame(), interrupt, cx as usize, from)
-    };
+    let outcome = unsafe { lane_region_run::<H>(cx, r, entry, (&*code, region), (site.function, from), (machine, program, interrupt)) };
     if site.diagnostics {
         site.native_entry_attempts
             .set(site.native_entry_attempts.get().saturating_add(1));
@@ -8429,7 +8410,7 @@ fn lane_loop_run<H: Host>(
                 site.native_region_runs.set(site.native_region_runs.get().saturating_add(1));
                 site.native_exits.set(site.native_exits.get().saturating_add(1));
             }
-            LoopOutcome::Resume(_) | LoopOutcome::Returned { .. } | LoopOutcome::Threw { .. } | LoopOutcome::Callee => {
+            LoopOutcome::Resume(_) | LoopOutcome::Returned { .. } | LoopOutcome::Threw { .. } | LoopOutcome::Callee | LoopOutcome::Left { .. } => {
                 site.native_region_runs
                     .set(site.native_region_runs.get().saturating_add(1));
             }
@@ -8489,7 +8470,7 @@ fn lane_loop_run<H: Host>(
         // The call made the callee's activation, whose own records the lane runs next; the
         // run left as any exit does, so it too pays with the iterations it completed.
         LoopOutcome::Callee => { site.note_run(entry.backedge_count()); LoopContinuation::Callee }
-        LoopOutcome::Left { exit, frames } => { site.note_run(entry.backedge_count()); lane_region_left(cx, r, site.function, (exit, frames)) }
+        LoopOutcome::Left { exit } => { site.note_run(entry.backedge_count()); lane_region_left(cx, r, site.function, exit) }
         LoopOutcome::Returned { pc, value } => {
             site.note_run(entry.backedge_count());
             LoopContinuation::Completed(pc, value)
@@ -8499,9 +8480,9 @@ fn lane_loop_run<H: Host>(
     }
 }
 
-/// Runs `code`, the region of the loop of `function` over the activation with registers `r`, where
-/// the lane admits the run (`lane_region_admits`); a run it does not admit enters nothing, as an entry
-/// guard that missed.
+/// Runs `code`, the region of the loop of `function` over the activation with registers `r`, from
+/// its header or the record `from`, where the lane admits the run (`lane_region_admits`); a run it
+/// does not admit enters nothing, as an entry guard that missed.
 ///
 /// # Safety
 /// As `CompiledOsrRegion::run`: `machine` and `interrupt` belong to the running lane.
@@ -8510,7 +8491,7 @@ unsafe fn lane_region_run<H: Host>(
     r: Registers,
     entry: &mut super::compiled::LoopEntry,
     (code, region): (&super::compiled::CompiledOsrRegion, &super::compiled::LoopRegion),
-    function: u32,
+    (function, from): (u32, u32),
     (machine, program, interrupt): (*mut Vm<H>, ProgramId, *const crate::execution_interrupt::ExecutionInterrupt),
 ) -> super::compiled::LoopOutcome {
     if !lane_region_admits(cx, function, code) {
@@ -8519,7 +8500,7 @@ unsafe fn lane_region_run<H: Host>(
         return if grown { super::compiled::LoopOutcome::Exit(region.header) } else { super::compiled::LoopOutcome::NotEntered };
     }
     // SAFETY: the caller's contract.
-    unsafe { code.run::<H>(r.0, entry, region, machine, program, function, (*cx).frame, interrupt, (cx as usize, lane_direct_calls(cx))) }
+    unsafe { code.run::<H>(r.0, entry, region, machine, program, function, (*cx).frame(), interrupt, (cx as usize, lane_direct_calls(cx)), from) }
 }
 
 /// Whether a run of `code`, the region of the loop of `function` the lane is in, may start: the lane
@@ -8529,7 +8510,7 @@ unsafe fn lane_region_run<H: Host>(
 #[inline(always)]
 fn lane_region_admits<H: Host>(cx: *mut LaneContext<H>, function: u32, code: &super::compiled::CompiledOsrRegion) -> bool {
     let room = code.calls.recovery_space();
-    room.activations == 0 || (lane_room_admits(cx, room) && !lane_locals_in_window(cx, function))
+    room.activations == 0 || (lane_room_admits(cx, room, NO_PENDING_ACTIVATIONS) && !lane_locals_in_window(cx, function))
 }
 
 /// Whether the running activation, of `function`, keeps its locals in its window past the register
@@ -8537,16 +8518,21 @@ fn lane_region_admits<H: Host>(cx: *mut LaneContext<H>, function: u32, code: &su
 fn lane_locals_in_window<H: Host>(cx: *mut LaneContext<H>, function: u32) -> bool {
     // SAFETY: the context's program and VM outlive the lane run.
     let (vm, code) = unsafe { (vm(cx), &*(*cx).code) };
-    code.function_get(function as usize).is_some_and(|body| vm.frames[unsafe { (*cx).frame }].locals.len() < usize::from(body.locals))
+    code.function_get(function as usize).is_some_and(|body| vm.frames[unsafe { (*cx).frame() }].locals.len() < usize::from(body.locals))
 }
 
 /// Where the lane goes after a region of the loop of `function` left inside the callee of a call it
-/// made by its entry, with `exit`, the native frames `frames` the call pushed made the activations
-/// of (`lane_frames_resumed`).
-fn lane_region_left<H: Host>(cx: *mut LaneContext<H>, r: Registers, function: u32, (exit, frames): (super::compiled::LaneExit, super::compiled::ShadowFrames)) -> LoopContinuation {
+/// made by its entry, with `exit`: in the innermost of the native frames the call pushed
+/// (`lane_frames_resumed`).
+fn lane_region_left<H: Host>(cx: *mut LaneContext<H>, r: Registers, function: u32, exit: super::compiled::LaneExit) -> LoopContinuation {
     // SAFETY: the program's views outlive the lane run, and the loop's function has the view its site was made from.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view).expect("the loop's function has its view");
-    LoopContinuation::Recovered(lane_frames_resumed(cx, r, (own, None), frames, exit))
+    if exit == super::compiled::LaneExit::Terminated {
+        // As a body's: a fault can bypass the native exit's register snapshots.
+        native_frames::discard_frames(cx);
+        return LoopContinuation::Safepoint;
+    }
+    LoopContinuation::Recovered(lane_frames_resumed(cx, r, (own, None), exit))
 }
 
 /// Where the lane goes after native code left inside inlined `frame` of `region`'s callee, at its PC
@@ -11845,18 +11831,23 @@ impl<H: Host> Vm<H> {
         self.execution_mode.allows_dynamic_execution() && self.specialized_operations_enabled(program)
     }
 
-    /// The lane stack's free values, its next and the end of its capacity, where a lane
-    /// body's direct calls place their callees' registers (`compiled::DirectCallee`); and the
-    /// activations it may still take past one, which those calls' frames may become. The
-    /// `pending` activations the running body's call has not pushed yet (`lane_enter_cell_body`)
-    /// are counted as pushed: the frames start past them.
-    pub(super) fn lane_stack_spare(&mut self, pending: usize) -> (*mut Value, *mut Value, usize, *mut Activation) {
+    /// The words a lane run's direct calls push onto (`compiled::DirectCallee`): the addresses
+    /// of the values' and the activations' tops, each owned here and bumped through its
+    /// address by emitted code; the end of the values' capacity; and the end of the `frames`
+    /// activations the run may nest above the activations' top, bounded by what the lane may
+    /// still make of them.
+    pub(super) fn lane_stack_words(&mut self, frames: usize) -> LaneStackWords {
         let stack = &mut self.lane_stack;
-        let held = stack.activations.len() + pending;
-        let activations = stack.activation_limit.get().saturating_sub(held + 1);
-        let values = &mut stack.values;
-        // SAFETY: both bound the vector's own allocation.
-        unsafe { (values.as_mut_ptr().add(values.len()), values.as_mut_ptr().add(values.capacity()), activations, stack.activations.as_mut_ptr().add(held)) }
+        let frames = frames.min(stack.activation_limit.get().saturating_sub(stack.activations.len() + 1));
+        let frames_end = stack.activations.top_ptr().wrapping_add(frames).addr();
+        // SAFETY: the values' capacity bounds the vector's own allocation.
+        let values_end = unsafe { stack.values.as_mut_ptr().add(stack.values.capacity()) }.addr();
+        LaneStackWords {
+            values_top: stack.values.top_word().addr(),
+            values_end,
+            activations_top: stack.activations.top_word().addr(),
+            frames_end,
+        }
     }
 
     /// The lane view a hot loop of `function` runs with (`Vm::note_back_edge`), or null.
@@ -12576,6 +12567,12 @@ script_handler! {
             NameResolution::Global => lane_load_name_bound::<H, KIND, BOUND_GLOBAL>,
             NameResolution::Intrinsic => lane_load_name_bound::<H, KIND, BOUND_INTRINSIC>,
             NameResolution::General => {
+                // SAFETY: the context's program outlives the lane run.
+                let code = unsafe { &*(*cx).code };
+                if code.function_get(lane_running_function(cx) as usize).is_some_and(|body| body.call_plan(code).holds_window_scope()) {
+                    requicken::<H>(ip, scoped_names::scoped_load_name::<H, KIND>());
+                    sibling!(scoped_names::scoped_load_name::<H, KIND>(), r, ip, Carried::script(cx))
+                }
                 requicken::<H>(ip, lane_exit::<H>);
                 return exit(ip);
             }
@@ -14854,6 +14851,7 @@ fn lane_body_resumed<H: Host>(cx: *mut LaneContext<H>, ip: Ip, resumed: LaneBody
         LaneBodyLeft::Terminated => Resumed::Exit(exit(ip)),
         LaneBodyLeft::Resume(_, resume, _) if body_calls::left_lane(resume) => Resumed::Exit(resume),
         LaneBodyLeft::Resume(registers, resume, carried) => Resumed::At(registers, resume, carried),
+        LaneBodyLeft::Raised(record) => Resumed::Exit(lane_raised_exit(cx, record)),
         LaneBodyLeft::Completed(record, value) => lane_returned(cx, record, value),
     }
 }
@@ -15194,46 +15192,20 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
     assert!(leaf_code.upgrade().is_none());
 }
 
-/// Pushes the activations of the native frames a run of a lane body left inside
-/// (`compiled::ShadowFrame`), outermost first, each over its window, which the stack's
-/// values then cover; the innermost's view and body, where the run's leave applies. The
-/// direct calls proved the values and activations they take.
-fn lane_materialize_frames<H: Host>(
-    cx: *mut LaneContext<H>,
-    frames: super::compiled::ShadowFrames,
-    _root: &super::compiled::LaneMethod,
-) -> Option<(&'static LaneView, &'static super::compiled::LaneMethod)> {
-    let mut innermost = None;
-    for index in 0..frames.count {
-        let frame = frames.get(index);
-        // SAFETY: the caller's body owns the callee it named, and the callee's view and body
-        // outlive the run; the frame's window starts at the stack's values' end.
-        let callee = unsafe { &*frame.callee };
-        let vm = unsafe { vm(cx) };
-        let registers = frame.window as *mut Value;
-        unsafe { vm.lane_stack.values.set_top(registers.add(usize::from(callee.registers))) };
-        let call = callee.call as Ip;
-        let argc = ImmediateLayout::argument_count(unsafe { (*call).imm() });
-        let caller = unsafe { (*cx).registers };
-        lane_enter_window::<H, false, false>(cx, caller, call, &callee.target, Registers(registers), argc, Value::from_bits(frame.this), false, callee.forwarder);
-        // The body the call ran is the cell's at that moment, not the descriptor's.
-        let method = frame.body as *const super::compiled::LaneMethod;
-        // SAFETY: the active caller's code lease pins a named callee body through recovery, and
-        // the view pins every body it published, even once its publication retired.
-        let view = unsafe { &*callee.target.view };
-        view.note_native_leave();
-        innermost = Some((view, unsafe { &*method }));
-    }
-    innermost
-}
-
 /// Whether a run of `own`'s specialized body may start: the one thing per run it cannot
 /// prove at specialization, that the lane can make the activation of a call it inlines
 /// should it leave inside one (`lane_body_inlined_activation`). `pending` activations are
 /// the running body's own, which its call has not pushed yet (`lane_enter_cell_body`).
 #[inline(always)]
 fn lane_body_admits<H: Host>(cx: *mut LaneContext<H>, method: &super::compiled::LaneMethod, pending: usize) -> bool {
-    let room = method.recovery_space();
+    lane_room_admits(cx, method.recovery_space(), pending)
+}
+
+/// Whether the lane has the room `room` names: the activations and values a leave inside an inlined
+/// callee of native code about to run makes (`lane_body_inlined_activation`), past the `pending`
+/// activations the running body's own call has not pushed.
+#[inline(always)]
+fn lane_room_admits<H: Host>(cx: *mut LaneContext<H>, room: LaneRecoverySpace, pending: usize) -> bool {
     let vm = unsafe { vm(cx) };
     room.activations == 0
         || (vm.lane_stack.activation_limit.get().saturating_sub(vm.lane_stack.activations.len() + pending) >= room.activations
@@ -15429,7 +15401,7 @@ fn lane_leave_counts<H: Host>(cx: *mut LaneContext<H>, exit: super::compiled::La
 
 /// Where the lane continues after a run of `method`, `own`'s body, on the activation whose
 /// registers are `r`: the activations of the native frames it left inside first
-/// (`lane_materialize_frames`), then the record its leave names in the innermost, or the
+/// (`native_frames::advance_into_frames`), then the record its leave names in the innermost, or the
 /// innermost's completion; `lane_body_left` adds the leave as feedback (`LaneMethod::feedback`).
 enum LaneBodyLeft {
     /// Irreversible cancellation leaves the lane without dispatching another record.
@@ -15461,18 +15433,32 @@ fn lane_body_left<H: Host>(
         return (LaneBodyLeft::Terminated, exit);
     }
     let feedback = method.feedback(exit, unsafe { &*(*cx).code });
-    // A leave into a callee's activation already linked the frames and went on in it.
+    (lane_frames_resumed(cx, r, (own, Some(method)), exit), feedback)
+}
+
+/// Where the lane continues after native code of the activation with registers `r`, a body of
+/// `root`'s or a region's, left with `exit`: in the innermost of the native frames it left inside, which
+/// the lane links and continues in first (`native_frames::advance_into_frames`; a leave into a callee's
+/// activation already linked them and went on in it), then at the record `exit` names there, or the
+/// innermost's completion. `own` is the activation's view; `root` the body that ran, where one did,
+/// whose inlined frames an `exit` that was not inside a native frame names.
+fn lane_frames_resumed<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    (own, root): (&LaneView, Option<&super::compiled::LaneMethod>),
+    exit: super::compiled::LaneExit,
+) -> LaneBodyLeft {
     let (r, own, method) = match exit {
-        super::compiled::LaneExit::Callee => (r, own, method),
+        super::compiled::LaneExit::Callee => (r, own, root),
         _ => match native_frames::advance_into_frames(cx) {
             // SAFETY: the advance made the innermost frame the running activation.
-            Some((own, method)) => (unsafe { (*cx).registers }, own, method),
-            None => (r, own, method),
+            Some((own, method)) => (unsafe { (*cx).registers }, own, Some(method)),
+            None => (r, own, root),
         },
     };
     // SAFETY: the running activation's records start at the context's base.
     let base = unsafe { (*cx).base };
-    (match exit.resumed() {
+    match exit.resumed() {
         // SAFETY: the record that raised is one of the activation's function.
         super::compiled::LaneExit::Threw { pc } => LaneBodyLeft::Raised(unsafe { base.add(pc) }),
         super::compiled::LaneExit::Terminated | super::compiled::LaneExit::Entry | super::compiled::LaneExit::Stub => unreachable!("termination leaves before recovery; an entry leave or an unentered call resumes at its first record"),
@@ -15492,7 +15478,79 @@ fn lane_body_left<H: Host>(
         }
         // SAFETY: the record that completes the activation is one of its function's.
         super::compiled::LaneExit::Returned { pc, value } => LaneBodyLeft::Completed(unsafe { base.add(pc) }, value),
-    }, feedback)
+    }
+}
+
+/// The VM frame the body that runs in the lane context `cx` runs in, whose environment its rows read
+/// (`Vm::refresh_body_bases`); none where it runs as lane activations, which keep their environments in
+/// their windows, and where there is no context (a test's entry).
+///
+/// # Safety
+/// `cx` is null or a live `LaneContext<H>`.
+pub(super) unsafe fn entry_frame<H: Host>(cx: *mut ()) -> Option<usize> {
+    let cx = std::ptr::NonNull::new(cx.cast::<LaneContext<H>>())?.as_ptr();
+    // SAFETY: the caller's contract.
+    unsafe { vm(cx).lane_stack.activations.is_empty().then(|| (*cx).root.frame()).flatten() }
+}
+
+/// Reloads the heap bases the running body's rows read through the payload (`Vm::refresh_body_bases`), as
+/// every call, construct and step helper of the body ends: the callee's run or an allocation may have
+/// moved them.
+///
+/// # Safety
+/// `context` is the running lane's.
+pub(super) unsafe fn refresh_body_bases<H: Host>(context: u64) {
+    let cx = context as usize as *mut LaneContext<H>;
+    // SAFETY: the caller's contract.
+    unsafe { vm(cx).refresh_body_bases(entry_frame::<H>(cx.cast())) };
+}
+
+/// Names `payload`, the dispatch of the native loop region that runs on the activation of the lane
+/// `context`, to the helpers its rows call (`lane_region_call`), and returns the one it replaces:
+/// a region's calls run lane code that may enter regions of its own.
+///
+/// # Safety
+/// `context` is the running lane's.
+pub(super) unsafe fn lane_region_payload<H: Host>(context: usize, payload: usize) -> usize {
+    // SAFETY: the caller's contract.
+    std::mem::replace(unsafe { &mut (*(context as *mut LaneContext<H>)).region_payload }, payload)
+}
+
+/// The helper a loop region's call row runs (`LaneHelper::RegionCall`): the call at `call_pc` of the
+/// activation the lane context names, whose registers the region runs on, as `lane_body_call`
+/// makes it, then the heap bases the region's payload holds reloaded (`LaneContext::region_payload`)
+/// besides the body frame's, which the callee's run or an allocation may have moved.
+///
+/// # Safety
+/// `context` is the running lane's, which the region entered (`lane_region_payload`), and `call_pc` a call record of its function.
+pub(super) unsafe extern "C" fn lane_region_call<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+    // SAFETY: the caller's contract.
+    let status = unsafe { body_calls::lane_body_call::<H>(vm, residual, context, call_pc) };
+    let cx = context as usize as *mut LaneContext<H>;
+    // SAFETY: as above.
+    unsafe { self::vm(cx).refresh_region_bases((*cx).region_payload, lane_direct_calls(cx)) };
+    status
+}
+
+/// Leaves the lane at `record`, where the running activation's body raised the exception in
+/// `Vm::lane_raised`: the general loop unwinds from there, from the frames frameless
+/// activations become first (`lane_in_place`).
+fn lane_raised_exit<H: Host>(cx: *mut LaneContext<H>, record: Ip) -> Ip {
+    let vm = unsafe { vm(cx) };
+    let (function, throw_pc) = super::compiled::raise_site_parts(vm.lane_raise_site);
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    if let Some(error) = vm.lane_raised.as_mut() { error.capture_source_location(code, function, throw_pc); }
+    if let Some(settled) = raised_windows::settle_raised_window(cx, record) {
+        return settled;
+    }
+    if !vm.lane_stack.activations.is_empty() {
+        // SAFETY: `record` is one of the running function's records.
+        let call_pc = unsafe { record.offset_from((*cx).base) } as usize;
+        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
+        vm.materialize_deferred_lane();
+    }
+    exit(record)
 }
 
 /// Where the lane continues after a body left at `pc` of `own`'s function on registers `r`: in
@@ -15672,7 +15730,7 @@ fn lane_fill_window<H: Host>(vm: &mut Vm<H>, target: &ScriptCallTarget, passed: 
 
 /// `lane_push_passed` past its window, which the stack's values cover from `window` on and
 /// which holds the callee's registers: the activation, and the context made the callee's.
-/// A native frame's materialization enters its window here too (`lane_materialize_frames`).
+/// A native frame's materialization enters its window here too (`native_frames::advance_into_frames`).
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
@@ -15790,7 +15848,7 @@ fn lane_activate_environment<H: Host>(
         return Err(exit(ip));
     };
     let body = code.function(target.function as usize);
-    let rest = body.rest;
+    let (rest, self_binding) = (body.rest, body.self_binding_slot);
     let plan = body.call_plan(code);
     // A body reading its `arguments` keeps every value passed past its parameters too, as
     // a frame does where legacy reflection (`f.arguments`) can read them; elsewhere nothing
@@ -15854,7 +15912,7 @@ fn lane_activate_environment<H: Host>(
         if let Some(gathered) = gathered {
             local.add(usize::from(target.params) - 1).write(gathered);
         }
-        if let Some(slot) = body.self_binding_slot {
+        if let Some(slot) = self_binding {
             local.add(usize::from(slot)).write(target.callee);
         }
         stack.values.set_top(registers.add(held + locals + usize::from(argc)));
@@ -21144,14 +21202,13 @@ impl<H: Host> Vm<H> {
             inline_calls,
             script_calls: inline_calls
                 && code.kind != crate::bytecode::ProgramKind::Wasm
-                && root_calls::in_lane(*frame + 1 == self.frames.len(), self.frames[*frame].function),
+                && *frame + 1 == self.frames.len(),
             script_constructs: code
                 .function_get(self.frames[*frame].function as usize)
                 .is_some_and(|function| {
                     function.dispatch == crate::bytecode::DispatchClass::General
                 }),
             floor: entered.cell,
-            region_payload: 0,
         };
         let mut context = self.lane_context(start);
         let ip = self.drive_lane(&mut context, entered, |cx| {

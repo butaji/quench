@@ -16,9 +16,6 @@ impl<H: Host> Vm<H> {
         let slots = self.lane_global_slots(program, function, unit);
         let stored: Vec<(crate::bytecode::Atom, GlobalRead)> = slots.iter().filter(|(_, store, _)| *store)
             .map(|(pc, _, slot)| (unit.instructions[*pc].atom_index(), *slot)).collect();
-        let global = |function: u32| program.function_get(function as usize)
-            .is_some_and(|body| body.names_resolve_statically(program))
-            && self.programs.names_are_global(self.active_program);
         let reads: Vec<(usize, GlobalRead)> = unit.instructions.iter().enumerate()
             .filter(|(_, instruction)| instruction.op().is_throwing_name_load())
             .filter(|(pc, instruction)| {
@@ -48,6 +45,60 @@ impl<H: Host> Vm<H> {
         let methods: Vec<(usize, GlobalRead)> = unit.instructions.iter().enumerate()
             .filter_map(|(pc, instruction)| Some((pc, self.method_native(instruction)?))).collect();
         reads.into_iter().chain(members).chain(methods).chain(slots.into_iter().map(|(pc, _, read)| (pc, read))).collect()
+    }
+
+    /// The by-name global accesses of `unit` as `table`'s tier takes them: the lane's own
+    /// (`lane_global_reads`), or the b-jit's, where a load of a global object's own data property that
+    /// is no constant is held as a slot of the object's layout too, which its row reads live.
+    pub(in crate::vm) fn global_table(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit, table: GlobalTable)
+        -> GlobalReads {
+        let reads = self.lane_global_reads(program, function, unit);
+        match table {
+            GlobalTable::Lane => reads,
+            GlobalTable::Base => {
+                let loads: Vec<(usize, GlobalRead)> = reads.range(0..=usize::MAX).map(|(pc, read)| (pc, *read)).collect();
+                loads.into_iter().map(|(pc, read)| (pc, self.slot_load(unit, pc, read))).collect()
+            }
+        }
+    }
+
+    /// The by-name load at `pc` held as a slot of the global object's layout where its read is no
+    /// constant and the object owns the name as a data property (`Vm::stable_global_slot`); `read` otherwise.
+    fn slot_load(&mut self, unit: &lane_unit::Unit, pc: usize, read: GlobalRead) -> GlobalRead {
+        let instruction = unit.instructions[pc];
+        let loads = matches!(read, GlobalRead::Stable { .. } | GlobalRead::Dynamic) && instruction.op().is_throwing_name_load();
+        loads.then(|| self.stable_global_slot(instruction.atom_index(), false)).flatten().map_or(read, GlobalRead::Slot)
+    }
+
+    /// Whether a by-name load of `atom` in `function` reads the global scope as the lane's own load does
+    /// (`dispatch_fast::lane_name_resolution`): the function's unresolved names are global and resolve
+    /// statically, and no internal binding owns the name.
+    fn reads_global_scope(&self, program: &ResidualProgram, function: u32, atom: crate::bytecode::Atom) -> bool {
+        program.function_get(function as usize).is_some_and(|body| body.names_resolve_statically(program))
+            && self.programs.names_are_global(self.active_program)
+            && (!self.atom_class(atom).contains(super::super::object::AtomClass::INTERNAL)
+                || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&self.atom_name(atom)))
+    }
+
+    /// The Stable fact each call site's callee register holds, by PC: the global cell its by-name
+    /// read took, where that read is the register's only definition reaching the call and the cell
+    /// holds the function the site recorded (`recorded`, by PC). Code that folds the callee holds
+    /// the fact as a dependency (`StableFacts::globals`) and tests nothing at the call.
+    pub(in crate::vm) fn stable_callees(&mut self, program: &ResidualProgram, function: u32, code: &[crate::bytecode::WideInstruction], recorded: &[Option<crate::value::Value>])
+        -> Vec<Option<crate::heap::GlobalFact>> {
+        let entered = branch_targets(code);
+        recorded.iter().enumerate().map(|(call, callee)| {
+            let callee = (*callee)?;
+            let load = code[straight_definition(code, &entered, call)?];
+            let atom = load.atom_index();
+            if !load.op().is_throwing_name_load() || !self.reads_global_scope(program, function, atom) {
+                return None;
+            }
+            match self.stable_global_read(program, atom, load.cache_site_index()) {
+                GlobalRead::Stable { value, fact, .. } if value == callee => Some(fact),
+                _ => None,
+            }
+        }).collect()
     }
 
     /// The field read `instruction` of a method of strings or arrays that a call runs inline

@@ -161,17 +161,9 @@ impl LoopTier {
         self.awaits_code(vm, site);
     }
 
-    /// Publishes `region` while the facts its code names hold.
-    fn publish(&mut self, heap: &mut crate::heap::Heap, mut region: super::super::compiled::CompiledOsrRegion) {
-        let roots = std::mem::take(&mut region.facts.roots);
-        let publication = Rc::new(crate::code_dependencies::PublishedCode::new(region));
-        publication.hold_roots(roots, heap);
-        let code = publication.lease().expect("new publication");
-        let dependent: Rc<dyn crate::code_dependencies::DependentCode> = publication.clone();
-        if !code.facts.subscribe(&dependent, heap) {
-            publication.retire();
-        }
-        self.code = Some(publication);
+    /// Publishes `region` while the facts its code names hold (`ProgramStore::publish_region`).
+    fn publish<H: Host>(&mut self, vm: &mut Vm<H>, region: super::super::compiled::CompiledOsrRegion) {
+        self.code = Some(vm.programs.publish_region(region, &mut vm.heap, vm.method_cache_atoms.readers()));
     }
 }
 
