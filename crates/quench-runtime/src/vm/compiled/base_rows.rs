@@ -18,7 +18,8 @@ use std::sync::Mutex;
 /// What a heap row does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Heap {
-    /// Depth-0 capture `slot` of the running activation.
+    /// Depth-0 capture `slot` of the running activation. It continues at TAKEN (`continues_at_taken`), as a fast arm
+    /// of a body's `LoadCapture` whose helper step answers a slot the dense run does not hold (a root binding's shared slot).
     Capture(u16),
     /// `dst = array[index]` of a dense array: the array word at hole 1, the index at hole 2.
     Index,
@@ -48,7 +49,7 @@ pub(super) enum Heap {
     /// `SiteStore` into the activation's receiver: hole 0 is unused.
     ThisStore,
     /// Stores the value operand (hole 0) into depth-0 capture `slot` of an activation whose slots
-    /// admit every direct store; the slot is hole 1 and its byte offset hole 2.
+    /// admit every direct store; the slot is hole 1 and its byte offset hole 2. It continues at TAKEN, as `Capture` does.
     CaptureSet(u16),
     /// The running activation's `this`.
     This,
@@ -193,7 +194,7 @@ impl Heap {
     /// Whether a hit continues at the row's TAKEN exit, not its NEXT: the rows of one convention with the fast arms, whose
     /// hit hops past the step laid out after them (`base_region::steps::plan_fast`).
     pub(super) fn continues_at_taken(self) -> bool {
-        matches!(self, Heap::StoreLocal(_))
+        matches!(self, Heap::StoreLocal(_) | Heap::Capture(_) | Heap::CaptureSet(_))
     }
 
     /// Whether the row reads a snapshot of the heap the loop's entry took (the record's captures,

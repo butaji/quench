@@ -4,6 +4,7 @@ use crate::test_host::TestHost;
 /// What a program prints, run in the interpreter and under `--b-jit`, and the runs of lane bodies
 /// the second made (all, and those that completed their activation).
 pub(super) fn run_both(source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
+    super::super::tier_policy::force_admission();
     let program = Engine::specialize(source, "base-body.js").unwrap();
     let printed = |mode: ExecutionMode| {
         let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));

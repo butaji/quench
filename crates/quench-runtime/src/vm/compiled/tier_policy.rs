@@ -252,7 +252,7 @@ pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
     loops: Loops { warmup_taken: 2, ..MEASURED.loops },
-    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, audit_period: u32::MAX, ..MEASURED.lane_body },
+    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, compile_poll_interval: 0, audit_period: u32::MAX, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)] },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
     stitch: MEASURED.stitch,
@@ -263,6 +263,12 @@ impl LaneBody {
     /// The entries before a function's body specializes in this process's mode.
     pub(in crate::vm) fn warmup(&self) -> u16 {
         if crate::jit_mode::base_only() { self.base_entries } else { self.warmup_entries }
+    }
+
+    /// The length `min_instructions` asks of a body without loops or calls for its entry to pay: none where every
+    /// eligible compile is admitted (`admits_every_compile`), so a fixture too short to repay one still gets its body.
+    pub(in crate::vm) fn amortizing_instructions(&self) -> usize {
+        if admits_every_compile() { 0 } else { self.min_instructions }
     }
 }
 

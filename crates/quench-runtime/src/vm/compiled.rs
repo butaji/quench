@@ -3820,7 +3820,7 @@ impl LaneMethod {
 
     /// Whether an entry, which costs a few hundred instructions the lane's own run of a
     /// short leaf never pays, has work to amortize it: a loop, an inlined call, or length
-    /// (`TIERS.lane_body.min_instructions`). A short leaf runs in the lane, or inlined.
+    /// (`LaneBody::amortizing_instructions`). A short leaf runs in the lane, or inlined.
     pub(super) fn amortizes_entry(&self) -> bool {
         self.amortizes
     }
@@ -9415,7 +9415,7 @@ const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 /// loop, a call (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
 pub(super) fn lane_body_may_amortize(body: &crate::bytecode::Function) -> bool {
-    body.loops() || body.code.len() >= TIERS.lane_body.min_instructions
+    body.loops() || body.code.len() >= TIERS.lane_body.amortizing_instructions()
         || body.code.iter().any(|packed| super::dispatch_fast::decoded_instruction(body, *packed).op().is_call())
 }
 
