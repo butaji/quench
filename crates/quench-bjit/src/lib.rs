@@ -135,7 +135,8 @@ const fn reloc_width(class: u8) -> usize {
 fn successor_target(layout: &Layout, rows: &[Row], out: usize, k: usize, r: &Reloc, exit: &impl Fn(usize, u32) -> usize) -> (usize, i64) {
     match r.index {
         NEXT => (out + layout.hot[k + 1], r.addend),
-        TAKEN => (out + layout.hot[rows[k].taken.expect("a branch row names its target")], r.addend),
+        // A row that names no target never takes this edge (a helper row whose step cannot branch): it falls through.
+        TAKEN => (out + layout.hot[rows[k].taken.unwrap_or(k + 1)], r.addend),
         LOCAL => (out + layout.address(rows, k, r.addend as usize), REL32_ADDEND),
         index => (exit(k, index - EXIT), r.addend),
     }
