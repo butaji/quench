@@ -61,11 +61,12 @@ fn receiver(instruction: WideInstruction) -> Option<Register> {
 pub(super) fn of(known: Known, instruction: WideInstruction) -> Option<Add> {
     let adds = known.adds?;
     let defines = instruction.op() == Op::DefineField;
-    let atom = instruction.atom_index();
     let stores = instruction.op().is_field_store() && !instruction.returns_from_frame() && !instruction.writes_current_this();
-    if !(defines || stores) || instruction.result_flags() != 0 || !known.stores_in_place(atom) {
+    if !(defines || stores) || instruction.result_flags() != 0 {
         return None;
     }
+    let atom = instruction.atom_index();
+    if !known.stores_in_place(atom) { return None; }
     let site = adds(instruction.cache_site_index(), atom, !defines)?;
     Some(Add { site, form: site.transition.form()?, this: receiver(instruction).is_none() })
 }

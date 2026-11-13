@@ -39,6 +39,7 @@ impl Lowering<'_, '_> {
     /// record of the caller, in a lane body (a loop region's payload names no storage), over registers the unit holds.
     fn window_access(&self, pc: usize, instruction: WideInstruction) -> Option<(u16, Access)> {
         let function = self.program.function(self.function_id as usize);
+        if instruction.op().immediate_role() != crate::bytecode::ImmediateRole::LocalSlot { return None; }
         let slot = u16::try_from(instruction.local_slot()).ok()
             .filter(|slot| super::super::base_region::env_owned(function, self.function_id, usize::from(*slot)))?;
         let caller = matches!(self.unit.origins.get(pc), Some(Origin::Caller(_)));

@@ -90,8 +90,9 @@ impl<H: Host> Vm<H> {
         recorded.iter().enumerate().map(|(call, callee)| {
             let callee = (*callee)?;
             let load = code[straight_definition(code, &entered, call)?];
+            if !load.op().is_throwing_name_load() { return None; }
             let atom = load.atom_index();
-            if !load.op().is_throwing_name_load() || !self.reads_global_scope(program, function, atom) {
+            if !self.reads_global_scope(program, function, atom) {
                 return None;
             }
             match self.stable_global_read(program, atom, load.cache_site_index()) {
