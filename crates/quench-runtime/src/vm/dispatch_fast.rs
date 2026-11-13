@@ -12675,44 +12675,12 @@ script_handler! {
         // Any other name's scope is a runtime fact, which the general path's read settles
         // (`lane_load_name_probe`).
         if !vm.atom_class(i.imm()).contains(AtomClass::INTERNAL) {
-            requicken::<H>(ip, lane_load_name_probe::<H, KIND>);
-            sibling!(lane_load_name_probe::<H, KIND>, r, ip, Carried::script(cx))
+            requicken::<H>(ip, probe_handler::<H, KIND>());
+            sibling!(probe_handler::<H, KIND>(), r, ip, Carried::script(cx))
         }
         requicken::<H>(ip, lane_exit::<H>);
         exit(ip)
     }
-}
-
-script_handler! {
-    /// A `LoadName` whose scope the compiler left open (an eval's code, which runs in its
-    /// caller's scope, or a function with an eval of its own): the lane cannot search the
-    /// scope from an activation without a frame, so the read exits to the general path, which
-    /// decides whether the name lands on the global object and quickens the record
-    /// accordingly (`Vm::settle_name_probe`).
-    #[inline(never)]
-    fn lane_load_name_probe<KIND: u8>(cx, r, ip, i, view) {
-        lane_materialize_running_leaf(cx);
-        let vm = unsafe { vm(cx) };
-        vm.scope_names.probe = Some(super::name_scope::NameProbe {
-            program: unsafe { (*cx).program },
-            function: lane_running_function(cx),
-            pc: unsafe { ip.offset_from((*cx).base) } as u32,
-        });
-        exit(ip)
-    }
-}
-
-/// Quickens the record of the by-name read at `pc` of `view`, which `Vm::settle_name_probe`
-/// settled: a hinted global read where the name lands on the global object, else an exit.
-pub(super) fn settle_name_record<H: Host>(view: &LaneView, pc: usize, op: Op, lands: bool) {
-    let handler = match (lands, op) {
-        (false, _) => lane_exit::<H> as Handler,
-        (true, Op::LoadName) => lane_load_global_name::<H, LOAD_NAME, true> as Handler,
-        (true, Op::LoadNameCall) => lane_load_global_name::<H, LOAD_NAME_CALL, true> as Handler,
-        (true, _) => lane_load_global_name::<H, LOAD_NAME_TYPEOF, true> as Handler,
-    };
-    // SAFETY: `pc` is a record of the view, whose records live while its program does.
-    requicken::<H>(unsafe { view.records().add(pc) }, handler);
 }
 
 script_handler! {
@@ -13419,6 +13387,7 @@ mod native_calls; mod generator_yields; use generator_yields::yield_handler;
 mod array_steps;
 mod value_steps;
 mod for_in_steps;
+mod name_probe; use name_probe::probe_handler; pub(super) use name_probe::settle_name_record;
 pub(in crate::vm) use value_steps::lane_body_value_step;
 use array_steps::*;
 use native_calls::{native_call_handler, reflect_get_call_handler, string_char_at_ascii, string_char_code_at};
