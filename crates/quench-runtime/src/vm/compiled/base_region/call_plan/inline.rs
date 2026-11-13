@@ -334,7 +334,7 @@ mod tests {
     use oxc_ast::ast::BinaryOperator;
     use std::rc::Rc;
 
-    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: super::CallForm::Plain };
+    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: super::super::CallForm::Plain };
     /// The caller's registers: the callee's window starts here.
     const BASE: Register = 8;
     const IDENTITY: u64 = 7;

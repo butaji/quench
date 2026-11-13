@@ -220,7 +220,6 @@ mod object_symbols;
 #[cfg(test)] mod call_out_tests;
 #[cfg(test)] mod native_frame_tests;
 #[cfg(test)] mod catch_tests;
-#[cfg(test)] mod call_out_tests;
 mod property_key;
 use call_arguments::CallArguments;
 use object::AtomClass;

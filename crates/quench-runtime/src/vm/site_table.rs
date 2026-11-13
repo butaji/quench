@@ -206,12 +206,6 @@ impl<T: SiteEntry> SiteTable<T> {
         unsafe { &mut *self.base.as_ptr().add(index) }
     }
 
-    #[cfg(test)]
-    pub(super) fn push(&mut self, value: T) {
-        self.extend_empty(1);
-        self.set(self.len - 1, value);
-    }
-
     #[cfg(any(test, feature = "profile-memory"))]
     pub(super) fn iter(&self) -> impl Iterator<Item = T> + '_ {
         (0..self.len).map(|index| self.get(index))

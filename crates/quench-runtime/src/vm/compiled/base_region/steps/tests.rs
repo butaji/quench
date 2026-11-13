@@ -172,7 +172,7 @@ fn a_one_element_append_has_a_fast_row_and_a_spread_the_helper_alone() {
     assert_eq!(append(Some(2), 1, 0), Step::Helper);
     assert_eq!(append(Some(2), 0, 1), Step::Helper);
     assert_eq!(append(None, 0, 2), Step::Helper);
-    let row = decode_step(0, WideInstruction::new(Op::AppendArray, 1, encode_optional_register(Some(2)), 0, 0), known(&program), process);
+    let row = decode_step(0, WideInstruction::new(Op::AppendArray, 1, encode_optional_register(Some(2)), 0, 0), known(&program), (process, false));
     assert!(matches!(row.a, Some(Source::Register(2))) && row.base == Some(1) && row.dst.is_none());
 }
 

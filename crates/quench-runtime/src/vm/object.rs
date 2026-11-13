@@ -1194,12 +1194,6 @@ impl FieldCacheSet {
             self.overflow = Some(Box::new(entries));
         }
     }
-    #[cfg(any(feature = "profile-memory", test))]
-    pub(super) fn len(&self) -> usize {
-        self.overflow
-            .as_ref()
-            .map_or_else(|| usize::from(self.len), |entries| entries.len())
-    }
 }
 
 #[inline(always)]

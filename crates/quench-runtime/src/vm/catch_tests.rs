@@ -144,10 +144,10 @@ fn body_runs(source: &str, names: &[&str]) -> (Vec<String>, Vec<BodyRuns>) {
     let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
     let runs = names.iter().map(|name| {
         let id = program.functions.iter()
-            .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name))
+            .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == *name))
             .unwrap();
         let view = views.get(id).and_then(super::program_store::derived_lane_view).expect("lane view");
-        let (ended, left) = view.body_stats.runs();
+        let (ended, left) = view.body_stats.ended_runs();
         // SAFETY: the view owns its entry cell, which lives as long as the view.
         let raised = unsafe { &*(view.entry_cell() as *const super::compiled::entry_cell::EntryCell) }.raised_runs();
         (ended, left, raised)

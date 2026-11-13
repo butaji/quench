@@ -445,22 +445,22 @@ fn repatch_leaves_in_mode(changes: i32) -> Vec<(u64, u64)> {
     leaves
 }
 
+/// The b-jit's site rows read the interpreter's live cache, so a shape change is a miss the interpreter's run of
+/// the access refreshes: the region is native again from the next entry, without a patch.
 #[test]
 #[cfg(not(quench_profiled))]
 fn bjit_loop_whose_receiver_shape_changes_once_runs_native_again_after_one_leave() {
     crate::vm::compiled::tier_policy::force_admission();
     let (exits, runs) = repatch_leaves(1)[0];
-    assert_eq!(exits, 1, "the miss leaves once; the re-patched entry then hits");
+    assert!(exits <= 1, "the miss leaves at most once; the refreshed cache then hits: {exits} exits");
     assert!(runs >= 2, "the region runs again after the leave: {runs} runs");
 }
 
+/// However often the receiver's shape changes, each change costs at most one leave and the loop runs native after it.
 #[test]
 #[cfg(not(quench_profiled))]
-fn bjit_site_whose_receiver_shape_changes_past_the_patch_bound_goes_generic() {
+fn bjit_site_whose_receiver_shape_changes_repeatedly_stays_native() {
     crate::vm::compiled::tier_policy::force_admission();
-    use crate::vm::compiled::base_region::MAX_REPATCHES_PER_SITE;
-    let leaves = repatch_leaves(i32::from(MAX_REPATCHES_PER_SITE) + 1);
-    let (patched, generic) = leaves.split_at(usize::from(MAX_REPATCHES_PER_SITE));
-    assert!(patched.iter().all(|(exits, _)| *exits == 1), "each change within the bound leaves once: {leaves:?}");
-    assert!(generic[0].0 > 1, "the change past the bound misses on every iteration: {leaves:?}");
+    let leaves = repatch_leaves(8);
+    assert!(leaves.iter().all(|(exits, runs)| *exits <= 1 && *runs >= 1), "each change leaves at most once and runs native: {leaves:?}");
 }

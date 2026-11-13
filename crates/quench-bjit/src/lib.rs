@@ -28,6 +28,10 @@ const JMP_REL32_LEN: usize = 5;
 /// The pc-relative addend of a rel32 field that ends its instruction.
 const REL32_ADDEND: i64 = -4;
 
+/// The machine code of a bare return, which a layout test places as a row's whole body.
+#[cfg(target_arch = "x86_64")]
+pub const RET: u8 = 0xc3;
+
 /// A relocation of a stencil: a value hole (`ABS64`, `MOVW`) or a successor transfer (`REL32`,
 /// `BRANCH*`), patched as its `class` says. `offset` is the patched field (x86-64 `rel32`) or
 /// instruction (AArch64).

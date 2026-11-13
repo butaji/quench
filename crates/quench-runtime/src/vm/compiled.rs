@@ -3480,7 +3480,7 @@ impl CompiledOsrRegion {
         #[cfg(test)]
         LANE_OSR_RUNS.with(|count| count.set(count.get() + 1));
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
-        unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, self.crossing == Crossing::General, |native, vm| {
+        let outcome = unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, self.crossing == Crossing::General, |native, vm| {
             osr_lane::bind_loop(native, vm, region, entry, (frame, lane_context));
             let _captures = osr_lane::bind_captures::<H>(native, region, entry, lane_context);
             osr_lane::bind_frame(native, vm, (program, function, frame), registers);
@@ -3488,7 +3488,10 @@ impl CompiledOsrRegion {
             // own helpers read (`region_lend`).
             let lend = self.calls.enters_callees().then_some(direct_calls);
             osr_lane::enter(native, vm, region, program, (code, resume), registers, interrupt, (lane_context, lend))
-        }) }.unwrap_or(LoopOutcome::Terminated)
+        }) }.unwrap_or(LoopOutcome::Terminated);
+        #[cfg(test)]
+        OsrRunKinds::note(&outcome, self.calls.enters_callees());
+        outcome
     }
 
 }
