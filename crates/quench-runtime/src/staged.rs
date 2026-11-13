@@ -57,7 +57,7 @@ pub(crate) mod call; pub(crate) mod frame;
 pub(crate) mod construct;
 pub(crate) mod forms;
 pub(crate) mod protocol;
-pub(crate) use forms::{Arguments, CallFacts, Callee, Invocation, Receiver, RegisterList};
+pub(crate) use forms::{Arguments, CallFacts, Callee, FunctionId, Invocation, Receiver, RegisterList};
 pub(crate) use protocol::CallOperation;
 pub(crate) mod invoke;
 pub(crate) mod plan;

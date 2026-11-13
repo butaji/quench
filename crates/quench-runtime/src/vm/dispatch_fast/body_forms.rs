@@ -1,0 +1,191 @@
+//! The call a lane body's helper runs, read through its decoded form (`staged::Invocation`), never
+//! through the record layout of one opcode: where its callee, receiver and arguments are is data
+//! the decode gave, so a register call, a known call, a method call and a construction run the
+//! same helper. The running activation's registers, `this` and function come from the running
+//! body, or from the native frame it runs as (`ShadowFrame`).
+use super::super::field_cache::FieldCacheProbe;
+use super::*;
+use crate::bytecode::Register;
+use crate::staged::protocol::fill_call;
+use crate::staged::{Arguments, Callee, Concrete, DecodeContext, FunctionId, Invocation, Passed, Receiver};
+
+/// Values a call gathers from its register list, kept inline up to what a call usually passes.
+pub(super) type Gathered = SmallVec<[Value; GATHERED_INLINE_VALUES]>;
+
+/// The values a call passes: a window's, in place, or a list's, gathered.
+pub(super) enum Values<'a> {
+    Window(&'a [Value]),
+    Gathered(Gathered),
+}
+
+impl std::ops::Deref for Values<'_> {
+    type Target = [Value];
+
+    fn deref(&self) -> &[Value] {
+        match self {
+            Self::Window(values) => values,
+            Self::Gathered(values) => values,
+        }
+    }
+}
+
+/// A call record of the running body, decoded once.
+#[derive(Clone, Copy)]
+pub(super) struct BodyCall<'a> {
+    pub(super) site: Invocation,
+    pub(super) registers: Registers,
+    pub(super) ip: Ip,
+    /// The running activation's `this`; the deleted marker where the body reads a lexical one.
+    this: Value,
+    code: &'a ResidualProgram,
+    /// The registers of a method call's argument list; none for a window.
+    list: &'a [Register],
+}
+
+impl<'a> BodyCall<'a> {
+    /// The call at `call_pc`, a record of the running body's function, with the running
+    /// activation's registers and `this`, or, where the body runs as a native callee, its window and
+    /// its function's own record. `None` for a form no row runs (`Invocation::of`).
+    ///
+    /// # Safety
+    /// `cx` is the running lane's context and `call_pc` a record of the running body's function.
+    pub(super) unsafe fn at<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> Option<Self> {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let (registers, base, function, this) = match Vm::<H>::innermost_shadow_frame() {
+            // SAFETY: the context names the running activation.
+            None => unsafe { ((*cx).registers, (*cx).base, lane_running_function(cx), (*cx).this) },
+            Some(frame) => {
+                // SAFETY: a pushed frame names the caller-owned callee, whose view outlives the run.
+                let target = unsafe { &(*frame.callee).target };
+                (Registers(frame.window as *mut Value), unsafe { (*target.view).records() }, target.function, Value::from_bits(frame.this))
+            }
+        };
+        let body = code.function(function as usize);
+        let site = Invocation::of(decoded_instruction(body, body.code[call_pc as usize]), DecodeContext::of(code))?;
+        let list = match site.arguments {
+            Arguments::List(list) => list.registers(&code.method_arguments),
+            Arguments::Window { .. } => &[],
+        };
+        // SAFETY: `call_pc` is a record of the function whose records start at `base`.
+        Some(Self { site, registers, ip: unsafe { base.add(call_pc as usize) }, this, code, list })
+    }
+
+    /// How many arguments the call passes.
+    pub(super) fn argc(&self) -> u16 {
+        self.site.arguments.count()
+    }
+
+    /// The record's hint of the script call target that answered it last.
+    pub(super) fn link(&self) -> &'a std::cell::Cell<u16> {
+        // SAFETY: `ip` is a record of the running view.
+        unsafe { &(*self.ip).call_link }
+    }
+
+    /// Whether the call's record may be requickened to its read memo (`lane_memoize_read`): only a
+    /// register call's record has the layout the memo's handlers read.
+    pub(super) fn memoizes(&self) -> bool {
+        matches!((self.site.callee, self.site.arguments), (Callee::Register(_), Arguments::Window { .. }))
+    }
+
+    /// The receiver the call binds: a register, the activation's `this` or the field of it a cached
+    /// read gives, or `undefined`. `None` where the helper cannot read it in place: a lexical `this`,
+    /// a field the caches do not hold, or a construction's receiver, which its plan allocates.
+    pub(super) fn receiver<H: Host>(&self, vm: &mut Vm<H>) -> Option<Value> {
+        match self.site.receiver {
+            Receiver::Register(register) => Some(self.registers.get(register)),
+            Receiver::Undefined => Some(Value::UNDEFINED),
+            Receiver::This { path } => {
+                let this = Some(self.this).filter(|this| !this.is_deleted())?;
+                let Some((_, cache)) = path else { return Some(this) };
+                match vm.cached_field_hit(self.code, this, cache) {
+                    FieldCacheProbe::Hit(value) => Some(value),
+                    FieldCacheProbe::OrdinaryMiss | FieldCacheProbe::Ineligible => None,
+                }
+            }
+            Receiver::Allocated => None,
+        }
+    }
+
+    /// The callee: a register's value, a method the site's caches load from `receiver`
+    /// (`Vm::method_cache_load`), or the function a known call names, which its site linked. `None`
+    /// where the method is not cached or the site linked no such function.
+    pub(super) fn callee<H: Host>(&self, vm: &mut Vm<H>, receiver: Value) -> Option<Value> {
+        match self.site.callee {
+            Callee::Register(register) => Some(self.registers.get(register)),
+            Callee::Method { atom, site } => vm.method_cache_load(self.code, site as usize, atom, receiver),
+            Callee::Known(function) => known_callee(vm, self.link(), function),
+        }
+    }
+
+    /// Parameter `k` of a plain activation as this call passes it: argument `k`, or `undefined`
+    /// where it is not passed.
+    pub(super) fn argument(&self) -> impl Fn(u16) -> Value + '_ {
+        move |parameter| match self.site.arguments {
+            Arguments::Window { first, count } if parameter < count => self.registers.get(first + parameter),
+            Arguments::Window { .. } => Value::UNDEFINED,
+            Arguments::List(_) => self.list.get(usize::from(parameter)).map_or(Value::UNDEFINED, |&register| self.registers.get(register)),
+        }
+    }
+
+    /// The values the call passes.
+    ///
+    /// # Safety
+    /// The caller's registers do not move while the values are read.
+    pub(super) unsafe fn values(&self) -> Values<'a> {
+        match self.site.arguments {
+            // SAFETY: the window is registers of the running function.
+            Arguments::Window { first, count } => Values::Window(unsafe { std::slice::from_raw_parts(self.registers.0.add(usize::from(first)), usize::from(count)) }),
+            Arguments::List(_) => Values::Gathered(self.list.iter().map(|&register| self.registers.get(register)).collect()),
+        }
+    }
+
+    /// The arguments as the keeping activation takes them: the window in place, or the values of a
+    /// list gathered into `gathered`, which then outlives the activation.
+    pub(super) fn kept(&self, gathered: &mut Gathered) -> ActivationArguments {
+        match self.site.arguments {
+            Arguments::Window { first, .. } => ActivationArguments::Window(first),
+            Arguments::List(_) => {
+                gathered.extend(self.list.iter().map(|&register| self.registers.get(register)));
+                ActivationArguments::Kept(gathered.as_ptr(), gathered.len())
+            }
+        }
+    }
+
+    /// The plain activation of `target` this call makes: its window of registers filled with the
+    /// arguments, then `undefined`. The call passes at most `target`'s parameters and the lane stack
+    /// has room (`lane_activation_room`).
+    pub(super) fn push_plain<H: Host>(&self, cx: *mut LaneContext<H>, target: &ScriptCallTarget, this: Value, constructs: bool) -> Registers {
+        match self.site.arguments {
+            Arguments::Window { first, count } => {
+                // SAFETY: the record's window of the registers holds its values.
+                let passed = unsafe { self.registers.0.add(usize::from(first)).cast_const() };
+                lane_push_passed::<H, false, false>(cx, self.registers, self.ip, target, passed, count, this, constructs).0
+            }
+            Arguments::List(_) => self.push_listed(cx, target, this, constructs),
+        }
+    }
+
+    /// `push_plain` of a list: the registers it names are read in the window's fill
+    /// (`staged::protocol::fill_call`, the row the native tiers emit).
+    fn push_listed<H: Host>(&self, cx: *mut LaneContext<H>, target: &ScriptCallTarget, this: Value, constructs: bool) -> Registers {
+        let stack = &mut unsafe { vm(cx) }.lane_stack;
+        // SAFETY: capacity holds the window's admitted room (`ScriptCallTarget::room`); the listed
+        // registers are the caller's, outside it; each slot is written before the length covers it.
+        let window = unsafe {
+            let top = stack.values.top();
+            let listed = Passed::List { file: self.registers.0 as u64, registers: self.list };
+            fill_call(&mut Concrete::new(std::ptr::null()), top as u64, &[], listed, target.registers);
+            stack.values.set_top(top.add(usize::from(target.registers)));
+            Registers(top)
+        };
+        lane_enter_window::<H, false, false>(cx, self.registers, self.ip, target, window, self.argc(), this, constructs, None).0
+    }
+}
+
+/// The function a known call names (`Callee::Known`), the callee its site linked: the cached
+/// entry the record's hint names, where that is a function of the running program.
+fn known_callee<H: Host>(vm: &Vm<H>, link: &std::cell::Cell<u16>, function: FunctionId) -> Option<Value> {
+    let entry = vm.lane_stack.script_targets.entries.get(usize::from(link.get()))?;
+    (entry.function == u32::from(function) && entry.program == vm.active_program).then_some(entry.callee)
+}

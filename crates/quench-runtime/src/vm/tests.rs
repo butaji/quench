@@ -20764,6 +20764,70 @@ fn lane_bodies_call_natively_and_match_the_interpreter_across_callee_exits() {
     assert_eq!(answers[0], answers[1]);
 }
 
+/// Lane bodies call through every form of a call record (`dispatch_fast::BodyCall`): a method site
+/// (`this.add(z, x)`, whose receiver is `this`, and `cell.add(...)`'s register) whose argument
+/// registers are the site's own list, not a window, in an order no window has, and a call whose
+/// arguments are consecutive. Every result must equal the interpreter's, and no run may leave its
+/// body at a method call.
+#[test]
+fn lane_bodies_call_method_sites_with_listed_arguments_like_the_interpreter() {
+    let source = r#"(function () {
+      const MASK = 65535;
+      function Cell(id) { this.id = id; this.sum = 0; this.peer = null; }
+      Cell.prototype.add = function (a, b) { this.sum = (this.sum + a * 3 + b) & MASK; return this.sum; };
+      Cell.prototype.pair = function (a, b) { return (this.add(b, a) + this.add(a, b)) & MASK; };
+      Cell.prototype.far = function (p, q, r) { return (p - q + r * 2) & MASK; };
+      Cell.prototype.drive = function (n, other) {
+        let total = 0;
+        for (let i = 0; i < n; i++) {
+          const x = i & 255, y = (i * 7) & 127, z = (i * 3) & 63;
+          total = (total + this.pair(x, y) + this.add(z, x) + this.add(y, z)) & MASK;
+          total = (total + other.add(x, y) + other.far(z, y, x) + this.far(x, x, z)) & MASK;
+        }
+        return total;
+      };
+      let sum = 0;
+      const cell = new Cell(1), other = new Cell(2);
+      for (let round = 0; round < 400; round++) {
+        sum = (sum + cell.drive(48, other) + cell.add(round, sum & 7)) & MASK;
+      }
+      globalThis.answer = sum + cell.sum + other.sum;
+    })();"#;
+    let program = Engine::specialize(source, "lane-body-method-sites.js").unwrap();
+    #[cfg(not(quench_profiled))]
+    let drive = program.functions.iter().position(|body|
+        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "drive")).unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let before = super::compiled::LANE_METHODS_COMPILED.load(std::sync::atomic::Ordering::Relaxed);
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        #[cfg(not(quench_profiled))]
+        vm.programs.enable_js_jit_diagnostics();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+        if mode == crate::ExecutionMode::Compiled && super::compiled::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
+            let after = super::compiled::LANE_METHODS_COMPILED.load(std::sync::atomic::Ordering::Relaxed);
+            assert!(after > before, "a method making method calls runs as a lane body");
+            #[cfg(not(quench_profiled))]
+            {
+                let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(drive)
+                    .and_then(super::program_store::derived_lane_view).unwrap();
+                let op_at = |function: u32, pc: u32| program.function(function as usize).instructions().nth(pc as usize)
+                    .map(|instruction| format!("{:?}", instruction.op()));
+                if let Some(report) = view.body_stats.report(0, view.lane_body_state(), &op_at) {
+                    assert!(!report.contains("CallMethod") && !report.contains("CallThisMethod"), "no leave at a method call: {report}");
+                }
+            }
+        }
+    }
+    assert!(answers[0].is_some());
+    assert_eq!(answers[0], answers[1]);
+}
+
 #[test]
 fn lane_bitwise_operands_take_to_int32_of_doubles_like_the_interpreter() {
     // A double's ToInt32 is its truncation modulo 2^32 natively below 2^63 in magnitude;

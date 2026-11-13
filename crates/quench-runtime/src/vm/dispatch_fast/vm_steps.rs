@@ -15,12 +15,8 @@ pub(in crate::vm) unsafe extern "C" fn lane_vm_step<H: Host>(_vm: u64, _residual
     let cx = context as usize as *mut LaneContext<H>;
     // The function's activation is the one the step reads (`activations.last`).
     lane_materialize_running_leaf(cx);
-    let vm = unsafe { vm(cx) };
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
-    let function = match vm.lane_stack.activations.last() {
-        Some(activation) => activation.function,
-        None => vm.frames[unsafe { (*cx).frame }].function,
-    };
+    let function = lane_running_function(cx);
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let body = code.function(function as usize);
