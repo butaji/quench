@@ -1475,6 +1475,9 @@ thread_local! {
     static INT32_PROJECTION_REUSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// An object's atom table is the data symbol after its narrow table.
+pub(super) const NATIVE_ATOM_TABLE_OFFSET: u32 = 1;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LaneHelpers {
     /// A frameless Number region: no VM helper capability, helpers named by symbol.
@@ -1501,6 +1504,26 @@ impl LaneHelpers {
     /// Whether helper addresses are symbols a loader resolves, not addresses of this process.
     pub(super) fn links(self) -> bool {
         !matches!(self, Self::Process(_))
+    }
+
+    /// The word of program atom `atom`: its id now for a live lowering; for a linking one the
+    /// symbol of an ahead image, or the object's atom table entry (`NATIVE_ATOM_TABLE_OFFSET`
+    /// symbols after its narrow table) the loader's namespace check proves to hold the id.
+    pub(super) fn atom_word(self, builder: &mut FunctionBuilder<'_>, atom: u32) -> ir::Value {
+        match self {
+            Self::Process(_) => builder.ins().iconst(types::I64, i64::from(atom)),
+            Self::Numeric | Self::Ahead => lane_region::atom_symbol(builder, atom),
+            #[cfg(feature = "aot")]
+            Self::Linked(_, narrow) | Self::Bound(_, narrow) => {
+                let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
+                    super::native_object::NATIVE_DATA_NAMESPACE, narrow + NATIVE_ATOM_TABLE_OFFSET));
+                let table = builder.create_global_value(ir::GlobalValueData::Symbol {
+                    name: ir::ExternalName::user(name), offset: 0.into(), colocated: false, tls: false });
+                let base = builder.ins().symbol_value(types::I64, table);
+                let word = builder.ins().load(types::I32, invariant(), base, (atom as usize * std::mem::size_of::<u32>()) as i32);
+                builder.ins().uextend(types::I64, word)
+            }
+        }
     }
 
     /// The address of `helper`: a symbol, or the table's entry (a symbol per use in live lane

@@ -216,10 +216,9 @@ fn global_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination:
 /// The 64-bit immediate `bits`.
 fn immediate(stage: &mut Emit<'_, '_>, bits: i64) -> ir::Value { stage.builder.ins().iconst(types::I64, bits) }
 
-/// The word of `atom`: its id now for a live lowering, its symbol for a linking one (`RelocKind::Atom`).
+/// The word of `atom` under the frame's helper binding.
 fn atom_word(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, atom: u32) -> ir::Value {
-    if !frame.helpers.links() { return immediate(stage, i64::from(atom)); }
-    crate::vm::jit_backend::symbol_address(&mut stage.builder, types::I64, super::relocs::RelocKind::Atom as u32, atom)
+    frame.helpers.atom_word(stage.builder, atom)
 }
 
 /// `value` as the tagged immediate `destination` holds under `fact`.

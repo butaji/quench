@@ -40,6 +40,11 @@ pub(in crate::vm::compiled) fn atom_key(namespace: u32, key: u32) -> Option<u32>
     (namespace == RelocKind::Atom as u32).then_some(key)
 }
 
+/// The symbol of the atom numbered `atom`, which an ahead image's loader resolves to that atom in its VM.
+pub(in crate::vm::compiled) fn atom_symbol(builder: &mut FunctionBuilder<'_>, atom: u32) -> ir::Value {
+    crate::vm::jit_backend::symbol_address(builder, types::I64, RelocKind::Atom as u32, atom)
+}
+
 /// The address of `helper` as the symbol a frameless Number region's loader resolves.
 pub(in crate::vm::compiled) fn helper_symbol(builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
     crate::vm::jit_backend::symbol_address(builder, types::I64, RelocKind::Helper as u32, helper as u32)
@@ -48,7 +53,7 @@ pub(in crate::vm::compiled) fn helper_symbol(builder: &mut FunctionBuilder<'_>, 
 impl Lowering<'_, '_> {
     /// The word of `atom`: its id now for a live lowering, its symbol for a linking one.
     pub(super) fn atom_word(&mut self, atom: u32) -> ir::Value {
-        self.reloc(RelocKind::Atom, atom, u64::from(atom))
+        self.helpers.atom_word(&mut self.builder, atom)
     }
 
     /// Whether no method cache names `atom`, from the payload's atom bits.

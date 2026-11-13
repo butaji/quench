@@ -26,8 +26,8 @@ const NATIVE_JS_REGION_EXIT: u32 = super::compiled::NATIVE_JS_INVALID_PC + 1;
 const REGION_START_PC_PARAMETER: usize = 1;
 /// The image's ABI header import is its first function symbol.
 const ABI_SYMBOL_INDEX: u32 = 0;
-/// Data records an image publishes between its functions' operands and the fallback tables: the narrow table.
-const NARROW_TABLE_COUNT: usize = 1;
+/// Data records an image publishes between its functions' operands and the fallback tables: the narrow table, then the atom table.
+const NARROW_TABLE_COUNT: usize = 1 + super::compiled::NATIVE_ATOM_TABLE_OFFSET as usize;
 
 /// How executable memory receives the call-threaded graph. Both publications
 /// residualize the same graph over the same semantic entries; they differ in
@@ -299,6 +299,13 @@ impl ObjectExtension<'_> {
             name: format!("{}_narrow_upper_words", self.namespace),
             bytes: crate::value::NarrowLayout::decode_words().iter().flat_map(|word| word.to_ne_bytes()).collect(),
             alignment: std::mem::align_of::<u64>() as u64,
+            writable: false,
+            function_addresses: Vec::new(),
+        });
+        data.push(NativeData {
+            name: format!("{}_atoms", self.namespace),
+            bytes: (0..self.program.atoms.len() as u32).flat_map(u32::to_ne_bytes).collect(),
+            alignment: std::mem::align_of::<u32>() as u64,
             writable: false,
             function_addresses: Vec::new(),
         });
