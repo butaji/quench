@@ -33,7 +33,7 @@ impl NativeCallBinding {
     /// retirement still uses this inventory for every binding kind.
     fn stands(&self, live: &impl Fn(Value) -> bool) -> bool {
         match self {
-            Self::Published(method) => stands(method.upgrade(), |method| crate::vm::compiled::names_dead_callee(&method.inlined, &method.direct, live)),
+            Self::Published(method) => stands(method.upgrade(), |method| crate::vm::compiled::names_dead_callee(&method.inlined, &method.direct, live) || method.constructors.iter().any(|constructor| !live(*constructor))),
             Self::Region(region) => stands(region.upgrade(), |region| region.calls.names_dead(live)),
             Self::Pending { watch, callees } => stands(watch.upgrade().filter(|watch| watch.is_published()), |_| callees.iter().any(|callee| !live(*callee))),
         }
@@ -132,29 +132,7 @@ impl ProgramStore {
         let mut bindings = self.native_call_bindings.borrow_mut();
         loop {
             let before = bindings.len();
-            bindings.retain(|binding| {
-                let weak = match binding {
-                    NativeCallBinding::Published(weak) => weak,
-                    NativeCallBinding::Pending { watch, callees } => {
-                        let Some(watch) = watch.upgrade().filter(|watch| watch.is_published()) else { return false; };
-                        let dead = callees.iter().any(|callee| !live(*callee));
-                        if dead { watch.retire(); }
-                        return !dead;
-                    }
-                };
-                let Some(code) = weak.upgrade() else { return false; };
-                let Some(method) = code.lease() else { return false; };
-                // Function bindings depend on the owned program definition,
-                // not a particular closure locator. Realm/reset retirement
-                // still uses this inventory for both binding kinds.
-                let dead = method.inlined.iter().any(|call| call.target.identity().is_some_and(|callee| !live(callee)))
-                    || method.constructors.iter().any(|constructor| !live(*constructor))
-                    || method.direct.iter().any(|callee| !live(callee.callee) || callee.method.as_ref().is_some_and(|method| !method.is_published()));
-                if dead {
-                    code.retire();
-                }
-                !dead
-            });
+            bindings.retain(|binding| binding.stands(&live));
             if bindings.len() == before { break; }
         }
     }

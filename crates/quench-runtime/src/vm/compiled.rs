@@ -1145,7 +1145,7 @@ fn emit_lane_helper_call(
 /// needs no barrier. Verified Numbers are immediate and discharge the test at
 /// compilation. Otherwise the caller must perform the logged store.
 fn emit_unlogged_property_store_guard(
-    builder: &mut FunctionBuilder<'_>, payload: ir::Value, record_id: ir::Value,
+    builder: &mut FunctionBuilder<'_>, space: crate::staged::RecordSpace, payload: ir::Value, record_id: ir::Value,
     value: ir::Value, fallback: ir::Block,
 ) {
     use crate::value::ValueLayout;

@@ -255,6 +255,7 @@ const FLOOR: Tiers = Tiers {
     lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, audit_period: u32::MAX, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)] },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
+    stitch: MEASURED.stitch,
     priors: MEASURED.priors,
 };
 
@@ -291,6 +292,16 @@ const MEASURED: Tiers = Tiers {
     },
     js_function: JsFunction { promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)] },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
+    stitch: Stitch {
+        max_instructions: 24,
+        max_total_instructions: 96,
+        window_registers: 32,
+        max_depth: 3,
+        classes: &[
+            Class::Move, Class::ToNumeric, Class::LoadConst, Class::Binary, Class::NumericAdd, Class::NumericMultiply,
+            Class::IncDec, Class::Unary, Class::JumpBinaryFalse, Class::JumpTrue, Class::JumpFalse, Class::Jump, Class::Return,
+        ],
+    },
     priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800 },
 };
 

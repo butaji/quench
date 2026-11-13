@@ -24,13 +24,10 @@ pub(super) struct LoopTier {
     declined: u32,
     /// Each operation the code left at, with its leaves so far; and those whose int32
     /// speculation the next compilation drops (`lane_region`'s `generic`), sorted.
-    leaves: Vec<(u32, u16)>,
+    leaves: Vec<(usize, u16)>,
     widened: Vec<usize>,
     /// The element reads among them that left again as Numbers, which the next compilation reads untyped.
     abandoned: Vec<usize>,
-    /// The cache site the latest run left at, which the interpreter then ran and whose entry
-    /// the next entry re-patches (`lane_loop_repatch`).
-    miss: Option<u32>,
 }
 
 impl LoopTier {
@@ -73,23 +70,18 @@ impl LoopTier {
         if let Some(pending) = &self.pending { pending.retire_named_shapes(); }
     }
 
-    /// Notes that the code left at the field access of `pc`.
-    pub(super) fn missed_at(&mut self, pc: u32) {
-        self.miss = Some(pc);
-    }
-
     /// Counts a run of the code that left at `pc`. An operation or element read left `widen_after_leaves`
     /// times joins the widened ones and the code goes, where a compilation remains: the next
     /// entry compiles the loop holding that operation's result as a double.
-    pub(super) fn left_at(&mut self, pc: u32, read: bool) {
-        let widened = self.widened.binary_search(&(pc as usize)).is_ok();
-        if !(read || !widened) || self.abandoned.binary_search(&(pc as usize)).is_ok() || self.compilations >= TIERS.loops.max_compilations { return; }
+    pub(super) fn left_at(&mut self, pc: usize, read: bool) {
+        let widened = self.widened.binary_search(&pc).is_ok();
+        if !(read || !widened) || self.abandoned.binary_search(&pc).is_ok() || self.compilations >= TIERS.loops.max_compilations { return; }
         let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
         self.leaves[at].1 += 1;
         if self.leaves[at].1 < TIERS.loops.widen_after_leaves { return; }
         self.leaves.swap_remove(at);
         let list = if widened { &mut self.abandoned } else { &mut self.widened };
-        list.push(pc as usize);
+        list.push(pc);
         list.sort_unstable();
         if let Some(code) = self.code.take() { code.retire(); }
     }
@@ -184,39 +176,6 @@ impl FieldAccess {
             return Some(Self { site: cache_site, atom, read: true, base: base.register_index() });
         }
         op.is_field_store().then(|| Self { site: instruction.cache_site_index(), atom: instruction.atom_index(), read: false, base: None })
-    }
-}
-
-/// Answers the miss the code left at (`LoopTier::missed_at`), which the interpreter has run:
-/// the site's entry is re-patched to the shape the interpreter's cache holds now, so the loop
-/// runs natively again. A leave that patched nothing counts toward widening the read
-/// (`LoopTier::left_at`).
-#[inline(always)]
-pub(super) fn lane_loop_repatch<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &LoopSite) {
-    let missed = site.tier.borrow_mut().miss.take();
-    if let Some(pc) = missed {
-        repatch_miss(cx, r, site, pc);
-    }
-}
-
-#[cold]
-fn repatch_miss<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &LoopSite, pc: u32) {
-    // SAFETY: the lane's VM is live, and nothing borrows it across the call.
-    let machine = unsafe { vm(cx) };
-    let access = machine.programs.get(machine.active_program).as_deref().and_then(|program| {
-        let body = program.function(site.function() as usize);
-        body.code.get(pc as usize).and_then(|packed| FieldAccess::of(&decoded_instruction(body, *packed)))
-    });
-    let Some(access) = access else { return };
-    let mut tier = site.tier.borrow_mut();
-    let patched = tier.code.clone().and_then(|publication| {
-        let region = publication.lease()?;
-        let watch: Rc<dyn crate::code_dependencies::DependentCode> = publication;
-        let load = machine.native_field_load_of(access.site, access.base.map(|base| r.get(base)))?;
-        Some(region.repatch(pc, access.atom, &load, &watch, &mut machine.heap))
-    });
-    if patched != Some(super::super::compiled::base_region::Repatch::Patched) && access.read {
-        tier.left_at(pc, false);
     }
 }
 

@@ -204,7 +204,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let signature = lane_body_signature(types::I64, stage.builder.func.signature.call_conv);
         let signature = stage.builder.import_signature(signature);
         let captures = address(self.helpers, stage.builder, RelocKind::CaptureWords, callee.target.function,
-            capture_word(callee.capture_values, callee.capture_len) as u64);
+            capture_word(callee.capture_values, callee.capture_len, callee.capture_stores));
         let entered = stage.builder.ins().call_indirect(signature, entry, &[call.context, this, captures, room.top]);
         let (status, word) = (stage.builder.inst_results(entered)[0], stage.builder.inst_results(entered)[1]);
         Some(Entered { status, word, unfinished: stage.builder.create_block() })

@@ -807,9 +807,8 @@ struct ParkedRealm {
 }
 /// The natives whose prototypes VM fields follow from the active realm
 /// (`Vm::realm_prototype_field`).
-/// One `typeof` name per `crate::ValueType`, indexed by its discriminant; `Function` is the
-/// last type.
-const TYPEOF_NAMES: usize = crate::ValueType::Function as usize + 1;
+/// One `typeof` name per `bytecode::TYPEOF_NAMES` entry, indexed as `typeof_name_index` classifies values.
+const TYPEOF_NAMES: usize = crate::bytecode::TYPEOF_NAMES.len();
 const REALM_FOLLOWING_PROTOTYPES: [Native; 4] =
     [Native::Object, Native::Function, Native::Array, Native::String];
 #[derive(Clone, Copy, PartialEq, Eq)]

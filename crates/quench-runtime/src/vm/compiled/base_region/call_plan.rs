@@ -163,7 +163,7 @@ impl DirectFacts {
             validity: word(ENTRY_CELL.validity_offset),
             facts: CellFacts::of_word(word(ENTRY_CELL.facts_offset)),
             descriptor: std::ptr::from_ref(callee).addr(),
-            captures: capture_word(callee.capture_values, callee.capture_len),
+            captures: capture_word(callee.capture_values, callee.capture_len, callee.capture_stores),
             global_this: callee.sloppy.map(|global| global.to_bits()),
             registers: callee.registers,
             construction: callee.forwarder.is_some(),
@@ -301,7 +301,7 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts) -> Result<(CallPart, Box<
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let stencil = call::stencil(CallRow::Direct { argc, sloppy: facts.global_this.is_some() })?;
-    Ok((part(stencil, [std::ptr::from_ref(&*record).addr() as u64, 0, 0], vec![Exit::Status]), record))
+    Ok((part(stencil, quench_bjit::padded_holes([std::ptr::from_ref(&*record).addr() as u64]), vec![Exit::Status]), record))
 }
 
 /// The chain of a helper step at `pc` (any instruction whose operation the helper runs in place):

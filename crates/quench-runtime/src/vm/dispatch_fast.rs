@@ -1842,7 +1842,7 @@ pub(super) struct LaneStack {
     /// swept (`forget_dead_callees`).
     call_sites: std::cell::RefCell<rustc_hash::FxHashMap<usize, smallvec::SmallVec<[super::compiled::CallTarget; INLINE_SITE_TARGETS]>>>,
     values: LaneValues,
-    activations: LaneActivations,
+    pub(in crate::vm) activations: LaneActivations,
     /// Wasm activation payload represented by `values` before lane materialization.
     wasm_storage_bytes: usize,
     /// Resolved targets of lane `Call` records (`Vm::script_call_entry`) of callees of the
@@ -8089,7 +8089,6 @@ fn lane_loop_run_native<H: Host>(
     if site.tier.borrow_mut().awaits_code(unsafe { vm(cx) }, site) {
         return None;
     }
-    loop_tier::lane_loop_repatch(cx, r, site);
     let Some(views) = lane_loop_entry(cx, r, region, entry) else {
         site.note_decline();
         return None;
@@ -8154,17 +8153,11 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
         body.code.get(pc as usize).and_then(|packed| {
             let op = decoded_instruction(body, *packed).op();
             super::compiled::base_region::leave(site.function(), pc, op);
-            // A BaseJIT region's cache miss: the interpreter's run of the access re-patches the
-            // entry at the next entry (`lane_loop_repatch`), which counts the leave if it patches nothing.
-            if crate::jit_mode::base_regions() && (matches!(op.class(), Class::GetField) || op.is_field_store()) {
-                site.tier.borrow_mut().missed_at(pc);
-                return None;
-            }
             (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
                 || matches!(op.class(), Class::LoadCapture)).then(|| op.is_get_index())
         })
     });
-    if let Some(read) = counted { site.tier.borrow_mut().left_at(pc, read); }
+    if let Some(read) = counted { site.tier.borrow_mut().left_at(pc as usize, read); }
 }
 
 /// Gives `site` its `header` record (`LoopSite::hookable`) once its region has code: the
@@ -15081,7 +15074,7 @@ fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, pc: u
         .unwrap_or((std::ptr::null(), 0));
     Some(super::compiled::DirectCallee {
         target, method, body, call: view.records().wrapping_add(pc).addr(), cell: view_of.entry_cell(),
-        callee: target.callee, registers: target.registers, sloppy, capture_values, capture_len, forwarder: None,
+        callee: target.callee, registers: target.registers, sloppy, capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None,
     })
 }
 
@@ -15170,7 +15163,7 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
         call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(), cell: unsafe { &*target.view }.entry_cell(),
         callee: leaf, registers: target.registers,
         sloppy: (target.this_binding == ThisBinding::Sloppy).then_some(vm.realm.globals),
-        capture_values, capture_len, forwarder: None,
+        capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None,
     });
     let root_method = vm.compile_lane_method(&program, root_target.function,
         &|_, _| Vec::new(), &|_| (0, 0), direct, &[]).unwrap();

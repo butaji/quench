@@ -82,7 +82,7 @@ fn live_nowhere(web: Register, successors: impl IntoIterator<Item = u32>, live_a
 
 /// Whether the web row `k` wrote is dead after it: live at neither its fall-through nor its branch target.
 fn dead_after(layout: &Layout, decoded: &[Decoded], k: usize, web: Register) -> bool {
-    let next = layout.header + k as u32 + 1;
+    let next = layout.span.header + k as u32 + 1;
     live_nowhere(web, std::iter::once(next).chain(decoded[k].target), |pc| layout.webs.live_at(&layout.span, pc))
 }
 

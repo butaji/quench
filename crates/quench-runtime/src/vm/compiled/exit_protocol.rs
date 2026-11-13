@@ -47,6 +47,11 @@ impl ExitKind {
 }
 
 impl LaneExit {
+    /// Whether the run ended the activation, by its return or by an exception, rather than
+    /// leaving it to the lane.
+    pub(super) fn completes(self) -> bool {
+        matches!(self, Self::Returned { .. } | Self::Threw { .. })
+    }
     /// The word a leave is emitted as; a completion is a status, which has none.
     pub(super) fn word(self) -> u64 {
         match self {

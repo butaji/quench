@@ -44,7 +44,7 @@ impl LaneMethod {
         Some(Self {
             dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, atoms: body.atoms, instanceofs: body.instanceofs, layouts: body.layouts, slots: body.slot_types, ..Default::default() }, invalidation, _code: memory, entry,
             recovery_space: super::super::dispatch_fast::LaneRecoverySpace::inlined(&body.frames), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
-            names_shapes: !direct.is_empty(), scratch_width, framed: true,
+            names_shapes: !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
             caller_registers: registers, amortizes: body.loops || body.covered >= TIERS.lane_body.min_instructions || !direct.is_empty(),
             direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames,
         })
@@ -103,8 +103,6 @@ impl<H: Host> Vm<H> {
         let known = Known {
             program, stores: folds.then(|| self.method_cache_atoms.bits()),
             reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
-            adds: folds.then_some(&adds as &dyn Fn(u16, crate::bytecode::Atom, bool) -> Option<crate::staged::add_plan::AddSite>),
-            names: folds.then_some(&names as &dyn Fn(u16, crate::bytecode::Atom) -> Option<(crate::staged::add_plan::Transition, u64)>),
             adds: folds.then_some(&adds as &dyn Fn(u16, crate::bytecode::Atom, bool) -> Option<crate::staged::add_plan::AddSite>),
             names: folds.then_some(&names as &dyn Fn(u16, crate::bytecode::Atom) -> Option<(crate::staged::add_plan::Transition, u64)>),
             invalidation: Some(invalidation.address()),

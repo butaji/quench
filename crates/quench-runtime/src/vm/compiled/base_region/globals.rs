@@ -171,7 +171,7 @@ pub(super) fn receiver_row(homes: &Homes, register: Register, pc: u32) -> Result
     let slot = u64::from(homes.orig[usize::from(register)]) * SLOT;
     Ok(Planned::single(
         base_rows::stencil(row)?,
-        [slot, Value::UNDEFINED.to_bits(), 0],
+        quench_bjit::padded_holes([slot, Value::UNDEFINED.to_bits()]),
         None,
         Some(pc),
     ))

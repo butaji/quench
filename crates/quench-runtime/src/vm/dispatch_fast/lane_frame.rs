@@ -5,7 +5,7 @@ use super::lane_reads::{RecordOperand, Reads};
 use crate::bytecode::{Operand, Register};
 use crate::typed_ir::Type;
 use crate::bytecode::RegisterWindow;
-use crate::staged::{Allocation, CallOut, Comparison, Concrete, Constant, Edge, Frame, GlobalBinding, NumberOperation, NumericFrame, Operation, Step};
+use crate::staged::{Allocation, CallOut, Comparison, Concrete, Constant, Edge, Frame, GlobalBinding, NumberOperation, NumericFrame, Operation, Step, read_initialized_local, write_initialized_local, write_local};
 
 /// The maker of a frame's heap values: allocates in the lane context it is given and runs no
 /// guest code; `None` leaves the instruction to the general path.

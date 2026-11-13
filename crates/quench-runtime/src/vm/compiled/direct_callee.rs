@@ -27,6 +27,8 @@ pub(in crate::vm) struct DirectCallee {
     /// The callee's dense capture slots (`EnvironmentSlots::native_dense_view`).
     pub(in crate::vm) capture_values: *const Value,
     pub(in crate::vm) capture_len: usize,
+    /// Whether those slots admit every direct store (`dispatch_fast::capture_stores`).
+    pub(in crate::vm) capture_stores: bool,
     /// For a construction site, the forwarding constructor whose activation the call skips:
     /// `callee` is that constructor, which the call guards, and `target` its forwarded
     /// initializer, which runs with the receiver the constructor's plan allocates and

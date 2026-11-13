@@ -233,31 +233,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// The facts a lowering may take of `instanceof constructor` as Stable, from what the steady case
-    /// remembers of the constructor (its layout, its prototype slot, the holder it inherits the
-    /// native `@@hasInstance` from): `None` where the steady case has not proved them.
-    pub(super) fn instanceof_fact(&self, constructor: Value) -> Option<crate::code_dependencies::InstanceofFact> {
-        let FunctionRecord { kind, object, .. } = self.heap.function(constructor)?;
-        if matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) {
-            return None;
-        }
-        let (shape, slot) = self.instanceof_constructor_layouts[instanceof_layout_index(object.shape())]?;
-        let holder = object.proto();
-        if shape != object.shape()
-            || object.proto_link() != self.instanceof_has_instance_link && !self.remembers_inheriting_holder(holder)
-        {
-            return None;
-        }
-        // SAFETY: as `steady_instanceof`: the memo names the slot of `prototype` in the shape it holds.
-        let prototype = unsafe { self.heap.property_get_shaped(object, slot) }?;
-        Some(crate::code_dependencies::InstanceofFact {
-            link: ProtoLink::object_record(prototype.direct_object_index()?).bits(),
-            shape: object.exact_shape(),
-            slot: u16::try_from(slot).ok()?,
-            holder: self.heap.object(holder)?.exact_shape(),
-        })
-    }
-
     /// `ordinary_instanceof`'s steady case, which calls nothing: the remembered constructor
     /// layout and `@@hasInstance` holder, and a primitive or a value whose chain is object
     /// records up to the prototype or `null`. `None` leaves the rest to

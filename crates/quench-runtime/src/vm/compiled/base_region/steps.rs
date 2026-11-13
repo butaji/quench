@@ -53,7 +53,7 @@
 //! (`lowering`), never from a table of opcodes here.
 
 use super::*;
-use super::call_plan::{self, CallChain, CallPart, CallPlan, CallShape, Choice};
+use super::call_plan::{self, CallChain, CallForm, CallPart, CallPlan, CallShape, Choice};
 use super::callees::chains;
 use super::super::{LaneHelper, LaneHelpers};
 use crate::bytecode::{InstructionField, Op};
@@ -205,7 +205,7 @@ pub(super) fn calls_in_place(instruction: WideInstruction, helpers: LaneHelpers)
 /// Whether `instruction` is a global name store or `typeof`, a call-out the VM makes in place
 /// (`LaneHelper::VmStep`) that writes at most one register.
 fn calls_out(instruction: WideInstruction) -> bool {
-    let call = crate::staged::Operation::<(), ()>::decode(instruction, |_| None).and_then(|row| row.call_out());
+    let call = crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::EMPTY).and_then(|row| row.call_out());
     instruction.result_flags() == 0 && matches!(call, Some((crate::staged::CallOut::GlobalWrite { .. } | crate::staged::CallOut::GlobalTypeof { .. }, _)))
 }
 

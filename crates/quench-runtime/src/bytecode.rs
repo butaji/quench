@@ -1405,7 +1405,8 @@ pub struct Function {
     /// (`js_compiled::function_candidate`), derived on its first entry; never serialized.
     pub(crate) js_tier_candidate: std::cell::OnceCell<bool>,
     /// Lazily derived `call_plan`; never serialized.
-    pub(crate) call_plan: std::cell::OnceCell<CallPlan>,
+    /// `CallPlan::to_bits`, packed: the plan's flags are one word, not a byte each.
+    pub(crate) call_plan: std::cell::OnceCell<u16>,
     /// Lazily derived `initializer_stores`; never serialized.
     pub(crate) initializer: std::cell::OnceCell<Option<crate::heap::ThinBoxSlice<InitializerStore>>>,
     pub(crate) handlers: crate::heap::ThinBoxSlice<Handler>,
@@ -2320,7 +2321,7 @@ impl Function {
 
     /// The function's `CallPlan`, derived on first use.
     #[inline(always)] pub(crate) fn call_plan(&self, tables: &impl FactTables) -> CallPlan {
-        *self.call_plan.get_or_init(|| self.derive_call_plan(tables))
+        CallPlan::from_bits(u32::from(*self.call_plan.get_or_init(|| u16::try_from(self.derive_call_plan(tables).to_bits()).expect("the plan's flags fit 16 bits"))))
     }
 
     fn derive_call_plan(&self, tables: &impl FactTables) -> CallPlan {
@@ -2460,7 +2461,7 @@ impl Function {
         let _ = self.live_parameter_reflection.set(fact(DerivedFact::LiveParameters));
         let _ = self.static_name_scope.set(fact(DerivedFact::StaticNameScope));
         let _ = self.dynamic_scope_access.set(fact(DerivedFact::DynamicScopeAccess));
-        let _ = self.call_plan.set(CallPlan::from_bits(bits >> DERIVED_FACT_COUNT));
+        let _ = self.call_plan.set(u16::try_from(bits >> DERIVED_FACT_COUNT).expect("the plan's flags fit 16 bits"));
     }
 
     /// Whether each fact `derived_facts` packs is this function's own derivation, whether it

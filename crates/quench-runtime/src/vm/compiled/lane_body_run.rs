@@ -33,7 +33,7 @@ impl<H: Host> Vm<H> {
         #[cfg(test)]
         LANE_ENTRIES.with(|counts| counts.set((counts.get().0 + 1, counts.get().1)));
         // SAFETY: the activation's capture slots outlive its body's run, which collects nothing.
-        let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(run.captures) }
+        let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(super::super::dispatch_fast::capture_reads(run.captures)) }
             .unwrap_or((std::ptr::null(), 0));
         // SAFETY: the frame lives for the thread and is never moved once made; no reference
         // into it is held across the body's run, which may enter it again
@@ -43,7 +43,7 @@ impl<H: Host> Vm<H> {
         let context = unsafe { self.bind_body_entry(frame, run) };
         #[cfg(test)]
         LANE_RUN_REWRITES.with(|count| count.set(count.get() + usize::from(bound != unsafe { (*frame).run_words() })));
-        let captures = entry_cell::capture_word(capture_values, capture_len);
+        let captures = entry_cell::capture_word(capture_values, capture_len, super::super::dispatch_fast::capture_stores(run.captures).is_some());
         // SAFETY: the body was compiled for this function, never allocates or collects, and
         // reads only the registers, constants and heap bases bound above.
         let BodyReturn { status, value: word } = unsafe { self.call_body(run, context, captures) };

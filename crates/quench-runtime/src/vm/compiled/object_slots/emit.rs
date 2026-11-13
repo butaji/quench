@@ -20,9 +20,6 @@ pub(in crate::vm::compiled) struct Emit<'a, 'b> {
     /// The property arena's value base (`Table::PropertyValues`), where the operation
     /// addresses a run; a read through a proved layout already holds its address.
     pub(in crate::vm::compiled) property_values: Option<ir::Value>,
-    /// The dispatch payload that holds the object marks the store barrier's test reads, where
-    /// the operation stores (`Stage::store_gate`).
-    pub(in crate::vm::compiled) gate: Option<ir::Value>,
     /// The dispatch payload that holds the slot-observation flag and the object marks the store
     /// barrier's test reads, where the operation stores (`Stage::store_gate`).
     pub(in crate::vm::compiled) gate: Option<ir::Value>,
@@ -136,12 +133,15 @@ impl Stage for Emit<'_, '_> {
     /// Whether the store needs no barrier log: the shared tag and mark test. A value the frame
     /// proved immediate never asks (`staged::store`); a stage with no payload answers no, and
     /// the store leaves at its miss.
-    fn store_gate(&mut self, record_id: ir::Value, value: ir::Value) -> ir::Value {
+    fn store_gate(&mut self, space: crate::staged::RecordSpace, record_id: ir::Value, value: ir::Value) -> ir::Value {
         let Some(payload) = self.gate else { return self.ult(record_id, record_id) };
         let (logged, join) = (self.builder.create_block(), self.builder.create_block());
         self.builder.set_cold_block(logged);
         let open = self.builder.append_block_param(join, types::I8);
-        super::super::emit_unlogged_property_store_guard(self.builder, payload, record_id, value, logged);
+        let tracked = super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, slots_tracked));
+        let untracked = ins!(self, icmp_imm_u(IntCC::Equal, tracked, 0));
+        super::super::emit_js_guard(self.builder, untracked, logged);
+        super::super::emit_unlogged_property_store_guard(self.builder, space, payload, record_id, value, logged);
         let yes = ins!(self, iconst(types::I8, 1));
         ins!(self, jump(join, &[ir::BlockArg::Value(yes)]));
         self.builder.switch_to_block(logged);
@@ -590,7 +590,7 @@ mod tests {
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         let [payload, record, value] = builder.block_params(entry).try_into().unwrap();
-        let open = Emit { builder: &mut builder, property_values: None, gate: Some(payload) }.store_gate(record, value);
+        let open = Emit { builder: &mut builder, property_values: None, gate: Some(payload) }.store_gate(crate::staged::RecordSpace::Object, record, value);
         let open = builder.ins().uextend(types::I64, open);
         builder.ins().return_(&[open]);
         builder.seal_all_blocks();
