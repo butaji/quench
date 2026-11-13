@@ -9,6 +9,9 @@ use quench_stencil_mine::weights::{TraceGrams, Weights, parse_census};
 use std::path::PathBuf;
 
 const DEFAULT_TOP: usize = 40;
+/// Exit statuses: a command-line mistake, a failed run.
+const USAGE_STATUS: i32 = 2;
+const FAILURE_STATUS: i32 = 1;
 const USAGE: &str = "usage: quench-stencil-mine [--census FILE] [--trace FILE] [--json FILE] [--top N] \
 [--max-supernodes N] [--max-variants N] PATH...\n  PATH: JavaScript files or directories\n  \
 --census: stderr of a QUENCH_TRACE=census=all run (profile-aggregate build)\n  \
@@ -25,19 +28,36 @@ struct Args {
     variants: Option<u64>,
 }
 
+impl Args {
+    /// Applies the option `flag`, taking its value from `args`.
+    fn set(&mut self, flag: &str, args: &mut impl Iterator<Item = String>) -> Result<(), String> {
+        let mut value = || args.next().ok_or(format!("{flag} needs a value"));
+        match flag {
+            "--census" => self.census = Some(value()?.into()),
+            "--trace" => self.trace = Some(value()?.into()),
+            "--json" => self.json = Some(value()?.into()),
+            "--top" => self.top = Some(number(flag, &value()?)?),
+            "--max-supernodes" => self.supernodes = Some(number(flag, &value()?)?),
+            "--max-variants" => self.variants = Some(number(flag, &value()?)?),
+            _ => return Err(format!("unknown option {flag}\n{USAGE}")),
+        }
+        Ok(())
+    }
+}
+
+fn number<T: std::str::FromStr>(flag: &str, text: &str) -> Result<T, String>
+where
+    T::Err: std::fmt::Display,
+{
+    text.parse().map_err(|error| format!("{flag}: {error}"))
+}
+
 fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut parsed = Args::default();
     while let Some(arg) = args.next() {
-        let mut value = |name: &str| args.next().ok_or(format!("{name} needs a value"));
         match arg.as_str() {
-            "--census" => parsed.census = Some(value("--census")?.into()),
-            "--trace" => parsed.trace = Some(value("--trace")?.into()),
-            "--json" => parsed.json = Some(value("--json")?.into()),
-            "--top" => parsed.top = Some(value("--top")?.parse().map_err(|e| format!("--top: {e}"))?),
-            "--max-supernodes" => parsed.supernodes = Some(value("--max-supernodes")?.parse().map_err(|e| format!("--max-supernodes: {e}"))?),
-            "--max-variants" => parsed.variants = Some(value("--max-variants")?.parse().map_err(|e| format!("--max-variants: {e}"))?),
             "--help" | "-h" => return Err(USAGE.to_string()),
-            flag if flag.starts_with("--") => return Err(format!("unknown option {flag}\n{USAGE}")),
+            flag if flag.starts_with("--") => parsed.set(flag, &mut args)?,
             path => parsed.paths.push(path.into()),
         }
     }
@@ -84,7 +104,7 @@ fn main() {
         Ok(args) => args,
         Err(message) => {
             eprintln!("{message}");
-            std::process::exit(2);
+            std::process::exit(USAGE_STATUS);
         }
     };
     // The compiler recurses deeply on nested source; run on the runtime's worker stack size.
@@ -93,8 +113,8 @@ fn main() {
         Ok(Ok(Ok(()))) => {}
         Ok(Ok(Err(message))) => {
             eprintln!("{message}");
-            std::process::exit(1);
+            std::process::exit(FAILURE_STATUS);
         }
-        _ => std::process::exit(1),
+        _ => std::process::exit(FAILURE_STATUS),
     }
 }

@@ -33,7 +33,7 @@ impl Op {
 
     /// A JavaScript conditional branch on a value or a binary comparison.
     pub(crate) const fn is_js_conditional_jump(self) -> bool {
-        matches!(self, Op::JumpFalse | Op::JumpTrue) || self.compares_and_jumps()
+        self.is_truthiness_jump() || self.compares_and_jumps()
     }
 
     /// A branch on a binary comparison of two operands.

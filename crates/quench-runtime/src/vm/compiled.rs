@@ -60,9 +60,6 @@ pub(super) use lane_region::ElementViews;
 use osr_compile::OsrFacts;
 use crate::typed_ir;
 
-/// Whole-program values by atom (`frozen_globals`, `frozen_fields`): sparse over the atom
-/// table, and ordered because an image's assumptions list them in atom order.
-type FrozenValues = std::collections::BTreeMap<Atom, Value>;
 /// A loop region's proved field loads by cache site, in site order (`lane_region`'s table).
 type FieldLoads = std::collections::BTreeMap<u16, Vec<NativeFieldLoad>>;
 /// A loop region's entry fields by PC (`lane_region`'s table).
@@ -194,6 +191,10 @@ mod ahead_entry_tests;
 pub(super) use ahead_entry::{lower_ahead_entry, AheadTargets};
 #[cfg(feature = "aot")]
 mod eager;
+#[cfg(feature = "aot")]
+mod frozen;
+#[cfg(feature = "aot")]
+pub(super) use frozen::{frozen_fields, frozen_global_reads, frozen_globals};
 #[cfg(feature = "aot")]
 pub(super) use eager::compile_eager_native;
 #[cfg(unix)]
@@ -1630,7 +1631,7 @@ pub(super) struct VmFacts<'a> {
     /// running VM's feedback: `Division::Frozen` instead of `Division::Online`.
     pub(super) frozen: bool,
     /// Whole-program prototype values by atom, each guarded at its read site.
-    pub(super) frozen_fields: Option<&'a FrozenValues>,
+    pub(super) frozen_fields: Option<&'a crate::dense_map::DenseMap<Value>>,
     /// The image's constant block, materialized after realm initialization.
     pub(super) frozen_constants: Option<usize>,
 }
@@ -4107,109 +4108,6 @@ fn publish_code(code: &[u8]) -> Option<CodeMemory> {
     Some(memory)
 }
 
-/// How many instructions of the program, over all functions, `counted` gives each atom.
-#[cfg(feature = "aot")]
-fn atom_store_counts(program: &ResidualProgram, counted: impl Fn(WideInstruction) -> bool) -> Vec<u32> {
-    let mut counts = vec![0_u32; program.atoms.len()];
-    for id in 0..program.function_count() {
-        let function = program.function(id);
-        for &packed in function.code.iter() {
-            let instruction = super::dispatch_fast::decoded_instruction(function, packed);
-            if counted(instruction) && let Some(count) = counts.get_mut(instruction.atom_index() as usize) {
-                *count += 1;
-            }
-        }
-    }
-    counts
-}
-
-/// The root's stores `stored` names an atom for, whose source register holds an immediate
-/// the root loaded, as (atom, value) in program order.
-#[cfg(feature = "aot")]
-fn root_immediate_stores(program: &ResidualProgram, stored: impl Fn(WideInstruction) -> Option<Atom>) -> FrozenValues {
-    let root = program.function(0);
-    let mut values = FrozenValues::new();
-    let mut immediates: Vec<Option<Value>> = vec![None; usize::from(root.registers)];
-    for &packed in root.code.iter() {
-        let instruction = super::dispatch_fast::decoded_instruction(root, packed);
-        for register in instruction.written_registers() {
-            if let Some(slot) = immediates.get_mut(usize::from(register)) { *slot = None; }
-        }
-        if instruction.op().js_denotation() == crate::bytecode::JsDenotation::LoadConst {
-            let value = program.constants.get(instruction.constant_index()).and_then(facts::immediate);
-            if let Some(slot) = immediates.get_mut(usize::from(instruction.result_register())) { *slot = value; }
-        } else if let Some(atom) = stored(instruction)
-            && let Some(Some(value)) = immediates.get(usize::from(instruction.register_a())) {
-            values.insert(atom, *value);
-        }
-    }
-    values
-}
-
-/// Whole-program globals a frozen image may fold: a `var` the program writes exactly
-/// once, with an immediate, before any other function can observe it.
-#[cfg(feature = "aot")]
-pub(super) fn frozen_globals(program: &ResidualProgram) -> FrozenValues {
-    let candidates: Vec<Atom> = program.function(0).global_var_atoms().iter().copied().collect();
-    let stores = atom_store_counts(program, |instruction| instruction.op().stores_name());
-    // The declaration's own store (`initializing`) carries its initializer.
-    root_immediate_stores(program, |instruction| {
-        let atom = instruction.atom_index();
-        (instruction.op().stores_name() && instruction.b() != 0 && candidates.contains(&atom)
-            && stores.get(atom as usize) == Some(&1)).then_some(atom)
-    })
-}
-
-/// Whole-program prototype values: a field the root stores exactly once with an
-/// immediate (a constructor's `prototype.k = <immediate>`), folded at each read and
-/// guarded there. Accessor definitions are outside this analysis.
-#[cfg(feature = "aot")]
-pub(super) fn frozen_fields(program: &ResidualProgram) -> FrozenValues {
-    let field_store = |instruction: WideInstruction| instruction.op().js_denotation() == crate::bytecode::JsDenotation::FieldStore;
-    let counts = atom_store_counts(program, field_store);
-    root_immediate_stores(program, |instruction| {
-        let atom = instruction.atom_index();
-        (field_store(instruction) && counts.get(atom as usize) == Some(&1)).then_some(atom)
-    })
-}
-
-/// Each by-name load or capture read of a frozen global, with the closure's whole-program
-/// value. A capture read names the binding through the environment slot it closes over, so
-/// its owner's local atom decides whether it reads a frozen global; the value it actually
-/// loads is compared with the frozen one at the read site, which keeps the fold sound even
-/// for a read before the declaration.
-#[cfg(feature = "aot")]
-pub(super) fn frozen_global_reads(program: &ResidualProgram, function: &Function,
-    globals: &FrozenValues,
-) -> crate::vm::global_facts::GlobalReads {
-    let frozen = |atom: Atom| globals.get(&atom).map(|&value|
-        crate::vm::global_facts::GlobalRead::Frozen { value, ty: crate::typed_ir::Type::immediate(value) });
-    function.code.iter().enumerate().filter_map(|(pc, &packed)| {
-        let instruction = super::dispatch_fast::decoded_instruction(function, packed);
-        let read = if instruction.op().loads_name() {
-            frozen(instruction.atom_index())
-        } else if instruction.op().addresses_capture() {
-            capture_binding_atom(program, function, instruction).and_then(frozen)
-        } else {
-            None
-        };
-        read.map(|read| (pc, read))
-    }).collect()
-}
-
-/// The atom a capture read names: the local atom of the slot its environment closes over.
-#[cfg(feature = "aot")]
-fn capture_binding_atom(program: &ResidualProgram, function: &Function,
-    instruction: crate::bytecode::WideInstruction,
-) -> Option<Atom> {
-    let mut owner = function.parent?;
-    for _ in 0..crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) {
-        owner = program.function(owner as usize).parent?;
-    }
-    let slot = usize::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()));
-    program.function(owner as usize).local_atoms.get(slot).copied()
-}
-
 /// Eager publication has no code-cache admission budget: all requested bodies
 /// must compile or the whole program fails. Owners release code and operands together.
 use super::jit_backend::NativeCompileRejection;
@@ -4447,11 +4345,10 @@ pub(super) const LANE_BODY_RETURNED: u32 = RETURN_STATUS_BASE - 1;
 /// What a lane body's native call (`dispatch_fast::lane_body_call`) did: completed, with its
 /// result in the call's register; missed before any effect, so the body leaves at the call;
 /// or left the lane in the callee's activation it made.
-pub(super) const LANE_CALL_COMPLETED: u64 = 0;
-pub(super) const LANE_CALL_MISSED: u64 = 1;
-pub(super) const LANE_CALL_LEFT: u64 = 2;
 /// Termination is terminal: the outer native body must not reconstruct or replay a call.
-pub(super) const LANE_CALL_TERMINATED: u64 = 3;
+pub(super) use quench_bjit::call_record::{
+    LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_TERMINATED,
+};
 
 impl LaneExit {
     /// The caller PC a leave or completion is at, with a completion's value written to the
@@ -5372,7 +5269,7 @@ pub(super) fn native_js_operation_signature(
     signature
 }
 
-pub(super) const NATIVE_JS_STOPPED: u32 = 1;
+pub(super) use quench_bjit::call_record::NATIVE_JS_STOPPED;
 #[cfg(feature = "aot")]
 pub(super) const NATIVE_JS_INVALID_PC: u32 = 2;
 #[cfg(feature = "native-execution")]

@@ -44,6 +44,7 @@ pub use execution_interrupt::ExecutionInterrupt;
 pub use vm::NativeFaultHandler;
 mod bigint;
 mod bitset;
+mod dense_map;
 mod bytecode;
 mod compile;
 mod code_dependencies;

@@ -2,7 +2,7 @@ use super::*;
 use quench_bjit::{exit_stub, padded_holes, patch_successor, EXIT_STUB_LEN, HOLES};
 
 /// `jmp rel32`: a resume stub's last row, which jumps to its PC's first row.
-pub(super) const JMP_REL32: u8 = 0xe9;
+pub(super) use quench_bjit::stub::JMP_REL32;
 pub(super) const JUMP_LEN: usize = 1 + std::mem::size_of::<u32>();
 
 /// A routine of the stencil build (`quench-bjit/stencils/entry.rs`) by name.

@@ -14,6 +14,9 @@ pub(crate) const LAST_HOLE: u8 = 4;
 /// The holes of the first and second operand.
 pub(crate) const HOLE_A: u8 = 1;
 pub(crate) const HOLE_B: u8 = 2;
+/// The value holes after the operands' (`HOLE_V0`..`HOLE_V4` are 0..=`LAST_HOLE`).
+pub(crate) const HOLE_THIRD: u8 = 2;
+pub(crate) const HOLE_FOURTH: u8 = 3;
 
 unsafe extern "C" {
     pub(crate) static HOLE_V0: u8;
@@ -89,8 +92,8 @@ pub(crate) fn hole64<const H: u8>() -> u64 {
         match H {
             0 => hole_word!(HOLE_V0),
             1 => hole_word!(HOLE_V1),
-            2 => hole_word!(HOLE_V2),
-            3 => hole_word!(HOLE_V3),
+            HOLE_THIRD => hole_word!(HOLE_V2),
+            HOLE_FOURTH => hole_word!(HOLE_V3),
             _ => hole_word!(HOLE_V4),
         }
     }
@@ -106,8 +109,8 @@ pub(crate) fn hole<const H: u8>() -> usize {
     match H {
         0 => &raw const HOLE_V0 as usize,
         1 => &raw const HOLE_V1 as usize,
-        2 => &raw const HOLE_V2 as usize,
-        3 => &raw const HOLE_V3 as usize,
+        HOLE_THIRD => &raw const HOLE_V2 as usize,
+        HOLE_FOURTH => &raw const HOLE_V3 as usize,
         _ => &raw const HOLE_V4 as usize,
     }
 }

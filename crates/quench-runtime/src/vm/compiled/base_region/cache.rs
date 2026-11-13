@@ -52,7 +52,7 @@ pub(super) fn cached_get(instruction: WideInstruction, loads: &[NativeFieldLoad]
     let receiver = base.register_index()?;
     let loads: Vec<NativeFieldLoad> = loads.iter().filter(|load| takes_get(load)).take(MAX_CACHE_ENTRIES).copied().collect();
     let row = Decoded::heap(Heap::CacheGet, Some(instruction.result_register()), Some(Source::Register(receiver)), None);
-    (!loads.is_empty()).then_some(Decoded { cache: Some(Cache { atom, loads }), ..row })
+    (!loads.is_empty()).then_some(Decoded { field_entry: Some(Cache { atom, loads }), ..row })
 }
 
 /// A named field store to a register receiver through the entries the region's reads of the same
@@ -70,7 +70,7 @@ pub(super) fn cached_set(region: &LoopRegion, instruction: WideInstruction, load
     let observed = named().filter(|(_, field)| field.receiver == FieldReceiver::Register(receiver)).filter_map(|(index, _)| loads.get(index)).flatten();
     let loads: Vec<NativeFieldLoad> = observed.filter(|load| takes_set(load)).take(MAX_CACHE_ENTRIES).copied().collect();
     let row = Decoded::heap(Heap::CacheSet, None, Some(Source::Register(instruction.register_a())), None);
-    (!loads.is_empty()).then_some(Decoded { base: Some(receiver), cache: Some(Cache { atom, loads }), ..row })
+    (!loads.is_empty()).then_some(Decoded { base: Some(receiver), field_entry: Some(Cache { atom, loads }), ..row })
 }
 
 /// One entry's row and holes. `operands` are the row's frame operands, the first two holes.

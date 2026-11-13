@@ -76,7 +76,7 @@ const CALL_ROW_PREFIX: &str = "call_";
 /// has no call, which a relocation against a non-hole symbol would already have failed.
 pub fn check_call(arch: Arch, row: &str, code: &[u8]) {
     let calls = match arch {
-        Arch::X86_64 => code.windows(2).any(|pair| pair[0] == X86_CALL_INDIRECT_OPCODE && (pair[1] >> X86_MODRM_REG_SHIFT) & X86_MODRM_REG_MASK == X86_CALL_INDIRECT_EXTENSION),
+        Arch::X86_64 => code.iter().zip(code.iter().skip(1)).any(|(&opcode, &modrm)| opcode == X86_CALL_INDIRECT_OPCODE && (modrm >> X86_MODRM_REG_SHIFT) & X86_MODRM_REG_MASK == X86_CALL_INDIRECT_EXTENSION),
         Arch::Aarch64 => code.chunks_exact(A64_WORD).any(|word| word_at(word, 0) & A64_CALL_REG.0 == A64_CALL_REG.1),
     };
     assert!(calls || !row.starts_with(CALL_ROW_PREFIX), "stencil {row}: a call row with no indirect call");

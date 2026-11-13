@@ -157,7 +157,7 @@ pub fn patch_value(code: &mut [u8], offset: usize, class: u8, value: u64) {
 mod tests {
     use super::*;
 
-    const B: u32 = 0x1400_0000;
+    use crate::stub::A64_B as B;
     const BCOND_EQ: u32 = 0x5400_0000;
     const TBZ: u32 = 0x3600_0000;
     const MOVZ_X0: u32 = 0xd280_0000;

@@ -46,6 +46,6 @@ pub fn dynamic_frequency(candidate: &Candidate, weights: &Weights, sequence_site
     };
     let opcodes = candidate.pattern.opcodes();
     let share = candidate.sites.len() as f64 / sequence_sites[&opcodes] as f64;
-    let rarest = opcodes.iter().map(|op| weights.dynamic.get(op).copied().unwrap_or(0.0)).fold(f64::INFINITY, f64::min);
+    let rarest = opcodes.iter().map(|op| weights.dynamic.get(*op)).fold(f64::INFINITY, f64::min);
     (trace.gram(&opcodes) as f64 * share).min(rarest)
 }

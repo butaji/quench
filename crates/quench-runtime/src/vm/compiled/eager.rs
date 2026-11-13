@@ -39,14 +39,14 @@ pub(crate) fn compile_eager_native<H: Host>(
 /// The whole-program assumptions an eager image carries: its invalidation word, the atoms,
 /// globals and fields it folded, and its constants.
 #[cfg(feature = "aot")]
-fn frozen_assumptions(owners: &mut EagerOwners, globals: &std::collections::BTreeMap<Atom, Value>, fields: &std::collections::BTreeMap<Atom, Value>,
+fn frozen_assumptions(owners: &mut EagerOwners, globals: &crate::dense_map::DenseMap<Value>, fields: &crate::dense_map::DenseMap<Value>,
     constants: Rc<std::cell::RefCell<Box<[Value]>>>, invalidation: crate::code_dependencies::Invalidation,
 ) -> crate::vm::native_program::FrozenAssumptions {
     crate::vm::native_program::FrozenAssumptions {
         invalidation: owners.invalidation.clone(),
-        atoms: std::mem::take(&mut owners.frozen_atoms).into_iter().collect(),
-        globals: globals.keys().copied().collect(),
-        fields: fields.keys().copied().collect(),
+        atoms: std::mem::take(&mut owners.frozen_atoms).iter().map(|atom| atom as Atom).collect(),
+        globals: globals.keys().collect(),
+        fields: fields.keys().collect(),
         constants,
         watch: Rc::new(crate::code_dependencies::PublishedCode::with_invalidation((), invalidation)),
     }
@@ -63,7 +63,7 @@ pub(super) struct EagerOwners {
     /// The word the image's stable facts are checked against.
     invalidation: crate::code_dependencies::Invalidation,
     /// Method atoms the image holds unnamed (`StableFacts::atoms`).
-    frozen_atoms: std::collections::BTreeSet<Atom>,
+    frozen_atoms: crate::bitset::BitSet,
 }
 
 /// The call-threaded generating extension for live Cranelift code: semantic
@@ -72,9 +72,9 @@ pub(super) struct EagerOwners {
 struct EagerCraneliftExtension<'p, H> {
     program: &'p ResidualProgram,
     /// Whole-program globals the lane bodies may fold.
-    globals: &'p std::collections::BTreeMap<Atom, Value>,
+    globals: &'p crate::dense_map::DenseMap<Value>,
     /// Whole-program prototype values the lane bodies may fold.
-    fields: &'p std::collections::BTreeMap<Atom, Value>,
+    fields: &'p crate::dense_map::DenseMap<Value>,
     /// The address of the image's constant block.
     constants: usize,
     isa: std::sync::Arc<dyn cranelift_codegen::isa::TargetIsa>,
@@ -151,7 +151,9 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
         let reads = frozen_global_reads(program, program.function_get(function_id as usize)?, self.globals);
         let (body, atoms) = lower_lane_body(program, function_id, isa,
             LaneHelpers::Process(LaneHelper::addresses::<H>()), facts, &reads)?;
-        self.owners.frozen_atoms.extend(atoms.iter().copied());
+        atoms.iter().for_each(|&atom| {
+            self.owners.frozen_atoms.insert_growing(atom as usize);
+        });
         publish_eager_graph(body, isa).ok()
     }
 

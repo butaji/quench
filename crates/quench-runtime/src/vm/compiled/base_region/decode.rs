@@ -47,13 +47,13 @@ pub(super) struct Decoded {
     pub(super) heap: Option<Heap>,
     pub(super) base: Option<Register>,
     pub(super) hole: u64,
-    /// The inline-cache entries of a field access (`cache`), which `plan` makes a chain of rows.
-    pub(super) cache: Option<Cache>,
+    /// The inline-cache entries of a field access (`field_entry`), which `plan` makes a chain of rows.
+    pub(super) field_entry: Option<Cache>,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, cache: None }
+        Self { kind, dst, a, b, target, heap: None, base: None, hole: 0, field_entry: None }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {

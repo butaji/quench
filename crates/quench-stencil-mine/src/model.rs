@@ -9,6 +9,8 @@ pub const MAX_TREE_DEPTH: usize = 3;
 /// A depth-3 tree of three-operand instructions could name 13 nodes; larger trees are not
 /// supernodes worth a stencil and are dropped.
 pub const MAX_TREE_NODES: usize = 7;
+/// A tree is a root and at least one producer.
+pub const MIN_TREE_NODES: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Label {

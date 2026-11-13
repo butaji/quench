@@ -1,5 +1,6 @@
 //! Mines real workloads for the bytecode supernodes worth giving a stencil: straight-line
 //! n-grams and dataflow trees, weighted by the dynamic opcode census or trace.
+pub mod bits;
 pub mod blocks;
 pub mod dataflow;
 pub mod inputs;

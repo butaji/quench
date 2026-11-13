@@ -14,6 +14,13 @@ pub(in crate::vm) struct Tiers {
     pub(in crate::vm) priors: Priors,
 }
 
+/// The priors the model tests pin their arithmetic to.
+#[cfg(test)]
+pub(in crate::vm) const TEST_PRIORS: Priors = Priors {
+    interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
+    region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800,
+};
+
 /// Parts per thousand, the unit of a prior's share.
 pub(in crate::vm) const PER_MILLE: u64 = 1000;
 

@@ -58,7 +58,8 @@ struct Analysis<'a> {
     hoisted_dense: &'a dyn Fn(usize) -> bool,
 }
 
-type Assumptions = BTreeMap<usize, Vec<(Register, IntRange)>>;
+/// The header assumptions a pass made, by unit PC (empty where no header assumed anything).
+type Assumptions = Vec<Vec<(Register, IntRange)>>;
 type Relaxed = BTreeMap<(usize, Register), Widening>;
 
 /// The ranges of `unit` entered at `entry`, where each `entering` register is guarded to its
@@ -88,7 +89,7 @@ impl Analysis<'_> {
         let len = self.unit.instructions.len();
         let mut proved = IntRanges::new(len);
         let mut incoming: Vec<Option<State>> = vec![None; len + 1];
-        let (mut assumed, mut failures) = (Assumptions::new(), Vec::new());
+        let (mut assumed, mut failures) = (vec![Vec::new(); len + 1], Vec::new());
         for pc in 0..len {
             let Some(mut state) = self.enter(pc, incoming[pc].take(), relaxed, &mut assumed) else { continue };
             self.visit(pc, &mut state, &mut proved);
@@ -147,7 +148,7 @@ impl Analysis<'_> {
             };
         }
         state.relations = fresh.relations;
-        assumed.insert(pc, carried);
+        assumed[pc] = carried;
         Some(state)
     }
 
@@ -164,7 +165,7 @@ impl Analysis<'_> {
     /// Records the assumptions of header `target` that the back edge's `next` state breaks.
     fn verify(&self, target: usize, next: &State, (assumed, relaxed): (&Assumptions, &Relaxed),
         failures: &mut Vec<((usize, Register), Widening)>) {
-        for &(register, assumption) in assumed.get(&target).into_iter().flatten() {
+        for &(register, assumption) in assumed.get(target).into_iter().flatten() {
             let kept = next.ranges[usize::from(register)];
             if kept.is_some_and(|range| assumption.contains(range)) { continue; }
             let key = (target, register);

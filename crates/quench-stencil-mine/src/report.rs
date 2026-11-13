@@ -1,6 +1,7 @@
 //! Text and JSON rendering of the ranked table and the recommended set.
 use crate::rank::Ranked;
 use crate::recommend::Budget;
+use quench_runtime::units::PERCENT;
 use serde_json::{Value, json};
 
 pub struct Report<'a> {
@@ -12,8 +13,6 @@ pub struct Report<'a> {
     pub ranked: &'a [Ranked],
     pub recommended: &'a [Ranked],
 }
-
-const PERCENT: f64 = 100.0;
 
 fn row_text(rank: usize, row: &Ranked) -> String {
     format!(

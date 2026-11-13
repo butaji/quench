@@ -41,8 +41,8 @@ pub fn workers(shards: usize, parallelism: usize) -> usize {
 pub fn merge(shards: impl IntoIterator<Item = Vec<(String, String)>>) -> Vec<(String, String)> {
     let mut rows: Vec<(String, String)> = shards.into_iter().flatten().collect();
     rows.sort();
-    if let Some(pair) = rows.windows(2).find(|pair| pair[0].0 == pair[1].0) {
-        panic!("stencil {} is defined by two shards", pair[0].0);
+    if let Some((row, _)) = rows.iter().zip(rows.iter().skip(1)).find(|(row, next)| row.0 == next.0) {
+        panic!("stencil {} is defined by two shards", row.0);
     }
     rows
 }

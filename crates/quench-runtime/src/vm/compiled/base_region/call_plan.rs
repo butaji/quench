@@ -232,6 +232,9 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts) -> Result<(CallPart, Box<
     Ok((part(stencil, padded_holes([std::ptr::from_ref(&*record).addr() as u64]), vec![Leave::Status]), record))
 }
 
+/// Rows a direct row's `taken` skips: itself and the helper row after it.
+const ROWS_PAST_DIRECT: usize = 2;
+
 /// The chain of a call (see the module doc for its layout and successors).
 pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
     let mut parts = plan.spills.iter().map(|&(place, register)| spill_part(place, register)).collect::<Result<Vec<_>, _>>()?;
@@ -243,7 +246,7 @@ pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
     let mut record = None;
     if let Some((mut row, owned)) = direct {
         // Past the direct row and the helper row that follows it: the first reload, or the next instruction.
-        row.taken = Some(parts.len() + 2);
+        row.taken = Some(parts.len() + ROWS_PAST_DIRECT);
         parts.push(row);
         record = Some(owned);
     }

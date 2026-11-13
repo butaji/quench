@@ -111,6 +111,8 @@ pub(super) struct LaneInstruction {
 /// polymorphic), so one keeps an entry at 32 bytes instead of 112.
 const INLINE_SITE_TARGETS: usize = 1;
 
+/// A `LaneView::loop_at_backedge` entry for an instruction that is no loop's backward jump.
+const NO_LOOP: u32 = u32::MAX;
 /// A `LaneInstruction::call_link` that names no entry: no cache holds this many.
 const NO_CALL_LINK: u16 = u16::MAX;
 const _: () = assert!(std::mem::size_of::<LaneInstruction>() == 3 * std::mem::size_of::<u64>());
@@ -335,6 +337,9 @@ pub(super) struct LaneView {
     /// The loops whose backward jumps run `lane_loop_jump`. The view owns them for the
     /// records that point into them, which are their only readers.
     loops: Box<[LoopSite]>,
+    /// Per instruction, the index in `loops` of the loop whose backward jump it is, or
+    /// `NO_LOOP`: built once with the loops, so a leave finds its loop by one index.
+    loop_at_backedge: Box<[u32]>,
     /// The vector regions whose first records point into them (`vector_region`): only
     /// those records read them.
     #[cfg_attr(not(test), allow(dead_code))]
@@ -19628,6 +19633,10 @@ fn derive_lane_view<'live, H: Host>(
     let string_case_filters = string_case_filter::specialize::<H>(heap, constants, &decoded, &mut records);
     let records = Records::new(records, decoded.iter().fold(false, |seen, instruction| seen || has_operand_feedback(instruction.op())));
     let first = records.base();
+    let mut loop_at_backedge = vec![NO_LOOP; decoded.len()];
+    for (index, site) in loops.iter().enumerate() {
+        loop_at_backedge[site.backedge as usize] = index as u32;
+    }
     LaneView {
         records,
         entries,
@@ -19638,6 +19647,7 @@ fn derive_lane_view<'live, H: Host>(
         environment_window,
         returns_from_entry,
         loops,
+        loop_at_backedge: loop_at_backedge.into_boxed_slice(),
         vector_regions,
         start: std::cell::Cell::new(first),
         prologue: std::cell::UnsafeCell::new(LaneInstruction {

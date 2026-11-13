@@ -1,6 +1,7 @@
 //! The ratchet: the counts each kernel and tier currently emit, which may only go down. A line is
 //! `kernel tier boxes guards spills calls instructions`; `#` starts a comment. A pair with no line
-//! has no ratchet yet and is held to its spec.
+//! has no ratchet yet: nothing it emits regresses until `--update-ratchet` records it. The spec is the target
+//! the report shows, not a ceiling.
 
 use super::{CATEGORY_COUNT, Counts, Kernel, Tier};
 use std::{collections::BTreeMap, fmt::Write};
@@ -40,12 +41,13 @@ impl Ratchet {
         self.0.contains_key(&(kernel.name.to_string(), tier))
     }
 
-    /// What `kernel` may emit on `tier`: its ratchet entry, else its spec.
-    pub fn ceiling(&self, kernel: &Kernel, tier: Tier) -> Counts {
+    /// The categories in which `counts` is above the recorded entry of `kernel` on `tier`: the
+    /// regressions. A pair with no entry has none.
+    pub fn regressions(&self, kernel: &Kernel, tier: Tier, counts: Counts) -> Vec<&'static str> {
         self.0
             .get(&(kernel.name.to_string(), tier))
-            .copied()
-            .unwrap_or_else(|| kernel.expected(tier))
+            .map(|recorded| counts.exceeding(*recorded).collect())
+            .unwrap_or_default()
     }
 
     /// The ratchet after `measured` (kernel, tier, counts): each entry the lower of its old value
