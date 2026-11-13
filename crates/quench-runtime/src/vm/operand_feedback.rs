@@ -181,15 +181,14 @@ pub(super) unsafe fn note_widened<H: Host>(cx: *mut LaneContext<H>, ip: Ip, resu
     }
 }
 
-/// `note_widened` of a division or remainder (`OP`) of `left` by `right`, which only int32
-/// operands can widen; any other operator or operand pair notes nothing.
+/// `note_widened` of the Number step of `left` and `right` (any operator), which only two int32
+/// operands can widen; any other operand pair notes nothing.
 ///
 /// # Safety
 /// As `note_operands`.
 #[inline(always)]
-pub(super) unsafe fn note_division_result<const OP: u32, H: Host>(cx: *mut LaneContext<H>, ip: Ip, left: Value, right: Value, result: Value) {
-    use super::super::operations::{DIVISION, REMAINDER};
-    if (OP == DIVISION || OP == REMAINDER) && Value::int_pair(left, right).is_some() {
+pub(super) unsafe fn note_pair_result<H: Host>(cx: *mut LaneContext<H>, ip: Ip, left: Value, right: Value, result: Value) {
+    if Value::int_pair(left, right).is_some() {
         // SAFETY: the caller's.
         unsafe { note_widened(cx, ip, result) };
     }

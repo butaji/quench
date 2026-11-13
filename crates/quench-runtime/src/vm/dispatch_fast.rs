@@ -654,7 +654,7 @@ mod body_calls;
 mod lane_leaves;
 #[path = "operand_feedback.rs"]
 pub(super) mod operand_feedback;
-use operand_feedback::{has_operand_feedback, note_division_result, note_first_miss, note_operands, note_widened, Records};
+use operand_feedback::{has_operand_feedback, note_first_miss, note_operands, note_pair_result, Records};
 #[path = "lane_body_tier.rs"]
 mod lane_body_tier;
 #[path = "loop_tier.rs"]
@@ -4268,8 +4268,6 @@ script_handler! {
             requicken::<H>(ip, lane_operator_numbers::<H, OP>);
             sibling!(lane_operator_numbers::<H, OP>, r, ip, Carried::script(cx))
         };
-        // SAFETY: the record is an arithmetic record of the running view.
-        unsafe { note_widened(cx, ip, value) };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -4332,7 +4330,7 @@ script_handler! {
             sibling!(lane_operator_other::<H, OP>, r, ip, Carried::script(cx))
         };
         // SAFETY: the record is an arithmetic record of the running view.
-        unsafe { note_division_result::<OP, H>(cx, ip, r.get(i.b), r.get(i.c), value) };
+        unsafe { note_pair_result(cx, ip, r.get(i.b), r.get(i.c), value) };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -4418,8 +4416,6 @@ script_handler! {
             requicken::<H>(ip, lane_operator_constant_numbers::<H, OP>);
             sibling!(lane_operator_constant_numbers::<H, OP>, r, ip, Carried::script(cx))
         };
-        // SAFETY: the record is an arithmetic record of the running view.
-        unsafe { note_widened(cx, ip, value) };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -4437,8 +4433,6 @@ script_handler! {
             requicken::<H>(ip, lane_operator_integer_constant_numbers::<H, OP>);
             sibling!(lane_operator_integer_constant_numbers::<H, OP>, r, ip, Carried::script(cx))
         };
-        // SAFETY: the record is an arithmetic record of the running view.
-        unsafe { note_widened(cx, ip, value) };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -4459,7 +4453,7 @@ script_handler! {
             return exit(ip);
         };
         // SAFETY: the record is an arithmetic record of the running view.
-        unsafe { note_division_result::<OP, H>(cx, ip, left, right, value) };
+        unsafe { note_pair_result(cx, ip, left, right, value) };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
