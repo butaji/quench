@@ -19,6 +19,7 @@ use crate::typed_ir::Type;
 
 mod concrete;
 pub(crate) mod numeric;
+pub(crate) mod flow;
 mod heap;
 mod global;
 #[cfg_attr(not(test), allow(dead_code))] // the division is data the specializers will ask; today only its tests do

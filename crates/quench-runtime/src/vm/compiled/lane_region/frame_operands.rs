@@ -35,7 +35,7 @@ pub(in crate::vm) fn operand_number(builder: &mut FunctionBuilder<'_>, registers
         crate::bytecode::OperandKind::Constant => {
             let value = constants.get(usize::from(operand.payload()))
                 .and_then(super::super::facts::immediate)?.as_number()?;
-            Some(builder.ins().f64const(value))
+            Some(super::super::super::object_slots::emit(builder).f64_constant(value))
         }
         _ => None,
     }
@@ -66,7 +66,7 @@ pub(in crate::vm) fn register_int_value(builder: &mut FunctionBuilder<'_>, regis
                 let integer = is_int_tagged(builder, bits);
                 emit_js_guard(builder, integer, otherwise);
             }
-            builder.ins().ireduce(types::I32, bits)
+            super::super::super::object_slots::emit(builder).narrow(bits)
         }
     };
     let variable = register_int(builder, registers, index);

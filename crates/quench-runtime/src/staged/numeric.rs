@@ -52,6 +52,10 @@ pub(crate) trait NumericStage: Stage {
     fn int_multiply(&mut self, left: Self::Word, right: Self::Word) -> Self::Word;
     /// The int32 word holding `value`.
     fn i32_constant(&mut self, value: i32) -> Self::Word;
+    /// The binary64 word holding `value`.
+    fn f64_constant(&mut self, value: f64) -> Self::Word;
+    /// The int32 word holding the low 32 bits of the 64-bit word `value`.
+    fn narrow(&mut self, value: Self::Word) -> Self::Word;
     fn i32_to_f64(&mut self, value: Self::Word) -> Self::Word;
     fn i32_is_zero(&mut self, value: Self::Word) -> Self::Cond;
     fn i32_is_negative(&mut self, value: Self::Word) -> Self::Cond;
@@ -372,6 +376,8 @@ impl NumericStage for super::Concrete {
         u64::from(super::math::int_multiply(int32(left), int32(right)) as u32)
     }
     fn i32_constant(&mut self, value: i32) -> u64 { u64::from(value as u32) }
+    fn f64_constant(&mut self, value: f64) -> u64 { value.to_bits() }
+    fn narrow(&mut self, value: u64) -> u64 { u64::from(value as u32) }
     fn i32_to_f64(&mut self, value: u64) -> u64 { f64::from(int32(value)).to_bits() }
     fn i32_is_zero(&mut self, value: u64) -> bool { int32(value) == 0 }
     fn i32_is_negative(&mut self, value: u64) -> bool { int32(value) < 0 }

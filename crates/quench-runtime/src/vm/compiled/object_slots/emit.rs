@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::staged::{Access, Domain, NumericStage, Stage, Table};
+use crate::staged::flow::FlowStage;
 use crate::vm::compiled::regions;
 use crate::vm::operations::{NumberArithmetic, NumberRelation};
 
@@ -148,8 +149,43 @@ impl Stage for Emit<'_, '_> {
     }
     fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
         otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
+        self.choose_arms(cond, then, otherwise, false)
+    }
+    fn guard(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
+        emit_js_guard(self.builder, cond, miss);
+        Some(())
+    }
+    fn known(&self, _cond: ir::Value) -> Option<bool> { None }
+    fn table(&mut self, table: Table) -> ir::Value {
+        match table { Table::PropertyValues => self.property_values.expect("an operation addressing the arena has its base") }
+    }
+}
+
+impl FlowStage for Emit<'_, '_> {
+    type Block = ir::Block;
+    fn jump(&mut self, block: ir::Block, args: &[ir::Value]) {
+        let args: Vec<ir::BlockArg> = args.iter().map(|value| ir::BlockArg::Value(*value)).collect();
+        self.builder.ins().jump(block, &args);
+    }
+    fn branch(&mut self, cond: ir::Value, then: (ir::Block, &[ir::Value]), otherwise: (ir::Block, &[ir::Value])) {
+        let arguments = |values: &[ir::Value]| values.iter().map(|value| ir::BlockArg::Value(*value)).collect::<Vec<_>>();
+        self.builder.ins().brif(cond, then.0, &arguments(then.1), otherwise.0, &arguments(otherwise.1));
+    }
+    fn ret(&mut self, values: &[ir::Value]) { self.builder.ins().return_(values); }
+}
+
+impl Emit<'_, '_> {
+    /// `choose` whose `then` arm is out of line: the path that rarely runs (a call to the VM).
+    pub(in crate::vm::compiled) fn choose_cold(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
+        otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
+        self.choose_arms(cond, then, otherwise, true)
+    }
+
+    fn choose_arms(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
+        otherwise: impl FnOnce(&mut Self) -> ir::Value, cold_then: bool) -> ir::Value {
         let (then_block, else_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         let value = self.builder.append_block_param(join, types::I64);
+        if cold_then { self.builder.set_cold_block(then_block); }
         self.builder.ins().brif(cond, then_block, &[], else_block, &[]);
         self.builder.switch_to_block(then_block);
         self.builder.seal_block(then_block);
@@ -162,14 +198,6 @@ impl Stage for Emit<'_, '_> {
         self.builder.switch_to_block(join);
         self.builder.seal_block(join);
         value
-    }
-    fn guard(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
-        emit_js_guard(self.builder, cond, miss);
-        Some(())
-    }
-    fn known(&self, _cond: ir::Value) -> Option<bool> { None }
-    fn table(&mut self, table: Table) -> ir::Value {
-        match table { Table::PropertyValues => self.property_values.expect("an operation addressing the arena has its base") }
     }
 }
 
@@ -205,6 +233,8 @@ impl NumericStage for Emit<'_, '_> {
         crate::vm::compiled::lane_region::emit_float_extreme(self.builder, maximum, left, right)
     }
     fn i32_constant(&mut self, value: i32) -> ir::Value { self.builder.ins().iconst(types::I32, i64::from(value)) }
+    fn f64_constant(&mut self, value: f64) -> ir::Value { self.builder.ins().f64const(value) }
+    fn narrow(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().ireduce(types::I32, a) }
     fn i32_to_f64(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().fcvt_from_sint(types::F64, a) }
     fn i32_is_zero(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, 0) }
     fn i32_is_negative(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, a, 0) }

@@ -9,8 +9,7 @@ use crate::vm::global_facts::GlobalSlot;
 use super::{RegisterFact, Representation, Type};
 use crate::bytecode::Register;
 use cranelift_codegen::ir;
-use crate::staged::{region::Region, Access, Stage};
-use cranelift_codegen::ir::InstBuilder;
+use crate::staged::{flow::FlowStage, region::Region, Access, Stage};
 
 /// The lane's register file.
 const FRAME: Access = Region::Frame.mutable();
@@ -56,7 +55,7 @@ pub(super) fn vm_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, resul
     stage.guard(incomplete, completed)?;
     let unmissed = stage.ne_imm(status, LANE_CALL_MISSED as u64);
     stage.guard(unmissed, miss)?;
-    stage.builder.ins().jump(site.stop, &[ir::BlockArg::Value(status)]);
+    stage.jump(site.stop, &[status]);
     stage.builder.switch_to_block(completed);
     let (arena, _) = emit_js_property_values(stage.builder, frame.payload);
     stage.builder.def_var(site.properties, arena);
@@ -102,10 +101,10 @@ pub(super) fn global_write(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, 
     let record = stage.and_imm(bits, u64::from(u32::MAX));
     emit_unlogged_property_store_guard(stage.builder, frame.payload, record, value, ty, general);
     stage.store_u64(OBJECT_SLOTS, address, 0, value);
-    stage.builder.ins().jump(done, &[]);
+    stage.jump(done, &[]);
     stage.builder.switch_to_block(general);
     vm_step(frame, stage, None)?;
-    stage.builder.ins().jump(done, &[]);
+    stage.jump(done, &[]);
     stage.builder.switch_to_block(done);
     Some(())
 }

@@ -4,7 +4,7 @@
 //! per-PC semantic fallback, which executes one instruction at a time. The body's receiver and
 //! dense captures are the payload's, bound once per activation (`JsStepDispatch::bind_captures`).
 use super::*;
-use crate::staged::{region::Region, Access, NumericStage, Stage};
+use crate::staged::{flow::FlowStage, region::Region, Access, NumericStage, Stage};
 
 /// The call context, step dispatch and result words the trampoline reads and writes.
 const DISPATCH: Access = Region::Dispatch.mutable();
@@ -84,7 +84,7 @@ fn emit_dispatch(
     let starts = stage.eq_imm(start_pc, 0u32);
     let unbounded = stage.eq_imm(stop_pc, JS_NO_STOP_PC as u64);
     let whole = stage.both(starts, unbounded);
-    stage.builder.ins().brif(whole, blocks.body, &[], blocks.step, &[ir::BlockArg::Value(start_pc)]);
+    stage.branch(whole, (blocks.body, &[]), (blocks.step, &[start_pc]));
     stage.builder.switch_to_block(blocks.body);
     let this = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, receiver));
     let values = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, capture_values));
@@ -105,23 +105,23 @@ fn emit_body_status(
     let mut stage = super::object_slots::emit(builder);
     let wide = stage.uextend32(status);
     let running = stage.ne_imm(wide, u64::from(LANE_BODY_RETURNED));
-    stage.guard(running, returned);
+    unforced(|| stage.guard(running, returned));
     let continuing = stage.ne_imm(wide, u64::from(NATIVE_JS_STOPPED));
-    stage.guard(continuing, leave);
-    stage.builder.ins().return_(&[status]);
+    unforced(|| stage.guard(continuing, leave));
+    stage.ret(&[status]);
     stage.builder.switch_to_block(returned);
     stage.store_u64(DISPATCH, params[PARAM_RESULT], 0, word);
     let record = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, returned_pc));
     let record = stage.and_imm(record, u64::from(u32::MAX));
     let wide = stage.add_imm(record, u64::from(RETURN_STATUS_BASE));
-    let status = stage.builder.ins().ireduce(types::I32, wide);
-    stage.builder.ins().return_(&[status]);
+    let status = stage.narrow(wide);
+    stage.ret(&[status]);
     stage.builder.switch_to_block(leave);
     // A failed entry proof resumes at the first record; any other word is the leave's PC.
     let entry = stage.eq_imm(word, LaneExit::Entry.word());
     let first = stage.constant(0);
     let pc = stage.select(entry, first, word);
-    stage.builder.ins().jump(blocks.step, &[ir::BlockArg::Value(pc)]);
+    stage.jump(blocks.step, &[pc]);
 }
 
 /// The per-PC loop: one semantic operation per record until one stops the run, and the two
@@ -134,20 +134,20 @@ fn emit_steps(
     stage.builder.switch_to_block(blocks.step);
     let records = stage.constant(u64::from(count));
     let in_range = stage.ult(blocks.pc, records);
-    stage.guard(in_range, blocks.invalid);
+    unforced(|| stage.guard(in_range, blocks.invalid));
     let status = fallback(stage.builder, [params[PARAM_CONTEXT], blocks.pc, params[PARAM_RESULT]]);
     let wide = stage.uextend32(status);
     let succeeded = stage.eq_imm(wide, 0u32);
-    stage.guard(succeeded, blocks.stopped);
+    unforced(|| stage.guard(succeeded, blocks.stopped));
     let next = stage.load_u64(DISPATCH, params[PARAM_RESULT], 0);
-    stage.builder.ins().jump(blocks.step, &[ir::BlockArg::Value(next)]);
+    stage.jump(blocks.step, &[next]);
     stage.builder.switch_to_block(blocks.stopped);
-    let stopped = stage.builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
-    stage.builder.ins().return_(&[stopped]);
+    let stopped = stage.i32_constant(NATIVE_JS_STOPPED as i32);
+    stage.ret(&[stopped]);
     stage.builder.switch_to_block(blocks.invalid);
     stage.store_u64(DISPATCH, params[PARAM_RESULT], 0, blocks.pc);
-    let invalid = stage.builder.ins().iconst(types::I32, i64::from(NATIVE_JS_INVALID_PC));
-    stage.builder.ins().return_(&[invalid]);
+    let invalid = stage.i32_constant(NATIVE_JS_INVALID_PC as i32);
+    stage.ret(&[invalid]);
 }
 
 #[cfg(test)]
@@ -159,21 +159,15 @@ mod tests {
     #[test]
     fn a_trampoline_verifies_over_any_targets() {
         let isa = crate::vm::jit_backend::target_isa().unwrap();
-        let mut signature = None;
         let function = lower_ahead_entry(0, 1, 4, &*isa, AheadTargets {
             body: &mut |builder, words| {
-                let signature = *signature.get_or_insert_with(|| builder.import_signature(
-                    lane_body_signature(isa.pointer_type(), isa.default_call_conv())));
                 let target = object_slots::emit(builder).constant(8);
-                let call = builder.ins().call_indirect(signature, target, words);
-                let results = builder.inst_results(call);
-                (results[0], results[1])
+                let word = emit_lane_call(builder, target, words);
+                (object_slots::emit(builder).narrow(word), word)
             },
             fallback: &mut |builder, [context, pc, result]| {
-                let signature = builder.import_signature(native_js_operation_signature(&*isa));
                 let target = object_slots::emit(builder).constant(8);
-                let call = builder.ins().call_indirect(signature, target, &[context, pc, result, result]);
-                builder.inst_results(call)[0]
+                emit_lane_call(builder, target, &[context, pc, result, result])
             },
         }).unwrap();
         cranelift_codegen::verify_function(&function, &*isa).unwrap();

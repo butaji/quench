@@ -38,7 +38,7 @@ pub(super) fn register_truthiness(builder: &mut FunctionBuilder<'_>, registers: 
 fn cell_truthiness(builder: &mut FunctionBuilder<'_>, payload: ir::Value, helpers: LaneHelpers, bits: ir::Value) -> ir::Value {
     let mut stage = super::super::super::object_slots::emit(builder);
     let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut stage, bits);
-    let word = stage.choose(undecided, |stage| {
+    let word = stage.choose_cold(undecided, |stage| {
         let address = helpers.address(stage.builder, LaneHelper::Truthy);
         super::super::super::emit_lane_helper_call(stage.builder, payload, address, &[bits])
     }, |stage| {
