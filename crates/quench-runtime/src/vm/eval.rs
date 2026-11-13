@@ -685,7 +685,7 @@ impl<H: Host> Vm<H> {
                 id
             }
         };
-        self.run_global_eval_program(&context, id)
+        self.declare_compiled_script_globals(&context, id).and_then(|()| self.run_global_eval_program(&context, id))
     }
 
     pub(crate) fn prepared_script_is_current(&self, prepared: &crate::PreparedScript) -> bool {
