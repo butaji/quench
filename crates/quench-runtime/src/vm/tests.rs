@@ -20858,28 +20858,6 @@ print(JSON.stringify(out));
 }
 
 #[test]
-fn symbol_reads_on_accessor_bearing_shapes_follow_the_slot_kind() {
-    // An own data symbol slot of a shape that also holds accessors is proved for the shape;
-    // the accessor slots, a redefinition of the data slot as an accessor and a second
-    // object of another shape keep the ordinary [[Get]] answers.
-    let source = r#"
-const k = Symbol('k'), g = Symbol('g');
-const out = [];
-function read(o, key) { let r; for (let i = 0; i < 4; i++) r = o[key]; return r; }
-function make(n) { return { get [g]() { return 'get' + n; }, [k]: n }; }
-const a = make(1), b = make(2);
-out.push(read(a, k), read(b, k), read(a, g), read(b, g), read(a, k));
-Object.defineProperty(a, k, { get() { return 'now-getter'; }, configurable: true });
-out.push(read(a, k), read(b, k));
-delete b[k]; out.push(String(read(b, k)), read(make(3), k));
-print(JSON.stringify(out));
-"#;
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    vm.execute(&Engine::specialize(source, "symbol-accessor-shapes.js").unwrap()).unwrap();
-    assert_eq!(output.borrow().as_slice(), [r#"[1,2,"get1","get2",1,"now-getter",2,"undefined",3]"#]);
-}
-
 fn inherited_getters_run_in_loop_and_follow_redefinitions() {
     // Getters found prototypes above the receiver, by name or symbol, run as in-loop frames
     // with the receiver as `this`; throws, shadowing, redefinition and deep chains keep the

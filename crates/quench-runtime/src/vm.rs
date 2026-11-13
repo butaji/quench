@@ -262,8 +262,7 @@ pub use value_serializer::{
 };
 pub(crate) use value_serializer::{ReadHooks, WriteHooks};
 use wtf16::JsString;
-#[cfg(test)] mod tests;
-#[cfg(test)] mod lane_semantics_tests;
+#[cfg(test)] mod tests; #[cfg(test)] mod lane_semantics_tests;
 #[cfg(test)] mod closure_retention_tests;
 #[cfg(test)] mod storage_tests;
 
