@@ -72,17 +72,23 @@ impl<H: Host> Vm<H> {
             (*frame).bind_run(bound, &self.execution_interrupt, || self.program_field_entries(run.program).unwrap_or(0));
             debug_assert_eq!((*dispatch).field_entries, self.program_field_entries(run.program).unwrap_or(0), "the run's field cache entries stand");
             (*dispatch).native_registers = run.registers;
+            ((*dispatch).native_locals, (*dispatch).local_count) = super::super::dispatch_fast::frame_locals::<H>(run.lane_context);
             (*dispatch).refresh_object_bases_at_entry(self);
             let vm = self as *mut Self;
             (*dispatch).bind_lane_storage(vm);
-            // A run starts with no native frames; its direct calls place their callees past
-            // the stack's values.
-            let (top, end, activations, shadow) = self.lane_stack_spare(run.pending);
-            ((*dispatch).native_top, (*dispatch).native_end) = (top.addr(), end.addr());
-            // A run whose lane may not make the frames' activations makes no direct call.
-            let frames = if run.direct_calls { SHADOW_FRAMES.min(activations) } else { 0 };
-            (*dispatch).shadow_base = shadow.addr();
-            ((*dispatch).shadow_top, (*dispatch).shadow_end) = (shadow.addr(), shadow.add(frames).addr());
+            // A body that runs in a VM frame starts with that frame's environment view, so its first
+            // environment row reads and writes in place.
+            let entered = super::super::dispatch_fast::entry_frame::<H>(run.lane_context);
+            (*dispatch).env_view = self.body_env_view(&*dispatch, entered, (general_capture::EnvView::EMPTY, false));
+            // A run starts with no native frames; its direct calls push their callees' windows and
+            // frames onto the lane stack's own tops, which the dispatch points at. A body entered
+            // through its cell has an activation pending, which a leave pushes first: it makes no
+            // direct call, the frames of which would sit above that activation's room.
+            let words = self.lane_stack_words(if run.direct_calls && run.pending == NO_PENDING_ACTIVATIONS { SHADOW_FRAMES } else { 0 });
+            (*dispatch).lane_frames_end = words.frames_end;
+            (*dispatch).lane_values_top = words.values_top;
+            (*dispatch).lane_values_end = words.values_end;
+            (*dispatch).lane_activations_top = words.activations_top;
             &raw mut (*frame).context
         }
     }

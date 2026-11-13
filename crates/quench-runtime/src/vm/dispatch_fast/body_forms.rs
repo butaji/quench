@@ -2,7 +2,7 @@
 //! through the record layout of one opcode: where its callee, receiver and arguments are is data
 //! the decode gave, so a register call, a known call, a method call and a construction run the
 //! same helper. The running activation's registers, `this` and function come from the running
-//! body, or from the native frame it runs as (`ShadowFrame`).
+//! body, which a native callee's frame makes the innermost (`native_frames::in_innermost_frame`).
 use super::super::field_cache::FieldCacheProbe;
 use super::*;
 use crate::bytecode::Register;
@@ -44,23 +44,16 @@ pub(super) struct BodyCall<'a> {
 
 impl<'a> BodyCall<'a> {
     /// The call at `call_pc`, a record of the running body's function, with the running
-    /// activation's registers and `this`, or, where the body runs as a native callee, its window and
-    /// its function's own record. `None` for a form no row runs (`Invocation::of`).
+    /// activation's registers and `this`. `None` for a form no row runs (`Invocation::of`).
     ///
     /// # Safety
     /// `cx` is the running lane's context and `call_pc` a record of the running body's function.
     pub(super) unsafe fn at<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> Option<Self> {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let (registers, base, function, this) = match Vm::<H>::innermost_shadow_frame() {
-            // SAFETY: the context names the running activation.
-            None => unsafe { ((*cx).registers, (*cx).base, lane_running_function(cx), (*cx).this) },
-            Some(frame) => {
-                // SAFETY: a pushed frame names the caller-owned callee, whose view outlives the run.
-                let target = unsafe { &(*frame.callee).target };
-                (Registers(frame.window as *mut Value), unsafe { (*target.view).records() }, target.function, Value::from_bits(frame.this))
-            }
-        };
+        // SAFETY: the context names the running activation, which a native callee's frame is while its helper
+        // runs (`native_frames::in_innermost_frame`).
+        let (registers, base, function, this) = unsafe { ((*cx).registers, (*cx).base, lane_running_function(cx), (*cx).this) };
         let body = code.function(function as usize);
         let site = Invocation::of(decoded_instruction(body, body.code[call_pc as usize]), DecodeContext::of(code))?;
         let list = match site.arguments {

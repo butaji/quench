@@ -32,14 +32,6 @@ pub(super) enum Bind {
     Frame(Option<Register>),
 }
 
-/// The edges out of a native call: its helper path, its completion, and the callee's exception.
-#[derive(Clone, Copy)]
-pub(super) struct CallEdges {
-    pub(super) helper: ir::Block,
-    pub(super) completed: ir::Block,
-    pub(super) raised: ir::Block,
-}
-
 /// Whether `unit` runs `pc` as the function's own record `pc`: the only record whose handler
 /// table is the caller's, with its PCs the unit's.
 fn is_own_record(unit: &Unit, pc: usize) -> bool {
@@ -84,7 +76,9 @@ struct Admission<'a> {
     program: &'a ResidualProgram,
     function: &'a Function,
     unit: &'a Unit,
-    completion: Completion,
+    /// Whether the run is a loop region (`Coverage::Loop`), which runs in the innermost frame or
+    /// activation of the lane, not a body's own activation.
+    region: bool,
     /// Whether the function may hold `with` scopes an exception leaves (a `with` statement,
     /// an inherited scope, names resolved at run time).
     scoped: bool,
@@ -97,7 +91,7 @@ impl Admission<'_> {
     /// function but a registers-only one, whose calls may be native frames no activation names
     /// (`general_frameless_admit`, `DirectCallee`); a window's body is its own activation.
     fn settles_where_it_runs(&self) -> bool {
-        self.completion == Completion::StatusAndPc || !self.function.call_plan(self.program).registers_only
+        self.region || !self.function.call_plan(self.program).registers_only
     }
 
     /// Whether `handler`'s entry settles frame state beyond native stores: `with` scopes the
@@ -106,7 +100,7 @@ impl Admission<'_> {
     /// `JsStepDispatch::native_locals`).
     fn settles_frame(&self, handler: Handler, local: Option<u16>) -> bool {
         handler.with_depth != 0 || self.scoped
-            || local.is_some_and(|slot| self.completion == Completion::Body || self.function.local_slot_uses_environment(usize::from(slot)))
+            || local.is_some_and(|slot| !self.region || self.function.local_slot_uses_environment(usize::from(slot)))
     }
 
     /// How native code enters `handler`, `None` for one it cannot serve: frame state in a
@@ -133,7 +127,7 @@ pub(super) fn catch_edges(program: &ResidualProgram, function: &Function, unit: 
     if !completion.status_and_pc() || !unit.frames.is_empty() || function.handlers.is_empty() {
         return catches;
     }
-    let admission = Admission { program, function, unit, completion, scoped: !function.own_names_resolve_statically(program) };
+    let admission = Admission { program, function, unit, region: matches!(coverage, Coverage::Loop { .. }), scoped: !function.own_names_resolve_statically(program) };
     for (pc, instruction) in unit.instructions.iter().enumerate() {
         if !raising_instruction(*instruction, unit.registers)
             || !coverage.lowered(pc) || !is_own_record(unit, pc) { continue; }
@@ -148,14 +142,6 @@ pub(super) fn catch_edges(program: &ResidualProgram, function: &Function, unit: 
 }
 
 impl Lowering<'_, '_> {
-    /// The edges of a call about to be made: its helper path, its completion, and the callee's
-    /// exception, whose block (cold) `raised_call` fills.
-    pub(super) fn call_edges(&mut self) -> CallEdges {
-        let (helper, completed, raised) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
-        self.builder.set_cold_block(raised);
-        CallEdges { helper, completed, raised }
-    }
-
     /// The record an exception raised at unit PC `pc` leaves the lowered function at, where no
     /// native handler takes it. A body's callers unwind past it, so no handler of the function
     /// may cover it (the interpreter's unwinding would run it); a loop region's only caller is
@@ -163,10 +149,10 @@ impl Lowering<'_, '_> {
     fn leaves_at(&self, pc: usize) -> Option<u32> {
         let Some(Origin::Caller(record)) = self.unit.origins.get(pc).copied() else { return None };
         let function = self.program.function(self.function_id as usize);
-        let admitted = match self.completion {
-            Completion::StatusAndPc => true,
-            Completion::Body => function.handler_at(record).is_none() && unwinds_natively(function),
-            Completion::SourcePc | Completion::Number => false,
+        let admitted = match (self.completion, self.coverage) {
+            (Completion::Body, Coverage::Loop { .. }) => true,
+            (Completion::Body, _) => function.handler_at(record).is_none() && unwinds_natively(function),
+            (Completion::Number, _) => false,
         };
         admitted.then_some(record)
     }
@@ -193,8 +179,7 @@ impl Lowering<'_, '_> {
         }
         let record = self.leaves_at(pc)?;
         let value = self.tagged(state, instruction.register_a());
-        self.canonicalize(state, pc);
-        self.spill_written(pc);
+        self.home_written(state, pc);
         let site = self.ins().iconst(types::I64, super::super::raise_site(self.function_id, record) as i64);
         self.helper_call(LaneHelper::Raise, &[value, site]);
         self.stop_with(LANE_BODY_THREW, record, None);
@@ -239,14 +224,6 @@ impl Lowering<'_, '_> {
                 if let Some(register) = register { self.set_tagged(state, register, value); }
             }
         }
-    }
-
-    /// Continues at `raised` where a helper's `status` is `LANE_CALL_RAISED`, else in a fresh block.
-    pub(super) fn branch_if_raised(&mut self, status: ir::Value, raised: ir::Block) {
-        let rest = self.builder.create_block();
-        let is_raised = self.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_RAISED as i64);
-        self.ins().brif(is_raised, raised, &[], rest, &[]);
-        self.builder.switch_to_block(rest);
     }
 
     /// Stops the run with `status`, and `value` as the result word where a run publishes one:

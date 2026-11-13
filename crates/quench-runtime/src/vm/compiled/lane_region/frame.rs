@@ -76,8 +76,6 @@ pub(super) struct EmitFrame<'a> {
     /// The region's entry proofs, whose object record table a prototype walk addresses where the
     /// step carries no field facts.
     pub(super) table_entry: Option<&'a Entry>,
-    /// The record a call-out calls for, where the lowering made one (`call_outs`).
-    pub(super) call_out: Option<&'a call_out::CallOutSite>,
 }
 
 /// The address of the activation's local `slot` (`JsStepDispatch::native_locals`), which an
@@ -265,9 +263,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn load_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, _miss: Option<ir::Block>)
         -> Option<(ir::Value, RegisterFact)> {
-        let locals = self.native_locals(stage)?;
-        let address = stage.builder.ins().iadd_imm_s(locals,
-            i64::from(slot) * std::mem::size_of::<Value>() as i64);
+        let address = self.locals.then(|| local_slot_address(stage.builder, self.payload, slot))?;
         let value = stage.builder.ins().load(types::I64, regions::frame(), address, 0);
         Some((value, RegisterFact::canonical()))
     }
@@ -275,9 +271,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn store_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, value: ir::Value,
         _miss: Option<ir::Block>) -> bool {
-        let Some(locals) = self.native_locals(stage) else { return false };
-        let address = stage.builder.ins().iadd_imm_s(locals,
-            i64::from(slot) * std::mem::size_of::<Value>() as i64);
+        let Some(address) = self.locals.then(|| local_slot_address(stage.builder, self.payload, slot)) else { return false };
         stage.builder.ins().store(regions::frame(), value, address, 0);
         true
     }

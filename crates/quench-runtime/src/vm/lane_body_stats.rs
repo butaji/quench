@@ -145,7 +145,6 @@ miss_reasons! {
     CallNoActivationRoom => "call:no-activation-room",
     CallReadAnswer => "call:read-answer",
     ConstructForm => "construct:form",
-    ConstructShadowActive => "construct:shadow-active",
     ConstructNoScriptConstructs => "construct:no-script-constructs",
     ConstructConstructTarget => "construct:construct-target",
     ConstructWithScope => "construct:with-scope",

@@ -145,7 +145,7 @@ fn lane_capture_read<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16, ro
     let vm = unsafe { vm(cx) };
     let env = unsafe { (*cx).env };
     if env.is_deleted() {
-        let frame = &vm.frames[unsafe { (*cx).frame }];
+        let frame = &vm.frames[unsafe { (*cx).frame() }];
         return vm.remembered_capture(frame.env, frame.captured, depth, slot);
     }
     let memo = unsafe { (*cx).outer };

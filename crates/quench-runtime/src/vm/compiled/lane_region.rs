@@ -53,7 +53,6 @@ mod polls;
 #[cfg(all(test, feature = "aot"))] #[path = "lane_region/exit_tests.rs"] mod exit_tests;
 #[cfg(all(test, feature = "aot"))] #[path = "lane_region/home_tests.rs"] mod home_tests;
 #[path = "lane_region/catches.rs"] mod catches;
-use catches::CallEdges;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
@@ -549,9 +548,6 @@ struct Lowering<'a, 'f> {
     call_out_stop: Option<ir::Block>,
     /// The throws native code catches itself, by unit PC (`catches::catch_edges`).
     catches: BTreeMap<usize, catches::Catch>,
-    /// The block the call-outs' statuses of a leave in a callee, or a termination, reach with the
-    /// status, made at the first and filled at the region's end (`call_outs`).
-    call_out_stop: Option<ir::Block>,
 }
 
 enum Liveness<'a> {
@@ -2517,7 +2513,6 @@ impl Lowering<'_, '_> {
         let terminate = self.ins().iconst(types::I32, TERMINATED_STATUS);
         self.leave_with(terminate, None);
         self.builder.switch_to_block(callee);
-        if let Some(raised) = raised { self.branch_if_raised(status, raised); }
         let word = self.ins().iconst(types::I64, LaneExit::Callee.word() as i64);
         let stop = self.stop;
         self.ins().jump(stop, &[word.into()]);
@@ -2674,13 +2669,6 @@ impl Lowering<'_, '_> {
     /// `step` with what the operation's frame needs beyond its edges (`StepWith`).
     fn step_with(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>,
         StepWith { access, sites, site }: StepWith<'_>) -> crate::staged::Step<ir::Value, ()> {
-        self.step_at(state, edges, None, operation)
-    }
-
-    /// `step` of an operation whose slow case calls the VM (`call_out`: the record and what its
-    /// helper needs).
-    fn step_at(&mut self, state: &mut State, edges: frame::Edges, call_out: Option<&frame::call_out::CallOutSite>,
-        operation: crate::staged::Operation<ir::Value, EmitProof>) -> crate::staged::Step<ir::Value, ()> {
         let locals = self.completion != Completion::Number;
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
         let gate = access.map(|_| self.payload);
@@ -2988,16 +2976,24 @@ impl Lowering<'_, '_> {
     fn call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         use crate::staged::{CallOperation, Operation};
         let decoded = Operation::<ir::Value, EmitProof>::decode(instruction, crate::staged::DecodeContext::of(self.program));
-        let (Some(super::lane_unit::Origin::Caller(record)), Some(Operation::Call(CallOperation::Site(site)))) = (self.unit.origins.get(pc).copied(), decoded) else {
+        // A callee's exception must go where native code takes it (`Lowering::raises_from`): a call
+        // it cannot unwind from is made by the lane.
+        let origin = self.unit.origins.get(pc).copied().filter(|_| self.raises_from(pc));
+        let (Some(super::lane_unit::Origin::Caller(record)), Some(Operation::Call(CallOperation::Site(site)))) = (origin, decoded) else {
             self.exit(state, pc as u32);
             return false;
         };
         let missed = self.guard_exit(state, pc as u32);
         self.home_written(state, pc);
-        let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
+        let (completed, generic, raised, entered) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        self.builder.set_cold_block(raised);
+        // The callee's exception block is filled before the call's blocks, from the state the call is made in.
+        self.ins().jump(entered, &[]);
+        self.raised_call(state, pc, record, raised);
+        self.builder.switch_to_block(entered);
         // SAFETY: the body owns the callee for as long as its code runs.
         let callee = self.direct.get(&pc).map(|callee| unsafe { &**callee });
-        let call = CallSite { callee, record, context: self.context, registers: self.registers_base, completed, missed,
+        let call = CallSite { callee, record, context: self.context, registers: self.registers_base, completed, missed, raised,
             stop: self.call_out_stop(), leave: self.leave_site() };
         self.step_with(state, frame::Edges::ValueGuarded { miss: generic }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
         self.reentries.push(completed);

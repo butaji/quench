@@ -393,15 +393,6 @@ pub(super) fn staged_require_iterator_result(r: Registers, view: Carried, regist
     matches!(crate::staged::step(&mut stage, &mut frame, Operation::RequireIteratorResult { register }), Step::Value(_))
 }
 
-/// ToPropertyKey of a direct string register `source` into `destination`, by the staged
-/// operation; false, writing nothing, where the full conversion decides.
-#[inline(always)]
-pub(super) fn staged_to_property_key(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    matches!(crate::staged::step(&mut stage, &mut frame, Operation::ToPropertyKey { destination, source }), Step::Value(_))
-}
-
 /// ToNumeric of a Number register `source` into `destination`, by the staged operation;
 /// false, writing nothing, where `source` is not a Number.
 #[inline(always)]
@@ -546,7 +537,7 @@ pub(super) fn staged_load_capture<H: Host>(cx: *mut LaneContext<H>, r: Registers
 pub(super) fn staged_load_local_checked<H: Host, const ACC: u8>(cx: *mut LaneContext<H>,
     r: Registers, view: Carried, destination: u16, slot: usize) -> bool {
     let vm = unsafe { vm(cx) };
-    let (code, frame) = (unsafe { &*(*cx).code }, unsafe { (*cx).frame });
+    let (code, frame) = (unsafe { &*(*cx).code }, unsafe { (*cx).frame() });
     let function = code.function(vm.frames[frame].function as usize);
     if vm.frames[frame].function == super::super::ROOT_FUNCTION_ID {
         return false;
@@ -569,7 +560,7 @@ pub(super) fn staged_load_local_checked<H: Host, const ACC: u8>(cx: *mut LaneCon
 pub(super) fn staged_store_local_checked<H: Host, const ACC: u8>(cx: *mut LaneContext<H>,
     r: Registers, view: Carried, (source, slot): (u16, usize), initializing: bool) -> bool {
     let vm = unsafe { vm(cx) };
-    let (code, frame) = (unsafe { &*(*cx).code }, unsafe { (*cx).frame });
+    let (code, frame) = (unsafe { &*(*cx).code }, unsafe { (*cx).frame() });
     let function = code.function(vm.frames[frame].function as usize);
     if vm.frames[frame].function == super::super::ROOT_FUNCTION_ID || function.is_self_binding_slot(slot) {
         return false;
@@ -694,7 +685,7 @@ fn lane_template_value<H: Host>(cx: *mut LaneContext<H>, template: u32) -> Optio
         return None;
     }
     // SAFETY: the context's program outlives the lane run.
-    let (code, frame) = unsafe { (&*(*cx).code, (*cx).frame) };
+    let (code, frame) = unsafe { (&*(*cx).code, (*cx).frame()) };
     let value = vm.literal_template(code, frame, template as usize).ok();
     note_allocation(vm);
     value
