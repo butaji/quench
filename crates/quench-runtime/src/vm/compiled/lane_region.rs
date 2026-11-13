@@ -1530,6 +1530,9 @@ pub(super) fn lower(
     }
     let signature = lane_body_signature(isa.pointer_type(), isa.default_call_conv());
     let mut native = ir::Function::with_name_signature(UserFuncName::user(LANE_REGION_NAMESPACE, function_id), signature);
+    // Every access this lowering emits is tagged with its alias region (`regions::flags`), so the
+    // function names them before anything verifies or compiles it (declaring again is a no-op).
+    super::regions::declare_regions(&mut native);
     let mut builder_context = FunctionBuilderContext::new();
     let mut builder = FunctionBuilder::new(&mut native, &mut builder_context);
     let entry_block = builder.create_block();

@@ -13101,6 +13101,7 @@ fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_array_alias_lifetimes_preserve_coercion_throw_and_collection() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
       function expandWords(seed, count) {
         const words = seed.slice();

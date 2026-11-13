@@ -15095,8 +15095,9 @@ fn lane_body_inlined_activation<H: Host>(
 /// by the lane's own `LoadCapture` lookup (`lane_read_capture_value`): its value, or
 /// `Value::DELETED` for none or an uninitialized binding, which leaves the body at the read.
 pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: u64, context: u64, packed: u64) -> u64 {
-    // As `lane_body_call`: static regions recover captures through their semantic operation.
-    if !crate::DYNAMIC_EXECUTION_ENABLED { return Value::DELETED.to_bits(); }
+    // As `lane_body_call`: static regions recover captures through their semantic operation,
+    // and an ahead body has no lane context to read them from.
+    if !crate::DYNAMIC_EXECUTION_ENABLED || context == 0 { return Value::DELETED.to_bits(); }
     let cx = context as usize as *mut LaneContext<H>;
     let (depth, slot) = ((packed >> u16::BITS) as u16, packed as u16);
     let value = match lane_body_callee_env::<H>() {
@@ -15121,7 +15122,7 @@ pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: 
 /// # Safety
 /// As `lane_body_capture`.
 pub(super) unsafe extern "C" fn lane_body_capture_store<H: Host>(_vm: u64, _residual: u64, context: u64, packed: u64, value: u64) -> u64 {
-    if !crate::DYNAMIC_EXECUTION_ENABLED { return 0; }
+    if !crate::DYNAMIC_EXECUTION_ENABLED || context == 0 { return 0; }
     let cx = context as usize as *mut LaneContext<H>;
     let (depth, slot, value) = ((packed >> u16::BITS) as u16, packed as u16, Value::from_bits(value));
     let stored = match lane_body_callee_env::<H>() {
@@ -15155,11 +15156,22 @@ pub(super) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64
     // Static regions recover ordinary calls through their linked semantic operation.
     // Binding this JIT-only helper to a miss removes its interpreter closure entirely.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return super::compiled::LANE_CALL_MISSED; }
+    // An ahead body runs from its entry trampoline, which has no lane run: no context to call
+    // into. The body leaves at the call, which the entry's per-PC fallback executes.
+    if context == 0 { return super::compiled::LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext<H>;
     // A body entered through its cell has no activation yet, which a call pushes above.
     lane_materialize_running_leaf(cx);
     let vm = unsafe { vm(cx) };
     let (r, ip) = unsafe { lane_body_record(cx, call_pc) };
+    if ip.is_null() {
+        if std::env::var_os("QUENCH_BODY_CALL_PROBE").is_some() {
+            eprintln!("BODY_CALL_NULL base={:p} registers={:p} call_pc={call_pc} shadow={} script_calls={}",
+                unsafe { (*cx).base }, unsafe { (*cx).registers.0 }, !Vm::<H>::lane_shadow_active(),
+                unsafe { (*cx).script_calls });
+        }
+        return lane_body_stats::miss(lane_body_stats::Miss::CallNoScriptCalls);
+    }
     let i = unsafe { &*ip };
     let callee = r.get(i.b);
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
@@ -15214,6 +15226,8 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     // As `lane_body_call`: static regions recover constructions through their semantic operation.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return super::compiled::LANE_CALL_MISSED; }
     use super::compiled::LANE_CALL_COMPLETED;
+    // As `lane_body_call`: an ahead body has no lane context, and leaves at the construction.
+    if context == 0 { return super::compiled::LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext<H>;
     let vm = unsafe { vm(cx) };
     let (r, ip) = unsafe { lane_body_record(cx, call_pc) };
