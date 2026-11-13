@@ -30,6 +30,8 @@ impl Emit<'_, '_> {
     fn word(&mut self, imm: EmitImm) -> ir::Value {
         match imm { EmitImm::Const(bits) => self.constant(bits) }
     }
+    fn compare(&mut self, condition: IntCC, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().icmp(condition, a, b) }
+    fn widen(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().uextend(types::I64, a) }
 }
 
 impl Stage for Emit<'_, '_> {
@@ -87,17 +89,17 @@ impl Stage for Emit<'_, '_> {
         self.builder.ins().ushr(a, v)
     }
     fn sar32_imm(&mut self, a: ir::Value, shift: u32) -> ir::Value {
-        let low = self.builder.ins().ireduce(types::I32, a);
+        let low = self.narrow(a);
         let shifted = self.builder.ins().sshr_imm_u(low, i64::from(shift));
-        self.builder.ins().uextend(types::I64, shifted)
+        self.widen(shifted)
     }
     fn eq_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
-        self.builder.ins().icmp(IntCC::Equal, a, v)
+        self.compare(IntCC::Equal, a, v)
     }
     fn ne_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
-        self.builder.ins().icmp(IntCC::NotEqual, a, v)
+        self.compare(IntCC::NotEqual, a, v)
     }
     fn sub(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().isub(a, b) }
     fn select(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
@@ -125,22 +127,22 @@ impl Stage for Emit<'_, '_> {
         self.ne_imm(zero, 0u32)
     }
     fn ult(&mut self, a: ir::Value, b: ir::Value) -> ir::Value {
-        self.builder.ins().icmp(IntCC::UnsignedLessThan, a, b)
+        self.compare(IntCC::UnsignedLessThan, a, b)
     }
     fn uextend32(&mut self, a: ir::Value) -> ir::Value {
-        if self.builder.func.dfg.value_type(a) == types::I32 { self.builder.ins().uextend(types::I64, a) } else { a }
+        if self.builder.func.dfg.value_type(a) == types::I32 { self.widen(a) } else { a }
     }
     fn ugt_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
-        self.builder.ins().icmp(IntCC::UnsignedGreaterThan, a, v)
+        self.compare(IntCC::UnsignedGreaterThan, a, v)
     }
-    fn not(&mut self, cond: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, cond, 0) }
+    fn not(&mut self, cond: ir::Value) -> ir::Value { self.i32_is_zero(cond) }
     fn any(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.or(a, b) }
     fn pick(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
         self.select(cond, then, otherwise)
     }
     fn shape_in(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value {
-        let word = if self.builder.func.dfg.value_type(shape) == types::I32 { shape } else { self.builder.ins().ireduce(types::I32, shape) };
+        let word = if self.builder.func.dfg.value_type(shape) == types::I32 { shape } else { self.narrow(shape) };
         super::shape_in_set(self.builder, word, shapes)
     }
     fn number_truthy(&mut self, bits: ir::Value) -> ir::Value {
