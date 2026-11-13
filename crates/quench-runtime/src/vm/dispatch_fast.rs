@@ -16396,6 +16396,12 @@ lane_handler! {
 }
 
 
+/// The completion `lane_return_from` expects of the activation it returns from.
+#[inline(always)]
+const fn returning_completion(crosses: bool, constructs: bool, settles: bool) -> Completion {
+    if crosses { Completion::Cross } else if constructs { Completion::Constructs } else if settles { Completion::SettlesPromise } else { Completion::Plain }
+}
+
 /// `lane_return_plain` of the innermost activation, a script one whose call keeps its
 /// result: of the caller's program (`Completion::Plain`), or, where `CROSSES`, of another
 /// (`Completion::Cross`), which enters the caller's program first, or, where `CONSTRUCTS`, a
@@ -16412,15 +16418,7 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
     if CONSTRUCTS && !vm.is_object_like(value) { value = unsafe { (*cx).this }; }
     let stack = &mut vm.lane_stack;
     let top = stack.activations.last()?;
-    let expected = if CROSSES {
-        Completion::Cross
-    } else if CONSTRUCTS {
-        Completion::Constructs
-    } else if SETTLES {
-        Completion::SettlesPromise
-    } else {
-        Completion::Plain
-    };
+    let expected = returning_completion(CROSSES, CONSTRUCTS, SETTLES);
     let ActivationKind::Script(script) = &top.kind else { return None };
     if script.completion != expected { return None; }
     // SAFETY: the call record belongs to the caller's live view.
@@ -16430,10 +16428,8 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
     }
     let destination = destination & crate::bytecode::REGISTER_MASK;
     let (call, caller_registers, caller_base, window) = (top.call, top.caller_registers, top.caller_base, top.native.window as *mut Value);
-    let (this, env, capture) = (script.caller_this, script.caller_env, script.caller_capture);
-    let caller_program = top.caller_program;
-    // SAFETY: a script activation holds no drop glue and no Wasm storage
-    // (`Activation::frame_storage_bytes`); its window starts within the values.
+    let (this, env, capture, caller_program) = (script.caller_this, script.caller_env, script.caller_capture, top.caller_program);
+    // SAFETY: a script activation holds no drop glue or Wasm storage; its window is in the values.
     unsafe {
         stack.activations.set_len(stack.activations.len() - 1);
         stack.values.set_top(window);
@@ -16445,13 +16441,8 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
         unsafe { (*cx).memory = MemoryView::script(cx) };
     }
     debug_assert!(unsafe { (*cx).memory.bytes } == cx.cast::<u8>(), "a JavaScript run carries its context");
-    unsafe {
-        (*cx).registers = caller_registers;
-        (*cx).base = caller_base;
-        (*cx).this = this;
-        (*cx).env = env;
-        (*cx).capture = capture;
-    }
+    unsafe { (*cx).registers = caller_registers; (*cx).base = caller_base; (*cx).this = this;
+             (*cx).env = env; (*cx).capture = capture; }
     if SETTLES { value = lane_settle_promise(cx, value, then); }
     caller_registers.set(destination, value);
     Some((caller_registers, following(call)))
