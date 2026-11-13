@@ -14,7 +14,7 @@
 use super::*;
 use quench_bjit::HOLES;
 use quench_bjit::numeric::supernodes::{self, Key, Node, Operand, Shape, Supernode};
-use std::collections::BTreeSet;
+use crate::bitset::BitSet;
 use std::sync::OnceLock;
 
 /// The code of a row a tile covers: none.
@@ -47,7 +47,7 @@ fn key_of(row: &Decoded) -> Key {
 /// What the matcher asks of the block around a position.
 pub(super) struct Facts<'a> {
     /// Indices of the rows some branch targets.
-    pub(super) targets: &'a BTreeSet<usize>,
+    pub(super) targets: &'a BitSet,
     /// Whether the web a row `k` wrote is dead once row `k` has run, on every way out of it.
     pub(super) dead_after: &'a dyn Fn(usize, Register) -> bool,
 }
@@ -88,9 +88,13 @@ fn dead_after(layout: &Layout, decoded: &[Decoded], k: usize, web: Register) -> 
 }
 
 /// The row indices a branch of the region targets.
-fn branch_targets(layout: &Layout, decoded: &[Decoded]) -> BTreeSet<usize> {
+fn branch_targets(layout: &Layout, decoded: &[Decoded]) -> BitSet {
     let inside = layout.header..=layout.backedge;
-    decoded.iter().filter_map(|row| row.target).filter(|pc| inside.contains(pc)).map(|pc| (pc - layout.header) as usize).collect()
+    let mut targets = BitSet::new(decoded.len());
+    decoded.iter().filter_map(|row| row.target).filter(|pc| inside.contains(pc)).for_each(|pc| {
+        targets.insert_growing((pc - layout.header) as usize);
+    });
+    targets
 }
 
 /// The second row's node with its operands exchanged where that puts the fed operand among the
@@ -144,12 +148,11 @@ fn covered() -> Planned {
 
 /// The plan of every row of the region, one entry per row: a tile at its first row, `covered`
 /// rows after it, a single row's plan elsewhere. `general` says which rows take general semantics and `kinds` the operand kinds each row's site saw.
-pub(super) fn plan_all(layout: &Layout, decoded: &[Decoded], general: &[bool], kinds: &[OperandKinds]) -> Result<Vec<Planned>, String> {
+pub(super) fn plan_all(layout: &Layout, decoded: &[Decoded], general: &BitSet, kinds: &[OperandKinds]) -> Result<Vec<Planned>, String> {
     let mut singles = decoded
         .iter()
-        .zip(general)
         .enumerate()
-        .map(|(k, (row, &general))| plan(row, &layout.homes, layout.header + k as u32, general, variant_of(row.kind, kinds.get(k))).map(Some))
+        .map(|(k, row)| plan(row, &layout.homes, layout.header + k as u32, general.contains(k), variant_of(row.kind, kinds.get(k))).map(Some))
         .collect::<Result<Vec<_>, _>>()?;
     let targets = branch_targets(layout, decoded);
     let dead = |k: usize, web: Register| dead_after(layout, decoded, k, web);
@@ -191,7 +194,11 @@ mod tests {
     const MUL_ADD: &str = "NumericMultiply(*) ; NumericAdd(+) [0>1]";
 
     fn matched(pattern: &str, rows: &[Decoded], at: usize, targets: &[usize], live_after: &[(usize, Register)]) -> Option<Operand> {
-        let targets: BTreeSet<usize> = targets.iter().copied().collect();
+        let mut set = BitSet::new(rows.len());
+        targets.iter().for_each(|&row| {
+            set.insert_growing(row);
+        });
+        let targets = set;
         let dead = |row: usize, web: Register| !live_after.contains(&(row, web));
         match_at(&shape(pattern), rows, at, &Facts { targets: &targets, dead_after: &dead })
     }

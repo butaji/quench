@@ -187,6 +187,10 @@ pub(super) use ahead_entry::{lower_ahead_entry, AheadTargets};
 #[cfg(feature = "aot")]
 mod eager;
 #[cfg(feature = "aot")]
+mod frozen;
+#[cfg(feature = "aot")]
+pub(super) use frozen::{frozen_fields, frozen_global_reads, frozen_globals};
+#[cfg(feature = "aot")]
 pub(super) use eager::compile_eager_native;
 #[cfg(unix)]
 #[path = "compiled/fault_handler.rs"]
@@ -1622,7 +1626,7 @@ pub(super) struct VmFacts<'a> {
     /// running VM's feedback: `Division::Frozen` instead of `Division::Online`.
     pub(super) frozen: bool,
     /// Whole-program prototype values by atom, each guarded at its read site.
-    pub(super) frozen_fields: Option<&'a std::collections::BTreeMap<Atom, Value>>,
+    pub(super) frozen_fields: Option<&'a crate::dense_map::DenseMap<Value>>,
     /// The image's constant block, materialized after realm initialization.
     pub(super) frozen_constants: Option<usize>,
 }
@@ -4158,145 +4162,6 @@ fn publish_code(code: &[u8]) -> Option<CodeMemory> {
     let memory = CodeMemory::new(code)?;
     write_perf_map("js-native", memory.pointer() as usize, code, &[(0, code.len(), memory.pointer() as usize)]);
     Some(memory)
-}
-
-/// Whole-program globals a frozen image may fold: a `var` the program writes exactly
-/// once, with an immediate, before any other function can observe it.
-#[cfg(feature = "aot")]
-fn global_store_counts(program: &ResidualProgram) -> std::collections::BTreeMap<Atom, usize> {
-    let mut stores: std::collections::BTreeMap<Atom, usize> = std::collections::BTreeMap::new();
-    for id in 0..program.function_count() {
-        let function = program.function(id);
-        for &packed in function.code.iter() {
-            let instruction = super::dispatch_fast::decoded_instruction(function, packed);
-            if instruction.op().stores_name() {
-                *stores.entry(instruction.atom_index()).or_default() += 1;
-            }
-        }
-    }
-    stores
-}
-
-#[cfg(feature = "aot")]
-fn root_immediate_globals(program: &ResidualProgram, candidates: &std::collections::BTreeSet<Atom>,
-    stores: &std::collections::BTreeMap<Atom, usize>,
-) -> std::collections::BTreeMap<Atom, Value> {
-    let root = program.function(0);
-    let mut values = std::collections::BTreeMap::new();
-    let mut immediates: std::collections::BTreeMap<u16, Value> = std::collections::BTreeMap::new();
-    for &packed in root.code.iter() {
-        let instruction = super::dispatch_fast::decoded_instruction(root, packed);
-        for register in instruction.written_registers() { immediates.remove(&register); }
-        if instruction.op().js_denotation() == crate::bytecode::JsDenotation::LoadConst {
-            if let Some(value) = program.constants.get(instruction.constant_index()).and_then(facts::immediate) {
-                immediates.insert(instruction.result_register(), value);
-            }
-        } else if instruction.op().stores_name() && instruction.b() != 0 {
-            // The declaration's own store (`initializing`) carries its initializer.
-            let atom = instruction.atom_index();
-            if candidates.contains(&atom) && stores.get(&atom) == Some(&1)
-                && let Some(&value) = immediates.get(&instruction.register_a()) {
-                values.insert(atom, value);
-            }
-        }
-    }
-    values
-}
-
-/// Whole-program globals a frozen image may fold: a `var` the program writes exactly
-/// once, with an immediate, before any other function can observe it.
-#[cfg(feature = "aot")]
-pub(super) fn frozen_globals(program: &ResidualProgram) -> std::collections::BTreeMap<Atom, Value> {
-    let root = program.function(0);
-    let candidates: std::collections::BTreeSet<Atom> = root.global_var_atoms().iter().copied().collect();
-    let stores = global_store_counts(program);
-    root_immediate_globals(program, &candidates, &stores)
-}
-
-#[cfg(feature = "aot")]
-fn field_store_counts(program: &ResidualProgram) -> std::collections::BTreeMap<Atom, usize> {
-    let mut counts: std::collections::BTreeMap<Atom, usize> = std::collections::BTreeMap::new();
-    for id in 0..program.function_count() {
-        let function = program.function(id);
-        for &packed in function.code.iter() {
-            let instruction = super::dispatch_fast::decoded_instruction(function, packed);
-            if instruction.op().js_denotation() == crate::bytecode::JsDenotation::FieldStore {
-                *counts.entry(instruction.atom_index()).or_default() += 1;
-            }
-        }
-    }
-    counts
-}
-
-#[cfg(feature = "aot")]
-fn root_immediate_fields(program: &ResidualProgram,
-    counts: &std::collections::BTreeMap<Atom, usize>,
-) -> std::collections::BTreeMap<Atom, Value> {
-    let root = program.function(0);
-    let mut immediates: std::collections::BTreeMap<u16, Value> = std::collections::BTreeMap::new();
-    let mut values = std::collections::BTreeMap::new();
-    for &packed in root.code.iter() {
-        let instruction = super::dispatch_fast::decoded_instruction(root, packed);
-        for register in instruction.written_registers() { immediates.remove(&register); }
-        if instruction.op().js_denotation() == crate::bytecode::JsDenotation::LoadConst {
-            if let Some(value) = program.constants.get(instruction.constant_index()).and_then(facts::immediate) {
-                immediates.insert(instruction.result_register(), value);
-            }
-        } else if instruction.op().js_denotation() == crate::bytecode::JsDenotation::FieldStore {
-            let atom = instruction.atom_index();
-            if counts.get(&atom) == Some(&1)
-                && let Some(&value) = immediates.get(&instruction.register_a()) {
-                values.insert(atom, value);
-            }
-        }
-    }
-    values
-}
-
-/// Whole-program prototype values: a field the root stores exactly once with an
-/// immediate (a constructor's `prototype.k = <immediate>`), folded at each read and
-/// guarded there. Accessor definitions are outside this analysis.
-#[cfg(feature = "aot")]
-pub(super) fn frozen_fields(program: &ResidualProgram) -> std::collections::BTreeMap<Atom, Value> {
-    let counts = field_store_counts(program);
-    root_immediate_fields(program, &counts)
-}
-
-/// Each by-name load or capture read of a frozen global, with the closure's whole-program
-/// value. A capture read names the binding through the environment slot it closes over, so
-/// its owner's local atom decides whether it reads a frozen global; the value it actually
-/// loads is compared with the frozen one at the read site, which keeps the fold sound even
-/// for a read before the declaration.
-#[cfg(feature = "aot")]
-pub(super) fn frozen_global_reads(program: &ResidualProgram, function: &Function,
-    globals: &std::collections::BTreeMap<Atom, Value>,
-) -> crate::vm::global_facts::GlobalReads {
-    let frozen = |atom: Atom| globals.get(&atom).map(|&value|
-        crate::vm::global_facts::GlobalRead::Frozen { value, ty: crate::typed_ir::Type::immediate(value) });
-    function.code.iter().enumerate().filter_map(|(pc, &packed)| {
-        let instruction = super::dispatch_fast::decoded_instruction(function, packed);
-        let read = if instruction.op().loads_name() {
-            frozen(instruction.atom_index())
-        } else if instruction.op().addresses_capture() {
-            capture_binding_atom(program, function, instruction).and_then(frozen)
-        } else {
-            None
-        };
-        read.map(|read| (pc, read))
-    }).collect()
-}
-
-/// The atom a capture read names: the local atom of the slot its environment closes over.
-#[cfg(feature = "aot")]
-fn capture_binding_atom(program: &ResidualProgram, function: &Function,
-    instruction: crate::bytecode::WideInstruction,
-) -> Option<Atom> {
-    let mut owner = function.parent?;
-    for _ in 0..crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) {
-        owner = program.function(owner as usize).parent?;
-    }
-    let slot = usize::from(crate::bytecode::ImmediateLayout::capture_slot(instruction.imm()));
-    program.function(owner as usize).local_atoms.get(slot).copied()
 }
 
 /// Eager publication has no code-cache admission budget: all requested bodies

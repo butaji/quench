@@ -11,7 +11,7 @@ fn grow(flow: &Flow, node: usize, depth: usize, nodes: &mut Vec<usize>) {
         return;
     }
     for &producer in &flow.links_in[node] {
-        if flow.single_use[producer] {
+        if flow.single_use.contains(producer) {
             grow(flow, producer, depth + 1, nodes);
         }
     }

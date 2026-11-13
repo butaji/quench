@@ -151,7 +151,7 @@ const fn tier_up_resume(header: u32, backedge: u32, pc: u32, held: bool, ready: 
 /// body stays published for its other entries.
 pub(super) fn header_for_tier_up<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, pc: usize) -> Option<usize> {
     let pc = u32::try_from(pc).ok()?;
-    let site = own.loops.iter().find(|site| site.backedge == pc)?;
+    let site = &own.loops[*own.loop_at_backedge.get(pc as usize).filter(|&&index| index != NO_LOOP)? as usize];
     if !left_for_tier_up(cx, site, pc) { return None; }
     let ready = matches!(*site.body.borrow(), LoopBody::Ready { .. });
     tier_up_resume(site.header, site.backedge, pc, !site.header_handler.get().is_null(), ready).map(|header| header as usize)

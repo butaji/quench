@@ -1,26 +1,9 @@
 use super::*;
 
 mod in_place;
-
-fn is_ecma_whitespace(unit: u16) -> bool {
-    matches!(
-        unit,
-        0x0009..=0x000D
-            | 0x0020
-            | 0x00A0
-            | 0x1680
-            | 0x2000..=0x200A
-            | 0x2028..=0x2029
-            | 0x202F
-            | 0x205F
-            | 0x3000
-            | 0xFEFF
-    )
-}
-
-pub(super) fn is_ecma_whitespace_character(character: char) -> bool {
-    u16::try_from(u32::from(character)).is_ok_and(is_ecma_whitespace)
-}
+mod whitespace;
+pub(super) use whitespace::is_ecma_whitespace_character;
+use whitespace::is_ecma_whitespace;
 
 impl<H: Host> Vm<H> {
     pub(super) fn call_target(&self, callee: Value) -> Result<CallTarget, JsError> {

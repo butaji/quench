@@ -223,10 +223,10 @@ fn assemble(region: &LoopRegion, dense: bool, widened: &[usize], seen: [&[Regist
         merged.extend(split);
     };
     let layout = Layout { header, backedge, homes, webs, region };
-    let general: Vec<bool> = decoded.iter().map(|row| is_general(row, &reprs)).collect();
+    let general = crate::bitset::BitSet::from_fn(decoded.len(), |k| is_general(&decoded[k], &reprs));
     let body = tile::plan_all(&layout, &decoded, &general, kinds)?;
     let bare = decoded.iter().all(|row| row.heap.is_none());
-    let embedded = decoded.iter().filter_map(|row| row.cache.as_ref()).flat_map(|cache| cache.loads.iter().copied()).collect();
+    let embedded = decoded.iter().filter_map(|row| row.field_entry.as_ref()).flat_map(|cache| cache.loads.iter().copied()).collect();
     let (code, resumes, sites) = link(&layout, &body)?;
     residuals::report_rows(&layout, &decoded, &body, code.len());
     Ok(Built { code, bare, resumes, embedded, sites })

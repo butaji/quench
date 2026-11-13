@@ -85,7 +85,7 @@ impl Planned {
 
 /// The plan of a heap row, given its (place, hole) of destination, first and second operand.
 fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hole), (b, b_hole)]: [(Place, u64); 3]) -> Result<Planned, String> {
-    if let Some(cache) = &decoded.cache {
+    if let Some(cache) = &decoded.field_entry {
         return cache_plan(decoded, cache, homes, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)]);
     }
     // An array the entry record holds is named by its record offset (`decoded.hole`), else by its slot.

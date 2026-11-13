@@ -1385,7 +1385,7 @@ file-lines crates/quench-regexp/src/lib.rs 2983
 file-lines crates/quench-runtime/src/api.rs 10290
 file-lines crates/quench-runtime/src/api_native.rs 2520
 file-lines crates/quench-runtime/src/api_native_tests.rs 2520
-file-lines crates/quench-runtime/src/bytecode.rs 4169
+file-lines crates/quench-runtime/src/bytecode.rs 4120
 file-lines crates/quench-runtime/src/bytecode/binary.rs 1736
 file-lines crates/quench-runtime/src/bytecode/instruction.rs 1131
 file-lines crates/quench-runtime/src/bytecode/tests.rs 881
@@ -1402,7 +1402,7 @@ file-lines crates/quench-runtime/src/compile/liveness.rs 642
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1050
 file-lines crates/quench-runtime/src/compile/rewrite.rs 1680
-file-lines crates/quench-runtime/src/heap.rs 4660
+file-lines crates/quench-runtime/src/heap.rs 4575
 file-lines crates/quench-runtime/src/heap/access.rs 869
 file-lines crates/quench-runtime/src/heap/array_elements.rs 664
 file-lines crates/quench-runtime/src/heap/cell.rs 3990
@@ -1419,9 +1419,9 @@ file-lines crates/quench-runtime/src/profile.rs 953
 file-lines crates/quench-runtime/src/snapshot.rs 892
 file-lines crates/quench-runtime/src/subset_tests.rs 1696
 file-lines crates/quench-runtime/src/typed_ir.rs 577
-file-lines crates/quench-runtime/src/value.rs 972
+file-lines crates/quench-runtime/src/value.rs 939
 file-lines crates/quench-runtime/src/value_vec.rs 1426
-file-lines crates/quench-runtime/src/vm.rs 3758
+file-lines crates/quench-runtime/src/vm.rs 3677
 file-lines crates/quench-runtime/src/vm/array.rs 1199
 file-lines crates/quench-runtime/src/vm/array_buffer.rs 1023
 file-lines crates/quench-runtime/src/vm/array_indexed.rs 646
@@ -1477,7 +1477,7 @@ file-lines crates/quench-runtime/src/vm/object_symbols.rs 833
 file-lines crates/quench-runtime/src/vm/object_tests.rs 1402
 file-lines crates/quench-runtime/src/vm/operations.rs 2665
 file-lines crates/quench-runtime/src/vm/primitive_bench.rs 655
-file-lines crates/quench-runtime/src/vm/primitives.rs 683
+file-lines crates/quench-runtime/src/vm/primitives.rs 671
 file-lines crates/quench-runtime/src/vm/program_store.rs 4026
 file-lines crates/quench-runtime/src/vm/promise.rs 5473
 file-lines crates/quench-runtime/src/vm/promise_async.rs 538

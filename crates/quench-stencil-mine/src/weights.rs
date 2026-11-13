@@ -26,29 +26,62 @@ impl Source {
     }
 }
 
-/// Exact adjacent-opcode counts from a trace, by n (index `n - MIN_NGRAM`).
+/// Values by opcode in one flat vector indexed by the opcode; an opcode never set holds the
+/// default.
+#[derive(Clone, Default)]
+pub struct ByOpcode<T>(Vec<T>);
+
+impl<T: Copy + Default> ByOpcode<T> {
+    pub fn get(&self, opcode: u16) -> T {
+        self.0.get(usize::from(opcode)).copied().unwrap_or_default()
+    }
+
+    fn slot(&mut self, opcode: u16) -> &mut T {
+        let index = usize::from(opcode);
+        if index >= self.0.len() {
+            self.0.resize(index + 1, T::default());
+        }
+        &mut self.0[index]
+    }
+
+    fn entries(&self) -> impl Iterator<Item = (u16, T)> + '_ {
+        self.0.iter().enumerate().map(|(opcode, &value)| (opcode as u16, value))
+    }
+}
+
+/// Exact adjacent-opcode counts from a trace, by n (index `n - MIN_NGRAM`): each n's packed
+/// windows as `(window, count)` runs sorted by window.
 #[derive(Default)]
 pub struct TraceGrams {
     pub length: u64,
-    pub unigrams: HashMap<u16, u64>,
-    grams: Vec<HashMap<u64, u64>>,
+    unigrams: ByOpcode<u64>,
+    grams: Vec<Vec<(u64, u64)>>,
 }
 
 fn pack(opcodes: &[u16]) -> u64 {
     opcodes.iter().fold(0, |packed, &opcode| (packed << OPCODE_BITS) | u64::from(opcode))
 }
 
+/// `(key, count)` runs of the sorted keys.
+fn count_runs(mut keys: Vec<u64>) -> Vec<(u64, u64)> {
+    keys.sort_unstable();
+    let mut runs: Vec<(u64, u64)> = Vec::new();
+    for key in keys {
+        match runs.last_mut() {
+            Some((last, count)) if *last == key => *count += 1,
+            _ => runs.push((key, 1)),
+        }
+    }
+    runs
+}
+
 impl TraceGrams {
     pub fn from_opcodes(opcodes: &[u16]) -> Self {
-        let mut trace = Self { length: opcodes.len() as u64, grams: vec![HashMap::new(); MAX_NGRAM - MIN_NGRAM + 1], ..Self::default() };
+        let mut trace = Self { length: opcodes.len() as u64, ..Self::default() };
         for &opcode in opcodes {
-            *trace.unigrams.entry(opcode).or_insert(0) += 1;
+            *trace.unigrams.slot(opcode) += 1;
         }
-        for n in MIN_NGRAM..=MAX_NGRAM {
-            for window in opcodes.windows(n) {
-                *trace.grams[n - MIN_NGRAM].entry(pack(window)).or_insert(0) += 1;
-            }
-        }
+        trace.grams = (MIN_NGRAM..=MAX_NGRAM).map(|n| count_runs(opcodes.windows(n).map(pack).collect())).collect();
         trace
     }
 
@@ -61,11 +94,9 @@ impl TraceGrams {
     }
 
     pub fn gram(&self, opcodes: &[u16]) -> u64 {
-        self.grams
-            .get(opcodes.len().wrapping_sub(MIN_NGRAM))
-            .and_then(|grams| grams.get(&pack(opcodes)))
-            .copied()
-            .unwrap_or(0)
+        let key = pack(opcodes);
+        let runs = self.grams.get(opcodes.len().wrapping_sub(MIN_NGRAM));
+        runs.and_then(|runs| runs.binary_search_by_key(&key, |&(window, _)| window).ok().map(|run| runs[run].1)).unwrap_or(0)
     }
 }
 
@@ -74,16 +105,16 @@ pub struct Weights {
     /// Total executed instructions the shares are taken of.
     pub total: f64,
     /// Executions per static instruction of each opcode.
-    per_instruction: HashMap<u16, f64>,
+    per_instruction: ByOpcode<f64>,
     /// Dynamic executions of each opcode.
-    pub dynamic: HashMap<u16, f64>,
+    pub dynamic: ByOpcode<f64>,
     pub trace: Option<TraceGrams>,
 }
 
-fn static_counts(corpus: &[FlowFunction]) -> HashMap<u16, u64> {
-    let mut counts = HashMap::new();
+fn static_counts(corpus: &[FlowFunction]) -> ByOpcode<u64> {
+    let mut counts = ByOpcode::default();
     for instruction in corpus.iter().flat_map(|function| &function.instructions) {
-        *counts.entry(instruction.opcode).or_insert(0) += 1;
+        *counts.slot(instruction.opcode) += 1;
     }
     counts
 }
@@ -92,30 +123,37 @@ fn opcode_ids(corpus: &[FlowFunction]) -> HashMap<&'static str, u16> {
     corpus.iter().flat_map(|function| &function.instructions).map(|i| (i.name, i.opcode)).collect()
 }
 
+fn as_dynamic(counts: &ByOpcode<u64>) -> ByOpcode<f64> {
+    ByOpcode(counts.0.iter().map(|&n| n as f64).collect())
+}
+
 impl Weights {
     pub fn build(corpus: &[FlowFunction], census: Option<HashMap<String, u64>>, trace: Option<TraceGrams>) -> Self {
         let statics = static_counts(corpus);
         let (source, dynamic, total) = if let Some(trace) = &trace {
-            let dynamic = trace.unigrams.iter().map(|(&op, &n)| (op, n as f64)).collect();
-            (Source::Trace, dynamic, trace.length as f64)
+            (Source::Trace, as_dynamic(&trace.unigrams), trace.length as f64)
         } else if let Some(census) = census {
             let ids = opcode_ids(corpus);
-            let dynamic: HashMap<u16, f64> =
-                census.iter().filter_map(|(name, &n)| Some((*ids.get(name.as_str())?, n as f64))).collect();
+            let mut dynamic = ByOpcode::default();
+            for (name, &n) in &census {
+                if let Some(&opcode) = ids.get(name.as_str()) {
+                    *dynamic.slot(opcode) = n as f64;
+                }
+            }
             (Source::Census, dynamic, census.values().sum::<u64>() as f64)
         } else {
-            (Source::Static, statics.iter().map(|(&op, &n)| (op, n as f64)).collect(), statics.values().sum::<u64>() as f64)
+            (Source::Static, as_dynamic(&statics), statics.0.iter().sum::<u64>() as f64)
         };
-        let per_instruction = statics
-            .iter()
-            .map(|(&op, &n)| (op, dynamic.get(&op).copied().unwrap_or(0.0) / n as f64))
-            .collect();
+        let mut per_instruction = ByOpcode::default();
+        for (opcode, n) in statics.entries().filter(|&(_, n)| n > 0) {
+            *per_instruction.slot(opcode) = dynamic.get(opcode) / n as f64;
+        }
         Self { source, total, per_instruction, dynamic, trace }
     }
 
     /// Estimated executions of one static instruction.
     pub fn instruction(&self, opcode: u16) -> f64 {
-        self.per_instruction.get(&opcode).copied().unwrap_or(0.0)
+        self.per_instruction.get(opcode)
     }
 }
 

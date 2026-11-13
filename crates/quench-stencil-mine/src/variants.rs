@@ -6,7 +6,6 @@
 mod library;
 
 use crate::model::{Label, Pattern};
-use std::collections::{BTreeMap, BTreeSet};
 
 /// JavaScript operator symbols and the library kind that computes them.
 const OPERATOR_KINDS: &[(&str, u8)] = &[
@@ -29,8 +28,10 @@ const OPCODE_KINDS: &[(&str, u8)] = &[
 const UNMAPPED_VARIANTS: f64 = 1.0;
 
 pub struct PlaceTable {
-    rows: BTreeMap<u8, usize>,
-    destinations: BTreeMap<u8, usize>,
+    /// Library rows by kind; zero where the kind has none.
+    rows: Vec<usize>,
+    /// Distinct destination places by kind; zero where the kind has no row.
+    destinations: Vec<usize>,
     pub library_rows: usize,
 }
 
@@ -39,25 +40,42 @@ fn kind_of(label: &Label) -> Option<u8> {
     by_operator.or_else(|| OPCODE_KINDS.iter().find(|(name, _)| *name == label.name)).map(|&(_, kind)| kind)
 }
 
+/// The nonzero count of `kind` in a by-kind table.
+fn count_of(table: &[usize], kind: u8) -> Option<f64> {
+    table.get(usize::from(kind)).filter(|&&count| count > 0).map(|&count| count as f64)
+}
+
 impl PlaceTable {
     pub fn new() -> Self {
         let rows = library::library();
-        let mut per_kind: BTreeMap<u8, usize> = BTreeMap::new();
-        let mut places: BTreeMap<u8, BTreeSet<u8>> = BTreeMap::new();
+        let mut per_kind: Vec<usize> = Vec::new();
+        let mut places: Vec<Vec<u8>> = Vec::new();
         for &(kind, destination, ..) in &rows {
-            *per_kind.entry(kind).or_insert(0) += 1;
-            places.entry(kind).or_default().insert(destination);
+            let index = usize::from(kind);
+            if index >= per_kind.len() {
+                per_kind.resize(index + 1, 0);
+                places.resize_with(index + 1, Vec::new);
+            }
+            per_kind[index] += 1;
+            places[index].push(destination);
         }
-        let destinations = places.into_iter().map(|(kind, set)| (kind, set.len())).collect();
+        let destinations = places
+            .into_iter()
+            .map(|mut set| {
+                set.sort_unstable();
+                set.dedup();
+                set.len()
+            })
+            .collect();
         Self { rows: per_kind, destinations, library_rows: rows.len() }
     }
 
     fn rows_of(&self, label: &Label) -> f64 {
-        kind_of(label).and_then(|kind| self.rows.get(&kind)).map_or(UNMAPPED_VARIANTS, |&rows| rows as f64)
+        kind_of(label).and_then(|kind| count_of(&self.rows, kind)).unwrap_or(UNMAPPED_VARIANTS)
     }
 
     fn fused_places(&self, label: &Label) -> f64 {
-        kind_of(label).and_then(|kind| self.destinations.get(&kind)).map_or(1.0, |&places| places as f64)
+        kind_of(label).and_then(|kind| count_of(&self.destinations, kind)).unwrap_or(1.0)
     }
 
     /// Stencil variants the pattern implies.
