@@ -7933,7 +7933,10 @@ impl<H: Host> Vm<H> {
         id: ProgramId,
         function: u32,
     ) -> bool {
-        if !self.tier_may_run(crate::jit_mode::Tier::CRANELIFT) || program.kind == crate::bytecode::ProgramKind::Wasm {
+        // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils.
+        let claims = self.tier_may_run(crate::jit_mode::Tier::CRANELIFT)
+            || (self.programs.js_jit_lane_methods_enabled() && self.tier_may_run(&[crate::jit_mode::Tier::Base]));
+        if !claims || program.kind == crate::bytecode::ProgramKind::Wasm {
             return false;
         }
         let Some(facts) = self.programs.js_entry_facts(id, function) else {

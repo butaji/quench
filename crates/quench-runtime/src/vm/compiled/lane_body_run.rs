@@ -47,6 +47,8 @@ impl<H: Host> Vm<H> {
         // SAFETY: the body was compiled for this function, never allocates or collects, and
         // reads only the registers, constants and heap bases bound above.
         let BodyReturn { status, value: word } = unsafe { self.call_body(run, context, captures) };
+        #[cfg(test)]
+        LANE_BODY_RUNS.with(|runs| { let [all, returned] = runs.get(); runs.set([all + 1, returned + usize::from(status == LANE_BODY_RETURNED)]); });
         // SAFETY: as above; a completing body wrote the record before it returned.
         LaneExit::read(status, word, || unsafe { (*frame).dispatch.returned_pc })
     }

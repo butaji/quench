@@ -304,7 +304,7 @@ impl LaneView {
     /// A mode with neither Cranelift function tiers nor `--b-jit`'s stencil bodies compiles no
     /// function body: the view's body is declined, once.
     fn declined_by_mode(&self) -> bool {
-        let declined = !crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT);
+        let declined = !crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) && !crate::jit_mode::base_only();
         if declined {
             // SAFETY: as `lane_body`.
             unsafe { *self.tier_lane.get() = LaneBody::Declined };
