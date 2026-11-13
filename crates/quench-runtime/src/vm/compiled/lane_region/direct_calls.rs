@@ -56,7 +56,7 @@ impl Lowering<'_, '_> {
         let (check, left, missed) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         self.builder.set_cold_block(left);
         self.builder.set_cold_block(missed);
-        let value = self.call_row(state, check, CallOperation::Complete { status, value: word, receiver, returned: LANE_BODY_RETURNED });
+        let value = super::super::unforced(|| self.call_row(state, check, CallOperation::Complete { status, value: word, receiver, returned: LANE_BODY_RETURNED }));
         self.word_store(shadow, payload, dispatch_offset(std::mem::offset_of!(JsStepDispatch, shadow_top)));
         self.word_store(value, base, register_offset(site.result));
         self.word_jump(completed, &[]);

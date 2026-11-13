@@ -11,11 +11,11 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn lane_global_reads(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit)
         -> crate::vm::global_facts::GlobalReads {
         // Before the loads hold their cells: a store reaches a cell no code holds, and the loads of
-        // a name the unit stores read it afresh (`stored`), as a fact the store retires each time
-        // would only leave.
+        // a name the unit stores read its slot (`stored`), typed by the slot's dependency, not folded
+        // as a fact the store would retire each time.
         let slots = self.lane_global_slots(program, function, unit);
-        let stored: Vec<crate::bytecode::Atom> = slots.iter().filter(|(_, store, _)| *store)
-            .map(|(pc, _, _)| unit.instructions[*pc].atom_index()).collect();
+        let stored: Vec<(crate::bytecode::Atom, GlobalRead)> = slots.iter().filter(|(_, store, _)| *store)
+            .map(|(pc, _, slot)| (unit.instructions[*pc].atom_index(), *slot)).collect();
         let global = |function: u32| program.function_get(function as usize)
             .is_some_and(|body| body.names_resolve_statically(program))
             && self.programs.names_are_global(self.active_program);
@@ -38,8 +38,10 @@ impl<H: Host> Vm<H> {
                 let immutable = super::super::builtins::immutable_globals().into_iter().find(|(global, _)| *global == name);
                 let read = match immutable {
                     Some((_, value)) => GlobalRead::Constant(value),
-                    None if stored.contains(&atom) => GlobalRead::Dynamic,
-                    None => self.stable_global_read(program, atom, site),
+                    None => match stored.iter().find(|(stored, _)| *stored == atom) {
+                        Some((_, slot)) => *slot,
+                        None => self.stable_global_read(program, atom, site),
+                    },
                 };
                 (pc, read)
             })

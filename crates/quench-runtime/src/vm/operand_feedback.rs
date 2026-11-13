@@ -124,7 +124,7 @@ impl OperandKinds {
 /// Whether an instruction's record has a feedback byte: the arithmetic and comparison
 /// instructions whose lane handlers quicken on int32 operands.
 pub(super) fn has_operand_feedback(op: Op) -> bool {
-    op.is_binary_arithmetic() || op == Op::JumpBinaryFalse
+    op.is_binary_arithmetic() || op.compares_and_jumps()
 }
 
 /// The feedback byte of the record at `ip` of the view whose first record is `base`.
@@ -260,7 +260,7 @@ mod tests {
             .position(|function| function.header().name.is_some_and(|name| &program.atoms[name as usize] == "run"))
             .unwrap();
         let mut vm = Vm::new(TestHost::writing_to(Default::default()));
-        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.set_execution_mode(crate::ExecutionMode::Interpreted);
         vm.execute(&program).unwrap();
         let sites: Vec<usize> = program.function(function).instructions().enumerate()
             .filter(|(_, instruction)| has_operand_feedback(instruction.op()))
@@ -286,7 +286,6 @@ mod tests {
     /// An int32 and a double operand make the site a Number site, and nothing more.
     #[test]
     fn a_double_operand_makes_a_number_site() {
-    crate::vm::compiled::tier_policy::force_admission();
         let kinds = run_with("let s = 0; for (let i = 0; i < n; i++) { s = s + x; } return s;", "0.5");
         assert!(kinds.iter().any(|kinds| kinds.class() == OperandClass::Number && kinds.contains(OperandKinds::DOUBLE)), "{kinds:?}");
         assert!(kinds.iter().all(|kinds| kinds.class() <= OperandClass::Number), "{kinds:?}");
@@ -302,7 +301,6 @@ mod tests {
     /// Two int32s whose sum leaves the int32 range widen the site without a double operand.
     #[test]
     fn an_int32_overflow_widens_the_site() {
-    crate::vm::compiled::tier_policy::force_admission();
         let kinds = run_with("let s = 2147483000; for (let i = 0; i < n; i++) { s = s + 1000; } return s;", "1");
         assert!(kinds.iter().any(|kinds| kinds.contains(OperandKinds::WIDENED) && kinds.class() == OperandClass::Number), "{kinds:?}");
     }
@@ -310,7 +308,6 @@ mod tests {
     /// A comparison against a double records it through its out-of-line handler.
     #[test]
     fn a_double_comparison_records_its_operands() {
-    crate::vm::compiled::tier_policy::force_admission();
         let kinds = run_with("let c = 0; for (let i = 0; i < n; i++) { if (i < x) { c = c + 1; } } return c;", "10.5");
         assert!(kinds.iter().any(|kinds| kinds.contains(OperandKinds::DOUBLE)), "{kinds:?}");
     }

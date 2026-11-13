@@ -102,18 +102,40 @@ pub(super) use lane_unit::static_call_targets;
 #[cfg(test)]
 pub(in crate::vm) mod forced_miss {
     use std::cell::Cell;
-    thread_local! { static STATE: Cell<(Option<usize>, usize)> = const { Cell::new((None, 0)) }; }
+    thread_local! {
+        static STATE: Cell<(Option<usize>, usize)> = const { Cell::new((None, 0)) };
+        static EXEMPT: Cell<bool> = const { Cell::new(false) };
+    }
+    /// Runs `emit`, whose guards are not deopt points: they dispatch on a status the code
+    /// already holds (`direct_finish`), which no speculation could make fail, so they are
+    /// neither counted nor forced.
+    pub(in crate::vm::compiled) fn exempt<T>(emit: impl FnOnce() -> T) -> T {
+        let outer = EXEMPT.replace(true);
+        let result = emit();
+        EXEMPT.set(outer);
+        result
+    }
     /// Counts guards from zero; `Some(n)` forces the nth, `None` only counts.
     pub(in crate::vm) fn arm(forced: Option<usize>) { STATE.with(|state| state.set((forced, 0))); }
     /// Guards emitted since `arm`.
     pub(in crate::vm) fn emitted() -> usize { STATE.with(|state| state.get().1) }
     pub(in crate::vm::compiled) fn next() -> bool {
+        if EXEMPT.get() { return false; }
         STATE.with(|state| {
             let (forced, count) = state.get();
             state.set((forced, count + 1));
             forced == Some(count)
         })
     }
+}
+/// `emit` with its guards exempt from the forced-deopt switch: the status dispatch of a call
+/// protocol is no speculation (`forced_miss::exempt`).
+#[inline(always)]
+fn unforced<T>(emit: impl FnOnce() -> T) -> T {
+    #[cfg(test)]
+    return forced_miss::exempt(emit);
+    #[cfg(not(test))]
+    emit()
 }
 /// The successor a guard-shaped branch takes when its condition holds: the forced-deopt switch
 /// makes a test-armed guard take `fail` instead. Sites call it in place of `ok`.

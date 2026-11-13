@@ -6,42 +6,64 @@ use crate::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
 
 /// A function calling `Array.prototype.map`, `Map.prototype.forEach` and `Array.prototype.sort`
-/// with callbacks, run until it compiles.
+/// with callbacks, run until it compiles. The callbacks are made once outside it and keep their
+/// state in `state`: a body that makes closures or opens a dead zone is not lowered, which is
+/// no part of what these tests are about.
 const CALLBACK_SOURCE: &str = r#"
+    var state = { total: 0, seed: 0 };
+    function addSeed(item) { return item + state.seed; }
+    function accumulate(value, key) { state.total += value - key; }
+    function descending(left, right) { return right - left; }
     function run(array, map, seed) {
-      let total = 0;
-      for (const value of array.map((item) => item + seed)) total += value;
-      map.forEach((value, key) => { total += value - key; });
-      const sorted = array.slice().sort((left, right) => right - left);
-      return total + sorted[0] * 3;
+      state.seed = seed;
+      state.total = 0;
+      var mapped = array.map(addSeed);
+      for (var at = 0; at < mapped.length; at++) state.total += mapped[at];
+      map.forEach(accumulate);
+      var sorted = array.slice().sort(descending);
+      return state.total + sorted[0] * 3;
     }
-    const array = [5, 3, 9, 1, 7];
-    const map = new Map([[1, 10], [2, 20]]);
-    let result = 0;
-    for (let repeat = 0; repeat < 600; repeat++) result += run(array, map, repeat);
+    var array = [5, 3, 9, 1, 7];
+    var map = new Map([[1, 10], [2, 20]]);
+    var result = 0;
+    for (var repeat = 0; repeat < 600; repeat++) result += run(array, map, repeat);
     print(result);
 "#;
 
 /// A function calling each array callback method and the collections' `forEach` with
 /// callbacks, run until it compiles.
 const ITERATION_SOURCE: &str = r#"
+    var state = { total: 0, seed: 0 };
+    function weigh(item, index) { state.total += item * index; }
+    function shift(item) { return item + state.seed; }
+    function sum(accumulated, item) { return accumulated + item; }
+    function odd(item) { return item % 2; }
+    function fold(accumulated, item) { return accumulated * 2 + item; }
+    function pair(item) { return [item, state.seed]; }
+    function big(item) { return item > 8; }
+    function positive(item) { return item > 0; }
+    function above(item) { return item > 4; }
+    function add(value) { state.total += value; }
+    function spread(value, key) { state.total += value - key; }
+    function ascending(left, right) { return left - right; }
     function run(array, set, map, seed) {
-      let total = 0;
-      array.forEach((item, index) => { total += item * index; });
-      total += array.map((item) => item + seed).reduce((sum, item) => sum + item, 0);
-      total += array.filter((item) => item % 2).reduceRight((sum, item) => sum * 2 + item);
-      total += array.flatMap((item) => [item, seed]).length;
-      if (array.some((item) => item > 8) && array.every((item) => item > 0)) total += 1;
-      total += array.find((item) => item > 4) + array.findIndex((item) => item > 4);
-      set.forEach((value) => { total += value; });
-      map.forEach((value, key) => { total += value - key; });
-      return total + array.slice().sort((left, right) => left - right)[1];
+      state.seed = seed;
+      state.total = 0;
+      array.forEach(weigh);
+      state.total += array.map(shift).reduce(sum, 0);
+      state.total += array.filter(odd).reduceRight(fold);
+      state.total += array.flatMap(pair).length;
+      if (array.some(big) && array.every(positive)) state.total += 1;
+      state.total += array.find(above) + array.findIndex(above);
+      set.forEach(add);
+      map.forEach(spread);
+      return state.total + array.slice().sort(ascending)[1];
     }
-    const array = [5, 3, 9, 1, 7];
-    const set = new Set([4, 6]);
-    const map = new Map([[1, 10], [2, 20]]);
-    let result = 0;
-    for (let repeat = 0; repeat < 600; repeat++) result += run(array, set, map, repeat);
+    var array = [5, 3, 9, 1, 7];
+    var set = new Set([4, 6]);
+    var map = new Map([[1, 10], [2, 20]]);
+    var result = 0;
+    for (var repeat = 0; repeat < 600; repeat++) result += run(array, set, map, repeat);
     print(result);
 "#;
 

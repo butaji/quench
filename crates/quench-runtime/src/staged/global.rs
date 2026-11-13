@@ -9,6 +9,8 @@ use crate::Value;
 #[derive(Clone, Copy)]
 pub(crate) enum GlobalBinding {
     Dynamic,
+    /// The lane's own read, of a value a dependency keeps of type `ty` (a slot the code stores).
+    Typed { ty: Type },
     Constant(Value),
     Held { value: Value, ty: Type },
     Frozen { value: Value, ty: Type },
@@ -30,9 +32,9 @@ pub(crate) trait GlobalFrame<S: Stage>: Frame<S> {
     fn global_frozen(&mut self, _stage: &mut S, _destination: Register, _atom: u32, _site: u16, _value: Value, _ty: Type,
         _proof: S::Proof) -> Option<()> { None }
 
-    /// The lane's own global-name read (`LaneHelper::GlobalGet`).
+    /// The lane's own global-name read (`LaneHelper::GlobalGet`), whose value has type `ty`.
     #[inline(always)]
-    fn global_read(&mut self, _stage: &mut S, _destination: Register, _atom: u32, _site: u16, _proof: S::Proof) -> Option<()> { None }
+    fn global_read(&mut self, _stage: &mut S, _destination: Register, _atom: u32, _site: u16, _ty: Type, _proof: S::Proof) -> Option<()> { None }
 
     /// The global-name store of register `source`, whose word is `value`, to `atom` through
     /// cache `site`, an initialization where `initialize`: a direct write to the global's slot

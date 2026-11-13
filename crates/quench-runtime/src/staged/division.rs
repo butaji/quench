@@ -45,7 +45,7 @@ impl GlobalBinding {
     pub(crate) const fn time(&self) -> BindingTime {
         match self {
             Self::Constant(_) | Self::Frozen { .. } => BindingTime::Static,
-            Self::Held { .. } => BindingTime::Stable,
+            Self::Held { .. } | Self::Typed { .. } => BindingTime::Stable,
             Self::Dynamic => BindingTime::Dynamic,
         }
     }

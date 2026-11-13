@@ -117,12 +117,15 @@ fn guard_word(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, word: ir::Val
 /// The lane's own global-name read: a DELETED answer leaves at the miss edge, otherwise the
 /// value is the destination's tagged word.
 fn global_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
-    atom: u32, site: u16, proof: EmitProof) -> Option<()> {
+    atom: u32, site: u16, ty: Type, proof: EmitProof) -> Option<()> {
     let EmitProof::GlobalRead { miss: Some(miss) } = proof else { return None };
     let value = global_word(frame, stage, atom, site);
     guard_word(frame, stage, value, IntCC::NotEqual, Value::DELETED, miss);
-    <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value,
-        RegisterFact::definition(Type::ANY, Representation::Tagged));
+    let fact = if ty == Type::ANY { RegisterFact::definition(ty, Representation::Tagged) } else {
+        RegisterFact::admit(Fact { ty, representation: Representation::Tagged, binding: BindingTime::Stable,
+            proof: Proof::Dependency, projection: Projection::Exact }).expect("a Stable fact's dependency proves any type")
+    };
+    <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value, fact);
     Some(())
 }
 
@@ -171,7 +174,7 @@ impl crate::staged::GlobalFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn global_frozen(&mut self, stage: &mut Emit<'_, '_>, destination: Register, atom: u32, site: u16, value: Value, ty: Type, proof: EmitProof) -> Option<()> {
         global_frozen(self, stage, destination, (atom, site), (value, ty), proof)
     }
-    fn global_read(&mut self, stage: &mut Emit<'_, '_>, destination: Register, atom: u32, site: u16, proof: EmitProof) -> Option<()> { global_read(self, stage, destination, atom, site, proof) }
+    fn global_read(&mut self, stage: &mut Emit<'_, '_>, destination: Register, atom: u32, site: u16, ty: Type, proof: EmitProof) -> Option<()> { global_read(self, stage, destination, atom, site, ty, proof) }
     fn global_write(&mut self, stage: &mut Emit<'_, '_>, source: Register, _atom: u32, _site: u16, value: ir::Value, _initialize: bool) -> Option<()> {
         super::call_out::global_write(self, stage, source, value)
     }
