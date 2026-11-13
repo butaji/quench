@@ -1011,10 +1011,16 @@ enum RewritePlan {
     Skip,
 }
 
+/// What an earlier replay of function `id` settled: its sites' start, or `None` for their
+/// skip. Read out of the cell before the plan records its own choice.
+fn deferred_start(program: &crate::bytecode::ResidualProgram, id: u32) -> Option<Option<RewriteStart>> {
+    program.rewrite_ranges.borrow().get(id as usize).copied().flatten()
+}
+
 fn rewrite_plan(program: &crate::bytecode::ResidualProgram, id: u32, rewrite: Rewrite, code: usize) -> RewritePlan {
     match rewrite {
         Rewrite::Loaded(start) => RewritePlan::Replay(start),
-        Rewrite::Deferred => match program.rewrite_ranges.borrow().get(id as usize).copied().flatten() {
+        Rewrite::Deferred => match deferred_start(program, id) {
             Some(Some(start)) => RewritePlan::Replay(start),
             Some(None) => RewritePlan::Skip,
             None => {
