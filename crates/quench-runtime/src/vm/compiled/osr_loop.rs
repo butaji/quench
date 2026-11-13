@@ -482,7 +482,7 @@ fn field_reads_alone_define(instructions: &[WideInstruction], register: Register
 
 /// A field read or an element read: the loads whose result a field read may take as its receiver.
 fn is_receiver_load(op: Op) -> bool {
-    op.is_get_field() || matches!(op, Op::GetIndex)
+    op.is_get_field() || op.is_get_index()
 }
 
 /// Traces a tagged-register rejection at `offset` (`QUENCH_TRACE=osr-reject`).
