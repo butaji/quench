@@ -26,9 +26,63 @@ pub(super) struct LoopTier {
     widened: Vec<usize>,
     /// The element reads among them that left again as Numbers, which the next compilation reads untyped.
     abandoned: Vec<usize>,
+    /// The lane's nanoseconds per loop iteration over the entries before the region compiled
+    /// (`lane_trial_start`/`lane_trial_end`); 0 until measured.
+    lane_ns: u32,
+    lane_started: u64,
+    /// A published region's trial: the thread CPU nanoseconds and iterations of its first runs,
+    /// and whether the trial judged it (`LoopTier::weigh_trial`).
+    trial_ns: u64,
+    trial_iterations: u64,
+    trial_runs: u32,
+    judged: bool,
 }
 
 impl LoopTier {
+    /// Starts timing the lane's own loop iterations, which a published region's trial is judged
+    /// against.
+    pub(super) fn lane_trial_start(&mut self) {
+        if self.lane_started == 0 {
+            self.lane_started = super::dispatch_fast::lane_body_tier::thread_cpu_ns();
+        }
+    }
+
+    /// Ends the lane timing after `iterations` iterations: their rate is the region trial's
+    /// baseline.
+    pub(super) fn lane_trial_end(&mut self, iterations: u32) {
+        let started = std::mem::replace(&mut self.lane_started, 0);
+        if started == 0 || iterations == 0 { return; }
+        let ns = super::dispatch_fast::lane_body_tier::thread_cpu_ns().saturating_sub(started) / u64::from(iterations);
+        self.lane_ns = u32::try_from(ns).unwrap_or(u32::MAX);
+    }
+
+    /// Whether the published region still takes trial runs.
+    pub(super) fn trial_pending(&self) -> bool {
+        !self.judged && self.lane_ns != 0 && self.trial_runs < TIERS.loops.native_trial_runs
+    }
+
+    /// Weighs a native run of `ns` CPU nanoseconds that took `iterations` iterations; at
+    /// `native_trial_runs` it judges the region's per-iteration cost against the lane's: a
+    /// region no faster keeps neither its entry nor its compile, and the loop runs in the lane.
+    pub(super) fn weigh_trial(&mut self, ns: u64, iterations: u64, function: u32, header: u32) {
+        if self.judged || self.lane_ns == 0 { return; }
+        self.trial_ns = self.trial_ns.saturating_add(ns);
+        self.trial_iterations = self.trial_iterations.saturating_add(iterations);
+        self.trial_runs = self.trial_runs.saturating_add(1);
+        if self.trial_runs < TIERS.loops.native_trial_runs { return; }
+        self.judged = true;
+        if self.trial_iterations == 0 { return; }
+        let native = u128::from(self.trial_ns / self.trial_iterations);
+        let lane = u128::from(self.lane_ns);
+        if crate::trace::Channel::JsJit.on() {
+            eprintln!("QUENCH_LOOP_TRIAL {{\"function\":{function},\"header\":{header},\"runs\":{},\"iterations\":{},\"lane_ns\":{lane},\"native_ns\":{native}}}",
+                self.trial_runs, self.trial_iterations);
+        }
+        if native * 1000 < lane * u128::from(TIERS.loops.native_slow_permille) { return; }
+        if let Some(code) = self.code.take() { code.retire(); }
+        self.compilations = TIERS.loops.max_compilations;
+    }
+
     pub(super) fn weigh_run(&mut self, backedges: u64) {
         self.runs = self.runs.saturating_add(1);
         self.iterations = self.iterations.saturating_add(backedges);
@@ -132,6 +186,7 @@ impl LoopTier {
 
     /// Publishes `region` while the facts its code names hold.
     fn publish(&mut self, heap: &mut crate::heap::Heap, region: super::super::compiled::CompiledOsrRegion) {
+        (self.trial_ns, self.trial_iterations, self.trial_runs, self.judged) = (0, 0, 0, false);
         let publication = Rc::new(crate::code_dependencies::PublishedCode::new(region));
         let code = publication.lease().expect("new publication");
         let dependent: Rc<dyn crate::code_dependencies::DependentCode> = publication.clone();

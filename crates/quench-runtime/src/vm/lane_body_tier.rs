@@ -33,6 +33,21 @@ pub(super) struct LaneBodyHistory {
 const RECURRENT_ENTRIES: u16 = 16;
 const RECURRENT_TICKS: u32 = 256;
 
+/// The calling thread's CPU nanoseconds, excluding time it waited: a loop region's trial uses
+/// it, so the idle time between runs is not counted.
+pub(in crate::vm) fn thread_cpu_ns() -> u64 {
+    #[cfg(unix)]
+    {
+        let mut now = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: `clock_gettime` writes the struct this call owns.
+        if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut now) } == 0 {
+            return u64::try_from(now.tv_sec).unwrap_or(0) * 1_000_000_000
+                + u64::try_from(now.tv_nsec).unwrap_or(0);
+        }
+    }
+    0
+}
+
 /// The warming entries every function has counted so far: a clock of the work the program does
 /// while its functions warm, which, unlike wall time, a rerun repeats.
 fn warm_ticks() -> u32 {

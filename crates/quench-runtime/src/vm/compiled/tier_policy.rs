@@ -66,6 +66,13 @@ pub(in crate::vm) struct Loops {
     /// instruction at. A function whose region enters weighs its body compile against that saving
     /// alone (`pays_compile`): the region already runs the loop.
     pub(in crate::vm) region_entry_work: u64,
+    /// The native runs a published region takes before its entry is judged against the lane's
+    /// measured loop rate (`LoopTier::weigh_trial`): a region no faster per iteration than the
+    /// lane keeps neither its entry nor its compile (V8-v7 EarleyBoyer's loops).
+    pub(in crate::vm) native_trial_runs: u32,
+    /// The per-mille of the lane's rate a native iteration may take and keep its entry: 1000
+    /// retires a region that is not faster at all.
+    pub(in crate::vm) native_slow_permille: u32,
 }
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
@@ -227,7 +234,7 @@ const FLOOR: Tiers = Tiers {
 pub(in crate::vm) const PERCENT: u64 = 100;
 
 const MEASURED: Tiers = Tiers {
-    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8, region_entry_work: 3 },
+    loops: Loops { threshold: 1000, max_exits: 1000, max_declines: 64, widen_after_leaves: 4, max_compilations: 8, region_entry_work: 3, native_trial_runs: 64, native_slow_permille: 1000 },
     lane_body: LaneBody {
         warmup_entries: 400,
         native_trial_runs: 512,

@@ -7953,7 +7953,14 @@ script_handler! {
             }
         }
         if site.taken.get() < TIERS.loops.threshold {
-            site.taken.set(site.taken.get() + 1);
+            let taken = site.taken.get();
+            // The lane's own iterations are the baseline a published region is judged against.
+            if taken == 0 {
+                site.tier.borrow_mut().lane_trial_start();
+            } else if taken + 1 == TIERS.loops.threshold {
+                site.tier.borrow_mut().lane_trial_end(taken);
+            }
+            site.taken.set(taken + 1);
             next!(cx, r, header, Carried::script(cx))
         }
         // A loop its region takes whole (no call it leaves at) stays the region's, which hoists
@@ -8331,9 +8338,14 @@ fn lane_loop_run<H: Host>(
     };
     // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the
     // callback executes no guest code, allocates nothing, and retains no VM references.
+    let trial_started = site.tier.borrow().trial_pending().then(lane_body_tier::thread_cpu_ns);
     let outcome = unsafe {
         code.run::<H>(r.0, entry, region, machine, program, site.function, (*cx).frame, interrupt, cx as usize)
     };
+    if let Some(started) = trial_started {
+        let ns = lane_body_tier::thread_cpu_ns().saturating_sub(started);
+        site.tier.borrow_mut().weigh_trial(ns, entry.backedge_count(), site.function, site.header);
+    }
     if site.diagnostics {
         site.native_entry_attempts
             .set(site.native_entry_attempts.get().saturating_add(1));
