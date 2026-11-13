@@ -3648,8 +3648,6 @@ struct JsStepDispatch {
     frame: usize,
     allow_inline_calls: bool,
     start_pc: usize,
-    #[cfg(feature = "native-execution")]
-    stop_pc: usize,
     native_registers: *mut Value,
     register_count: usize,
     native_locals: *mut Value,
@@ -3755,6 +3753,9 @@ struct JsStepDispatch {
     function_mark_block_count: usize,
     empty_string: u64,
     outcome: Option<JsNativeStep>,
+    /// Past every word generated code reads: a feature's field leaves their offsets as they are.
+    #[cfg(feature = "native-execution")]
+    stop_pc: usize,
 }
 
 pub(super) struct LaneMethod {
