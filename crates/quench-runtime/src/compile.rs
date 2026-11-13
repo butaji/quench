@@ -77,6 +77,7 @@ pub(crate) mod program_profile;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
 pub(crate) mod replay;
+mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIELD_SITE_WINDOW, SUPERINSTRUCTION_WINDOW};
 mod rewrite;
 mod sequence;
 pub(crate) mod stack;
@@ -2157,11 +2158,6 @@ impl<'a> From<&'a Constant> for ConstantKey<'a> {
 
 /// Whether a load lowers every record it keeps instead of leaving it to the record's first
 /// read: under `verify-replay`, and in tests that compare the two (`LOWER_AT_LOAD`).
-/// The instructions a rewrite consumes for each site it adds: a field site fuses a read of a
-/// field with the store of its result, and no later rewrite fuses what a field site made again.
-pub(crate) const FIELD_SITE_WINDOW: usize = 2;
-/// The instructions of the window a superinstruction fuses.
-pub(crate) const SUPERINSTRUCTION_WINDOW: usize = rewrite::CONST_ARRAY_OBJECT2.len();
 
 fn lowers_at_load() -> bool {
     #[cfg(test)]
@@ -2426,7 +2422,7 @@ impl<'a> Compiler<'a> {
             private_name_overrides: FxHashMap::default(),
             constants: SiteTable::default(),
             constant_index: replay::ConstantIndex::default(),
-            functions: replay::FunctionTable::default(),
+            functions: replay::FunctionTable::default(), deferred_rewrite_code: 0,
             errors: vec![],
             cache_sites: 0,
             name_shared_sites: NameSharedSites::default(),
@@ -2446,7 +2442,6 @@ impl<'a> Compiler<'a> {
             early_replays: FxHashMap::default(),
             invoked_functions: FxHashSet::default(),
             replay_calls: FxHashMap::default(),
-            deferred_rewrite_code: 0,
             replay_target: None,
             source_type: oxc_span::SourceType::default(),
             replay_program: None,
@@ -2563,6 +2558,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
+
     /// Finishes replayable function `id` as soon as it is compiled and releases its record,
     /// so a program's records never all exist beside its tree. Only a function that, with
     /// every function nested in it, resolves names statically, inside no function that may
@@ -2607,24 +2603,7 @@ impl<'a> Compiler<'a> {
         let arguments_slot = function.arguments_slot;
         capture_layout::apply_function(&mut function, id as usize, &layout, &self.atoms);
         let rewrite = self.start_rewrite(&mut function);
-        let undefined_constant = self.constant(Constant::Undefined);
-        // The record is released below and only its header stays, so a load that drops it
-        // settles just the dispatch class the header keeps. One that encodes it finishes it as
-        // a replay would, against tables whose entries for it are final (`lower_settled`);
-        // `verify-replay` keeps the whole record to compare each replay with.
-        if matches!(rewrite, replay::Rewrite::Deferred) {
-            // Its replay settles it after its rewrites.
-        } else if cfg!(feature = "verify-replay") || self.load_encoding.is_some() {
-            self.lower_function(&mut function, undefined_constant);
-            liveness::mark_register_roots(
-                std::iter::once(&mut function),
-                self.method_arguments(),
-                self.field_sites.as_slice(),
-                self.superinstructions.as_slice(),
-            );
-        } else {
-            self.settle_dispatch(&mut function);
-        }
+        self.settle_early(&rewrite, &mut function);
         if let Some(encoding) = &mut self.load_encoding {
             let tables = LoadTables {
                 atoms: &self.atoms,
@@ -3348,17 +3327,9 @@ impl<'a> Compiler<'a> {
             }
         }
         for (id, slot) in functions.iter_mut().enumerate() {
-            let Some(function) = slot else { continue };
-            match replays.get_mut(&(id as u32)).filter(|_| !released.contains_key(&id)) {
-                Some(replay) => {
-                    replay.rewrite = self.start_rewrite(function);
-                    if matches!(replay.rewrite, replay::Rewrite::Deferred)
-                        && let Some(function) = slot.take()
-                    {
-                        released.insert(id, replay::ReleasedFunction::of(function));
-                    }
-                }
-                None => self.rewrite_function(function),
+            let replay = replays.get_mut(&(id as u32)).filter(|_| !released.contains_key(&id));
+            if let Some(function) = self.rewrite_replayable(slot, replay) {
+                released.insert(id, function);
             }
         }
         #[cfg(feature = "profile-memory")]
@@ -3476,8 +3447,7 @@ impl<'a> Compiler<'a> {
             object_sites: self.object_sites.into_vec(),
             regexp_literal_sites: self.regexp_literal_sites.into_vec(),
             literal_templates: self.literal_templates.into_vec(),
-            superinstructions: crate::bytecode::append_vec::AppendVec::with_headroom(self.superinstructions.into_vec(), self.deferred_rewrite_code / SUPERINSTRUCTION_WINDOW + 1),
-            rewrite_ranges: Default::default(),
+            superinstructions: crate::bytecode::append_vec::AppendVec::with_headroom(self.superinstructions.into_vec(), self.deferred_rewrite_code / SUPERINSTRUCTION_WINDOW + 1), rewrite_ranges: Default::default(),
             replay: replay_atoms.map(|atoms| {
                 std::rc::Rc::new(replay::ProgramReplay {
                     source_type: self.source_type,
@@ -4322,34 +4292,6 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// Runs the rewrites of replayable `function`, whose record is released, unless its first
-    /// compile can run them: they add sites, which a replay finds in the program's tables
-    /// where the load left them, so the load either adds them here or reserves room for the
-    /// replay to add them (`deferred_rewrite_code`).
-    fn start_rewrite(&mut self, function: &mut BcFunction) -> replay::Rewrite {
-        if self.defers_rewrites() {
-            self.deferred_rewrite_code += function.code.len();
-            return replay::Rewrite::Deferred;
-        }
-        let start = replay::RewriteStart {
-            field_sites: self.field_sites.len() as u32,
-            superinstructions: self.superinstructions.len() as u32,
-        };
-        self.rewrite_function(function);
-        replay::Rewrite::Loaded(start)
-    }
-
-    /// Whether the load leaves rewrites to the first compile of the functions it releases:
-    /// when their records are dropped for good, not encoded (`load_encoding`) or compared
-    /// with their replays (`lowers_at_load`), and a program records them nowhere else.
-    fn defers_rewrites(&self) -> bool {
-        crate::DYNAMIC_EXECUTION_ENABLED
-            && self.mode == SpecializationMode::Enabled
-            && self.replayable_source
-            && self.load_encoding.is_none()
-            && !lowers_at_load()
-            && !cfg!(feature = "profile-aggregate")
-    }
 
     /// The specializing rewrites of one function, the only finishing pass that adds sites.
     fn rewrite_function(&mut self, function: &mut BcFunction) {

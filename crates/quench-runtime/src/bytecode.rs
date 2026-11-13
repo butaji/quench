@@ -58,8 +58,7 @@ pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
 pub type Atom = u32;
 pub type Register = u16;
 
-mod source_text_snapshot;
-pub(crate) mod append_vec;
+mod source_text_snapshot; pub(crate) mod append_vec;
 mod atoms;
 mod control_flow;
 pub(crate) mod initialization;
@@ -3735,14 +3734,12 @@ pub struct ResidualProgram {
     pub(crate) cache_sites: u16,
     pub(crate) method_sites: Vec<MethodSite>,
     pub(crate) method_arguments: Vec<Register>,
-    /// Grows as the functions whose load deferred their rewrites compile (`append_vec`).
     pub(crate) field_sites: append_vec::AppendVec<FieldSite>,
     pub(crate) object_sites: Vec<ObjectSite>,
     pub(crate) regexp_literal_sites: Vec<RegExpLiteralSite>,
     pub(crate) literal_templates: Vec<Box<[LiteralStep]>>,
     pub(crate) superinstructions: append_vec::AppendVec<Superinstruction>,
-    /// Where the sites of each function (by id) whose rewrites a replay made start, or `None` when it left them unrun in the two tables above (`Rewrite::Deferred`).
-    pub(crate) rewrite_ranges: std::cell::RefCell<Vec<Option<Option<crate::compile::replay::RewriteStart>>>>,
+    pub(crate) rewrite_ranges: std::cell::RefCell<Vec<Option<Option<crate::compile::replay::RewriteStart>>>>, // per function id: where a replay put its rewrites' sites, or `None` for their skip
     /// How its functions can be compiled again from source, when they can.
     pub(crate) replay: Option<std::rc::Rc<crate::compile::replay::ProgramReplay>>,
     /// Each nested first-call stub's scopes, by stub id, which an encoding keeps with the stubs.
@@ -3828,14 +3825,6 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    /// Notes where the sites of function `id`'s deferred rewrites start, or `None` if they stayed unrun.
-    pub(crate) fn record_rewrite(&self, id: u32, start: Option<crate::compile::replay::RewriteStart>) {
-        let mut ranges = self.rewrite_ranges.borrow_mut();
-        let len = ranges.len().max(id as usize + 1);
-        ranges.resize(len, None);
-        ranges[id as usize] = Some(start);
-    }
-
     /// Original compiler text used by diagnostics and Function.prototype.toString.
     pub fn source_text(&self) -> Option<&str> {
         self.source.as_ref().map(|source| source.text.as_ref())
