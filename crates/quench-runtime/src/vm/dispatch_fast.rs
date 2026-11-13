@@ -2997,6 +2997,10 @@ script_handler! {
             // SAFETY: the context's program outlives the lane run.
             vm.frame_binding_mut(unsafe { &*(*cx).code }, unsafe { (*cx).frame() }, slot)
         } else if ENVIRONMENT {
+            // SAFETY: as `lane_store_window_local_window`'s write to the window's storage; a marker needs no barrier.
+            if unsafe { crate::staged::environment::concrete_environment_slot_open(window_storage(r, registers), slot as u16) } {
+                next!(cx, r, following(ip), Carried::script(cx))
+            }
             // SAFETY: as `lane_load_window_local`'s read of the window's storage; a marker
             // needs no barrier.
             let storage = unsafe {
@@ -4111,12 +4115,18 @@ script_handler! {
     #[inline(never)]
     fn lane_store_window_local_window<ENVIRONMENT: bool>(cx, r, ip, i, view) {
         let (slot, registers) = environment_window_fields(i);
-        if !unsafe { (*cx).env }.is_deleted() && i.c == 0 {
+        if !unsafe { (*cx).env }.is_deleted() && (ENVIRONMENT || i.c == 0) {
             let value = r.get(i.a);
             let stored = if ENVIRONMENT {
                 // SAFETY: as `lane_load_window_local_general`'s read of the window's storage, which no
                 // other reference reads while this record runs; `slot` is the 16-bit field.
-                unsafe { crate::staged::environment::concrete_environment_slot_store(window_storage(r, registers), slot as u16, value) }
+                unsafe {
+                    if i.c == 0 {
+                        crate::staged::environment::concrete_environment_slot_store(window_storage(r, registers), slot as u16, value)
+                    } else {
+                        crate::staged::environment::concrete_environment_slot_define(window_storage(r, registers), slot as u16, value)
+                    }
+                }
             } else {
                 // SAFETY: an environment activation's window holds its locals after its
                 // entries (`lane_activate_environment`).
@@ -6663,7 +6673,7 @@ fn lane_activate_getter<H: Host>(
         let Some(this) = lane_call_this(vm, &target, base) else {
             return Err(exit(ip));
         };
-        return lane_activate_environment(cx, r, ip, &target, &[], this);
+        return lane_activate_environment(cx, r, ip, &target, &[], (this, false));
     }
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
     let Some(target) = vm
@@ -11726,7 +11736,7 @@ impl<H: Host> Vm<H> {
             // completes across programs as a call does (`Completion::CrossConstructs`); a
             // forwarding one runs its program's keeping construction
             // (`lane_construct_keeping_activation`), which another program's caller does not.
-            constructs: shape.constructs && !environment && !settles && !body.rest && !(cross && plan.keeps_arguments),
+            constructs: shape.constructs && !settles && !body.rest && !(cross && plan.keeps_arguments),
             initializes: shape.initializes && !environment && !settles && !cross && !body.rest,
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
@@ -12232,7 +12242,7 @@ script_handler! {
         profile_script_call_target(cx, ip, callee, target);
         // SAFETY: the call's window is registers of the running function.
         let passed = unsafe { lane_call_window(r, i) };
-        match lane_activate_environment(cx, r, ip, target, passed, this) {
+        match lane_activate_environment(cx, r, ip, target, passed, (this, false)) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
             Err(next) => next,
         }
@@ -12422,7 +12432,7 @@ script_handler! {
         let arguments = ImmediateLayout::call_window_base(i.imm());
         let activated = if target.entry == CallEntry::Environment {
             // SAFETY: the call's window is registers of the running function.
-            lane_activate_environment(cx, r, ip, target, unsafe { lane_call_window(r, i) }, this)
+            lane_activate_environment(cx, r, ip, target, unsafe { lane_call_window(r, i) }, (this, false))
         } else if target.forwards() {
             lane_activate_keeping::<H, true>(cx, r, ip, target, ActivationArguments::Window(arguments), this, false, None)
         } else {
@@ -12988,7 +12998,7 @@ fn lane_activate_passed<H: Host>(
     this: Value,
 ) -> Result<(Registers, Ip), Ip> {
     if target.entry == CallEntry::Environment {
-        return lane_activate_environment(cx, r, ip, target, passed, this);
+        return lane_activate_environment(cx, r, ip, target, passed, (this, false));
     }
     let arguments = ActivationArguments::Kept(passed.as_ptr(), passed.len());
     lane_activate_keeping::<H, true>(cx, r, ip, target, arguments, this, false, None)
@@ -13190,9 +13200,16 @@ const FRAME_CALL_INLINE_ARGUMENTS: usize = 8;
 /// `r` is the registers of the activation `i` belongs to; the slice is valid until they move.
 #[inline(always)]
 unsafe fn lane_call_window<'a>(r: Registers, i: &LaneInstruction) -> &'a [Value] {
-    let window = ImmediateLayout::call_window_base(i.imm());
-    let argc = ImmediateLayout::argument_count(i.imm());
-    unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(argc)) }
+    unsafe { lane_window(r, ImmediateLayout::call_window_base(i.imm()), i) }
+}
+
+/// The `argument_count` values of the record `i` at register `window` of the running function.
+///
+/// # Safety
+/// As `lane_call_window`.
+#[inline(always)]
+unsafe fn lane_window<'a>(r: Registers, window: u16, i: &LaneInstruction) -> &'a [Value] {
+    unsafe { std::slice::from_raw_parts(r.0.add(usize::from(window)), usize::from(ImmediateLayout::argument_count(i.imm()))) }
 }
 
 /// The value of the lane `Call` record `i` of the native `callee`, of `kind`, with
@@ -13840,7 +13857,13 @@ script_handler! {
                 return lane_frame_return(vm, ip, this);
             }
         }
-        match lane_activate(cx, r, ip, &target, i.c, this, true) {
+        let activated = if target.entry == CallEntry::Environment {
+            // SAFETY: the construction's arguments are a window of the running function's registers.
+            lane_activate_environment(cx, r, ip, &target, unsafe { lane_window(r, i.c, i) }, (this, true))
+        } else {
+            lane_activate(cx, r, ip, &target, i.c, this, true)
+        };
+        match activated {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
             Err(next) => next,
         }
@@ -15804,7 +15827,7 @@ fn lane_activate_environment<H: Host>(
     ip: Ip,
     target: &ScriptCallTarget,
     passed: &[Value],
-    this: Value,
+    (this, constructs): (Value, bool),
 ) -> Result<(Registers, Ip), Ip> {
     let vm = unsafe { vm(cx) };
     // SAFETY: `ip` is a record of the running view.
@@ -15904,7 +15927,7 @@ fn lane_activate_environment<H: Host>(
             caller_this: unsafe { (*cx).this },
             caller_env: unsafe { (*cx).env },
             caller_capture: unsafe { (*cx).capture },
-            completion: Completion::of(false, cross, false),
+            completion: Completion::of(constructs, cross, false),
             forwards: false,
             environment: true,
             record: std::ptr::null_mut(),

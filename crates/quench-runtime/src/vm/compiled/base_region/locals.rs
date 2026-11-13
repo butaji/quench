@@ -22,8 +22,9 @@
 //! (`dispatch_fast::lane_activate_environment`), which keeps the locals its closures capture in the storage its
 //! slots word names, in place among the locals or in the environment a closure made. Its body reads that
 //! storage through the payload (`JsStepDispatch::environment_storage`, set at each entry), by the rows of
-//! `staged::environment::environment_slot` and `environment_slot_store` (`ENV_ROW`, `ENV_SET_ROW`): a read of an
-//! initialized binding, and an assignment of one. The storage is the window's own, so a store needs no barrier of its
+//! `staged::environment::environment_slot`, `environment_slot_store` and `environment_slot_define` (`ENV_ROW`,
+//! `ENV_SET_ROW`, `ENV_DEFINE_ROW`): a read of an initialized binding, an assignment of one, and the opening of a dead
+//! zone and a declaration's first value, which define it. The storage is the window's own, so a store needs no barrier of its
 //! own beyond the interpreter's (the environment is young, or a resumed generator's, which joined the remembered
 //! set when its window opened). A body that runs in a frame holds storage with no slots, which every such row
 //! misses at; a loop region has no such storage and makes no such row.
@@ -38,26 +39,32 @@ fn frame_owned(function: &Function, id: u32, slot: usize) -> bool {
 /// Whether `slot` of `function` (index `id`) lives in the storage of an activation's environment window, as the
 /// window handlers' `ENVIRONMENT` flavor reads it (`specialize_environment_window`): the function resolves no names at
 /// run time and no mapped `arguments` aliases the slot.
-fn env_owned(function: &Function, id: u32, slot: usize) -> bool {
+pub(in crate::vm::compiled) fn env_owned(function: &Function, id: u32, slot: usize) -> bool {
     id != crate::vm::ROOT_FUNCTION_ID && function.local_slot_uses_environment(slot) && !function.has_dynamic_scope_access()
         && crate::vm::arguments::mapped_arguments_slot(function, slot).is_none()
 }
 
-/// The fast row of the access of an environment-owned slot by `instruction`, if it has one: a read, or an
-/// assignment (an initializing store of such a slot cannot tell its dead zone from a slot the environment took) that
-/// copies its value to no register, is no self binding's and has no result flag.
+/// The fast row of the access of an environment-owned slot by `instruction`, if it has one: a read, an assignment
+/// or a declaration's first value (a definition, which tells its dead zone from a slot another environment shares:
+/// `environment_slot_define`), or the opening of its dead zone (`InitializeTdz`, the hole defined). A store copies its
+/// value to no register, is no self binding's and has no result flag.
 fn env_row(function: &Function, id: u32, instruction: WideInstruction) -> Option<Decoded> {
     let owned = || u16::try_from(instruction.local_slot()).ok().filter(|slot| env_owned(function, id, usize::from(*slot)));
+    let plain_store = || instruction.optional_register_b().is_none() && instruction.result_flags() == 0
+        && !function.is_self_binding_slot(instruction.local_slot());
+    let define = |slot: u16, value: Source| Decoded { a: Some(value), ..Decoded::step(Step::Fast(Heap::EnvDefine(slot)), None) };
     match instruction.op().class() {
         Class::LoadLocal | Class::LoadEnvLocal if !instruction.writes_numeric_local() => {
             owned().map(|slot| Decoded::step(Step::Fast(Heap::EnvLocal(slot)), Some(instruction.result_register())))
         }
-        Class::StoreLocal | Class::StoreEnvLocal
-            if instruction.optional_register_b().is_none() && instruction.boolean_field(InstructionField::C) == Some(false)
-                && instruction.result_flags() == 0 && !function.is_self_binding_slot(instruction.local_slot()) =>
-        {
-            owned().map(|slot| Decoded { a: Some(Source::Register(instruction.register_a())), ..Decoded::step(Step::Fast(Heap::EnvStore(slot)), None) })
+        Class::StoreLocal | Class::StoreEnvLocal if plain_store() => {
+            let value = Source::Register(instruction.register_a());
+            match instruction.boolean_field(InstructionField::C)? {
+                false => owned().map(|slot| Decoded { a: Some(value), ..Decoded::step(Step::Fast(Heap::EnvStore(slot)), None) }),
+                true => owned().map(|slot| define(slot, value)),
+            }
         }
+        Class::InitializeTdz => owned().map(|slot| define(slot, Source::Value(Value::DELETED.to_bits()))),
         _ => None,
     }
 }

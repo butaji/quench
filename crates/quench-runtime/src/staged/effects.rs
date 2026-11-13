@@ -79,6 +79,14 @@ impl<W, P> Operation<W, P> {
         !matches!(self, Self::ElementRead { .. }) && (effects.writes.contains(Region::Elements) || effects.may_alloc || effects.may_call_js)
     }
 
+    /// Whether the operation may create or replace the running activation's environment, which its environment storage word
+    /// names: a closure's allocation promotes the activation's captured locals into one (it allocates and writes
+    /// `Region::Frame`), and anything that may run any code is conservative. A guard, a read or a store does not.
+    pub(crate) fn makes_environment(&self) -> bool {
+        let effects = self.effects();
+        effects.may_alloc && effects.writes.contains(Region::Frame)
+    }
+
     /// The effect row of the operation, from its variant alone.
     pub(crate) const fn effects(&self) -> Effects {
         match self.memory_effects() {

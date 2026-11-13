@@ -39,7 +39,7 @@ use crate::staged::region::Region;
 use crate::staged::{Frame, RecordSpace, Stage, Step, add, elements, entry, environment, iteration, load_this, naming, read_initialized_local, read_local, string_length, value, write_initialized_local, write_local};
 
 pub(crate) use crate::codes::{
-    ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, CONSTANT_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM,
+    ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, CONSTANT_ROW, ENV_DEFINE_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM,
     SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
     STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, INSTANCEOF_ROW, APPEND_ROW,
     ADD_AFTER_AT, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_LINK_AT, ADD_LINK_BITS, ADD_OBJECT_AT, ADD_PACKED_ROW, ADD_SLOT_BITS, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW,
@@ -144,6 +144,14 @@ fn env_row<const D: u8>(s: S, payload: usize) -> Out {
 fn env_set_row<const A: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::from_hole(HOLE_A);
     need!(s, environment::environment_slot_store(&mut stage, word_at(payload, JS_STEP_ENV_STORAGE), 0, tagged_place::<A, 0>(&s), ()));
+    Out::Taken(s)
+}
+
+/// A definition of the value operand (hole 0) into the same slot, whatever initialized or uninitialized binding it holds.
+#[inline(always)]
+fn env_define_row<const A: u8>(s: S, payload: usize) -> Out {
+    let mut stage = StencilStage::from_hole(HOLE_A);
+    need!(s, environment::environment_slot_define(&mut stage, word_at(payload, JS_STEP_ENV_STORAGE), 0, tagged_place::<A, 0>(&s), ()));
     Out::Taken(s)
 }
 
@@ -537,6 +545,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         CAPTURE_SET_ROW => capture_set_row::<A>(s, payload),
         ENV_ROW => env_row::<D>(s, payload),
         ENV_SET_ROW => env_set_row::<A>(s, payload),
+        ENV_DEFINE_ROW => env_define_row::<A>(s, payload),
         INSTANCEOF_ROW => instanceof_row(s, payload),
         FIELD_ROW => field_row::<D>(s, payload),
         SITE_ROW => site_row::<D, ENTRY>(s, payload, register_object(&s)),

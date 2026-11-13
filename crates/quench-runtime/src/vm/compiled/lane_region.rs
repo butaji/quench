@@ -80,6 +80,7 @@ use call_frames::{CallSite, Leave, ReturnSite, Site};
 #[path = "lane_region/jumps.rs"] mod jumps;
 #[path = "lane_region/call_rows.rs"] mod call_rows;
 #[path = "lane_region/register_rows.rs"] mod register_rows;
+#[path = "lane_region/window_locals.rs"] mod window_locals;
 #[path = "lane_region/element_rows.rs"] mod element_rows;
 #[path = "lane_region/fixed_arrays.rs"] mod fixed_arrays;
 #[cfg(test)] #[path = "lane_region/element_tests.rs"] mod element_tests;
@@ -312,6 +313,9 @@ struct Entry {
     /// The running activation's dense capture slots (`EnvironmentSlots::native_dense_view`).
     capture_values: Variable,
     capture_len: Variable,
+    /// The word of the storage the activation's environment-owned locals live in (`JsStepDispatch::environment_storage`),
+    /// read once at entry and again after an operation that makes an environment (`Lowering::reload_environment`).
+    environment: Variable,
     this: Variable,
     /// Flat per-site immutable slot inputs; no per-operation probe.
     fields: smallvec::SmallVec<[(u16, FieldSlotBinding); INLINE_FIELD_BINDINGS]>,
@@ -2108,6 +2112,9 @@ impl Lowering<'_, '_> {
         let (values, len) = self.entry_capture_words();
         self.builder.def_var(capture_values, values);
         self.builder.def_var(capture_len, len);
+        let environment = self.builder.declare_var(types::I64);
+        let storage = self.environment_word();
+        self.builder.def_var(environment, storage);
         let mut miss = None;
         let object_table = accesses_fields
             .then(|| {
@@ -2252,7 +2259,7 @@ impl Lowering<'_, '_> {
             self.return_at(origin(self.coverage.entry()));
             self.builder.switch_to_block(admitted);
         }
-        Entry { receiver, object_table, records, receiver_shapes, store_atoms, capture_values, capture_len, this, fields, calls, call_receivers }
+        Entry { receiver, object_table, records, receiver_shapes, store_atoms, capture_values, capture_len, environment, this, fields, calls, call_receivers }
     }
 
     /// Whether the entry edge admits the inlined call at `pc`, a call a run may skip
@@ -2439,6 +2446,7 @@ impl Lowering<'_, '_> {
             _ if self.is_call_row(instruction) => self.call_row_step(state, pc, instruction),
             _ if self.is_call_out(instruction) => Some(self.call_out_step(state, pc, instruction)),
             _ if self.is_register_row(instruction) => Some(self.register_step(state, pc, instruction)),
+            _ if self.is_window_row(pc, instruction) => Some(self.window_step(state, pc, instruction)),
             opcode if (opcode.is_load_name() || opcode.is_load_name_call()) && plain && self.global_reads.contains_key(&pc) => Some(self.global_read(state, pc, instruction)),
             opcode if opcode.is_nop() && plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
                 Some(frame) => Some(self.inline_call(state, pc, frame)),
@@ -2671,6 +2679,7 @@ impl Lowering<'_, '_> {
     fn step_with(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>,
         StepWith { access, sites, site }: StepWith<'_>) -> crate::staged::Step<ir::Value, ()> {
         let locals = self.completion != Completion::Number;
+        let makes_environment = operation.makes_environment();
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
         let gate = access.map(|_| self.payload);
         let mut stage = Emit { builder: &mut self.builder, property_values, gate };
@@ -2686,6 +2695,8 @@ impl Lowering<'_, '_> {
             held: self.held_view.take(), arrays_fixed: self.arrays_fixed, site };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
+        // A step that ends in a branch makes no environment: only a closure's allocation, a value step, does.
+        if makes_environment && matches!(edges, frame::Edges::Value | frame::Edges::ValueGuarded { .. }) { self.reload_environment(); }
         step
     }
 

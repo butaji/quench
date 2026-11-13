@@ -4,6 +4,11 @@ use crate::test_host::TestHost;
 /// What a program prints, run in the interpreter and under `--b-jit`, and the runs of lane bodies
 /// the second made (all, and those that completed their activation).
 pub(super) fn run_both(source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
+    run_in(JitMode::BaseOnly, source)
+}
+
+/// `run_both` with the compiled run under `mode`.
+pub(super) fn run_in(mode: JitMode, source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
     super::super::tier_policy::force_admission();
     let program = Engine::specialize(source, "base-body.js").unwrap();
     let printed = |mode: ExecutionMode| {
@@ -16,7 +21,7 @@ pub(super) fn run_both(source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
     };
     let interpreted = printed(ExecutionMode::Interpreted);
     super::super::LANE_BODY_RUNS.with(|runs| runs.set([0; 2]));
-    let compiled = crate::jit_mode::with_mode(JitMode::BaseOnly, || printed(ExecutionMode::Compiled));
+    let compiled = crate::jit_mode::with_mode(mode, || printed(ExecutionMode::Compiled));
     (interpreted, compiled, super::super::LANE_BODY_RUNS.with(std::cell::Cell::get))
 }
 
