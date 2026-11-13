@@ -59,6 +59,7 @@ pub type Atom = u32;
 pub type Register = u16;
 
 mod source_text_snapshot;
+pub(crate) mod append_vec;
 mod atoms;
 mod control_flow;
 pub(crate) mod initialization;
@@ -3734,11 +3735,14 @@ pub struct ResidualProgram {
     pub(crate) cache_sites: u16,
     pub(crate) method_sites: Vec<MethodSite>,
     pub(crate) method_arguments: Vec<Register>,
-    pub(crate) field_sites: Vec<FieldSite>,
+    /// Grows as the functions whose load deferred their rewrites compile (`append_vec`).
+    pub(crate) field_sites: append_vec::AppendVec<FieldSite>,
     pub(crate) object_sites: Vec<ObjectSite>,
     pub(crate) regexp_literal_sites: Vec<RegExpLiteralSite>,
     pub(crate) literal_templates: Vec<Box<[LiteralStep]>>,
-    pub(crate) superinstructions: Vec<Superinstruction>,
+    pub(crate) superinstructions: append_vec::AppendVec<Superinstruction>,
+    /// Where the sites of each function (by id) whose rewrites a replay made start in the two tables above (`Rewrite::Deferred`).
+    pub(crate) rewrite_ranges: std::cell::RefCell<Vec<Option<crate::compile::replay::RewriteStart>>>,
     /// How its functions can be compiled again from source, when they can.
     pub(crate) replay: Option<std::rc::Rc<crate::compile::replay::ProgramReplay>>,
     /// Each nested first-call stub's scopes, by stub id, which an encoding keeps with the stubs.

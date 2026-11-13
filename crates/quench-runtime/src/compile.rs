@@ -1924,6 +1924,9 @@ struct Compiler<'a> {
     /// The compile-cache records of the functions released during the load, when its
     /// program will be encoded (`ReleasedRecords::Encoded`).
     load_encoding: Option<crate::bytecode::LoadEncoding>,
+    /// The instructions of the functions whose rewrites the load left to their first compile
+    /// (`Compiler::defers_rewrites`), which bound the sites those add.
+    deferred_rewrite_code: usize,
 }
 
 /// Whether a compilation may parse a data script's literal as an empty one
@@ -2154,6 +2157,12 @@ impl<'a> From<&'a Constant> for ConstantKey<'a> {
 
 /// Whether a load lowers every record it keeps instead of leaving it to the record's first
 /// read: under `verify-replay`, and in tests that compare the two (`LOWER_AT_LOAD`).
+/// The instructions a rewrite consumes for each site it adds: a field site fuses a read of a
+/// field with the store of its result, and no later rewrite fuses what a field site made again.
+const FIELD_SITE_WINDOW: usize = 2;
+/// The instructions of the window a superinstruction fuses.
+const SUPERINSTRUCTION_WINDOW: usize = rewrite::CONST_ARRAY_OBJECT2.len();
+
 fn lowers_at_load() -> bool {
     #[cfg(test)]
     if LOWER_AT_LOAD.with(std::cell::Cell::get) {
@@ -2437,6 +2446,7 @@ impl<'a> Compiler<'a> {
             early_replays: FxHashMap::default(),
             invoked_functions: FxHashSet::default(),
             replay_calls: FxHashMap::default(),
+            deferred_rewrite_code: 0,
             replay_target: None,
             source_type: oxc_span::SourceType::default(),
             replay_program: None,
@@ -2596,17 +2606,15 @@ impl<'a> Compiler<'a> {
         };
         let arguments_slot = function.arguments_slot;
         capture_layout::apply_function(&mut function, id as usize, &layout, &self.atoms);
-        let rewrite_cursors = (
-            self.field_sites.len() as u32,
-            self.superinstructions.len() as u32,
-        );
-        self.rewrite_function(&mut function);
+        let rewrite = self.start_rewrite(&mut function);
         let undefined_constant = self.constant(Constant::Undefined);
         // The record is released below and only its header stays, so a load that drops it
         // settles just the dispatch class the header keeps. One that encodes it finishes it as
         // a replay would, against tables whose entries for it are final (`lower_settled`);
         // `verify-replay` keeps the whole record to compare each replay with.
-        if cfg!(feature = "verify-replay") || self.load_encoding.is_some() {
+        if matches!(rewrite, replay::Rewrite::Deferred) {
+            // Its replay settles it after its rewrites.
+        } else if cfg!(feature = "verify-replay") || self.load_encoding.is_some() {
             self.lower_function(&mut function, undefined_constant);
             liveness::mark_register_roots(
                 std::iter::once(&mut function),
@@ -2632,7 +2640,7 @@ impl<'a> Compiler<'a> {
                 call,
                 layout,
                 arguments_slot,
-                rewrite_cursors,
+                rewrite,
             },
         );
         // Name bindings are resolved only for functions a dynamic lookup reaches.
@@ -3329,7 +3337,7 @@ impl<'a> Compiler<'a> {
                         call,
                         layout: layout_inputs[id as usize].clone(),
                         arguments_slot: function.arguments_slot,
-                        rewrite_cursors: (0, 0),
+                        rewrite: replay::Rewrite::Loaded(replay::RewriteStart { field_sites: 0, superinstructions: 0 }),
                     },
                 );
             }
@@ -3339,17 +3347,19 @@ impl<'a> Compiler<'a> {
                 capture_layout::apply_function(function, id, &layout_inputs[id], &self.atoms);
             }
         }
-        for (id, function) in functions.iter_mut().enumerate() {
-            let Some(function) = function else { continue };
-            if let Some(replay) = replays.get_mut(&(id as u32))
-                && !released.contains_key(&id)
-            {
-                replay.rewrite_cursors = (
-                    self.field_sites.len() as u32,
-                    self.superinstructions.len() as u32,
-                );
+        for (id, slot) in functions.iter_mut().enumerate() {
+            let Some(function) = slot else { continue };
+            match replays.get_mut(&(id as u32)).filter(|_| !released.contains_key(&id)) {
+                Some(replay) => {
+                    replay.rewrite = self.start_rewrite(function);
+                    if matches!(replay.rewrite, replay::Rewrite::Deferred)
+                        && let Some(function) = slot.take()
+                    {
+                        released.insert(id, replay::ReleasedFunction::of(function));
+                    }
+                }
+                None => self.rewrite_function(function),
             }
-            self.rewrite_function(function);
         }
         #[cfg(feature = "profile-memory")]
         if crate::trace::Channel::Memory.on() && released.is_empty() {
@@ -3419,8 +3429,7 @@ impl<'a> Compiler<'a> {
         constants.shrink_to_fit();
         method_sites.shrink_to_fit();
         method_arguments.shrink_to_fit();
-        let mut field_sites = self.field_sites.into_vec();
-        field_sites.shrink_to_fit();
+        let field_sites = self.field_sites.into_vec();
         let program = ResidualProgram {
             specialized: self.mode == SpecializationMode::Enabled,
             // Eval code is code compiled for an eval; a host script that only captures its
@@ -3463,11 +3472,12 @@ impl<'a> Compiler<'a> {
             cache_sites: self.cache_sites,
             method_sites,
             method_arguments,
-            field_sites,
+            field_sites: crate::bytecode::append_vec::AppendVec::with_headroom(field_sites, self.deferred_rewrite_code / FIELD_SITE_WINDOW + 1),
             object_sites: self.object_sites.into_vec(),
             regexp_literal_sites: self.regexp_literal_sites.into_vec(),
             literal_templates: self.literal_templates.into_vec(),
-            superinstructions: self.superinstructions.into_vec(),
+            superinstructions: crate::bytecode::append_vec::AppendVec::with_headroom(self.superinstructions.into_vec(), self.deferred_rewrite_code / SUPERINSTRUCTION_WINDOW + 1),
+            rewrite_ranges: Default::default(),
             replay: replay_atoms.map(|atoms| {
                 std::rc::Rc::new(replay::ProgramReplay {
                     source_type: self.source_type,
@@ -4310,6 +4320,35 @@ impl<'a> Compiler<'a> {
             Some(program) => program,
             None => &self.method_sites,
         }
+    }
+
+    /// Runs the rewrites of replayable `function`, whose record is released, unless its first
+    /// compile can run them: they add sites, which a replay finds in the program's tables
+    /// where the load left them, so the load either adds them here or reserves room for the
+    /// replay to add them (`deferred_rewrite_code`).
+    fn start_rewrite(&mut self, function: &mut BcFunction) -> replay::Rewrite {
+        if self.defers_rewrites() {
+            self.deferred_rewrite_code += function.code.len();
+            return replay::Rewrite::Deferred;
+        }
+        let start = replay::RewriteStart {
+            field_sites: self.field_sites.len() as u32,
+            superinstructions: self.superinstructions.len() as u32,
+        };
+        self.rewrite_function(function);
+        replay::Rewrite::Loaded(start)
+    }
+
+    /// Whether the load leaves rewrites to the first compile of the functions it releases:
+    /// when their records are dropped for good, not encoded (`load_encoding`) or compared
+    /// with their replays (`lowers_at_load`), and a program records them nowhere else.
+    fn defers_rewrites(&self) -> bool {
+        crate::DYNAMIC_EXECUTION_ENABLED
+            && self.mode == SpecializationMode::Enabled
+            && self.replayable_source
+            && self.load_encoding.is_none()
+            && !lowers_at_load()
+            && !cfg!(feature = "profile-aggregate")
     }
 
     /// The specializing rewrites of one function, the only finishing pass that adds sites.

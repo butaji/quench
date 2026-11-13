@@ -22,6 +22,9 @@ pub(super) enum SiteTable<'a, T> {
         next: usize,
         written: FxHashMap<usize, T>,
     },
+    /// The first replay of a function whose load deferred its rewrites: its entries go
+    /// straight into the program's table, in the room the load reserved.
+    Grow(&'a crate::bytecode::append_vec::AppendVec<T>),
 }
 
 impl<T> Default for SiteTable<'_, T> {
@@ -39,10 +42,15 @@ impl<'a, T: Clone> SiteTable<'a, T> {
         }
     }
 
+    pub(super) fn grow(table: &'a crate::bytecode::append_vec::AppendVec<T>) -> Self {
+        Self::Grow(table)
+    }
+
     /// The index the next entry takes.
     pub(super) fn len(&self) -> usize {
         match self {
             Self::Owned(entries) => entries.len(),
+            Self::Grow(table) => table.len(),
             Self::Replay { next, .. } => *next,
         }
     }
@@ -50,6 +58,7 @@ impl<'a, T: Clone> SiteTable<'a, T> {
     pub(super) fn push(&mut self, value: T) {
         match self {
             Self::Owned(entries) => entries.push(value),
+            Self::Grow(table) => table.append(std::iter::once(value)),
             Self::Replay { next, written, .. } => {
                 written.insert(*next, value);
                 *next += 1;
@@ -68,6 +77,7 @@ impl<'a, T: Clone> SiteTable<'a, T> {
     pub(super) fn as_slice(&self) -> &[T] {
         match self {
             Self::Owned(entries) => entries,
+            Self::Grow(table) => table,
             Self::Replay { entries, .. } => entries,
         }
     }
@@ -75,6 +85,7 @@ impl<'a, T: Clone> SiteTable<'a, T> {
     pub(super) fn get(&self, index: usize) -> Option<&T> {
         match self {
             Self::Owned(entries) => entries.get(index),
+            Self::Grow(table) => table.get(index),
             Self::Replay { entries, written, .. } => {
                 written.get(&index).or_else(|| entries.get(index))
             }
@@ -90,7 +101,7 @@ impl<'a, T: Clone> SiteTable<'a, T> {
     pub(super) fn into_vec(self) -> Vec<T> {
         match self {
             Self::Owned(entries) => entries,
-            Self::Replay { .. } => Vec::new(),
+            Self::Replay { .. } | Self::Grow(_) => Vec::new(),
         }
     }
 
@@ -98,7 +109,7 @@ impl<'a, T: Clone> SiteTable<'a, T> {
     #[cfg(feature = "verify-replay")]
     pub(super) fn written(&self) -> impl Iterator<Item = (usize, &T)> {
         match self {
-            Self::Owned(_) => None,
+            Self::Owned(_) | Self::Grow(_) => None,
             Self::Replay { written, .. } => Some(written.iter().map(|(index, value)| (*index, value))),
         }
         .into_iter()
@@ -118,6 +129,7 @@ impl<T: Clone> IndexMut<usize> for SiteTable<'_, T> {
     fn index_mut(&mut self, index: usize) -> &mut T {
         match self {
             Self::Owned(entries) => &mut entries[index],
+            Self::Grow(table) => table.entry_mut(index),
             Self::Replay { entries, written, .. } => written
                 .entry(index)
                 .or_insert_with(|| entries[index].clone()),
@@ -275,6 +287,16 @@ pub(super) struct ReleasedFunction {
     pub(super) record: crate::bytecode::Function,
 }
 
+impl ReleasedFunction {
+    pub(super) fn of(function: crate::bytecode::Function) -> Box<Self> {
+        Box::new(Self {
+            header: crate::bytecode::FunctionHeader::of(&function),
+            #[cfg(feature = "verify-replay")]
+            record: function,
+        })
+    }
+}
+
 /// The functions a compilation makes, by id. At load the compiler owns every entry. A replay
 /// makes one record, the replayed function's; the functions nested in it keep the ids and
 /// records the load gave them, and the replay reads their headers from the program.
@@ -409,11 +431,7 @@ impl<'a> FunctionTable<'a> {
     /// Releases a finished function, keeping its header.
     pub(super) fn release(&mut self, id: u32, function: crate::bytecode::Function) {
         if let Self::Owned(entries) = self {
-            entries[id as usize] = FunctionEntry::Released(Box::new(ReleasedFunction {
-                header: crate::bytecode::FunctionHeader::of(&function),
-                #[cfg(feature = "verify-replay")]
-                record: function,
-            }));
+            entries[id as usize] = FunctionEntry::Released(ReleasedFunction::of(function));
         }
     }
 
@@ -529,8 +547,25 @@ pub(crate) struct FunctionReplay {
     /// The `arguments` slot `Compiler::compile_function` decided, before layout: it depends on
     /// the code of the arrows nested in the function, which a replay does not compile.
     pub(super) arguments_slot: Option<u16>,
-    /// The field-site and superinstruction cursors the function's rewrites started from.
-    pub(super) rewrite_cursors: (u32, u32),
+    pub(super) rewrite: Rewrite,
+}
+
+/// Where the sites a function's rewrites make start in the field-site and superinstruction tables.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RewriteStart {
+    pub(super) field_sites: u32,
+    pub(super) superinstructions: u32,
+}
+
+/// When a function's rewrites ran. A released function's record is made again by its replay,
+/// so its load need only run them for the sites they add to the program's tables.
+#[derive(Clone, Copy)]
+pub(crate) enum Rewrite {
+    /// The load ran them, starting at these cursors.
+    Loaded(RewriteStart),
+    /// The first replay runs them, and appends their sites to the program's tables
+    /// (`ResidualProgram::rewrite_ranges`), in the room the load reserved for them.
+    Deferred,
 }
 
 /// Lazily derived views of a finished program that its replays share.
@@ -899,13 +934,21 @@ pub(crate) fn recompile(
         .ok_or("the replay made no record")?;
     function.arguments_slot = function_replay.arguments_slot;
     capture_layout::apply_function(&mut function, id as usize, &function_replay.layout, &compiler.atoms);
-    compiler
-        .field_sites
-        .skip_to(function_replay.rewrite_cursors.0 as usize);
-    compiler
-        .superinstructions
-        .skip_to(function_replay.rewrite_cursors.1 as usize);
+    let (start, appends) = rewrite_start(program, id, function_replay.rewrite);
+    if appends {
+        compiler.field_sites = SiteTable::grow(&program.field_sites);
+        compiler.superinstructions = SiteTable::grow(&program.superinstructions);
+    } else {
+        compiler.field_sites.skip_to(start.field_sites as usize);
+        compiler.superinstructions.skip_to(start.superinstructions as usize);
+    }
     compiler.rewrite_function(&mut function);
+    if appends {
+        let mut ranges = program.rewrite_ranges.borrow_mut();
+        let len = ranges.len().max(id as usize + 1);
+        ranges.resize(len, None);
+        ranges[id as usize] = Some(start);
+    }
     let undefined_constant = compiler.constant(Constant::Undefined);
     compiler.lower_function(&mut function, undefined_constant);
     liveness::mark_register_roots(
@@ -955,6 +998,18 @@ pub(crate) fn recompile(
     written(&mut entries, "superinstructions", &compiler.superinstructions);
     }
     Ok(Recompiled { function, entries })
+}
+
+/// Where `id`'s rewrites start in the program's tables, and whether this replay adds their
+/// sites to the tables: the first replay of a function whose load deferred its rewrites does.
+fn rewrite_start(program: &crate::bytecode::ResidualProgram, id: u32, rewrite: Rewrite) -> (RewriteStart, bool) {
+    match rewrite {
+        Rewrite::Loaded(start) => (start, false),
+        Rewrite::Deferred => match program.rewrite_ranges.borrow().get(id as usize).copied().flatten() {
+            Some(start) => (start, false),
+            None => (RewriteStart { field_sites: program.field_sites.len() as u32, superinstructions: program.superinstructions.len() as u32 }, true),
+        },
+    }
 }
 
 impl ShiftSpans {

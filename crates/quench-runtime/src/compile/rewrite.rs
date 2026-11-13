@@ -726,7 +726,7 @@ struct SuperRule {
     fuse: fn(&[Instr], &mut SiteTable<'_, Superinstruction>) -> Option<Instr>,
 }
 
-const CONST_ARRAY_OBJECT2: [Op; 4] = [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2];
+pub(super) const CONST_ARRAY_OBJECT2: [Op; 4] = [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2];
 
 const SUPER_RULES: &[SuperRule] = &[SuperRule {
     pattern: &[Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2],

@@ -89,7 +89,7 @@ impl ProgramFootprint {
             constants: bytes::<Constant>(&program.constants),
             sites: bytes::<MethodSite>(&program.method_sites)
                 + bytes::<Register>(&program.method_arguments)
-                + bytes::<FieldSite>(&program.field_sites)
+                + slice_bytes::<FieldSite>(&program.field_sites)
                 + bytes::<ObjectSite>(&program.object_sites)
                 + bytes::<RegExpLiteralSite>(&program.regexp_literal_sites)
                 + program
@@ -97,7 +97,7 @@ impl ProgramFootprint {
                     .iter()
                     .map(|steps| slice_bytes::<crate::bytecode::LiteralStep>(steps))
                     .sum::<usize>()
-                + bytes::<Superinstruction>(&program.superinstructions),
+                + slice_bytes::<Superinstruction>(&program.superinstructions),
             register_roots: sum(|function| function.register_roots.capacity_bytes()),
         }
     }
