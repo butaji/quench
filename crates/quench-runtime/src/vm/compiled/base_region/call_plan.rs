@@ -2,9 +2,10 @@
 //! chain of stencil parts (`quench-bjit/stencils/call_rows.rs` holds the rows and their register
 //! and stack contract; `quench_bjit::call` names them).
 //!
-//! A call whose callee is small and monomorphic is not a chain at all where its callee is one
-//! row: the stitcher decodes it as that row (`inline::InlineSite`), so no part is planned and
-//! the pinned registers stay where they are.
+//! A call whose callee is small and monomorphic is not a chain at all: the stitch splices in the
+//! callee's rows (`inline::InlineSite`), so no part is planned and the pinned registers stay where
+//! they are. A call that returns its result (`return f(x)`) is followed by the row that completes
+//! the activation with it.
 //!
 //! The chain, in layout order:
 //!
@@ -109,6 +110,8 @@ pub(super) struct CallShape {
     /// follows it does (`steps::completing`), and nothing is live after it.
     pub(super) returning: bool,
     pub(super) form: CallForm,
+    /// The call completes its caller's activation with its result (`return f(x)`).
+    pub(super) returning: bool,
 }
 
 impl CallShape {

@@ -1,15 +1,19 @@
 //! A Number loop region built from BaseJIT stencils (`quench-bjit`) instead of Cranelift IR,
-//! behind `QUENCH_DEV=bjit`. The registers the region touches most live in pinned machine
-//! registers through the whole chain of stencils and the rest stay tagged `Value` words in the
-//! activation's register file; every exit writes the pinned registers back first, so it leaves
-//! the lane's state canonical. An instruction that is no row of the stencil library is lowered
-//! by `steps` (a helper step or a leave), so no region is declined for its instructions.
+//! behind `QUENCH_DEV=bjit`, as the same stitched program of rows a function's body is
+//! (`function`, `stitch`): the loop's span of its function, its small monomorphic calls inlined.
+//! The registers the region touches most live in pinned machine registers through the whole chain
+//! of stencils and the rest stay tagged `Value` words in the activation's register file; every exit
+//! writes the pinned registers back first, so it leaves the lane's state canonical. An instruction
+//! that is no row of the stencil library is lowered by `steps` (a helper step or a leave), so no
+//! region is declined for its instructions.
 //!
-//! The result word is the exit PC: a leave out of the region resumes there, a guard inside it
-//! exits at its instruction (nothing of that instruction has run), a backward jump exits at the
-//! jump when an interrupt is requested so the interpreter's safepoint runs, and an entry guard
-//! that finds a register that is no Number returns `LaneExit::Entry`.
+//! The result word is the exit: the PC a leave out of the region resumes at, a guard inside it
+//! exits at its instruction (nothing of that instruction has run; inside an inlined callee, at the
+//! callee's, `LaneExit::Inlined`), a backward jump exits at the jump when an interrupt is
+//! requested so the interpreter's safepoint runs, and an entry guard that finds a register that is
+//! no Number returns `LaneExit::Entry`.
 
+use super::lane_unit::{Frame as InlinedCall, Origin};
 use super::osr_loop::LoopRegion;
 use crate::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
 use crate::code_dependencies::InstanceofFact;
@@ -29,20 +33,28 @@ mod sites;
 pub(in crate::vm::compiled) mod callees;
 mod decode;
 pub(in crate::vm::compiled) mod function;
+pub(in crate::vm) use function::inlined_exit_key;
 mod link;
 mod locals;
 mod plan;
 mod repr;
+mod span;
 mod steps;
 mod throws;
+mod stitch;
 mod webs;
 use sites::*;
+#[cfg(test)]
+#[path = "base_region/region_tests.rs"]
+mod region_tests;
 use decode::*;
 use link::*;
 use plan::*;
 use repr::*;
+use span::*;
 use steps::*;
 pub(in crate::vm::compiled) use steps::covers;
+use stitch::*;
 use webs::*;
 
 /// What a row reads of the running program rather than of the registers: the names its
@@ -59,8 +71,8 @@ pub(in crate::vm::compiled) struct Known<'a> {
     /// prototype holds folds to the value the holder holds now (`folded_read`), which a change of the
     /// holder's values retires the code over (`Body::holders`). `None` where no fact may be held.
     pub(in crate::vm::compiled) reads: Option<&'a dyn Fn(u16) -> Vec<NativeFieldLoad>>,
-    /// The address of the code's invalidation word (`code_dependencies::Invalidation`), which a body that
-    /// holds a Stable fact and makes a call reads before the rows that hold it. `None` for a region.
+    /// The address of the code's invalidation word (`code_dependencies::Invalidation`), which code that
+    /// holds a Stable fact and makes a call reads before the rows that hold it.
     pub(in crate::vm::compiled) invalidation: Option<usize>,
     /// The program's constants as the compiling VM materialized them (a string or BigInt is a heap
     /// value there, which lives as long as the program), where it has them; none for a region.
@@ -80,6 +92,15 @@ pub(in crate::vm::compiled) struct Known<'a> {
     /// object has the receiver layout (exact shape and prototype link) that answered, which a layout change of any
     /// prototype retires the code over (`Body::holders`). `None` where no fact may be held.
     pub(in crate::vm::compiled) presences: Option<&'a [Option<InPresence>]>,
+}
+
+/// The realm a body's inlined callees were found in: where the active realm's global object sits in
+/// the VM (`Vm::realm_globals_offset`) and the global object itself. A body that inlines code runs
+/// it under its own realm's globals, so its entry proves this realm active (`Heap::Realm`).
+#[derive(Clone, Copy, Default)]
+pub(in crate::vm::compiled) struct RealmProof {
+    pub(in crate::vm::compiled) offset: u64,
+    pub(in crate::vm::compiled) global: u64,
 }
 
 impl Known<'_> {
@@ -161,7 +182,7 @@ fn note_inlined() {
     INLINED_SITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
-fn inlined_sites() -> u64 {
+pub(in crate::vm::compiled) fn inlined_sites() -> u64 {
     INLINED_SITES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
@@ -235,36 +256,15 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
     }
 }
 
-/// The machine code of `region`, entered at the shared native entry ABI, or the stencil it lacks.
-/// `seen` are the registers that held an int32 and a double as the compile began; `widened` lists the PCs whose int32 speculation failed: they take general rows.
-pub(super) fn build(region: &LoopRegion, dense: bool, known: Known, widened: &[usize], seen: [&[Register]; SEEN], helpers: LaneHelpers) -> Result<Built, String> {
-    let started = std::time::Instant::now();
-    let built = assemble(region, (dense, known), widened, seen, helpers);
-    let nanos = started.elapsed().as_nanos() as u64;
-    note(|totals, rejects| match &built {
-        Ok(Built { code, .. }) => {
-            totals.regions += 1;
-            totals.ops += u64::from(region.backedge - region.header) + 1;
-            totals.bytes += code.len() as u64;
-            totals.nanos += nanos;
-        }
-        Err(name) => {
-            totals.rejected += 1;
-            *rejects.entry(name.clone()).or_default() += 1;
-        }
-    });
-    built
-}
-
 /// The webs of `decoded`, their representations and homes, and the rows renamed to webs.
-fn analyze(region: &LoopRegion, decoded: &[Decoded], widened: &[usize], seen: [&[Register]; SEEN]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
+fn analyze(span: &Span, decoded: &[Decoded], widened: &[usize], seen: [&[Register]; SEEN]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
     // A register with several webs may not have a web in an int slot, whose writes keep a
     // tagged word's high half; such a register is left whole.
     let mut merged = Bits::default();
     loop {
-        let (webs, renamed) = Webs::split(region, decoded, &merged);
-        let reprs = representations(region, &renamed, widened, seen, &webs);
-        let homes = Homes::of(&ranked(&renamed, &reprs, Repr::Int), &ranked(&renamed, &reprs, Repr::Double), webs.orig.clone(), &webs.clashes(region, &renamed));
+        let (webs, renamed) = Webs::split(span, decoded, &merged);
+        let reprs = representations(span, &renamed, widened, seen, &webs);
+        let homes = Homes::of(&ranked(&renamed, &reprs, Repr::Int), &ranked(&renamed, &reprs, Repr::Double), webs.orig.clone(), &webs.clashes(span, &renamed));
         let split: Vec<Register> = homes.slots.iter().map(|web| webs.orig[usize::from(*web)]).filter(|register| webs.count(*register) > 1).collect();
         if split.is_empty() {
             return (reprs, homes, webs, renamed);

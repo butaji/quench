@@ -45,6 +45,7 @@
 
 use super::*;
 use super::call_plan::{self, CallChain, CallPart, CallPlan, CallShape, Choice};
+use super::callees::chains;
 use super::super::{LaneHelper, LaneHelpers};
 use crate::bytecode::Op;
 use quench_bjit::HOLES;
@@ -62,7 +63,7 @@ pub(super) enum Step {
     Leave,
     /// The activation completes with the register the row reads (a body's `Return`).
     Return,
-    /// A call, made by the call planner's chain (a body's `Call`).
+    /// A call, made by the call planner's chain (a body's `Call`, a loop region's plain call).
     Call(CallShape),
     /// A `throw` no handler of the function takes natively: the helper stashes the exception and
     /// the run leaves at the record (`plan_throw`).
@@ -180,6 +181,7 @@ fn branches_back(pc: u32, instruction: WideInstruction) -> bool {
 pub(super) fn decode_step(pc: u32, instruction: WideInstruction, (helpers, polls): (LaneHelpers, bool)) -> Decoded {
     match instruction.op().class() {
         Class::Nop => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
+        Class::Call if calls_in_place(instruction, helpers) => Decoded::step(Step::Call(CallShape::of(pc, instruction)), Some(instruction.result_register())),
         _ => {
             let step = if branches_back(pc, instruction) && !polls { Step::Leave } else { lowering(instruction, helpers) };
             let helped = step.runs_helper();
@@ -239,7 +241,7 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
             let slot = operand(&layout.homes, decoded.a).1;
             Ok(Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) })
         }
-        Step::Call(shape) => plan_call(layout, shape, helpers),
+        Step::Call(shape) => plan_call(layout, shape, pc, helpers),
     }
 }
 

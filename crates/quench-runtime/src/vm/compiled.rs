@@ -52,8 +52,8 @@ use std::rc::{Rc, Weak};
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
-mod osr_compile; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
-pub(super) use osr_compile::{start_osr_region, OsrCompile, PendingOsrRegion};
+mod region_lend; mod osr_compile; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
+pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
 pub(super) use lane_region::ElementViews;
 use osr_compile::OsrFacts;
 use crate::typed_ir;
@@ -128,7 +128,7 @@ pub(super) use code_heap::{CodeMemory, CODE_GRANULE};
 #[path = "compiled/direct_call.rs"]
 mod direct_call;
 mod direct_callee;
-pub(super) use direct_callee::{DirectCallee, DirectCandidates, ShadowFrame};
+pub(super) use direct_callee::{names_dead_callee, window_width, DirectCallee, DirectCandidates, ShadowFrame};
 #[path = "compiled/lane_storage.rs"]
 mod lane_storage;
 #[path = "compiled/general_call.rs"]
@@ -1780,6 +1780,8 @@ lane_helper_inventory! { H;
     FieldGet => lane_field_get::<H>,
     FieldSet => lane_field_set::<H>,
     Call => super::dispatch_fast::lane_body_call::<H>,
+    /// A loop region's call (`dispatch_fast::lane_region_call`).
+    RegionCall => super::dispatch_fast::lane_region_call::<H>,
     IndexSet => lane_index_set::<H>,
     /// Room for a loop's append to a dense array (`lane_array_append_room`).
     AppendRoom => lane_array_append_room::<H>,
@@ -6036,6 +6038,30 @@ thread_local! {
     pub(super) static LANE_OSR_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Runs of lane bodies in this test thread, and those that completed their activation.
     pub(super) static LANE_BODY_RUNS: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
+    /// What the lane-ABI OSR runs in this test thread did (`OsrRunKinds`).
+    pub(super) static LANE_OSR_KINDS: std::cell::Cell<OsrRunKinds> = const { std::cell::Cell::new(OsrRunKinds { lent: 0, left: 0, inlined: 0 }) };
+}
+
+/// The runs of lane-ABI OSR regions that ran on the lane frame's payload (a direct row), that left
+/// inside their loop (an exit, a leave inside a callee), and that left inside an inlined callee.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct OsrRunKinds {
+    pub(super) lent: usize,
+    pub(super) left: usize,
+    pub(super) inlined: usize,
+}
+
+#[cfg(test)]
+impl OsrRunKinds {
+    /// Counts a run that ended in `outcome`, `lent` the payload.
+    fn note(outcome: &LoopOutcome, lent: bool) {
+        let left = matches!(outcome, LoopOutcome::Exit(_) | LoopOutcome::Inlined { .. } | LoopOutcome::Left { .. } | LoopOutcome::Callee);
+        LANE_OSR_KINDS.with(|kinds| {
+            let now = kinds.get();
+            kinds.set(Self { lent: now.lent + usize::from(lent), left: now.left + usize::from(left), inlined: now.inlined + usize::from(matches!(outcome, LoopOutcome::Inlined { .. })) });
+        });
+    }
 }
 
 /// A native OSR region published by the shared compiler. Its lowerer is private to this
@@ -6045,6 +6071,9 @@ pub(super) struct CompiledOsrRegion {
     entry: Entry,
     pub(super) facts: OsrFacts,
     crossing: Crossing,
+    /// What its code owns of its calls: the callees it runs as their own rows, whose registers
+    /// follow the activation's (`CallCode`).
+    pub(super) calls: CallCode,
 }
 
 impl CompiledOsrRegion {
@@ -6067,11 +6096,11 @@ impl CompiledOsrRegion {
         function: u32,
         frame: usize,
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
-        lane_context: usize,
+        (lane_context, direct_calls): (usize, bool),
     ) -> LoopOutcome {
         // SAFETY: the caller's contract; the region runs the same lane entry ABI.
         unsafe { if self.crossing == Crossing::Bare { stencil_run::run_bare(self.entry, registers, entry, region, interrupt) }
-            else { self.run_lane(registers, entry, region, vm, program, function, frame, interrupt, lane_context) } }
+            else { self.run_lane(registers, entry, region, vm, program, function, frame, interrupt, (lane_context, direct_calls)) } }
     }
 
     /// Runs a loop compiled through the lane region specializer: the shared lane entry ABI,
@@ -6090,7 +6119,7 @@ impl CompiledOsrRegion {
         function: u32,
         frame: usize,
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
-        lane_context: usize,
+        (lane_context, direct_calls): (usize, bool),
     ) -> LoopOutcome {
         let mut outcome = LoopOutcome::Terminated;
         #[cfg(test)]
@@ -6153,15 +6182,23 @@ impl CompiledOsrRegion {
             let mut context = CallContext::interrupt_only(&*interrupt);
             context.vm = std::ptr::from_mut(vm).cast();
             context.program = program;
-            context.adapter_payload = (&mut native.dispatch as *mut JsStepDispatch).cast();
+            // A region that calls callees by their entries runs on the lane frame's payload, which their
+            // own helpers read (`region_lend`).
+            let lent = self.calls.enters_callees();
+            let payload: *mut JsStepDispatch = if lent { unsafe { region_lend::lend(vm, &mut native.dispatch, direct_calls) } } else { &raw mut native.dispatch };
+            context.adapter_payload = payload.cast();
             let mut word = 0u64;
             // SAFETY: as the caller promises; the code reads the register file and writes
             // the result word.
             // A stencil region (`Lean`) takes the frame, whose window is the register file; Cranelift code takes the file.
             let mut shadow = ShadowFrame { window: registers as usize, ..ShadowFrame::EMPTY };
             let arguments = if self.crossing == Crossing::Lean { (&raw mut shadow).cast::<u64>().cast_const() } else { registers.cast::<u64>().cast_const() };
+            // The region's call rows reload its payload's heap bases after the callee ran (`lane_region_call`).
+            let outer = super::dispatch_fast::lane_region_payload::<H>(lane_context, payload.addr());
             let status = enter_native(&mut context, 0, 0, arguments,
                 &mut word, NativeEntryMode::Resumable, self.entry);
+            super::dispatch_fast::lane_region_payload::<H>(lane_context, outer);
+            let frames = if lent { unsafe { region_lend::reclaim::<H>(&mut native.dispatch) } } else { ShadowFrames::NONE };
 
             if let Some(Raised::Panic(panic)) = context.raised.take() {
                 std::panic::resume_unwind(panic);
@@ -6175,13 +6212,27 @@ impl CompiledOsrRegion {
                 LoopOutcome::Returned { pc: native.dispatch.returned_pc as u32,
                     value: crate::Value::from_bits(word) }
             } else {
-                lane_loop_outcome(word, region)
+                lane_region_outcome::<H>((status, word), region, self.crossing, frames)
             };
         }) };
         if ran.is_none() { return LoopOutcome::Terminated; }
+        #[cfg(test)]
+        OsrRunKinds::note(&outcome, self.calls.enters_callees());
         outcome
     }
 
+}
+
+/// The outcome of a lane OSR region's return, its result `word` and `status`: a stencil region's
+/// status says, where it is not 0, that its run ended inside the callee of a call it made (the leave
+/// routine of `Exit::Status` returns the call's status, `quench-bjit`'s `entry.rs`), whose own leave the
+/// status and word make (`lane_method_exit`), with the native `frames` the call pushed; any other
+/// return is the region's own leave.
+fn lane_region_outcome<H: Host>((status, word): (u32, u64), region: &LoopRegion, crossing: Crossing, frames: ShadowFrames) -> LoopOutcome {
+    if crossing == Crossing::Lean && status != 0 {
+        return LoopOutcome::Left { exit: Vm::<H>::lane_method_exit(status, word), frames };
+    }
+    lane_loop_outcome(word, region)
 }
 
 /// The outcome of a lane OSR region's leave `word`. A leave outside the loop is the loop's
@@ -6650,6 +6701,10 @@ pub(super) struct LaneMethod {
     /// The scratch registers a leave inside an inlined call fills (`LaneFrame::scratch`): one
     /// per register of the inlined callees, the unit's past the caller's.
     scratch_width: usize,
+    /// Whether its inlined frames' registers live in the activation's register file past the
+    /// caller's (a stitched body's) and not in the scratch window its code fills: a leave inside
+    /// one adopts them from the file (`Vm::lane_adopt_window`).
+    framed: bool,
     caller_registers: u16,
     /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
     amortizes: bool,
@@ -6671,6 +6726,12 @@ impl LaneMethod {
     /// The registers of the function it runs, which an inlined callee's follow.
     pub(super) fn caller_registers(&self) -> u16 {
         self.caller_registers
+    }
+
+    /// Whether its inlined frames' registers are in the activation's register file past the
+    /// caller's (`LaneMethod::framed`).
+    pub(super) fn framed(&self) -> bool {
+        self.framed
     }
 
     /// The address of its compiled entry, which a direct caller calls (`DirectCallee`).
@@ -7259,6 +7320,20 @@ impl<H: Host> Vm<H> {
         exit
     }
 
+    /// Copies the registers that follow the first `from` of the activation at `registers`, where a
+    /// stitched body kept its inlined callees' (`LaneMethod::framed`), into the scratch window a
+    /// leave inside one reads (`lane_scratch`), before the activations it makes overwrite them.
+    pub(super) fn lane_adopt_window(registers: *const Value, from: usize) {
+        let frame = lane_frame();
+        // SAFETY: as `take_shadow_frames`; the body's admission proved the room past the
+        // activation's registers (`LaneRecoverySpace`), and no lane body runs while the lane reads it.
+        unsafe {
+            for (at, slot) in (*frame).scratch.iter_mut().enumerate() {
+                *slot = registers.add(from + at).read();
+            }
+        }
+    }
+
     /// Reloads the heap bases a running body's rows read through the payload
     /// (`JsStepDispatch::refresh_object_bases`): a helper that allocated or ran guest code may
     /// have moved the record tables or the barrier's mark blocks. Every call, construct and step
@@ -7290,6 +7365,19 @@ impl<H: Host> Vm<H> {
         let frame = lane_frame();
         // SAFETY: as `refresh_body_bases`.
         unsafe { (*frame).dispatch.receiver = receiver.to_bits() }
+    }
+
+    /// Reloads the heap bases of the payload of the native loop region the lane entered, whose address the
+    /// lane context holds (`dispatch_fast::lane_region_payload`; zero where none runs), as
+    /// `refresh_body_bases` does the body frame's.
+    pub(super) fn refresh_region_bases(&mut self, payload: usize) {
+        // SAFETY: a region's payload lives for its run, which the helper that calls this is made from.
+        if let Some(payload) = unsafe { (payload as *mut JsStepDispatch).as_mut() } {
+            payload.refresh_object_bases(self);
+            // The activation the call made is popped: a direct call's window and frame go where the lane's are now.
+            let direct_calls = payload.shadow_end != payload.shadow_base;
+            region_lend::bind_stacks(self, payload, direct_calls);
+        }
     }
 
     /// Hands `write` each of the `count` registers an inlined callee its lane body left

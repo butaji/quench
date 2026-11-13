@@ -21,7 +21,7 @@ fn a_simple_loop_is_planned_by_the_region_specializer() {
     let observation = Observation { native_field_loads: &[], number_arrays: &[], abandoned: &[], int_entries: &[], typed_captures: &[], int_captures: &[], int_registers: &[], double_registers: &[] };
     let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
         crate::MemoryPolicy::Throughput, &program, id,
-        super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &mut |_| Default::default(), (&[], None))
+        super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &mut |_| Default::default(), (&[], None), RegionCalls::default())
         .expect("the loop plans");
     assert_eq!(pending.header, region.header, "the loop goes through RegionSpecializer");
 }
@@ -404,4 +404,39 @@ fn an_inlined_call_loop_runs_through_the_lane_unit() {
     assert_eq!(error.thrown_value(), Some(crate::Value::integer(200_000)));
     assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
         "the inlining lane OSR path ran");
+}
+
+/// A call in a hot loop is the region's call row, not a leave: the callee's result is the call's
+/// register, which the loop's own rows read, and no run ends at the call.
+#[test]
+fn a_call_in_a_loop_region_runs_as_a_call_row() {
+    let (output, osr) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || osr_run(
+        "function bump(n) { return n * 3 + 1; }
+         function sum(n) { var s = 0; for (var i = 0; i < n; i++) { s = (s + bump(i)) | 0; } return s; }
+         print(sum(200000));", "sum"));
+    assert_eq!(output, ["-129642144"]);
+    assert_eq!(osr.exits, 0, "the call is no exit: {osr:?}");
+}
+
+/// A callee that throws inside a region's loop ends the run at its call (the callee's activation
+/// is the lane's now), and the caller's handler catches it as the interpreter's does.
+#[test]
+fn a_throwing_callee_in_a_loop_region_is_caught_as_in_the_interpreter() {
+    let (output, _) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || osr_run(
+        "function pick(n) { if (n === 150000) throw new Error('at ' + n); return n + 1; }
+         function sum(n) { var s = 0; try { for (var i = 0; i < n; i++) { s = (s + pick(i)) | 0; } } catch (e) { print(e.message + ' after ' + s); } return s; }
+         print(sum(200000));", "sum"));
+    assert_eq!(output.len(), 2);
+}
+
+/// A callee that changes what the loop's entry recorded (a field, an array's length, a capture)
+/// is seen by the rows after the call, which read it live.
+#[test]
+fn a_callee_that_changes_the_loops_snapshot_is_seen_after_the_call() {
+    let (output, _) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || osr_run(
+        "var box = { n: 1 }, xs = [1, 2, 3], shared = 0;
+         function grow(i) { box.n = box.n + 1; xs.push(i); shared = shared + 1; return 0; }
+         function run(n) { var t = 0; for (var i = 0; i < n; i++) { grow(i); t = (t + box.n + xs.length + shared) | 0; } return t; }
+         print(run(100000));", "run"));
+    assert_eq!(output.len(), 1);
 }

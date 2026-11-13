@@ -117,6 +117,10 @@ pub const INSTANCEOF_ROW: u8 = 27;
 /// Bits below the environment view's payload byte offset in an environment row's hole 0, which carries the frame offset
 /// of the row's destination (`ENV_ROW`) or value operand (`ENV_SET_ROW`) beneath it.
 pub const ENV_VIEW_AT: u32 = 32;
+/// Branches to its taken successor (an entry's failure) unless the word at the byte offset in hole 1
+/// of the VM the payload names is the word of hole 2: the active realm's global object, which the
+/// code was compiled against.
+pub const REALM_ROW: u8 = 17;
 /// Bits below the prototype link in a folded read's hole 1, which carries the receiver's exact shape beneath it.
 pub const HELD_LINK_AT: u32 = 32;
 /// Bits below the object register's frame offset in a site field read's hole 0, which carries

@@ -179,6 +179,7 @@ pub(super) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bo
             [dst_hole | a_hole << numeric::library::SITE_OBJECT_AT, b_hole | link << numeric::library::HELD_LINK_AT, decoded.hole]
         }
         Heap::CaptureSet(slot) => [a_hole, u64::from(slot), u64::from(slot) * SLOT],
+        Heap::Live => [0, decoded.hole, 0],
         _ => [dst_hole, a_hole, b_hole],
     })
 }

@@ -80,12 +80,12 @@ fn entry_repr(entered: bool, register: Register, seen: [&[Register]; SEEN]) -> R
 
 /// The representation of every web the region names, to a fixed point: where the compile
 /// began (`ints`, `doubles`; dead at the header: none yet), then each writer's result.
-pub(super) fn representations(region: &LoopRegion, decoded: &[Decoded], widened: &[usize], seen: [&[Register]; SEEN], webs: &Webs) -> Reprs {
-    let header = region.header;
+pub(super) fn representations(span: &Span, decoded: &[Decoded], widened: &[usize], seen: [&[Register]; SEEN], webs: &Webs) -> Reprs {
+    let header = span.header;
     // One loaded value that left for its int32 speculation widens every loaded value at once: the
     // next compile need not discover them one leave at a time.
     let loads_widened = loads_widened(decoded, header, widened);
-    let entered = webs.entry_live(region);
+    let entered = webs.entry_live(span);
     let mut reprs: Reprs = webs.orig.iter().enumerate().map(|(web, register)| entry_repr(entered.contains(&web), *register, seen)).collect();
     let mut changed = true;
     while changed {
@@ -96,7 +96,7 @@ pub(super) fn representations(region: &LoopRegion, decoded: &[Decoded], widened:
                 changed = true;
             }
             let Some(dst) = row.dst else { continue };
-            let result = result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some()), region.number_registers().contains(&webs.orig[usize::from(dst)]));
+            let result = result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some()), span.number_registers().contains(&webs.orig[usize::from(dst)]));
             if reprs[usize::from(dst)] < result {
                 reprs[usize::from(dst)] = result;
                 changed = true;

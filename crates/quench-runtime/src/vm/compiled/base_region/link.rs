@@ -1,5 +1,6 @@
 use super::*;
 use super::call_plan::DirectFacts;
+use super::super::LaneHelper;
 use quench_bjit::{call, HOLES};
 
 /// `push imm32` and `jmp rel32`: a row's exit stub, which names its PC and the routine that
@@ -9,8 +10,9 @@ pub(super) const JMP_REL32: u8 = 0xe9;
 pub(super) const EXIT_STUB_LEN: usize = 2 * (1 + std::mem::size_of::<u32>());
 
 /// How a region hands back its result: a loop region stores its word through the entry's result
-/// pointer and returns status 0; a function body returns its status and word in two registers,
-/// as a lane body does (`lane_body_abi`), a leave with status `NATIVE_JS_STOPPED`.
+/// pointer and returns status 0, or, where a call it made ended the run (`Leave::Status`), that call's
+/// status; a function body returns its status and word in two registers, as a lane body does
+/// (`lane_body_abi`), a leave with status `NATIVE_JS_STOPPED`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Ending {
     Region,
@@ -23,6 +25,12 @@ impl Ending {
     /// The one place a poll row is chosen, so no body can reach the counting one.
     pub(super) fn poll(self) -> Kind {
         match self { Self::Region => Kind::JumpPoll, Self::Body => Kind::JumpWatch }
+    }
+
+    /// The helper a call row runs: a body's call is made on the activation its native frame runs
+    /// (`LaneHelper::Call`), a loop region's on the lane's own (`LaneHelper::RegionCall`).
+    pub(super) fn call_helper(self) -> LaneHelper {
+        match self { Self::Region => LaneHelper::RegionCall, Self::Body => LaneHelper::Call }
     }
 
     fn thunk(self) -> &'static str {
@@ -59,12 +67,18 @@ pub(super) fn thunk(ending: Ending, rows_at: usize) -> Result<Vec<u8>, String> {
 }
 
 /// The code that writes `spills` back to the register file (a pinned double as a canonical
-/// word, a pinned int32 tagged) and ends in the leave routine `tail`, given `leave` as its holes.
-pub(super) fn leave_chain(spills: &[(Place, Register)], tail: &str, leave: [u64; HOLES]) -> Result<Vec<u8>, String> {
+/// word, a pinned int32 tagged), then copies each of `copies` (destination register, source
+/// register) between their frame slots, and ends in the leave routine `tail`, given `leave` as its
+/// holes.
+pub(super) fn leave_chain(spills: &[(Place, Register)], copies: &[(Register, Register)], tail: &str, leave: [u64; HOLES]) -> Result<Vec<u8>, String> {
     let mut chain = Vec::new();
     for (place, register) in spills {
         let row = numeric::Row { kind: Kind::Spill, dst: Place::Mem, a: *place, b: Place::Mem, speculate: false };
         chain.push((numeric::stencil(row)?.clone(), [u64::from(*register) * SLOT, 0, 0]));
+    }
+    for (dst, src) in copies {
+        let row = numeric::Row { kind: Kind::Move, dst: Place::Mem, a: Place::Mem, b: Place::Mem, speculate: false };
+        chain.push((numeric::stencil(row)?.clone(), [u64::from(*dst) * SLOT, u64::from(*src) * SLOT, 0]));
     }
     chain.push((routine(tail)?, leave));
     let hole_fns: Vec<Box<dyn Fn(u32) -> u64 + '_>> = chain.iter().map(|(_, h)| Box::new(move |i: u32| h[i as usize]) as Box<dyn Fn(u32) -> u64>).collect();
@@ -76,27 +90,66 @@ pub(super) fn leave_chain(spills: &[(Place, Register)], tail: &str, leave: [u64;
     Ok(code)
 }
 
-/// What the linker needs of the region: its span, the registers live at a PC, and the entry
+/// What the linker needs of the region: its span, the registers live at a row, and the entry
 /// loads.
 pub(super) struct Layout<'a> {
-    pub(super) header: u32,
-    pub(super) backedge: u32,
+    pub(super) span: Span<'a>,
     pub(super) homes: Homes,
     pub(super) webs: Webs,
-    pub(super) region: &'a LoopRegion,
     pub(super) ending: Ending,
-    /// Per PC, what the call there recorded of its callee: a whole function's call sites (a loop
-    /// region has none, its calls being leaves).
+    /// Per caller PC, what the call there recorded of its callee, where the code calls it by its entry.
     pub(super) callees: &'a [Option<DirectFacts>],
+    /// Per row of a stitched program, where the interpreter resumes if the row leaves.
+    pub(super) origins: &'a [Origin],
+    /// Per inlined frame, the (parameter register, argument register) copies a leave inside it runs
+    /// first: a parameter the callee never writes lives in the caller's argument register.
+    pub(super) copies: &'a [Vec<(Register, Register)>],
     /// The address of the invalidation word the code reads before each row that holds a Stable fact a
     /// call may have changed (`Decoded::holds_stable`): a body that folds one and makes a call.
     pub(super) invalidation: Option<usize>,
+    /// The realm the entry proves active, where the code inlines callees.
+    pub(super) realm: Option<RealmProof>,
 }
 
 impl Layout<'_> {
-    /// What the call at `pc` recorded of its callee.
+    /// What the call at caller PC `pc` recorded of its callee.
     pub(super) fn callee(&self, pc: u32) -> Option<&DirectFacts> {
         self.callees.get(pc as usize)?.as_ref()
+    }
+
+    fn origin(&self, row: u32) -> Option<Origin> {
+        self.origins.get(row as usize).copied()
+    }
+
+    /// The word a leave at `row` returns: the caller's PC, or the callee's inside its inlined frame.
+    pub(super) fn exit_word(&self, row: u32) -> u64 {
+        match self.origin(row) {
+            Some(Origin::Caller(pc)) => u64::from(pc),
+            Some(Origin::Inlined { frame, pc }) => super::super::LaneExit::Inlined { frame, pc }.word(),
+            None => u64::from(row),
+        }
+    }
+
+    /// The caller's record the instruction of `row` is: where a helper row names it and a
+    /// completion records it.
+    pub(super) fn record(&self, row: u32) -> u32 {
+        match self.origin(row) {
+            Some(Origin::Caller(pc)) => pc,
+            _ => row,
+        }
+    }
+
+    /// Whether `row` is inside an inlined callee.
+    pub(super) fn inlined(&self, row: u32) -> bool {
+        matches!(self.origin(row), Some(Origin::Inlined { .. }))
+    }
+
+    /// The copies a leave at `row` runs before it leaves: its inlined frame's, else none.
+    fn copies(&self, row: u32) -> &[(Register, Register)] {
+        match self.origin(row) {
+            Some(Origin::Inlined { frame, .. }) => &self.copies[frame],
+            _ => &[],
+        }
     }
 
     /// The pinned registers live at `pc`: the ones a stub there writes back.
@@ -110,7 +163,7 @@ impl Layout<'_> {
 
     /// The pins of `homes` whose web is live at `pc`, each with the register it writes back to.
     fn live_homes(&self, homes: &[Pin], pc: u32) -> Vec<Pin> {
-        let live = self.webs.live_at(self.region, pc);
+        let live = self.webs.live_at(&self.span, pc);
         homes.iter().filter(|(_, web)| live.contains(&usize::from(*web))).map(|(pin, web)| (*pin, self.homes.orig[usize::from(*web)])).collect()
     }
 
@@ -122,22 +175,25 @@ impl Layout<'_> {
 
     /// The routine a row's exit stub jumps to: it writes the live pinned registers back and returns the PC the stub pushed.
     pub(super) fn routine(&self, pc: u32) -> Result<Vec<u8>, String> {
-        leave_chain(&self.spills(pc), self.ending.tails().1, self.ending.holes(0))
+        leave_chain(&self.spills(pc), &[], self.ending.tails().1, self.ending.holes(0))
     }
 }
 
-/// The entry rows: each pinned register live at the header loads its int32, each int slot is
-/// checked (or, dead there, tagged), and each other Number register live there is checked, so a
-/// loop whose values are no Numbers is never entered.
+/// The entry rows: the realm a body inlined callees in is the active one, each pinned register live
+/// at the header loads its int32, each int slot is checked (or, dead there, tagged), and each other
+/// Number register live there is checked, so a loop whose values are no Numbers is never entered.
 pub(super) fn entry_rows(layout: &Layout) -> Result<Vec<(&'static Stencil, [u64; HOLES])>, String> {
-    let region = layout.region;
     let guard = |kind, dst, offset: u64| {
         numeric::stencil(numeric::Row { kind, dst, a: Place::Mem, b: Place::Mem, speculate: true }).map(|stencil| {
             (stencil, if kind == Kind::TagInit { [offset, 0, 0] } else { [0, offset, 0] })
         })
     };
     let mut rows = Vec::new();
-    let entered = layout.webs.entry_live(region);
+    if let Some(realm) = layout.realm {
+        let row = HeapRow { heap: Heap::Realm, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
+        rows.push((base_rows::stencil(row)?, [0, realm.offset, realm.global]));
+    }
+    let entered = layout.webs.entry_live(&layout.span);
     let slot = |web: Register| u64::from(layout.homes.orig[usize::from(web)]) * SLOT;
     for (pin, web) in layout.homes.pins.iter().filter(|(_, web)| entered.contains(&usize::from(*web))) {
         rows.push(guard(Kind::Guard, Place::Pin(*pin as u8), slot(*web))?);
@@ -150,7 +206,7 @@ pub(super) fn entry_rows(layout: &Layout) -> Result<Vec<(&'static Stencil, [u64;
         rows.push(guard(if live { Kind::Guard } else { Kind::TagInit }, Place::MemInt, slot(*web))?);
     }
     for web in entered.iter().map(|web| *web as Register) {
-        let number = region.number_registers().contains(&layout.homes.orig[usize::from(web)]);
+        let number = layout.span.number_registers().contains(&layout.homes.orig[usize::from(web)]);
         if number && layout.homes.place(web) == Place::Mem {
             rows.push(guard(Kind::Guard, Place::Mem, slot(web))?);
         }
@@ -184,13 +240,9 @@ struct Leaves(Vec<(Leave, Stencil)>);
 
 impl Leaves {
     /// The leave rows every link starts with, and the index of the failed entry's (nothing to
-    /// write back): a loop region also leaves past its backedge, where a body never falls (its
-    /// last row leaves it).
+    /// write back).
     fn open(layout: &Layout) -> Result<(Self, usize), String> {
         let mut leaves = Self(Vec::new());
-        if layout.ending == Ending::Region {
-            leaves.index(layout, Leave::Pc(layout.backedge + 1))?;
-        }
         let failed = leaves.index(layout, Leave::Word(super::super::LaneExit::Entry.word()))?;
         Ok((leaves, failed))
     }
@@ -202,12 +254,12 @@ impl Leaves {
         }
         let ending = layout.ending;
         let stencil = match leave {
-            Leave::Pc(pc) => leave_row(leave_chain(&layout.spills(pc), ending.tails().0, ending.holes(u64::from(pc)))?),
-            Leave::Word(word) => leave_row(leave_chain(&[], ending.tails().0, ending.holes(word))?),
+            Leave::Pc(pc) => leave_row(leave_chain(&layout.spills(pc), layout.copies(pc), ending.tails().0, ending.holes(layout.exit_word(pc)))?),
+            Leave::Word(word) => leave_row(leave_chain(&[], &[], ending.tails().0, ending.holes(word))?),
             Leave::Status => routine(call::LEAVE_STATUS)?,
             Leave::Return { pc, slot } => {
                 let status = u64::from(super::super::LANE_BODY_RETURNED);
-                leave_row(leave_chain(&layout.spills(pc), "leave_returned", [slot, status, u64::from(pc)])?)
+                leave_row(leave_chain(&layout.spills(pc), &[], "leave_returned", [slot, status, u64::from(layout.record(pc))])?)
             }
         };
         self.0.push((leave, stencil));
@@ -242,7 +294,8 @@ fn exit_targets(layout: &Layout, body: &[&Planned], (entry, leaf_base): (usize, 
         let mut row_targets = Vec::with_capacity(row.exits.len());
         for exit in &row.exits {
             row_targets.push(match *exit {
-                Exit::Spilling(pc) => Target::Stub { pc, routine: routine_index(layout, &mut routines, pc)? },
+                Exit::Spilling(pc) if layout.inlined(pc) => Target::Row(leaf_base + leaves.index(layout, Leave::Pc(pc))?),
+                Exit::Spilling(pc) => Target::Stub { pc: layout.record(pc), routine: routine_index(layout, &mut routines, pc)? },
                 Exit::At(pc) => Target::Row(leaf_base + leaves.index(layout, Leave::Word(u64::from(pc)))?),
                 Exit::Status => Target::Row(leaf_base + leaves.index(layout, Leave::Status)?),
                 Exit::Ahead(parts) => Target::Row(entry + at + parts),
@@ -273,7 +326,7 @@ type Part<'a> = (&'a Planned, usize);
 /// stop is its leave row, a branch inside the region its row, a branch out of it a leave row,
 /// and a part of the row's own run the part.
 fn branch_target(layout: &Layout, leaves: &mut Leaves, starts: &[usize], (row, run): Part, parts: usize, entry: usize) -> Result<Option<usize>, String> {
-    let (header, backedge) = (layout.header, layout.backedge);
+    let (header, backedge) = (layout.span.header, layout.span.backedge);
     let leave = match (row.stop, row.branch) {
         (Some(stop), _) => stop.leave(),
         (None, Some(Branch::Part(part))) => return Ok(Some(entry + run + part)),

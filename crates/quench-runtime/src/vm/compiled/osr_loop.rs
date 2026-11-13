@@ -37,7 +37,7 @@ use crate::value::Value;
 use super::super::operations::{NumberArithmetic, NumberBitwise, NumberUnary};
 
 use super::typed_ir::Type;
-use super::NativeFieldLoad;
+use super::{LaneExit, NativeFieldLoad, ShadowFrames};
 use oxc_ast::ast::UnaryOperator;
 
 /// The most instructions a region spans. Native code polls termination only at backward
@@ -63,7 +63,7 @@ mod receivers;
 /// in the low one.
 /// The outcome of one native run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LoopOutcome {
+pub(in crate::vm) enum LoopOutcome {
     /// An entry guard failed: registers are untouched, and the interpreter takes the jump.
     NotEntered,
     /// Control left the region by a jump to this PC, which the lane runs next.
@@ -82,6 +82,10 @@ pub(crate) enum LoopOutcome {
     /// the lane resumes in the activation the call made, at `LaneContext::callee_resume`,
     /// not in this region's view.
     Callee,
+    /// A call the region made by its callee's entry left inside the callee (a stencil region, whose
+    /// status says so): the callee's own leave, with the native frames its call pushed, which the
+    /// lane makes the activations of (`lane_frames_resumed`) and resumes the leave in.
+    Left { exit: LaneExit, frames: ShadowFrames },
     /// Termination was requested while the code ran: its poll faulted, so registers may
     /// hold values of an unfinished iteration, which nothing reads before the request ends
     /// the execution.

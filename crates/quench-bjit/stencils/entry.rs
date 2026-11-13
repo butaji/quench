@@ -7,8 +7,9 @@
 //! Entry ABI: (rdi = context, rcx = the frame, r8 = result pointer). The thunk moves the
 //! context to r13 and loads the frame's window of registers (`staged::frame::WINDOW`) into r12
 //! (the row convention), calls the first row
-//! (`HOLE_NEXT`), stores the word the chain returned through the result pointer and returns
-//! status 0.
+//! (`HOLE_NEXT`), stores the word the chain returned through the result pointer and returns the
+//! status the chain left in edx: 0 from a region's own leaves (`leave_word`, `leave_pop`), the
+//! status of the call that ended the run from `leave_status` (`call_rows.rs`).
 //!
 //! A function body (`entry_body`, the lane body ABI of `lane_body_abi.rs`) is entered as
 //! (rdi = context, rsi = receiver, rdx = captures, rcx = the register file) and returns the
@@ -58,25 +59,25 @@ pub unsafe extern "C" fn entry_thunk() {
         "pop r12",
         "pop rbx",
         "pop rbp",
-        "xor eax, eax",
+        "mov eax, edx",
         "ret",
         first = sym HOLE_NEXT,
         window = const frame::WINDOW,
     )
 }
 
-/// Returns hole 0 (a word the region leaves with: a PC or a lane exit).
+/// Returns hole 0 (a word the region leaves with: a PC or a lane exit), status 0.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn leave_word() {
-    core::arch::naked_asm!("movabs rax, offset {word}", "ret", word = sym HOLE_V0)
+    core::arch::naked_asm!("movabs rax, offset {word}", "xor edx, edx", "ret", word = sym HOLE_V0)
 }
 
-/// Returns the word an exit stub pushed.
+/// Returns the word an exit stub pushed, status 0.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn leave_pop() {
-    core::arch::naked_asm!("pop rax", "ret")
+    core::arch::naked_asm!("pop rax", "xor edx, edx", "ret")
 }
 
 /// The body entry: saves the callee-saved registers, takes the context in r13 and the register

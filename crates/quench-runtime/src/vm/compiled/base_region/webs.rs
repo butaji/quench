@@ -24,7 +24,6 @@ pub(super) struct Webs {
 type Pc = u32;
 type WebId = Register;
 const NO_WEB: WebId = WebId::MAX;
-const WORD: usize = u64::BITS as usize;
 
 /// A set of small numbers, one bit each.
 #[derive(Default)]
@@ -51,15 +50,15 @@ pub(super) enum Next {
     Leave(Pc),
 }
 
-/// The row of the region at `pc`, if it is inside.
-fn row_at(region: &LoopRegion, pc: Pc) -> Option<usize> {
-    (region.header..=region.backedge).contains(&pc).then(|| (pc - region.header) as usize)
+/// The row of the span at `pc`, if it is inside.
+fn row_at(span: &Span, pc: Pc) -> Option<usize> {
+    (span.header..=span.backedge).contains(&pc).then(|| (pc - span.header) as usize)
 }
 
 impl Decoded {
     /// The registers the row reads.
     fn reads(&self) -> impl Iterator<Item = Register> {
-        [self.a.and_then(register_of), self.b.and_then(register_of), self.base, self.identity.map(|(register, _)| register)].into_iter().flatten()
+        [self.a.and_then(register_of), self.b.and_then(register_of), self.base].into_iter().flatten()
     }
 
     /// Where control goes after row `k` of `count`.
@@ -177,9 +176,9 @@ struct Flow {
 }
 
 /// The branch targets outside the region, ascending.
-fn leave_targets(region: &LoopRegion, decoded: &[Decoded]) -> Vec<Pc> {
+fn leave_targets(span: &Span, decoded: &[Decoded]) -> Vec<Pc> {
     let count = decoded.len();
-    let outside = decoded.iter().enumerate().flat_map(|(k, row)| row.successors(k, count, region));
+    let outside = decoded.iter().enumerate().flat_map(|(k, row)| row.successors(k, count, span));
     let mut pcs: Vec<Pc> = outside.filter_map(|next| if let Next::Leave(pc) = next { Some(pc) } else { None }).collect();
     pcs.sort_unstable();
     pcs.dedup();
@@ -213,7 +212,7 @@ impl Flow {
     }
 
     /// Propagates the states of the rows in `work` to their successors until nothing grows.
-    fn run(&mut self, region: &LoopRegion, decoded: &[Decoded], defs: &Defs, work: &mut Vec<usize>) {
+    fn run(&mut self, span: &Span, decoded: &[Decoded], defs: &Defs, work: &mut Vec<usize>) {
         let mut out = vec![0; self.width];
         while let Some(k) = work.pop() {
             out.copy_from_slice(self.row(k));
@@ -221,7 +220,7 @@ impl Flow {
                 out[defs.words[def.column]..defs.words[def.column + 1]].fill(0);
                 out[defs.words[def.column] + def.local / WORD] |= 1 << (def.local % WORD);
             }
-            for next in decoded[k].successors(k, decoded.len(), region) {
+            for next in decoded[k].successors(k, decoded.len(), span) {
                 self.deliver(next, &out, work);
             }
         }
@@ -235,9 +234,9 @@ impl Flow {
 
     /// A row control never reaches (it follows a jump, or an instruction that is a leave) is taken
     /// as entered with the region's entry values: its webs are never run, but they must exist.
-    fn of(region: &LoopRegion, decoded: &[Decoded], defs: &Defs) -> Self {
+    fn of(span: &Span, decoded: &[Decoded], defs: &Defs) -> Self {
         let (count, width) = (decoded.len(), defs.width());
-        let leaf_pcs = leave_targets(region, decoded);
+        let leaf_pcs = leave_targets(span, decoded);
         let mut flow = Self { width, at: vec![0; count * width], leaves: vec![0; leaf_pcs.len() * width], leaf_pcs };
         // Every named register is entered with its first definition.
         for column in 0..defs.columns() {
@@ -246,7 +245,7 @@ impl Flow {
         let entry = flow.row(0).to_vec();
         let mut work = vec![0];
         loop {
-            flow.run(region, decoded, defs, &mut work);
+            flow.run(span, decoded, defs, &mut work);
             let Some(k) = flow.unreached(count) else { return flow };
             flow.at[k * width..(k + 1) * width].copy_from_slice(&entry);
             work.push(k);
@@ -285,20 +284,20 @@ impl Sets {
 
 /// The union-find of definitions where one value of a register is live or read, or the register
 /// is left whole (`merged`).
-fn joined(region: &LoopRegion, decoded: &[Decoded], merged: &Bits, defs: &Defs, flow: &Flow) -> Sets {
+fn joined(span: &Span, decoded: &[Decoded], merged: &Bits, defs: &Defs, flow: &Flow) -> Sets {
     let mut sets = Sets { parent: (0..defs.total()).collect() };
     let whole = |register: Register| merged.contains(usize::from(register));
     for (k, row) in decoded.iter().enumerate() {
-        let pc = region.header + k as Pc;
+        let pc = span.header + k as Pc;
         for (column, register) in defs.named.iter().enumerate() {
-            if region.is_live(pc, *register) || row.reads().any(|read| read == *register) || whole(*register) {
+            if span.is_live(pc, *register) || row.reads().any(|read| read == *register) || whole(*register) {
                 sets.join_held(defs, flow.row(k), column);
             }
         }
     }
     for (leaf, pc) in flow.leaf_pcs.iter().enumerate() {
         for (column, register) in defs.named.iter().enumerate() {
-            if region.is_live(*pc, *register) || whole(*register) {
+            if span.is_live(*pc, *register) || whole(*register) {
                 sets.join_held(defs, flow.leaf(leaf), column);
             }
         }
@@ -364,10 +363,10 @@ impl Renamer<'_> {
 
 impl Webs {
     /// The rows renamed to webs. A register in `merged` is one web.
-    pub(super) fn split(region: &LoopRegion, decoded: &[Decoded], merged: &Bits) -> (Self, Vec<Decoded>) {
+    pub(super) fn split(span: &Span, decoded: &[Decoded], merged: &Bits) -> (Self, Vec<Decoded>) {
         let defs = Defs::of(decoded);
-        let flow = Flow::of(region, decoded, &defs);
-        let sets = joined(region, decoded, merged, &defs, &flow);
+        let flow = Flow::of(span, decoded, &defs);
+        let sets = joined(span, decoded, merged, &defs, &flow);
         Renamer { defs: &defs, flow: &flow, number: vec![NO_WEB; defs.total()], sets, orig: Vec::new() }.rename(decoded)
     }
 
@@ -378,21 +377,21 @@ impl Webs {
 
     /// The webs live at `pc`: in the region, the ones reaching its row; outside, the ones reaching
     /// that branch target.
-    pub(super) fn live_at(&self, region: &LoopRegion, pc: u32) -> Vec<usize> {
+    pub(super) fn live_at(&self, span: &Span, pc: u32) -> Vec<usize> {
         let columns = self.named.len();
-        let table = match row_at(region, pc) {
+        let table = match row_at(span, pc) {
             Some(k) => self.at.get(k * columns..(k + 1) * columns),
             None => self.leaf_pcs.binary_search(&pc).ok().and_then(|leaf| self.leaf_at.get(leaf * columns..(leaf + 1) * columns)),
         };
         table.map_or_else(Vec::new, |webs| {
-            let reaching = self.named.iter().zip(webs).filter(|(register, web)| **web != NO_WEB && region.is_live(pc, **register));
+            let reaching = self.named.iter().zip(webs).filter(|(register, web)| **web != NO_WEB && span.is_live(pc, **register));
             reaching.map(|(_, web)| usize::from(*web)).collect()
         })
     }
 
     /// For each web, the webs that may not share its pin: those live where it is live, or where
     /// it is defined.
-    pub(super) fn clashes(&self, region: &LoopRegion, decoded: &[Decoded]) -> Vec<Vec<usize>> {
+    pub(super) fn clashes(&self, span: &Span, decoded: &[Decoded]) -> Vec<Vec<usize>> {
         let mut clash: Vec<Vec<usize>> = vec![Vec::new(); self.orig.len()];
         for (k, row) in decoded.iter().enumerate() {
             let mut held = self.live_at(region, region.header + k as Pc);
@@ -409,7 +408,7 @@ impl Webs {
     }
 
     /// The webs the region is entered with: those live at the header that reach its first row.
-    pub(super) fn entry_live(&self, region: &LoopRegion) -> Vec<usize> {
-        self.live_at(region, region.header)
+    pub(super) fn entry_live(&self, span: &Span) -> Vec<usize> {
+        self.live_at(span, span.header)
     }
 }

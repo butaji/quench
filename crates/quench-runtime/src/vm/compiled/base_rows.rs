@@ -81,6 +81,10 @@ pub(super) enum Heap {
     Held,
     /// `Held` of the activation's receiver, which the payload holds: hole 0 is the destination alone.
     ThisHeld,
+    /// Branches to its taken successor, an entry's failure, unless the active realm's global object (the
+    /// word at the byte offset in hole 1 of the VM) is the word of hole 2: the realm a body folded
+    /// facts of its callees in (`Vm::realm_globals_offset`), proved once, at the entry.
+    Realm,
     /// Leaves unless the invalidation word at the address in hole 1 is zero (`code_dependencies::Invalidation`):
     /// the check before a row that holds a Stable fact where a call may have changed it.
     Live,
@@ -152,6 +156,7 @@ impl Heap {
             Heap::Instanceof => library::INSTANCEOF_ROW,
             Heap::TypeofIs { negated: false, .. } => library::TYPEOF_IS_ROW,
             Heap::TypeofIs { negated: true, .. } => library::TYPEOF_ISNOT_ROW,
+            Heap::Realm => library::REALM_ROW,
         }
     }
 
