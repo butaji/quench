@@ -62,6 +62,11 @@ impl AheadBlocks {
     }
 }
 
+/// The entry parameter the lane body takes through unchanged, after the call context.
+const ENTRY_BODY_ARGUMENTS: usize = 3;
+/// The entry parameter addressing the cell the next PC or the completion's value goes through.
+const ENTRY_RESULT_CELL: usize = 4;
+
 /// Starts the lane body where the run is the whole function (it starts at the first record
 /// with no bound), the per-PC loop otherwise, and maps the body's status.
 fn emit_dispatch(
@@ -82,7 +87,7 @@ fn emit_dispatch(
     let length = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, capture_len));
     let length = builder.ins().ishl_imm_u(length, i64::from(entry_cell::CAPTURE_ADDRESS_BITS));
     let captures = builder.ins().bor(values, length);
-    let (status, word) = body(builder, &[params[0], this, captures, params[3]]);
+    let (status, word) = body(builder, &[params[0], this, captures, params[ENTRY_BODY_ARGUMENTS]]);
     emit_body_status(builder, params, blocks, payload, (status, word));
 }
 
@@ -103,7 +108,7 @@ fn emit_body_status(
     builder.switch_to_block(passed);
     builder.ins().return_(&[status]);
     builder.switch_to_block(returned);
-    builder.ins().store(MemFlagsData::trusted(), word, params[4], 0);
+    builder.ins().store(MemFlagsData::trusted(), word, params[ENTRY_RESULT_CELL], 0);
     let record = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, returned_pc));
     let record = builder.ins().ireduce(types::I32, record);
     let status = builder.ins().iadd_imm_u(record, i64::from(RETURN_STATUS_BASE));
@@ -127,15 +132,15 @@ fn emit_steps(
     let in_range = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, blocks.pc, i64::from(count));
     builder.ins().brif(in_range, run, &[], blocks.invalid, &[ir::BlockArg::Value(blocks.pc)]);
     builder.switch_to_block(run);
-    let status = fallback(builder, [params[0], blocks.pc, params[4]]);
+    let status = fallback(builder, [params[0], blocks.pc, params[ENTRY_RESULT_CELL]]);
     let failed = builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
-    let next = builder.ins().load(types::I64, MemFlagsData::trusted(), params[4], 0);
+    let next = builder.ins().load(types::I64, MemFlagsData::trusted(), params[ENTRY_RESULT_CELL], 0);
     builder.ins().brif(failed, blocks.stopped, &[], blocks.step, &[ir::BlockArg::Value(next)]);
     builder.switch_to_block(blocks.stopped);
     let stopped = builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
     builder.ins().return_(&[stopped]);
     builder.switch_to_block(blocks.invalid);
-    builder.ins().store(MemFlagsData::trusted(), blocks.invalid_pc, params[4], 0);
+    builder.ins().store(MemFlagsData::trusted(), blocks.invalid_pc, params[ENTRY_RESULT_CELL], 0);
     let invalid = builder.ins().iconst(types::I32, i64::from(NATIVE_JS_INVALID_PC));
     builder.ins().return_(&[invalid]);
 }

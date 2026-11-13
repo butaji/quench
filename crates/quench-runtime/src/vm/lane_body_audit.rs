@@ -7,6 +7,9 @@
 
 use std::time::Instant;
 
+/// The sides an audit alternates between: the compiled body and the interpreter.
+const AUDITED_SIDES: u32 = 2;
+
 use super::{LaneBody, LaneView, TIERS};
 use super::super::compiled::tier_policy::PER_MILLE;
 
@@ -48,7 +51,7 @@ impl LaneView {
         self.history.set(history);
         let period = TIERS.lane_body.audit_period;
         (history.audit.seen % period == 0)
-            .then(|| if (history.audit.seen / period) % 2 == 0 { Timed::Body } else { Timed::Interpreter })
+            .then(|| if (history.audit.seen / period) % AUDITED_SIDES == 0 { Timed::Body } else { Timed::Interpreter })
     }
 
     /// Books a completed timed run of `nanos` on `side`, then takes the verdict once both

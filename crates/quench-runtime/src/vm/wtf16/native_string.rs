@@ -46,7 +46,7 @@ pub(crate) fn shared_units_offset() -> u64 {
     static OFFSET: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *OFFSET.get_or_init(|| {
         let ascii: Rc<str> = Rc::from("probe");
-        let wide: Rc<[u16]> = Rc::from([0x61u16, 0x62]);
+        let wide: Rc<[u16]> = Rc::from([u16::from(b'a'), u16::from(b'b')]);
         let distance = |data: *const u8, handle: *const u8| {
             // SAFETY: a handle starts with the pointer to its allocation, which `SharedForm` places.
             let allocation = unsafe { (handle as *const usize).read() };
