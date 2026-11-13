@@ -662,18 +662,7 @@ const YOUNG_MINIMUM_ALLOCATION: usize = 1 << 12;
 /// react-ssr ran 12151 young collections in 14.5 s. npm-perf no-JIT, 40000 rounds, 5
 /// interleaved runs: geomean x1.047 (next x1.09, zod x1.10, ws x0.94); V8-v7 max RSS (rss-exec)
 /// Richards 5436 -> 6208 KiB, DeltaBlue 8312 -> 6864, others +0.1-0.8 MB (x86_64, 2026-11-08).
-///
-/// Raised to 2^17 (aarch64 macOS, load 2.4-3.0, 2026-11-12): at 2^14 the V8-v7 allocation
-/// lanes collected about 550 times a second. `profile-gc-time` on EarleyBoyer measured 368 ms
-/// of mark, sweep and root work over 2,677 collections in a run whose measured phase is about
-/// two seconds, against Node's megabyte-scale nursery. The wider floor gives: the `--no-jit`
-/// EarleyBoyer gate against Node --jitless 1.187 -> 1.276 (5 matched rounds, 14,874 -> 15,997
-/// against 12,535), and v8-v7 JIT in 5 matched rounds DeltaBlue +3.1%, EarleyBoyer +6.3%,
-/// Splay +6.8%, NavierStokes +2.2%, RegExp +1.6%, Richards +0.5%, Crypto flat, RayTrace -3.7%.
-/// Median max RSS rises by the nursery: EarleyBoyer --no-jit 14 -> 30 MiB, --jit 57 -> 63
-/// (Crypto 41 -> 58, RayTrace 67 -> 73, Splay 113 -> 115), still under the peers' 100+ MiB.
-/// Memory-first keeps the small-nursery table for the RSS-first policy.
-const THROUGHPUT_MINIMUM_YOUNG: usize = 1 << 17;
+const THROUGHPUT_MINIMUM_YOUNG: usize = 1 << 14;
 /// The most allocations between young collections under throughput: 2^19, for Score, which
 /// this table serves (memory-first keeps RSS first). V8-v7 fixed work, gc-tuning build,
 /// callgrind main thread, 2^19 young with the full interval at 2^21 against 3 << 14 and 2^18

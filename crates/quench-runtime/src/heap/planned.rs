@@ -31,12 +31,6 @@ impl Heap {
         }
     }
 
-    /// An object record id claimed with nothing written, through the staged claim row; the
-    /// caller writes the record and counts the allocation (`allocated`).
-    pub(crate) fn claim_record_id(&mut self) -> Option<u32> {
-        self.object_records.claim_uninit()
-    }
-
     /// A fresh direct object record claimed with nothing written: its `Value` and the address
     /// to write an `Object` at, `None` where the record space needs its slow path (the caller
     /// then allocates as `alloc_planned_object` does). Allocation never collects, so the
@@ -44,7 +38,7 @@ impl Heap {
     /// and admit its values (`ValueArena::note_plan_values`), before then.
     #[inline(always)]
     pub(crate) fn claim_object_record(&mut self) -> Option<(Value, *mut Object)> {
-        let id = self.claim_record_id()?;
+        let id = self.object_records.claim_uninit()?;
         self.allocated += 1;
         Some((Value::direct_object(id), self.object_records.record_ptr(id)))
     }

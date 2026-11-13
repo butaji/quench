@@ -138,4 +138,3 @@ fn bitmap_reuse_preserves_descending_free_id_order_across_sweeps() {
     assert_eq!(arena.try_insert(13).unwrap(), ids[0]);
     assert_eq!(arena.try_insert(14).unwrap(), 6);
 }
-

@@ -8,13 +8,10 @@ use crate::value::ValueLayout;
 const FAMILY_SHIFT: u32 = ValueLayout::HEAP_FAMILY_MASK.trailing_zeros();
 const _: () = assert!(ValueLayout::HEAP_FAMILY_MASK == u64::MAX << FAMILY_SHIFT);
 
-/// The immediate a family test compares `bits`'s family with (`family_is`).
-pub(crate) const fn family_immediate(tag: u64) -> u64 { tag >> FAMILY_SHIFT }
-
 #[inline(always)]
 fn family_is<S: Stage>(stage: &mut S, bits: S::Word, tag: u64) -> S::Cond {
     let family = stage.shr_imm(bits, FAMILY_SHIFT);
-    stage.eq_imm(family, family_immediate(tag))
+    stage.eq_imm(family, tag >> FAMILY_SHIFT)
 }
 
 /// Whether `bits` is a direct object reference, whose low half names its record
