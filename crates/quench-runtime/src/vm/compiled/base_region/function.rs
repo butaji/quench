@@ -126,7 +126,7 @@ fn reachable(region: &LoopRegion, decoded: &[Decoded]) -> Result<Vec<bool>, Stri
 
 /// A row that runs no code: a row control never reaches.
 fn skipped() -> Planned {
-    static EMPTY: Stencil = Stencil { code: Vec::new(), relocs: Vec::new(), imm32: Vec::new(), next_jump: None, tail_len: 0, raw_len: 0 };
+    static EMPTY: Stencil = Stencil { code: Vec::new(), relocs: Vec::new(), imm32: Vec::new(), next_jump: None, tail_len: 0, raw_len: 0, hot_len: 0 };
     Planned::single(&EMPTY, [0; HOLES], None, None)
 }
 

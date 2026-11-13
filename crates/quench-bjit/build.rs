@@ -1,6 +1,7 @@
 //! Compiles `stencils/rows.rs` (and the Number rows `stencils/library.rs` lists, generated into
-//! `OUT_DIR/instances.rs`) with the toolchain's own rustc into an object, reads its functions and
-//! relocations with a minimal ELF64 reader, and writes them as static tables
+//! `OUT_DIR/instances.rs`) with the toolchain's own rustc into one object per CPU variant (the
+//! x86-64-v2 baseline and x86-64-v3, which the runtime picks once at startup), reads their
+//! functions and relocations with a minimal ELF64 reader, and writes them as static tables
 //! (`OUT_DIR/rustc_stencils.rs`). A row that contains a `ret` is a build error: rows chain by
 //! `become` only, and only the `leave_*` rows return. A relocated `call` is a build error; the
 //! one call a row may make is `call reg` through an address `movabs`-loaded from a value hole,
@@ -8,9 +9,24 @@
 #[path = "stencils/library.rs"]
 mod library;
 
+#[path = "build/checks.rs"]
+mod checks;
+#[path = "build/layout.rs"]
+mod layout;
+
+use layout::{NEXT, SUCCESSOR};
 use std::{env, fs, path::PathBuf, process::Command};
 
 const SOURCE: &str = "stencils/rows.rs";
+/// The stencil libraries: the table's name and the `-C target-cpu` it is built for.
+const VARIANTS: [(&str, &str); 2] = [("BASELINE", "x86-64-v2"), ("V3", "x86-64-v3")];
+/// The flags every stencil object is built with: optimized, no panic or overflow machinery, no
+/// frame pointer or unwind tables (a row has no frame), one codegen unit so LLVM sees every row
+/// at once, and absolute relocations for the holes.
+const RUSTC_FLAGS: &[&str] = &[
+    "--edition", "2024", "--crate-type=lib", "--crate-name=quench_stencil_rows", "--emit=obj", "-C", "opt-level=3", "-C", "panic=abort", "-C", "relocation-model=static",
+    "-C", "codegen-units=1", "-C", "debuginfo=0", "-C", "debug-assertions=off", "-C", "overflow-checks=off", "-C", "force-frame-pointers=no", "-C", "force-unwind-tables=no",
+];
 const R_X86_64_64: u32 = 1;
 const R_X86_64_PC32: u32 = 2;
 const R_X86_64_PLT32: u32 = 4;
@@ -52,8 +68,12 @@ const U64_BYTES: usize = 8;
 const EXIT_PREFIX: usize = 4;
 const EXIT_BASE: u32 = 2;
 const ABS32: u8 = 0;
-const SUCCESSOR: u8 = 1;
 const ABS64: u8 = 2;
+/// The successor hole indexes (`quench_bjit::NEXT`, `TAKEN`, `EXIT`).
+const TAKEN: u32 = 1;
+/// The routines around the rows (`stencils/entry.rs`).
+const ENTRY_PREFIX: &str = "entry_";
+const LEAVE_PREFIX: &str = "leave_";
 /// The rows that may make a call (`stencils/call_rows.rs`).
 const CALL_ROW_PREFIX: &str = "call_";
 /// `movabs r64, imm64`: REX.W (REX.B for r8-r15) then `B8 + register`; the immediate follows.
@@ -128,7 +148,7 @@ fn check_transfer(row: &str, code: &[u8], at: usize) {
     let before = &code[..at];
     let jmp = matches!(before, [.., 0xe9]);
     let jcc = matches!(before, [.., 0x0f, 0x80..=0x8f]);
-    let call = row.starts_with("entry_") && matches!(before, [.., 0xe8]);
+    let call = row.starts_with(ENTRY_PREFIX) && matches!(before, [.., 0xe8]);
     assert!(jmp || jcc || call, "stencil {row}: relocation at {at} is not a jmp or jcc (a `call`?)");
 }
 
@@ -163,20 +183,22 @@ fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let table = out.join("rustc_stencils.rs");
     if env::var("CARGO_CFG_TARGET_ARCH").as_deref() != Ok("x86_64") || env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
-        fs::write(&table, "pub(crate) static RAW: &[RawStencil] = &[];\n").unwrap();
+        fs::write(&table, VARIANTS.map(|(name, _)| library_source(name, 0, 0, "")).concat()).unwrap();
         return;
     }
     let instances: String = library::library().into_iter().map(|c| format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4)).collect();
     let heap: String = library::heap_library().into_iter().map(|c| format!("heap_row!({}, {}, {}, {}, {}, {});\n", library::heap_name(c), c.0, c.1, c.2, c.3, c.4)).collect();
     fs::write(out.join("instances.rs"), instances + &heap).unwrap();
-    let object = compile(&out);
-    fs::write(&table, stencil_table(&fs::read(&object).unwrap())).unwrap();
+    let tables: String = VARIANTS.iter().map(|(name, cpu)| stencil_table(name, &fs::read(compile(&out, cpu)).unwrap())).collect();
+    fs::write(&table, tables).unwrap();
 }
 
-fn compile(out: &std::path::Path) -> PathBuf {
-    let object = out.join("rows.o");
+fn compile(out: &std::path::Path, cpu: &str) -> PathBuf {
+    let object = out.join(format!("rows_{cpu}.o"));
     let status = Command::new(env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
-        .args(["--edition", "2024", "--crate-type=lib", "--crate-name=quench_stencil_rows", "--emit=obj", "-C", "opt-level=3", "-C", "panic=abort", "-C", "relocation-model=static", "-C", "codegen-units=8", "-C", "debuginfo=0"])
+        .args(RUSTC_FLAGS)
+        .arg("-C")
+        .arg(format!("target-cpu={cpu}"))
         .arg("-o")
         .arg(&object)
         .arg(SOURCE)
@@ -186,24 +208,34 @@ fn compile(out: &std::path::Path) -> PathBuf {
     object
 }
 
-/// The rows of an object as the static table `RAW`, sorted by name.
-fn stencil_table(data: &[u8]) -> String {
+/// The rows of an object as the static table `name`, sorted by name.
+fn stencil_table(table: &str, data: &[u8]) -> String {
     let elf = Elf::parse(data);
     let symbols = elf.symbols();
     let mut rows: Vec<(String, String)> = Vec::new();
+    let (mut framed, mut unchained) = (0, 0);
     for (name, section, value, _) in symbols.iter().filter(|s| s.3 & SYMBOL_KIND_MASK == SYMBOL_FUNCTION && s.3 >> SYMBOL_BIND_SHIFT == SYMBOL_GLOBAL && s.1 != 0 && !s.0.starts_with("_R")) {
         assert_eq!(*value, 0, "{name}: one function per section");
         let section_data = &elf.sections[*section];
         let code = &data[section_data.offset..section_data.offset + section_data.size];
-        let returns = name.starts_with("leave_") || name.starts_with("entry_");
+        let returns = name.starts_with(LEAVE_PREFIX) || name.starts_with(ENTRY_PREFIX);
         assert!(returns || !ends_with_ret(code), "stencil {name} ends with `ret`");
         check_call(name, code);
         let relocs = relocations(&elf, &symbols, data, name, *section, code);
-        rows.push((name.clone(), format!("    RawStencil {{ name: {name:?}, code: &{code:?}, relocs: &{relocs:?} }},\n")));
+        let laid = if checks::is_row(name) { layout::reorder(code, &relocs) } else { None };
+        let (code, relocs, hot_len) = laid.map_or((code.to_vec(), relocs, code.len()), |l| (l.code, l.relocs, l.hot_len));
+        framed += usize::from(checks::is_row(name) && checks::has_stack_frame(&code));
+        unchained += usize::from(checks::is_row(name) && !checks::ends_in_continuation(&code[..hot_len], &relocs));
+        rows.push((name.clone(), format!("    RawStencil {{ name: {name:?}, code: &{code:?}, hot_len: {hot_len}, relocs: &{relocs:?} }},\n")));
     }
     rows.sort();
     let body: String = rows.into_iter().map(|(_, row)| row).collect();
-    format!("pub(crate) static RAW: &[RawStencil] = &[\n{body}];\n")
+    library_source(table, framed, unchained, &body)
+}
+
+/// The static `RawLibrary` named `table`: its rows and what `checks` counted over them.
+fn library_source(table: &str, stencils_with_stack_frame: usize, stencils_not_ending_in_continuation: usize, rows: &str) -> String {
+    format!("pub(crate) static {table}: RawLibrary = RawLibrary {{ stencils_with_stack_frame: {stencils_with_stack_frame}, stencils_not_ending_in_continuation: {stencils_not_ending_in_continuation}, rows: &[\n{rows}] }};\n")
 }
 
 /// The relocations of one row as (offset, class, index, addend).
@@ -236,7 +268,7 @@ fn ends_with_ret(code: &[u8]) -> bool {
 /// hole index of a relocation. Value hole `HOLE_V<n>` is index n; `HOLE_NEXT` 0, `HOLE_TAKEN` 1,
 /// `HOLE_EXIT<k>` 2 + k (the successor indexes of `quench_bjit`).
 fn hole_of(row: &str, symbol: &str, kind: u32) -> (u8, u32) {
-    let rest = symbol.strip_prefix("HOLE_").unwrap_or_else(|| panic!("stencil {row}: relocation against {symbol}, not a hole"));
+    let rest = symbol.strip_prefix("HOLE_").unwrap_or_else(|| panic!("stencil {row}: relocation against {symbol}, not a hole (a panic, bounds check or call the planner's facts should have removed)"));
     let class = match kind {
         R_X86_64_32 | R_X86_64_32S => ABS32,
         R_X86_64_PC32 | R_X86_64_PLT32 => SUCCESSOR,
@@ -245,8 +277,8 @@ fn hole_of(row: &str, symbol: &str, kind: u32) -> (u8, u32) {
     };
     let number = |digits: &str| digits.parse::<u32>().unwrap_or_else(|_| panic!("stencil {row}: bad hole {symbol}"));
     match (class, rest) {
-        (SUCCESSOR, "NEXT") => (SUCCESSOR, 0),
-        (SUCCESSOR, "TAKEN") => (SUCCESSOR, 1),
+        (SUCCESSOR, "NEXT") => (SUCCESSOR, NEXT),
+        (SUCCESSOR, "TAKEN") => (SUCCESSOR, TAKEN),
         (SUCCESSOR, exit) if exit.starts_with("EXIT") => (SUCCESSOR, EXIT_BASE + number(&exit[EXIT_PREFIX..])),
         (_, value) if value.starts_with('V') && class != SUCCESSOR => (class, number(&value[1..])),
         _ => panic!("stencil {row}: hole {symbol} used in the wrong way"),

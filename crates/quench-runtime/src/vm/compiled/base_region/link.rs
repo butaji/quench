@@ -371,7 +371,7 @@ mod tests {
     /// A row that is one `jmp rel32` through its first exit hole.
     fn exiting() -> Stencil {
         let exit = Reloc { offset: 1, pc_relative: true, namespace: 0, index: quench_bjit::EXIT, addend: -(std::mem::size_of::<i32>() as i64) };
-        Stencil { code: vec![JMP_REL32, 0, 0, 0, 0], relocs: vec![exit], imm32: Vec::new(), next_jump: None, tail_len: 0, raw_len: 5 }
+        Stencil { code: vec![JMP_REL32, 0, 0, 0, 0], relocs: vec![exit], imm32: Vec::new(), next_jump: None, tail_len: 0, raw_len: 5, hot_len: 5 }
     }
 
     /// Where the row at `at` of `code` jumps to.

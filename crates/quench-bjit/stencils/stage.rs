@@ -73,9 +73,11 @@ impl Stage for StencilStage {
         self.sites += 1;
         // SAFETY: only the addresses of the statics are taken.
         unsafe {
-            match [&raw const HOLE_V0, &raw const HOLE_V1, &raw const HOLE_V2].get(n as usize) {
-                Some(hole) => *hole as u64,
-                None => UNSUPPORTED_site(n as u64),
+            match n {
+                0 => (&raw const HOLE_V0) as u64,
+                1 => (&raw const HOLE_V1) as u64,
+                2 => (&raw const HOLE_V2) as u64,
+                _ => UNSUPPORTED_site(n as u64),
             }
         }
     }
@@ -133,7 +135,12 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn ult(&mut self, a: u64, b: u64) -> bool { a < b }
     #[inline(always)]
-    fn uextend32(&mut self, a: u64) -> u64 { a }
+    fn uextend32(&mut self, a: u64) -> u64 {
+        // SAFETY: the operation's contract is a 32-bit word (a width-checked index or length), which
+        // the guard before it proved; LLVM drops the extension and any range check on the result.
+        unsafe { core::hint::assert_unchecked(a <= u64::from(u32::MAX)) };
+        a
+    }
     #[inline(always)]
     fn sub(&mut self, a: u64, b: u64) -> u64 { a.wrapping_sub(b) }
     #[inline(always)]
@@ -204,7 +211,14 @@ impl Stage for StencilStage {
         if cond { then(self) } else { otherwise(self) }
     }
     #[inline(always)]
-    fn guard(&mut self, cond: bool, _miss: ()) -> Option<()> { cond.then_some(()) }
+    fn guard(&mut self, cond: bool, _miss: ()) -> Option<()> {
+        if cond {
+            return Some(());
+        }
+        // A failed guard leaves through an exit hole: the hot path stays straight.
+        core::hint::cold_path();
+        None
+    }
     #[inline(always)]
     fn known(&self, _cond: bool) -> Option<bool> { None }
     #[inline(always)]
