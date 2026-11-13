@@ -48,4 +48,26 @@ pub(super) fn pure_setup(op: Op) -> bool {
     op.traits().has(crate::bytecode::Traits::PURE_SETUP)
 }
 
+/// Whether a region calls: a call may write a field a hold would assume, so a call-bearing
+/// region reads every field through its cache instead of holding it.
+pub(super) fn call_bearing(instructions: &[WideInstruction]) -> bool {
+    instructions.iter().any(|instruction| instruction.op().is_ordinary_call())
+}
 
+/// Whether a region may hold `path`'s value: no call writes a field under it, and no store
+/// names one of its steps.
+pub(super) fn holds(
+    instructions: &[WideInstruction],
+    path: &FieldPath,
+    stored_names: &[crate::bytecode::Atom],
+) -> bool {
+    !call_bearing(instructions) && path.steps.iter().all(|(atom, _)| !stored_names.contains(atom))
+}
+
+/// The names `instructions` store into.
+pub(super) fn stored_names(instructions: &[WideInstruction]) -> Vec<crate::bytecode::Atom> {
+    instructions.iter()
+        .filter(|instruction| admitted_store(instruction.op()))
+        .map(|instruction| instruction.atom_index())
+        .collect()
+}

@@ -1924,14 +1924,10 @@ fn admit_register_roles(
     let backedge = header + instructions.len() as u32 - 1;
     // A held register keeps the value its path read at entry, which a store to any name on
     // the path could change: a path through a name the region stores is not held.
-    let stored_names: std::collections::BTreeSet<crate::bytecode::Atom> = instructions
-        .iter()
-        .filter(|instruction| admitted_store(instruction.op()))
-        .map(|instruction| instruction.atom_index())
-        .collect();
+    let stored_names = ops::stored_names(&instructions);
     let rooted: std::collections::BTreeMap<Register, FieldPath> = held_registers(&instructions, sites, header_live, objects)
         .into_iter()
-        .filter(|(_, path)| path.steps.iter().all(|(atom, _)| !stored_names.contains(atom)))
+        .filter(|(_, path)| ops::holds(&instructions, path, &stored_names))
         .collect();
     let paths: std::collections::BTreeMap<Register, FieldPath> = rooted.iter().filter(|(_, path)| !path.steps.is_empty()).map(|(register, path)| (*register, path.clone())).collect();
     // An indexed register the region defines, other than one holding a field's value at
