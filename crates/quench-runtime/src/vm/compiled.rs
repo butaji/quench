@@ -5057,11 +5057,18 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
     // SAFETY: the compiled entry's owner keeps this context and adapter payload
     // alive through the callout.
     let context_ref = unsafe { &mut *context };
+    // The program whose code called (a function of another program than the one running makes
+    // its constants the active ones for the step), restored after it.
+    let entered_from = std::cell::Cell::new(None);
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let pc = usize::try_from(function)
             .map_err(|_| JsError::validation("native JS PC does not fit usize".into()))?;
         let dispatch = unsafe { &mut *context_ref.adapter_payload.cast::<JsStepDispatch>() };
         let vm = unsafe { &mut *context_ref.vm.cast::<Vm<H>>() };
+        if vm.active_program != dispatch.program_id {
+            entered_from.set(Some(vm.active_program));
+            vm.set_active_program(dispatch.program_id);
+        }
         // SAFETY: the owning JsNativeActivation admits both pointers once and retains the shared
         // program until native execution (including reentry) finishes; release needs it unique.
         let program = unsafe { &*(dispatch.residual as *const ResidualProgram) };
@@ -5420,6 +5427,10 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         }
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
+    if let Some(previous) = entered_from.get() {
+        // SAFETY: the context's VM outlives the callout.
+        unsafe { &mut *context_ref.vm.cast::<Vm<H>>() }.set_active_program(previous);
+    }
 
     match called {
         Ok(Ok(JsCalloutStep::Continue(next))) => {
