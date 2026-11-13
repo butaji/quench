@@ -24,7 +24,9 @@ pub(crate) use wasm_fields::{TableTarget, TableWords, WasmGcFields, WasmTableEle
 pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 pub(crate) use prototype_values::{PrototypeValueWatch, subscribe_prototype_values, watch_prototype_values};
-pub(crate) use global_values::{GlobalCell, GlobalFact, GlobalLayoutFact, global_layout_fact, global_value_fact, new_table, note_global_shadowed, note_global_write, subscribe_global_layout, subscribe_global_value};
+pub(crate) use global_values::{GlobalCell, GlobalFact, GlobalLayoutFact, global_layout_fact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_layout, subscribe_global_value};
+#[cfg(test)]
+pub(crate) use global_values::new_table;
 
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have
 /// changed: its shape, prototype or integrity changes; a collection frees a prototype, whose

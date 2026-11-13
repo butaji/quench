@@ -49,10 +49,10 @@ fn run() -> Result<bool, String> {
     let mut args = env::args_os().skip(1);
     let mut report_path = PathBuf::from("target/iteration/wasm-shared-report.json");
     let mut paths = Vec::new();
-    let mut jit = true;
+    let mut mode = String::from("jit");
     while let Some(arg) = args.next() {
-        if arg == "-no-jit" || arg == "--no-jit" {
-            jit = false;
+        if let Some(name) = arg.to_str().map(|arg| arg.trim_start_matches('-')).filter(|name| arg.to_str().is_some_and(|arg| arg.starts_with('-')) && quench_wasm_test::mode_named(name).is_some()) {
+            mode = name.to_string();
         } else if arg == "--report" {
             report_path = args
                 .next()
@@ -63,7 +63,7 @@ fn run() -> Result<bool, String> {
         }
     }
     if paths.is_empty() {
-        return Err("usage: run [--no-jit] [--report FILE] WAST_FILE_OR_DIRECTORY ...".into());
+        return Err("usage: run [--no-jit|--b-jit|--u-jit|--aot] [--report FILE] WAST_FILE_OR_DIRECTORY ...".into());
     }
     let mut files = Vec::new();
     for path in paths {
@@ -117,7 +117,7 @@ fn run() -> Result<bool, String> {
         let mut child = Command::new(env::current_exe().map_err(|error| error.to_string())?)
             .env(
                 quench_wasm_test::EXECUTION_MODE_VARIABLE,
-                if jit { "jit" } else { "no-jit" },
+                &mode,
             )
             .arg("--worker")
             .arg(&file)

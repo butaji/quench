@@ -97,12 +97,25 @@ const SPECTEST_TABLE_MAX: u32 = 20;
 /// its per-file workers.
 pub const EXECUTION_MODE_VARIABLE: &str = "QUENCH_EXECUTION_MODE";
 
+/// The execution mode `name` selects, as `execution_mode_name` spells it: `no-jit`, a JIT tier alone
+/// (`b-jit`, `u-jit`, `q-jit`), `jit` (every tier) or `aot`; the tier choice becomes the process's.
+pub fn mode_named(name: &str) -> Option<quench_runtime::ExecutionMode> {
+    use quench_runtime::{ExecutionMode, JitMode};
+    if name == "aot" {
+        return Some(ExecutionMode::NativeOnly);
+    }
+    let jit = JitMode::FLAGGED.iter().map(|(mode, _)| *mode).chain([JitMode::default()]).find(|mode| mode.name() == name)?;
+    jit.set_process_mode();
+    Some(jit.execution_mode())
+}
+
 impl Store {
     pub(crate) fn new() -> Self {
         let mut runtime = Runtime::new(ScriptHost);
         // The spec runner selects the execution mode for its workers.
-        if std::env::var_os(EXECUTION_MODE_VARIABLE).is_some_and(|mode| mode == "jit") {
-            runtime.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
+        let mode = std::env::var(EXECUTION_MODE_VARIABLE).ok().and_then(|name| mode_named(&name));
+        if let Some(mode) = mode.filter(|mode| *mode != quench_runtime::ExecutionMode::Interpreted) {
+            runtime.set_execution_mode(mode);
             // Every module's compiled code, not only its hot roots: a conformance run.
             runtime.compile_wasm_eagerly();
         }

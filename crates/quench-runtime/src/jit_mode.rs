@@ -19,15 +19,29 @@ pub enum JitMode {
 }
 
 impl JitMode {
+    /// Every mode a flag selects, with its flag: the one table `from_flag`, `flag` and `name` read.
+    pub const FLAGGED: [(Self, &'static str); 4] = [
+        (Self::Interp, "--no-jit"), (Self::BaseOnly, "--b-jit"), (Self::UltraOnly, "--u-jit"), (Self::QuickOnly, "--q-jit"),
+    ];
+
     /// The mode a command line flag selects, or `None` if the flag is not a JIT mode.
     pub fn from_flag(flag: &str) -> Option<Self> {
-        match flag {
-            "--no-jit" => Some(Self::Interp),
-            "--b-jit" => Some(Self::BaseOnly),
-            "--u-jit" => Some(Self::UltraOnly),
-            "--q-jit" => Some(Self::QuickOnly),
-            _ => None,
-        }
+        Self::FLAGGED.iter().find(|(_, own)| *own == flag).map(|(mode, _)| *mode)
+    }
+
+    /// The flag that selects this mode; none for the default.
+    pub fn flag(self) -> Option<&'static str> {
+        Self::FLAGGED.iter().find(|(mode, _)| *mode == self).map(|(_, flag)| *flag)
+    }
+
+    /// The name reports give this mode: its flag without the dashes, `jit` for the default.
+    pub fn name(self) -> &'static str {
+        self.flag().map_or("jit", |flag| flag.trim_start_matches("--"))
+    }
+
+    /// The mode the process runs in (`set_process_mode`).
+    pub fn process() -> Self {
+        process_mode()
     }
 
     /// Whether `arg` has the shape of a JIT mode flag (`--no-jit`, `--b-jit`, the removed `--jit`, or an unknown `--x-jit`).

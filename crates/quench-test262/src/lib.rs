@@ -28,7 +28,7 @@ pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = quench_runtime::NativeImageSu
 pub const NATIVE_SUPPORT_HAS_JIT: bool = quench_runtime::NativeImageSupport::DynamicSource.is_available();
 pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
 
-use quench_runtime::ExecutionMode;
+use quench_runtime::{ExecutionMode, JitMode};
 
 /// The switch that runs cases in the interpreter; compiled (JIT) execution is the default.
 pub const NO_JIT_FLAG: &str = "--no-jit";
@@ -45,34 +45,31 @@ pub fn take_dynamic_source<T: PartialEq<str>>(args: &mut Vec<T>) -> bool {
     requested
 }
 
-/// Select native-only, interpreter (`--no-jit`) or, by default, JIT execution and remove the mode switch.
+/// Select native-only (`--aot`), the interpreter (`--no-jit`), one JIT tier alone (`--b-jit`,
+/// `--u-jit`, `--q-jit`) or, by default, every tier, and remove the mode switch. The tier choice is the
+/// process's (`JitMode::set_process_mode`), the one mapping `quench-node` uses.
 pub fn take_execution_mode<T: PartialEq<str>>(args: &mut Vec<T>) -> ExecutionMode {
     let native = args.iter().any(|arg| arg == AOT_FLAG);
     args.retain(|arg| arg != AOT_FLAG);
-    let before = args.len();
-    args.retain(|arg| arg != NO_JIT_FLAG);
-    if native {
-        ExecutionMode::NativeOnly
-    } else if args.len() < before {
-        ExecutionMode::Interpreted
-    } else {
-        ExecutionMode::Compiled
-    }
+    let jit = JitMode::FLAGGED.iter().find(|(_, flag)| args.iter().any(|arg| arg == *flag)).map_or_else(JitMode::default, |(mode, _)| *mode);
+    args.retain(|arg| !JitMode::FLAGGED.iter().any(|(_, flag)| arg == *flag));
+    jit.set_process_mode();
+    if native { ExecutionMode::NativeOnly } else { jit.execution_mode() }
 }
 
-/// The name reports and logs give `mode`.
+/// The name reports and logs give `mode`: `no-jit`, the tier alone that runs (`b-jit`, `u-jit`, `q-jit`) or `jit`, or `aot`.
 pub fn execution_mode_name(mode: ExecutionMode) -> &'static str {
     match mode {
-        ExecutionMode::Interpreted => "no-jit",
-        ExecutionMode::Compiled => "jit",
+        ExecutionMode::Interpreted => JitMode::Interp.name(),
+        ExecutionMode::Compiled => JitMode::process().name(),
         ExecutionMode::NativeOnly => "aot",
     }
 }
 
 pub fn execution_mode_flag(mode: ExecutionMode) -> Option<&'static str> {
     match mode {
-        ExecutionMode::Interpreted => Some(NO_JIT_FLAG),
-        ExecutionMode::Compiled => None,
+        ExecutionMode::Interpreted => JitMode::Interp.flag(),
+        ExecutionMode::Compiled => JitMode::process().flag(),
         ExecutionMode::NativeOnly => Some(AOT_FLAG),
     }
 }
