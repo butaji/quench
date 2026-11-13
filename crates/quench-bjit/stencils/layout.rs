@@ -298,4 +298,17 @@ pub(crate) mod string_form {
     pub(crate) const SHORT_LENGTH_OFFSET: i32 = 1;
     /// A shared record's pointer follows its tag at the next word, then its length.
     pub(crate) const SHARED_LENGTH_OFFSET: i32 = 2 * core::mem::size_of::<usize>() as i32;
+    /// The units of a short record follow its length byte.
+    pub(crate) const SHORT_UNITS_OFFSET: u64 = 2;
+    /// A shared record's pointer follows its tag at the next word.
+    pub(crate) const SHARED_POINTER_OFFSET: i32 = core::mem::size_of::<usize>() as i32;
+    /// How far into the shared allocation the units start: the two reference counts of an `Rc`.
+    pub(crate) const fn shared_units_offset() -> u64 {
+        2 * core::mem::size_of::<usize>() as u64
+    }
 }
+/// What an inline-cache row reads of the dispatch payload (`stencils/ic_rows.rs`): the method-cache atom bits and their
+/// word count, which a store row consults, and whether stores are specialized.
+pub(crate) const JS_STEP_METHOD_CACHE_ATOMS: usize = 0;
+pub(crate) const JS_STEP_METHOD_CACHE_ATOM_WORDS: usize = 0;
+pub(crate) const JS_STEP_STORES_SPECIALIZED: usize = 0;

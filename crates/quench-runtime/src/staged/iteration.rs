@@ -5,6 +5,7 @@
 //! `Concrete` (`dispatch_fast::lane_frame`), the b-jit runs it as a stencil row ahead of the
 //! helper step that is its slow arm.
 
+use super::region::Region;
 use super::{Concrete, Frame, Stage, Step, elements, entry, value};
 use crate::bytecode::Register;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
@@ -59,7 +60,7 @@ pub(crate) const FOR_IN_NO_MEMO: u64 = crate::value::TAG_UNDEFINED;
 /// The word of element `index` of a for-in state whose first value `values` addresses.
 #[inline(always)]
 fn state_word<S: Stage>(stage: &mut S, values: S::Word, index: usize) -> S::Word {
-    stage.load_u64(values, (index * std::mem::size_of::<crate::Value>()) as i32)
+    stage.load_u64(Region::Elements.mutable(), values, (index * std::mem::size_of::<crate::Value>()) as i32)
 }
 
 /// Guards that the raw word `held` is `expected`.
@@ -92,10 +93,10 @@ pub(crate) fn for_in_next<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, 
     stage.guard(present, miss)?;
     let object = state_word(stage, backing.values, FOR_IN_OBJECT);
     let (_, record) = entry::direct_record(stage, objects, object, miss)?;
-    let exact = stage.load_u32(record, OBJECT.auxiliary_offset as i32);
+    let exact = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
     let listed = state_word(stage, backing.values, FOR_IN_SHAPE);
     same_word(stage, exact, listed, miss)?;
-    let payload = stage.load_u64(record, OBJECT.payload_offset as i32);
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let plain = super::object::plain_payload(stage, payload);
     stage.guard(plain, miss)?;
     let cursor = state_word(stage, backing.values, FOR_IN_CURSOR);

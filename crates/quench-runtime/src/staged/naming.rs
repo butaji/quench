@@ -10,6 +10,7 @@
 //! plain storage, the store gate of the function record space, and that the slot holds the empty
 //! string the VM keeps (`empty`, a word the caller reads from the dispatch payload or the VM).
 
+use super::region::Region;
 use super::add::{Edge, admitted};
 use super::entry::plain_value;
 use super::object::{Form, store_slot};
@@ -19,6 +20,7 @@ use crate::heap::{NATIVE_FUNCTION_LAYOUT as FUNCTION, NATIVE_OBJECT_LAYOUT as OB
 /// The storage form the name slot is in: a slot below the inline count is packed or an arena run
 /// as the record says at run time; any other is an arena run. The slot already holds a value, so
 /// no room is needed, unlike an add (`add_plan::Transition::form`).
+#[inline(always)]
 pub(crate) fn name_form(slot: u16) -> Form {
     if usize::from(slot) < OBJECT.inline_property_count { Form::Either } else { Form::Arena }
 }
@@ -37,7 +39,7 @@ pub(crate) fn set_function_name<S: Stage>(stage: &mut S, record: S::Word, record
     let unnamed = stage.eq_imm(moved, 0u32);
     stage.guard(unnamed, miss)?;
     store_slot(stage, record, payload, edge.slot, form, name, miss)?;
-    stage.store_u32(record, OBJECT.auxiliary_offset as i32, edge.after);
+    stage.store_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32, edge.after);
     Some(())
 }
 

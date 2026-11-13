@@ -19,6 +19,10 @@ pub fn may_return(row: &str) -> bool {
 }
 
 const X86_RET: u8 = 0xc3;
+/// A final `c3` that is the displacement of a short `jmp` or `jcc` (`eb c3`, `7x c3`) is a branch, not a return.
+const X86_SHORT_JMP: u8 = 0xeb;
+const X86_SHORT_JCC_FIRST: u8 = 0x70;
+const X86_SHORT_JCC_LAST: u8 = 0x7f;
 const X86_JMP: u8 = 0xe9;
 const X86_CALL: u8 = 0xe8;
 const X86_JCC_ESCAPE: u8 = 0x0f;
@@ -66,7 +70,7 @@ pub fn check_transfer(arch: Arch, row: &str, code: &[u8], at: usize, class: u8) 
             A64_TRANSFERS.into_iter().any(matches_form) || may_call(row) && matches_form(A64_CALL)
         }
     };
-    assert!(ok, "stencil {row}: relocation at {at} is not a jump or conditional branch (a call?)");
+    assert!(ok, "stencil {row}: relocation at {at} is not a jump or conditional branch (a call?): preceding bytes {:02x?}", &code[at.saturating_sub(3)..at]);
 }
 
 /// The rows that may make a call through a register (`stencils/call_rows.rs`).
@@ -85,7 +89,7 @@ pub fn check_call(arch: Arch, row: &str, code: &[u8]) {
 /// A row that is not a returning routine contains no return.
 pub fn check_no_return(arch: Arch, row: &str, code: &[u8]) {
     let returns = match arch {
-        Arch::X86_64 => code.last() == Some(&X86_RET),
+        Arch::X86_64 => matches!(code, [.., X86_RET]) && !matches!(code, [.., X86_SHORT_JMP | X86_SHORT_JCC_FIRST..=X86_SHORT_JCC_LAST, X86_RET]),
         Arch::Aarch64 => code.chunks_exact(A64_WORD).any(|w| word_at(w, 0) == A64_RET),
     };
     assert!(may_return(row) || !returns, "stencil {row} contains a `ret`");

@@ -1,5 +1,6 @@
 //! Value-word reads every tier shares: which heap family a value names.
 
+use super::region::Region;
 use super::Stage;
 use crate::value::ValueLayout;
 
@@ -19,14 +20,6 @@ fn family_is<S: Stage>(stage: &mut S, bits: S::Word, tag: u64) -> S::Cond {
 #[inline(always)]
 pub(crate) fn is_direct_object<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG)
-}
-
-/// Whether `bits` is an int32 (`Value::as_int`); an int32 has one tagged form, so two
-/// distinct int-tagged words are two distinct values.
-#[inline(always)]
-pub(crate) fn is_int<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
-    let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
-    stage.eq_imm(tag, ValueLayout::INT_TAG)
 }
 
 /// The id of the object record a direct object reference names, its low half (`Value::direct_object_index`).
@@ -154,7 +147,7 @@ pub(crate) fn immediate_typeof_string<S: Stage>(stage: &mut S, bits: S::Word, na
     let index = immediate_typeof_index(stage, bits, miss)?;
     let offset = stage.mul_imm(index, core::mem::size_of::<crate::Value>() as u64);
     let entry = stage.add(names, offset);
-    Some(stage.load_table(entry))
+    Some(stage.load_table(Region::HeapMeta.readonly(), entry))
 }
 
 /// The interpreter's `immediate_typeof_index` of `value`.

@@ -11,6 +11,7 @@
 //! planner (`add_plan`) decides which form can take the add and the row never grows storage. Any
 //! other add is the VM's, which allocates and grows.
 
+use super::region::Region;
 use super::entry::direct_record;
 use super::object::{Form, plain_payload, proto_link, store_slot};
 use super::{RecordSpace, Stage};
@@ -33,15 +34,15 @@ pub(crate) struct Edge<W> {
 #[inline(always)]
 pub(super) fn admitted<S: Stage>(stage: &mut S, space: RecordSpace, record: S::Word, record_id: S::Word, before: S::Word,
     value: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let exact = stage.load_u32(record, OBJECT.auxiliary_offset as i32);
+    let exact = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
     let moved = stage.sub(exact, before);
     let same = stage.eq_imm(moved, 0u32);
     stage.guard(same, miss)?;
-    let meta = stage.load_u32(record, OBJECT.meta_offset as i32);
+    let meta = stage.load_u32(Region::Records.mutable(), record, OBJECT.meta_offset as i32);
     let integrity = stage.and_imm(meta, u64::from(OBJECT.integrity_mask));
     let open = stage.eq_imm(integrity, 0u32);
     stage.guard(open, miss)?;
-    let payload = stage.load_u64(record, OBJECT.payload_offset as i32);
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
     let gate = stage.store_gate(space, record_id, value);
@@ -60,7 +61,7 @@ pub(crate) fn add_property<S: Stage>(stage: &mut S, record: S::Word, record_id: 
     form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
     let payload = admitted(stage, RecordSpace::Object, record, record_id, edge.before, value, miss)?;
     store_slot(stage, record, payload, edge.slot, form, value, miss)?;
-    stage.store_u32(record, OBJECT.auxiliary_offset as i32, edge.after);
+    stage.store_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32, edge.after);
     Some(())
 }
 

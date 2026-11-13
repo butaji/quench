@@ -4,36 +4,17 @@
 //! patches into the instruction that uses it. An operation with no stencil form calls an
 //! `UNSUPPORTED_*` symbol, which `build.rs` rejects, so a row cannot silently use one.
 
-<<<<<<< HEAD
-use crate::layout::words::{HEAP_TAG, TAG_MASK};
-use crate::layout::{JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE};
-use crate::staged::{Stage, Table};
-use crate::words::{hole, HOLE_FOURTH, HOLE_THIRD, LAST_HOLE};
-||||||| base
-use crate::staged::{Stage, Table};
-=======
 use crate::layout::{
     words::{HEAP_TAG, TAG_MASK},
-    JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT, JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT, JS_STEP_SLOTS_TRACKED, NATIVE_OBJECT_LAYOUT as OBJECT,
+    JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT, JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT, JS_STEP_PROPERTY_BUFFER, JS_STEP_SLOTS_TRACKED,
+    NATIVE_OBJECT_LAYOUT as OBJECT, PROPERTY_BUFFER_BASE,
 };
 use crate::staged::{RecordSpace, Stage, Table};
->>>>>>> W
+use crate::words::{hole, HOLE_FOURTH, HOLE_THIRD, LAST_HOLE};
 use crate::typed_ir::Type;
 use crate::staged::region::{Access, Region};
 
 unsafe extern "C" {
-<<<<<<< HEAD
-    fn UNSUPPORTED_store_gate(a: u64, b: u64) -> u64;
-||||||| base
-    static HOLE_V0: u8;
-    static HOLE_V1: u8;
-    static HOLE_V2: u8;
-    fn UNSUPPORTED_store_gate(a: u64, b: u64) -> u64;
-=======
-    static HOLE_V0: u8;
-    static HOLE_V1: u8;
-    static HOLE_V2: u8;
->>>>>>> W
     fn UNSUPPORTED_assumption(a: u64) -> u64;
     fn UNSUPPORTED_number_operator(a: u64, b: u64, c: u64) -> u64;
     fn UNSUPPORTED_shape_in(a: u64) -> u64;
@@ -41,42 +22,41 @@ unsafe extern "C" {
     fn UNSUPPORTED_clamp_u8(a: u64) -> u64;
 }
 
-<<<<<<< HEAD
-/// The stencil stage; `sites` is the number of the next value hole a `site` call names, and
-/// `payload` the activation's dispatch payload (`JsStepDispatch`), which the process tables
-/// (`table`) are read through; zero for a row that addresses none.
-||||||| base
-/// The stencil stage; `sites` is the number of the next value hole a `site` call names.
-=======
 /// The stencil stage; `sites` is the number of the next value hole a `site` call names,
-/// `values` the property arena's value base a row that reads object storage was given, and
-/// `payload` the dispatch payload a row that stores was given, whose barrier words
-/// `store_gate` reads.
->>>>>>> W
+/// `values` the property arena's value base a row that reads object storage was given (else the
+/// arena is found through `payload`), and `payload` the activation's dispatch payload
+/// (`JsStepDispatch`), which the process tables (`table`) and the barrier words (`store_gate`)
+/// are read through; zero for a row that addresses none.
 #[derive(Clone, Copy)]
 pub(crate) struct StencilStage {
     sites: u8,
-<<<<<<< HEAD
-    payload: u64,
-||||||| base
-=======
     values: u64,
-    payload: usize,
->>>>>>> W
+    payload: u64,
 }
 
 impl StencilStage {
     /// A stage whose first `site` is hole `first`.
     #[inline(always)]
     pub(crate) fn from_hole(first: u8) -> Self {
-<<<<<<< HEAD
-        Self { sites: first, payload: 0 }
+        Self { sites: first, values: 0, payload: 0 }
     }
 
     /// As `from_hole`, for a row whose operations address a process table through `payload`.
     #[inline(always)]
     pub(crate) fn with_payload(first: u8, payload: u64) -> Self {
-        Self { sites: first, payload }
+        Self { sites: first, values: 0, payload }
+    }
+
+    /// As `from_hole`, with the property arena's value base (`Table::PropertyValues`).
+    #[inline(always)]
+    pub(crate) fn with_values(first: u8, values: u64) -> Self {
+        Self { sites: first, values, payload: 0 }
+    }
+
+    /// As `with_values`, for a row that stores through the dispatch payload at `payload`.
+    #[inline(always)]
+    pub(crate) fn storing(first: u8, values: u64, payload: usize) -> Self {
+        Self { sites: first, values, payload: payload as u64 }
     }
 
     /// The `T` at `base + offset`, which need not be aligned (a typed array's bytes).
@@ -91,36 +71,13 @@ impl StencilStage {
     fn write<T>(&self, base: u64, offset: i32, value: T) {
         // SAFETY: as `read`; a store writes only a live backing or buffer.
         unsafe { (base.wrapping_add(offset as i64 as u64) as *mut T).write_unaligned(value) }
-||||||| base
-        Self { sites: first }
-=======
-        Self { sites: first, values: 0, payload: 0 }
-    }
-
-    /// As `from_hole`, with the property arena's value base (`Table::PropertyValues`).
-    #[inline(always)]
-    pub(crate) fn with_values(first: u8, values: u64) -> Self {
-        Self { sites: first, values, payload: 0 }
-    }
-
-    /// As `with_values`, for a row that stores through the dispatch payload at `payload`.
-    #[inline(always)]
-    pub(crate) fn storing(first: u8, values: u64, payload: usize) -> Self {
-        Self { sites: first, values, payload }
->>>>>>> W
     }
 
     /// The runtime's `Concrete::new`, which the shared rows' interpreter wrappers call; those
     /// wrappers are never used here.
     #[inline(always)]
     pub(crate) fn new(_property_values: *const crate::Value) -> Self {
-<<<<<<< HEAD
-        Self { sites: 0, payload: 0 }
-||||||| base
-        Self { sites: 0 }
-=======
         Self { sites: 0, values: 0, payload: 0 }
->>>>>>> W
     }
 }
 
@@ -137,7 +94,6 @@ impl Stage for StencilStage {
         self.sites += 1;
         // SAFETY: only the addresses of the statics are taken.
         unsafe {
-<<<<<<< HEAD
             match n {
                 0 => hole::<0>() as u64,
                 1 => hole::<1>() as u64,
@@ -145,17 +101,6 @@ impl Stage for StencilStage {
                 HOLE_FOURTH => hole::<HOLE_FOURTH>() as u64,
                 LAST_HOLE => hole::<LAST_HOLE>() as u64,
                 _ => UNSUPPORTED_site(n as u64),
-||||||| base
-            match [&raw const HOLE_V0, &raw const HOLE_V1, &raw const HOLE_V2].get(n as usize) {
-                Some(hole) => *hole as u64,
-                None => UNSUPPORTED_site(n as u64),
-=======
-            match n {
-                0 => (&raw const HOLE_V0) as u64,
-                1 => (&raw const HOLE_V1) as u64,
-                2 => (&raw const HOLE_V2) as u64,
-                _ => UNSUPPORTED_site(n as u64),
->>>>>>> W
             }
         }
     }
@@ -182,7 +127,6 @@ impl Stage for StencilStage {
         unsafe { (base.wrapping_add(offset as i64 as u64) as *const u64).read() }
     }
     #[inline(always)]
-<<<<<<< HEAD
     fn load_u8(&mut self, _at: Access, base: u64, offset: i32) -> u64 {
         // SAFETY: as `load_u32`.
         u64::from(unsafe { (base.wrapping_add(offset as i64 as u64) as *const u8).read() })
@@ -194,16 +138,6 @@ impl Stage for StencilStage {
     }
     #[inline(always)]
     fn load_table(&mut self, at: Access, address: u64) -> u64 { self.load_u64(at, address, 0) }
-||||||| base
-    fn load_table(&mut self, address: u64) -> u64 { self.load_u64(address, 0) }
-=======
-    fn load_u8(&mut self, base: u64, offset: i32) -> u64 {
-        // SAFETY: as `load_u32`.
-        u64::from(unsafe { (base.wrapping_add(offset as i64 as u64) as *const u8).read() })
-    }
-    #[inline(always)]
-    fn load_table(&mut self, address: u64) -> u64 { self.load_u64(address, 0) }
->>>>>>> W
     #[inline(always)]
     fn add(&mut self, a: u64, b: u64) -> u64 { a.wrapping_add(b) }
     #[inline(always)]
@@ -250,7 +184,6 @@ impl Stage for StencilStage {
         unsafe { (base.wrapping_add(offset as i64 as u64) as *mut u64).write(value) }
     }
     #[inline(always)]
-<<<<<<< HEAD
     fn load_i8(&mut self, _at: Access, base: u64, offset: i32) -> u64 { u64::from(self.read::<i8>(base, offset) as i32 as u32) }
     #[inline(always)]
     fn load_i16(&mut self, _at: Access, base: u64, offset: i32) -> u64 { u64::from(self.read::<i16>(base, offset) as i32 as u32) }
@@ -278,20 +211,10 @@ impl Stage for StencilStage {
         unsafe { UNSUPPORTED_clamp_u8(a) }
     }
     #[inline(always)]
-    fn store_gate(&mut self, _record_id: u64, value: u64) -> bool {
-        // A value that is no heap reference needs no barrier log (`RecordSpace::store_logs`), as
-        // the native guard (`emit_unlogged_property_store_guard`) tests first; a reference leaves,
-        // for its record's mark bit is not a hole yet.
-        value & TAG_MASK != HEAP_TAG
-||||||| base
-    fn store_gate(&mut self, record_id: u64, value: u64) -> bool {
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_store_gate(record_id, value) != 0 }
-=======
     fn store_gate(&mut self, space: RecordSpace, record_id: u64, value: u64) -> bool {
         let word = |offset: usize| {
             // SAFETY: a payload word at a layout offset; a row that stores was given the live payload.
-            unsafe { ((self.payload + offset) as *const u64).read() }
+            unsafe { ((self.payload as usize + offset) as *const u64).read() }
         };
         if word(JS_STEP_SLOTS_TRACKED) != 0 {
             return false;
@@ -314,7 +237,6 @@ impl Stage for StencilStage {
         // SAFETY: the record's block lies below the block count, and its marks are a word of that block.
         let marked = unsafe { (marks as *const u64).read() } >> (within % OBJECT.mark_word_bits as u64) & 1;
         marked == 0
->>>>>>> W
     }
     #[inline(always)]
     fn assumption(&mut self, watch: u64) -> bool {
@@ -360,9 +282,9 @@ impl Stage for StencilStage {
     fn known(&self, _cond: bool) -> Option<bool> { None }
     #[inline(always)]
     fn table(&mut self, table: Table) -> u64 {
-<<<<<<< HEAD
         match table {
             // The arena's header is the allocator's own, whose base native code reads each time.
+            Table::PropertyValues if self.values != 0 => self.values,
             Table::PropertyValues => {
                 let header = self.load_u64(Region::Dispatch.mutable(), self.payload, JS_STEP_PROPERTY_BUFFER as i32);
                 self.load_u64(Region::HeapMeta.mutable(), header, PROPERTY_BUFFER_BASE as i32)
@@ -372,18 +294,6 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn walk_prototypes(&mut self, records: u64, object: u64, target: u64, max_depth: u32) -> (bool, bool) {
         crate::staged::object::walk_prototypes_loop(self, records, object, target, max_depth)
-||||||| base
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_table(table as u64) }
-=======
-        match table {
-            Table::PropertyValues => self.values,
-        }
-    }
-    #[inline(always)]
-    fn walk_prototypes(&mut self, records: u64, object: u64, target: u64, max_depth: u32) -> (bool, bool) {
-        crate::staged::object::walk_prototypes_loop(self, records, object, target, max_depth)
->>>>>>> W
     }
 }
 

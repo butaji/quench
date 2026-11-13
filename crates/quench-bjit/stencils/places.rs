@@ -339,6 +339,9 @@ fn local_slot(s: &S, slot: u16) -> Option<usize> {
 }
 
 impl<const D: u8, const A: u8, const B: u8> GlobalFrame<Concrete> for Places<D, A, B> {}
+impl<const D: u8, const A: u8, const B: u8> crate::staged::PropertyFrame<Concrete> for Places<D, A, B> {}
+impl<const D: u8, const A: u8, const B: u8> crate::staged::ElementFrame<Concrete> for Places<D, A, B> {}
+impl<const D: u8, const A: u8, const B: u8> crate::staged::CallFrame<Concrete> for Places<D, A, B> {}
 
 impl<const D: u8, const A: u8, const B: u8> NumericFrame<Concrete> for Places<D, A, B> {
     #[inline(always)]

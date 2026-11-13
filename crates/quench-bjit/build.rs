@@ -61,6 +61,10 @@ const VARIANTS: [(&str, Option<&str>); 2] = [("BASELINE", Some("x86-64-v2")), ("
 const RUSTC_FLAGS: &[&str] = &[
     "--edition", "2024", "--crate-type=lib", "--crate-name=quench_stencil_rows", "--emit=obj", "-C", "opt-level=3", "-C", "panic=abort", "-C", "relocation-model=static",
     "-C", "codegen-units=1", "-C", "debuginfo=0", "-C", "debug-assertions=off", "-C", "overflow-checks=off", "-C", "force-frame-pointers=no", "-C", "force-unwind-tables=no",
+    // A jump table is a relocation against read-only data, which no hole names: a row's dispatch stays compares.
+    "-C", "llvm-args=--min-jump-table-entries=65536",
+    // A vectorized comparison loads its constants from a pool, which a row has none of (a hole is the only relocation).
+    "-C", "no-vectorize-slp", "-C", "no-vectorize-loops",
 ];
 
 /// Every file whose change must recompile the stencils: the stencil sources and the runtime's
@@ -181,7 +185,7 @@ fn compile(out: &Path, shard: usize, cpu: Option<&str>) -> PathBuf {
     if let Some(cpu) = cpu {
         command.arg("-C").arg(format!("target-cpu={cpu}"));
     }
-    command.args(["--check-cfg", "cfg(fixed_rows)"]);
+    command.args(["--check-cfg", "cfg(fixed_rows)", "--check-cfg", "cfg(stencil_build)", "--cfg", "stencil_build"]);
     if shard == FIXED_ROWS_SHARD {
         command.args(["--cfg", "fixed_rows"]);
     }
@@ -224,11 +228,11 @@ fn relocations(arch: Arch, row: &ObjectRow) -> Vec<(u16, u8, u8, i32)> {
     row.relocs
         .iter()
         .map(|reloc| {
+            let index = hole_index(&row.name, &reloc.symbol, reloc.class);
             if is_successor(reloc.class) {
                 check_transfer(arch, &row.name, &row.code, reloc.offset, reloc.class);
             }
             check_value_field(arch, &row.name, &row.code, reloc.offset, reloc.class);
-            let index = hole_index(&row.name, &reloc.symbol, reloc.class);
             (u16::try_from(reloc.offset).expect("a stencil under 64 KiB"), reloc.class, u8::try_from(index).expect("a small hole index"), i32::try_from(reloc.addend).expect("a small addend"))
         })
         .collect()

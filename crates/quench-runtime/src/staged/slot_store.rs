@@ -29,7 +29,7 @@ pub(crate) fn admitted_payload<S: Stage>(stage: &mut S, record: S::Word, record_
 #[inline(always)]
 pub(crate) fn gate_open<S: Stage>(stage: &mut S, record_id: S::Word, (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
     if fact.is_subtype(Type::IMMEDIATE) { return Some(()); }
-    let open = stage.store_gate(record_id, value);
+    let open = stage.store_gate(super::RecordSpace::Object, record_id, value);
     stage.guard(open, miss)
 }
 

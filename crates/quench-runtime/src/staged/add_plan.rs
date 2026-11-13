@@ -33,6 +33,7 @@ impl Transition {
     /// object has a free half below the inline count, and an arena range of `slot` values has
     /// room for one more where its capacity class says (`range_has_room`). `None` where neither
     /// form fits, so the VM's add, which allocates, is the only one.
+    #[inline(always)]
     pub(crate) fn form(self) -> Option<Form> {
         let slot = usize::from(self.slot);
         match (slot < OBJECT.inline_property_count, range_has_room(slot)) {

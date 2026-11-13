@@ -1440,16 +1440,16 @@ impl<H: Host> Vm<H> {
     pub(super) fn string_length_value(&self, object: Value) -> Option<Value> {
         self.heap
             .string_record_base()
-            .and_then(|records| crate::staged::strings::concrete_string_length(records, object))
+            .and_then(|records| crate::staged::string_length::concrete_string_length(records, object))
             .or_else(|| self.heap.string(object).map(|text| Value::length(text.len())))
     }
 
     /// The `length` of a direct array or string, from the one staged row over both record
-    /// tables (`staged::strings::length_of`); any other form is the general read's.
+    /// tables (`staged::string_length::length_of`); any other form is the general read's.
     #[inline(always)]
     pub(super) fn length_value(&self, object: Value) -> Option<Value> {
         let (arrays, strings) = (self.heap.array_record_base()?, self.heap.string_record_base()?);
-        crate::staged::strings::concrete_length_of(arrays, strings, object)
+        crate::staged::string_length::concrete_length_of(arrays, strings, object)
     }
 
     /// `cached_field_hit` for compiled code's probe (`compiled::lane_field_get`), which also

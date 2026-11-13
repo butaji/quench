@@ -144,7 +144,7 @@ fn outcome<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, co
     [left, right]: [Operand; 2], negate: bool) -> Option<S::Cond> {
     match comparison {
         Comparison::Relation { relation, domain } =>
-            Some(super::numeric::relation_holds(stage, frame, left, right, relation, domain)),
+            super::numeric::relation_holds(stage, frame, left, right, relation, domain),
         Comparison::Equality { strict, negated } => equality(stage, frame, [left, right], (strict, negated)),
         Comparison::Nullish { expected, strict, negated } => {
             let equal_edge = if negated == negate { Edge::Target } else { Edge::Following };

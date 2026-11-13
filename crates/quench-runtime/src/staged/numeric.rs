@@ -76,8 +76,11 @@ pub(crate) trait NumericStage: Stage {
 /// A frame whose operands a numeric operation proves in its representation and whose result
 /// it defines with that representation's fact.
 pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + super::PropertyFrame<S> + super::ElementFrame<S> + super::CallFrame<S> {
-    fn int_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> S::Word;
-    fn number_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> S::Word;
+    /// The int32 word of `operand`, proved here; `None` where it is none (a frame whose
+    /// facts prove it, or whose guard branches away at `miss`, always answers `Some`).
+    fn int_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<S::Word>;
+    /// The binary64 word of `operand`, proved here; `None` where it is no Number.
+    fn number_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<S::Word>;
     /// Continue where `register` holds a Number; `None` where it does not, so nothing runs
     /// past it. A specializer may prove a narrower representation its facts favor (an
     /// untyped register taken for an int32), leaving at `miss` for the rest.
@@ -96,7 +99,7 @@ pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + supe
     /// that proves int32 operands only reads them as such.
     #[inline(always)]
     fn int32_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<S::Word> {
-        Some(self.int_operand(stage, operand, miss))
+        self.int_operand(stage, operand, miss)
     }
 
     /// The encoded prototype link (`ProtoLink::bits`) of `constructor`'s `prototype`, where the
@@ -205,10 +208,11 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 }
 
 /// `~source` of an int32 `source`: `-1 - source`, which never overflows.
+#[inline(always)]
 fn bitwise_not<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, source: Operand) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
-    let value = frame.int_operand(stage, source, miss);
+    let Some(value) = frame.int_operand(stage, source, miss) else { return Step::Unresolved };
     let all_ones = stage.i32_constant(-1);
     int_arithmetic_result(stage, frame, destination, all_ones, value,
         NumberArithmetic::Subtract, Overflow::Exit, miss)
@@ -230,19 +234,16 @@ fn operands<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 #[inline(always)]
 fn relation<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     left: Operand, right: Operand, relation: NumberRelation, domain: Domain) -> Step<S::Word, F::Control> {
-    let holds = relation_holds(stage, frame, left, right, relation, domain);
+    let Some(holds) = relation_holds(stage, frame, left, right, relation, domain) else { return Step::Unresolved };
     Step::Value(stage.cond_word(holds))
 }
 
-/// Whether `relation` holds of two operands in `domain`.
+/// Whether `relation` holds of two operands in `domain`; `None` where the frame proves neither.
+#[inline(always)]
 pub(super) fn relation_holds<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    left: Operand, right: Operand, relation: NumberRelation, domain: Domain) -> S::Cond {
-    let miss = frame.miss();
-    let (left, right) = match domain {
-        Domain::Int32 => (frame.int_operand(stage, left, miss), frame.int_operand(stage, right, miss)),
-        Domain::Float64 => (frame.number_operand(stage, left, miss), frame.number_operand(stage, right, miss)),
-    };
-    stage.relation(relation, domain, left, right)
+    left: Operand, right: Operand, relation: NumberRelation, domain: Domain) -> Option<S::Cond> {
+    let (left, right) = operands(stage, frame, left, right, domain)?;
+    Some(stage.relation(relation, domain, left, right))
 }
 
 /// Arithmetic of two operands in `domain`; the result in `domain` or widened to binary64.
@@ -390,6 +391,9 @@ macro_rules! wrapping_int32_arithmetic {
 }
 crate::vm::operations::number_arithmetic_rows!(wrapping_int32_arithmetic);
 
+/// The sign bit of a binary64 word.
+const F64_SIGN_BIT: u64 = 1 << (u64::BITS - 1);
+
 impl NumericStage for super::Concrete {
     #[inline(always)]
     fn relation(&mut self, relation: NumberRelation, domain: Domain,
@@ -407,7 +411,13 @@ impl NumericStage for super::Concrete {
     }
     #[inline(always)]
     fn float_negate(&mut self, value: u64) -> u64 {
-        (-f64::from_bits(value)).to_bits()
+        // The sign bit flipped. A stencil has no constant pool to hold a mask for a value that lives in a
+        // vector register, so the mask is an opaque word it makes in a general register.
+        #[cfg(stencil_build)]
+        let mask = core::hint::black_box(F64_SIGN_BIT);
+        #[cfg(not(stencil_build))]
+        let mask = F64_SIGN_BIT;
+        value ^ mask
     }
     #[inline(always)]
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
@@ -429,22 +439,29 @@ impl NumericStage for super::Concrete {
     fn float_unary(&mut self, operation: super::math::FloatUnary, value: u64) -> u64 {
         super::math::float_unary(operation, f64::from_bits(value)).to_bits()
     }
+    #[inline(always)]
     fn float_extreme(&mut self, maximum: bool, left: u64, right: u64) -> u64 {
         super::math::float_extreme(maximum, f64::from_bits(left), f64::from_bits(right)).to_bits()
     }
+    #[inline(always)]
     fn int_multiply(&mut self, left: u64, right: u64) -> u64 {
         u64::from(super::math::int_multiply(int32(left), int32(right)) as u32)
     }
     #[inline(always)]
     fn i32_constant(&mut self, value: i32) -> u64 { u64::from(value as u32) }
+    #[inline(always)]
     fn f64_constant(&mut self, value: f64) -> u64 { value.to_bits() }
+    #[inline(always)]
     fn narrow(&mut self, value: u64) -> u64 { u64::from(value as u32) }
     #[inline(always)]
-    fn i32_to_f64(&mut self, value: u64) -> u64 { f64::from(int32(value)).to_bits() }
-    fn u32_to_f64(&mut self, value: u64) -> u64 { f64::from(value as u32).to_bits() }
+    fn i32_to_f64(&mut self, value: u64) -> u64 { (i64::from(int32(value)) as f64).to_bits() }
+    #[inline(always)]
+    fn u32_to_f64(&mut self, value: u64) -> u64 { (i64::from(value as u32) as f64).to_bits() }
+    #[inline(always)]
     fn to_int32(&mut self, number: u64, _miss: ()) -> Option<u64> {
         Some(u64::from(crate::units::to_int32(f64::from_bits(number)) as u32))
     }
+    #[inline(always)]
     fn int_bitwise(&mut self, operation: NumberBitwise, left: u64, right: u64) -> u64 {
         u64::from(int32_bitwise_bits(operation, int32(left), int32(right)) as u32)
     }

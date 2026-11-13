@@ -254,6 +254,12 @@ impl NumberBitwise {
     }
 }
 
+/// The int32 bits `operation` makes of two int32 operands.
+#[inline(always)]
+pub(crate) fn int32_bitwise_bits(operation: NumberBitwise, left: i32, right: i32) -> i32 {
+    operation.apply(&mut I32BitwiseStage, left, right)
+}
+
 #[inline(always)]
 pub(crate) fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) -> f64 {
     let bits = operation.apply(&mut I32BitwiseStage, left, right);

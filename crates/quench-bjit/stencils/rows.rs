@@ -10,7 +10,7 @@
 //! its own slice of the generated instances (one row per kind, places and speculation); the
 //! target's fixed rows (`entry*.rs`) belong to the shard built with `--cfg fixed_rows`.
 #![no_std]
-#![feature(explicit_tail_calls, rust_preserve_none_cc)]
+#![feature(explicit_tail_calls, rust_preserve_none_cc, core_float_math)]
 #![allow(incomplete_features, non_upper_case_globals, dead_code, unused_imports)]
 extern crate core as std;
 
@@ -32,7 +32,7 @@ mod stage;
 mod staged;
 mod supernode_rows;
 mod words;
-pub(crate) use facade::{Value, bytecode, heap, operations, typed_ir, value, value_vec, vm};
+pub(crate) use facade::{Value, bytecode, heap, operations, typed_ir, units, value, value_vec, vm};
 
 use numeric::{Out, S};
 

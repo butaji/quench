@@ -20,7 +20,13 @@ pub const LANE_CALL_COMPLETED: u64 = 0;
 pub const LANE_CALL_MISSED: u64 = 1;
 pub const LANE_CALL_LEFT: u64 = 2;
 pub const LANE_CALL_TERMINATED: u64 = 3;
-pub const LANE_CALL_BRANCHED: u64 = 4;
+/// A call-out that decides a comparison completed, and the comparison held; `LANE_CALL_COMPLETED`
+/// is that it did not.
+pub const LANE_CALL_HOLDS: u64 = 4;
+/// The callee's body ended by an exception (`LANE_BODY_THREW`): its activation is popped, the
+/// call's register is untouched and the exception waits in `Vm::lane_raised`.
+pub const LANE_CALL_RAISED: u64 = 5;
+pub const LANE_CALL_BRANCHED: u64 = 6;
 
 /// The general dispatch's return statuses count down from the top of `u32` by this many blocks
 /// (`vm::compiled::MAX_JS_GENERAL_DISPATCH_BLOCKS`).
@@ -30,6 +36,8 @@ pub const GENERAL_RETURN_STATUS_BASE: u32 = u32::MAX - GENERAL_DISPATCH_BLOCKS;
 /// the stub, so nothing ran (`LANE_BODY_NOT_ENTERED`).
 pub const LANE_BODY_RETURNED: u32 = GENERAL_RETURN_STATUS_BASE - 1;
 pub const LANE_BODY_NOT_ENTERED: u32 = GENERAL_RETURN_STATUS_BASE - 2;
+/// A lane body whose activation ends by an exception no handler of its function covers (`LANE_BODY_THREW`).
+pub const LANE_BODY_THREW: u32 = GENERAL_RETURN_STATUS_BASE - 3;
 /// The status of a body that stops with a result word naming where (`NATIVE_JS_STOPPED`), the
 /// result word of a stop inside a callee's activation (`LaneExit::Callee`), and the status of a
 /// terminated run (`TERMINATED_STATUS`).

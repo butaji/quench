@@ -4,19 +4,109 @@
 //! the entry's address, so the code never changes when the site's feedback does (the entry
 //! record is the one feedback authority).
 
-use super::object::{arena_run, decode_narrow, inline_storage, plain_payload};
-use super::Stage;
+use super::object::{Form, arena_run, decode_narrow, extras_pointer, has_extras, inline_storage, plain_payload, store_slot};
+use super::{RecordSpace, Stage};
 use super::region::Region;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::vm::NATIVE_FIELD_CACHE_LAYOUT as ENTRY;
 
 // The entry's words are complemented by an all-ones word (a difference from it) for the shapes
 // and by zero for the slot: the guards below read them without a xor.
-const _: () = assert!(ENTRY.receiver_complement == u32::MAX && ENTRY.holder_complement == u32::MAX && ENTRY.slot_complement == 0);
+const _: () = assert!(ENTRY.receiver_complement == u32::MAX && ENTRY.slot_complement == 0);
 
 /// Guards that the shape of the object record at `record` is the one the entry at `entry`
 /// stores in its word at `offset`, complemented by `complement`: the stored word and the
 /// record's shape complemented differ by zero.
+#[inline(always)]
+fn shape_matches<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, (offset, complement): (usize, u32), miss: S::Miss) -> Option<()> {
+    let exact = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
+    let stored = stage.load_u32(Region::HeapMeta.mutable(), entry, offset as i32);
+    let complement = stage.constant(u64::from(complement));
+    let wanted = stage.sub(complement, exact);
+    let difference = stage.sub(stored, wanted);
+    let same = stage.eq_imm(difference, 0u32);
+    stage.guard(same, miss)
+}
+
+/// Whether the entry at `entry` is an own entry: its holder word is the stored own holder.
+#[inline(always)]
+fn own_entry<S: Stage>(stage: &mut S, entry: S::Word) -> S::Cond {
+    let stored = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.holder_offset as i32);
+    stage.eq_imm(stored, u64::from(ENTRY.holder_complement ^ ENTRY.own_holder))
+}
+
+/// The slot the entry at `entry` names.
+#[inline(always)]
+fn entry_slot<S: Stage>(stage: &mut S, entry: S::Word) -> S::Word {
+    let slot = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.slot_offset as i32);
+    stage.and_imm(slot, u64::from(u16::MAX))
+}
+
+/// The value at `slot` of the object record at `record`, whose shape the caller proved: `None`
+/// (leaving at `miss`) where its values are not plain (extras displaced them). Packed values
+/// decode from the record, flat ones read from the arena run.
+#[inline(always)]
+pub(super) fn plain_value<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+    let plain = plain_payload(stage, payload);
+    stage.guard(plain, miss)?;
+    let inline = inline_storage(stage, record);
+    Some(stage.choose(inline, |stage| {
+        let half = stage.mul_imm(slot, std::mem::size_of::<u32>() as u64);
+        let address = stage.add(record, half);
+        let narrow = stage.load_u32(Region::Payload.mutable(), address, OBJECT.payload_offset as i32);
+        decode_narrow(stage, narrow)
+    }, |stage| {
+        let run = arena_run(stage, payload);
+        let offset = stage.mul_imm(slot, OBJECT.property_value_size as u64);
+        let address = stage.add(run, offset);
+        stage.load_u64(Region::ObjectSlots.mutable(), address, 0)
+    }))
+}
+
+/// A field read through two cache entries: the first names a value the second entry's site reads from.
+#[inline(always)]
+pub(crate) fn site_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, (first, second): (S::Imm, S::Imm), miss: S::Miss) -> Option<S::Word> {
+    site_tables(stage, tables, miss)?;
+    let middle = site_read_in(stage, tables, object, first, miss)?;
+    site_read_in(stage, tables, middle, second, miss)
+}
+
+/// Stores `value` at `slot` of the object record at `record`, whose shape the caller proved and
+/// whose store gate (`Stage::store_gate`) admitted the write: a packed slot takes the value's
+/// narrow form, a flat one the value (`store_slot`); `None` (leaving at `miss`) where its values are
+/// not plain or a packed slot cannot hold the value, nothing written.
+#[inline(always)]
+fn plain_store<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, value: S::Word, miss: S::Miss) -> Option<()> {
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+    let plain = plain_payload(stage, payload);
+    stage.guard(plain, miss)?;
+    store_slot(stage, record, payload, slot, Form::Either, value, miss)
+}
+
+/// A store of `value` through the own cache entry `offset` bytes into the table of `tables`: the
+/// record's shape is the entry's, the gate admits the write, and the slot is plain.
+#[inline(always)]
+pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, value: S::Word, miss: S::Miss) -> Option<()> {
+    site_tables(stage, tables, miss)?;
+    let (id, record, entry) = site_record(stage, tables, object, offset, miss)?;
+    let own = own_entry(stage, entry);
+    stage.guard(own, miss)?;
+    shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
+    let open = stage.store_gate(RecordSpace::Object, id, value);
+    stage.guard(open, miss)?;
+    let slot = entry_slot(stage, entry);
+    plain_store(stage, record, slot, value, miss)
+}
+
+/// The value the own entry at `entry` (an address) names in the object record at `record`:
+/// `None` (leaving at `miss`) where the record's exact shape is not the entry's, the entry
+/// names a prototype holder (or is empty), or the record's values are not plain. The entry
+/// stores each of its words complemented against the empty entry, so a holder of zero and a
+/// shape equal to the record's shape complemented are the guards.
+// Read by the b-jit stencil generator (thread 7) once it derives GetField from this row; the
+// tests run it on `Concrete` meanwhile.
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     let stored_holder = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.holder_offset as i32);
@@ -26,7 +116,7 @@ pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S:
     let stored_shape = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.receiver_offset as i32);
     let complement = stage.constant(u64::from(ENTRY.receiver_complement));
     let wanted = stage.sub(complement, exact);
-    let difference = stage.sub(stored, wanted);
+    let difference = stage.sub(stored_shape, wanted);
     let same = stage.eq_imm(difference, 0u32);
     stage.guard(same, miss)?;
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
@@ -53,8 +143,24 @@ pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S:
 /// a run in the arena, so `None` (leaving at `miss`) where it has none, or where an inline value
 /// is past the inline ones.
 #[inline(always)]
-pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> S::Word {
-    stage.load_site(Region::LoopEntry.readonly(), entry, offset)
+fn holder_value<S: Stage>(stage: &mut S, holder: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let payload = stage.load_u64(Region::Payload.mutable(), holder, OBJECT.payload_offset as i32);
+    let extras = has_extras(stage, payload);
+    stage.guard(extras, miss)?;
+    let pointer = extras_pointer(stage, payload);
+    let inline = inline_storage(stage, holder);
+    let limit = stage.constant(OBJECT.inline_property_count as u64);
+    let below = stage.ult(slot, limit);
+    let flat = stage.not(inline);
+    let fits = stage.any(flat, below);
+    stage.guard(fits, miss)?;
+    let run = stage.choose(inline, |stage| stage.add_imm(pointer, OBJECT.extras_inline_values_offset as u64), |stage| {
+        let start = stage.load_u32(Region::Payload.mutable(), pointer, OBJECT.extras_arena_start_offset as i32);
+        arena_run(stage, start)
+    });
+    let offset = stage.mul_imm(slot, OBJECT.property_value_size as u64);
+    let address = stage.add(run, offset);
+    Some(stage.load_u64(Region::ObjectSlots.mutable(), address, 0))
 }
 
 /// The value an own entry at `entry` (an address) names in the object record at `record`:
@@ -62,12 +168,10 @@ pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm
 /// are not plain. The entry stores each of its words complemented against the empty entry, so
 /// a shape equal to the record's shape complemented is the guard.
 #[inline(always)]
-pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> (S::Word, S::Word) {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    let address = stage.add_imm(entry, offset);
-    let values = stage.load_table(Region::LoopEntry.readonly(), address);
-    let length = stage.load_u32(Region::Elements.mutable(), values, ARRAY.header_length_offset as i32 - ARRAY.header_values_offset as i32);
-    (values, length)
+fn own_entry_value<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
+    shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
+    let slot = entry_slot(stage, entry);
+    plain_value(stage, record, slot, miss)
 }
 
 /// The value a prototype-held entry at `entry` names for the object record at `record`
@@ -128,7 +232,7 @@ pub(crate) fn held_receiver<S: Stage>(stage: &mut S, records: S::Word, object: S
     let present = stage.ne_imm(records, 0u32);
     stage.guard(present, miss)?;
     let (_, record) = direct_record(stage, records, object, miss)?;
-    let exact = stage.load_u32(record, OBJECT.auxiliary_offset as i32);
+    let exact = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
     let same = stage.eq_imm(exact, shape);
     stage.guard(same, miss)?;
     let prototype = super::object::proto_link(stage, record);
@@ -162,22 +266,8 @@ pub(crate) fn site_read<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), obj
 /// A nested lookup's chain of two reads, `object.first.second` (`FieldLookup::Site`): the value
 /// the first entry reads is the object the second reads from, and the tables are proved once.
 #[inline(always)]
-pub(crate) fn site_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, (first, second): (S::Imm, S::Imm), miss: S::Miss) -> Option<S::Word> {
-    site_tables(stage, tables, miss)?;
-    let middle = site_read_in(stage, tables, object, first, miss)?;
-    site_read_in(stage, tables, middle, second, miss)
-}
-
-/// Stores `value` at `slot` of the object record at `record`, whose shape the caller proved and
-/// whose store gate (`Stage::store_gate`) admitted the write: a packed slot takes the value's
-/// narrow form, a flat one the value (`store_slot`); `None` (leaving at `miss`) where its values are
-/// not plain or a packed slot cannot hold the value, nothing written.
-#[inline(always)]
-fn plain_store<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, value: S::Word, miss: S::Miss) -> Option<()> {
-    let payload = stage.load_u64(record, OBJECT.payload_offset as i32);
-    let plain = plain_payload(stage, payload);
-    stage.guard(plain, miss)?;
-    store_slot(stage, record, payload, slot, Form::Either, value, miss)
+pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> S::Word {
+    stage.load_site(Region::LoopEntry.readonly(), entry, offset)
 }
 
 /// A store of `value` through the cache entry `offset` bytes into the field cache table `entries`
@@ -188,16 +278,12 @@ fn plain_store<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, value: S
 /// may store in place at all (a specialized run, no method cache naming the field) is the
 /// caller's.
 #[inline(always)]
-pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, value: S::Word, miss: S::Miss) -> Option<()> {
-    site_tables(stage, tables, miss)?;
-    let (id, record, entry) = site_record(stage, tables, object, offset, miss)?;
-    let own = own_entry(stage, entry);
-    stage.guard(own, miss)?;
-    shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
-    let open = stage.store_gate(RecordSpace::Object, id, value);
-    stage.guard(open, miss)?;
-    let slot = entry_slot(stage, entry);
-    plain_store(stage, record, slot, value, miss)
+pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> (S::Word, S::Word) {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let address = stage.add_imm(entry, offset);
+    let values = stage.load_table(Region::LoopEntry.readonly(), address);
+    let length = stage.load_u32(Region::Elements.mutable(), values, ARRAY.header_length_offset as i32 - ARRAY.header_values_offset as i32);
+    (values, length)
 }
 
 /// The interpreter's `site_read` of `object` through the stored field cache entry `entry` (at

@@ -112,7 +112,7 @@ mod tests {
     use super::*;
     use crate::heap::Heap;
     use crate::staged::Concrete;
-    use crate::staged::builtins::length_value;
+    use crate::staged::value::length_value;
     use crate::vm::wtf16::{JsString, SHORT_ASCII_CAPACITY};
 
     fn stage() -> Concrete { Concrete::new(std::ptr::null()) }

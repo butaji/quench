@@ -169,7 +169,7 @@ fn unbarred_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, barred: 
 pub(crate) fn array_length<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<S::Word> {
     use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
     let backing = array_backing(stage, record_base, base, miss)?;
-    let payload = stage.load_u64(backing.record, (ARRAY.object_offset + OBJECT.payload_offset) as i32);
+    let payload = stage.load_u64(Region::Payload.mutable(), backing.record, (ARRAY.object_offset + OBJECT.payload_offset) as i32);
     let plain = super::object::plain_payload(stage, payload);
     stage.guard(plain, miss)?;
     super::value::length_value(stage, backing.length, miss)
@@ -231,7 +231,7 @@ pub(crate) fn append_element<S: Stage>(stage: &mut S, values: S::Word, length: S
 pub(crate) fn append_in_room<S: Stage>(stage: &mut S, backing: Backing<S::Word>, value: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    let word = stage.load_u32(backing.header, ARRAY.header_capacity_offset as i32);
+    let word = stage.load_u32(Region::Elements.mutable(), backing.header, ARRAY.header_capacity_offset as i32);
     let capacity = stage.and_imm(word, u64::from(ARRAY.capacity_mask));
     append_element(stage, backing.values, backing.length, capacity, backing.length, value, miss)
 }
@@ -303,6 +303,24 @@ pub(crate) fn concrete_dense_element(elements: &[crate::Value], index: usize) ->
     let mut stage = Concrete::new(std::ptr::null());
     dense_element(&mut stage, elements.as_ptr() as u64, elements.len() as u64, index as u64, ())
         .map(|(_, value)| crate::Value::from_bits(value))
+}
+
+/// The interpreter's reading of `array_backing` then `dense_element`: element `index` of the
+/// direct array `base` among the array records at `record_base`.
+#[inline(always)]
+pub(crate) fn concrete_record_element(record_base: *const crate::heap::ArrayObject, base: crate::Value, index: usize) -> Option<crate::Value> {
+    let mut stage = Concrete::new(std::ptr::null());
+    let backing = array_backing(&mut stage, record_base as u64, base.to_bits(), ())?;
+    dense_element(&mut stage, backing.values, backing.length, index as u64, ())
+        .map(|(_, value)| crate::Value::from_bits(value))
+}
+
+/// The interpreter's reading of `array_length`: the `length` of the direct array `base` among the
+/// array records at `record_base`, as the int32 it reads as.
+#[inline(always)]
+pub(crate) fn concrete_array_length(record_base: *const crate::heap::ArrayObject, base: crate::Value) -> Option<crate::Value> {
+    let mut stage = Concrete::new(std::ptr::null());
+    array_length(&mut stage, record_base as u64, base.to_bits(), ()).map(crate::Value::from_bits)
 }
 
 #[cfg(test)]

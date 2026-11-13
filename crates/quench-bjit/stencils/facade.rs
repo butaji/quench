@@ -20,6 +20,13 @@ impl Value {
     pub(crate) const fn from_bits(bits: u64) -> Self {
         Self(bits)
     }
+    /// What the shared rows' interpreter-side readers ask of a word; no stencil row calls them.
+    pub(crate) const fn is_deleted(self) -> bool {
+        self.0 == words::DELETED
+    }
+    pub(crate) const fn heap_index(self) -> Option<u32> {
+        if self.0 & words::TAG_MASK == words::HEAP_TAG { Some(self.0 as u32) } else { None }
+    }
 }
 
 pub(crate) mod typed_ir {
@@ -76,6 +83,14 @@ pub(crate) mod value {
         pub(crate) fn upper_words() -> *const u64 {
             crate::words::hole64::<{ crate::words::HOLE_A }>() as *const u64
         }
+    }
+}
+
+/// ToInt32, as the staged Number rows name it (`units::to_int32`).
+pub(crate) mod units {
+    pub(crate) fn to_int32(value: f64) -> i32 {
+        if !value.is_finite() { return 0; }
+        (core::f64::math::trunc(value) % 4_294_967_296.0) as i64 as u32 as i32
     }
 }
 

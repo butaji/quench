@@ -44,7 +44,7 @@ pub(crate) fn dense_capture_store<S: Stage>(stage: &mut S, (values, len, admitte
     let direct = stage.ne_imm(admitted, 0u32);
     stage.guard(direct, miss)?;
     let (address, _) = dense_slot(stage, values, len, slot, miss)?;
-    stage.store_u64(address, 0, value);
+    stage.store_u64(Region::Cells.mutable(), address, 0, value);
     Some(())
 }
 

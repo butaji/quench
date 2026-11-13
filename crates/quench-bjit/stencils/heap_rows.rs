@@ -27,13 +27,16 @@ use crate::layout::{
     ENV_VIEW_LEN, ENV_VIEW_STORES, ENV_VIEW_VALUES, CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_EPOCH, JS_STEP_EMPTY_STRING, JS_STEP_FIELD_ENTRIES, JS_STEP_FUNCTION_RECORD_BASE, JS_STEP_LOOP_ENTRY,
     JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_STRING_RECORD_BASE, JS_STEP_VM, PROPERTY_BUFFER_BASE,
 };
-use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, hole, hole64, index_of, number_word};
+use crate::ic_rows;
+use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of, number_word};
+use crate::words::{hole, hole64};
 use crate::places::{DEST, LEFT, Places, Rep, tagged_place};
 use crate::stage::StencilStage;
 use crate::value::ValueLayout;
 use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
 use crate::staged::object::{self, Form, Layout, Slots};
-use crate::staged::{Frame, Stage, Step, add, elements, entry, environment, iteration, load_this, naming, read_initialized_local, read_local, strings, value, write_initialized_local, write_local};
+use crate::staged::region::Region;
+use crate::staged::{Frame, RecordSpace, Stage, Step, add, elements, entry, environment, iteration, load_this, naming, read_initialized_local, read_local, string_length, value, write_initialized_local, write_local};
 
 pub(crate) use crate::codes::{
     ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, CONSTANT_ROW, FIELD_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM,
@@ -41,6 +44,7 @@ pub(crate) use crate::codes::{
     STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, ENV_ROW, ENV_SET_ROW, ENV_VIEW_AT, INSTANCEOF_ROW, APPEND_ROW,
     ADD_AFTER_AT, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_LINK_AT, ADD_LINK_BITS, ADD_OBJECT_AT, ADD_PACKED_ROW, ADD_SLOT_BITS, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW,
     THIS_ADD_PACKED_ROW, FOR_IN_ROW, NAME_ARENA_ROW, NAME_EITHER_ROW, NAME_FUNCTION_AT,
+    IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_INT_ROW, IC_SET_ROW,
 };
 
 unsafe extern "C" {
@@ -69,24 +73,6 @@ pub(crate) fn payload(s: &S) -> usize {
     word_at(s.ctx, CALL_CONTEXT_ADAPTER_PAYLOAD) as usize
 }
 
-/// The word the loop entry record at `entry` holds at the per-site byte `offset`: a field value the
-/// loop's entry recorded (`LoopEntry`), written before the run and never during it.
-#[inline(always)]
-fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> S::Word {
-    stage.load_site(entry, offset)
-}
-
-/// The dense backing of an array the loop entry recorded: its first value, at the per-site byte
-/// `offset` of the entry record (which never changes during a run, so the load is of an immutable
-/// table), and its length, read from the backing's header.
-#[inline(always)]
-fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> (S::Word, S::Word) {
-    let address = stage.add_imm(entry, offset);
-    let values = stage.load_table(address);
-    let length = stage.load_u32(values, ARRAY.header_length_offset as i32 - ARRAY.header_values_offset as i32);
-    (values, length)
-}
-
 /// The array word an `ENTRY == false` row names: the frame slot at hole `H`.
 #[inline(always)]
 fn array_word<const H: u8>(s: &S) -> u64 {
@@ -101,7 +87,7 @@ fn backing<const ENTRY: bool, const H: u8, const WRITABLE: bool>(s: &S, payload:
     if ENTRY {
         let record = word_at(payload, JS_STEP_LOOP_ENTRY);
         let offset = stage_site(&mut stage);
-        let (values, length) = entry_backing(&mut stage, record, offset);
+        let (values, length) = entry::entry_backing(&mut stage, record, offset);
         return Some((values, length, elements::Backing { record: 0, header: 0, values, length }));
     }
     let base = array_word::<H>(s);
@@ -177,7 +163,7 @@ fn field_row<const D: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::from_hole(HOLE_A);
     let record = word_at(payload, JS_STEP_LOOP_ENTRY);
     let offset = stage_site(&mut stage);
-    deliver::<D>(s, entry_word(&mut stage, record, offset))
+    deliver::<D>(s, entry::entry_word(&mut stage, record, offset))
 }
 
 /// A field read through the site's cache entry (`entry::site_read`), or with `CHAIN` through two
@@ -281,12 +267,12 @@ fn global_store_row<const A: u8, const GATED: bool>(s: S, payload: usize) -> Out
     let layout = need!(s, global_layout(&mut stage, payload, id));
     let Slots::Flat(base) = layout.slots else { return Out::Exit(s) };
     if GATED {
-        let open = stage.store_gate(id, value);
+        let open = stage.store_gate(RecordSpace::Object, id, value);
         need!(s, stage.guard(open, ()));
     }
     let offset = stage.site(0);
     let address = stage.add_imm(base, offset);
-    stage.store_u64(address, 0, value);
+    stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value);
     Out::Next(s)
 }
 
@@ -296,21 +282,13 @@ fn constant_row<const D: u8>(s: S) -> Out {
     deliver::<D>(s, hole64::<HOLE_A>())
 }
 
-/// Continues while the VM's active realm names the global object word of hole 2 (the realm field
-/// is at the byte offset of hole 1 behind the payload's VM), else leaves through the taken successor.
-#[inline(always)]
-fn realm_row(s: S, payload: usize) -> Out {
-    let vm = word_at(payload, JS_STEP_VM);
-    if word_at(vm as usize, hole::<HOLE_A>()) == hole64::<HOLE_B>() { Out::Next(s) } else { Out::Taken(s) }
-}
-
-/// The `length` of the array or string word at hole 1 (`strings::length_of`).
+/// The `length` of the array or string word at hole 1 (`string_length::length_of`).
 #[inline(always)]
 fn length_row<const D: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::from_hole(0);
     let base = array_word::<HOLE_A>(&s);
     let records = (word_at(payload, JS_STEP_ARRAY_RECORD_BASE), word_at(payload, JS_STEP_STRING_RECORD_BASE));
-    deliver::<D>(s, need!(s, strings::length_of(&mut stage, records, base, ())))
+    deliver::<D>(s, need!(s, string_length::length_of(&mut stage, records, base, ())))
 }
 
 /// Whether the row's staged work was done and fit its place: it continues, else it leaves.
@@ -405,34 +383,6 @@ fn typeof_is_row<const NEGATED: bool>(s: S) -> Out {
         let (boolean, fact) = frame.boolean(&mut stage, holds);
         frame.write(&mut stage, DEST, boolean, fact);
     }).is_some();
-    finish_fast(frame, done)
-}
-
-/// A fast arm's row: where its proof held and its places fit it continues at TAKEN, past the
-/// helper step laid out after it, else it leaves into that step.
-#[inline(always)]
-fn finish_fast<const D: u8, const A: u8>(frame: Places<D, A, MEM>, done: bool) -> Out {
-    match finish(frame, done) {
-        Out::Next(s) => Out::Taken(s),
-        left => left,
-    }
-}
-
-/// `RequireIteratorResult`'s fast arm: the operand (hole 1) is a direct object or array record
-/// (`iteration::require_iterator_result`).
-#[inline(always)]
-fn object_row(s: S) -> Out {
-    let mut frame = Places::<MEM, MEM, MEM>::new(s);
-    let done = matches!(iteration::require_iterator_result(&mut StencilStage::from_hole(0), &mut frame, LEFT, ()), Step::Value(_));
-    finish_fast(frame, done)
-}
-
-/// `ToPropertyKey`'s fast arm: a direct string operand (hole 1) is copied to the destination
-/// (hole 0, `iteration::to_property_key`).
-#[inline(always)]
-fn key_row(s: S) -> Out {
-    let mut frame = Places::<MEM, MEM, MEM>::new(s);
-    let done = matches!(iteration::to_property_key(&mut StencilStage::from_hole(0), &mut frame, DEST, LEFT, ()), Step::Value(_));
     finish_fast(frame, done)
 }
 
@@ -613,7 +563,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         TYPEOF_ISNOT_ROW => typeof_is_row::<true>(s),
         OBJECT_ROW => object_row(s),
         KEY_ROW => key_row(s),
-        FOR_IN_ROW => for_in_row(s),
+        FOR_IN_ROW => for_in_row(s, payload),
         APPEND_ROW => append_row::<A>(s, payload),
         ADD_PACKED_ROW => register_add_row::<A, ENTRY>(s, payload, Form::Packed),
         ADD_ARENA_ROW => register_add_row::<A, ENTRY>(s, payload, Form::Arena),

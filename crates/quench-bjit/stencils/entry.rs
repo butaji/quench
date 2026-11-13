@@ -8,7 +8,7 @@
 //! context to r13 and loads the frame's window of registers (`staged::frame::WINDOW`) into r12
 //! (the row convention), calls the first row
 //! (`HOLE_NEXT`), stores the word the chain returned through the result pointer and returns the
-//! status the chain left in edx: 0 from a region's own leaves (`leave_word`, `leave_pop`), the
+//! status the chain left in edx: `NATIVE_JS_STOPPED` from a region's own leaves (`leave_word`, `leave_pop`), the
 //! status of the call that ended the run from `leave_status` (`call_rows.rs`).
 //!
 //! A function body (`entry_body`, the lane body ABI of `lane_body_abi.rs`) is entered as
@@ -27,6 +27,7 @@ use crate::layout::{
     CALL_CONTEXT_ADAPTER_PAYLOAD, CAPTURE_ADDRESS_BITS, CAPTURE_ADDRESS_PAD, CAPTURE_STORES_BIT, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES,
     JS_STEP_RECEIVER, JS_STEP_RETURNED_PC,
 };
+use crate::layout::call_record::NATIVE_JS_STOPPED;
 use crate::staged::frame;
 use crate::words::HOLE_V0;
 
@@ -36,9 +37,9 @@ unsafe extern "C" {
     static HOLE_V2: u8;
 }
 
-/// The thunk around a call of the row chain: saves rbp, rbx and r12-r15, calls the chain
-/// through `$call` and returns its word beside the stopped status. The eighth word keeps the
-/// stack 16-byte aligned at the call. Written once for both entries.
+/// The thunk around a call of the row chain: saves rbp, rbx, r12-r15 and the result pointer r8, calls the chain
+/// through `$call`, stores its word through the result pointer and returns the status the chain left in edx.
+/// Written once for both entries.
 macro_rules! thunk {
     ($call:literal $(, $($binding:tt)*)?) => {
         core::arch::naked_asm!(
@@ -48,21 +49,21 @@ macro_rules! thunk {
             "push r13",
             "push r14",
             "push r15",
-            "sub rsp, 8",
+            "push r8",
             "mov r13, rdi",
-            "mov r12, rcx",
+            "mov r12, [rcx + {window}]",
             $call,
-            "add rsp, 8",
-            "mov rdx, rax",
+            "pop r8",
+            "mov [r8], rax",
             "pop r15",
             "pop r14",
             "pop r13",
             "pop r12",
             "pop rbx",
             "pop rbp",
-            "mov eax, {stopped}",
+            "mov eax, edx",
             "ret",
-            stopped = const NATIVE_JS_STOPPED
+            window = const frame::WINDOW
             $(, $($binding)*)?
         )
     };
@@ -72,44 +73,30 @@ macro_rules! thunk {
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_thunk() {
-    core::arch::naked_asm!(
-        "push rbp",
-        "push rbx",
-        "push r12",
-        "push r13",
-        "push r14",
-        "push r15",
-        "push r8",
-        "mov r13, rdi",
-        "mov r12, [rcx + {window}]",
-        "call {first}",
-        "pop r8",
-        "mov [r8], rax",
-        "pop r15",
-        "pop r14",
-        "pop r13",
-        "pop r12",
-        "pop rbx",
-        "pop rbp",
-        "mov eax, edx",
-        "ret",
-        first = sym HOLE_NEXT,
-        window = const frame::WINDOW,
-    )
+    thunk!("call {first}", first = sym HOLE_NEXT)
 }
 
-/// Returns hole 0 (a word the region leaves with: a PC or a lane exit), status 0.
+/// Calls the address in rdx (the body ABI's `captures` argument, which a stencil region does not
+/// read): a resume stub of the region, which loads the pinned registers live at its PC and jumps
+/// to the PC's first row.
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn entry_resume() {
+    thunk!("call rdx")
+}
+
+/// Returns hole 0 (a word the region leaves with: a PC or a lane exit), status `NATIVE_JS_STOPPED`.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn leave_word() {
-    core::arch::naked_asm!("movabs rax, offset {word}", "xor edx, edx", "ret", word = sym HOLE_V0)
+    core::arch::naked_asm!("movabs rax, offset {word}", "mov edx, {stopped}", "ret", word = sym HOLE_V0, stopped = const NATIVE_JS_STOPPED)
 }
 
-/// Returns the word an exit stub pushed, status 0.
+/// Returns the word an exit stub pushed, status `NATIVE_JS_STOPPED`.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn leave_pop() {
-    core::arch::naked_asm!("pop rax", "xor edx, edx", "ret")
+    core::arch::naked_asm!("pop rax", "mov edx, {stopped}", "ret", stopped = const NATIVE_JS_STOPPED)
 }
 
 /// The body entry: saves the callee-saved registers, takes the context in r13 and the register

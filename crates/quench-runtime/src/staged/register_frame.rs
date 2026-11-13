@@ -89,6 +89,7 @@ pub(crate) enum CallOut {
 impl CallOut {
     /// The registers the VM reads, in the order its operation takes them: the first operand
     /// then the second, which is the only one an operation of a single operand has.
+    #[inline(always)]
     pub(crate) fn operands(self) -> [Option<Register>; 2] {
         match self {
             Self::Equality { left, right, .. } | Self::Binary { left, right, .. } => [Some(left), Some(right)],

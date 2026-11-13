@@ -87,6 +87,7 @@ pub(super) fn slot_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond
 }
 
 /// The reached record's exact shape word: the caller's where it holds one, else loaded.
+#[inline(always)]
 pub(super) fn shape_word<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>) -> S::Word {
     at.shape.unwrap_or_else(|| stage.load_u32(Region::ShapeWord.mutable(), at.record, OBJECT.auxiliary_offset as i32))
 }
@@ -109,6 +110,7 @@ fn prototype_constants<S: Stage>(stage: &mut S, record: S::Word, values: &[(u32,
 }
 
 /// `IcOp::LoadPrototypeSlot` of the record at `record`.
+#[inline(always)]
 fn prototype_slot<S: Stage>(stage: &mut S, record: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
     let inline = inline_storage(stage, record);
     let in_arena = stage.not(inline);
@@ -175,6 +177,7 @@ pub(crate) unsafe fn concrete_site_chain(property_values: *const crate::Value, t
 /// # Safety
 /// As `concrete_site_read`, with `heap` the heap whose tables `entries` and `records` are.
 #[inline(always)]
+#[cfg(not(stencil_build))]
 pub(crate) unsafe fn concrete_site_store(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64, value: crate::Value) -> bool {
     let mut stage = super::Concrete::storing(heap);
     super::entry::site_store(&mut stage, (entries, records), object.to_bits(), offset, value.to_bits(), ()).is_some()
