@@ -166,6 +166,35 @@ pub(super) unsafe fn note_first_miss<H: Host>(cx: *mut LaneContext<H>, ip: Ip, l
     unsafe { note_operands(cx, ip, left, right) }
 }
 
+/// Notes on the record at `ip` that its int32 step declined two int32s: `result`, a Number an
+/// int32 handler completed itself (an overflowing sum, difference or product, a `-0`) or a
+/// division or remainder the lane's Number step computed, is no int32.
+///
+/// # Safety
+/// As `note_operands`.
+#[inline(always)]
+pub(super) unsafe fn note_widened<H: Host>(cx: *mut LaneContext<H>, ip: Ip, result: Value) {
+    if result.as_int().is_none() {
+        // SAFETY: the caller's.
+        let cell = unsafe { feedback_cell((*cx).base, ip) };
+        cell.set(cell.get() | OperandKinds::WIDENED.0);
+    }
+}
+
+/// `note_widened` of a division or remainder (`OP`) of `left` by `right`, which only int32
+/// operands can widen; any other operator or operand pair notes nothing.
+///
+/// # Safety
+/// As `note_operands`.
+#[inline(always)]
+pub(super) unsafe fn note_division_result<const OP: u32, H: Host>(cx: *mut LaneContext<H>, ip: Ip, left: Value, right: Value, result: Value) {
+    use super::super::operations::{DIVISION, REMAINDER};
+    if (OP == DIVISION || OP == REMAINDER) && Value::int_pair(left, right).is_some() {
+        // SAFETY: the caller's.
+        unsafe { note_widened(cx, ip, result) };
+    }
+}
+
 /// A view's records, with the feedback bytes of its sites in front of them: one byte per record,
 /// counted back from the first.
 pub(super) struct Records {
@@ -298,8 +327,15 @@ mod tests {
         assert!(kinds.iter().any(|kinds| kinds.class() == OperandClass::Any && kinds.has_string()), "{kinds:?}");
     }
 
-    /// Two int32s whose int32 step declines (a remainder by zero; an overflowing sum or product
-    /// the handler completes itself) widen the site without a double operand.
+    /// Two int32s whose int32 result leaves the int32 range (an overflowing sum, which the
+    /// handler completes itself) widen the site without a double operand.
+    #[test]
+    fn an_int32_overflow_widens_the_site() {
+        let kinds = run_with("let s = 1; for (let i = 0; i < n; i++) { s = s + x; } return s;", "2147483647");
+        assert!(kinds.iter().any(|kinds| kinds.contains(OperandKinds::WIDENED) && kinds.class() == OperandClass::Number), "{kinds:?}");
+    }
+
+    /// A remainder by zero declines the int32 step of two int32s and widens the site likewise.
     #[test]
     fn an_int32_remainder_by_zero_widens_the_site() {
         let kinds = run_with("let s = 7; for (let i = 0; i < n; i++) { s = s % x; } return s;", "0");
