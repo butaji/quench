@@ -42,12 +42,13 @@ pub(super) fn defined_second(webs: &Webs, region: &LoopRegion, pc: u32) -> Optio
         .map(|_| webs.find(slots::second(region.entry_count(), (pc - region.header) as usize)))
 }
 
-/// The registers a by-name call writes: its callee, a function, and its receiver,
-/// `undefined`.
+/// The registers a call writes as values: a by-name call's callee (a function) and receiver
+/// (`undefined`), and a native call's result (the callee's value) and callee.
 pub(super) fn tagged_registers(instructions: &[WideInstruction]) -> impl Iterator<Item = Register> + '_ {
-    instructions.iter()
+    let by_name = instructions.iter()
         .filter(|instruction| instruction.op().class() == Class::LoadNameCall)
-        .flat_map(|instruction| [instruction.result_register(), instruction.register_b()])
+        .flat_map(|instruction| [instruction.result_register(), instruction.register_b()]);
+    by_name
 }
 
 /// Each web's starting representation, with each second definition's web tagged: a by-name
@@ -55,8 +56,13 @@ pub(super) fn tagged_registers(instructions: &[WideInstruction]) -> impl Iterato
 pub(super) fn web_representations(region: &LoopRegion, webs: &Webs) -> Vec<Representation> {
     let mut representations = vec![Representation::Int32; webs.parent.len()];
     for (offset, instruction) in region.instructions.iter().enumerate() {
-        if second_definition(*instruction).is_some() {
-            representations[webs.find(slots::second(region.entry_count(), offset))] = Representation::Tagged;
+        let definition = if second_definition(*instruction).is_some() {
+            Some(slots::second(region.entry_count(), offset))
+        } else {
+            None
+        };
+        if let Some(definition) = definition {
+            representations[webs.find(definition)] = Representation::Tagged;
         }
     }
     representations
@@ -171,6 +177,9 @@ impl Lowering<'_, '_> {
     /// Lowers a by-name call to its callee's entry capture and an `undefined` receiver, or a
     /// capture read to its capture.
     pub(super) fn capture_read(&mut self, pc: u32, instruction: WideInstruction) -> Option<()> {
+        if instruction.op().class() == Class::Call {
+            return self.native_call(pc, instruction);
+        }
         if instruction.op().class() == Class::LoadNameCall {
             let index = global_capture_index(self.region, instruction)?;
             let callee = self.capture(index);

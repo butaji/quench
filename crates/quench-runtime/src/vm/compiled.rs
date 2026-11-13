@@ -119,6 +119,7 @@ use exact_budget::PcLowering;
 use direct_call::direct_call;
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 mod guard_aarch64;
+#[path = "compiled/osr_call.rs"] mod osr_call;
 #[cfg(unix)]
 #[path = "compiled/fault_handler.rs"]
 mod fault_handler;
@@ -4566,6 +4567,8 @@ struct OsrProbePayload {
     frame: usize,
     program: Option<Rc<ResidualProgram>>,
     diagnostics_enabled: bool,
+    /// The running activation's register file: a native call reads its window there.
+    registers: *mut Value,
 }
 
 /// The OSR probe's first word is otherwise a cache site, which is bounded by `u16`.
@@ -4613,8 +4616,7 @@ unsafe extern "C" fn osr_probe<H: Host>(
             // The generated caller seeds the scratch word with the tagged key. Neither
             // lookup nor a miss allocates, collects, invokes guest code, or retains pointers.
             // The current array record/backing is resolved anew after every native store.
-            let key = Value::from_bits(unsafe { result.read() });
-            return vm.dense_array_element(Value::from_bits(receiver_bits), key);
+            return osr_call::dense_read(vm, receiver_bits, unsafe { result.read() });
         }
         if cache_site == OSR_RESERVE_ARRAY_APPEND {
             let receiver = Value::from_bits(receiver_bits);
@@ -4639,14 +4641,11 @@ unsafe extern "C" fn osr_probe<H: Host>(
             return vm.primary_own_field_store_hit::<true>(program, receiver, atom, value, site,
                 crate::heap::PropertyStoreLayout::PreserveNative).then_some(Value::UNDEFINED);
         }
+        if cache_site & osr_call::OSR_CALL_MASK == osr_call::OSR_CALL {
+            return osr_call::call(vm, payload, program, cache_site, receiver_bits);
+        }
         if cache_site == OSR_INITIALIZED_LOCAL_READ {
-            if vm.lane_has_activations()
-                || vm.frames.get(payload.frame).is_none_or(|frame| frame.function != payload.function)
-            {
-                return None;
-            }
-            let slot = usize::try_from(receiver_bits).ok()?;
-            return vm.initialized_frame_binding(program, payload.frame, slot);
+            return osr_call::initialized_local(vm, payload, program, receiver_bits);
         }
         let site = u16::try_from(cache_site).ok()?;
         // The ABI slot is used as a raw 64-bit Value, never as an address.
@@ -6217,7 +6216,7 @@ impl CompiledOsrRegion {
             function,
             frame,
             program: program_data,
-            diagnostics_enabled,
+            diagnostics_enabled, registers,
         };
         context.vm = vm.cast();
         context.program = program;

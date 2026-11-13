@@ -91,9 +91,11 @@ impl Admission<'_> {
 
     /// Admits a `LoadCapture`: an environment slot at depth 0, or a rewritten `LoadName` at
     /// `GLOBAL_DEPTH` whose atom the entry record materializes.
-    pub(super) fn admit_capture(&mut self, instruction: WideInstruction, tagged: &std::collections::BTreeSet<Register>) -> Option<()> {
-        if instruction.op().class() == Class::LoadNameCall {
-            return self.admit_name_call(instruction);
+    pub(super) fn admit_capture(&mut self, instruction: WideInstruction, tagged: &std::collections::BTreeSet<Register>, native_calls: bool) -> Option<()> {
+        match instruction.op().class() {
+            Class::LoadNameCall => return self.admit_name_call(instruction),
+            Class::Call => return if native_calls { self.admit_call(instruction) } else { Some(()) },
+            _ => {}
         }
         instruction.result_flags().eq(&0).then_some(())?;
         let depth = instruction.capture_depth();

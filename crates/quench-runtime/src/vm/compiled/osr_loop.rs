@@ -208,6 +208,8 @@ pub(crate) struct LoopRegion {
     /// The registers that hold a field's value at every read (`held_registers`), with the
     /// path they hold and that field's index.
     held: std::collections::BTreeMap<Register, (FieldPath, usize)>,
+    /// Whether a call runs natively (`osr_call`): only where nothing was pinned at entry.
+    native_calls: bool,
     /// Nullish equality branches against `null` or `undefined` that read an unchanged
     /// tagged register directly from the activation's rooted register file.
     identity_branches: std::collections::BTreeMap<u32, IdentityBranch>,
@@ -712,7 +714,7 @@ fn tagged_registers_with_failure(
                     }
                 }
                 // Captures (a by-name call's callee too) and cached fields carry any value.
-                Class::LoadCapture | Class::LoadNameCall | Class::GetField | Class::GetIndex => {}
+                Class::LoadCapture | Class::LoadNameCall | Class::GetField | Class::GetIndex | Class::Call => {}
                 Class::Binary if number_comparison(instruction).is_some() => {}
                 // The type-name index is still a boxed Number at bytecode level. Its
                 // lowering reads only immediate tags and exits before the operation for
@@ -1522,8 +1524,17 @@ impl LoopEntry {
     /// # Safety
     /// The exit wrote the register back: it is live at the exit's PC (`LoopRegion::is_live`).
     pub(crate) unsafe fn scratch_value(&self, inlining: &Inlining, register: Register) -> Value {
+        unsafe { self.scratch_register(usize::from(register - inlining.caller_registers)) }
+    }
+
+    /// An inlining region's scratch register `index` (from its caller's register count): the
+    /// slot native code writes an inlined callee's values to.
+    ///
+    /// # Safety
+    /// The register was written at the site (`Lowering::store_registers`, `spill_live`).
+    pub(crate) unsafe fn scratch_register(&self, index: usize) -> Value {
         // SAFETY: as the caller promises.
-        Value::from_bits(unsafe { self.scratch[usize::from(register - inlining.caller_registers)].assume_init() })
+        Value::from_bits(unsafe { self.scratch[index].assume_init() })
     }
 
     /// A field's value; a Number field's must be a Number.
@@ -1747,9 +1758,10 @@ fn admit_region(
     if let Err(offset) = iteration::iterates_natively(&instructions, header) {
         return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op() as u16), header, offset));
     }
-    match admit_register_roles(
-        instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects, &globals,
-    ) {
+    let attempt = |native_calls: bool| admit_register_roles(
+        instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects, &globals, native_calls,
+    );
+    match attempt(true).or_else(|_| attempt(false)) {
         Ok(region) => Ok(region),
         Err(failure) => {
             // The lifetime fallback models no captures; a rewritten global read keeps the
@@ -1794,7 +1806,7 @@ fn admit_lifetime_roles(
         return None;
     }
     let mut flow = LoopRegion {
-        header, backedge: header + instructions.len() as u32 - 1,
+        header, backedge: header + instructions.len() as u32 - 1, native_calls: false,
         numbers: (0..registers).map(|register| register as Register).collect(),
         tagged: Vec::new(), lifetime_roles: None, arrays: Vec::new(), captures: Vec::new(), capture_globals: Vec::new(),
         fields: Vec::new(), field_reads: BTreeMap::new(), dynamic_field_reads: BTreeMap::new(),
@@ -1852,7 +1864,7 @@ fn admit_lifetime_roles(
             field(InstructionField::B, instruction.b())?,
             field(InstructionField::C, instruction.c())?, instruction.imm()));
     }
-    let mut region = admit_register_roles(analysis, roots.len(), constants, &[], None, None, header, &BTreeSet::new(), &[])
+    let mut region = admit_register_roles(analysis, roots.len(), constants, &[], None, None, header, &BTreeSet::new(), &[], false)
         .inspect_err(|&failure| {
             if crate::trace::Channel::OsrReject.on() {
                 eprintln!("QUENCH_JS_JIT_OSR_LIFETIME_REJECT header={header} failure={failure:?}");
@@ -1907,7 +1919,7 @@ fn admit_register_roles(
     live: Option<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     header_live: Option<RegisterSet>,
     header: u32,
-    objects: &std::collections::BTreeSet<Register>, globals: &[(crate::bytecode::Atom, u16)],
+    objects: &std::collections::BTreeSet<Register>, globals: &[(crate::bytecode::Atom, u16)], native_calls: bool,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     let backedge = header + instructions.len() as u32 - 1;
     // A held register keeps the value its path read at entry, which a store to any name on
@@ -1983,7 +1995,7 @@ fn admit_register_roles(
             ));
         }
     };
-    tagged.extend(paths.keys().copied());
+    tagged.extend(paths.keys().copied().chain(native_calls.then(|| osr_call::tagged(&instructions)).into_iter().flatten()));
     let mut admission = Admission {
         constants, globals,
         roles: std::collections::BTreeMap::new(),
@@ -2043,7 +2055,7 @@ fn admit_register_roles(
                 }
             }
         }
-        if admitted_store(instruction.op()) {
+    if admitted_store(instruction.op()) {
             if instruction.result_flags() != 0 || instruction.returns_from_frame() {
                 return Err(RegionAnalysisFailure::at(
                     RegionRejection::UnsupportedInstruction(instruction.op() as u16),
@@ -2115,7 +2127,7 @@ fn admit_register_roles(
         if let Some(register) = object_reads(instruction).filter(|register| paths.contains_key(register)) {
             admission.field_arrays.entry(register).or_insert(false);
         }
-        if admit(&mut admission, instruction, constants, &tagged, &defined_registers, &dynamic_arrays).is_none() {
+        if admit(&mut admission, instruction, constants, &tagged, &defined_registers, &dynamic_arrays, osr_call::native_calls(&rooted, globals, &instructions, native_calls)).is_none() {
             if crate::trace::Channel::OsrReject.on() {
                 let constant = (instruction.op().is_load_const())
                     .then(|| constants.get(instruction.constant_index()).copied());
@@ -2249,7 +2261,7 @@ fn admit_register_roles(
     Ok(LoopRegion {
         header,
         backedge,
-        numbers,
+        numbers, native_calls: osr_call::native_calls(&rooted, globals, &instructions, native_calls),
         tagged,
         lifetime_roles: None,
         arrays,
@@ -2277,7 +2289,7 @@ fn admit(
     constants: &[Value],
     tagged: &std::collections::BTreeSet<Register>,
     defined_registers: &std::collections::BTreeSet<Register>,
-    dynamic_arrays: &std::collections::BTreeSet<Register>,
+    dynamic_arrays: &std::collections::BTreeSet<Register>, native_calls: bool,
 ) -> Option<()> {
     match instruction.op().class() {
         Class::LoadConst => {
@@ -2299,7 +2311,7 @@ fn admit(
                 admission.number(instruction.register_b())?;
             }
         }
-        Class::LoadCapture | Class::LoadNameCall => { admission.admit_capture(instruction, &tagged)?; }
+        Class::LoadCapture | Class::LoadNameCall | Class::Call => { admission.admit_capture(instruction, &tagged, native_calls)?; }
         Class::Binary | Class::NumericAdd | Class::NumericMultiply => {
             if number_comparison(instruction).is_some() {
                 (instruction.result_flags() == 0).then_some(())?;
@@ -2617,6 +2629,7 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
         };
         if dynamic { reads.push((register, Type::ANY)); }
     }
+    reads.extend(osr_call::reads(instruction, region.native_calls));
     if admitted_store(instruction.op()) {
         let store = region.field_stores.get(&(offset as u32)).map(|index| &region.field_store_sites[*index]);
         let expected = store.map_or(Type::ANY, |store| region.field_store_type(store));
@@ -2629,7 +2642,7 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
 fn number_definition(instruction: WideInstruction) -> Option<Register> {
     use Op::*;
     matches!(instruction.op(), LoadConst | Move | LoadCapture | LoadNameCall | Binary | NumericAdd | NumericMultiply
-        | IncDec | Unary | ToNumeric | GetIndex | GetField | LoadEnvLocal)
+        | IncDec | Unary | ToNumeric | GetIndex | GetField | LoadEnvLocal | Call)
     .then(|| instruction.result_register())
 }
 
@@ -2640,7 +2653,7 @@ fn lowered_natively(op: Op) -> bool {
     use Op::*;
     admitted_store(op) || matches!(op, LoadConst | Move | LoadCapture | Binary | NumericAdd | NumericMultiply
         | ToNumeric | IncDec | Unary | RequireObjectCoercible | GetIndex | GetField | SetIndex | LoadEnvLocal
-        | LoadNameCall | Return | Jump | JumpBinaryFalse | JumpFalse | JumpTrue)
+        | LoadNameCall | Call | Return | Jump | JumpBinaryFalse | JumpFalse | JumpTrue)
 }
 
 fn exits_before_effects(op: Op) -> bool { !lowered_natively(op) }
@@ -2651,7 +2664,7 @@ fn native_definition(at: WideInstruction) -> Option<Register> { at.defined_regis
 /// where the lane resumes; as lowered (`Lowering::jump`, `Lowering::fall_through`).
 fn successors(region: &LoopRegion, pc: u32) -> Vec<u32> {
     let instruction = region.instructions[(pc - region.header) as usize];
-    if exits_before_effects(instruction.op()) {
+    if exits_before_effects(instruction.op()) || (instruction.op().class() == Class::Call && !region.native_calls) {
         return Vec::new();
     }
     let mut successors = Vec::with_capacity(2);
@@ -3009,6 +3022,8 @@ pub(super) fn verify_region<'a>(
                         Some(Arithmetic::Int32(operation)) if operation != NumberBitwise::ShiftRightUnsigned) => Type::INT32,
                 Class::IncDec | Class::GetIndex | Class::LoadEnvLocal | Class::Unary
                     | Class::Binary | Class::NumericAdd | Class::NumericMultiply => Type::NUMBER,
+                // A call the region leaves defines its result in the lane; a native call's is any value.
+                Class::Call if !region.native_calls => Type::NUMBER,
                 _ => Type::ANY,
             };
             obligations[offset] = match instruction.op().class() {
@@ -6356,7 +6371,7 @@ impl<'a, 'b> Lowering<'a, 'b> {
                 self.define(instruction.result_register(), value);
                 self.fall_through(pc)
             }
-            Class::LoadCapture | Class::LoadNameCall => self.capture_read(pc, instruction),
+            Class::LoadCapture | Class::LoadNameCall | Class::Call => self.capture_read(pc, instruction),
             Class::Binary | Class::NumericAdd | Class::NumericMultiply => {
                 let left = self.operand(instruction.operand_b())?;
                 let right = self.operand(instruction.operand_c())?;
@@ -6866,6 +6881,8 @@ mod slots;
 mod ops;
 #[path = "osr_loop/name_calls.rs"]
 mod name_calls;
+#[path = "osr_loop/osr_call.rs"]
+mod osr_call;
 use name_calls::second_definition;
 use ops::{admitted_store, array_read, field_reads_alone_define, mentions, pure_setup};
 #[path = "osr_loop/array_roots.rs"]
@@ -7364,6 +7381,7 @@ mod tests {
             &std::collections::BTreeSet::new(),
             &std::collections::BTreeSet::new(),
             &std::collections::BTreeSet::new(),
+            false,
         )
         .is_some());
         assert_eq!(admission.numbers.get(&65_536), Some(&0.0));
@@ -7398,6 +7416,7 @@ mod tests {
             &tagged,
             &std::collections::BTreeSet::new(),
             &std::collections::BTreeSet::new(),
+            false,
         )
         .is_some());
         assert_eq!(admission.values.get(&0), Some(&Value::NULL));

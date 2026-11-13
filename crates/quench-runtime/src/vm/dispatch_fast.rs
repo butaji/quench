@@ -11214,6 +11214,7 @@ impl<H: Host> Vm<H> {
         self.script_call_index(callee).map(|index| &self.lane_stack.script_targets[index] as *const ScriptCallTarget)
     }
 
+
     /// The index of `script_call_entry`'s entry in `LaneStack::script_targets`.
     #[inline(always)]
     fn script_call_index(&self, callee: Value) -> Option<usize> {

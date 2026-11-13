@@ -72,3 +72,13 @@ pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, 
         _ => lane_native_call::<H>,
     }
 }
+
+impl<H: Host> Vm<H> {
+    /// The compiled-call target of `callee`: its program and function, when the lane
+    /// resolves it in place (`script_call_entry`).
+    pub(crate) fn compiled_call_target(&self, callee: Value) -> Option<(ProgramId, u32)> {
+        // SAFETY: the entry lives in the lane stack, which no activation replaces here.
+        let target = unsafe { &*self.script_call_entry(callee)? };
+        target.entry.activates().then_some((target.program, target.function))
+    }
+}
