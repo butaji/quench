@@ -19633,8 +19633,9 @@ fn derive_lane_view<'live, H: Host>(
     let string_case_filters = string_case_filter::specialize::<H>(heap, constants, &decoded, &mut records);
     let records = Records::new(records, decoded.iter().fold(false, |seen, instruction| seen || has_operand_feedback(instruction.op())));
     let first = records.base();
+    // The first loop closing at a backedge owns it, as a front-to-back search would find it.
     let mut loop_at_backedge = vec![NO_LOOP; decoded.len()];
-    for (index, site) in loops.iter().enumerate() {
+    for (index, site) in loops.iter().enumerate().rev() {
         loop_at_backedge[site.backedge as usize] = index as u32;
     }
     LaneView {

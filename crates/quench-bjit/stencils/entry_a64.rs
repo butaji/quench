@@ -9,7 +9,7 @@
 //!
 //! Entry ABI: (x0 = context, x3 = the frame record, x4 = result pointer), status `NATIVE_JS_STOPPED` in w0.
 
-use crate::layout::NATIVE_JS_STOPPED;
+use crate::layout::call_record::NATIVE_JS_STOPPED;
 use crate::staged::frame;
 use crate::words::hole64;
 use crate::Row;

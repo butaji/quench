@@ -11,7 +11,7 @@
 //! every run that leaves with a word. `entry_resume` is the same thunk calling the address in
 //! rdx, where a resume stub enters the chain mid-region.
 
-use crate::layout::NATIVE_JS_STOPPED;
+use crate::layout::call_record::NATIVE_JS_STOPPED;
 use crate::words::HOLE_V0;
 
 unsafe extern "C" {
