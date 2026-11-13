@@ -30,20 +30,40 @@ impl<'a> Compiler<'a> {
     /// when their records are dropped for good, not encoded (`load_encoding`) or compared
     /// with their replays (`lowers_at_load`), and a program records them nowhere else.
     fn defers_rewrites(&self) -> bool {
+        self.replayable_source && self.may_defer_rewrites()
+    }
+
+    /// Whether any record's rewrites may wait for its first read: nothing encodes or compares
+    /// the load's records, and the rewrites run at all.
+    fn may_defer_rewrites(&self) -> bool {
         crate::DYNAMIC_EXECUTION_ENABLED
             && self.mode == SpecializationMode::Enabled
-            && self.replayable_source
             && self.load_encoding.is_none()
             && !lowers_at_load()
             && !cfg!(feature = "profile-aggregate")
     }
 
+    /// Whether function `id`, which the program keeps, leaves its rewrites to its first read: a
+    /// program that compiles most of its functions without ever running them (an eval of a
+    /// bundle) pays for the rewrites of the ones that run. The root runs at once, so its
+    /// rewrites stay in the load.
+    fn defers_kept_rewrites(&mut self, id: usize, function: &BcFunction) -> bool {
+        let defers = self.eval_context.is_some() && id != crate::vm::ROOT_FUNCTION_ID as usize && self.may_defer_rewrites();
+        if defers {
+            self.deferred_rewrite_code += function.code.len();
+            self.kept_rewrites_pending = true;
+        }
+        defers
+    }
+
     /// Starts the rewrites of the load's function in `slot`, a replayable one's (`replay`) as
     /// `start_rewrite` settles them; the function, released from `slot`, when they are deferred.
-    pub(super) fn rewrite_replayable(&mut self, slot: &mut Option<BcFunction>, replay: Option<&mut replay::FunctionReplay>) -> Option<Box<replay::ReleasedFunction>> {
+    pub(super) fn rewrite_replayable(&mut self, id: usize, slot: &mut Option<BcFunction>, replay: Option<&mut replay::FunctionReplay>) -> Option<Box<replay::ReleasedFunction>> {
         let function = slot.as_mut()?;
         let Some(replay) = replay else {
-            self.rewrite_function(function);
+            if !self.defers_kept_rewrites(id, function) {
+                self.rewrite_function(function);
+            }
             return None;
         };
         replay.rewrite = self.start_rewrite(function);
@@ -85,6 +105,26 @@ impl<'a> Compiler<'a> {
     }
 }
 
+/// The rewrites of kept function `id`, which its load deferred (`Compiler::defers_kept_rewrites`),
+/// run as its record is first read: they append their sites to the program's tables, as a
+/// replay's do, or stay unrun when the room the load reserved is short.
+pub(crate) fn settle_deferred_rewrite(program: &crate::bytecode::ResidualProgram, id: u32, function: &mut BcFunction) {
+    if !program.specialized {
+        return;
+    }
+    let (fields, supers) = (&program.field_sites, &program.superinstructions);
+    match rewrite_plan(program, id, Rewrite::Deferred, function.code.len()) {
+        RewritePlan::Skip => {}
+        RewritePlan::Replay(start) => rewrite::apply(
+            function,
+            program,
+            &mut SiteTable::replay(fields, start.field_sites as usize),
+            &mut SiteTable::replay(supers, start.superinstructions as usize),
+        ),
+        RewritePlan::Append => rewrite::apply(function, program, &mut SiteTable::grow(fields), &mut SiteTable::grow(supers)),
+    }
+}
+
 /// How a replay treats the rewrites of one function.
 enum RewritePlan {
     /// The load, or an earlier replay, put their sites at these cursors.
@@ -118,12 +158,12 @@ impl crate::bytecode::ResidualProgram {
     /// What an earlier replay of function `id` settled: its sites' start, or `None` for their
     /// skip. Read out of the cell before a plan records its own choice.
     fn settled_rewrite(&self, id: u32) -> Option<Option<RewriteStart>> {
-        self.rewrite_ranges.borrow().get(id as usize).copied().flatten()
+        self.rewrite_ranges.settled.borrow().get(id as usize).copied().flatten()
     }
 
     /// Notes where the sites of function `id`'s deferred rewrites start, or `None` if they stayed unrun.
     fn record_rewrite(&self, id: u32, start: Option<RewriteStart>) {
-        let mut ranges = self.rewrite_ranges.borrow_mut();
+        let mut ranges = self.rewrite_ranges.settled.borrow_mut();
         let len = ranges.len().max(id as usize + 1);
         ranges.resize(len, None);
         ranges[id as usize] = Some(start);

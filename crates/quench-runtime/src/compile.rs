@@ -77,7 +77,7 @@ pub(crate) mod program_profile;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
 pub(crate) mod replay;
-mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIELD_SITE_WINDOW, SUPERINSTRUCTION_WINDOW};
+mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIELD_SITE_WINDOW, SUPERINSTRUCTION_WINDOW, settle_deferred_rewrite};
 mod rewrite;
 mod sequence;
 pub(crate) mod stack;
@@ -1928,6 +1928,8 @@ struct Compiler<'a> {
     /// The instructions of the functions whose rewrites the load left to their first compile
     /// (`Compiler::defers_rewrites`), which bound the sites those add.
     deferred_rewrite_code: usize,
+    /// Some kept record's rewrites wait for its first read.
+    kept_rewrites_pending: bool,
 }
 
 /// Whether a compilation may parse a data script's literal as an empty one
@@ -2422,7 +2424,7 @@ impl<'a> Compiler<'a> {
             private_name_overrides: FxHashMap::default(),
             constants: SiteTable::default(),
             constant_index: replay::ConstantIndex::default(),
-            functions: replay::FunctionTable::default(), deferred_rewrite_code: 0,
+            functions: replay::FunctionTable::default(), deferred_rewrite_code: 0, kept_rewrites_pending: false,
             errors: vec![],
             cache_sites: 0,
             name_shared_sites: NameSharedSites::default(),
@@ -3328,7 +3330,7 @@ impl<'a> Compiler<'a> {
         }
         for (id, slot) in functions.iter_mut().enumerate() {
             let replay = replays.get_mut(&(id as u32)).filter(|_| !released.contains_key(&id));
-            if let Some(function) = self.rewrite_replayable(slot, replay) {
+            if let Some(function) = self.rewrite_replayable(id, slot, replay) {
                 released.insert(id, function);
             }
         }
@@ -3447,7 +3449,8 @@ impl<'a> Compiler<'a> {
             object_sites: self.object_sites.into_vec(),
             regexp_literal_sites: self.regexp_literal_sites.into_vec(),
             literal_templates: self.literal_templates.into_vec(),
-            superinstructions: crate::bytecode::append_vec::AppendVec::with_headroom(self.superinstructions.into_vec(), self.deferred_rewrite_code / SUPERINSTRUCTION_WINDOW + 1), rewrite_ranges: Default::default(),
+            superinstructions: crate::bytecode::append_vec::AppendVec::with_headroom(self.superinstructions.into_vec(), self.deferred_rewrite_code / SUPERINSTRUCTION_WINDOW + 1),
+            rewrite_ranges: replay::RewriteRanges { kept_pending: self.kept_rewrites_pending, ..Default::default() },
             replay: replay_atoms.map(|atoms| {
                 std::rc::Rc::new(replay::ProgramReplay {
                     source_type: self.source_type,

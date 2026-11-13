@@ -3678,7 +3678,7 @@ pub struct ResidualProgram {
     pub(crate) regexp_literal_sites: Vec<RegExpLiteralSite>,
     pub(crate) literal_templates: Vec<Box<[LiteralStep]>>,
     pub(crate) superinstructions: append_vec::AppendVec<Superinstruction>,
-    pub(crate) rewrite_ranges: std::cell::RefCell<Vec<Option<Option<crate::compile::replay::RewriteStart>>>>, // per function id: where a replay put its rewrites' sites, or `None` for their skip
+    pub(crate) rewrite_ranges: crate::compile::replay::RewriteRanges,
     /// How its functions can be compiled again from source, when they can.
     pub(crate) replay: Option<std::rc::Rc<crate::compile::replay::ProgramReplay>>,
     /// Each nested first-call stub's scopes, by stub id, which an encoding keeps with the stubs.
@@ -3829,7 +3829,7 @@ impl ResidualProgram {
             if !crate::DYNAMIC_EXECUTION_ENABLED {
                 panic!("native function {index} of {} was not lowered before linking", self.source_name);
             }
-            let function = self.lower_unlowered(unlowered);
+            let function = self.lower_unlowered(index, unlowered);
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
         }
@@ -3858,8 +3858,9 @@ impl ResidualProgram {
     /// would have lowered it (`compile::lower_settled`), with its register roots.
     #[cold]
     #[inline(never)]
-    fn lower_unlowered(&self, unlowered: std::rc::Rc<Function>) -> Function {
+    fn lower_unlowered(&self, index: usize, unlowered: std::rc::Rc<Function>) -> Function {
         let mut function = std::rc::Rc::unwrap_or_clone(unlowered);
+        if self.rewrite_ranges.kept_pending { crate::compile::settle_deferred_rewrite(self, index as u32, &mut function); }
         let undefined_constant = *self.undefined_constant.get_or_init(|| {
             let index = self.constants.iter().position(|constant| matches!(constant, Constant::Undefined))
                 .expect("a program with an unlowered record holds the `undefined` constant");

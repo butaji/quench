@@ -374,6 +374,17 @@ pub(crate) enum Rewrite {
     Deferred,
 }
 
+/// The rewrites a program's load left to its functions' first reads.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RewriteRanges {
+    /// Every record the load kept unlowered still awaits its rewrites, which its first read runs
+    /// (`compile::settle_deferred_rewrite`): a program that keeps its records but compiled few.
+    pub(crate) kept_pending: bool,
+    /// Per function id: where a replay or first read put its rewrites' sites (`Some(Some)`), or
+    /// that they stayed unrun (`Some(None)`); `None` before either.
+    pub(crate) settled: std::cell::RefCell<Vec<Option<Option<crate::compile::replay::RewriteStart>>>>,
+}
+
 /// Lazily derived views of a finished program that its replays share.
 #[derive(Default)]
 pub(super) struct ReplayViews {
