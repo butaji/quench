@@ -2,7 +2,8 @@
 //! (execution law 4). Each kernel of `quench-tier-corpus` runs under each forced tier with
 //! `QUENCH_TRACE=residuals`; the engine reports the counts of the loops it compiles (CLIF
 //! instructions for u-jit, stencil rows for b-jit) and this mode compares the hottest loop's
-//! counts with the kernel's spec and the shrink-only ratchet.
+//! counts with the kernel's spec (the target, reported) and the shrink-only ratchet (the gate:
+//! only a count above its recorded entry fails).
 
 use super::{fail, usage};
 use quench_tier_corpus::residuals::{
@@ -161,7 +162,7 @@ fn run_kernel(config: &Config, tier: Tier, source: &str) -> Result<String, Strin
         .ok_or_else(|| format!("exited with {status}"))
 }
 
-/// One kernel on one tier against its spec and ceiling.
+/// One kernel on one tier against its spec and recorded ratchet entry.
 struct Row {
     kernel: &'static Kernel,
     tier: Tier,
@@ -173,13 +174,10 @@ struct Row {
 fn measure(config: &Config, ratchet: &Ratchet, kernel: &'static Kernel, tier: Tier) -> Row {
     let outcome = run_kernel(config, tier, kernel.source)
         .and_then(|report| hottest(&report, tier).ok_or_else(|| NO_LOOP.to_string()));
-    let over = match &outcome {
-        Ok(record) => record
-            .counts
-            .exceeding(ratchet.ceiling(kernel, tier))
-            .collect(),
-        Err(_) => Vec::new(),
-    };
+    let over = outcome.as_ref().map_or_else(
+        |_| Vec::new(),
+        |record| ratchet.regressions(kernel, tier, record.counts),
+    );
     Row {
         kernel,
         tier,
@@ -188,7 +186,7 @@ fn measure(config: &Config, ratchet: &Ratchet, kernel: &'static Kernel, tier: Ti
     }
 }
 
-/// Whether the row breaks the judge: a loop above its ceiling, a failed run, or a loop that
+/// Whether the row breaks the judge: a loop above its recorded entry, a failed run, or a loop that
 /// compiled before (a ratchet entry) and no longer does.
 fn is_violation(row: &Row, ratchet: &Ratchet) -> bool {
     match &row.outcome {
@@ -225,7 +223,7 @@ fn print_row(row: &Row, ratchet: &Ratchet) {
         row.tier.name()
     );
     for category in &row.over {
-        println!("  over ceiling: {category}");
+        println!("  regressed past the ratchet: {category}");
     }
 }
 

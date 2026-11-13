@@ -162,55 +162,62 @@ mod tests {
         assert_eq!(super::NAMES, quench_tier_corpus::residuals::CATEGORIES);
     }
 
+    /// The kernels whose loop is Number work alone, which a static typed region lowers
+    /// without a running VM.
+    #[cfg(feature = "aot")]
+    const SCALAR: [&str; 3] = ["int-sum", "bitwise-mix", "early-exit"];
+
+    /// The CLIF of `kernel`'s typed loop region.
+    #[cfg(feature = "aot")]
+    fn typed_loop(kernel: &quench_tier_corpus::residuals::Kernel) -> super::ir::Function {
+        use super::super::{lower_static_typed_regions, LaneHelpers, VmFacts};
+
+        let isa = super::super::super::jit_backend::target_isa().unwrap();
+        let program = crate::Engine::specialize(kernel.source, kernel.name).unwrap();
+        let id = program
+            .functions
+            .iter()
+            .position(|body| {
+                body.header()
+                    .name
+                    .is_some_and(|name| &program.atoms[name as usize] == "kernel")
+            })
+            .unwrap();
+        lower_static_typed_regions(
+            &program,
+            id as u32,
+            &[],
+            &*isa,
+            LaneHelpers::linked_for(0, &program),
+            VmFacts::STATIC,
+            &Default::default(),
+        )
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("{}: no typed loop region", kernel.name))
+        .function
+    }
+
     #[cfg(feature = "aot")]
     #[test]
-    fn scalar_kernels_stay_within_their_residual_ceiling() {
-        use super::super::{lower_static_typed_regions, LaneHelpers, VmFacts};
+    fn scalar_kernels_do_not_regress_past_their_ratchet() {
         use quench_tier_corpus::residuals::{Counts, Ratchet, Tier, KERNELS};
 
-        // The kernels whose loop is Number work alone, which a static typed region lowers
-        // without a running VM.
-        const SCALAR: [&str; 3] = ["int-sum", "bitwise-mix", "early-exit"];
         let ratchet = Ratchet::parse(include_str!(
             "../../../../../tests/fixtures/residuals/ratchet.txt"
         ))
         .unwrap();
-        let isa = super::super::super::jit_backend::target_isa().unwrap();
         for kernel in KERNELS
             .iter()
             .filter(|kernel| SCALAR.contains(&kernel.name))
         {
-            let program = crate::Engine::specialize(kernel.source, kernel.name).unwrap();
-            let id = program
-                .functions
-                .iter()
-                .position(|body| {
-                    body.header()
-                        .name
-                        .is_some_and(|name| &program.atoms[name as usize] == "kernel")
-                })
-                .unwrap();
-            let region = lower_static_typed_regions(
-                &program,
-                id as u32,
-                &[],
-                &*isa,
-                LaneHelpers::linked_for(0, &program),
-                VmFacts::STATIC,
-                &Default::default(),
-            )
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| panic!("{}: no typed loop region", kernel.name));
-            let counts = Counts(super::of_clif(&region.function).counts());
-            let over: Vec<_> = counts
-                .exceeding(ratchet.ceiling(kernel, Tier::UJit))
-                .collect();
+            let function = typed_loop(kernel);
+            let counts = Counts(super::of_clif(&function).counts());
+            let over = ratchet.regressions(kernel, Tier::UJit, counts);
             assert!(
                 over.is_empty(),
-                "{}: {over:?} over its ceiling, counts {counts:?}\n{}",
+                "{}: {over:?} regressed past the ratchet, counts {counts:?}\n{function}",
                 kernel.name,
-                region.function
             );
         }
     }
