@@ -3293,7 +3293,7 @@ script_handler! {
     fn lane_to_numeric<>(cx, r, ip, i, view) {
         if !staged_to_numeric(r, Carried::script(cx), i.a, i.b) {
             let value = r.get(i.b);
-            if !matches!(unsafe { vm(cx) }.heap.get(value), Some(Cell::BigInt(_))) {
+            if !matches!(unsafe { vm(cx) }.heap.get(value), Some(crate::heap::Cell::BigInt(_))) {
                 return exit(ip);
             }
             r.set(i.a, value);
@@ -7797,15 +7797,24 @@ script_handler! {
     /// itself among them, inline; two distinct heap values, which may be equal strings or
     /// BigInts, take `lane_jump_strict_equal_cells`.
     fn lane_jump_strict_equal_false<BACKWARD: bool, NEGATED: bool>(cx, r, ip, i, view) {
-        let is_record = |value: Value| value.direct_object_index().is_some() || value.direct_array_index().is_some();
         let (left, right) = (r.get(i.b), r.get(i.c));
         let equal = match (left.as_number(), right.as_number()) {
             (Some(left), Some(right)) => left == right,
             _ if left == right => true,
-            // An object or array record equals only itself, which `left == right` decided.
-            _ if left.is_heap() && right.is_heap() && !(is_record(left) || is_record(right)) => {
-                sibling!(lane_jump_strict_equal_cells::<H, BACKWARD, NEGATED>, r, ip, Carried::script(cx))
-            }
+            // Two distinct heap values are equal only as strings or BigInts, which their
+            // handles' families name; a slot cell that is no BigInt (a Symbol) is not.
+            _ if left.is_heap() && right.is_heap() => match left.distinct_heap_pair(right) {
+                crate::value::DistinctHeapPair::Unequal => false,
+                crate::value::DistinctHeapPair::Strings => {
+                    sibling!(lane_jump_strict_equal_cells::<H, BACKWARD, NEGATED>, r, ip, Carried::script(cx))
+                }
+                crate::value::DistinctHeapPair::Slots => {
+                    if matches!(unsafe { vm(cx) }.heap.get(left), Some(crate::heap::Cell::BigInt(_))) {
+                        sibling!(lane_jump_strict_equal_cells::<H, BACKWARD, NEGATED>, r, ip, Carried::script(cx))
+                    }
+                    false
+                }
+            },
             _ => false,
         };
         if equal == NEGATED {
