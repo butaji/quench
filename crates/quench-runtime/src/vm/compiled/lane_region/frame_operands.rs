@@ -1,5 +1,6 @@
 //! A staged operand's value: a register's proved one, or a constant's, statically.
 use super::*;
+use crate::staged::{NumericStage, Stage};
 
 /// An operand's int32 value, statically where it is a constant int32.
 pub(in crate::vm) fn operand_int(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
@@ -12,12 +13,13 @@ pub(in crate::vm) fn operand_int(builder: &mut FunctionBuilder<'_>, registers: &
             let constant = constants.get(usize::from(operand.payload()))?;
             let value = super::super::facts::immediate(constant)?;
             let int32 = super::super::facts::is_int32(value);
+            let mut stage = super::super::super::object_slots::emit(builder);
             if !int32 {
-                builder.ins().jump(otherwise, &[]);
-                let dead = builder.create_block();
-                builder.switch_to_block(dead);
+                let zero = stage.constant(0);
+                let never = stage.ne_imm(zero, 0u32);
+                stage.guard(never, otherwise)?;
             }
-            Some(builder.ins().iconst(types::I32, if int32 { i64::from(value.wasm_bits32() as i32) } else { 0 }))
+            Some(stage.i32_constant(if int32 { value.wasm_bits32() as i32 } else { 0 }))
         }
         _ => None,
     }
@@ -87,7 +89,7 @@ pub(in crate::vm) fn register_number_value(builder: &mut FunctionBuilder<'_>, re
         Representation::Int32 => {
             let variable = register_int(builder, registers, index);
             let int = builder.use_var(variable);
-            builder.ins().fcvt_from_sint(types::F64, int)
+            super::super::super::object_slots::emit(builder).i32_to_f64(int)
         }
         Representation::Tagged => {
             let bits = register_tagged(builder, registers, state, register);

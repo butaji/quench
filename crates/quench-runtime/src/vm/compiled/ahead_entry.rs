@@ -4,6 +4,10 @@
 //! per-PC semantic fallback, which executes one instruction at a time. The body's receiver and
 //! dense captures are the payload's, bound once per activation (`JsStepDispatch::bind_captures`).
 use super::*;
+use crate::staged::{region::Region, Access, NumericStage, Stage};
+
+/// The call context, step dispatch and result words the trampoline reads and writes.
+const DISPATCH: Access = Region::Dispatch.mutable();
 
 /// The native-entry parameters a trampoline reads (`native_entry_signature`): the call
 /// context, the registers, and the address of the result word.
@@ -34,6 +38,7 @@ pub(in crate::vm) fn lower_ahead_entry(
         ir::UserFuncName::user(namespace, function_id),
         native_entry_signature(isa.pointer_type(), isa.default_call_conv()),
     );
+    regions::declare_regions(&mut native);
     let mut context = FunctionBuilderContext::new();
     let mut builder = FunctionBuilder::new(&mut native, &mut context);
     let entry = builder.create_block();
@@ -48,23 +53,21 @@ pub(in crate::vm) fn lower_ahead_entry(
     Ok(native)
 }
 
-/// The trampoline's blocks: the body's entry, the per-PC loop and its two ends.
+/// The trampoline's blocks: the body's entry, the per-PC loop and its two ends; the invalid
+/// end reads the loop's `pc`, which dominates it.
 struct AheadBlocks {
     body: ir::Block,
     step: ir::Block,
     pc: ir::Value,
     stopped: ir::Block,
     invalid: ir::Block,
-    invalid_pc: ir::Value,
 }
 
 impl AheadBlocks {
     fn new(builder: &mut FunctionBuilder<'_>) -> Self {
         let step = builder.create_block();
         let pc = builder.append_block_param(step, types::I64);
-        let invalid = builder.create_block();
-        let invalid_pc = builder.append_block_param(invalid, types::I64);
-        Self { body: builder.create_block(), step, pc, stopped: builder.create_block(), invalid, invalid_pc }
+        Self { body: builder.create_block(), step, pc, stopped: builder.create_block(), invalid: builder.create_block() }
     }
 }
 
@@ -74,21 +77,21 @@ fn emit_dispatch(
     builder: &mut FunctionBuilder<'_>, params: &[ir::Value], blocks: &AheadBlocks,
     body: &mut dyn FnMut(&mut FunctionBuilder<'_>, &[ir::Value]) -> (ir::Value, ir::Value),
 ) {
-    let payload = builder.ins().load(types::I64, MemFlagsData::trusted(), params[PARAM_CONTEXT],
-        std::mem::offset_of!(CallContext, adapter_payload) as i32);
-    let start_pc = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, start_pc));
-    let stop_pc = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, stop_pc));
-    let starts = builder.ins().icmp_imm_u(IntCC::Equal, start_pc, 0);
-    let unbounded = builder.ins().icmp_imm_u(IntCC::Equal, stop_pc, JS_NO_STOP_PC as i64);
-    let whole = builder.ins().band(starts, unbounded);
-    builder.ins().brif(whole, blocks.body, &[], blocks.step, &[ir::BlockArg::Value(start_pc)]);
-    builder.switch_to_block(blocks.body);
-    let this = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, receiver));
-    let values = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, capture_values));
-    let length = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, capture_len));
-    let length = builder.ins().ishl_imm_u(length, i64::from(entry_cell::CAPTURE_ADDRESS_BITS));
-    let captures = builder.ins().bor(values, length);
-    let (status, word) = body(builder, &[params[PARAM_CONTEXT], this, captures, params[PARAM_REGISTERS]]);
+    let mut stage = super::object_slots::emit(builder);
+    let payload = stage.load_u64(DISPATCH, params[PARAM_CONTEXT], std::mem::offset_of!(CallContext, adapter_payload) as i32);
+    let start_pc = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, start_pc));
+    let stop_pc = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, stop_pc));
+    let starts = stage.eq_imm(start_pc, 0u32);
+    let unbounded = stage.eq_imm(stop_pc, JS_NO_STOP_PC as u64);
+    let whole = stage.both(starts, unbounded);
+    stage.builder.ins().brif(whole, blocks.body, &[], blocks.step, &[ir::BlockArg::Value(start_pc)]);
+    stage.builder.switch_to_block(blocks.body);
+    let this = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, receiver));
+    let values = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, capture_values));
+    let length = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, capture_len));
+    let length = stage.mul_imm(length, 1u64 << entry_cell::CAPTURE_ADDRESS_BITS);
+    let captures = stage.or(values, length);
+    let (status, word) = body(stage.builder, &[params[PARAM_CONTEXT], this, captures, params[PARAM_REGISTERS]]);
     emit_body_status(builder, params, blocks, payload, (status, word));
 }
 
@@ -99,27 +102,26 @@ fn emit_body_status(
     (status, word): (ir::Value, ir::Value),
 ) {
     let (returned, leave) = (builder.create_block(), builder.create_block());
-    let completed = builder.ins().icmp_imm_u(IntCC::Equal, status, i64::from(LANE_BODY_RETURNED));
-    let other = builder.create_block();
-    builder.ins().brif(completed, returned, &[], other, &[]);
-    builder.switch_to_block(other);
-    let stopped = builder.ins().icmp_imm_u(IntCC::Equal, status, i64::from(NATIVE_JS_STOPPED));
-    let passed = builder.create_block();
-    builder.ins().brif(stopped, leave, &[], passed, &[]);
-    builder.switch_to_block(passed);
-    builder.ins().return_(&[status]);
-    builder.switch_to_block(returned);
-    builder.ins().store(MemFlagsData::trusted(), word, params[PARAM_RESULT], 0);
-    let record = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, returned_pc));
-    let record = builder.ins().ireduce(types::I32, record);
-    let status = builder.ins().iadd_imm_u(record, i64::from(RETURN_STATUS_BASE));
-    builder.ins().return_(&[status]);
-    builder.switch_to_block(leave);
+    let mut stage = super::object_slots::emit(builder);
+    let wide = stage.uextend32(status);
+    let running = stage.ne_imm(wide, u64::from(LANE_BODY_RETURNED));
+    stage.guard(running, returned);
+    let continuing = stage.ne_imm(wide, u64::from(NATIVE_JS_STOPPED));
+    stage.guard(continuing, leave);
+    stage.builder.ins().return_(&[status]);
+    stage.builder.switch_to_block(returned);
+    stage.store_u64(DISPATCH, params[PARAM_RESULT], 0, word);
+    let record = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, returned_pc));
+    let record = stage.and_imm(record, u64::from(u32::MAX));
+    let wide = stage.add_imm(record, u64::from(RETURN_STATUS_BASE));
+    let status = stage.builder.ins().ireduce(types::I32, wide);
+    stage.builder.ins().return_(&[status]);
+    stage.builder.switch_to_block(leave);
     // A failed entry proof resumes at the first record; any other word is the leave's PC.
-    let entry = builder.ins().icmp_imm_u(IntCC::Equal, word, LaneExit::Entry.word() as i64);
-    let first = builder.ins().iconst(types::I64, 0);
-    let pc = builder.ins().select(entry, first, word);
-    builder.ins().jump(blocks.step, &[ir::BlockArg::Value(pc)]);
+    let entry = stage.eq_imm(word, LaneExit::Entry.word());
+    let first = stage.constant(0);
+    let pc = stage.select(entry, first, word);
+    stage.builder.ins().jump(blocks.step, &[ir::BlockArg::Value(pc)]);
 }
 
 /// The per-PC loop: one semantic operation per record until one stops the run, and the two
@@ -128,22 +130,24 @@ fn emit_steps(
     builder: &mut FunctionBuilder<'_>, params: &[ir::Value], blocks: &AheadBlocks, count: u32,
     fallback: &mut dyn FnMut(&mut FunctionBuilder<'_>, [ir::Value; 3]) -> ir::Value,
 ) {
-    builder.switch_to_block(blocks.step);
-    let run = builder.create_block();
-    let in_range = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, blocks.pc, i64::from(count));
-    builder.ins().brif(in_range, run, &[], blocks.invalid, &[ir::BlockArg::Value(blocks.pc)]);
-    builder.switch_to_block(run);
-    let status = fallback(builder, [params[PARAM_CONTEXT], blocks.pc, params[PARAM_RESULT]]);
-    let failed = builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
-    let next = builder.ins().load(types::I64, MemFlagsData::trusted(), params[PARAM_RESULT], 0);
-    builder.ins().brif(failed, blocks.stopped, &[], blocks.step, &[ir::BlockArg::Value(next)]);
-    builder.switch_to_block(blocks.stopped);
-    let stopped = builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
-    builder.ins().return_(&[stopped]);
-    builder.switch_to_block(blocks.invalid);
-    builder.ins().store(MemFlagsData::trusted(), blocks.invalid_pc, params[PARAM_RESULT], 0);
-    let invalid = builder.ins().iconst(types::I32, i64::from(NATIVE_JS_INVALID_PC));
-    builder.ins().return_(&[invalid]);
+    let mut stage = super::object_slots::emit(builder);
+    stage.builder.switch_to_block(blocks.step);
+    let records = stage.constant(u64::from(count));
+    let in_range = stage.ult(blocks.pc, records);
+    stage.guard(in_range, blocks.invalid);
+    let status = fallback(stage.builder, [params[PARAM_CONTEXT], blocks.pc, params[PARAM_RESULT]]);
+    let wide = stage.uextend32(status);
+    let succeeded = stage.eq_imm(wide, 0u32);
+    stage.guard(succeeded, blocks.stopped);
+    let next = stage.load_u64(DISPATCH, params[PARAM_RESULT], 0);
+    stage.builder.ins().jump(blocks.step, &[ir::BlockArg::Value(next)]);
+    stage.builder.switch_to_block(blocks.stopped);
+    let stopped = stage.builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
+    stage.builder.ins().return_(&[stopped]);
+    stage.builder.switch_to_block(blocks.invalid);
+    stage.store_u64(DISPATCH, params[PARAM_RESULT], 0, blocks.pc);
+    let invalid = stage.builder.ins().iconst(types::I32, i64::from(NATIVE_JS_INVALID_PC));
+    stage.builder.ins().return_(&[invalid]);
 }
 
 #[cfg(test)]
@@ -160,14 +164,14 @@ mod tests {
             body: &mut |builder, words| {
                 let signature = *signature.get_or_insert_with(|| builder.import_signature(
                     lane_body_signature(isa.pointer_type(), isa.default_call_conv())));
-                let target = builder.ins().iconst(isa.pointer_type(), 8);
+                let target = object_slots::emit(builder).constant(8);
                 let call = builder.ins().call_indirect(signature, target, words);
                 let results = builder.inst_results(call);
                 (results[0], results[1])
             },
             fallback: &mut |builder, [context, pc, result]| {
                 let signature = builder.import_signature(native_js_operation_signature(&*isa));
-                let target = builder.ins().iconst(isa.pointer_type(), 8);
+                let target = object_slots::emit(builder).constant(8);
                 let call = builder.ins().call_indirect(signature, target, &[context, pc, result, result]);
                 builder.inst_results(call)[0]
             },
