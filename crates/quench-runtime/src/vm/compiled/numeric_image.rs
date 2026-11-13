@@ -18,7 +18,7 @@ fn lower_numeric_region(program: &ResidualProgram, function_id: u32) -> Option<N
     let unit = lane_unit::unit(program, function_id, function, &|_, _| Vec::new(), &|_| None)?;
     let isa = crate::vm::jit_backend::target_isa()?;
     let region = lane_region::RegionSpecializer { function_id, unit: &unit,
-        helpers: LaneHelpers::Numeric, fields: &std::collections::BTreeMap::new(),
+        helpers: LaneHelpers::Numeric, fields: &[],
         global_reads: &Default::default(), facts: VmFacts::STATIC, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa: &*isa,
         entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],

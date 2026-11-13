@@ -51,7 +51,7 @@ fn fingerprint(program: &ResidualProgram) -> u64 {
 fn image(program: &ResidualProgram, function: u32) -> Option<Image> {
     let body = program.function_get(function as usize)?;
     let unit = lane_unit::with_budget(program, function, body, 0, &|_, _| Vec::new(), &|callee| program.function_get(callee as usize))?;
-    let mut lowered = lane_region::lower_body(program, function, &unit, LaneHelpers::Ahead, &BTreeMap::new(),
+    let mut lowered = lane_region::lower_body(program, function, &unit, LaneHelpers::Ahead, &[],
         &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &[])?;
     if lowered.region.native == 0 { return None; }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
@@ -216,7 +216,7 @@ impl<H: Host> Vm<H> {
         }).ok()?;
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
             fault_poll: image.fault_poll, hoists_arrays: false, stable: Default::default() };
-        let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None }, fields: BTreeMap::new(),
+        let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None }, fields: Vec::new(),
             direct: Box::new([]), closed: false, function, invalidation: crate::code_dependencies::Invalidation::default(), budget: 0 };
         let method = plan.finish(&linked)?;
         self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers())

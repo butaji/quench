@@ -90,18 +90,24 @@ impl<W, P> Operation<W, P> {
     /// cache sites are feedback, a proof's facts are Stable, and a stage word is Dynamic.
     pub(crate) fn operand_times(&self) -> OperandTimes {
         match self {
-            Self::Move { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER)]),
+            Self::Move { .. } | Self::LogicalNot { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER)]),
             Self::LoadConst { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("constant", BYTECODE)]),
             Self::LoadLocalPlain { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("slot", REGISTER)]),
             Self::StoreLocalPlain { .. } => SmallVec::from_slice(&[("source", REGISTER), ("slot", REGISTER),
                 ("result", REGISTER)]),
+            Self::Number(operation) => number(operation),
+            _ => self.control_operand_times(),
+        }
+    }
+
+    /// The control and value operations' operands (`operand_times`).
+    fn control_operand_times(&self) -> OperandTimes {
+        match self {
             Self::Jump => SmallVec::from_slice(&[("target", BYTECODE)]),
             Self::JumpIf { .. } => SmallVec::from_slice(&[("register", REGISTER), ("taken", BYTECODE),
                 ("target", BYTECODE)]),
             Self::LoadThis { .. } => SmallVec::from_slice(&[("destination", REGISTER)]),
-            Self::Number(operation) => number(operation),
             Self::RequireObjectCoercible { .. } => SmallVec::from_slice(&[("register", REGISTER)]),
-            Self::LogicalNot { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER)]),
             _ => self.heap_operand_times(),
         }
     }
@@ -116,6 +122,19 @@ impl<W, P> Operation<W, P> {
             Self::IndexRead { .. } | Self::TypedIndexRead { .. } => SmallVec::from_slice(&[("index", VALUE), ("proof", PROOF)]),
             Self::IndexWrite { .. } | Self::TypedIndexWrite { .. } =>
                 SmallVec::from_slice(&[("index", VALUE), ("value", VALUE), ("proof", PROOF)]),
+            Self::IndexSetHelper { .. } => SmallVec::from_slice(&[("base", VALUE), ("key", VALUE),
+                ("value", VALUE), ("proof", PROOF)]),
+            Self::GlobalRead { binding, .. } => SmallVec::from_slice(&[("destination", REGISTER),
+                ("atom", BYTECODE), ("site", SITE), ("binding", binding.time()), ("proof", PROOF)]),
+            Self::FieldStoreMiss { .. } => SmallVec::from_slice(&[("object", VALUE), ("atom", BYTECODE),
+                ("site", SITE), ("value", VALUE), ("proof", PROOF)]),
+            _ => self.make_operand_times(),
+        }
+    }
+
+    /// The allocation and safepoint operations' operands (`heap_operand_times`).
+    fn make_operand_times(&self) -> OperandTimes {
+        match self {
             Self::MakeObject { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("proof", PROOF)]),
             Self::MakeArray { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("length", VALUE),
                 ("elements", VALUE), ("proof", PROOF)]),
@@ -124,12 +143,6 @@ impl<W, P> Operation<W, P> {
             Self::MakeObjectPair { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("site", SITE),
                 ("first", VALUE), ("second", VALUE), ("proof", PROOF)]),
             Self::Safepoint { .. } => SmallVec::from_slice(&[("proof", PROOF)]),
-            Self::IndexSetHelper { .. } => SmallVec::from_slice(&[("base", VALUE), ("key", VALUE),
-                ("value", VALUE), ("proof", PROOF)]),
-            Self::GlobalRead { binding, .. } => SmallVec::from_slice(&[("destination", REGISTER),
-                ("atom", BYTECODE), ("site", SITE), ("binding", binding.time()), ("proof", PROOF)]),
-            Self::FieldStoreMiss { .. } => SmallVec::from_slice(&[("object", VALUE), ("atom", BYTECODE),
-                ("site", SITE), ("value", VALUE), ("proof", PROOF)]),
             _ => unreachable!("`operand_times` answers every other operation"),
         }
     }

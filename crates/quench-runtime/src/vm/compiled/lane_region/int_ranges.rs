@@ -207,6 +207,11 @@ impl Analysis<'_> {
             if let Some(range) = range { state.set(instruction.result_register(), Some(range), false); }
         }
         if self.disturbs_lengths(pc, instruction) { state.relations.clear(); }
+        self.relate_length_read(instruction, state);
+    }
+
+    /// A read of an array's `length` into a register relates the two.
+    fn relate_length_read(&self, instruction: WideInstruction, state: &mut State) {
         if super::super::reads_length(self.program, instruction) && instruction.result_flags() == 0
             && let Some(FieldLookup::Atom { base, .. }) = instruction.field_lookup()
             && let Some(array) = base.register_index().filter(|array| *array != instruction.result_register()) {

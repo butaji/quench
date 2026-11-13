@@ -5,6 +5,12 @@
 //! dense captures are the payload's, bound once per activation (`JsStepDispatch::bind_captures`).
 use super::*;
 
+/// The native-entry parameters a trampoline reads (`native_entry_signature`): the call
+/// context, the registers, and the address of the result word.
+const PARAM_CONTEXT: usize = 0;
+const PARAM_REGISTERS: usize = 3;
+const PARAM_RESULT: usize = 4;
+
 /// Where a trampoline reaches the bodies it joins: a body of the lane body ABI and the
 /// per-PC semantic fallback, each as the call a publication binds (an address, or a symbol).
 pub(in crate::vm) struct AheadTargets<'a> {
@@ -68,7 +74,7 @@ fn emit_dispatch(
     builder: &mut FunctionBuilder<'_>, params: &[ir::Value], blocks: &AheadBlocks,
     body: &mut dyn FnMut(&mut FunctionBuilder<'_>, &[ir::Value]) -> (ir::Value, ir::Value),
 ) {
-    let payload = builder.ins().load(types::I64, MemFlagsData::trusted(), params[0],
+    let payload = builder.ins().load(types::I64, MemFlagsData::trusted(), params[PARAM_CONTEXT],
         std::mem::offset_of!(CallContext, adapter_payload) as i32);
     let start_pc = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, start_pc));
     let stop_pc = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, stop_pc));
@@ -82,7 +88,7 @@ fn emit_dispatch(
     let length = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, capture_len));
     let length = builder.ins().ishl_imm_u(length, i64::from(entry_cell::CAPTURE_ADDRESS_BITS));
     let captures = builder.ins().bor(values, length);
-    let (status, word) = body(builder, &[params[0], this, captures, params[3]]);
+    let (status, word) = body(builder, &[params[PARAM_CONTEXT], this, captures, params[PARAM_REGISTERS]]);
     emit_body_status(builder, params, blocks, payload, (status, word));
 }
 
@@ -103,7 +109,7 @@ fn emit_body_status(
     builder.switch_to_block(passed);
     builder.ins().return_(&[status]);
     builder.switch_to_block(returned);
-    builder.ins().store(MemFlagsData::trusted(), word, params[4], 0);
+    builder.ins().store(MemFlagsData::trusted(), word, params[PARAM_RESULT], 0);
     let record = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, returned_pc));
     let record = builder.ins().ireduce(types::I32, record);
     let status = builder.ins().iadd_imm_u(record, i64::from(RETURN_STATUS_BASE));
@@ -127,15 +133,15 @@ fn emit_steps(
     let in_range = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, blocks.pc, i64::from(count));
     builder.ins().brif(in_range, run, &[], blocks.invalid, &[ir::BlockArg::Value(blocks.pc)]);
     builder.switch_to_block(run);
-    let status = fallback(builder, [params[0], blocks.pc, params[4]]);
+    let status = fallback(builder, [params[PARAM_CONTEXT], blocks.pc, params[PARAM_RESULT]]);
     let failed = builder.ins().icmp_imm_u(IntCC::NotEqual, status, 0);
-    let next = builder.ins().load(types::I64, MemFlagsData::trusted(), params[4], 0);
+    let next = builder.ins().load(types::I64, MemFlagsData::trusted(), params[PARAM_RESULT], 0);
     builder.ins().brif(failed, blocks.stopped, &[], blocks.step, &[ir::BlockArg::Value(next)]);
     builder.switch_to_block(blocks.stopped);
     let stopped = builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
     builder.ins().return_(&[stopped]);
     builder.switch_to_block(blocks.invalid);
-    builder.ins().store(MemFlagsData::trusted(), blocks.invalid_pc, params[4], 0);
+    builder.ins().store(MemFlagsData::trusted(), blocks.invalid_pc, params[PARAM_RESULT], 0);
     let invalid = builder.ins().iconst(types::I32, i64::from(NATIVE_JS_INVALID_PC));
     builder.ins().return_(&[invalid]);
 }

@@ -67,7 +67,7 @@ impl Stage for Emit<'_, '_> {
     fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
     fn add_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
-        self.builder.ins().iadd(a, v)
+        self.add(a, v)
     }
     fn mul_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
@@ -79,7 +79,7 @@ impl Stage for Emit<'_, '_> {
     }
     fn or_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
-        self.builder.ins().bor(a, v)
+        self.or(a, v)
     }
     fn shr_imm(&mut self, a: ir::Value, shift: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(shift.into());
@@ -134,9 +134,9 @@ impl Stage for Emit<'_, '_> {
         self.builder.ins().icmp(IntCC::UnsignedGreaterThan, a, v)
     }
     fn not(&mut self, cond: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, cond, 0) }
-    fn any(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
+    fn any(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.or(a, b) }
     fn pick(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
-        self.builder.ins().select(cond, then, otherwise)
+        self.select(cond, then, otherwise)
     }
     fn shape_in(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value {
         let word = if self.builder.func.dfg.value_type(shape) == types::I32 { shape } else { self.builder.ins().ireduce(types::I32, shape) };
@@ -209,7 +209,7 @@ impl NumericStage for Emit<'_, '_> {
     fn i32_is_zero(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_u(IntCC::Equal, a, 0) }
     fn i32_is_negative(&mut self, a: ir::Value) -> ir::Value { self.builder.ins().icmp_imm_s(IntCC::SignedLessThan, a, 0) }
     fn both(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().band(a, b) }
-    fn either(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.builder.ins().bor(a, b) }
+    fn either(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.or(a, b) }
     fn cond_word(&mut self, cond: ir::Value) -> ir::Value { cond }
     fn guard_false(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
         let passed = self.builder.create_block();

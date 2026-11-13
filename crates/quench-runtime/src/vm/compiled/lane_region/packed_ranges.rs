@@ -160,32 +160,43 @@ pub(super) fn result(state: &State, program: &ResidualProgram, instruction: Wide
         return program.constants.get(instruction.constant_index())
             .and_then(super::super::facts::immediate).and_then(Value::as_int).map(IntRange::singleton);
     }
-    if instruction.op().class().eq(Class::IncDec) {
-        if instruction.numeric_local_target().is_some() { return None; }
-        let (source, one) = (state.ranges[usize::from(instruction.register_b())]?, IntRange::singleton(1));
-        return if instruction.boolean_flag()? { source.subtract(one) } else { source.add(one) };
-    }
+    if instruction.op().class().eq(Class::IncDec) { return step_result(state, instruction); }
     if instruction.op().js_denotation() != crate::bytecode::JsDenotation::NumericBinary { return None; }
     let (left, right) = (state.operand(program, instruction.operand_b()), state.operand(program, instruction.operand_c()));
     if let Some(operation) = NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()) {
-        return match operation {
-            NumberArithmetic::Add => left?.add(right?),
-            NumberArithmetic::Subtract => left?.subtract(right?),
-            NumberArithmetic::Multiply => left?.multiply(right?),
-            _ => None,
-        };
+        return arithmetic_result(operation, left, right);
     }
-    if let Some(operation) = NumberBitwise::from_js_instruction(instruction.op(), instruction.binary_operator()) {
-        return match operation {
-            NumberBitwise::Or if right == Some(IntRange::singleton(0)) => Some(left.unwrap_or(IntRange::FULL)),
-            NumberBitwise::Or if left == Some(IntRange::singleton(0)) => Some(right.unwrap_or(IntRange::FULL)),
-            NumberBitwise::And | NumberBitwise::Or | NumberBitwise::Xor =>
-                Some(left.unwrap_or(IntRange::FULL).bitwise_hull(right.unwrap_or(IntRange::FULL))),
-            NumberBitwise::ShiftRight => left.unwrap_or(IntRange::FULL).shift_right(right?),
-            _ => None,
-        };
+    NumberBitwise::from_js_instruction(instruction.op(), instruction.binary_operator())
+        .and_then(|operation| bitwise_result(operation, left, right))
+}
+
+/// The range an increment or decrement of an int32 register leaves.
+fn step_result(state: &State, instruction: WideInstruction) -> Option<IntRange> {
+    if instruction.numeric_local_target().is_some() { return None; }
+    let (source, one) = (state.ranges[usize::from(instruction.register_b())]?, IntRange::singleton(1));
+    if instruction.boolean_flag()? { source.subtract(one) } else { source.add(one) }
+}
+
+/// The range of an arithmetic operation over operands of ranges `left` and `right`.
+fn arithmetic_result(operation: NumberArithmetic, left: Option<IntRange>, right: Option<IntRange>) -> Option<IntRange> {
+    match operation {
+        NumberArithmetic::Add => left?.add(right?),
+        NumberArithmetic::Subtract => left?.subtract(right?),
+        NumberArithmetic::Multiply => left?.multiply(right?),
+        _ => None,
     }
-    None
+}
+
+/// The range of a bitwise operation over operands of ranges `left` and `right`.
+fn bitwise_result(operation: NumberBitwise, left: Option<IntRange>, right: Option<IntRange>) -> Option<IntRange> {
+    match operation {
+        NumberBitwise::Or if right == Some(IntRange::singleton(0)) => Some(left.unwrap_or(IntRange::FULL)),
+        NumberBitwise::Or if left == Some(IntRange::singleton(0)) => Some(right.unwrap_or(IntRange::FULL)),
+        NumberBitwise::And | NumberBitwise::Or | NumberBitwise::Xor =>
+            Some(left.unwrap_or(IntRange::FULL).bitwise_hull(right.unwrap_or(IntRange::FULL))),
+        NumberBitwise::ShiftRight => left.unwrap_or(IntRange::FULL).shift_right(right?),
+        _ => None,
+    }
 }
 
 pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit::Unit,

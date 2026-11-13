@@ -463,19 +463,23 @@ impl Planner<'_, '_> {
         (alternatives, ran)
     }
 
+    /// Whether the callee's code fits the inlining budget and the call's arguments fit its registers.
+    fn within_budget(&self, instruction: WideInstruction, callee: &Function, code: &[WideInstruction]) -> bool {
+        code.len() <= MAX_INLINED_INSTRUCTIONS && code.len() <= self.budget
+            && ImmediateLayout::argument_count(instruction.imm()) <= callee.registers
+    }
+
+    /// Whether a callee reached through `target.callee` may run inline.
+    fn eligible_callee(&self, target: CallTarget, callee: &Function) -> bool {
+        target.callee != CalleeBinding::Function
+            || (callee.plain_activation(self.program) && super::super::js_compiled::eligible(callee, self.program))
+    }
+
     /// The callee of `target`, whole, if it inlines within the budget (`inline_target` chooses).
     fn inline_body(&mut self, target: CallTarget, instruction: WideInstruction, depth: usize) -> Option<InlinedPlan> {
         let callee = (self.body)(target.function)?;
         let code = decoded(callee);
-        if code.len() > MAX_INLINED_INSTRUCTIONS
-            || code.len() > self.budget
-            || ImmediateLayout::argument_count(instruction.imm()) > callee.registers
-            || !code.iter().all(|instruction| inlinable(*instruction) && renamable(*instruction))
-            || !code.iter().any(|instruction| completion_length(*instruction) > 1
-                || (instruction.op().class().eq(Class::Call) && instruction.returns_from_frame()))
-            || (target.callee == CalleeBinding::Function
-                && (!callee.plain_activation(self.program) || !super::super::js_compiled::eligible(callee, self.program)))
-        {
+        if !self.within_budget(instruction, callee, &code) || !lowerable(&code) || !self.eligible_callee(target, callee) {
             return None;
         }
         let recovery = if super::lane_region::restartable_numeric_function(self.program, callee, &code)
@@ -495,6 +499,14 @@ impl Planner<'_, '_> {
         }
         Some(InlinedPlan { target, recovery, base, registers: callee.registers, plan })
     }
+}
+
+/// Whether every instruction of an inlined callee renames, and one of them completes it (a
+/// multi-instruction completion or a returning call).
+fn lowerable(code: &[WideInstruction]) -> bool {
+    code.iter().all(|instruction| inlinable(*instruction) && renamable(*instruction))
+        && code.iter().any(|instruction| completion_length(*instruction) > 1
+            || (instruction.op().class().eq(Class::Call) && instruction.returns_from_frame()))
 }
 
 /// The unit's instructions, origins and frames as a plan lays them out.

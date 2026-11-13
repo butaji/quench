@@ -10,7 +10,7 @@ fn ahead_image(source: &str) -> (RelocatableCode, usize) {
     let program = crate::Engine::specialize(source, "ahead-image.js").unwrap();
     let unit = lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let isa = crate::vm::jit_backend::target_isa().unwrap();
-    let region = lower(&program, 1, &unit, LaneHelpers::Ahead, &BTreeMap::new(), &Default::default(),
+    let region = lower(&program, 1, &unit, LaneHelpers::Ahead, &[], &Default::default(),
         VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[],
         Coverage::Full, Completion::Body, ElementViews::Dense).unwrap();
     let image = crate::vm::jit_backend::compile_function(region.function, &*isa, None, |compiled, function| {
@@ -137,7 +137,7 @@ fn field_reads_calls_and_global_reads_compile_ahead_to_helper_symbols_only() {
         let id = program.function_count() - 1;
         let unit = lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = crate::vm::jit_backend::target_isa().unwrap();
-        let region = lower(&program, id as u32, &unit, LaneHelpers::Ahead, &BTreeMap::new(), &Default::default(),
+        let region = lower(&program, id as u32, &unit, LaneHelpers::Ahead, &[], &Default::default(),
             VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[],
             Coverage::Full, Completion::Body, ElementViews::Dense).expect(source);
         let image = crate::vm::jit_backend::compile_function(region.function, &*isa, None, |compiled, function| {

@@ -123,7 +123,7 @@ impl Lowering<'_, '_> {
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let string = continues(strings::flat_string(&mut stage, records, base, miss));
         let length = continues(builtins::length_value(&mut stage, string.length, miss));
-        self.ins().ireduce(types::I32, length)
+        self.narrow_word(length)
     }
 
     /// `push` of the value in `argument` onto the array in `receiver`: its new length, an
@@ -135,13 +135,13 @@ impl Lowering<'_, '_> {
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         continues(builtins::unreferenced(&mut stage, value, exit));
         let room = self.helper_call(LaneHelper::AppendRoom, &[array]);
-        let granted = self.ins().icmp_imm_u(IntCC::NotEqual, room, 0);
+        let granted = self.word_cmp_imm(IntCC::NotEqual, room, 0);
         emit_js_guard(&mut self.builder, granted, exit);
         let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, array_record_base));
         let mut stage = Emit { builder: &mut self.builder, property_values: None };
         let backing = continues(elements::array_backing(&mut stage, records, array, exit));
         let length = continues(builtins::array_push_one(&mut stage, backing, room, value, exit));
-        self.ins().ireduce(types::I32, length)
+        self.narrow_word(length)
     }
 
     /// `pop` of the array in `receiver`: its last element, which the backing no longer holds,

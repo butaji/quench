@@ -67,25 +67,45 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::LoadEnvLocal { destination, slot } => load_environment(stage, frame, destination, slot),
         Operation::StoreEnvLocal { source, slot, result, initialize } =>
             store_environment(stage, frame, (source, slot, initialize), result),
-        Operation::ArgumentsLength { destination, slot } => match frame.arguments_length(stage, slot) {
-            Some(length) => defined(stage, frame, destination, Some(length)),
-            None => calling(stage, frame, CallOut::ArgumentsLength { slot }, Some(destination)),
-        },
-        Operation::GlobalTypeof { destination, atom, site } => match frame.global_typeof(stage, destination, atom, site) {
-            Some(()) => Step::Value(stage.constant(0)),
-            None => calling(stage, frame, CallOut::GlobalTypeof { atom, site }, Some(destination)),
-        },
-        Operation::GlobalWrite { source, atom, site, initialize } => {
-            let value = frame.tagged(stage, source);
-            match frame.global_write(stage, source, atom, site, value, initialize) {
-                Some(()) => Step::Value(value),
-                None => calling(stage, frame, CallOut::GlobalWrite { source, atom, site, initialize }, None),
-            }
-        }
+        Operation::ArgumentsLength { destination, slot } => arguments_length(stage, frame, destination, slot),
+        Operation::GlobalTypeof { destination, atom, site } => global_typeof(stage, frame, destination, (atom, site)),
+        Operation::GlobalWrite { source, atom, site, initialize } =>
+            global_write(stage, frame, source, (atom, site, initialize)),
         Operation::Protocol { step, destination, operands } =>
             calling(stage, frame, CallOut::Protocol { step, operands }, destination),
         Operation::ForInNext { destination, state } => for_in_next(stage, frame, destination, state),
         _ => Step::Unresolved,
+    }
+}
+
+/// `ArgumentsLength`: the frame's own length, else the VM's.
+#[inline(always)]
+fn arguments_length<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
+    slot: u16) -> Step<S::Word, F::Control> {
+    match frame.arguments_length(stage, slot) {
+        Some(length) => defined(stage, frame, destination, Some(length)),
+        None => calling(stage, frame, CallOut::ArgumentsLength { slot }, Some(destination)),
+    }
+}
+
+/// `GlobalTypeof`: the frame's own `typeof` of the global, else the VM's.
+#[inline(always)]
+fn global_typeof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
+    (atom, site): (u32, u16)) -> Step<S::Word, F::Control> {
+    match frame.global_typeof(stage, destination, atom, site) {
+        Some(()) => Step::Value(stage.constant(0)),
+        None => calling(stage, frame, CallOut::GlobalTypeof { atom, site }, Some(destination)),
+    }
+}
+
+/// `GlobalWrite`: the frame's own store to the global name, else the VM's.
+#[inline(always)]
+fn global_write<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, source: Register,
+    (atom, site, initialize): (u32, u16, bool)) -> Step<S::Word, F::Control> {
+    let value = frame.tagged(stage, source);
+    match frame.global_write(stage, source, atom, site, value, initialize) {
+        Some(()) => Step::Value(value),
+        None => calling(stage, frame, CallOut::GlobalWrite { source, atom, site, initialize }, None),
     }
 }
 

@@ -1704,7 +1704,7 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
     let unit = lane_unit::with_budget(program, function_id, function, 0, &|_, _| Vec::new(),
         &|callee| program.function_get(callee as usize))?;
     lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
-        fields: &std::collections::BTreeMap::new(), global_reads, facts, generic: &[],
+        fields: &[], global_reads, facts, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
         entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
         plan: lane_region::RegionPlan { coverage: lane_region::Coverage::Prefix,
@@ -4887,16 +4887,17 @@ impl<H: Host> Vm<H> {
     /// values they met (a function's own field, read through a plain object's proof), so
     /// they take the VM's cached read, which answers them (`lane_region::field_probe`).
     fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize])
-        -> std::collections::BTreeMap<u16, Vec<NativeFieldLoad>> {
+        -> Vec<Option<Vec<NativeFieldLoad>>> {
         let (generic, functions): (Vec<u16>, _) = (generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
             .map(|(site, _)| site).collect(), self.heap.function_shapes());
-        unit.instructions
+        let sites = unit.instructions
             .iter()
             .flat_map(|instruction| Self::instruction_field_sites(program, instruction))
             .filter(|(site, _)| !generic.contains(site))
             .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }.into_iter().map(|load| NativeFieldLoad { function_shape: functions.contains(load.shape as usize), ..load }).collect::<Vec<_>>()))
             .filter(|(site, shapes)| !shapes.is_empty() && site_posterior::SiteEvidence::of(self.field_site_leaves(self.field_cache_index(*site)), shapes.len()).speculates())
-            .collect()
+            .map(|(site, shapes)| (usize::from(site), shapes));
+        lane_region::flat_table(sites)
     }
 
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
