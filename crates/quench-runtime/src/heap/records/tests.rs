@@ -1,4 +1,4 @@
-use super::{OCCUPANCY_WORD_BITS, PromotionAge, RECORD_SPACE_CAPACITY, RECORDS_PER_BLOCK, RecordSpace};
+use super::{ClaimRoute, OCCUPANCY_WORD_BITS, PromotionAge, RECORD_SPACE_CAPACITY, RECORDS_PER_BLOCK, RecordSpace, claim_route};
 use std::mem::size_of;
 
 #[test]
@@ -137,4 +137,19 @@ fn bitmap_reuse_preserves_descending_free_id_order_across_sweeps() {
     assert_eq!(arena.try_insert(12).unwrap(), ids[2]);
     assert_eq!(arena.try_insert(13).unwrap(), ids[0]);
     assert_eq!(arena.try_insert(14).unwrap(), 6);
+}
+
+#[test]
+fn the_fresh_claim_route_is_one_decision() {
+    let capacity = 1 << 20;
+    let (blocks, rpb) = (capacity / RECORDS_PER_BLOCK, RECORDS_PER_BLOCK);
+    let fresh = claim_route(0, 0, true, 7, blocks, capacity);
+    assert_eq!(fresh, ClaimRoute::Fresh { id: 7, block: 0, record: 7 });
+    assert_eq!(claim_route(0, 0, true, rpb as u32, blocks, capacity),
+        ClaimRoute::Fresh { id: rpb as u32, block: 1, record: 0 });
+    assert_eq!(claim_route(0, 0, true, capacity as u32, blocks, capacity), ClaimRoute::Cold);
+    assert_eq!(claim_route(0, 0, false, 0, blocks, capacity), ClaimRoute::Cold);
+    assert_eq!(claim_route(1, 0, true, 0, blocks, capacity), ClaimRoute::Cold);
+    assert_eq!(claim_route(0, 4, true, 0, blocks, capacity), ClaimRoute::Cold);
+    assert_eq!(claim_route(0, 0, true, 0, 0, capacity), ClaimRoute::Cold);
 }

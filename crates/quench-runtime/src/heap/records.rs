@@ -249,6 +249,27 @@ pub(crate) struct RecordClaimFacts {
     pub(crate) block_size: usize,
 }
 
+/// The record-claim fast path's decision, as data: a fresh id and where it lives, or the cold
+/// path (a loaded free word, a free cursor scan, an unreserved space, or no room). One home
+/// for the condition the staged claim row's Emit projection repeats.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ClaimRoute {
+    Fresh { id: u32, block: usize, record: usize },
+    Cold,
+}
+
+/// `ClaimRoute` of a record space's live fields.
+#[inline(always)]
+pub(crate) fn claim_route(free_word: u64, free_cursor: u32, reserved: bool, next_id: u32,
+    block_count: usize, capacity: usize) -> ClaimRoute {
+    if free_word != 0 || free_cursor != 0 || !reserved || (next_id as usize) >= capacity {
+        return ClaimRoute::Cold;
+    }
+    let (block, record) = (next_id as usize / RECORDS_PER_BLOCK, next_id as usize % RECORDS_PER_BLOCK);
+    if block >= block_count { return ClaimRoute::Cold; }
+    ClaimRoute::Fresh { id: next_id, block, record }
+}
+
 impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     /// The record-claim fast path's fields (`_record_claim`), as pointers to the live state.
     /// Native code writes them with no Rust borrow live, as it does the allocator header.
@@ -417,24 +438,17 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     /// uninitialized, to be written before the next safepoint (`try_insert` writes it at once).
     #[inline(always)]
     pub(super) fn claim_uninit(&mut self) -> Option<RecordId> {
-        // The common allocation, inline: an id from the loaded free word, else the next fresh id
-        // in a block that exists; `claim_slow` names no value (no address of the caller's stack).
-        let id = if self.free_word != 0 {
-            self.take_free_word_id()
-        } else if self.free_cursor == 0
-            && self.is_reserved()
-            && (self.next_id as usize) < CAPACITY
-            && Self::split_id(self.next_id).0 < self.blocks.len()
-        {
-            let id = self.next_id;
-            let (block_index, record_index) = Self::split_id(id);
-            if !self.blocks[block_index].claim(record_index) {
-                return None;
+        // The common allocation, inline: a fresh id per `claim_route`, else the loaded free
+        // word or `claim_slow` (which names no value: no address of the caller's stack).
+        let id = match claim_route(self.free_word, self.free_cursor, self.is_reserved(),
+            self.next_id, self.blocks.len(), CAPACITY) {
+            ClaimRoute::Fresh { id, block, record } => {
+                if !self.blocks[block].claim(record) { return None; }
+                self.next_id += 1;
+                id
             }
-            self.next_id += 1;
-            id
-        } else {
-            self.claim_slow()?
+            ClaimRoute::Cold if self.free_word != 0 => self.take_free_word_id(),
+            ClaimRoute::Cold => self.claim_slow()?,
         };
         self.live += 1;
         Some(id)
