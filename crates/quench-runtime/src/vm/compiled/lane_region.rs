@@ -5429,6 +5429,105 @@ fn emit_js_guard_not(builder: &mut FunctionBuilder<'_>, condition: ir::Value, fa
 
 #[cfg(test)]
 mod tests {
+    /// The record-claim row's Emit projection, compiled and run, against its concrete
+    /// projection on a heap in the same state: the same id, next id, live count and usable
+    /// occupancy.
+    #[test]
+    fn the_claim_rows_emit_projection_matches_its_concrete_one() {
+        use crate::heap::Heap;
+        use crate::staged::records::claim as emit_claim;
+        use cranelift_codegen::ir::UserFuncName;
+        use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+
+        use crate::heap::Object;
+        let write = |ptr: *mut Object| unsafe { ptr.write(Object::new(Value::NULL)) };
+        let mut concrete = Heap::new();
+        let (_, reserved) = concrete.claim_object_record().unwrap();
+        write(reserved);
+        let (expected_value, record) = concrete.claim_object_record().unwrap();
+        write(record);
+        let expected = expected_value.heap_index().unwrap();
+
+        let mut heap = Heap::new();
+        let (_, reserved) = heap.claim_object_record().unwrap();
+        write(reserved);
+        let facts = heap.record_claim_facts();
+        // SAFETY: a zeroed dispatch supplies the record-claim words the row reads; the cold
+        // arm is emitted but not taken (the fresh route holds).
+        let mut dispatch: super::super::JsStepDispatch = unsafe { std::mem::zeroed() };
+        dispatch.record_next_id = facts.next_id as usize;
+        dispatch.record_free_word = facts.free_word as usize;
+        dispatch.record_free_cursor = facts.free_cursor as usize;
+        dispatch.record_live = facts.live as usize;
+        dispatch.record_blocks = facts.blocks as usize;
+        dispatch.record_block_count = facts.block_count;
+        dispatch.record_capacity = facts.capacity;
+        dispatch.record_records_per_block = facts.records_per_block;
+        dispatch.record_occupancy_word_bits = facts.occupancy_word_bits;
+        dispatch.record_block_size = facts.block_size;
+        dispatch.record_reserved = u32::from(facts.reserved);
+
+        let isa = super::super::jit_backend::target_isa().unwrap();
+        let mut signature = ir::Signature::new(isa.default_call_conv());
+        signature.params.push(ir::AbiParam::new(types::I64));
+        signature.returns.push(ir::AbiParam::new(types::I64));
+        let mut function = ir::Function::with_name_signature(UserFuncName::testcase("claim_row"), signature);
+        let mut context = FunctionBuilderContext::new();
+        let payload;
+        {
+            let mut builder = FunctionBuilder::new(&mut function, &mut context);
+            let entry = builder.create_block();
+            builder.append_block_params_for_function_params(entry);
+            builder.switch_to_block(entry);
+            builder.seal_block(entry);
+            payload = builder.block_params(entry)[0];
+            let miss = builder.create_block();
+            let mut registers = super::Registers { tagged: Vec::new(), int: Vec::new(), float: Vec::new() };
+            let mut written = cranelift_codegen::bitset::CompoundBitSet::with_capacity(1);
+            let mut state = super::State::canonical(0);
+            let mut polls = smallvec::SmallVec::new();
+            let mut stage = super::super::object_slots::Emit { builder: &mut builder, property_values: None };
+            let mut frame = super::frame::EmitFrame {
+                registers: &mut registers, written: &mut written, state: &mut state,
+                edges: super::frame::Edges::Value, constants: &[], this: None, payload,
+                helpers: super::super::LaneHelpers::Process(super::super::LaneHelper::addresses::<crate::test_host::TestHost>()),
+                locals: false, polls: &mut polls,
+            };
+            let id = emit_claim(&mut stage, &mut frame, miss, facts.capacity as u64).unwrap();
+            builder.ins().return_(&[id]);
+            builder.switch_to_block(miss);
+            let failed = builder.ins().iconst(types::I64, u64::MAX as i64);
+            builder.ins().return_(&[failed]);
+            builder.seal_all_blocks();
+            builder.finalize(isa.frontend_config());
+        }
+        if let Err(error) = cranelift_codegen::verify_function(&function, &*isa) {
+            panic!("{error}\n{}", function.display());
+        }
+        let (memory, entry) = super::super::compile_native_function(function, &*isa, usize::MAX, super::super::publish_entry).unwrap();
+        // SAFETY: the row's function takes the dispatch pointer and returns the record id.
+        let run: unsafe extern "C" fn(u64) -> u64 = unsafe { std::mem::transmute(entry) };
+        let id = unsafe { run(&mut dispatch as *mut _ as u64) };
+        drop(memory);
+        assert_eq!(id, u64::from(expected));
+        let (after, concrete_after) = (heap.record_claim_facts(), concrete.record_claim_facts());
+        // SAFETY: the facts point into each live heap.
+        unsafe {
+            assert_eq!(*after.next_id, *concrete_after.next_id);
+            assert_eq!(*after.live, *concrete_after.live);
+            assert_eq!(*after.free_word, *concrete_after.free_word);
+        }
+        // The emitted claim's record is usable and the next claim is the next id.
+        let base = heap.object_record_base().unwrap();
+        write(unsafe { base.add(id as usize).cast_mut() });
+        let (next_emit, next_record) = heap.claim_object_record().unwrap();
+        write(next_record);
+        let (next_concrete, concrete_record) = concrete.claim_object_record().unwrap();
+        write(concrete_record);
+        assert_eq!(next_emit.heap_index(), next_concrete.heap_index());
+        assert_eq!(next_emit.heap_index().unwrap(), expected + 1);
+    }
+
     #[test]
     fn call_effect_retires_nullable_shapes_without_losing_null_alternatives() {
         use super::*;

@@ -5480,12 +5480,6 @@ fn lane_new_literal_array<H: Host>(vm: &mut Vm<H>, r: Registers, ip: Ip, length:
 /// back to a heap slot, which takes the new object by its stack address, a temporary the
 /// handler then does not hold.
 #[inline(never)]
-/// The record-claim row's cold path (`staged::records`): an object record id from the real
-/// allocator, live count advanced, or `u32::MAX` where the space has no room.
-pub(super) fn lane_claim_object_record<H: Host>(vm: &mut Vm<H>) -> u64 {
-    vm.heap.claim_record_id().map_or(u64::MAX, u64::from)
-}
-
 fn lane_new_object<H: Host>(vm: &mut Vm<H>) -> Value {
     let value = vm.object();
     note_allocation(vm);

@@ -6,6 +6,15 @@ use super::{Host, JsStepDispatch, ResidualProgram, Value, Vm};
 /// A lane body's empty object literal, as the lane's own (`dispatch_fast::lane_make_object`);
 /// `DELETED` where a collection is due, which the body leaves for. The allocation may move
 /// the property arena, whose base and length the dispatch reads again.
+/// The record-claim row's cold path: an object record id from the real allocator, its live
+/// count advanced, or `u32::MAX` where the space has no room.
+pub(super) unsafe extern "C" fn lane_claim_object_record<H: Host>(vm: u64, _residual: u64) -> u64 {
+    // SAFETY: as `lane_new_object`; the helper table is this process's, and the body's
+    // dispatch is the running VM's.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    vm.heap.claim_record_id().map_or(u64::MAX, u64::from)
+}
+
 pub(super) unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64, payload: u64) -> u64 {
     // SAFETY: the body passes its own dispatch; nothing else borrows the VM while it runs.
     let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };

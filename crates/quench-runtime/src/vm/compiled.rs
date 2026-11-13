@@ -72,7 +72,7 @@ mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
-use lane_allocations::{lane_binary, lane_new_array, lane_new_const_array, lane_new_object, lane_new_object_pair};
+use lane_allocations::{lane_binary, lane_claim_object_record, lane_new_array, lane_new_const_array, lane_new_object, lane_new_object_pair};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
@@ -1809,7 +1809,7 @@ lane_helper_inventory! { H;
     /// An object literal's and an array literal's allocation.
     NewObject => lane_new_object::<H>,
     /// The record-claim row's cold path: a claimed record id, or `u32::MAX`.
-    ClaimObjectRecord => super::dispatch_fast::lane_claim_object_record::<H>,
+    ClaimObjectRecord => lane_claim_object_record::<H>,
     NewArray => lane_new_array::<H>,
     /// An array literal of program constants (`lane_new_const_array`).
     NewConstArray => lane_new_const_array::<H>,
