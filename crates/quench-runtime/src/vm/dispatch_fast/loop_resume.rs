@@ -7,12 +7,18 @@ use super::*;
 /// The innermost loop site of `own` holding `pc` whose published code can re-enter at it, with
 /// its region.
 fn resumable_site<'v>(own: &'v LaneView, pc: u32) -> Option<(&'v LoopSite, &'v super::super::compiled::LoopRegion)> {
-    let mut held: Vec<&LoopSite> = own.loops.iter().filter(|site| (site.header..=site.backedge).contains(&pc)).collect();
-    held.sort_by_key(|site| site.backedge - site.header);
-    held.into_iter().find_map(|site| {
-        let region = site.active_region().filter(|region| region.inlining.is_none())?;
-        site.tier.borrow().resumable(region, pc).then_some((site, region))
-    })
+    let mut innermost: Option<(u32, &LoopSite, &super::super::compiled::LoopRegion)> = None;
+    for site in &own.loops {
+        let span = site.backedge - site.header;
+        if !(site.header..=site.backedge).contains(&pc) || innermost.is_some_and(|(held, ..)| held <= span) {
+            continue;
+        }
+        let Some(region) = site.active_region().filter(|region| region.inlining.is_none()) else { continue };
+        if site.tier.borrow().resumable(region, pc) {
+            innermost = Some((span, site, region));
+        }
+    }
+    innermost.map(|(_, site, region)| (site, region))
 }
 
 /// Runs the loop's published code from `pc` on the activation's registers `r`, and where the

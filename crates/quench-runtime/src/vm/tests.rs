@@ -3030,6 +3030,13 @@ fn young_runs_of_survivors_keep_their_values_across_collections() {
     }
 }
 
+#[cfg(not(quench_profiled))]
+/// The OSR diagnostics of the lane view of function `function` of `vm`'s main program.
+fn main_osr(vm: &Vm<TestHost>, function: usize) -> super::dispatch_fast::OsrDiagnostics {
+    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).expect("main program lane views");
+    views.get(function).and_then(super::program_store::derived_lane_view).expect("hot caller loop lane view").osr_diagnostics()
+}
+
 fn global_text(source: &str, name: &str) -> String {
     global_text_under(crate::MemoryPolicy::default(), source, name)
 }
@@ -12949,10 +12956,7 @@ fn assert_lane_matches_interpreter(source: &str, name: &str, globals: &[&str]) {
 }
 
 #[cfg(not(quench_profiled))]
-#[test]
-fn lane_tagged_int32_bitwise_ops_fall_back_exactly() {
-    assert_lane_matches_interpreter(
-        r#"
+const LANE_TAGGED_INT32_BITWISE_OPS_FALL_BACK_EXACTLY_SOURCE: &str = r#"
           function bitAnd(left, right) {
             let result = 0;
             for (let pass = 0; pass < 2; pass++) result = left & right;
@@ -13012,10 +13016,12 @@ fn lane_tagged_int32_bitwise_ops_fall_back_exactly() {
           let bigintThrew = false;
           try { bitXor(13n, 1); } catch (error) { bigintThrew = error instanceof TypeError; }
           if (!bigintThrew) throw Error('mixed bigint fallback');
-        "#,
-        "js-lane-int32-bitwise.js",
-        &["result"],
-    );
+        "#;
+
+#[cfg(not(quench_profiled))]
+#[test]
+fn lane_tagged_int32_bitwise_ops_fall_back_exactly() {
+    assert_lane_matches_interpreter(LANE_TAGGED_INT32_BITWISE_OPS_FALL_BACK_EXACTLY_SOURCE, "js-lane-int32-bitwise.js", &["result"]);
 }
 
 #[test]
@@ -13297,15 +13303,7 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
         compiled.execute(&program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), ["4999500000"], "{policy:?}");
-        let views = compiled
-            .programs
-            .lane_views(super::program_store::ProgramId::MAIN)
-            .expect("main program lane views");
-        let view = views
-            .get(function_id)
-            .and_then(super::program_store::derived_lane_view)
-            .expect("hot sum loop lane view");
-        let osr = view.osr_diagnostics();
+        let osr = main_osr(&compiled, function_id);
         // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
         let analyzes = super::compiled::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY);
         assert_eq!(osr.admitted_sites, usize::from(analyzes), "field loop admission under {policy:?}");
@@ -13345,15 +13343,7 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
         compiled.execute(&program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), ["1201100"], "{policy:?}");
-        let views = compiled
-            .programs
-            .lane_views(super::program_store::ProgramId::MAIN)
-            .expect("main program lane views");
-        let osr = views
-            .get(function_id)
-            .and_then(super::program_store::derived_lane_view)
-            .expect("hot fill loop lane view")
-            .osr_diagnostics();
+        let osr = main_osr(&compiled, function_id);
         // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
         let analyzes = super::compiled::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY);
         assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-reading store loop admission under {policy:?}");
@@ -13427,15 +13417,7 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
 
     assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
     assert_eq!(compiled_output.borrow().as_slice(), ["162010 10 10 true 10 5 3"]);
-    let views = compiled
-        .programs
-        .lane_views(super::program_store::ProgramId::MAIN)
-        .expect("main program lane views");
-    let osr = views
-        .get(function_id)
-        .and_then(super::program_store::derived_lane_view)
-        .expect("hot field-store loop lane view")
-        .osr_diagnostics();
+    let osr = main_osr(&compiled, function_id);
     assert!(osr.currently_compiled_sites > 0, "field-store loop did not compile: {osr:?}");
     assert!(osr.native_region_runs > 0, "field-store loop never ran natively: {osr:?}");
     let reference_id = program
@@ -13448,11 +13430,7 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
                 .is_some_and(|atom| &program.atoms[atom as usize] == "fillReference")
         })
         .unwrap();
-    let reference_osr = views
-        .get(reference_id)
-        .and_then(super::program_store::derived_lane_view)
-        .expect("hot reference field-store loop lane view")
-        .osr_diagnostics();
+    let reference_osr = main_osr(&compiled, reference_id);
     assert!(reference_osr.currently_compiled_sites > 0, "reference field-store loop did not compile: {reference_osr:?}");
     assert!(reference_osr.native_region_runs > 0, "reference field-store loop never ran natively: {reference_osr:?}");
 }
@@ -13846,15 +13824,7 @@ fn shared_osr_appends_and_fills_holes_in_place() {
         if !super::compiled::loop_tier_compiles(policy) {
             continue;
         }
-        let views = compiled
-            .programs
-            .lane_views(super::program_store::ProgramId::MAIN)
-            .expect("main program lane views");
-        let osr = views
-            .get(function_id)
-            .and_then(super::program_store::derived_lane_view)
-            .expect("hot grow loop lane view")
-            .osr_diagnostics();
+        let osr = main_osr(&compiled, function_id);
         assert!(osr.native_region_runs > 0, "no native run under {policy:?}: {osr:?}");
         // A store leaves only where the backing is full, once per capacity growth.
         assert!(osr.exits < osr.native_region_runs, "appends left native code under {policy:?}: {osr:?}");
@@ -13922,15 +13892,7 @@ fn shared_osr_wavefront_pairs_keep_stencil_sweep_results() {
         if !super::compiled::loop_tier_compiles(policy) {
             continue;
         }
-        let views = compiled
-            .programs
-            .lane_views(super::program_store::ProgramId::MAIN)
-            .expect("main program lane views");
-        let osr = views
-            .get(function_id)
-            .and_then(super::program_store::derived_lane_view)
-            .expect("hot sweep lane view")
-            .osr_diagnostics();
+        let osr = main_osr(&compiled, function_id);
         assert!(osr.native_region_runs > 0, "no native sweep under {policy:?}: {osr:?}");
     }
 }
@@ -13983,15 +13945,7 @@ fn shared_osr_stores_fields_of_receivers_the_loop_redefines() {
         if !super::compiled::loop_tier_compiles(policy) {
             continue;
         }
-        let views = compiled
-            .programs
-            .lane_views(super::program_store::ProgramId::MAIN)
-            .expect("main program lane views");
-        let osr = views
-            .get(function_id)
-            .and_then(super::program_store::derived_lane_view)
-            .expect("hot walk lane view")
-            .osr_diagnostics();
+        let osr = main_osr(&compiled, function_id);
         assert!(osr.native_region_runs > 0, "no native walk under {policy:?}: {osr:?}");
     }
 }
@@ -14032,15 +13986,7 @@ fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
         if !super::compiled::loop_tier_compiles(policy) {
             continue;
         }
-        let views = compiled
-            .programs
-            .lane_views(super::program_store::ProgramId::MAIN)
-            .expect("main program lane views");
-        let osr = views
-            .get(function_id)
-            .and_then(super::program_store::derived_lane_view)
-            .expect("hot fill lane view")
-            .osr_diagnostics();
+        let osr = main_osr(&compiled, function_id);
         // The lane path enters the loop once per call and leaves only where a reserve or
         // collection debt needs the VM; the old lowering re-entered at each capacity growth.
         assert!(osr.native_region_runs > 0, "fill left native code under {policy:?}: {osr:?}");
@@ -14352,15 +14298,7 @@ fn shared_osr_indexes_arrays_that_field_reads_give() {
         compiled.execute(&program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), ["804092460 34 110"], "{policy:?}");
-        let views = compiled
-            .programs
-            .lane_views(super::program_store::ProgramId::MAIN)
-            .expect("main program lane views");
-        let osr = views
-            .get(function_id)
-            .and_then(super::program_store::derived_lane_view)
-            .expect("hot mix loop lane view")
-            .osr_diagnostics();
+        let osr = main_osr(&compiled, function_id);
         // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
         let analyzes = super::compiled::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY);
         assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-array loop admission under {policy:?}");
@@ -14512,15 +14450,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
     );
     assert_eq!(compiled_output.borrow().as_slice(), ["40 5050 true"]);
 
-    let views = compiled
-        .programs
-        .lane_views(super::program_store::ProgramId::MAIN)
-        .unwrap();
-    let view = views
-        .get(function_id)
-        .and_then(super::program_store::derived_lane_view)
-        .expect("callback loop lane view");
-    let osr = view.osr_diagnostics();
+    let osr = main_osr(&compiled, function_id);
     assert_eq!(
         osr.sites.len(),
         5,
@@ -15184,15 +15114,7 @@ print(t + " " + w.array[5] + " " + w.array[77]);
         compiled.execute(&program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
-        let views = compiled
-            .programs
-            .lane_views(super::program_store::ProgramId::MAIN)
-            .expect("main program lane views");
-        let osr = views
-            .get(function_id)
-            .and_then(super::program_store::derived_lane_view)
-            .expect("hot caller loop lane view")
-            .osr_diagnostics();
+        let osr = main_osr(&compiled, function_id);
         let compiles = super::compiled::loop_tier_compiles(policy);
         assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "inlining loop native code under {policy:?}");
         assert_eq!(osr.native_region_runs > 0, compiles, "inlining loop native runs under {policy:?}");
@@ -15251,15 +15173,7 @@ print(total + " " + w.arr.slice(35, 50).join(","));
         compiled.execute(&program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
-        let views = compiled
-            .programs
-            .lane_views(super::program_store::ProgramId::MAIN)
-            .expect("main program lane views");
-        let osr = views
-            .get(function_id)
-            .and_then(super::program_store::derived_lane_view)
-            .expect("hot caller loop lane view")
-            .osr_diagnostics();
+        let osr = main_osr(&compiled, function_id);
         let compiles = super::compiled::loop_tier_compiles(policy);
         assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "inlining loop native code under {policy:?}");
         assert_eq!(osr.native_region_runs > 0, compiles, "inlining loop native runs under {policy:?}");
@@ -15438,13 +15352,7 @@ print(t);
         if !super::compiled::loop_tier_compiles(policy) {
             continue;
         }
-        let views = compiled
-            .programs
-            .lane_views(super::program_store::ProgramId::MAIN)
-            .expect("main program lane views");
-        let osr = |function: usize| {
-            views.get(function).and_then(super::program_store::derived_lane_view).expect("hot lane view").osr_diagnostics()
-        };
+        let osr = |function: usize| main_osr(&compiled, function);
         let (callee, caller) = (osr(am3), osr(reduce));
         assert!(caller.native_region_runs > 0, "no native caller run under {policy:?}: {caller:?}");
         // Out of line, am3's loop would run once per call, 2000 reductions of 30 calls; the
@@ -15847,15 +15755,7 @@ fn shared_osr_compiles_numeric_truthiness_branches() {
     vm.execute(&program).unwrap();
 
     assert_eq!(output.borrow().as_slice(), ["1200", "2", "ok"]);
-    let views = vm
-        .programs
-        .lane_views(super::program_store::ProgramId::MAIN)
-        .expect("main program lane views");
-    let view = views
-        .get(function_id)
-        .and_then(super::program_store::derived_lane_view)
-        .expect("hot truthiness loop lane view");
-    let diagnostics = view.osr_diagnostics();
+    let diagnostics = main_osr(&vm, function_id);
     assert_eq!(
         diagnostics.currently_compiled_sites,
         1,
@@ -15922,15 +15822,7 @@ fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["3200", "2", "2"]);
 
-    let views = vm
-        .programs
-        .lane_views(super::program_store::ProgramId::MAIN)
-        .expect("main program lane views");
-    let view = views
-        .get(function_id)
-        .and_then(super::program_store::derived_lane_view)
-        .expect("hot strict null loop lane view");
-    let diagnostics = view.osr_diagnostics();
+    let diagnostics = main_osr(&vm, function_id);
     assert_eq!(
         diagnostics.currently_compiled_sites,
         1,
@@ -16004,15 +15896,7 @@ fn shared_osr_compiles_strict_inequality_branches_for_null_and_undefined() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
-    let views = vm
-        .programs
-        .lane_views(super::program_store::ProgramId::MAIN)
-        .expect("main program lane views");
-    let diagnostics = views
-        .get(function_id)
-        .and_then(super::program_store::derived_lane_view)
-        .expect("hot strict inequality lane view")
-        .osr_diagnostics();
+    let diagnostics = main_osr(&vm, function_id);
     assert!(diagnostics.compile_successes > 0, "strict inequality loop did not compile: {diagnostics:?}");
     assert!(diagnostics.native_region_runs > 0, "strict inequality loop did not run natively: {diagnostics:?}");
 }
@@ -16085,15 +15969,7 @@ fn shared_osr_exits_at_effectful_calls_with_live_state_written_back() {
     compiled.execute(&program).unwrap();
     assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
-    let views = compiled
-        .programs
-        .lane_views(super::program_store::ProgramId::MAIN)
-        .expect("main program lane views");
-    let diagnostics = views
-        .get(function_id)
-        .and_then(super::program_store::derived_lane_view)
-        .expect("hot callback loop lane view")
-        .osr_diagnostics();
+    let diagnostics = main_osr(&compiled, function_id);
     assert!(diagnostics.compile_successes > 0, "call boundary did not admit a native prefix: {diagnostics:?}");
     assert!(diagnostics.native_region_runs > 0, "native prefix never ran: {diagnostics:?}");
     assert!(diagnostics.sites.iter().any(|site| {
@@ -16147,15 +16023,7 @@ fn shared_osr_reads_initialized_captured_environment_locals_and_deopts_non_numbe
     compiled.execute(&program).unwrap();
     assert_eq!(compiled_output.borrow().as_slice(), expected.as_slice());
 
-    let views = compiled
-        .programs
-        .lane_views(super::program_store::ProgramId::MAIN)
-        .expect("main program lane views");
-    let diagnostics = views
-        .get(function_id)
-        .and_then(super::program_store::derived_lane_view)
-        .expect("hot captured local lane view")
-        .osr_diagnostics();
+    let diagnostics = main_osr(&compiled, function_id);
     assert!(diagnostics.compile_successes > 0, "environment-local boundary was not compiled: {diagnostics:?}");
     assert!(diagnostics.native_region_runs > 0, "environment-local boundary never ran natively: {diagnostics:?}");
     assert!(diagnostics.exits > 0, "a non-Number local did not fall back at its load: {diagnostics:?}");
@@ -16274,15 +16142,7 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
         Value::number(528.0)
     );
 
-    let views = vm
-        .programs
-        .lane_views(super::program_store::ProgramId::MAIN)
-        .expect("main program lane views");
-    let view = views
-        .get(function_id)
-        .and_then(super::program_store::derived_lane_view)
-        .expect("hot changing receiver lane view after collection");
-    let diagnostics = view.osr_diagnostics();
+    let diagnostics = main_osr(&vm, function_id);
     assert_eq!(diagnostics.currently_compiled_sites, 1, "OSR diagnostics: {diagnostics:?}");
     assert!(
         diagnostics.compile_successes >= 2,
@@ -16431,15 +16291,7 @@ fn shared_osr_compiles_typeof_switch_indices_and_falls_back_for_heap_values() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
-    let views = vm
-        .programs
-        .lane_views(super::program_store::ProgramId::MAIN)
-        .expect("main program lane views");
-    let view = views
-        .get(function_id)
-        .and_then(super::program_store::derived_lane_view)
-        .expect("hot typeof switch lane view");
-    let diagnostics = view.osr_diagnostics();
+    let diagnostics = main_osr(&vm, function_id);
     assert_eq!(diagnostics.currently_compiled_sites, 1, "OSR diagnostics: {diagnostics:?}");
     assert!(diagnostics.native_region_runs > 0, "OSR diagnostics: {diagnostics:?}");
     assert_eq!(
@@ -16494,8 +16346,7 @@ fn shared_osr_tagged_number_equality_keeps_boolean_negation_and_number_semantics
     vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
-    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
-    let diagnostics = super::program_store::derived_lane_view(&views[function_id]).unwrap().osr_diagnostics();
+    let diagnostics = main_osr(&vm, function_id);
     assert_eq!(diagnostics.currently_compiled_sites, 1, "{diagnostics:?}");
     assert!(diagnostics.native_region_runs > 0, "{diagnostics:?}");
     assert_eq!(diagnostics.exits, 0, "strict comparisons must not coerce or exit: {diagnostics:?}");
@@ -16554,15 +16405,7 @@ fn shared_osr_compiles_loose_nullish_equality_without_coercion() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["800", "0", "4"]);
 
-    let views = vm
-        .programs
-        .lane_views(super::program_store::ProgramId::MAIN)
-        .expect("main program lane views");
-    let view = views
-        .get(function_id)
-        .and_then(super::program_store::derived_lane_view)
-        .expect("hot loose nullish loop lane view");
-    let diagnostics = view.osr_diagnostics();
+    let diagnostics = main_osr(&vm, function_id);
     assert_eq!(
         diagnostics.currently_compiled_sites,
         1,
@@ -16657,15 +16500,7 @@ fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
-    let views = vm
-        .programs
-        .lane_views(super::program_store::ProgramId::MAIN)
-        .expect("main program lane views");
-    let view = views
-        .get(function_id)
-        .and_then(super::program_store::derived_lane_view)
-        .expect("hot changing receiver lane view");
-    let diagnostics = view.osr_diagnostics();
+    let diagnostics = main_osr(&vm, function_id);
     assert_eq!(diagnostics.currently_compiled_sites, 1, "OSR diagnostics: {diagnostics:?}");
     assert!(
         diagnostics.native_region_runs > 0,
@@ -16711,15 +16546,7 @@ fn shared_osr_float_unary_uses_shared_number_denotation() {
                 .is_some_and(|name| &program.atoms[name as usize] == "negate")
         })
         .unwrap();
-    let views = vm
-        .programs
-        .lane_views(super::program_store::ProgramId::MAIN)
-        .expect("main program lane views");
-    let view = views
-        .get(function_id)
-        .and_then(super::program_store::derived_lane_view)
-        .expect("hot negate loop lane view");
-    let osr = view.osr_diagnostics();
+    let osr = main_osr(&vm, function_id);
     assert_eq!(
         osr.admitted_sites, 1,
         "OSR analysis rejected the unary loop ({} rejection sites)",
@@ -16838,10 +16665,7 @@ fn js_jit_tier_tracking_has_a_hard_bound() {
 }
 
 #[cfg(not(quench_profiled))]
-#[test]
-fn lane_dynamic_properties_run_with_shared_vm_semantics() {
-    assert_lane_matches_interpreter(
-        r#"
+const LANE_DYNAMIC_PROPERTIES_RUN_WITH_SHARED_VM_SEMANTICS_SOURCE: &str = r#"
       function read(target, key) {
         try { return target[key]; } catch (error) { return error; }
       }
@@ -16879,10 +16703,12 @@ fn lane_dynamic_properties_run_with_shared_vm_semantics() {
       }
       if (getterCalls !== 96 || target.fallback !== 148) throw Error('dynamic property effects');
       if (read(target, 'throwing') !== marker) throw Error('caught getter throw');
-    "#,
-        "js-jit-general.js",
-        &[],
-    );
+    "#;
+
+#[cfg(not(quench_profiled))]
+#[test]
+fn lane_dynamic_properties_run_with_shared_vm_semantics() {
+    assert_lane_matches_interpreter(LANE_DYNAMIC_PROPERTIES_RUN_WITH_SHARED_VM_SEMANTICS_SOURCE, "js-jit-general.js", &[]);
 }
 
 #[cfg(not(quench_profiled))]
@@ -16907,10 +16733,7 @@ fn lane_loads_rooted_string_and_bigint_constants() {
 }
 
 #[cfg(not(quench_profiled))]
-#[test]
-fn lane_static_global_name_loads_keep_exact_fallbacks() {
-    assert_lane_matches_interpreter(
-        r#"
+const LANE_STATIC_GLOBAL_NAME_LOADS_KEEP_EXACT_FALLBACKS_SOURCE: &str = r#"
           globalThis.cachedData = 41;
           globalThis.nameGetterCalls = 0;
           Object.defineProperty(globalThis, 'accessorData', {
@@ -16950,17 +16773,16 @@ fn lane_static_global_name_loads_keep_exact_fallbacks() {
             readCachedData(), callStrictTarget(), readLexicalShadow(),
             readAccessor(), readMissing(), typeofMissing(), nameGetterCalls
           ];
-        "#,
-        "js-jit-general-static-names.js",
-        &["nameLoadResult"],
-    );
-}
+        "#;
 
 #[cfg(not(quench_profiled))]
 #[test]
-fn lane_number_arithmetic_falls_back_exactly() {
-    assert_lane_matches_interpreter(
-        r#"
+fn lane_static_global_name_loads_keep_exact_fallbacks() {
+    assert_lane_matches_interpreter(LANE_STATIC_GLOBAL_NAME_LOADS_KEEP_EXACT_FALLBACKS_SOURCE, "js-jit-general-static-names.js", &["nameLoadResult"]);
+}
+
+#[cfg(not(quench_profiled))]
+const LANE_NUMBER_ARITHMETIC_FALLS_BACK_EXACTLY_SOURCE: &str = r#"
       function combine(left, right) {
         try { const result = left + right; return result; }
         catch (error) { return error instanceof TypeError; }
@@ -17030,10 +16852,12 @@ fn lane_number_arithmetic_falls_back_exactly() {
       if (negate(Symbol('value')) !== true || positive(Symbol('value')) !== true) {
         throw Error('unary throw fallback');
       }
-    "#,
-        "js-jit-general-arithmetic.js",
-        &[],
-    );
+    "#;
+
+#[cfg(not(quench_profiled))]
+#[test]
+fn lane_number_arithmetic_falls_back_exactly() {
+    assert_lane_matches_interpreter(LANE_NUMBER_ARITHMETIC_FALLS_BACK_EXACTLY_SOURCE, "js-jit-general-arithmetic.js", &[]);
 }
 
 #[cfg(not(quench_profiled))]
@@ -17122,10 +16946,7 @@ fn lane_number_relations_fall_back_exactly() {
 }
 
 #[cfg(not(quench_profiled))]
-#[test]
-fn lane_dense_array_element_reads_fall_back_exactly() {
-    assert_lane_matches_interpreter(
-        r#"
+const LANE_DENSE_ARRAY_ELEMENT_READS_FALL_BACK_EXACTLY_SOURCE: &str = r#"
       function readIndex(array, key) { return array[key]; }
       const first = [10, 20];
       const second = [30, 40];
@@ -17161,17 +16982,16 @@ fn lane_dense_array_element_reads_fall_back_exactly() {
       const accessor = [];
       Object.defineProperty(accessor, 0, { get() { accessorCalls++; return 70; } });
       if (readIndex(accessor, 0) !== 70 || accessorCalls !== 1) throw Error('accessor fallback');
-    "#,
-        "js-jit-general-dense-array-index.js",
-        &[],
-    );
-}
+    "#;
 
 #[cfg(not(quench_profiled))]
 #[test]
-fn lane_own_field_reads_fall_back_exactly() {
-    assert_lane_matches_interpreter(
-        r#"
+fn lane_dense_array_element_reads_fall_back_exactly() {
+    assert_lane_matches_interpreter(LANE_DENSE_ARRAY_ELEMENT_READS_FALL_BACK_EXACTLY_SOURCE, "js-jit-general-dense-array-index.js", &[]);
+}
+
+#[cfg(not(quench_profiled))]
+const LANE_OWN_FIELD_READS_FALL_BACK_EXACTLY_SOURCE: &str = r#"
       // The read feeds a test, so it is a plain GetField rather than a returning one.
       function readField(object) { const value = object.value; if (value === null) return null; return value; }
       // Three own properties keep the values in the property arena.
@@ -17231,17 +17051,16 @@ fn lane_own_field_reads_fall_back_exactly() {
 
       if (readField('text') !== undefined) throw Error('primitive fallback');
       if (readField(first) !== 11) throw Error('cached shape after misses');
-    "#,
-        "js-jit-general-own-field.js",
-        &[],
-    );
-}
+    "#;
 
 #[cfg(not(quench_profiled))]
 #[test]
-fn lane_own_field_stores_fall_back_exactly() {
-    assert_lane_matches_interpreter(
-        r#"
+fn lane_own_field_reads_fall_back_exactly() {
+    assert_lane_matches_interpreter(LANE_OWN_FIELD_READS_FALL_BACK_EXACTLY_SOURCE, "js-jit-general-own-field.js", &[]);
+}
+
+#[cfg(not(quench_profiled))]
+const LANE_OWN_FIELD_STORES_FALL_BACK_EXACTLY_SOURCE: &str = r#"
       function writeField(object, value) { object.value = value; }
       // Three own properties keep the values in the property arena.
       const first = { value: 0, other: 1, more: 2 };
@@ -17281,10 +17100,12 @@ fn lane_own_field_stores_fall_back_exactly() {
       if (methods.value() !== 2) throw Error('method cache invalidation');
       writeField(first, 11);
       if (first.value !== 11) throw Error('cached shape after misses');
-    "#,
-        "js-jit-general-own-field-store.js",
-        &[],
-    );
+    "#;
+
+#[cfg(not(quench_profiled))]
+#[test]
+fn lane_own_field_stores_fall_back_exactly() {
+    assert_lane_matches_interpreter(LANE_OWN_FIELD_STORES_FALL_BACK_EXACTLY_SOURCE, "js-jit-general-own-field-store.js", &[]);
 }
 
 #[cfg(not(quench_profiled))]
@@ -20614,17 +20435,15 @@ fn published_native_calls_retire_weak_callees_at_lifecycle_edges() {
         vm.execute(&program).unwrap();
         let atom = vm.intern_atom("receiver");
         let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
-        let add = vm.intern_atom("add");
-        let step = vm.intern_atom("step");
-        let callee = vm.get_property(&program, receiver, add).unwrap();
-        let caller = vm.get_property(&program, receiver, step).unwrap();
+        let method_of = |vm: &mut Vm<TestHost>, name: &str| { let atom = vm.intern_atom(name); vm.get_property(&program, receiver, atom).unwrap() };
+        let callee = method_of(&mut vm, "add");
+        let caller = method_of(&mut vm, "step");
         let crate::heap::FunctionKind::User(_, caller_id) = vm.heap.function(caller).unwrap().kind else { panic!("caller") };
         let crate::heap::FunctionKind::User(_, callee_id) = vm.heap.function(callee).unwrap().kind else { panic!("callee") };
         let body = program.function(caller_id as usize);
         let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap();
         let mut targets = vec![None; body.code.len()];
-        let other = vm.intern_atom("other");
-        let other = vm.get_property(&program, receiver, other).unwrap();
+        let other = method_of(&mut vm, "other");
         let crate::heap::FunctionKind::User(_, other_id) = vm.heap.function(other).unwrap().kind else { panic!("other") };
         targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: other_id });
         assert!(vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| (0, 0), Vec::new(), &[]).is_none(),
@@ -23739,14 +23558,12 @@ fn js_jit_interrupt_exits_through_the_shared_native_entry() {
     assert_eq!(compiled.native_entries(), 1, "the shared adapter must enter once");
 }
 
-#[test]
-fn lane_builtin_rows_keep_builtin_semantics() {
-    // The staged builtin rows (`staged::builtins`, `staged::strings`) run in hot functions of
-    // the interpreter's lane and its native body alike: `charCodeAt`, `charAt`, `length`,
-    // `push`, `pop` and `Number.isInteger`, and the cases a row leaves for the native: ropes,
-    // slices, wide strings, odd indexes, frozen and sealed arrays, holes, shared backings,
-    // an index on a prototype, array-likes, and a replaced method. Expected value is Node's.
-    let source = r#"
+/// The staged builtin rows (`staged::builtins`, `staged::strings`) run in hot functions of
+/// the interpreter's lane and its native body alike: `charCodeAt`, `charAt`, `length`,
+/// `push`, `pop` and `Number.isInteger`, and the cases a row leaves for the native: ropes,
+/// slices, wide strings, odd indexes, frozen and sealed arrays, holes, shared backings,
+/// an index on a prototype, array-likes, and a replaced method. Expected value is Node's.
+const LANE_BUILTIN_ROWS_SOURCE: &str = r#"
       var out = [];
       function code(s, i) { return s.charCodeAt(i); }
       function chr(s, i) { return s.charAt(i); }
@@ -23804,11 +23621,17 @@ fn lane_builtin_rows_keep_builtin_semantics() {
       out.push(push([], 1));
       print(out.join("|"));
     "#;
+
+/// Node's output for `LANE_BUILTIN_ROWS_SOURCE`.
+const LANE_BUILTIN_ROWS_EXPECTED: &str = r#"3268350|104|104|"h"|"h"|97|a|101|8364|"e"|"€"|98|b|32|55296|" "|"\ud800"|99|c|NaN|NaN|""|""|NaN||NaN|NaN|""|""|NaN||101|8364|"e"|"€"|98|b|104|104|"h"|"h"|97|a|108|108|"l"|"l"|99|c|104|104|"h"|"h"|97|a|104|104|"h"|"h"|97|a|101|8364|"e"|"€"|98|b|NaN|NaN|""|""|NaN||NaN|NaN|""|""|NaN||NaN|NaN|""|""|NaN||104|104|"h"|"h"|97|a|152|0|6|47|49|c|5|3|2|102|297||||-0|TypeError|TypeError|TypeError|TypeError|4|4|false|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|15|4.5|string|3|4|9|3|1,2,3|5|5|5|3|7|2|2|true|true|true|false|false|false|false|true|true|true|true|false|false|false|false|false|false|TypeError|object receiver|mine1|98|1"#;
+
+#[test]
+fn lane_builtin_rows_keep_builtin_semantics() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    let program = Engine::specialize(source, "lane_builtin_rows_keep_builtin_semantics.js").unwrap();
+    let program = Engine::specialize(LANE_BUILTIN_ROWS_SOURCE, "lane_builtin_rows_keep_builtin_semantics.js").unwrap();
     vm.execute(&program).unwrap();
-    assert_eq!(output.borrow().as_slice(), [r#"3268350|104|104|"h"|"h"|97|a|101|8364|"e"|"€"|98|b|32|55296|" "|"\ud800"|99|c|NaN|NaN|""|""|NaN||NaN|NaN|""|""|NaN||101|8364|"e"|"€"|98|b|104|104|"h"|"h"|97|a|108|108|"l"|"l"|99|c|104|104|"h"|"h"|97|a|104|104|"h"|"h"|97|a|101|8364|"e"|"€"|98|b|NaN|NaN|""|""|NaN||NaN|NaN|""|""|NaN||NaN|NaN|""|""|NaN||104|104|"h"|"h"|97|a|152|0|6|47|49|c|5|3|2|102|297||||-0|TypeError|TypeError|TypeError|TypeError|4|4|false|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|15|4.5|string|3|4|9|3|1,2,3|5|5|5|3|7|2|2|true|true|true|false|false|false|false|true|true|true|true|false|false|false|false|false|false|TypeError|object receiver|mine1|98|1"#]);
+    assert_eq!(output.borrow().as_slice(), [LANE_BUILTIN_ROWS_EXPECTED]);
 }
 
 /// What `lane_entry_counts` measured of a run.

@@ -525,26 +525,10 @@ impl LaneView {
             promotion_only_sites: self.loops.iter().filter(|site| site.promotion_only).count(),
             compile_attempts: self.loops.iter().map(|site| site.compile_attempts.get()).sum(),
             compile_successes: self.loops.iter().map(|site| site.compile_successes.get()).sum(),
-            currently_compiled_sites: self
-                .loops
-                .iter()
-                .filter(|site| site.tier.borrow().is_published())
-                .count(),
-            native_entry_attempts: self
-                .loops
-                .iter()
-                .map(|site| site.native_entry_attempts.get())
-                .sum(),
-            native_region_runs: self
-                .loops
-                .iter()
-                .map(|site| site.native_region_runs.get())
-                .sum(),
-            entry_guard_misses: self
-                .loops
-                .iter()
-                .map(|site| site.entry_guard_misses.get())
-                .sum(),
+            currently_compiled_sites: self.loops.iter().filter(|site| site.tier.borrow().is_published()).count(),
+            native_entry_attempts: self.loops.iter().map(|site| site.native_entry_attempts.get()).sum(),
+            native_region_runs: self.loops.iter().map(|site| site.native_region_runs.get()).sum(),
+            entry_guard_misses: self.loops.iter().map(|site| site.entry_guard_misses.get()).sum(),
             tier_ups: self.loops.iter().map(|site| site.tier_ups.get()).sum(),
             body_runs: self.loops.iter().map(|site| site.body_runs.get()).sum(),
             exits: self.loops.iter().map(|site| site.native_exits.get()).sum(),
@@ -1554,123 +1538,8 @@ pub(super) struct ScriptCallTarget {
     forwarded_method: u16,
 }
 
-/// How a plain lane call enters a frameless target (`ScriptCallTarget::entry`), one byte so the
-/// call tests it once. The kinds exclude each other: a body that is one read keeps nothing.
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-enum CallEntry {
-    /// Its activation holds its registers alone (`lane_activate`).
-    Activates,
-    /// It keeps the values it was passed for a forwarded `arguments`
-    /// (`CallPlan::forwards_arguments`, `lane_activate_keeping`).
-    Keeps,
-    /// It keeps them, and its rest parameter, in the register after the others, starts as
-    /// the array of those past the others (`lane_activate_keeping`).
-    Gathers,
-    /// Its body is one returning `GetField` (`returning_kind` of its first instruction),
-    /// whose hit a call answers without activating it (`lane_call_read`).
-    Reads,
-    /// It needs a VM frame (`CallPlan::registers_only` fails, or its view has no
-    /// activation): a call takes `lane_frame_call`. Only the cache and the call's own
-    /// out-of-line form see such a target (`lane_script_target` leaves it out).
-    Frame,
-    /// Its body reads a field of `this` or a parameter, then an element of that by a
-    /// parameter, and returns it (`element_read_body`), which a call answers likewise.
-    ReadsElement,
-    /// Its body returns a call of a method of a field of `this` or a parameter with its
-    /// parameters in order (`forwarding_read_body`), which a call answers where that method
-    /// is a `Reads` or `ReadsElement` target whose read hits.
-    ForwardsRead,
-    /// Its body returns one of its captures (`capture_read_body`), as a bundler's export
-    /// getter `() => binding` compiles, which a call answers by reading the capture.
-    ReadsCapture,
-    /// Its body returns its `this` (`this_read_body`), as `get self() { return this; }`
-    /// compiles, which a call answers with the receiver it binds.
-    ReadsThis,
-    /// It keeps frame locals and makes closures (`CallPlan::environment_activation`): its
-    /// activation's window holds its environment and locals after its registers
-    /// (`lane_activate_environment`). Only a plain call activates it.
-    Environment,
-    /// An async function whose body never suspends, laid out as its registers
-    /// (`CallPlan::settles_registers_only`): only a plain call of its own program activates
-    /// it (`lane_script_call_settles`), whose promise its return settles
-    /// (`Completion::SettlesPromise`).
-    Settles,
-    /// Its body is a leaf (`leaf_body`): a plain call of its own program runs its records on
-    /// a window of the lane stack without an activation (`lane_script_call_leaf`), which
-    /// anything observing activations makes first (`lane_materialize_leaf`). Any other
-    /// call activates it as `Activates`.
-    Leaf,
-    /// A leaf whose records read its captures and not its receiver (`CAPTURE_LEAF`), so its
-    /// call makes the context's environment its own, which its return restores.
-    CaptureLeaf,
-    /// A leaf whose records read its receiver (`CONTEXT_LEAF`), so its call makes the
-    /// context's receiver and environment its own, which its return restores.
-    ContextLeaf,
-    /// A proven conditional append to a captured binding, completed without activation
-    /// (`capture_append::run`).
-    AppendsCapture,
-}
-
-impl CallEntry {
-    /// Whether a call that does not answer it otherwise activates the target as its registers
-    /// alone (`lane_activate`): a leaf's every call but the plain one does.
-    #[inline(always)]
-    fn activates(self) -> bool {
-        matches!(self, Self::Activates | Self::Leaf | Self::CaptureLeaf | Self::ContextLeaf)
-    }
-
-    /// The leaf entry of a body whose records read the context as `form` says.
-    #[inline] fn leaf(form: LeafForm) -> Self {
-        match form {
-            CONTEXT_LEAF => Self::ContextLeaf,
-            CAPTURE_LEAF => Self::CaptureLeaf,
-            _ => Self::Leaf,
-        }
-    }
-
-    /// The form of a leaf entry, `NOT_LEAF` for any other.
-    #[inline(always)]
-    fn leaf_form(self) -> LeafForm {
-        match self {
-            Self::Leaf => PLAIN_LEAF,
-            Self::CaptureLeaf => CAPTURE_LEAF,
-            Self::ContextLeaf => CONTEXT_LEAF,
-            _ => NOT_LEAF,
-        }
-    }
-}
-
-impl CallEntry {
-    /// Whether a plain call's activation of the target holds its registers alone: the
-    /// entries whose calls a read answers activate like `Activates` once the read misses,
-    /// which is the activation a lane body's inlined call materializes
-    /// (`lane_body_inlined_activation`).
-    fn activates_registers_only(self) -> bool {
-        self.activates() || matches!(self, Self::Reads | Self::ReadsElement | Self::ForwardsRead | Self::ReadsCapture | Self::ReadsThis)
-    }
-}
-
-impl CallEntry {
-    /// An entry another program's call activates frameless (`Vm::cross_call_entry`): a plain
-    /// or keeping activation, which `lane_activate_keeping` enters across programs.
-    #[inline(always)]
-    fn activates_across(self) -> bool {
-        matches!(self, Self::Activates | Self::Keeps | Self::Gathers)
-    }
-
-    /// A body a call answers by reading alone (`lane_call_leaf_read`).
-    #[inline(always)]
-    fn reads(self) -> bool {
-        matches!(self, Self::Reads | Self::ReadsElement | Self::ReadsCapture | Self::ReadsThis)
-    }
-
-    /// A body whose call a read answers (`lane_call_read`): its own read, or a forwarded one.
-    #[inline(always)]
-    fn answered_by_read(self) -> bool {
-        self.reads() || self == Self::ForwardsRead
-    }
-}
+mod call_entry;
+use call_entry::CallEntry;
 
 // Recognized once per target, as it resolves; no operation runs them.
 #[path = "call_body_forms.rs"]
@@ -8100,6 +7969,31 @@ enum LoopAttempt {
     Carry(Registers, Ip, Carried),
 }
 
+/// `lane_loop_native`'s entry and run of `region` into `entry`: how it continues, or `None`
+/// where its code is awaited or its entry record cannot be built (the site notes the decline).
+#[inline(always)]
+fn lane_loop_run_native<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    site: &LoopSite,
+    region: &super::compiled::LoopRegion,
+    entry: &mut super::compiled::LoopEntry,
+) -> Option<LoopContinuation> {
+    if site.tier.borrow_mut().awaits_code(&mut unsafe { vm(cx) }.heap, site) {
+        return None;
+    }
+    loop_tier::lane_loop_repatch(cx, r, site);
+    let Some(views) = lane_loop_entry(cx, r, region, entry) else {
+        site.note_decline();
+        return None;
+    };
+    // The tier's state is borrowed only here, so the dispatch after it holds no borrow.
+    let continuation = lane_loop_run(cx, r, site, region, entry, views, site.header);
+    count_continuation(&continuation);
+    if matches!(continuation, LoopContinuation::Jump) { site.note_decline(); }
+    Some(continuation)
+}
+
 /// Runs `site`'s region on `r` from its `header` record, reached at `record` (the backward
 /// jump, or the header itself): the entry guards, then native code, which resumes the lane
 /// where control leaves the region or leaves to the general path. Once the region has code,
@@ -8118,19 +8012,8 @@ fn lane_loop_native<H: Host>(
     // record remains contiguous in this lane view.
     let at = |pc: u32| unsafe { header.offset(pc as isize - site.header as isize) };
     // The record is filled where it lives, so its words are neither cleared nor copied.
-    if site.tier.borrow_mut().awaits_code(&mut unsafe { vm(cx) }.heap, site) {
-        return LoopAttempt::Declined;
-    }
-    loop_tier::lane_loop_repatch(cx, r, site);
     let mut entry = super::compiled::LoopEntry::new();
-    let Some(views) = lane_loop_entry(cx, r, region, &mut entry) else {
-        site.note_decline();
-        return LoopAttempt::Declined;
-    };
-    // The tier's state is borrowed only here, so the dispatch below holds no borrow.
-    let continuation = lane_loop_run(cx, r, site, region, &mut entry, views, site.header);
-    count_continuation(&continuation);
-    if matches!(continuation, LoopContinuation::Jump) { site.note_decline(); }
+    let Some(continuation) = lane_loop_run_native(cx, r, site, region, &mut entry) else { return LoopAttempt::Declined };
     lane_loop_hold_header::<H>(header, site);
     match continuation {
         LoopContinuation::Jump | LoopContinuation::Compiling => LoopAttempt::Declined,
@@ -11494,9 +11377,7 @@ impl<H: Host> Vm<H> {
         } else { code };
         // The JavaScript tier enters a frameless activation at its prologue as it enters a
         // frame (`lane_tier_prologue`), so a function it may claim is cached like any other.
-        if function == super::ROOT_FUNCTION_ID {
-            return None;
-        }
+        if function == super::ROOT_FUNCTION_ID { return None; }
         // A numeric body's target differs from its plain closures' (below), so only plain
         // closures share their function's.
         if !numeric && let Some(known) = self.lane_stack.function_target(program, function, cross) {
@@ -11509,9 +11390,7 @@ impl<H: Host> Vm<H> {
             }
             return Some(target);
         }
-        if !self.programs.lane_call_may_derive(program, function) {
-            return None;
-        }
+        if !self.programs.lane_call_may_derive(program, function) { return None; }
         let body = code.function_get(function as usize)?;
         let plan = body.call_plan(code);
         // An arrow binds the `this` of its environment, found once here: one still
@@ -11875,177 +11754,8 @@ macro_rules! lane_plain_activation {
 }
 use lane_plain_activation;
 
-script_handler! {
-    /// A plain call of a leaf target of form `LEAF` (`CallEntry::leaf`): the callee's records
-    /// run on a window at the lane stack's top, the call's facts held by `LaneContext::leaf`
-    /// instead of an activation until its return completes the call (`lane_complete_leaf`)
-    /// or anything observing activations makes it one (`lane_materialize_leaf`). The window
-    /// and the stack room are those its activation would take, so the guest-call budget and
-    /// a full stack decide as they would. A call of this leaf form the site does not make (a
-    /// receiver whose binding reads the heap, values past the parameters, no room) takes
-    /// `lane_script_call_full`, which activates a leaf as any registers-only target. `ARGC`
-    /// is the record's argument count (`leaf_call_handler`), which a call returning its
-    /// completion never has.
-    fn lane_script_call_leaf<LEAF: u8, ARGC: u16>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let callee = r.get(i.b);
-        let target = if unsafe { (*cx).script_calls } && !lane_constructing(vm, callee) {
-            vm.linked_script_call_entry(callee, &i.call_link)
-        } else {
-            None
-        };
-        // SAFETY: as `Vm::script_call_entry`; nothing in the leaf resolves a target or collects.
-        let Some(target) = target.map(|target| unsafe { &*target }) else {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
-        };
-        // A site meeting other callees too calls each as its own form would: a plain
-        // activation's in place, another leaf form's through it, any other through the
-        // full form.
-        if target.entry != CallEntry::leaf(LEAF) {
-            std::hint::cold_path();
-            if target.entry == CallEntry::Activates {
-                lane_plain_activation!(cx, vm, r, ip, i, target, ARGC)
-            }
-            let other: Handler = match target.entry.leaf_form() {
-                PLAIN_LEAF => lane_script_call_leaf::<H, PLAIN_LEAF, ARGC>,
-                CAPTURE_LEAF => lane_script_call_leaf::<H, CAPTURE_LEAF, ARGC>,
-                CONTEXT_LEAF => lane_script_call_leaf::<H, CONTEXT_LEAF, ARGC>,
-                _ => lane_script_call_full::<H>,
-            };
-            sibling!(other, r, ip, Carried::script(cx))
-        }
-        // Only a leaf reading its receiver binds it here; any other binds it if it
-        // materializes (`lane_materialize_leaf`), which a binding past the receiver's own
-        // bits could not.
-        let receiver = r.get(i.c);
-        let this = if LEAF == CONTEXT_LEAF {
-            lane_direct_call_this(vm, target, receiver)
-        } else {
-            lane_binds_directly(target, receiver).then_some(receiver)
-        };
-        let Some(this) = this else {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
-        };
-        // The cached target is of the running program (`Vm::script_call_holds`).
-        debug_assert!(!lane_crosses::<H, true>(cx, target));
-        if vm.with_scope_entered || !lane_admits_window(vm, target, ARGC) {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
-        }
-        vm.programs.record_js_jit_lane_entry(target.program, target.function);
-        let stack = &mut vm.lane_stack;
-        // SAFETY: as `lane_push_passed`'s window, which the stack's length covers only once
-        // the leaf is materialized: no collection runs before.
-        let registers = unsafe {
-            let registers = stack.values.as_mut_ptr().add(stack.values.len());
-            fill_admitted_window(registers, usize::from(target.registers));
-            copy_arguments(registers, r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))), ARGC);
-            Registers(registers)
-        };
-        // SAFETY: the program store keeps a derived view alive with its program; the tier
-        // claims no leaf's view, so its activation starts at its first record.
-        let base = unsafe { (*target.view).records() };
-        unsafe {
-            let leaf = &mut (*cx).leaf;
-            leaf.call = ip;
-            (leaf.form, leaf.argc) = (LEAF, ARGC);
-            leaf.caller_registers = r;
-            leaf.caller_base = (*cx).base;
-            leaf.target = target;
-            if LEAF == CONTEXT_LEAF {
-                leaf.caller_this = (*cx).this;
-                (*cx).this = this;
-            }
-            if LEAF != PLAIN_LEAF {
-                leaf.caller_env = (*cx).env;
-                leaf.caller_capture = (*cx).capture;
-                (*cx).env = target.env;
-                (*cx).capture = target.capture;
-            }
-            (*cx).registers = registers;
-            (*cx).base = base;
-        }
-        next!(cx, registers, base, Carried::script(cx))
-    }
-}
-
-/// The form a call record `i` whose linked target is a leaf (`entry`) calls it with: the
-/// `lane_script_call_leaf` instantiation of its entry and argument count, or, for a record
-/// past `FIXED_ARGUMENT_COPIES` or returning its completion, which completes its caller too,
-/// `lane_script_call_full`, which activates the leaf.
-fn leaf_call_handler<H: Host>(entry: CallEntry, i: &LaneInstruction) -> Handler {
-    const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
-    macro_rules! leaf {
-        ($form:ident) => {
-            match ImmediateLayout::argument_count(i.imm()) {
-                0 => lane_script_call_leaf::<H, $form, 0>,
-                1 => lane_script_call_leaf::<H, $form, 1>,
-                2 => lane_script_call_leaf::<H, $form, 2>,
-                3 => lane_script_call_leaf::<H, $form, 3>,
-                4 => lane_script_call_leaf::<H, $form, 4>,
-                _ => lane_script_call_full::<H>,
-            }
-        };
-    }
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 {
-        return lane_script_call_full::<H>;
-    }
-    match entry.leaf_form() {
-        CONTEXT_LEAF => leaf!(CONTEXT_LEAF),
-        CAPTURE_LEAF => leaf!(CAPTURE_LEAF),
-        _ => leaf!(PLAIN_LEAF),
-    }
-}
-
-/// Whether `lane_direct_call_this` binds `receiver` for `target`, without the binding: any
-/// binding but a sloppy function's, and its of an object in the direct record table, `null`
-/// or `undefined`, the commonest receiver of a plain call, tested first.
-#[inline(always)]
-fn lane_binds_directly(target: &ScriptCallTarget, receiver: Value) -> bool {
-    target.this_binding != ThisBinding::Sloppy
-        || receiver.is_undefined()
-        || receiver.is_direct_object_family()
-        || receiver.is_null()
-}
-
-/// The return of the running leaf with `value` (`LaneContext::leaf`): the caller's registers,
-/// records and context again, and the call's result in its register, as the plain
-/// activation's return makes them (`lane_return_plain`). `None` while no leaf runs.
-#[inline(always)]
-fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value, form: LeafForm) -> Option<(Registers, Ip)> {
-    // SAFETY: the running lane's context.
-    let leaf = unsafe { &mut (*cx).leaf };
-    if leaf.call.is_null() {
-        return None;
-    }
-    let call = std::mem::replace(&mut leaf.call, std::ptr::null());
-    let caller = leaf.caller_registers;
-    // SAFETY: the call record belongs to the caller's live view; the target stays cached.
-    unsafe {
-        debug_assert!(leaf.form == form);
-        if form == CONTEXT_LEAF {
-            (*cx).this = leaf.caller_this;
-        }
-        if form != PLAIN_LEAF {
-            (*cx).env = leaf.caller_env;
-            (*cx).capture = leaf.caller_capture;
-        }
-        (*cx).registers = caller;
-        (*cx).base = leaf.caller_base;
-        caller.set((*call).a & crate::bytecode::REGISTER_MASK, value);
-    }
-    Some((caller, following(call)))
-}
-
-/// `lane_materialize_leaf` of the running leaf, if one runs: where a leaf's records reach
-/// what observes activations or frames (the lane's exit, a getter's activation, an operation
-/// made in place), a leaf is the activation its call would have pushed. Its records reach
-/// nothing else that does (`leaf_body`).
-#[inline(always)]
-fn lane_materialize_running_leaf<H: Host>(cx: *mut LaneContext<H>) {
-    if !unsafe { (*cx).leaf.call }.is_null() {
-        lane_materialize_leaf(cx);
-    }
-}
+mod leaf_calls;
+use leaf_calls::{lane_complete_leaf, lane_materialize_running_leaf, leaf_call_handler};
 
 /// Make the running leaf (`LaneContext::leaf`) the activation its call would have pushed
 /// (`lane_enter_window`), before anything observes activations: their materialization
@@ -14876,6 +14586,12 @@ fn lane_body_concluded<H: Host>(
     if matches!(left, super::compiled::LaneExit::Returned { .. }) {
         own.audit_body_run(started);
     }
+    lane_body_resumed(cx, ip, resumed)
+}
+
+/// Where the lane continues after a lane body's resolved leave `resumed`, which left at `ip`.
+#[inline(always)]
+fn lane_body_resumed<H: Host>(cx: *mut LaneContext<H>, ip: Ip, resumed: LaneBodyLeft) -> Resumed {
     match resumed {
         LaneBodyLeft::Terminated => Resumed::Exit(exit(ip)),
         LaneBodyLeft::Resume(_, resume, _) if body_calls::left_lane(resume) => Resumed::Exit(resume),
@@ -15016,7 +14732,12 @@ fn lane_unit_targets<H: Host>(cx: *mut LaneContext<H>, function: u32, pc: u32) -
 fn lane_unit_trips<H: Host>(cx: *mut LaneContext<H>, function: u32, header: u32) -> Option<u64> {
     // SAFETY: the program's views outlive the lane run.
     let view = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view)?;
-    view.loops.iter().find(|site| site.header == header)?.tier.borrow().mean_trip()
+    for site in &view.loops {
+        if site.header == header {
+            return site.tier.borrow().mean_trip();
+        }
+    }
+    None
 }
 
 /// The dense capture slots of `callee`'s environment (`Vm::lane_callee_captures`).
@@ -15511,9 +15232,7 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
         return LANE_CALL_COMPLETED;
     }
     // A returning construction takes the plan only: the lane completes it with its callee's result.
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 {
-        return lane_body_stats::miss(lane_body_stats::Miss::ConstructReturning);
-    }
+    if i.a & crate::bytecode::RETURN_REGISTER != 0 { return lane_body_stats::miss(lane_body_stats::Miss::ConstructReturning); }
     // What is left resolves a target and pushes an activation above the body's own, which a
     // body entered through its cell makes now.
     lane_materialize_running_leaf(cx);
@@ -15854,9 +15573,7 @@ fn lane_enter_cell_body<H: Host>(
     this: Value,
 ) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    if vm.programs.js_jit_diagnostics_enabled() {
-        return None;
-    }
+    if vm.programs.js_jit_diagnostics_enabled() { return None; }
     // SAFETY: the program store keeps a derived view alive with its program.
     let own = unsafe { &*target.view };
     let method = own.cell_method()?;
@@ -15866,24 +15583,22 @@ fn lane_enter_cell_body<H: Host>(
         unsafe { vm.lane_stack.values.set_top(window.0) };
         return None;
     }
-    vm.programs.record_js_jit_lane_entry(target.program, target.function);
-    #[cfg(test)]
-    super::compiled::LANE_CELL_CROSSINGS.with(|count| count.set(count.get() + 1));
     lane_begin_cell_leaf(cx, ip, r, target, argc, this, window);
     let run = super::compiled::BodyRun {
         method, direct_calls: lane_direct_calls(cx), program: unsafe { (*cx).program }, residual: unsafe { &*(*cx).code },
         registers: window.0, receiver: lane_entry_receiver(cx, own.binds_this()), captures: capture_reads(target.capture), lane_context: cx.cast(),
-        pending: CALLEE_ACTIVATION_PENDING,
-    };
-    let exit = vm.run_lane_body(&run);
-    Some(lane_cell_body_ended(cx, window, own, target.function, method, exit))
+        pending: CALLEE_ACTIVATION_PENDING };
+    Some(lane_cell_body_ended(cx, window, own, target.function, method, vm.run_lane_body(&run)))
 }
 
 /// Makes the call of `target` the context's running leaf (`CONTEXT_LEAF`), which holds what its
 /// activation would (`lane_materialize_leaf`): the callee's receiver, environment, captures,
-/// registers and records are the context's, the caller's are the leaf's.
+/// registers and records are the context's, the caller's are the leaf's; the entry is counted.
 #[inline(always)]
 fn lane_begin_cell_leaf<H: Host>(cx: *mut LaneContext<H>, ip: Ip, r: Registers, target: &ScriptCallTarget, argc: u16, this: Value, window: Registers) {
+    unsafe { vm(cx) }.programs.record_js_jit_lane_entry(target.program, target.function);
+    #[cfg(test)]
+    super::compiled::LANE_CELL_CROSSINGS.with(|count| count.set(count.get() + 1));
     // SAFETY: the running lane's context, and the callee's view outlives its program.
     unsafe {
         (*cx).leaf = LeafCall {
@@ -19911,7 +19626,7 @@ fn derive_lane_view<'live, H: Host>(
     };
     let (field_records, name_records) = (hinted_records(false), hinted_records(true));
     let string_case_filters = string_case_filter::specialize::<H>(heap, constants, &decoded, &mut records);
-    let records = Records::new(records, decoded.iter().any(|instruction| has_operand_feedback(instruction.op())));
+    let records = Records::new(records, decoded.iter().fold(false, |seen, instruction| seen || has_operand_feedback(instruction.op())));
     let first = records.base();
     LaneView {
         records,
@@ -22232,131 +21947,13 @@ mod on_demand_metadata;
 use on_demand_metadata::{lane_completes_return, lane_note_late_call};
 
 #[cfg(test)]
-mod numeric_pair_tests {
-    use crate::test_host::TestHost;
-
-    #[test]
-    fn numeric_pair_compositions_match_general_execution() {
-        let source = include_str!("../../tests/fixtures/constant-numeric-pairs.js");
-        let run = |program| {
-            let host = TestHost::default();
-            super::super::Vm::new(host.clone()).execute(&program).unwrap();
-            let output = host.lines();
-            output.clone()
-        };
-        let specialized = crate::Engine::specialize(source, "constant-numeric-pairs.js").unwrap();
-        let general = crate::Engine::specialize_unspecialized(source, "constant-numeric-pairs.js").unwrap();
-        assert_eq!(run(specialized), run(general));
-    }
-}
+mod numeric_pair_tests;
 
 #[cfg(all(test, feature = "profile-field-primitives"))]
-mod field_pair_census_tests {
-    use super::*;
-    use crate::{bytecode::{FieldBase, FieldLookup, FieldSite}, profile::field_primitives::Path, test_host::TestHost};
-
-    #[test]
-    fn pair_census_distinguishes_first_and_second_rejection() {
-        let program = crate::Engine::specialize(
-            "var first={next:null}, second={next:first}; first.next=second;
-             function read(o){return o.next;} read(first);", "pair-census.js").unwrap();
-        program.compile_released();
-        let mut vm = Vm::new(TestHost::default());
-        vm.set_execution_mode(crate::ExecutionMode::Interpreted);
-        vm.execute(&program).unwrap();
-        let read_name = vm.lookup_atom("read").unwrap();
-        let function = program.functions.iter().find(|f| f.name == Some(read_name)).unwrap();
-        let instruction = function.instructions().find(|i| i.op().is_get_field()).unwrap();
-        let (atom, cache) = match instruction.field_lookup().unwrap() {
-            FieldLookup::Atom { atom, cache_site, .. } => (atom, cache_site),
-            FieldLookup::Site(index) => program.field_sites.get(index).unwrap().first,
-        };
-        let global = |name| vm.own_property(vm.realm.globals, vm.lookup_atom(name).unwrap()).unwrap();
-        let (first, second) = (global("first"), global("second"));
-        assert_eq!(vm.get_field_cached(&program, first, atom, cache).unwrap(), second);
-        let field = vm.field_cache_entry(cache);
-        let mut site = FieldSite { base: FieldBase::THIS, first: (atom, cache), second: Some((atom, cache)),
-            sink: None, sources: std::array::from_fn(|_| None) };
-        let memo = MemoLeaf::Nested { base: FieldBase::THIS.0, field, second: field };
-        for (receiver, intermediate, expected, counts) in [
-            (first, second, Some(first), [1, 1, 1]),
-            (Value::integer(0), second, None, [1, 0, 0]),
-            (first, Value::integer(0), None, [1, 1, 0]),
-        ] {
-            vm.heap.property_set(first, field.slot as usize, intermediate);
-            vm.profile.field_primitives = Default::default();
-            assert_eq!(nested_own_field_hit(&mut vm, &program, &site, receiver), expected);
-            assert_eq!(memo.run(MEMO_NESTED, &vm, ReadArguments::NONE, receiver), expected);
-            for paths in [[Path::NestedOwnPairAttempt, Path::NestedOwnPairFirstHit, Path::NestedOwnPairHit],
-                [Path::MemoPairAttempt, Path::MemoPairFirstHit, Path::MemoPairHit]] {
-                assert_eq!(paths.map(|path| vm.profile.field_primitives.count(path)), counts);
-            }
-        }
-        // Single reads and special length reads are not two ordinary field probes.
-        for second_step in [None, Some((vm.length_atom, cache))] {
-            site.second = second_step;
-            vm.profile.field_primitives = Default::default();
-            let _ = nested_own_field_hit(&mut vm, &program, &site, first);
-            assert_eq!(vm.profile.field_primitives.count(Path::NestedOwnPairAttempt), 0);
-            assert_eq!(vm.profile.field_primitives.count(Path::NestedOwnPairFirstHit), 0);
-            assert_eq!(vm.profile.field_primitives.count(Path::NestedOwnPairHit), 0);
-        }
-    }
-}
+mod field_pair_census_tests;
 
 #[cfg(test)]
-mod leaf_call_tests {
-    use super::*;
-    use crate::test_host::TestHost;
-
-    #[test]
-    fn leaf_bodies_take_the_leaf_entry_and_others_activate() {
-        // A body of register, capture, `this`, field read and store, global name and returning
-        // read records with forward jumps is a leaf (`leaf_body`), whose records read the
-        // context or not; a call, a loop, `arguments` or a private read keeps the activation.
-        let source = r#"
-          function plain(x) { return (x + 1) | 0; }
-          function branch(x) { return x < 3 ? x : -x; }
-          var bump = (function () { var c = 0; return function () { c = (c + 1) | 0; return c; }; })();
-          function method(x) { return (x + this.n) | 0; }
-          function setter(x) { this.n = x; }
-          globalThis.G0 = 1;
-          function readsGlobal(x) { return x + G0; }
-          function picks(o, f) { return f ? o.a : o.b; }
-          function calls(x) { return plain(x); }
-          function loops(x) { var s = 0; for (var i = 0; i < x; i++) s += i; return s; }
-          function args(x) { return arguments.length; }
-          class P { #v = 1; read() { return this.#v; } }
-          var p = new P(), readP = P.prototype.read;
-          for (var i = 0; i < 2; i++) { plain(i); branch(i); bump(); method.call({ n: 1 }, i); setter.call({ n: 1 }, i); readsGlobal(i); picks({ a: 1, b: 2 }, i); calls(i); loops(i); args(i); p.read(); }
-        "#;
-        let program = crate::Engine::specialize(source, "leaf-entries.js").unwrap();
-        let mut vm = Vm::new(TestHost::default());
-        vm.execute(&program).unwrap();
-        let leaf = |entry: CallEntry| entry.leaf_form() != NOT_LEAF;
-        for (name, expected) in [
-            ("plain", Some(CallEntry::Leaf)),
-            ("branch", Some(CallEntry::Leaf)),
-            ("bump", Some(CallEntry::CaptureLeaf)),
-            ("method", Some(CallEntry::ContextLeaf)),
-            ("setter", Some(CallEntry::ContextLeaf)),
-            ("readsGlobal", Some(CallEntry::Leaf)),
-            ("picks", Some(CallEntry::Leaf)),
-            ("calls", None),
-            ("loops", None),
-            ("args", None),
-            ("readP", None),
-        ] {
-            let atom = vm.intern_atom(name);
-            let callee = vm.own_property(vm.realm.globals, atom).unwrap();
-            let entry = vm.resolve_script_call_target(&program, callee).map(|target| target.entry);
-            match expected {
-                Some(expected) => assert!(entry == Some(expected), "{name} is a leaf"),
-                None => assert!(!entry.is_some_and(leaf), "{name} is no leaf"),
-            }
-        }
-    }
-}
+mod leaf_call_tests;
 
 /// Counts a leave of a lane body at a place its body had not named before on the field sites of
 /// the instruction there (`Vm::note_field_leave`): a place counts once per body.
