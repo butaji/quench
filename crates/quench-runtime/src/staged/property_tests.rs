@@ -98,6 +98,8 @@ impl<'p> PropertyFrame<Concrete> for Host<'p> {
     }
 }
 
+impl ElementFrame<Concrete> for Host<'_> {}
+
 impl NumericFrame<Concrete> for Host<'_> {
     fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 { unreachable!("no numbers") }
     fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 { unreachable!("no numbers") }

@@ -51,6 +51,12 @@ pub(super) struct EmitFrame<'a> {
     pub(super) fields: Option<super::frame_fields::FieldFacts<'a>>,
     /// The record a call-out calls for, where the lowering made one (`call_outs`).
     pub(super) call_out: Option<&'a call_out::CallOutSite>,
+    /// The view of a loop's hoisted dense array the element row reads through, proved at the loop's
+    /// entering edge (`ElementFrame::kept_view`).
+    pub(super) held: Option<super::frame_elements::Held>,
+    /// Whether no operation of the unit may move an array's backing or the record table
+    /// (`fixed_arrays`), so the table's base word is read-only.
+    pub(super) arrays_fixed: bool,
 }
 
 impl EmitFrame<'_> {
@@ -130,14 +136,6 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         call_out::vm_step(self, stage, result)
     }
 
-    /// A dense element under the view proof; a hole or an index past the view continues at
-    /// the proof's cold block, exactly as the lowering's cold path did.
-    #[inline(always)]
-    fn index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
-        let EmitProof::Index { view, absent, in_bounds } = proof else { return None };
-        Some(super::super::emit_dense_element(stage.builder, view, index, absent, in_bounds).1)
-    }
-
     #[inline(always)]
     fn index_write(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, value: ir::Value,
         proof: EmitProof) -> Option<()> {
@@ -168,25 +166,6 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn allocate_value(&mut self, stage: &mut Emit<'_, '_>, destination: Register, allocation: crate::staged::Allocation,
         proof: EmitProof) -> Option<ir::Value> { calls::allocate_value(self, stage, destination, allocation, proof) }
-
-    /// A typed array element: the kind's load, as a Number word.
-    #[inline(always)]
-    fn typed_index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
-        let EmitProof::TypedIndex { values, length, kind, absent } = proof else { return None };
-        Some(super::typed_element(stage.builder, values, length, kind, index, absent, super::typed_read))
-    }
-
-    /// A typed array element store: the kind's conversion, then its width.
-    #[inline(always)]
-    fn typed_index_write(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, value: ir::Value,
-        proof: EmitProof) -> Option<()> {
-        let EmitProof::TypedIndex { values, length, kind, absent } = proof else { return None };
-        super::typed_element(stage.builder, values, length, kind, index, absent, |builder, load, address| {
-            super::typed_write(builder, load, address, value, absent);
-            value
-        });
-        Some(())
-    }
 
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {

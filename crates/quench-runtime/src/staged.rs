@@ -36,6 +36,11 @@ pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod builtins;
 pub(crate) mod elements;
+pub(crate) mod element_rows;
+pub(crate) mod typed_elements;
+pub(crate) mod typed_view;
+mod element_frame;
+pub(crate) use element_frame::ElementFrame;
 pub(crate) mod entry;
 pub(crate) mod environment;
 pub(crate) mod ic;
@@ -130,22 +135,9 @@ pub(crate) trait Frame<S: Stage> {
     /// `register`'s value from `constant`, with the fact the stage keeps of it.
     fn constant(&mut self, stage: &mut S, constant: Constant) -> (S::Word, Self::Fact);
 
-    /// The dense array element at `index`, under the proof; a hole, a miss or an index past
-    /// the view leaves `None` to the caller's cold path.
-    #[inline(always)]
-    fn index_read(&mut self, _stage: &mut S, _index: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
-
     /// Store `value` at the dense array element `index`, under the proof.
     #[inline(always)]
     fn index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
-
-    /// The typed array element at `index`, as a Number word.
-    #[inline(always)]
-    fn typed_index_read(&mut self, _stage: &mut S, _index: S::Word, _proof: S::Proof) -> Option<S::Word> { None }
-
-    /// Store the Number `value` at typed array element `index`.
-    #[inline(always)]
-    fn typed_index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
 
     /// The heap value `allocation` makes, defined into `destination`; `None` where the frame
     /// has no allocator for it or the value is the general path's (a due collection).
@@ -269,14 +261,8 @@ pub(crate) enum Operation<W, P> {
     /// Define `destination` with the `typeof` name index (int32) of register `source`'s value
     /// where its own word decides it; a heap value leaves at the frame's miss edge.
     TypeofIndex { destination: Register, source: Register },
-    /// A dense array element at `index`, under `proof`; a hole or miss leaves `Unresolved`.
-    IndexRead { index: W, proof: P },
     /// Store `value` at dense array element `index`, under `proof`.
     IndexWrite { index: W, value: W, proof: P },
-    /// A typed array element at `index`, as a Number word, under `proof`.
-    TypedIndexRead { index: W, proof: P },
-    /// Store the Number `value` at typed array element `index`, under `proof`.
-    TypedIndexWrite { index: W, value: W, proof: P },
     /// The empty object, object or array literal, constant array, regexp literal, closure,
     /// literal template or string concatenation `allocation` makes, defined into `destination`; a due collection leaves
     /// at the frame's miss edge (`Frame::allocate_value`).
@@ -351,6 +337,12 @@ pub(crate) enum Operation<W, P> {
     /// A step of the call protocol: admission, `this` binding, the callee's window, completion
     /// (`protocol`).
     Call(CallOperation<W>),
+    /// The value `base[key]` reads, a present dense element where the array and the key's int32
+    /// are proved (`element_rows`), else the VM's read; the tier defines the result register.
+    ElementRead { base: Register, key: Operand },
+    /// `base[key] = value`, replacing a present dense element in place where the array owns its
+    /// backing alone and the value needs no barrier log, else the VM's store.
+    ElementWrite { value: Register, base: Register, key: Register },
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes.
@@ -377,6 +369,7 @@ impl<W, P> Operation<W, P> {
                 Self::Call(CallOperation::Site(Invocation::of(instruction)?)),
             Op::GetField | Op::Delete => return Self::decode_property(instruction),
             op if op.is_field_store() => return Self::decode_property(instruction),
+            Op::GetIndex | Op::SetIndex => return Self::decode_element(instruction),
             _ => return names::decode(instruction),
         })
     }
@@ -487,3 +480,9 @@ mod coverage_tests;
 mod capture_return_tests;
 #[cfg(test)]
 mod generic_tests;
+#[cfg(test)]
+mod element_tests;
+#[cfg(test)]
+mod primitive_tests;
+#[cfg(test)]
+mod typed_element_tests;

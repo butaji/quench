@@ -101,7 +101,7 @@ impl<H: Host> Vm<H> {
         match self.heap.get(value) {
             Some(Cell::ArrayBuffer { shared: true, .. }) => "SharedArrayBuffer",
             Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
-            Some(Cell::TypedArray { kind, .. }) => kind.name(),
+            Some(Cell::TypedArray { object, .. }) => object.native.kind().name(),
             Some(Cell::DataView { .. }) => {
                 if uncaptured_factory {
                     "DataView"

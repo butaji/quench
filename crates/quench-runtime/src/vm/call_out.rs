@@ -262,6 +262,8 @@ impl<H: Host> PropertyFrame<Concrete> for HostFrame<'_, H> {
     fn plans(&self) -> NoPlans { NoPlans }
 }
 
+impl<H: Host> crate::staged::ElementFrame<Concrete> for HostFrame<'_, H> {}
+
 impl<H: Host> NumericFrame<Concrete> for HostFrame<'_, H> {
     fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 {
         unreachable!("a call-out row has no numeric operand")

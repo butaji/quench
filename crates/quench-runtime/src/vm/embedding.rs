@@ -414,7 +414,7 @@ impl<H: Host> Vm<H> {
                     .find(|(brand, _)| *brand == typed)
                     .expect("typed brand")
                     .1;
-                matches!(cell, Some(Cell::TypedArray { kind: actual, .. }) if *actual == kind)
+                matches!(cell, Some(Cell::TypedArray { object, .. }) if object.native.kind() == kind)
             }
         })
     }
@@ -662,8 +662,8 @@ impl<H: Host> Vm<H> {
                     bytes.to_vec()
                 },
             },
-            Some(Cell::TypedArray { kind, .. }) => D::Bytes {
-                brand: typed_array_brand(*kind),
+            Some(Cell::TypedArray { object, .. }) => D::Bytes {
+                brand: typed_array_brand(object.native.kind()),
                 bytes: self.embedding_view_bytes(value).unwrap_or_default(),
             },
             Some(Cell::DataView { .. }) => D::Bytes {
@@ -692,10 +692,8 @@ impl<H: Host> Vm<H> {
         let value = self.embedding_value(root)?;
         if !matches!(
             self.heap.get(value),
-            Some(Cell::TypedArray {
-                kind: TypedArrayKind::Float16 | TypedArrayKind::Float32 | TypedArrayKind::Float64,
-                ..
-            })
+            Some(Cell::TypedArray { object, .. })
+                if matches!(object.native.kind(), TypedArrayKind::Float16 | TypedArrayKind::Float32 | TypedArrayKind::Float64)
         ) {
             return Ok(None);
         }
@@ -914,7 +912,7 @@ impl<H: Host> Vm<H> {
             Cell::Array { .. } => "Array",
             Cell::ArrayBuffer { shared: true, .. } => "SharedArrayBuffer",
             Cell::ArrayBuffer { .. } => "ArrayBuffer",
-            Cell::TypedArray { kind, .. } => kind.name(),
+            Cell::TypedArray { object, .. } => object.native.kind().name(),
             Cell::DataView { .. } => "DataView",
             Cell::Map { .. } => "Map",
             Cell::Set { .. } => "Set",

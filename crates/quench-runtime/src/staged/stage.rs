@@ -59,6 +59,27 @@ pub(crate) trait Stage {
     /// Stores the low 32 bits of `value`.
     fn store_u32(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
     fn store_u64(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
+    /// A byte (`load_i8`) or a 16-bit element (`load_i16`, `load_u16`'s address need not be
+    /// aligned) as an int32 word, sign-extended; `load_i32` is `load_u32`'s bits as an int32.
+    fn load_i8(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
+    fn load_i16(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
+    fn load_i32(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
+    /// A binary32 element: an `f32` word, which only `f32_to_f64` and `store_f32` take.
+    fn load_f32(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
+    /// A binary64 element: an `f64` word (the IEEE bits in an interpreter's word).
+    fn load_f64(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
+    /// Stores the low 8 (`store_u8`) or 16 (`store_u16`) bits of `value`.
+    fn store_u8(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
+    fn store_u16(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
+    fn store_f32(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
+    fn store_f64(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
+    /// The `f64` word of an `f32` word, exactly.
+    fn f32_to_f64(&mut self, a: Self::Word) -> Self::Word;
+    /// The `f32` word nearest an `f64` word, ties to even.
+    fn f64_to_f32(&mut self, a: Self::Word) -> Self::Word;
+    /// ToUint8Clamp of an `f64` word, as an int32 word: NaN is zero, the rest clamps to 0..=255
+    /// and rounds half to even.
+    fn clamp_u8(&mut self, a: Self::Word) -> Self::Word;
     /// Whether a store of `value` into object record `record_id` may proceed unobserved and
     /// without a barrier log: no slot representation observes the write, and the record is not
     /// one the barrier logs for this value. The one place the store barrier's layout is read;

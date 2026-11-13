@@ -12229,11 +12229,10 @@ fn host_byte_views_preserve_intrinsics_backing_and_gc_edges() {
             let prototype = match vm.heap.get(view) {
                 Some(super::Cell::TypedArray {
                     object,
-                    kind,
                     buffer,
                     ..
                 }) => {
-                    assert_eq!(*kind, TypedArrayKind::Uint8);
+                    assert_eq!(object.native.kind(), TypedArrayKind::Uint8);
                     assert!(matches!(
                         vm.heap.get(*buffer),
                         Some(super::Cell::ArrayBuffer {

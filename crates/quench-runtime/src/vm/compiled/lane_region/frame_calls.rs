@@ -70,12 +70,19 @@ pub(super) fn index_set_helper(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '
     base: cranelift_codegen::ir::Value, key: cranelift_codegen::ir::Value,
     value: cranelift_codegen::ir::Value, proof: EmitProof) -> Option<()> {
     let EmitProof::IndexSetHelper { miss } = proof else { return None };
+    index_set(frame, stage, (base, key, value), miss);
+    Some(())
+}
+
+/// The element store's host helper over the tagged `base`, `key` and `value`: its nonzero answer
+/// means the store landed, else the body leaves at `miss`.
+pub(in super::super) fn index_set(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>,
+    (base, key, value): (ir::Value, ir::Value, ir::Value), miss: ir::Block) {
     let payload = frame.payload;
     let address = frame.helpers.address(&mut stage.builder, LaneHelper::IndexSet);
     let stored = emit_lane_helper_call(stage.builder, payload, address, &[base, key, value]);
     let hit = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
     emit_js_guard(stage.builder, hit, miss);
-    Some(())
 }
 
 /// A literal allocation's DELETED answer (a due collection) leaves at `miss`; otherwise the

@@ -59,12 +59,11 @@ impl<H: Host> Vm<H> {
                 resizable: *resizable,
             }),
             Some(Cell::TypedArray {
-                kind,
                 object,
                 buffer,
                 length,
             }) => Some(Metadata::View {
-                kind: format!("{:?}", kind),
+                kind: format!("{:?}", object.native.kind()),
                 buffer: *buffer,
                 offset: object.offset,
                 length: length.get().unwrap_or(0),
@@ -220,6 +219,7 @@ impl<H: Host> Vm<H> {
                     let proto = self.intrinsic_builtin_prototype(Native::DataView);
                     self.heap.alloc(Cell::DataView {
                         object: Box::new(crate::heap::BufferViewObject {
+                            native: Default::default(),
                             object: Self::empty_object(proto),
                             offset: *offset,
                         }),
@@ -256,8 +256,8 @@ impl<H: Host> Vm<H> {
                     }
                     let proto = self.typed_array_proto(kind);
                     self.heap.alloc(Cell::TypedArray {
-                        kind,
                         object: Box::new(crate::heap::BufferViewObject {
+                            native: crate::heap::NativeView::typed(kind),
                             object: Self::empty_object(proto),
                             offset: *offset,
                         }),

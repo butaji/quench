@@ -9,6 +9,9 @@ use rc_drop::{StoppedCellDrop, cell_rc_drop_lock};
 mod access;
 mod array_elements;
 mod store_gate;
+mod typed_view;
+pub(crate) use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NativeView};
+use typed_view::TypedViewTable;
 pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod array_proofs;
 pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope, retire_array_storage_proofs};
@@ -47,7 +50,7 @@ mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
 pub(crate) use cell::*;
-pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
+pub(crate) use buffer_bytes::{BufferBytes, BufferRead, buffer_relocations_address};
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
 use records::{
@@ -608,6 +611,8 @@ pub(crate) struct Heap {
     properties: ValueArena,
     roots: RootTable,
     sparse_arrays: Option<Box<FxHashMap<Value, SparseElements>>>,
+    /// The typed arrays' view records by slot (`Heap::typed_view_directory`); declared after `slots`, whose cells' records drop first.
+    typed_views: TypedViewTable,
     #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     gc_profile: GcProfile,
     #[cfg(feature = "profile-memory")]
@@ -1260,7 +1265,27 @@ impl Heap {
             },
             cell => cell,
         };
-        self.alloc_in_slot(cell, track_young)
+        let typed = matches!(cell, Cell::TypedArray { .. });
+        let value = self.alloc_in_slot(cell, track_young);
+        if typed {
+            self.register_typed_view(value);
+        }
+        value
+    }
+
+    /// Names the record of the typed array just allocated at `value` in the table native code reads.
+    fn register_typed_view(&mut self, value: Value) {
+        let Some(index) = value.legacy_heap_index() else { return };
+        if let Some(Cell::TypedArray { object, .. }) = self.slots.get_mut(index as usize).and_then(|slot| slot.cell.as_mut()) {
+            self.typed_views.register(index, &mut object.native);
+        }
+    }
+
+    /// The directory of the typed array view record pages by legacy slot and its page count
+    /// (`NATIVE_TYPED_ARRAY_LAYOUT`): read an entry from a current live typed array's slot
+    /// index, finish before any VM safepoint, which an allocation may move the directory at.
+    pub(crate) fn typed_view_directory(&self) -> (*const usize, usize) {
+        self.typed_views.directory()
     }
 
     /// `alloc(Cell::BigInt(value))` without the dispatch on the cell's kind: a BigInt has no

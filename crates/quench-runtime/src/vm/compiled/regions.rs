@@ -47,8 +47,6 @@ region_flags! {
     object_slots => ObjectSlots.mutable,
     /// An object record's exact shape word.
     shape_word => ShapeWord.mutable,
-    /// A dense array element.
-    elements => Elements.mutable,
     /// A record's payload word, or a narrow value packed in it.
     payload => Payload.mutable,
     /// A word of the step dispatch, call context or result.

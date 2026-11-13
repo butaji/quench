@@ -561,9 +561,9 @@ impl Cell {
                 writer.bool(*resizable);
                 writer.bool(*immutable);
             }
-            Self::TypedArray { kind, object, buffer, length } => {
+            Self::TypedArray { object, buffer, length } => {
                 writer.u8(tag::TYPED_ARRAY);
-                typed_array_kind::write(writer, *kind);
+                typed_array_kind::write(writer, object.native.kind());
                 write_object(writer, &object.object)?;
                 writer.u64(object.offset as u64);
                 writer.value(*buffer);
@@ -766,14 +766,13 @@ impl Cell {
             tag::TYPED_ARRAY => {
                 let kind = typed_array_kind::read(reader)?;
                 Self::TypedArray {
-                    kind,
-                    object: Box::new(BufferViewObject { object: read_object(reader)?, offset: reader.u64()? as usize }),
+                    object: Box::new(BufferViewObject { native: crate::heap::NativeView::typed(kind), object: read_object(reader)?, offset: reader.u64()? as usize }),
                     buffer: reader.value()?,
                     length: read_view_length(reader)?,
                 }
             }
             tag::DATA_VIEW => Self::DataView {
-                object: Box::new(BufferViewObject { object: read_object(reader)?, offset: reader.u64()? as usize }),
+                object: Box::new(BufferViewObject { native: Default::default(), object: read_object(reader)?, offset: reader.u64()? as usize }),
                 buffer: reader.value()?,
                 length: read_view_length(reader)?,
             },

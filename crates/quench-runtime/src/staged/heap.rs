@@ -1,5 +1,5 @@
-//! The staged heap operations: literal allocation, the host helpers and dense/typed element
-//! access, each over the frame's proof.
+//! The staged heap operations: literal allocation, the host helpers and the dense element
+//! write, each over the frame's proof.
 
 use super::*;
 
@@ -49,24 +49,12 @@ fn helper_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F
     }
 }
 
-/// A dense or typed element read or write over a frame's view proof.
+/// A dense element write over a frame's view proof.
 #[inline(always)]
 fn index_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
-        Operation::IndexRead { index, proof } => match frame.index_read(stage, index, proof) {
-            Some(value) => Step::Value(value),
-            None => Step::Unresolved,
-        },
         Operation::IndexWrite { index, value, proof } => match frame.index_write(stage, index, value, proof) {
-            Some(()) => Step::Value(value),
-            None => Step::Unresolved,
-        },
-        Operation::TypedIndexRead { index, proof } => match frame.typed_index_read(stage, index, proof) {
-            Some(value) => Step::Value(value),
-            None => Step::Unresolved,
-        },
-        Operation::TypedIndexWrite { index, value, proof } => match frame.typed_index_write(stage, index, value, proof) {
             Some(()) => Step::Value(value),
             None => Step::Unresolved,
         },

@@ -18,6 +18,7 @@ unsafe extern "C" {
     fn UNSUPPORTED_number_truthy(a: u64) -> u64;
     fn UNSUPPORTED_shape_in(a: u64) -> u64;
     fn UNSUPPORTED_site(a: u64) -> u64;
+    fn UNSUPPORTED_clamp_u8(a: u64) -> u64;
 }
 
 /// The stencil stage; `sites` is the number of the next value hole a `site` call names, and
@@ -40,6 +41,20 @@ impl StencilStage {
     #[inline(always)]
     pub(crate) fn with_payload(first: u8, payload: u64) -> Self {
         Self { sites: first, payload }
+    }
+
+    /// The `T` at `base + offset`, which need not be aligned (a typed array's bytes).
+    #[inline(always)]
+    fn read<T>(&self, base: u64, offset: i32) -> T {
+        // SAFETY: a staged operation loads only from a live record, backing or buffer at a layout offset.
+        unsafe { (base.wrapping_add(offset as i64 as u64) as *const T).read_unaligned() }
+    }
+
+    /// Writes `value` at `base + offset`, which need not be aligned.
+    #[inline(always)]
+    fn write<T>(&self, base: u64, offset: i32, value: T) {
+        // SAFETY: as `read`; a store writes only a live backing or buffer.
+        unsafe { (base.wrapping_add(offset as i64 as u64) as *mut T).write_unaligned(value) }
     }
 
     /// The runtime's `Concrete::new`, which the shared rows' interpreter wrappers call; those
@@ -146,6 +161,33 @@ impl Stage for StencilStage {
     fn store_u64(&mut self, _at: Access, base: u64, offset: i32, value: u64) {
         // SAFETY: as `store_u32`.
         unsafe { (base.wrapping_add(offset as i64 as u64) as *mut u64).write(value) }
+    }
+    #[inline(always)]
+    fn load_i8(&mut self, _at: Access, base: u64, offset: i32) -> u64 { u64::from(self.read::<i8>(base, offset) as i32 as u32) }
+    #[inline(always)]
+    fn load_i16(&mut self, _at: Access, base: u64, offset: i32) -> u64 { u64::from(self.read::<i16>(base, offset) as i32 as u32) }
+    #[inline(always)]
+    fn load_i32(&mut self, _at: Access, base: u64, offset: i32) -> u64 { u64::from(self.read::<u32>(base, offset)) }
+    #[inline(always)]
+    fn load_f32(&mut self, _at: Access, base: u64, offset: i32) -> u64 { u64::from(self.read::<u32>(base, offset)) }
+    #[inline(always)]
+    fn load_f64(&mut self, _at: Access, base: u64, offset: i32) -> u64 { self.read::<u64>(base, offset) }
+    #[inline(always)]
+    fn store_u8(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u8) }
+    #[inline(always)]
+    fn store_u16(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u16) }
+    #[inline(always)]
+    fn store_f32(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u32) }
+    #[inline(always)]
+    fn store_f64(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value) }
+    #[inline(always)]
+    fn f32_to_f64(&mut self, a: u64) -> u64 { f64::from(f32::from_bits(a as u32)).to_bits() }
+    #[inline(always)]
+    fn f64_to_f32(&mut self, a: u64) -> u64 { u64::from((f64::from_bits(a) as f32).to_bits()) }
+    #[inline(always)]
+    fn clamp_u8(&mut self, a: u64) -> u64 {
+        // SAFETY: never run; the symbol fails the build.
+        unsafe { UNSUPPORTED_clamp_u8(a) }
     }
     #[inline(always)]
     fn store_gate(&mut self, _record_id: u64, value: u64) -> bool {

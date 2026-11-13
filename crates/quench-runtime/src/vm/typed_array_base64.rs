@@ -134,11 +134,8 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         receiver: Value,
     ) -> Result<(Value, usize), JsError> {
-        let Some(Cell::TypedArray {
-            kind: TypedArrayKind::Uint8,
-            buffer,
-            ..
-        }) = self.heap.get(receiver)
+        let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(receiver).filter(|cell| matches!(cell,
+            Cell::TypedArray { object, .. } if object.native.kind() == TypedArrayKind::Uint8))
         else {
             return Err(self.type_error(
                 p,

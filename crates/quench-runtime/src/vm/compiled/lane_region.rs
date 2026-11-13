@@ -24,6 +24,8 @@ use super::super::specializer::Specializer;
 use crate::typed_ir::{BindingTime, Fact, Projection, Proof, Reentry, Representation, Type, VerifiedFact};
 use super::object_slots::{CheckedObject, CheckedObjectTable, Emit, ObjectHeader, ObjectRecord, ObjectTable};
 use crate::typed_ir::Division;
+use crate::staged::typed_elements::{NativeKind, ViewKind};
+use crate::staged::typed_view::{prove_typed_view, TypedRecords, ViewAccess};
 use std::collections::{BTreeMap, BTreeSet};
 use cranelift_codegen::bitset::CompoundBitSet;
 use cranelift_codegen::entity::EntityRef;
@@ -63,6 +65,7 @@ use captures::RootedRead;
 #[path = "lane_region/bindings.rs"] mod bindings;
 #[path = "lane_region/frame.rs"] mod frame;
 #[path = "lane_region/frame_fields.rs"] mod frame_fields;
+#[path = "lane_region/frame_elements.rs"] mod frame_elements;
 #[path = "lane_region/frame_stores.rs"] mod frame_stores;
 #[path = "lane_region/field_plans.rs"] mod field_plans;
 #[path = "lane_region/headers.rs"] mod headers;
@@ -76,6 +79,9 @@ use captures::RootedRead;
 #[path = "lane_region/call_outs.rs"] mod call_outs;
 #[path = "lane_region/jumps.rs"] mod jumps;
 #[path = "lane_region/register_rows.rs"] mod register_rows;
+#[path = "lane_region/element_rows.rs"] mod element_rows;
+#[path = "lane_region/fixed_arrays.rs"] mod fixed_arrays;
+#[cfg(test)] #[path = "lane_region/element_tests.rs"] mod element_tests;
 use loop_arrays::{ArraySource, LoopArray};
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
@@ -342,114 +348,6 @@ struct ArrayVariables {
     room: Variable,
 }
 
-/// The typed array kinds whose elements a loop reads and writes natively, with how a load
-/// of one makes its Number. Float16 and BigInt elements stay on the general path.
-#[derive(Clone, Copy)]
-enum TypedLoad { Unsigned8, Clamped8, Signed8, Unsigned16, Signed16, Signed32, Unsigned32, Float32, Float64 }
-
-/// The element widths an integer typed array store writes, in bytes.
-const BYTE_WIDTH: u32 = 1;
-const HALFWORD_WIDTH: u32 = 2;
-
-const TYPED_LOADS: [(crate::heap::TypedArrayKind, TypedLoad); 9] = {
-    use crate::heap::TypedArrayKind as Kind;
-    [(Kind::Uint8, TypedLoad::Unsigned8), (Kind::Uint8Clamped, TypedLoad::Clamped8), (Kind::Int8, TypedLoad::Signed8),
-     (Kind::Uint16, TypedLoad::Unsigned16), (Kind::Int16, TypedLoad::Signed16), (Kind::Int32, TypedLoad::Signed32),
-     (Kind::Uint32, TypedLoad::Unsigned32), (Kind::Float32, TypedLoad::Float32), (Kind::Float64, TypedLoad::Float64)]
-};
-
-impl TypedLoad {
-    fn width(self) -> u32 {
-        match self {
-            Self::Unsigned8 | Self::Clamped8 | Self::Signed8 => 1,
-            Self::Unsigned16 | Self::Signed16 => 2,
-            Self::Signed32 | Self::Unsigned32 | Self::Float32 => 4,
-            Self::Float64 => 8,
-        }
-    }
-}
-
-/// The typed element at `index` of a view `values`/`length` with `kind`: one block per kind
-/// of `TYPED_LOADS`, chosen by a jump table, over which `access` loads or stores the kind's
-/// element and joins as `f64`. An index past the view or any other kind continues at `exit`.
-fn typed_element(builder: &mut FunctionBuilder<'_>, elements: ir::Value, length: ir::Value,
-    kind: ir::Value, index: ir::Value, exit: ir::Block,
-    access: impl Fn(&mut FunctionBuilder<'_>, TypedLoad, ir::Value) -> ir::Value) -> ir::Value {
-    let wide = builder.ins().sextend(types::I64, index);
-    let in_bounds = builder.ins().icmp(IntCC::UnsignedLessThan, wide, length);
-    emit_js_guard(builder, in_bounds, exit);
-    let join = builder.create_block();
-    let result = builder.append_block_param(join, types::F64);
-    let mut cases = vec![builder.func.dfg.block_call(exit, &[]); usize::from(u8::try_from(crate::heap::TypedArrayKind::Float64 as u32).expect("kind fits u8")) + 1];
-    let mut blocks = Vec::with_capacity(TYPED_LOADS.len());
-    for (kind, load) in TYPED_LOADS {
-        let block = builder.create_block();
-        cases[kind as usize] = builder.func.dfg.block_call(block, &[]);
-        blocks.push((block, load));
-    }
-    let selector = builder.ins().ireduce(types::I32, kind);
-    let default = builder.func.dfg.block_call(exit, &[]);
-    let table = builder.create_jump_table(ir::JumpTableData::new(default, &cases));
-    builder.ins().br_table(selector, table);
-    for (block, load) in blocks {
-        builder.switch_to_block(block);
-        builder.seal_block(block);
-        let offset = builder.ins().ishl_imm_u(wide, i64::from(load.width().trailing_zeros()));
-        let address = builder.ins().iadd(elements, offset);
-        let value = access(builder, load, address);
-        builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
-    }
-    builder.switch_to_block(join);
-    builder.seal_block(join);
-    result
-}
-
-/// `load`'s element at `address`, as a Number (`f64`): an integer kind by `fcvt_from_sint`,
-/// a float kind as loaded.
-fn typed_read(builder: &mut FunctionBuilder<'_>, load: TypedLoad, address: ir::Value) -> ir::Value {
-    let flags = MemFlagsData::new();
-    let (int, float) = match load {
-        TypedLoad::Unsigned8 | TypedLoad::Clamped8 => (Some(builder.ins().uload8(types::I32, flags, address, 0)), None),
-        TypedLoad::Signed8 => (Some(builder.ins().sload8(types::I32, flags, address, 0)), None),
-        TypedLoad::Unsigned16 => (Some(builder.ins().uload16(types::I32, flags, address, 0)), None),
-        TypedLoad::Signed16 => (Some(builder.ins().sload16(types::I32, flags, address, 0)), None),
-        TypedLoad::Signed32 => (Some(builder.ins().load(types::I32, flags, address, 0)), None),
-        TypedLoad::Unsigned32 => (Some(builder.ins().uload32(flags, address, 0)), None),
-        TypedLoad::Float32 => {
-            let single = builder.ins().load(types::F32, flags, address, 0);
-            (None, Some(builder.ins().fpromote(types::F64, single)))
-        }
-        TypedLoad::Float64 => (None, Some(builder.ins().load(types::F64, flags, address, 0))),
-    };
-    float.unwrap_or_else(|| builder.ins().fcvt_from_sint(types::F64, int.expect("an integer element")))
-}
-
-/// Store `number` as `load`'s element at `address`: a float kind stored directly (`f32`
-/// demoted), an integer kind by ToInt32 modulo the element's bytes. A clamped element
-/// rounds half to even in the general path, so it continues at `exit`.
-fn typed_write(builder: &mut FunctionBuilder<'_>, load: TypedLoad, address: ir::Value,
-    number: ir::Value, exit: ir::Block) {
-    let flags = MemFlagsData::new();
-    match load {
-        TypedLoad::Float64 => { builder.ins().store(flags, number, address, 0); }
-        TypedLoad::Float32 => { let single = builder.ins().fdemote(types::F32, number); builder.ins().store(flags, single, address, 0); }
-        TypedLoad::Clamped8 => {
-            builder.ins().jump(exit, &[]);
-            let unreached = builder.create_block();
-            builder.switch_to_block(unreached);
-            builder.seal_block(unreached);
-        }
-        integer => {
-            let word = super::emit_number_to_int32(builder, number, exit);
-            match integer.width() {
-                BYTE_WIDTH => { builder.ins().istore8(flags, word, address, 0); }
-                HALFWORD_WIDTH => { builder.ins().istore16(flags, word, address, 0); }
-                _ => { builder.ins().store(flags, word, address, 0); }
-            }
-        }
-    }
-}
-
 /// A STORE-site projection admitted on entry to a storage-preserving loop.
 /// The record is physical receiver identity, not merely an equal shape.
 #[derive(Clone, Copy)]
@@ -521,6 +419,9 @@ struct Lowering<'a, 'f> {
     proving_entry: bool,
     /// Whether a previous body left at the instruction being lowered (`generic`): its reads probe the VM's caches.
     left_here: bool,
+    /// The view of the loop's hoisted dense array the next element row reads or writes through, which
+    /// its entering edge proved once (`EmitFrame::held`).
+    held_view: Option<frame_elements::Held>,
     /// The shared leave of a failed input proof (`LaneExit::Entry`), made at its first guard
     /// and filled with the other exits.
     entry_exit: Option<ir::Block>,
@@ -587,6 +488,9 @@ struct Lowering<'a, 'f> {
     hoisted: BTreeMap<usize, LoopRead>,
     /// Loop-invariant array bases whose views their loop's entry proves (`loop_arrays`).
     loop_arrays: Vec<LoopArray>,
+    /// Whether no operation of the unit may move an array's backing or the array record table
+    /// (`arrays_stay_put`), so the record table's base is read-only throughout.
+    arrays_fixed: bool,
     /// Each hoisted base's tagged value and view, by register, across its loop's iterations.
     array_vars: BTreeMap<ArraySource, ArrayVariables>,
     views: ElementViews,
@@ -692,12 +596,34 @@ impl Completion {
 /// typed arrays' (`Vm::lane_typed_array_elements`). A region assumes one, proved on each
 /// loop's entering edge, so no access chooses between them; a static image publishes a
 /// typed variant beside the dense one, which its dispatcher tries next at the header, and a
-/// loop site compiles the one its entry found (`LoopTier::views`).
+/// loop site compiles the one its entry found (`LoopTier::views`). A typed view carries the
+/// kind the site observed, which the proof compares once and the accesses fold; `None` where
+/// the entries showed several kinds (or none was observed), the accesses dispatching on the
+/// record's.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(in crate::vm) enum ElementViews {
     #[default]
     Dense,
-    Typed,
+    Typed(Option<crate::heap::TypedArrayKind>),
+}
+
+impl ElementViews {
+    /// The views of arrays viewed both as `self` and as `other`: the same dense views, or typed
+    /// views of the kind both name and of no kind where they differ; `None` for a mix.
+    pub(in crate::vm) fn common(self, other: Self) -> Option<Self> {
+        match (self, other) {
+            (Self::Typed(left), Self::Typed(right)) => Some(Self::Typed(if left == right { left } else { None })),
+            _ => (self == other).then_some(self),
+        }
+    }
+
+    /// The kind a typed view's site observed.
+    fn observed_kind(self) -> Option<crate::heap::TypedArrayKind> {
+        match self {
+            Self::Typed(kind) => kind,
+            Self::Dense => None,
+        }
+    }
 }
 
 /// No heap, environment or guest-call effect may precede scalar-call recovery.
@@ -1158,14 +1084,14 @@ fn stores_own(instruction: WideInstruction) -> bool {
 }
 
 /// Whether `instruction` is an element store natively: into a record array, whose elements
-/// no named field read, capture or object shape observes (`Lowering::set_index`); anything
+/// no named field read, capture or object shape observes (`Lowering::element_write`); anything
 /// else leaves first.
 fn stores_element(instruction: WideInstruction) -> bool {
     instruction.op().class().eq(Class::SetIndex) && !instruction.returns_from_frame()
 }
 
 /// Whether an array view (`LocalProofs::arrays`) survives `instruction`: it reads no heap
-/// value but an element, or replaces one in place (`Lowering::set_index` retires the views
+/// value but an element, or replaces one in place (`Lowering::element_write` retires the views
 /// itself on its general path), so no array's storage changes.
 fn retains_array_views(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> bool {
     match instruction.op().class() {
@@ -1634,7 +1560,7 @@ pub(super) fn lower(
         vm,
         stable: Default::default(),
         generic,
-        proving_entry: false, left_here: false, entry_exit: None,
+        proving_entry: false, left_here: false, held_view: None, entry_exit: None,
         direct,
         frame_captures,
         context,
@@ -1665,7 +1591,7 @@ pub(super) fn lower(
         hoists: BTreeMap::new(),
         intrinsics: Vec::new(),
         hoisted: BTreeMap::new(),
-        loop_arrays: Vec::new(),
+        loop_arrays: Vec::new(), arrays_fixed: false,
         array_vars: BTreeMap::new(),
         views,
         loop_fields: Vec::new(),
@@ -1789,6 +1715,7 @@ pub(super) fn lower(
         lowering.views, typed_captures);
     lowering.entering = lowering.entering_ranges(entry_pc);
     lowering.ranges = int_ranges::analyze(program, unit, &lowering.facts, entry_pc, &lowering.entering, generic, &|pc| lowering.dense_loop_access(pc));
+    lowering.arrays_fixed = lowering.arrays_stay_put(&leaders, &writes);
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
         lowering.hoists.entry(field.header).or_default().push(InvariantRead { pc: field.reads[0], owner: Some(field.owner), rooted: false });
@@ -2579,32 +2506,7 @@ impl Lowering<'_, '_> {
                 Some(true)
             }
             _ if instruction.op().is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
-            _ if instruction.op().is_get_index() && plain && [instruction.operand_b(), instruction.operand_c()].into_iter().all(|operand| self.operand_supported(operand)) => {
-                // A present dense element, the lane's own fast read (`Vm::direct_dense_element`),
-                // of an int32 key, proved once.
-                let exit = self.guard_exit(state, pc32);
-                let base = self.operand_tagged(state, instruction.operand_b());
-                let index = self.operand_int(state, instruction.operand_c(), exit);
-                base.zip(index).map(|(base, index)| {
-                    match self.loop_array(pc, instruction.operand_b().register_index()) {
-                        Some(array) => self.loop_element_read(state, array, index, (pc, instruction.result_register()), exit),
-                        None => {
-                            let view = self.array_view(state, base, false, exit);
-                            let value = self.dense_element(state, base, view, index, exit);
-                            self.set_tagged(state, instruction.result_register(), value);
-                        }
-                    }
-                    // The element an observation typed (`number_reads`), proved here.
-                    match self.observed.at(pc) {
-                        Some(ty) if ty == Type::INT32 => { self.int(state, instruction.result_register(), exit); }
-                        Some(_) => { self.number(state, instruction.result_register(), exit); }
-                        None => {}
-                    }
-                    true
-                })
-            }
-            Class::SetIndex if [instruction.register_a(), instruction.register_b(), instruction.register_c()]
-                .iter().all(|register| *register < self.unit.registers) => Some(self.element_store(state, pc32, instruction)),
+            _ if self.is_element_row(instruction) => Some(self.element_step(state, pc, instruction)),
             _ if matches!((plain, instruction.op().field_store()), (true, Some(_))) => self.set_field(state, pc, instruction),
             _ if instruction.op().js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.operator(state, pc, instruction).or_else(|| self.binary_call_out(state, pc, instruction))
@@ -2848,7 +2750,8 @@ impl Lowering<'_, '_> {
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
             payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls,
-            roots: &mut self.stable.roots, captures, number_returns: &mut self.number_returns, fields, call_out };
+            roots: &mut self.stable.roots, captures, number_returns: &mut self.number_returns, fields, call_out,
+            held: self.held_view.take(), arrays_fixed: self.arrays_fixed };
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         step
@@ -3732,7 +3635,7 @@ impl Lowering<'_, '_> {
                     let unproved = self.ins().iconst(types::I32, 0);
                     self.builder.def_var(variables.room, unproved);
                 }
-                ElementViews::Typed => self.hoist_typed_view(array, bits, variables, exit),
+                ElementViews::Typed(_) => self.hoist_typed_view(array, bits, variables, exit),
             }
         }
     }
@@ -3749,22 +3652,40 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// The typed array `bits` holds, viewed in place by the helper; a miss exits at the loop's entry.
+    /// The typed array `bits` holds, proved from its record once on the loop's entering edge
+    /// (`prove_typed_view`): a proof that leaves takes the slow arm, where the VM publishes the
+    /// record (`LaneHelper::TypedArrayView`) and the proof is made again, leaving at the loop's
+    /// entry where it fails still.
     fn hoist_typed_view(&mut self, array: LoopArray, bits: ir::Value, variables: ArrayVariables, exit: ir::Block) {
-            let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,
-                size_of::<super::LaneTypedArrayView>() as u32, align_of::<super::LaneTypedArrayView>().trailing_zeros() as u8));
-            let out = self.ins().stack_addr(types::I64, slot, 0);
-            let writable = self.ins().iconst(types::I64, i64::from(array.writable));
-            let viewed = self.helper_call(LaneHelper::TypedArrayView, &[bits, writable, out]);
-            let admitted = self.ins().icmp_imm_u(IntCC::NotEqual, viewed, 0);
-            emit_js_guard(&mut self.builder, admitted, exit);
-            let word = |field: usize| i32::try_from(field).expect("view field offset fits i32");
-            let values = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, elements)));
-            let length = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, length)));
-            let kind = self.ins().stack_load(types::I64, types::I64, slot, word(std::mem::offset_of!(super::LaneTypedArrayView, kind)));
-            self.builder.def_var(variables.values, values);
-            self.builder.def_var(variables.length, length);
-            self.builder.def_var(variables.kind, kind);
+        let access = ViewAccess { kind: array.views.observed_kind().and_then(NativeKind::new), writable: array.writable };
+        let (publish, done) = (self.builder.create_block(), self.builder.create_block());
+        self.builder.set_cold_block(publish);
+        self.prove_typed_view_into(variables, bits, access, publish);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(publish);
+        self.builder.seal_block(publish);
+        let published = self.helper_call(LaneHelper::TypedArrayView, &[bits]);
+        let admitted = self.ins().icmp_imm_u(IntCC::NotEqual, published, 0);
+        emit_js_guard(&mut self.builder, admitted, exit);
+        self.prove_typed_view_into(variables, bits, access, exit);
+        self.ins().jump(done, &[]);
+        self.builder.switch_to_block(done);
+        self.builder.seal_block(done);
+    }
+
+    /// The proof of the typed array `bits` for `access`, leaving at `miss`, whose view the
+    /// array's variables then hold.
+    fn prove_typed_view_into(&mut self, variables: ArrayVariables, bits: ir::Value, access: ViewAccess, miss: ir::Block) {
+        let records = TypedRecords {
+            directory: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, typed_view_directory)),
+            pages: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, typed_view_pages)),
+            relocations: emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, buffer_relocations)),
+        };
+        let view = prove_typed_view(&mut super::object_slots::emit(&mut self.builder), records, bits, access, miss)
+            .expect("the emit stage continues past its guards");
+        self.builder.def_var(variables.values, view.values);
+        self.builder.def_var(variables.length, view.length);
+        if let ViewKind::Dynamic(kind) = view.kind { self.builder.def_var(variables.kind, kind); }
     }
 
     fn array_variables(&mut self, array: LoopArray) -> ArrayVariables {
@@ -3777,68 +3698,6 @@ impl Lowering<'_, '_> {
             kind: builder.declare_var(types::I64),
             room: builder.declare_var(types::I32),
         })
-    }
-
-    /// The view of the dense array `base` holds, proved once until a storage change retires
-    /// it; a `writable` request upgrades a read view.
-    fn array_view(&mut self, state: &mut State, base: ir::Value, writable: bool, exit: ir::Block) -> super::DenseArrayView {
-        if let Some((_, view)) = state.proofs.arrays.iter().find(|(known, view)| *known == base && (view.writable || !writable)) {
-            return *view;
-        }
-        let view = super::emit_dense_array_view(&mut self.builder, self.payload, base, writable, exit);
-        state.proofs.arrays.retain(|(known, _)| *known != base);
-        state.proofs.arrays.push((base, view));
-        view
-    }
-
-    /// An element store. A Number replacing a present element of a writable array is
-    /// native, through the array's view; anything else takes the
-    /// lane's helper (`lane_index_set`), which may also add the element and so retires the
-    /// views, and leaves at the store when that misses too. Every operand's tagged view is
-    /// made before the paths split, so the join sees only values both paths dominate.
-    pub(super) fn set_index(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> bool {
-        let exit = self.guard_exit(state, pc);
-        let number = state.values[usize::from(instruction.register_a())].value.ty.is_subtype(Type::NUMBER);
-        if let Some(array) = self.loop_array(pc as usize, Some(instruction.register_b())).filter(|array| number && array.writable) {
-            self.loop_element_write(state, array, pc, instruction, exit);
-            state.proofs.arrays.clear();
-            state.proofs.fields.clear();
-            state.proofs.stable = false;
-            return true;
-        }
-        let value = self.tagged(state, instruction.register_a());
-        let base = self.tagged(state, instruction.register_b());
-        let key = self.tagged(state, instruction.register_c());
-        let general = |lowering: &mut Self| {
-            let stored = lowering.helper_call(LaneHelper::IndexSet, &[base, key, value]);
-            let hit = lowering.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
-            emit_js_guard(&mut lowering.builder, hit, exit);
-        };
-        if state.values[usize::from(instruction.register_a())].value.ty.is_subtype(Type::NUMBER) {
-            // The helper stores only at an int32 key; any other leaves at the store either way.
-            let index = self.int(state, instruction.register_c(), exit);
-            let slow = self.builder.create_block();
-            self.builder.set_cold_block(slow);
-            let done = self.builder.create_block();
-            let view = self.array_view(state, base, true, slow);
-            self.index_write(state, index, value, view, slow, false);
-            self.ins().jump(done, &[]);
-            self.builder.switch_to_block(slow);
-            self.builder.seal_block(slow);
-            general(self);
-            self.reload_dense_arrays(pc as usize);
-            self.ins().jump(done, &[]);
-            self.builder.switch_to_block(done);
-            self.builder.seal_block(done);
-        } else {
-            general(self);
-            self.reload_dense_arrays(pc as usize);
-        }
-        state.proofs.arrays.clear();
-        state.proofs.fields.clear();
-        // The helper may write a prototype's element or mapped argument.
-        state.proofs.stable = false;
-        true
     }
 
     /// After the element store's helper, which may grow any record array's backing, through
@@ -3868,61 +3727,25 @@ impl Lowering<'_, '_> {
         (self.builder.use_var(variables.values), self.builder.use_var(variables.length))
     }
 
-    /// A typed region's hoisted array kind.
-    fn hoisted_kind(&mut self, array: LoopArray) -> ir::Value {
-        let variables = self.array_variables(array);
-        self.builder.use_var(variables.kind)
-    }
-
-    /// Element `index` (an int32) of a hoisted array's view, into `destination`: a dense
-    /// array's present element, tagged, or a typed array's element, a Number. Any other
-    /// element exits.
-    fn loop_element_read(&mut self, state: &mut State, array: LoopArray, index: ir::Value, (pc, destination): (usize, Register), exit: ir::Block) {
-        let (values, length) = self.hoisted_view(array);
-        let in_bounds = self.ranges.in_bounds(pc);
-        let number = self.observed.at(pc).is_some();
-        if array.views == ElementViews::Dense && number {
-            // An element read as a Number (`number_reads`) needs no hole test of its own: a hole
-            // is a NaN pattern, which the Number proof's one NaN test sends to the tag check
-            // that leaves.
-            if !in_bounds {
-                let below = self.ins().icmp(IntCC::UnsignedLessThan, index, length);
-                emit_js_guard(&mut self.builder, below, exit);
+    /// A typed region's hoisted array kind: the site's, which its proof compared once, or the record's.
+    fn hoisted_kind(&mut self, array: LoopArray) -> ViewKind<ir::Value> {
+        match array.views.observed_kind().and_then(NativeKind::new) {
+            Some(native) => ViewKind::Static(native),
+            None => {
+                let variables = self.array_variables(array);
+                ViewKind::Dynamic(self.builder.use_var(variables.kind))
             }
-            let offset = self.ins().uextend(types::I64, index);
-            let offset = self.ins().imul_imm_s(offset, std::mem::size_of::<crate::Value>() as i64);
-            let address = self.ins().iadd(values, offset);
-            let value = self.ins().load(types::I64, regions::elements(), address, 0);
-            return self.set_tagged(state, destination, value);
         }
-        if array.views == ElementViews::Dense {
-            let view = super::DenseArrayView { values, length, writable: array.writable, uncounted: array.writable };
-            let value = super::emit_dense_element(&mut self.builder, view, index, exit, in_bounds).1;
-            return self.set_tagged(state, destination, value);
-        }
-        let kind = self.hoisted_kind(array);
-        let proof = super::EmitProof::TypedIndex { values, length, kind, absent: exit };
-        let number = match self.step(state, frame::Edges::ValueGuarded { miss: exit },
-            crate::staged::Operation::TypedIndexRead { index, proof }) {
-            crate::staged::Step::Value(value) => value,
-            _ => unreachable!("a typed element read yields a value or leaves at its miss edge"),
-        };
-        self.set_number(state, destination, number);
     }
 
-    /// A Number's store through a hoisted dense array view (`loop_element_write`).
+    /// A Number's store through a hoisted dense array view at a site that left (`left_here`): in place,
+    /// else appended inline (`dense_append`), else the VM's store. Any other hoisted store is its row.
     fn dense_element_write(&mut self, state: &mut State, array: LoopArray, pc: u32, instruction: WideInstruction,
-        index: ir::Value, exit: ir::Block) {
+        exit: ir::Block) {
+        let index = self.int(state, instruction.register_c(), exit);
         let (values, length) = self.hoisted_view(array);
         let in_bounds = self.ranges.in_bounds(pc as usize);
         let value = self.tagged(state, instruction.register_a());
-        // A store the code has not left at replaces an element in place or leaves: the
-        // append helper is a call every live value is spilled around, which a loop that
-        // never appends should not pay (a site that left compiles it, `left_here`).
-        if !self.left_here {
-            let view = super::DenseArrayView { values, length, writable: true, uncounted: true };
-            return self.index_write(state, index, value, view, exit, in_bounds);
-        }
         let base = self.tagged(state, instruction.register_b());
         let key = self.tagged(state, instruction.register_c());
         let (slow, done) = (self.builder.create_block(), self.builder.create_block());
@@ -3941,24 +3764,6 @@ impl Lowering<'_, '_> {
         self.ins().jump(done, &[]);
         self.builder.switch_to_block(done);
         self.builder.seal_block(done);
-    }
-
-    /// A Number's store to a hoisted array's element `index` (an int32): a dense array's
-    /// in-place replacement, or its helper on a miss (which may grow a backing, every dense
-    /// view reading its own again after), or a typed array's element by its kind's
-    /// conversion. A typed miss or a clamped element exits at the store.
-    fn loop_element_write(&mut self, state: &mut State, array: LoopArray, pc: u32, instruction: WideInstruction, exit: ir::Block) {
-        let index = self.int(state, instruction.register_c(), exit);
-        let (values, length) = self.hoisted_view(array);
-        if array.views == ElementViews::Dense {
-            return self.dense_element_write(state, array, pc, instruction, index, exit);
-        }
-        let number = self.number(state, instruction.register_a(), exit);
-        let kind = self.hoisted_kind(array);
-        let proof = super::EmitProof::TypedIndex { values, length, kind, absent: exit };
-        let step = self.step(state, frame::Edges::ValueGuarded { miss: exit },
-            crate::staged::Operation::TypedIndexWrite { index, value: number, proof });
-        debug_assert!(matches!(step, crate::staged::Step::Value(_)));
     }
 
     /// The reads of `instruction`'s lookup, one per site, and the sink a nested read of the

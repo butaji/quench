@@ -94,6 +94,8 @@ impl GlobalFrame<Concrete> for Probe {
     }
 }
 
+impl crate::staged::ElementFrame<Concrete> for Probe {}
+
 impl PropertyFrame<Concrete> for Probe {
     type Plans = NoPlans;
 

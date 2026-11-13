@@ -40,6 +40,8 @@ impl Frame<Concrete> for ScopeFrame {
     }
 }
 
+impl crate::staged::ElementFrame<Concrete> for ScopeFrame {}
+
 impl crate::staged::PropertyFrame<Concrete> for ScopeFrame {
     type Plans = crate::staged::NoPlans;
 

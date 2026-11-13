@@ -57,6 +57,11 @@ pub(crate) trait NumericStage: Stage {
     /// The int32 word holding the low 32 bits of the 64-bit word `value`.
     fn narrow(&mut self, value: Self::Word) -> Self::Word;
     fn i32_to_f64(&mut self, value: Self::Word) -> Self::Word;
+    /// The binary64 of the unsigned low 32 bits of `value`.
+    fn u32_to_f64(&mut self, value: Self::Word) -> Self::Word;
+    /// ToInt32 of a binary64 word, as an int32 word; a specializer whose native range is narrower
+    /// than ToInt32's leaves at `miss` for what it does not convert.
+    fn to_int32(&mut self, number: Self::Word, miss: Self::Miss) -> Option<Self::Word>;
     fn i32_is_zero(&mut self, value: Self::Word) -> Self::Cond;
     fn i32_is_negative(&mut self, value: Self::Word) -> Self::Cond;
     fn both(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
@@ -68,7 +73,7 @@ pub(crate) trait NumericStage: Stage {
 
 /// A frame whose operands a numeric operation proves in its representation and whose result
 /// it defines with that representation's fact.
-pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + super::PropertyFrame<S> {
+pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + super::PropertyFrame<S> + super::ElementFrame<S> {
     fn int_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> S::Word;
     fn number_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> S::Word;
     /// Continue where `register` holds a Number; `None` where it does not, so nothing runs
@@ -379,6 +384,10 @@ impl NumericStage for super::Concrete {
     fn f64_constant(&mut self, value: f64) -> u64 { value.to_bits() }
     fn narrow(&mut self, value: u64) -> u64 { u64::from(value as u32) }
     fn i32_to_f64(&mut self, value: u64) -> u64 { f64::from(int32(value)).to_bits() }
+    fn u32_to_f64(&mut self, value: u64) -> u64 { f64::from(value as u32).to_bits() }
+    fn to_int32(&mut self, number: u64, _miss: ()) -> Option<u64> {
+        Some(u64::from(crate::units::to_int32(f64::from_bits(number)) as u32))
+    }
     fn i32_is_zero(&mut self, value: u64) -> bool { int32(value) == 0 }
     fn i32_is_negative(&mut self, value: u64) -> bool { int32(value) < 0 }
     fn both(&mut self, a: bool, b: bool) -> bool { a && b }
