@@ -11,8 +11,12 @@ pub(crate) mod effects {
 pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {}
 pub(crate) trait ElementFrame<S: Stage>: PropertyFrame<S> {}
 pub(crate) trait CallFrame<S: Stage>: Frame<S> {}
+/// The runtime vocabulary the frame's default methods name, which a stencil frame never makes: uninhabited here.
+pub(crate) enum Allocation {}
+pub(crate) enum Edge {}
+pub(crate) enum CallOut {}
 #[path = "../../quench-runtime/src/staged/register_frame.rs"] mod register_frame;
-pub(crate) use register_frame::{CallOut, Constant, Frame, Protocol, Step, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
+pub(crate) use register_frame::{Constant, Frame, Step, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
 pub(crate) use crate::bytecode::Register;
 #[path = "../../quench-runtime/src/staged/global.rs"] mod global;
 pub(crate) use global::GlobalFrame;
