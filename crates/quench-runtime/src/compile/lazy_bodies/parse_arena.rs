@@ -8,6 +8,11 @@ use oxc_allocator::Allocator;
 /// cost no memory.
 const ARENA_BYTES_PER_SOURCE_BYTE: usize = 32;
 
+/// Tree bytes past which a whole-program parse's pages are returned when its arena is handed
+/// back, instead of staying resident warm. A code-load iteration's tree (JetStream
+/// first-inspector-code-load) is smaller and keeps its pages for the next parse.
+const WARM_TREE_BYTES: usize = 4 << 20;
+
 /// The arena for parsing `text` again.
 pub(crate) fn arena(text: &str) -> Allocator {
     Allocator::with_capacity(text.len().saturating_mul(ARENA_BYTES_PER_SOURCE_BYTE))
@@ -38,7 +43,14 @@ impl Drop for ParseArena {
     fn drop(&mut self) {
         // SAFETY: the allocator is taken once, here, and not used after.
         let mut allocator = unsafe { std::mem::ManuallyDrop::take(&mut self.0) };
+        let tree = allocator.used_bytes();
         allocator.reset();
+        // A large tree's pages are the program's compile-time working set, not the next parse's
+        // head start: they go back now, not at a collection that throughput never runs.
+        if tree > WARM_TREE_BYTES {
+            let chunk = allocator.capacity();
+            release_free_pages(&allocator, chunk);
+        }
         // The larger arena stays warm: it serves every parse the smaller one does.
         let warm = WARM.take();
         WARM.set(Some(match warm {
