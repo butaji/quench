@@ -52,7 +52,7 @@ mod osr_loop;
 mod exit_protocol;
 mod region_lend;
 pub(super) use exit_protocol::ExitTable;
-mod region_lend; mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
+mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
 pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
 pub(super) use lane_region::ElementViews;
 use osr_compile::OsrFacts;
@@ -3685,6 +3685,8 @@ struct JsStepDispatch {
     method_cache_atoms: usize,
     method_cache_atom_words: usize,
     stores_specialized: usize,
+    /// Whether the property arena records its slots' value classes (`Heap::tracks_slot_values`), which the store gate reads.
+    slots_tracked: usize,
     /// A lane body's receiver; `DELETED` elsewhere.
     receiver: u64,
     /// A lane body's VM and running residual, which its semantic helpers take.
@@ -4346,25 +4348,10 @@ impl<H: Host> Vm<H> {
     /// (`JsStepDispatch::refresh_object_bases`): a helper that allocated or ran guest code may
     /// have moved the record tables or the barrier's mark blocks. Every call, construct and step
     /// helper ends with it, so a row after one reads current bases and checks none.
-    ///
-    /// A body that runs in the VM frame `frame` also reloads the view of that frame's environment slots its
-    /// environment rows read (`env_view`, kept where its barrier admissions are); one that runs as lane
-    /// activations has none.
-    pub(super) fn refresh_body_bases(&mut self, frame: Option<usize>) {
+    pub(super) fn refresh_body_bases(&mut self) {
         let lane = lane_frame();
         // SAFETY: the frame lives for the thread; the running body's helper is the payload's only user.
-        let dispatch = unsafe { &mut (*lane).dispatch };
-        let (epoch, view) = (dispatch.epoch, dispatch.env_view);
-        dispatch.refresh_object_bases(self);
-        dispatch.env_view = self.body_env_view(dispatch, frame, (view, epoch == dispatch.epoch));
-    }
-
-    /// The environment view of the VM frame `frame` a body runs in (`EnvView::after`), none where it runs as lane
-    /// activations; `previous` the payload's view and whether no collection ran since it was taken.
-    fn body_env_view(&mut self, dispatch: &JsStepDispatch, frame: Option<usize>, previous: (general_capture::EnvView, bool)) -> general_capture::EnvView {
-        // SAFETY: the dispatch's residual is the running program's, live for the run.
-        let program = unsafe { &*(dispatch.residual as *const ResidualProgram) };
-        frame.map_or(general_capture::EnvView::EMPTY, |frame| general_capture::EnvView::after(self, frame, (program, dispatch.program_id), previous))
+        unsafe { (*lane).dispatch.refresh_object_bases(self) };
     }
 
     /// Publishes `receiver`, a `this` the running body's frame has just bound (`InitializeThis`), as the
@@ -4741,7 +4728,6 @@ impl JsStepDispatch {
         (self.function_mark_blocks, self.function_mark_block_count) = (blocks as usize, count);
         self.empty_string = vm.empty_string_word().to_bits();
         self.slots_tracked = usize::from(vm.heap.tracks_slot_values());
-        self.string_record_base = vm.heap.string_record_base().map_or(0, |base| base as usize);
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
     }

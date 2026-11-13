@@ -76,10 +76,6 @@ impl<H: Host> Vm<H> {
             (*dispatch).refresh_object_bases_at_entry(self);
             let vm = self as *mut Self;
             (*dispatch).bind_lane_storage(vm);
-            // A body that runs in a VM frame starts with that frame's environment view, so its first
-            // environment row reads and writes in place.
-            let entered = super::super::dispatch_fast::entry_frame::<H>(run.lane_context);
-            (*dispatch).env_view = self.body_env_view(&*dispatch, entered, (general_capture::EnvView::EMPTY, false));
             // A run starts with no native frames; its direct calls push their callees' windows and
             // frames onto the lane stack's own tops, which the dispatch points at. A body entered
             // through its cell has an activation pending, which a leave pushes first: it makes no

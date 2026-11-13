@@ -95,40 +95,6 @@ fn calls_that_bind_this_or_run_eval_are_helper_calls() {
     assert!(runs > 0, "no body ran");
 }
 
-/// A binding the function's own environment holds (one a closure captures) is read by the row over the frame's
-/// environment view, which the body's helpers reload; a dead zone or a slot outside the view leaves into the
-/// helper step, which raises or answers.
-#[test]
-fn environment_local_reads_are_rows_over_the_environment_view() {
-    let before = fast_rows(Op::LoadEnvLocal);
-    let (interpreted, compiled, [runs, _]) = run_both(
-        "function counter(n) { let c = 0; let d = 5; const inc = () => { c = c + 1; return c; }; for (let i = 0; i < n; i++) { inc(); d = d + c; } return c + d; }
-         function dead(n) { let s = 0; const f = () => z; for (let i = 0; i < n; i++) { try { s = s + z; } catch (e) { s = s + 1; } } let z = 2; return s + f(); }
-         let t = 0; for (let m = 0; m < 300; m++) t = (t + counter(m % 6) + dead(m % 3)) | 0;
-         print(t); print(counter(4)); print(dead(2));",
-    );
-    assert_eq!(interpreted, compiled);
-    assert!(runs > 100, "the bodies ran {runs} times");
-    assert!(fast_rows(Op::LoadEnvLocal) > before, "LoadEnvLocal has no fast row");
-}
-
-/// An assignment to a binding the function's own environment holds (one a closure captures) is written by the row over
-/// the environment view where the view admits every direct store, taken when the body is entered; a dead zone or a slot
-/// outside the view leaves into the helper step, which raises or answers.
-#[test]
-fn environment_local_assignments_are_rows_over_the_environment_view() {
-    let before = fast_rows(Op::StoreEnvLocal);
-    let (interpreted, compiled, [runs, _]) = run_both(
-        "function counter(n) { let c = 0; let d = 5; const inc = () => { c = c + 1; return c; }; for (let i = 0; i < n; i++) { c = c + 2; d = d + c; inc(); } return c + d; }
-         function dead(n) { let s = 0; const f = () => z; for (let i = 0; i < n; i++) { try { z = 1; } catch (e) { s = s + 1; } } let z = 2; return s + f(); }
-         let t = 0; for (let m = 0; m < 300; m++) t = (t + counter(m % 6) + dead(m % 3)) | 0;
-         print(t); print(counter(4)); print(dead(2));",
-    );
-    assert_eq!(interpreted, compiled);
-    assert!(runs > 100, "the bodies ran {runs} times");
-    assert!(fast_rows(Op::StoreEnvLocal) > before, "StoreEnvLocal has no fast row");
-}
-
 /// A numeric operator whose result is a local slot (a function that keeps its locals in slots, here because it
 /// evals) is the helper step's, which writes the frame's local the rows read, not a leave: every run of the body completes.
 #[test]

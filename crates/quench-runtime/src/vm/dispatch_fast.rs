@@ -15481,18 +15481,6 @@ fn lane_frames_resumed<H: Host>(
     }
 }
 
-/// The VM frame the body that runs in the lane context `cx` runs in, whose environment its rows read
-/// (`Vm::refresh_body_bases`); none where it runs as lane activations, which keep their environments in
-/// their windows, and where there is no context (a test's entry).
-///
-/// # Safety
-/// `cx` is null or a live `LaneContext<H>`.
-pub(super) unsafe fn entry_frame<H: Host>(cx: *mut ()) -> Option<usize> {
-    let cx = std::ptr::NonNull::new(cx.cast::<LaneContext<H>>())?.as_ptr();
-    // SAFETY: the caller's contract.
-    unsafe { vm(cx).lane_stack.activations.is_empty().then(|| (*cx).root.frame()).flatten() }
-}
-
 /// Reloads the heap bases the running body's rows read through the payload (`Vm::refresh_body_bases`), as
 /// every call, construct and step helper of the body ends: the callee's run or an allocation may have
 /// moved them.
@@ -15502,7 +15490,7 @@ pub(super) unsafe fn entry_frame<H: Host>(cx: *mut ()) -> Option<usize> {
 pub(super) unsafe fn refresh_body_bases<H: Host>(context: u64) {
     let cx = context as usize as *mut LaneContext<H>;
     // SAFETY: the caller's contract.
-    unsafe { vm(cx).refresh_body_bases(entry_frame::<H>(cx.cast())) };
+    unsafe { vm(cx).refresh_body_bases() };
 }
 
 /// Names `payload`, the dispatch of the native loop region that runs on the activation of the lane
