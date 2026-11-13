@@ -469,6 +469,10 @@ struct Lowering<'a, 'f> {
     /// The unit PCs a previous body left at (`Vm::compile_lane_method`): a construction there
     /// runs by the call protocol (`Lowering::construct`).
     generic: &'a [usize],
+    /// Whether the function's activations are environment activations
+    /// (`CallPlan::environment_activation`): their windows hold the metadata and locals that
+    /// `LoadEnvLocal`/`StoreEnvLocal` address (`lane_activate_environment`).
+    environment: bool,
     /// Whether the entry is proving a lane body's inputs: its guards share `entry_exit`.
     proving_entry: bool,
     /// Whether a previous body left at the instruction being lowered (`generic`): its reads probe the VM's caches.
@@ -743,6 +747,64 @@ impl<'a, 'f> Lowering<'a, 'f> {
     fn define(&mut self, state: &mut State, register: Register, value: ir::Value, fact: RegisterFact) {
         frame::register_define(&mut self.builder, &mut self.registers, &mut self.written, state,
             register, value, fact);
+    }
+
+    /// `LoadEnvLocal` of `slot` in an environment activation (`lane_load_window_local`): the
+    /// helper reads the window's local or the environment's slot; an uninitialized binding
+    /// leaves at the read, where the general path raises.
+    fn env_local_get(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> Option<bool> {
+        let exit = self.guard_exit(state, pc);
+        let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+        let base = self.registers_base;
+        let count = self.unit.caller_registers;
+        let slot = u16::try_from(instruction.local_slot()).ok()?;
+        let packed = self.ins().iconst(types::I64, i64::from(count) << u16::BITS | i64::from(slot));
+        let value = self.helper_call(LaneHelper::EnvLocalGet, &[context, base, packed]);
+        let found = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+        emit_js_guard(&mut self.builder, found, exit);
+        self.set_tagged(state, instruction.register_a(), value);
+        Some(true)
+    }
+
+    /// `MakeClosure` of `function` in an environment activation (`lane_make_window_closure`):
+    /// the closure over the activation's environment. The request allocates, so the
+    /// property arena may move (`allocated`); a due collection or a failed request leaves.
+    fn env_closure(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> Option<bool> {
+        let exit = self.guard_exit(state, pc);
+        let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+        let payload = self.payload;
+        let base = self.registers_base;
+        let window = self.unit.caller_registers;
+        let function = u32::from(instruction.imm());
+        let packed = self.ins().iconst(types::I64, i64::from(window) << u32::BITS | i64::from(function));
+        let value = self.helper_call(LaneHelper::EnvClosure, &[context, payload, base, packed]);
+        let made = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+        emit_js_guard(&mut self.builder, made, exit);
+        self.allocated(state);
+        self.set_tagged(state, instruction.result_register(), value);
+        Some(true)
+    }
+
+    /// `StoreEnvLocal` of `slot` in an environment activation (`lane_store_window_local`): the
+    /// helper writes the window's local or the environment's slot, and an uninitialized
+    /// binding's store (not its initialization) leaves at the store.
+    fn env_local_set(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+        let exit = self.guard_exit(state, pc as u32);
+        let value = self.tagged(state, instruction.register_a());
+        let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+        let base = self.registers_base;
+        let count = self.unit.caller_registers;
+        let slot = u16::try_from(instruction.local_slot()).ok()?;
+        let packed = self.ins().iconst(types::I64, i64::from(count) << u16::BITS | i64::from(slot));
+        let initializing = self.ins().iconst(types::I64,
+            i64::from(u8::from(instruction.boolean_field(crate::bytecode::InstructionField::C).unwrap_or(false))));
+        let stored = self.helper_call(LaneHelper::EnvLocalSet, &[context, base, packed, value, initializing]);
+        let done = self.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
+        emit_js_guard(&mut self.builder, done, exit);
+        if let Some(register) = instruction.optional_register_b() {
+            self.set_tagged(state, register, value);
+        }
+        Some(true)
     }
 
     fn set_tagged(&mut self, state: &mut State, register: Register, bits: ir::Value) {
@@ -1567,6 +1629,7 @@ pub(super) fn lower(
         vm,
         stable: Default::default(),
         generic,
+        environment: program.function(function_id as usize).call_plan(program).environment_activation,
         proving_entry: false, left_here: false, entry_exit: None,
         direct,
         frame_captures,
@@ -2748,6 +2811,20 @@ impl Lowering<'_, '_> {
                 Some(false)
             }
             Class::LoadThis if plain && !instruction.writes_current_this() => self.operation_step(state, pc32, instruction, true),
+            // An environment activation's own local (`lane_load_window_local`,
+            // `lane_store_window_local`): its window keeps the binding until the environment
+            // is made, then the environment's slot holds it. The rows are the lane handlers'
+            // own rules; an uninitialized binding leaves to the general path.
+            // A lane body's own activation has the window metadata these rows address; a
+            // loop region runs on the registers alone (`Completion::StatusAndPc`).
+            Class::LoadEnvLocal if plain && self.environment && self.completion == Completion::Body
+                && self.unit.frames.is_empty() && instruction.local_slot() <= usize::from(u16::MAX) =>
+                self.env_local_get(state, pc32, instruction),
+            Class::StoreEnvLocal if self.environment && self.completion == Completion::Body
+                && self.unit.frames.is_empty() && instruction.local_slot() <= usize::from(u16::MAX) =>
+                self.env_local_set(state, pc, instruction),
+            Class::MakeClosure if plain && self.environment && self.completion == Completion::Body
+                && self.unit.frames.is_empty() => self.env_closure(state, pc32, instruction),
             Class::LoadCapture if plain && crate::bytecode::ImmediateLayout::capture_depth(instruction.imm()) == 0 => {
                 let exit = self.guard_exit(state, pc as u32);
                 let value = self.load_capture(state, pc, instruction, exit, None, RootedRead::InBody);

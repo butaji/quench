@@ -319,6 +319,30 @@ fn a_directly_called_body_with_native_calls_matches_the_interpreter() {
     assert_eq!(printed(source, "lane-direct-natives.js", crate::ExecutionMode::Compiled, true), interpreted);
 }
 
+/// A lane body whose activation holds an environment runs it natively: its own locals
+/// (`LoadEnvLocal`/`StoreEnvLocal`) and the closure over them (`MakeClosure`), which
+/// materializes the environment the body then keeps reading and writing. The values are the
+/// interpreter's, before and after the environment is made.
+#[test]
+fn lane_bodies_run_environment_activations() {
+    let source = r#"
+      function counter(start) {
+        let value = start;
+        const bump = () => { value = value + 1; };
+        const read = () => value;
+        for (let i = 0; i < 200; i++) { bump(); value = value + 0; }
+        return read() + value;
+      }
+      let total = 0;
+      for (let calls = 0; calls < 3000; calls++) total = (total + counter(calls)) | 0;
+      print(total);
+    "#;
+    let interpreted = printed(source, "lane-env-activation.js", crate::ExecutionMode::Interpreted, false);
+    assert_eq!(interpreted.len(), 1);
+    assert_eq!(printed(source, "lane-env-activation.js", crate::ExecutionMode::Compiled, true), interpreted);
+    assert_eq!(printed(source, "lane-env-activation.js", crate::ExecutionMode::Compiled, false), interpreted);
+}
+
 /// What `source`, wrapped in a function, prints when run in `mode`, with lane bodies where
 /// `lane_methods`.
 fn printed(source: &str, name: &str, mode: crate::ExecutionMode, lane_methods: bool) -> Vec<String> {

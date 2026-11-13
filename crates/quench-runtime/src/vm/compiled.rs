@@ -1801,6 +1801,12 @@ lane_helper_inventory! { H;
     InstanceOf => lane_instance_of::<H>,
     /// A fused `typeof` test of a heap value (`lane_typeof_is`).
     TypeofIs => lane_typeof_is::<H>,
+    /// An environment activation's local read (`lane_env_local_get`).
+    EnvLocalGet => super::dispatch_fast::lane_env_local_get::<H>,
+    /// An environment activation's local store (`lane_env_local_set`).
+    EnvLocalSet => super::dispatch_fast::lane_env_local_set::<H>,
+    /// A closure over an environment activation (`lane_env_closure`).
+    EnvClosure => constructions::lane_env_closure::<H>,
     /// A planned construction (`lane_construct`).
     Construct => constructions::lane_construct::<H>,
     ConstructReceiver => constructions::lane_construct_receiver::<H>,

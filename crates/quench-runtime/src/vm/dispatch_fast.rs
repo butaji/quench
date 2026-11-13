@@ -15059,6 +15059,89 @@ fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, pc: u
     })
 }
 
+/// A compiled body's `LoadEnvLocal` of `slot` in the activation whose window is at
+/// `registers` (`lane_load_window_local`): the window's local before its environment is
+/// made, else the environment's own slot. `Value::DELETED` for an uninitialized binding or
+/// a lost storage, which leaves the read to the general path.
+pub(in crate::vm) unsafe extern "C" fn lane_env_local_get<H: Host>(_vm: u64, _residual: u64, context: u64, registers: u64, packed: u64) -> u64 {
+    let cx = context as usize as *mut LaneContext<H>;
+    let r = Registers(registers as *mut Value);
+    let (count, slot) = ((packed >> u16::BITS) as u16, packed as u16);
+    let slot_index = usize::from(slot);
+    let environment = r.get(count + WINDOW_ENVIRONMENT);
+    let value = if environment.is_deleted() {
+        Some(r.get(count + WINDOW_LOCALS + slot))
+    } else {
+        let vm = unsafe { vm(cx) };
+        // SAFETY: the window's in-place storage, which the environment's slots alias
+        // (`lane_activate_environment`), as `lane_load_window_local_general` reads it.
+        let storage = unsafe {
+            &*(std::mem::transmute::<Value, u64>(r.get(count + WINDOW_SLOTS))
+                as *const crate::heap::EnvironmentSlots)
+        };
+        storage.dense().and_then(|dense| dense.dense_plain(slot_index))
+            .or_else(|| vm.heap.environment_slot(environment, slot_index))
+    };
+    value.filter(|value| !value.is_deleted()).unwrap_or(Value::DELETED).to_bits()
+}
+
+/// A compiled body's `StoreEnvLocal` of `slot` (`lane_store_window_local`): the window's
+/// local before its environment is made, else the environment's slot, which takes the
+/// environment's barrier first. `initializing` admits a store to a binding in its dead zone;
+/// `1` when stored, `0` for an uninitialized store, which leaves to the general path.
+pub(in crate::vm) unsafe extern "C" fn lane_env_local_set<H: Host>(_vm: u64, _residual: u64, context: u64, registers: u64, packed: u64, value: u64, initializing: u64) -> u64 {
+    let cx = context as usize as *mut LaneContext<H>;
+    let r = Registers(registers as *mut Value);
+    let (count, slot) = ((packed >> u16::BITS) as u16, packed as u16);
+    let value = Value::from_bits(value);
+    let environment = r.get(count + WINDOW_ENVIRONMENT);
+    let stored = if environment.is_deleted() {
+        // SAFETY: an environment activation's window holds its locals after its registers
+        // and metadata (`lane_activate_environment`).
+        let binding = unsafe {
+            &mut *r.0.add(usize::from(count + WINDOW_LOCALS) + usize::from(slot))
+        };
+        if initializing != 0 || !binding.is_deleted() {
+            *binding = value;
+            true
+        } else {
+            false
+        }
+    } else {
+        let vm = unsafe { vm(cx) };
+        vm.heap.remember_cell(environment);
+        // SAFETY: as the read's storage; a write takes the environment's barrier first.
+        let storage = unsafe {
+            &mut *(std::mem::transmute::<Value, u64>(r.get(count + WINDOW_SLOTS))
+                as *mut crate::heap::EnvironmentSlots)
+        };
+        let binding = storage.owned_mut(usize::from(slot)).or_else(|| vm.heap.environment_slot_mut(environment, usize::from(slot)));
+        match binding {
+            Some(binding) if initializing != 0 || !binding.is_deleted() => {
+                *binding = value;
+                true
+            }
+            _ => false,
+        }
+    };
+    u64::from(stored)
+}
+
+/// A compiled body's `MakeClosure` of `function` in an environment activation
+/// (`lane_make_window_closure`): the closure over the activation's environment, whose window
+/// starts at `registers`; `None` where a collection is due or the closure cannot be made,
+/// which leaves at the record. The caller refreshes the dispatch's arena bases
+/// (`compiled::lane_env_closure`).
+pub(in crate::vm) fn lane_env_closure_value<H: Host>(context: usize, registers: u64, packed: u64) -> Option<Value> {
+    let cx = context as *mut LaneContext<H>;
+    let r = Registers(registers as *mut Value);
+    let (window, function) = ((packed >> u32::BITS) as u16, packed as u32);
+    if unsafe { (*cx).vm.as_mut() }?.heap.should_collect() {
+        return None;
+    }
+    lane_window_closure_value(cx, r, function, window)
+}
+
 /// Whether a lane body's run may call bodies by their compiled entries: the lane may make
 /// their activations should it leave inside one (`lane_body_call`'s own conditions).
 fn lane_direct_calls<H: Host>(cx: *mut LaneContext<H>) -> bool {

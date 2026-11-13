@@ -32,6 +32,19 @@ pub(super) unsafe extern "C" fn lane_construct<H: Host>(vm: u64, residual: u64, 
     built.unwrap_or(Value::DELETED).to_bits()
 }
 
+/// A lane body's `MakeClosure` in an environment activation
+/// (`dispatch_fast::lane_env_closure_value`): the closure, or `Value::DELETED`, which leaves
+/// at the record. The request may have moved the property arena, whose bases the dispatch
+/// then holds again for the body to reload.
+pub(super) unsafe extern "C" fn lane_env_closure<H: Host>(vm: u64, _residual: u64, payload: u64, context: u64, registers: u64, packed: u64) -> u64 {
+    // SAFETY: the body passes its own VM, running dispatch and lane context; the request
+    // runs no guest code beyond the closure's own template.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    let made = super::dispatch_fast::lane_env_closure_value::<H>(context as usize, registers, packed);
+    dispatch.refresh_object_bases(vm);
+    made.unwrap_or(Value::DELETED).to_bits()
+}
+
 /// The receiver a body's construction through forwarding constructor `callee` passes its
 /// forwarded initializer (`dispatch_fast::lane_body_receiver`), or `Value::DELETED`, which
 /// takes the construction's helper path before any effect.
