@@ -78,12 +78,12 @@ pub(super) struct EmitFrame<'a> {
     pub(super) table_entry: Option<&'a Entry>,
 }
 
-impl EmitFrame<'_> {
-    /// The activation's local slots, read where an instruction uses them.
-    fn native_locals(&self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
-        self.locals.then(|| super::super::emit_js_payload_word(stage.builder, self.payload,
-            std::mem::offset_of!(super::super::JsStepDispatch, native_locals)))
-    }
+/// The address of the activation's local `slot` (`JsStepDispatch::native_locals`), which an
+/// instruction or a handler's entry reads or writes.
+pub(super) fn local_slot_address(builder: &mut FunctionBuilder<'_>, payload: ir::Value, slot: u16) -> ir::Value {
+    let locals = super::super::emit_js_payload_word(builder, payload,
+        std::mem::offset_of!(super::super::JsStepDispatch, native_locals));
+    builder.ins().iadd_imm_s(locals, i64::from(slot) * std::mem::size_of::<Value>() as i64)
 }
 
 impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {

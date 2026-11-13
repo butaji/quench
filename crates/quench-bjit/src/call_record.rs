@@ -22,6 +22,9 @@ pub const LANE_CALL_TERMINATED: u64 = 3;
 /// A call-out that decides a comparison completed, and the comparison held; `LANE_CALL_COMPLETED`
 /// is that it did not.
 pub const LANE_CALL_HOLDS: u64 = 4;
+/// The callee's body ended by an exception (`LANE_BODY_THREW`): its activation is popped, the
+/// call's register is untouched and the exception waits in `Vm::lane_raised`.
+pub const LANE_CALL_RAISED: u64 = 5;
 
 /// The general dispatch's return statuses count down from the top of `u32` by this many blocks
 /// (`vm::compiled::MAX_JS_GENERAL_DISPATCH_BLOCKS`).

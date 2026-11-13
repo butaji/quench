@@ -42,6 +42,14 @@ impl LaneBodyStats {
         self.ends.iter().map(|end| u64::from(end.get())).sum()
     }
 
+    /// The runs that ended the activation (a return or an exception) and the runs that left it
+    /// to the lane, which a test reads to see that no exception made a frame.
+    #[cfg(test)]
+    pub(in crate::vm) fn ended_runs(&self) -> (u32, u32) {
+        let left = [End::LeftAt, End::LeftInlined, End::LeftInCallee].map(|end| self.ends[end as usize].get()).iter().sum();
+        (self.ends[End::Completed as usize].get(), left)
+    }
+
     /// `frames`, the body's inlined calls, name the function a leave inside one was in.
     pub(in crate::vm) fn ended(&self, exit: super::super::compiled::LaneExit, exits: &super::super::compiled::ExitTable, frames: &[super::super::compiled::InlinedCall], line: u64) {
         let index = End::of(exit) as usize;
@@ -106,7 +114,7 @@ impl End {
     fn of(exit: super::super::compiled::LaneExit) -> Self {
         use super::super::compiled::LaneExit;
         match exit {
-            LaneExit::Returned { .. } => Self::Completed,
+            LaneExit::Returned { .. } | LaneExit::Threw { .. } => Self::Completed,
             LaneExit::At(_) | LaneExit::Entry | LaneExit::Stub => Self::LeftAt,
             LaneExit::Inlined { .. } => Self::LeftInlined,
             LaneExit::Callee => Self::LeftInCallee,
@@ -126,7 +134,6 @@ macro_rules! miss_reasons {
     };
 }
 miss_reasons! {
-    CallShadowActive => "call:shadow-active",
     CallNoScriptCalls => "call:no-script-calls",
     CallConstructing => "call:constructing",
     CallWithScope => "call:with-scope",

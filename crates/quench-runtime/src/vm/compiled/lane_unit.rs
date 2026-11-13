@@ -212,7 +212,7 @@ impl Unit {
             }
         }
         starts.push(successors.len());
-        let live = crate::compile::liveness::analyze_graph(&transfers, &starts, &successors, |pc| masks[pc]);
+        let live = crate::compile::liveness::analyze_graph(&transfers, &starts, &successors, &[], |pc| masks[pc]);
         Some(std::borrow::Cow::Owned(RegisterMasks::new(live)))
     }
 }

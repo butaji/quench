@@ -1350,6 +1350,10 @@ lane_helper_inventory! { H;
     ConstructReceiver => constructions::lane_construct_receiver::<H>,
     /// A construction of the body's own, by the call protocol (`dispatch_fast::lane_body_construct`).
     ConstructCall => super::dispatch_fast::lane_body_construct::<H>,
+    /// A body's uncaught `throw`, stashed for its native callers and the lane (`lane_raise`).
+    Raise => lane_raise::<H>,
+    /// The exception a callee left in `Vm::lane_raised`, for a handler of the caller's own (`lane_take_raised`).
+    TakeRaised => lane_take_raised::<H>,
     /// An object literal's and an array literal's allocation.
     NewObject => lane_new_object::<H>,
     NewArray => lane_new_array::<H>,
@@ -1385,6 +1389,8 @@ lane_helper_inventory! { H;
     /// A decision of two words the call-out carries, which needs no VM record
     /// (`dispatch_fast::lane_decide`).
     Decide => super::dispatch_fast::lane_decide::<H>,
+    /// A handler's entry in the frame, for the exception it catches (`dispatch_fast::lane_handler_edge`).
+    HandlerEdge => super::dispatch_fast::lane_handler_edge::<H>,
 }
 
 /// Makes the frames of a chain of native activations, outer to inner, above the payload's
@@ -3656,16 +3662,20 @@ struct JsStepDispatch {
     lane_context: usize,
     /// The record a lane body's completion runs (`LANE_BODY_RETURNED`).
     returned_pc: usize,
-    /// A lane run's free lane-stack values, where a direct call places its callee's
-    /// registers (`DirectCallee`): the next and the end of the stack's capacity.
+    /// A frameless entry's free windows and shadow records (`frameless`): the next and the end
+    /// of each stack.
     native_top: usize,
     native_end: usize,
-    /// The next free and the end of the run's shadow frames (`LaneFrame::shadow`).
     shadow_top: usize,
     shadow_end: usize,
     /// The first native frame's address (the lane stack's activations' end); `shadow_top`
     /// equals it while no native frame lives.
     shadow_base: usize,
+    /// The words of a run's direct calls' stack tops, owned by the VM's `LaneStack` (`Vm::lane_stack_words`).
+    lane_values_top: usize,
+    lane_values_end: usize,
+    lane_activations_top: usize,
+    lane_frames_end: usize,
     /// The element read past a present dense element (`general_elements`).
     element_get: usize,
     /// The VM's frameless call admissions (`frameless`), valid in the heap's collection
@@ -3778,6 +3788,9 @@ pub(super) enum LaneExit {
     Callee,
     /// The activation completes with `value`, by the `Return` or the returning call at `pc`.
     Returned { pc: usize, value: Value },
+    /// The activation ends by the exception in `Vm::lane_raised`, raised at the record `pc`,
+    /// which no native handler of its function took: the lane unwinds from there.
+    Threw { pc: usize },
     /// The entry's proof of its inputs failed before any instruction ran: the activation
     /// resumes at its first record, and a plan again proves no input contract.
     Entry,
@@ -3791,13 +3804,17 @@ pub(super) enum LaneExit {
 /// and `JsStepDispatch::returned_pc` the record that completes it (`LaneExit::Returned`). It
 /// sits below the return statuses and above every small status.
 pub(super) const LANE_BODY_RETURNED: u32 = RETURN_STATUS_BASE - 1;
+/// The status of a lane body whose activation ends by an exception no handler of its function
+/// covers: the exception is in `Vm::lane_raised` and `JsStepDispatch::returned_pc` names the
+/// record that raised it (`LaneExit::Threw`). Native callers unwind through it.
+pub(super) const LANE_BODY_THREW: u32 = RETURN_STATUS_BASE - 3;
 
 /// What a lane body's native call (`dispatch_fast::lane_body_call`) did: completed, with its
 /// result in the call's register; missed before any effect, so the body leaves at the call;
 /// or left the lane in the callee's activation it made.
 /// Termination is terminal: the outer native body must not reconstruct or replay a call.
 pub(super) use quench_bjit::call_record::{
-    LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_TERMINATED,
+    LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_RAISED, LANE_CALL_TERMINATED,
 };
 
 impl LaneExit {
@@ -3812,7 +3829,7 @@ impl LaneExit {
     }
     #[cfg(test)]
     pub(super) fn caller_pc(self) -> Option<usize> {
-        match self { Self::At(pc) | Self::Returned { pc, .. } => Some(pc), Self::Entry | Self::Stub => Some(0), Self::Inlined { .. } | Self::Callee | Self::Terminated => None }
+        match self { Self::At(pc) | Self::Returned { pc, .. } | Self::Threw { pc } => Some(pc), Self::Entry | Self::Stub => Some(0), Self::Inlined { .. } | Self::Callee | Self::Terminated => None }
     }
     /// Where the activation resumes: an entry leave at its first record.
     pub(super) fn resumed(self) -> Self {
@@ -3943,6 +3960,39 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
 unsafe extern "C" fn lane_call_budget(_vm: u64, _residual: u64) -> u64 {
     #[cfg(test)] CALL_BUDGET_READS.with(|count| count.set(count.get() + 1));
     crate::stack::GuestCallGuard::remaining() as u64
+}
+
+/// The word naming the record a lane body's `throw` raised at: its function above the record.
+pub(super) fn raise_site(function: u32, record: u32) -> u64 {
+    u64::from(function) << u32::BITS | u64::from(record)
+}
+
+/// The function and record `raise_site` names.
+pub(super) fn raise_site_parts(site: u64) -> (u32, u32) {
+    ((site >> u32::BITS) as u32, site as u32)
+}
+
+/// A lane body's `throw` of `value` that no handler of its function takes: the exception in
+/// `Vm::lane_raised`, with where it was thrown, for native callers and then the lane to find.
+/// The interpreter's `Throw` makes the same error; its source location is captured only if it
+/// escapes native code (`dispatch_fast::lane_raised_exit`).
+unsafe extern "C" fn lane_raise<H: Host>(vm: u64, _residual: u64, value: u64, site: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; the message of a value reads no guest code.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    let value = Value::from_bits(value);
+    let message = vm.detail_string(value);
+    vm.lane_raised = Some(JsError::thrown(value, message));
+    vm.lane_raise_site = site;
+    0
+}
+
+/// The exception a callee's body raised (`lane_raise`), taken from `Vm::lane_raised` for the
+/// handler of the caller that catches it.
+unsafe extern "C" fn lane_take_raised<H: Host>(vm: u64, _residual: u64) -> u64 {
+    // SAFETY: as `lane_field_get`.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    let error = vm.lane_raised.take().expect("a raised call left its exception");
+    error.thrown_value().expect("a body raises a thrown value").to_bits()
 }
 
 /// A lane body's global name read (`Vm::lane_global_read`): its value, or `Value::DELETED` for one the lane's own read would not take.
@@ -4179,49 +4229,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// The native frames the last run left inside, outermost first, which the lane now
-    /// materializes (`ShadowFrame`); none once taken.
-    pub(super) fn take_shadow_frames() -> ShadowFrames {
-        let frame = lane_frame();
-        // SAFETY: no lane body runs while the lane reads the frame; the frames sit past the
-        // activations' end, which the lane's own pushes (materialization) overwrite in
-        // order, each after the frame it replaces was read (`ShadowFrames::get`).
-        unsafe {
-            let base = (*frame).dispatch.shadow_base as *const Activation;
-            let top = (*frame).dispatch.shadow_top as *const Activation;
-            let count = if top.is_null() { 0 } else { top.offset_from(base) as usize };
-            (*frame).dispatch.shadow_top = base.addr();
-            ShadowFrames { base, count }
-        }
-    }
-
-    /// The callee of the innermost native frame of the running body (`ShadowFrame`): the
-    /// body a helper runs for when it runs as a direct callee; `None` in the activation's own.
-    pub(super) fn innermost_direct_callee() -> Option<&'static DirectCallee> {
-        Self::innermost_shadow_frame().map(|frame| unsafe { &*frame.callee })
-    }
-
-    /// The innermost native frame of the running body (`ShadowFrame`), whose window and callee
-    /// are the registers and function a helper called from that body (`dispatch_fast::lane_body_record`)
-    /// reads; `None` in the activation's own.
-    pub(super) fn innermost_shadow_frame() -> Option<ShadowFrame> {
-        let frame = lane_frame();
-        // SAFETY: as `lane_shadow_active`.
-        unsafe {
-            let (base, top) = ((*frame).dispatch.shadow_base as *const Activation, (*frame).dispatch.shadow_top as *const Activation);
-            (!top.is_null() && top != base).then(|| (*top.sub(1)).native)
-        }
-    }
-
-    /// Whether a running body has native frames below the innermost: a helper's activation
-    /// would sit under them, so a call from one takes the body's exit instead
-    /// (`dispatch_fast::lane_body_call`).
-    pub(super) fn lane_shadow_active() -> bool {
-        let frame = lane_frame();
-        // SAFETY: as `take_shadow_frames`; the running body wrote the top before its call.
-        unsafe { (*frame).dispatch.shadow_top != (*frame).dispatch.shadow_base }
-    }
-
     /// `run_lane_method` from inside a running body (`dispatch_fast::lane_body_call`): the
     /// caller's body continues with the per-entry words it entered with. Its callee runs in
     /// the same program (`lane_crosses`) and allocates nothing, so the program's bases stand.
@@ -4276,26 +4283,6 @@ impl<H: Host> Vm<H> {
 /// machine stack each costs a frame; the bound keeps a native recursion within it.
 const SHADOW_FRAMES: usize = 64;
 
-/// The native frames a leave took (`Vm::take_shadow_frames`): the prefixes of `count` activations
-/// at `base`, in the activations' spare room, where materialization makes the activations in place.
-#[derive(Clone, Copy)]
-pub(super) struct ShadowFrames {
-    base: *const Activation,
-    pub(super) count: usize,
-}
-
-impl ShadowFrames {
-    /// Frame `index`, outermost first, read before the activation that replaces it is pushed.
-    pub(super) fn get(&self, index: usize) -> ShadowFrame {
-        // SAFETY: `index < count` frames were pushed in place by the run that left.
-        unsafe { (*self.base.add(index)).native }
-    }
-}
-
-/// `shadow_base` before any lane body ran on the frame: no frame word equals it, so a helper
-/// a loop region calls then sees native frames (`lane_shadow_active`) and its call leaves.
-const NO_LANE_RUN: usize = usize::MAX;
-
 /// The stride of the native frames a run pushes: an activation record, whose first words they are.
 pub(super) const FRAME_BYTES: usize = std::mem::size_of::<Activation>();
 
@@ -4307,6 +4294,8 @@ struct LaneEntry {
     lane_context: usize,
     native_registers: *mut Value,
     residual: usize,
+    /// The end of the frames the run may nest, which a nested run narrows and its caller regains.
+    frames_end: usize,
 }
 
 impl LaneEntry {
@@ -4317,6 +4306,7 @@ impl LaneEntry {
             lane_context: dispatch.lane_context,
             native_registers: dispatch.native_registers,
             residual: dispatch.residual,
+            frames_end: dispatch.lane_frames_end,
         }
     }
 
@@ -4326,6 +4316,7 @@ impl LaneEntry {
         dispatch.lane_context = self.lane_context;
         dispatch.native_registers = self.native_registers;
         dispatch.residual = self.residual;
+        dispatch.lane_frames_end = self.frames_end;
     }
 }
 
@@ -4445,6 +4436,7 @@ impl LaneFrame {
                 native_end: 0,
                 shadow_top: 0,
                 shadow_end: 0, shadow_base: NO_LANE_RUN,
+                lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
                 outcome: None,
             },
             scratch: Vec::new(),
@@ -4570,6 +4562,7 @@ impl JsNativeActivation {
             native_end: 0,
             shadow_top: 0,
             shadow_end: 0, shadow_base: 0,
+            lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
             outcome: None,
         }, _program: program };
         // The prologue already coerced `this` (`Vm::call_this_value`); a frame that has not

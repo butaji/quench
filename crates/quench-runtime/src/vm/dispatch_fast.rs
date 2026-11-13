@@ -566,10 +566,10 @@ struct EnvironmentWindow {
 /// (`EnvironmentSlots::lay_out_in_place`) over its locals, which follow. Until a closure or a
 /// frame needs the environment, every slot lives among the locals and the storage address
 /// names that in-place storage, so a captured slot reads the same way before and after.
-const WINDOW_ENVIRONMENT: u16 = 0;
-const WINDOW_SLOTS: u16 = 1;
-const WINDOW_CAPTURED: u16 = 2;
-const WINDOW_STORAGE: u16 = 3;
+pub(super) const WINDOW_ENVIRONMENT: u16 = 0;
+pub(super) const WINDOW_SLOTS: u16 = 1;
+pub(super) const WINDOW_CAPTURED: u16 = 2;
+pub(super) const WINDOW_STORAGE: u16 = 3;
 pub(super) const WINDOW_LOCALS: u16 = WINDOW_STORAGE + crate::heap::IN_PLACE_SLOTS_WORDS as u16;
 
 impl EnvironmentWindow {
@@ -602,7 +602,9 @@ const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 mod closure_targets;
 mod getters;
 mod lane_stack_growth;
-use super::lane_values::LaneValues;
+mod native_frames;
+use super::lane_values::{LaneValues, HEAP_WINDOW};
+use super::lane_activations::LaneActivations;
 mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::lane_loop_field_stores;
@@ -1302,10 +1304,11 @@ const LANE_STACK_ACTIVATIONS: usize = 1 << 16;
 /// a window of the lane stack; it returns to the record after `call` in its
 /// caller, whose registers, view and memory it keeps for the return.
 #[derive(Clone, Copy)]
-#[repr(C)]
+#[repr(C, align(128))]
 pub(in crate::vm) struct Activation {
-    /// The native prefix: a direct call's frame, which a leave inside it links in place
-    /// (`lane_materialize_frames`); empty for an activation the lane made.
+    /// The native prefix: the callee's descriptor, receiver, body and window, which emitted
+    /// code writes for a direct call's frame (`ActivationKind::Native`) and which stays through
+    /// its link (`NativeFrames`); only `window` for an activation the lane made.
     pub(in crate::vm) native: super::compiled::ShadowFrame,
     function: u32,
     call: Ip,
@@ -1318,36 +1321,62 @@ pub(in crate::vm) struct Activation {
     kind: ActivationKind,
 }
 
+/// The tags of `ActivationKind`: the discriminants, which emitted code writes as the first
+/// word of the kind (`NATIVE_TAG`) and the lane reads to tell a native frame from an activation.
+pub(in crate::vm) const KIND_NATIVE: u8 = 0;
+/// Where the kind's tag lies in an activation.
+pub(in crate::vm) const KIND_OFFSET: usize = std::mem::offset_of!(Activation, kind);
+const KIND_SCRIPT: u8 = 1;
+const KIND_WASM: u8 = 2;
+
 /// What an activation keeps beyond its registers, by the kind of function it runs.
 #[derive(Clone, Copy)]
+#[repr(C, u8)]
 enum ActivationKind {
-    Script(ScriptActivation),
+    /// A native direct call's frame as emitted code wrote it: only the prefix words
+    /// (`Activation::native`, the callee's descriptor, receiver, body and window) and this
+    /// tag, no link state. `NativeFrames::link` makes it a `Script` activation when the lane
+    /// first observes it; the prefix stays, as the descriptor of the frame above it.
+    Native = KIND_NATIVE,
+    Script(ScriptActivation) = KIND_SCRIPT,
     /// A Wasm activation keeps its caller's memory for the return and its requested
     /// register payload for guest-stack accounting, excluding admission padding.
-    Wasm { memory: MemoryView, frame_storage_bytes: usize },
+    Wasm { memory: MemoryView, frame_storage_bytes: usize } = KIND_WASM,
 }
 
+const _: () = {
+    assert!(KIND_OFFSET % std::mem::size_of::<u64>() == 0);
+};
+
 impl Activation {
-    /// The frame state of a JavaScript activation; `None` for Wasm.
+    /// The frame state of a JavaScript activation; `None` for Wasm and for a native frame
+    /// the lane has not linked (`NativeFrames`), which no lane code observes.
     #[inline] fn script(&self) -> Option<&ScriptActivation> {
         match &self.kind {
             ActivationKind::Script(script) => Some(script),
-            ActivationKind::Wasm { .. } => None,
+            ActivationKind::Native | ActivationKind::Wasm { .. } => None,
         }
+    }
+
+    /// The pc of the call record this activation was entered from, in its caller's body
+    /// (`caller_base`); `None` for a native frame, which keeps no link state.
+    fn caller_pc(&self) -> Option<usize> {
+        // SAFETY: a linked activation's call record lies in its caller's body.
+        (!matches!(self.kind, ActivationKind::Native)).then(|| unsafe { self.call.offset_from(self.caller_base) } as usize)
     }
 
     /// The memory view its caller runs with: a JavaScript activation's caller is JavaScript,
     /// whose view carries the context (`MemoryView::script`).
     fn caller_memory<H: Host>(&self, cx: *mut LaneContext<H>) -> MemoryView {
         match self.kind {
-            ActivationKind::Script(_) => MemoryView::script(cx),
+            ActivationKind::Native | ActivationKind::Script(_) => MemoryView::script(cx),
             ActivationKind::Wasm { memory, .. } => memory,
         }
     }
 
     #[inline] fn frame_storage_bytes(&self) -> usize {
         match self.kind {
-            ActivationKind::Script(_) => 0,
+            ActivationKind::Native | ActivationKind::Script(_) => 0,
             ActivationKind::Wasm { frame_storage_bytes, .. } => frame_storage_bytes,
         }
     }
@@ -1375,6 +1404,10 @@ struct ScriptActivation {
     forwards: bool,
     /// Its environment and frame locals follow its registers (`CallEntry::Environment`).
     environment: bool,
+    /// The record of the suspended frame a windowed activation runs over (`generator_windows`,
+    /// `lane_roots`), which the lane's name lookups read the dynamic bindings of; null for any
+    /// other activation.
+    record: *mut super::activation::FrameRecord,
 }
 
 /// A JavaScript activation's own receiver and environment, which it does not store
@@ -1388,9 +1421,29 @@ struct ActivationState {
 }
 
 impl Activation {
-    /// The lane-stack index of this activation's first register, in a stack whose values start at `values`.
-    fn window(&self, values: *const Value) -> usize {
-        (self.native.window - values.addr()) / std::mem::size_of::<Value>()
+    /// The address of this activation's first register: its prefix's WINDOW word without its
+    /// mark (`HEAP_WINDOW`), which names the lane stack's values by default and any other
+    /// register file (a generator's) alike.
+    #[inline(always)]
+    pub(in crate::vm) fn window_ptr(&self) -> *mut Value {
+        (self.native.window & !HEAP_WINDOW) as *mut Value
+    }
+
+    /// The prefix's WINDOW word as it stands, which a return hands the lane stack's values to
+    /// free the window if the stack holds it (`LaneValues::release_window`).
+    #[inline(always)]
+    pub(in crate::vm) fn window_word(&self) -> usize {
+        self.native.window
+    }
+
+    /// The first `len` values from the window: its registers, and what follows them
+    /// (`ScriptActivation::forwards`, `environment`).
+    ///
+    /// # Safety
+    /// The window holds `len` initialized values, which nothing else writes while the slice lives.
+    #[inline(always)]
+    unsafe fn window(&self, len: usize) -> &[Value] {
+        unsafe { std::slice::from_raw_parts(self.window_ptr(), len) }
     }
 }
 
@@ -1457,6 +1510,24 @@ enum Completion {
     ReturnsToBody,
     /// `ReturnsToBody` of a body's `new`. Made a frame, it is a construction's.
     ConstructsToBody,
+    /// A generator the lane resumed over its suspended frame's register file
+    /// (`generator_windows`): its `yield` suspends it back into the record and its return
+    /// completes it, the call yielding the step's iterator result, which only a step's
+    /// `done` and `value` reads observe (`Vm::reused_iterator_result`). The activation's
+    /// callee is the generator. Made a frame, its pending call completes the step
+    /// (`CallCompletion::Generator`).
+    Generates,
+    /// `Generates` for a `yield*` step of a delegate generator: the step's fresh result goes to
+    /// the delegating record's state register, which that record, made again, reads
+    /// (`lane_yield_star`).
+    Delegates,
+    /// The async function or async generator a promise job resumed over its suspended frame's
+    /// register file, the root of its lane run (`LaneRoot::Job`, `Vm::run_lane_job`): its
+    /// `await` suspends it back into its owner (`lane_await`) and its return ends the run with
+    /// the value, which the job delivers. No call record is its caller's. Made a frame, it is
+    /// the entry frame of the general loop that finishes it, which no pending call names. The
+    /// activation's callee is its owner.
+    ResumesJob,
 }
 
 impl Completion {
@@ -1478,6 +1549,17 @@ impl Completion {
     /// non-object result.
     #[inline] fn constructs(self) -> bool {
         matches!(self, Self::Constructs | Self::CrossConstructs | Self::ConstructsToBody)
+    }
+
+    /// Whether the activation runs a generator over its record's register file.
+    #[inline] fn is_generator(self) -> bool {
+        matches!(self, Self::Generates | Self::Delegates)
+    }
+
+    /// Whether the activation runs over the register file of a heap record's frame, a
+    /// generator's or a job's, which names its owner as its callee.
+    #[inline] fn is_windowed(self) -> bool {
+        self.is_generator() || self == Self::ResumesJob
     }
 
     /// Whether the activation's return makes the caller's program the lane's again.
@@ -1760,7 +1842,7 @@ pub(super) struct LaneStack {
     /// swept (`forget_dead_callees`).
     call_sites: std::cell::RefCell<rustc_hash::FxHashMap<usize, smallvec::SmallVec<[super::compiled::CallTarget; INLINE_SITE_TARGETS]>>>,
     values: LaneValues,
-    activations: Vec<Activation>,
+    activations: LaneActivations,
     /// Wasm activation payload represented by `values` before lane materialization.
     wasm_storage_bytes: usize,
     /// Resolved targets of lane `Call` records (`Vm::script_call_entry`) of callees of the
@@ -1803,6 +1885,16 @@ pub(super) struct LaneStack {
     /// frame's `active_iterators`, which the activation's frame takes when it materializes.
     /// A completion drops its activation's entries, as a frame's pop drops its list.
     iterators: Vec<(usize, super::ActiveIterator)>,
+    /// The `with` objects of the activations' scope chains (`with_scopes`), each with the index of
+    /// the activation that owns it, innermost last: a frame's `with_objects`, which the
+    /// activation's frame takes when it materializes. A completion drops its activation's
+    /// entries, as a frame's pop truncates the VM's scope stack.
+    with_objects: Vec<(usize, Value)>,
+    /// The records ordinary activations made for a direct eval (`lane_eval`), each with the
+    /// index of the activation that owns it, innermost last; the activation names it
+    /// (`ScriptActivation::record`). A completion drops its activation's, and a materialization
+    /// its frame's own state takes over: the environment the eval promoted.
+    records: Vec<(usize, Box<super::activation::FrameRecord>)>,
     /// The forwarding constructor bodies call targets name (`ScriptCallTarget::forwarded_method`),
     /// each once: a program's bodies are fixed, so the table only grows with distinct ones.
     forwarded_methods: Vec<crate::bytecode::ForwardedThisMethod>,
@@ -1827,6 +1919,15 @@ pub(super) struct LaneStack {
     boundary_frames: Option<usize>,
 }
 
+/// The addresses a lane run's direct calls push onto (`Vm::lane_stack_words`).
+#[derive(Clone, Copy)]
+pub(in crate::vm) struct LaneStackWords {
+    pub(in crate::vm) values_top: usize,
+    pub(in crate::vm) values_end: usize,
+    pub(in crate::vm) activations_top: usize,
+    pub(in crate::vm) frames_end: usize,
+}
+
 /// A generation no lane runs under: an empty target entry never matches.
 const NO_SCRIPT_GENERATION: ScriptGeneration = 0;
 
@@ -1834,7 +1935,7 @@ impl Default for LaneStack {
     fn default() -> Self {
         Self {
             values: LaneValues::with_capacity(LANE_STACK_VALUES),
-            activations: Vec::with_capacity(LANE_STACK_ACTIVATIONS),
+            activations: LaneActivations::with_capacity(LANE_STACK_ACTIVATIONS),
             wasm_storage_bytes: 0,
             call_sites: std::cell::RefCell::default(),
             script_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
@@ -1848,6 +1949,8 @@ impl Default for LaneStack {
             settling: Vec::new(),
             steps: Vec::new(),
             iterators: Vec::new(),
+            with_objects: Vec::new(),
+            records: Vec::new(),
             forwarded_methods: Vec::new(),
             activation_limit: std::cell::Cell::new(0),
             generation: NO_SCRIPT_GENERATION,
@@ -1928,12 +2031,9 @@ impl LaneStack {
         let len = self.activations.len();
         let frame_storage_bytes = activation.frame_storage_bytes();
         debug_assert!(len < self.activations.capacity(), "lane activations stay within capacity");
-        // SAFETY: the slot at `len` lies within capacity and is uninitialized; the length
+        // SAFETY: the slot at `len` lies within capacity and is uninitialized; the top
         // covers it only once written.
-        unsafe {
-            self.activations.as_mut_ptr().add(len).write(activation);
-            self.activations.set_len(len + 1);
-        }
+        unsafe { self.activations.push_unchecked(activation); }
         self.wasm_storage_bytes += frame_storage_bytes;
     }
 
@@ -1941,22 +2041,25 @@ impl LaneStack {
     fn pop_activation(&mut self) -> Option<Activation> {
         let activation = self.activations.pop()?;
         self.wasm_storage_bytes -= activation.frame_storage_bytes();
-        self.drop_iterators_from(self.activations.len());
+        self.drop_owned_from(self.activations.len());
         Some(activation)
     }
 
-    /// Drops the iterator entries of the activations from index `depth` on, which completed.
+    /// Drops what the activations from index `depth` on owned, which completed: their loops'
+    /// iterators and their `with` objects.
     #[inline(always)]
-    fn drop_iterators_from(&mut self, depth: usize) {
-        if !self.iterators.is_empty() {
-            self.drop_iterators_held_from(depth);
+    fn drop_owned_from(&mut self, depth: usize) {
+        if !self.iterators.is_empty() || !self.with_objects.is_empty() || !self.records.is_empty() {
+            self.drop_owned_held_from(depth);
         }
     }
 
     #[cold]
     #[inline(never)]
-    fn drop_iterators_held_from(&mut self, depth: usize) {
+    fn drop_owned_held_from(&mut self, depth: usize) {
         self.iterators.retain(|(owner, _)| *owner < depth);
+        self.with_objects.retain(|(owner, _)| *owner < depth);
+        self.records.retain(|(owner, _)| *owner < depth);
     }
 
     /// The generation of a lane run under `key`: the current one while the key holds, else
@@ -2070,8 +2173,9 @@ struct LaneContext<H: Host> {
     /// The executing program, which every inline call stays within.
     code: *const ResidualProgram,
     program: ProgramId,
-    /// The active frame, its registers and the view of its function.
-    frame: usize,
+    /// What the run starts from: the VM frame it runs, or a job's frame in its record
+    /// (`LaneRoot`). The registers and the view of the function the lane runs follow.
+    root: LaneRoot,
     registers: Registers,
     base: Ip,
     /// The general loop's pending inline calls, which lane calls extend and
@@ -2204,7 +2308,7 @@ const NO_FRAME_STORAGE: FrameStorage =
 #[inline(always)]
 fn lane_frame_storage<H: Host>(cx: *mut LaneContext<H>) -> Option<&'static mut crate::heap::EnvironmentSlots> {
     let vm = unsafe { vm(cx) };
-    let index = unsafe { (*cx).frame };
+    let index = unsafe { (*cx).frame() };
     let frame = &vm.frames[index];
     if !frame.captured || frame.function == super::ROOT_FUNCTION_ID {
         return None;
@@ -2227,7 +2331,7 @@ fn lane_known_frame_storage<H: Host>(
 ) -> Option<(&'static mut crate::heap::EnvironmentSlots, Value)> {
     let known = unsafe { (*cx).frame_storage };
     let vm = unsafe { vm(cx) };
-    if known.frame != unsafe { (*cx).frame } || known.slots.is_null() || vm.frames[known.frame].env != known.env {
+    if known.frame != unsafe { (*cx).frame() } || known.slots.is_null() || vm.frames[known.frame].env != known.env {
         return None;
     }
     // SAFETY: as `FrameStorage`; the lane holds no other reference to the storage.
@@ -2403,7 +2507,7 @@ unsafe fn lane_this<H: Host>(cx: *mut LaneContext<H>) -> Option<Value> {
     if !this.is_deleted() {
         return Some(this);
     }
-    unsafe { vm(cx).current_this((*cx).frame) }
+    unsafe { vm(cx).current_this((*cx).frame()) }
 }
 
 /// The running lane's context.
@@ -2421,6 +2525,12 @@ const _: () = assert!(std::mem::align_of::<LaneInstruction>() > EXIT_TAG);
 #[inline(always)]
 fn exit(ip: Ip) -> Ip {
     ip.map_addr(|address| address | EXIT_TAG)
+}
+
+/// The record a handler's result names, and whether the result leaves the lane there (`exit`).
+#[inline(always)]
+fn exited(ip: Ip) -> (Ip, bool) {
+    (ip.map_addr(|address| address & !EXIT_TAG), ip.addr() & EXIT_TAG != 0)
 }
 
 /// SAFETY: the context outlives the lane run and no other reference to the
@@ -2446,7 +2556,7 @@ fn profile_script_call_target<H: Host>(
         .lane_stack
         .activations
         .last()
-        .map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| {
+        .map_or_else(|| vm.frames[unsafe { (*cx).frame() }].function, |activation| {
             activation.function
         });
     let pc = unsafe { ip.offset_from((*cx).base) } as u32;
@@ -2737,7 +2847,7 @@ lane_handler! {
             // SAFETY: the context's program outlives the lane run.
             (unsafe { vm(cx) }).initialized_frame_binding(
                 unsafe { &*(*cx).code },
-                unsafe { (*cx).frame },
+                unsafe { (*cx).frame() },
                 i.imm() as usize,
             )
         } else {
@@ -2769,6 +2879,7 @@ fn frame_window_local<H: Host>(vm: &Vm<H>, frame: usize, slot: usize, environmen
 }
 
 mod capture_append;
+mod mapped_windows;
 mod string_case_filter;
 
 script_handler! {
@@ -2786,9 +2897,9 @@ script_handler! {
             match (if ENVIRONMENT { lane_frame_storage(cx) } else { None }).and_then(|storage| storage.dense()) {
                 Some(dense) => dense.dense_plain(slot).or_else(|| {
                     let vm = unsafe { vm(cx) };
-                    vm.heap.environment_slot(vm.frames[unsafe { (*cx).frame }].env, slot)
+                    vm.heap.environment_slot(vm.frames[unsafe { (*cx).frame() }].env, slot)
                 }),
-                None => frame_window_local(unsafe { vm(cx) }, unsafe { (*cx).frame }, slot, ENVIRONMENT),
+                None => frame_window_local(unsafe { vm(cx) }, unsafe { (*cx).frame() }, slot, ENVIRONMENT),
             }
         } else if ENVIRONMENT {
             // SAFETY: an environment window holds its environment's slot storage, which
@@ -2822,7 +2933,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let binding = if unsafe { (*cx).env }.is_deleted() {
             let storage = if ENVIRONMENT { lane_frame_storage(cx) } else { None };
-            let frame = &mut vm.frames[unsafe { (*cx).frame }];
+            let frame = &mut vm.frames[unsafe { (*cx).frame() }];
             if frame.function == super::ROOT_FUNCTION_ID {
                 None
             } else if ENVIRONMENT && frame.captured {
@@ -2871,7 +2982,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let binding = if unsafe { (*cx).env }.is_deleted() {
             // SAFETY: the context's program outlives the lane run.
-            vm.frame_binding_mut(unsafe { &*(*cx).code }, unsafe { (*cx).frame }, slot)
+            vm.frame_binding_mut(unsafe { &*(*cx).code }, unsafe { (*cx).frame() }, slot)
         } else if ENVIRONMENT {
             // SAFETY: as `lane_load_window_local`'s read of the window's storage; a marker
             // needs no barrier.
@@ -2924,11 +3035,12 @@ fn lane_window_closure_value<H: Host>(
     registers: u16,
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    let owner = vm.lane_stack.activations.last().map(|activation| activation.function);
+    let activation = vm.lane_stack.activations.last().copied();
+    let bindings = activation.map(|activation| activation.take_record_bindings()).unwrap_or_default();
     // SAFETY: the running environment activation's window, whose function is the
     // innermost activation's and whose environment's parent is the context's.
-    let environment = owner.map(|owner| unsafe {
-        window_environment(vm, &*(*cx).code, r.0.add(usize::from(registers)), owner, (*cx).env, (*cx).program, (*cx).this)
+    let environment = activation.map(|activation| unsafe {
+        window_environment(vm, &*(*cx).code, r.0.add(usize::from(registers)), activation.function, (*cx).env, (*cx).program, (*cx).this, bindings)
     });
     // SAFETY: the context's program outlives the lane run.
     let value = environment.and_then(|environment| vm.closure(unsafe { &*(*cx).code }, function, environment).ok());
@@ -2940,14 +3052,15 @@ lane_handler! {
     /// `StoreLocal` and `StoreEnvLocal` to a binding a VM frame owns that
     /// `Vm::store_initialized_frame_binding` completes; any other store takes the general
     /// path. A `StoreEnvLocal` of a function that resolves names at run time, which may
-    /// write a `with` object's binding instead, has no record (`derive_lane_view`).
+    /// write a `with` object's binding instead, has no record (`derive_lane_view`) but the
+    /// scoped window's (`scoped_names::lane_store_scoped_local`).
     fn lane_store_local<>(cx, r, ip, i, view) {
         let value = r.get(i.a);
         // SAFETY: the context's program outlives the lane run.
         let stored = unsafe { (*cx).env }.is_deleted()
             && (unsafe { vm(cx) }).store_initialized_frame_binding(
                 unsafe { &*(*cx).code },
-                unsafe { (*cx).frame },
+                unsafe { (*cx).frame() },
                 i.imm() as usize,
                 value,
                 i.c != 0,
@@ -3003,7 +3116,7 @@ fn lane_plain_local_operand<H: Host>(cx: *mut LaneContext<H>, slot: u16) -> Opti
         return (!value.is_deleted()).then_some(value);
     }
     // SAFETY: its frame is the running one.
-    let frame = unsafe { (*cx).frame };
+    let frame = unsafe { (*cx).frame() };
     let frame = vm.frames.get(frame)?;
     let slot = usize::from(slot);
     code.functions
@@ -3023,7 +3136,7 @@ script_handler! {
         if let Some(depth) = vm.lane_stack.activations.len().checked_sub(1) {
             vm.lane_stack.iterators.push((depth, iterator));
         } else {
-            let frame = unsafe { (*cx).frame };
+            let frame = unsafe { (*cx).frame() };
             vm.frames[frame].active_iterators.push(iterator);
         }
         next!(cx, r, following(ip), Carried::script(cx))
@@ -3038,7 +3151,7 @@ script_handler! {
             // The running activation's own entry, the last.
             Some(depth) => vm.lane_stack.iterators.pop_if(|(owner, _)| *owner == depth).is_some(),
             None => {
-                let frame = unsafe { (*cx).frame };
+                let frame = unsafe { (*cx).frame() };
                 vm.frames[frame].active_iterators.pop().is_some()
             }
         };
@@ -3089,7 +3202,7 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let Some(binding) = (unsafe { vm(cx) }).frame_binding_mut(
             unsafe { &*(*cx).code },
-            unsafe { (*cx).frame },
+            unsafe { (*cx).frame() },
             i.imm() as usize,
         ) else {
             return exit(ip);
@@ -3112,7 +3225,7 @@ script_handler! {
         if !vm.lane_stack.activations.is_empty() {
             return exit(ip);
         }
-        let frame = unsafe { (*cx).frame };
+        let frame = unsafe { (*cx).frame() };
         if vm.frames[frame].captured {
             // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
             // running function's view.
@@ -3128,11 +3241,7 @@ script_handler! {
                 return exit(ip);
             }
             note_allocation(vm);
-            unsafe {
-                (*cx).capture = std::ptr::null();
-                (*cx).outer = NO_OUTER_WALK;
-                (*cx).frame_storage = NO_FRAME_STORAGE;
-            }
+            handler_edges::drop_environment_caches(cx);
         }
         next!(cx, r, following(ip), Carried::script(cx))
     }
@@ -3236,7 +3345,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let function = match vm.lane_stack.activations.last() {
             Some(activation) => activation.function,
-            None => vm.frames[unsafe { (*cx).frame }].function,
+            None => vm.frames[unsafe { (*cx).frame() }].function,
         };
         // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
         // running function's view.
@@ -3278,7 +3387,7 @@ lane_handler! {
         // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
         // active view, which is the running frame's.
         let (code, frame, pc) = unsafe {
-            (&*(*cx).code, (*cx).frame, ip.offset_from((*cx).base) as usize)
+            (&*(*cx).code, (*cx).frame(), ip.offset_from((*cx).base) as usize)
         };
         let function = code.function(vm.frames[frame].function as usize);
         let instruction = decoded_instruction(function, function.code[pc]);
@@ -3358,7 +3467,7 @@ fn lane_in_place<H: Host, T>(
     if beside {
         vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc, frames: vm.frames.len() });
     } else {
-        let frame = unsafe { (*cx).frame };
+        let frame = unsafe { (*cx).frame() };
         vm.frames[frame].pc = pc;
         vm.frames[frame].pc_is_resume = false;
     }
@@ -3704,14 +3813,27 @@ script_handler! {
             sibling!(lane_binary_general::<H>, r, ip, Carried::script(cx))
         };
         if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 {
-            let local = usize::from(i.a & crate::bytecode::REGISTER_MASK);
-            // SAFETY: the view admits a numeric local target only below
-            // Function.locals.
-            unsafe { vm(cx).write_validated_local((*cx).frame, local, value) };
+            lane_store_numeric_local(cx, r, i.a & crate::bytecode::REGISTER_MASK, value);
         } else {
             r.set(i.a, value);
         }
         next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+/// Stores `value` to the plain local a numeric target names (`lane_binary`): the running
+/// environment window's, which follows the function's registers (`lane_plain_local_operand`),
+/// else the running frame's.
+#[inline(always)]
+fn lane_store_numeric_local<H: Host>(cx: *mut LaneContext<H>, r: Registers, local: u16, value: Value) {
+    let vm = unsafe { vm(cx) };
+    let window = vm.lane_stack.activations.last().filter(|activation| activation.script().is_some_and(|script| script.environment));
+    // SAFETY: the context's program outlives the lane run.
+    let registers = window.map(|activation| unsafe { &*(*cx).code }.function(activation.function as usize).registers);
+    match registers {
+        Some(registers) => r.set(registers + WINDOW_LOCALS + local, value),
+        // SAFETY: the view admits a numeric local target only below `Function.locals`.
+        None => unsafe { vm.write_validated_local((*cx).frame(), usize::from(local), value) },
     }
 }
 
@@ -3999,7 +4121,13 @@ script_handler! {
                     .filter(|binding| !binding.is_deleted())
             };
             if let Some(binding) = binding {
-                debug_assert!(!unsafe { vm(cx) }.heap.is_old(r.get(registers + WINDOW_ENVIRONMENT)));
+                // The window's environment is young, or a resumed generator's, which joined the
+                // remembered set when its window opened (`generator_windows::open_window_locals`).
+                debug_assert!({
+                    let heap = &unsafe { vm(cx) }.heap;
+                    let environment = r.get(registers + WINDOW_ENVIRONMENT);
+                    !heap.is_old(environment) || heap.is_remembered_cell(environment)
+                });
                 let value = r.get(i.a);
                 *binding = value;
                 if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
@@ -4022,7 +4150,7 @@ lane_handler! {
             return exit(ip);
         }
         let vm = unsafe { vm(cx) };
-        let frame = &vm.frames[unsafe { (*cx).frame }];
+        let frame = &vm.frames[unsafe { (*cx).frame() }];
         if ENVIRONMENT && frame.captured {
             sibling!(lane_load_frame_environment_local::<H>, r, ip, view)
         }
@@ -4043,7 +4171,7 @@ lane_handler! {
     #[inline(never)]
     fn lane_load_frame_environment_local<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let frame = &vm.frames[unsafe { (*cx).frame }];
+        let frame = &vm.frames[unsafe { (*cx).frame() }];
         let value = (frame.function != super::ROOT_FUNCTION_ID)
             .then(|| vm.heap.environment_slot(frame.env, i.imm() as usize))
             .flatten();
@@ -4064,7 +4192,7 @@ lane_handler! {
         }
         let value = r.get(i.a);
         let vm = unsafe { vm(cx) };
-        let frame = &mut vm.frames[unsafe { (*cx).frame }];
+        let frame = &mut vm.frames[unsafe { (*cx).frame() }];
         if ENVIRONMENT && frame.captured {
             sibling!(lane_store_frame_environment_local::<H>, r, ip, view)
         }
@@ -4089,7 +4217,7 @@ lane_handler! {
     fn lane_store_frame_environment_local<>(cx, r, ip, i, view) {
         let value = r.get(i.a);
         let vm = unsafe { vm(cx) };
-        let frame = &vm.frames[unsafe { (*cx).frame }];
+        let frame = &vm.frames[unsafe { (*cx).frame() }];
         let binding = (frame.function != super::ROOT_FUNCTION_ID)
             .then(|| vm.heap.environment_slot_mut(frame.env, i.imm() as usize))
             .flatten();
@@ -4122,9 +4250,10 @@ script_handler! {
     fn lane_load_callee<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = match vm.lane_stack.activations.last() {
-            Some(Activation { kind: ActivationKind::Script(script), .. }) => script.callee,
+            // A windowed activation names the owner of its frame, which is the record's.
+            Some(Activation { kind: ActivationKind::Script(script), .. }) if !script.completion.is_windowed() => script.callee,
             Some(_) => return exit(ip),
-            None => vm.frames[unsafe { (*cx).frame }].context.callee().unwrap_or(Value::UNDEFINED),
+            None => vm.frames[unsafe { (*cx).frame() }].context.callee().unwrap_or(Value::UNDEFINED),
         };
         r.set(i.a, callee);
         next!(cx, r, following(ip), view)
@@ -4877,7 +5006,7 @@ fn lane_projected_capture<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u1
     let vm = unsafe { vm(cx) };
     let env = unsafe { (*cx).env };
     let env = if env.is_deleted() {
-        vm.capture_env(unsafe { (*cx).frame }, depth)?
+        vm.capture_env(unsafe { (*cx).frame() }, depth)?
     } else {
         vm.environment_capture_env(env, false, depth)?
     };
@@ -4891,7 +5020,7 @@ fn lane_projected_capture<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u1
 #[inline(never)]
 fn lane_frame_capture<H: Host>(cx: *mut LaneContext<H>) -> Option<*const usize> {
     let vm = unsafe { vm(cx) };
-    let frame = unsafe { (*cx).frame };
+    let frame = unsafe { (*cx).frame() };
     let Some((slots, None)) = vm.current_capture_slots(frame) else {
         return None;
     };
@@ -4928,7 +5057,7 @@ fn lane_read_capture_value<H: Host, const PLAIN: bool>(
     let env = unsafe { (*cx).env };
     
     if env.is_deleted() {
-        let frame = unsafe { (*cx).frame };
+        let frame = unsafe { (*cx).frame() };
         let value = if PLAIN {
             vm.cached_plain_capture(frame, depth, slot)
         } else {
@@ -4998,7 +5127,7 @@ script_handler! {
             let code = unsafe { &*(*cx).code };
             let function = lane_running_function(cx);
             let body = code.function_get(function as usize);
-            let shape = vm.current_capture_slots(unsafe { (*cx).frame }).map(|(slots, root)| {
+            let shape = vm.current_capture_slots(unsafe { (*cx).frame() }).map(|(slots, root)| {
                 (root.is_some(), unsafe { &*slots }.dense().is_some(), unsafe { &*slots }.len())
             });
             super::lane_exits::record_detail(format!(
@@ -5207,12 +5336,6 @@ pub(super) unsafe fn lane_context_captures<H: Host>(context: usize) -> Option<(*
     }
 }
 
-/// The environment a running lane body's captures resolve in when it runs as a direct
-/// callee (`Vm::innermost_direct_callee`): its closure's, which no lane activation holds.
-fn lane_body_callee_env<H: Host>() -> Option<Value> {
-    Vm::<H>::innermost_direct_callee().map(|callee| callee.target.env)
-}
-
 script_handler! {
     /// `CreateRegExpLiteral` (`Vm::regexp_literal`), which allocates and runs no guest code.
     fn lane_regexp_literal<>(cx, r, ip, i, view) {
@@ -5244,7 +5367,7 @@ fn lane_closure_value_of<H: Host>(cx: *mut LaneContext<H>, id: u32) -> Option<Va
         return None;
     }
     // SAFETY: the context's program outlives the lane run.
-    let (code, frame) = unsafe { (&*(*cx).code, (*cx).frame) };
+    let (code, frame) = unsafe { (&*(*cx).code, (*cx).frame()) };
     let function = vm.frames[frame].function;
     if function == super::ROOT_FUNCTION_ID
         || !code.function_get(function as usize)?.binding_sites.is_empty()
@@ -5498,7 +5621,7 @@ unsafe fn lane_fixed_this<H: Host>(cx: *mut LaneContext<H>) -> Option<Value> {
     if !this.is_deleted() {
         return Some(this);
     }
-    let frame = (unsafe { vm(cx) }).frames.get(unsafe { (*cx).frame })?;
+    let frame = (unsafe { vm(cx) }).frames.get(unsafe { (*cx).frame() })?;
     frame.fixed_this.then_some(frame.this)
 }
 
@@ -6815,7 +6938,7 @@ fn lane_set_field_in_place<H: Host>(
     let vm = unsafe { vm(cx) };
     let function = match vm.lane_stack.activations.last() {
         Some(activation) => activation.function,
-        None => vm.frames[unsafe { (*cx).frame }].function,
+        None => vm.frames[unsafe { (*cx).frame() }].function,
     };
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
     // innermost activation's view.
@@ -6863,7 +6986,7 @@ fn lane_private_site<H: Host>(cx: *mut LaneContext<H>) -> Option<(Value, u32, bo
         None => {
             // The running frame is the top one, whose home `Vm::private_name_home` finds.
             let frame = vm.frames.len().checked_sub(1)?;
-            (vm.captured_parent_environment(frame), vm.frames[frame].function, true)
+            (vm.captured_parent_environment(vm.frame_caller(frame)), vm.frames[frame].function, true)
         }
         // SAFETY: the context outlives the lane run.
         Some(activation) => (unsafe { (*cx).env }, activation.script().map(|_| activation.function)?, false),
@@ -7473,7 +7596,7 @@ script_handler! {
         } else {
             // SAFETY: the function's validated bytecode bounds the local slot, and the lane
             // keeps its frame installed for the whole run.
-            unsafe { vm(cx).read_validated_local((*cx).frame, i.imm() as usize) }
+            unsafe { vm(cx).read_validated_local((*cx).frame(), i.imm() as usize) }
         };
         r.set(i.a, value);
         let Some(comparison) = lane_integer_comparison(relation_operator::<OP>(branch), r.get(branch.b), r.get(branch.c)) else {
@@ -7796,7 +7919,7 @@ fn lane_count_backedge<H: Host>(cx: *mut LaneContext<H>) {
         .lane_stack
         .activations
         .last()
-        .map_or(machine.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+        .map_or_else(|| machine.frames[unsafe { (*cx).frame() }].function, |activation| activation.function);
     machine.programs.note_wasm_tier_backedges(program, function);
     unsafe { (*cx).backedges_left = Some(TIERS.wasm.backedges_per_entry) };
 }
@@ -7985,6 +8108,7 @@ fn lane_loop_native<H: Host>(
         LoopContinuation::Callee => LoopAttempt::Leave(exit(unsafe { (*cx).callee_resume })),
         LoopContinuation::Completed(pc, value) =>
             LoopAttempt::Resumed(lane_return_value_general::<H>(cx, at(pc), value)),
+        LoopContinuation::Threw(pc) => LoopAttempt::Leave(lane_raised_exit(cx, at(pc))),
     }
 }
 
@@ -8166,6 +8290,8 @@ enum LoopContinuation {
     Compiling,
     /// The region completed its activation with this value at this record.
     Completed(u32, Value),
+    /// The region raised the exception in `Vm::lane_raised` at this record: unwind from it.
+    Threw(u32),
     /// A call activated the callee's lane body: leave the run in that activation.
     Callee,
 }
@@ -8175,7 +8301,7 @@ fn count_continuation(continuation: &LoopContinuation) {
     use super::compiled::base_region::{count, Event};
     count(match continuation {
         LoopContinuation::Jump | LoopContinuation::Compiling => Event::Declined,
-        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Safepoint | LoopContinuation::Callee => Event::Left,
+        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Safepoint | LoopContinuation::Callee | LoopContinuation::Threw(_) => Event::Left,
         LoopContinuation::Resume(_) | LoopContinuation::Completed(..) => Event::Entered,
     });
 }
@@ -8228,7 +8354,7 @@ fn lane_loop_run<H: Host>(
     // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the
     // callback executes no guest code, allocates nothing, and retains no VM references.
     let outcome = unsafe {
-        code.run::<H>(r.0, entry, region, machine, program, site.function, (*cx).frame, interrupt, cx as usize, from)
+        code.run::<H>(r.0, entry, region, machine, program, site.function, (*cx).frame(), interrupt, cx as usize, from)
     };
     if site.diagnostics {
         site.native_entry_attempts
@@ -8249,7 +8375,7 @@ fn lane_loop_run<H: Host>(
                 site.native_region_runs.set(site.native_region_runs.get().saturating_add(1));
                 site.native_exits.set(site.native_exits.get().saturating_add(1));
             }
-            LoopOutcome::Resume(_) | LoopOutcome::Returned { .. } | LoopOutcome::Callee => {
+            LoopOutcome::Resume(_) | LoopOutcome::Returned { .. } | LoopOutcome::Threw { .. } | LoopOutcome::Callee => {
                 site.native_region_runs
                     .set(site.native_region_runs.get().saturating_add(1));
             }
@@ -8313,6 +8439,7 @@ fn lane_loop_run<H: Host>(
             site.note_run(entry.backedge_count());
             LoopContinuation::Completed(pc, value)
         }
+        LoopOutcome::Threw { pc } => { site.note_run(entry.backedge_count()); LoopContinuation::Threw(pc) }
         LoopOutcome::Terminated => LoopContinuation::Safepoint,
     }
 }
@@ -10824,7 +10951,7 @@ fn lane_frame_state<H: Host>(
     // The general path's register access names the active frame's register file.
     vm.active_registers = r.0;
     unsafe {
-        (*cx).frame = frame;
+        (*cx).root = LaneRoot::Frame(frame);
         (*cx).registers = r;
         (*cx).base = base;
         (*cx).memory = view;
@@ -10961,6 +11088,7 @@ impl<H: Host> Vm<H> {
 
     fn materialize_lane_activations(&mut self, cx: *mut LaneContext<H>) {
         debug_assert!(unsafe { (*cx).leaf.call }.is_null(), "a running leaf materializes at the lane's exit");
+        self.link_natives(cx);
         if self.lane_stack.activations.is_empty() {
             return;
         }
@@ -10975,18 +11103,21 @@ impl<H: Host> Vm<H> {
                 .map(Activation::frame_storage_bytes)
                 .sum::<usize>()
         );
-        let mut caller = unsafe { (*cx).frame };
-        let mut registers = std::mem::take(&mut self.lane_stack.values);
+        let root = unsafe { (*cx).root };
+        let mut caller = root.caller_of_first(self.frames.len());
         let mut forwarders = std::mem::take(&mut self.lane_stack.forwarders).into_iter();
         let mut settling = std::mem::take(&mut self.lane_stack.settling).into_iter();
         let mut steps = std::mem::take(&mut self.lane_stack.steps).into_iter();
         let iterators = std::mem::take(&mut self.lane_stack.iterators);
+        let scopes = std::mem::take(&mut self.lane_stack.with_objects);
+        // Each frame holds the environment its eval promoted; the records go with the activations.
+        let _records = std::mem::take(&mut self.lane_stack.records);
         let states = ActivationState::of(&activations, cx);
         // A deferred native's caller activations below its callback take the lane's outer
         // pending calls and executing program (`NativeBoundary`).
         let boundary = self.lane_stack.native_boundary.take();
         let before = self.frames.len();
-        for (depth, (activation, state)) in activations.drain(..).zip(states).enumerate() {
+        for (depth, (activation, state)) in activations.drain().zip(states).enumerate() {
             let below = boundary.filter(|boundary| depth < boundary.activation);
             if let Some(boundary) = boundary
                 && depth == boundary.activation
@@ -11019,11 +11150,12 @@ impl<H: Host> Vm<H> {
             });
             // SAFETY: a call record lies in its caller's view.
             let mut call_pc = unsafe { activation.call.offset_from(activation.caller_base) } as usize;
-            let mut result = unsafe { (*activation.call).a };
-            self.frames[caller].pc = call_pc + 1;
-            self.frames[caller].pc_is_resume = true;
+            let (mut result, resume_pc) = activation.caller_resume(call_pc);
+            self.resume_caller_frame(root, depth, caller, resume_pc);
             let count = usize::from(code.function(activation.function as usize).registers);
-            let at = activation.window(registers.as_ptr()); let window = &registers[at..at + count];
+            // SAFETY: the activation's window holds its registers, which nothing writes until
+            // its frame takes them.
+            let window = unsafe { activation.window(count) };
             let completion = match activation.script().map(|script| script.completion) {
                 Some(completion) if completion.constructs() => CallCompletion::Constructor(state.this),
                 Some(Completion::SettlesPromise) => CallCompletion::Promise(
@@ -11037,19 +11169,27 @@ impl<H: Host> Vm<H> {
             // A native's callback is the entry frame of the loop that finishes it.
             let to_native = body_calls::enters_as_frame(&mut self.lane_stack, &activation, self.frames.len());
             let call_guard = match activation.kind {
+                // A windowed activation's frame is its owner's, which takes the iterators its loops pushed.
+                ActivationKind::Script(script) if script.completion.is_windowed() => {
+                    let owned = iterators.iter().filter(|(owner, _)| *owner == depth).map(|(_, iterator)| *iterator);
+                    let entered = scopes.iter().filter(|(owner, _)| *owner == depth).map(|(_, object)| *object);
+                    self.push_window_frame(root, &script, owned, entered);
+                    crate::stack::GuestCallGuard::enter().ok()
+                }
                 ActivationKind::Script(script) => {
                     let argc = usize::from(script.argc);
                     // A forwarding activation kept the values after its registers; any other
                     // passed them all to parameter registers.
                     let passed = if script.forwards {
-                        &registers[at + count..at + count + argc]
+                        // SAFETY: the window holds the registers, then the `argc` kept values.
+                        &unsafe { activation.window(count + argc) }[count..]
                     } else if script.environment {
                         // After its environment and locals (`lane_activate_environment`).
-                        let kept = at
-                            + count
+                        let kept = count
                             + usize::from(WINDOW_LOCALS)
                             + usize::from(code.function(activation.function as usize).locals);
-                        &registers[kept..kept + argc]
+                        // SAFETY: the window holds them, then the `argc` kept values.
+                        &unsafe { activation.window(kept + argc) }[kept..]
                     } else {
                         &window[..argc]
                     };
@@ -11057,8 +11197,10 @@ impl<H: Host> Vm<H> {
                         // The construction's skipped forwarding constructor becomes the frame
                         // it would have been, pending at its forwarding call, whose dead
                         // registers hold `undefined`; the method's frame runs inside it.
-                        let forwarder = forwarders
-                            .next()
+                        // A native frame's is its descriptor's (`NativeFrames`), which no entry holds.
+                        // SAFETY: a native frame's callee outlives the run.
+                        let forwarder = unsafe { activation.native.callee.as_ref() }
+                            .map_or_else(|| forwarders.next(), |callee| callee.forwarder)
                             .expect("each forwarder activation has its skipped constructor");
                         let constructor_registers = vec![
                             Value::UNDEFINED;
@@ -11083,7 +11225,7 @@ impl<H: Host> Vm<H> {
                             call_guard: crate::stack::GuestCallGuard::enter().ok(),
                             caller_program: None,
                         });
-                        caller += 1;
+                        caller = caller.wrapping_add(1);
                         call_pc = forwarder.method.call_pc as usize;
                         result = forwarder.method.call_result;
                         self.frames[caller].pc = call_pc + 1;
@@ -11105,17 +11247,18 @@ impl<H: Host> Vm<H> {
                     if script.environment {
                         // The frame its promotion would have made: the environment it holds,
                         // and its locals.
-                        let held = at + count;
-                        // SAFETY: the activation's window, intact in the taken registers.
+                        let held = count;
+                        // SAFETY: the activation's window, intact.
                         let environment = unsafe {
                             window_environment(
                                 self,
                                 code,
-                                registers.as_mut_ptr().add(held),
+                                activation.window_ptr().add(held),
                                 activation.function,
                                 state.env,
                                 program,
                                 state.this,
+                                Vec::new(),
                             )
                         };
                         let frame = self.frames.last_mut().expect("the activation pushed a frame");
@@ -11130,12 +11273,14 @@ impl<H: Host> Vm<H> {
                         let body = code.function(activation.function as usize);
                         let arguments = body.arguments_slot.map(usize::from);
                         let object = arguments.map(|slot| frame.locals[slot]);
-                        frame.locals.copy_from_slice(&registers[locals..locals + count]);
+                        // SAFETY: the window holds the environment's locals after the registers.
+                        frame.locals.copy_from_slice(&unsafe { activation.window(locals + count) }[locals..]);
                         if let (Some(slot), Some(object)) = (arguments, object) {
                             frame.locals[slot] = object;
                             if body.arguments_alias_parameters() {
                                 for parameter in 0..usize::from(body.params).min(argc) {
-                                    let value = registers[locals + parameter];
+                                    // SAFETY: as the locals' read.
+                                    let value = unsafe { activation.window(locals + parameter + 1) }[locals + parameter];
                                     self.store_mapped_argument(object, parameter, value);
                                 }
                             }
@@ -11146,10 +11291,13 @@ impl<H: Host> Vm<H> {
                     frame.active_iterators.extend(
                         iterators.iter().filter(|(owner, _)| *owner == depth).map(|(_, iterator)| *iterator),
                     );
+                    // The scope chain it entered sits on the VM's scope stack above its base.
+                    self.with_stack.extend(scopes.iter().filter(|(owner, _)| *owner == depth).map(|(_, object)| *object));
                     // The activation counted within `LaneStack::activation_limit`; its frame
                     // takes the guest-call guard its push would have.
                     crate::stack::GuestCallGuard::enter().ok()
                 }
+                ActivationKind::Native => unreachable!("native frames link before the activations become frames"),
                 ActivationKind::Wasm { .. } => {
                     // The lane reserved this payload while it was frameless; its materialized
                     // frame holds the same weighted guard until the call returns.
@@ -11173,7 +11321,7 @@ impl<H: Host> Vm<H> {
                     caller_program,
                 });
             }
-            caller += 1;
+            caller = caller.wrapping_add(1);
         }
         debug_assert!(settling.next().is_none(), "every settling root belongs to an activation");
         debug_assert!(steps.next().is_none(), "every array step belongs to an activation");
@@ -11184,7 +11332,6 @@ impl<H: Host> Vm<H> {
             let natives = boundary.natives.min(self.realm.promise.active_native.len());
             self.shift_beside_natives(natives, boundary.deferred.frames, added);
         }
-        self.lane_stack.values = registers;
         self.lane_stack.values.clear();
         self.lane_stack.activations = activations;
         // The frames now hold the guards the activations were counted against.
@@ -11194,7 +11341,7 @@ impl<H: Host> Vm<H> {
         let registers = Registers(self.frames[caller].registers.as_mut_ptr());
         self.active_registers = registers.0;
         unsafe {
-            (*cx).frame = caller;
+            (*cx).root = LaneRoot::Frame(caller);
             (*cx).registers = registers;
             (*cx).this = self.frame_lane_this(caller);
             (*cx).env = Value::DELETED;
@@ -11753,6 +11900,7 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
             completion: Completion::Plain,
             forwards: false,
             environment: false,
+            record: std::ptr::null_mut(),
         }),
     };
     // SAFETY: the call proved room for the activation (`lane_activation_room`).
@@ -12067,14 +12215,15 @@ script_handler! {
 
 script_handler! {
     /// An iteration step (`lane_iteration_step`) of this realm's generator `next` of a
-    /// generator that is not running: the generator resumes in place from the running frame,
-    /// as `lane_call_native` calls the native, with a result only the step's `done` and
-    /// `value` reads observe (`Vm::generator_iteration_step`).
+    /// generator that is not running: the generator resumes as an activation over its record
+    /// (`lane_resume_generator_step`), or, where its function has no window, as the native
+    /// `next` runs it (`Vm::generator_iteration_step`), with a result only the step's `done`
+    /// and `value` reads observe.
     #[inline(never)]
     fn lane_generator_step<>(cx, r, ip, i, view) {
         let (method, iterator) = (r.get(i.b), r.get(i.c));
-        if let Some(next) = lane_resume_generator_frame(cx, ip, i, method, iterator) {
-            return next;
+        if let Some((registers, start)) = lane_resume_generator_step(cx, r, ip, i, method, iterator) {
+            next!(cx, registers, start, Carried::script(cx))
         }
         let value = lane_call_from_frame(cx, ip, |vm, code| vm.generator_iteration_step(code, method, iterator));
         resume!(cx, lane_native_complete(cx, ip, i, value))
@@ -12349,7 +12498,7 @@ script_handler! {
 #[inline(always)]
 fn lane_running_function<H: Host>(cx: *mut LaneContext<H>) -> u32 {
     let vm = unsafe { vm(cx) };
-    vm.lane_stack.activations.last().map_or(vm.frames[unsafe { (*cx).frame }].function, |activation| activation.function)
+    vm.lane_stack.activations.last().map_or_else(|| vm.frames[unsafe { (*cx).frame() }].function, |activation| activation.function)
 }
 
 /// The global value property `lane_name_resolution` answers without a lookup.
@@ -12373,6 +12522,10 @@ script_handler! {
         if global {
             requicken::<H>(ip, lane_store_global_name::<H>);
             sibling!(lane_store_global_name::<H>, r, ip, Carried::script(cx))
+        }
+        if code.function_get(function as usize).is_some_and(|body| body.call_plan(code).holds_window_scope()) {
+            requicken::<H>(ip, scoped_names::scoped_store_name::<H>());
+            sibling!(scoped_names::scoped_store_name::<H>(), r, ip, Carried::script(cx))
         }
         requicken::<H>(ip, lane_exit::<H>);
         exit(ip)
@@ -12970,6 +13123,12 @@ fn lane_native_value<H: Host>(
         Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow => {
             return lane_call_native(cx, ip, native, callee, receiver, args);
         }
+        // `with (object)` and its exit, in a frameless activation: its scope chain is the lane stack's.
+        Native::WithEnter | Native::WithExit => {
+            if let Some(value) = with_scopes::lane_with_scope(cx, native, args) {
+                return Some(value);
+            }
+        }
         // Neither a string method nor a pure native: the promise shortcut, else the native.
         Native::PromiseThen | Native::PromiseCatch | Native::PromiseResolve => {
             // SAFETY: the context's program outlives the lane run.
@@ -12994,10 +13153,22 @@ use wasm_calls::{known_call_handler, reference_call_handler};
 use denoted::{denoted_handler, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
-mod native_calls; mod generator_yields; use generator_yields::yield_handler;
+mod native_calls; mod generator_yields; use generator_yields::suspend_handler;
+mod lane_roots;
+mod lane_trace;
+mod with_scopes;
+mod scoped_names;
+mod lane_eval;
+mod root_windows;
+use lane_roots::{LaneRoot, LaneStart};
+pub(in crate::vm) use lane_roots::{JobEnd, ParkedLane};
+mod generator_windows; use generator_windows::{lane_generator_returned, lane_resume_generator_step};
+mod raised_windows;
 mod array_steps;
 mod vm_steps;
 pub(in crate::vm) use vm_steps::{lane_body_string_concat, lane_decide, lane_vm_step};
+mod handler_edges;
+pub(in crate::vm) use handler_edges::lane_handler_edge;
 use array_steps::*;
 use native_calls::{native_call_handler, string_char_at_ascii, string_char_code_at};
 mod wasm_gc;
@@ -13342,7 +13513,7 @@ fn lane_call_from_frame<H: Host>(
     vm.materialize_lane_activations(cx);
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
     // active view, which is the running frame's.
-    let (code, frame) = unsafe { (&*(*cx).code, (*cx).frame) };
+    let (code, frame) = unsafe { (&*(*cx).code, (*cx).frame()) };
     vm.frames[frame].pc = call_pc + 1;
     vm.frames[frame].pc_is_resume = true;
     // The native branch of `Vm::call_value_with_target_inner`, whose callee this is; its
@@ -13395,7 +13566,7 @@ fn lane_construct_native<H: Host>(
         vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
     } else {
         vm.materialize_lane_activations(cx);
-        let frame = unsafe { (*cx).frame };
+        let frame = unsafe { (*cx).frame() };
         vm.frames[frame].pc = call_pc + 1;
         vm.frames[frame].pc_is_resume = true;
     }
@@ -14029,7 +14200,7 @@ use crate::bytecode::FORWARDED_APPLY_ARGUMENTS;
 unsafe fn lane_kept_arguments<H: Host>(cx: *mut LaneContext<H>) -> Option<ActivationArguments> {
     let vm = unsafe { vm(cx) };
     if unsafe { (*cx).env }.is_deleted() {
-        let frame = &vm.frames[unsafe { (*cx).frame }];
+        let frame = &vm.frames[unsafe { (*cx).frame() }];
         return Some(ActivationArguments::Kept(
             frame.original_arguments.as_ptr(),
             frame.original_arguments.len(),
@@ -14039,12 +14210,7 @@ unsafe fn lane_kept_arguments<H: Host>(cx: *mut LaneContext<H>) -> Option<Activa
     let script = activation.script().filter(|script| script.forwards)?;
     let registers = usize::from(unsafe { &*(*cx).code }.function(activation.function as usize).registers);
     // SAFETY: the activation's window holds its registers, then its kept values.
-    let values = unsafe {
-        vm.lane_stack
-            .values
-            .as_ptr()
-            .add(activation.window(vm.lane_stack.values.as_ptr()) + registers)
-    };
+    let values = unsafe { activation.window_ptr().add(registers) };
     Some(ActivationArguments::Kept(values, usize::from(script.argc)))
 }
 
@@ -14055,7 +14221,7 @@ script_handler! {
     fn lane_load_forwarded_arguments<>(cx, r, ip, i, view) {
         let value = if unsafe { (*cx).env }.is_deleted() {
             // SAFETY: validated bytecode bounds the slot by Function.locals.
-            unsafe { vm(cx).read_validated_local((*cx).frame, i.imm() as usize) }
+            unsafe { vm(cx).read_validated_local((*cx).frame(), i.imm() as usize) }
         } else {
             Value::UNMATERIALIZED_ARGUMENTS
         };
@@ -14073,7 +14239,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let value = if unsafe { (*cx).env }.is_deleted() {
             // SAFETY: validated bytecode bounds the slot by Function.locals.
-            unsafe { vm.read_validated_local((*cx).frame, i.imm() as usize) }
+            unsafe { vm.read_validated_local((*cx).frame(), i.imm() as usize) }
         } else {
             let Some((function, Some(script))) =
                 vm.lane_stack.activations.last().map(|activation| (activation.function, activation.script()))
@@ -14110,7 +14276,7 @@ unsafe fn lane_unmaterialized_arguments<H: Host>(
     slot: usize,
 ) -> Option<(*const Value, usize)> {
     if unsafe { (*cx).env }.is_deleted()
-        && unsafe { vm(cx).read_validated_local((*cx).frame, slot) }
+        && unsafe { vm(cx).read_validated_local((*cx).frame(), slot) }
             != Value::UNMATERIALIZED_ARGUMENTS
     {
         return None;
@@ -14208,11 +14374,13 @@ script_handler! {
     /// and the indices it kept from the frame's values; a materialized object its own data
     /// `length` in its creation layout (`Vm::arguments_object_length`) and its stored
     /// elements no parameter mapping reaches (`Vm::plain_arguments_element`). Any other read,
-    /// a mapped element (which aliases a parameter) among them, takes the general path.
+    /// a mapped element (which aliases a parameter) among them, takes the general path. A
+    /// suspended function's window holds the object made on entry (`window_arguments`).
     #[inline(never)]
     fn lane_frame_arguments<GET: bool>(cx, r, ip, i, view) {
         // An environment activation keeps the values passed after its locals
-        // (`Function::reads_passed_arguments_only`); no other activation runs such a function.
+        // (`Function::reads_passed_arguments_only`); a suspended function's window keeps the
+        // object itself (`Function::arguments_ride_window`).
         if !unsafe { (*cx).env }.is_deleted() {
             let vm = unsafe { vm(cx) };
             let Some((function, argc)) = vm.lane_stack.activations.last().and_then(|activation| {
@@ -14223,6 +14391,13 @@ script_handler! {
             };
             // SAFETY: the context's program outlives the lane run.
             let body = unsafe { &*(*cx).code }.function(function as usize);
+            if body.is_generator || body.is_async {
+                let Some(value) = window_arguments::<H, GET>(vm, r, i, body) else {
+                    return exit(ip);
+                };
+                r.set(i.a, value);
+                next!(cx, r, following(ip), view)
+            }
             let value = if GET {
                 let Some(index) = r.get(i.b).as_int().and_then(|index| u16::try_from(index).ok()).filter(|index| *index < argc)
                 else {
@@ -14242,7 +14417,7 @@ script_handler! {
             next!(cx, r, following(ip), view)
         }
         let vm = unsafe { vm(cx) };
-        let frame = unsafe { (*cx).frame };
+        let frame = unsafe { (*cx).frame() };
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let Ok(binding) = vm.load_local_binding(code, frame, i.imm() as usize, None) else {
@@ -14269,6 +14444,20 @@ script_handler! {
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
     }
+}
+
+/// `ArgumentsLength` or `ArgumentGet` in the window of a suspended function: the `arguments`
+/// object it made on entry is the function's local `i.imm()` (`mapped_windows::window_binding`),
+/// read as a materialized object is, a mapped element too: the window's writes to its parameter
+/// reach it (`lane_store_mapped_parameter`). `None` takes the general path.
+#[inline(always)]
+fn window_arguments<H: Host, const GET: bool>(vm: &Vm<H>, r: Registers, i: &LaneInstruction, body: &Function) -> Option<Value> {
+    let binding = mapped_windows::window_binding(vm, r, body, i.imm() as usize);
+    if !GET {
+        return vm.arguments_object_length(binding);
+    }
+    let index = usize::try_from(r.get(i.b).as_int()?).ok()?;
+    vm.stored_arguments_element(binding, index)
 }
 
 /// The frameless target of a lane call to `callee`, resolved on first use.
@@ -15034,7 +15223,7 @@ pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: 
     if !crate::DYNAMIC_EXECUTION_ENABLED { return Value::DELETED.to_bits(); }
     let cx = context as usize as *mut LaneContext<H>;
     let (depth, slot) = ((packed >> u16::BITS) as u16, packed as u16);
-    let value = match lane_body_callee_env::<H>() {
+    let value = match native_frames::innermost_callee_env(cx) {
         Some(env) => {
             let vm = unsafe { vm(cx) };
             // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
@@ -15059,7 +15248,7 @@ pub(super) unsafe extern "C" fn lane_body_capture_store<H: Host>(_vm: u64, _resi
     if !crate::DYNAMIC_EXECUTION_ENABLED { return 0; }
     let cx = context as usize as *mut LaneContext<H>;
     let (depth, slot, value) = ((packed >> u16::BITS) as u16, packed as u16, Value::from_bits(value));
-    let stored = match lane_body_callee_env::<H>() {
+    let stored = match native_frames::innermost_callee_env(cx) {
         Some(env) => {
             // SAFETY: the context's program outlives the lane run.
             let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
@@ -15087,6 +15276,9 @@ enum LaneBodyLeft {
     /// Irreversible cancellation leaves the lane without dispatching another record.
     Terminated,
     Resume(Registers, Ip, Carried),
+    /// The activation's body raised an exception (`Vm::lane_raised`) at the record: the
+    /// lane unwinds from it, or the call that made the activation pops it (`lane_pop_raised`).
+    Raised(Ip),
     /// The activation completes with the value, by the record.
     Completed(Ip, Value),
 }
@@ -15105,19 +15297,25 @@ fn lane_body_left<H: Host>(
     }
     if exit == super::compiled::LaneExit::Terminated {
         // A fault can bypass the native exit's register snapshots. Discard its
-        // shadow chain instead of materializing stale homes for guest execution.
-        Vm::<H>::take_shadow_frames();
+        // native frames instead of materializing stale homes for guest execution.
+        native_frames::discard_frames(cx);
         return (LaneBodyLeft::Terminated, exit);
     }
-    let (feedback, frames) = (method.feedback(exit, unsafe { &*(*cx).code }), Vm::<H>::take_shadow_frames());
-    let (r, own, method) = match lane_materialize_frames(cx, frames, method) {
-        // SAFETY: the materialization made the innermost frame the running activation.
-        Some((own, method)) => (unsafe { (*cx).registers }, own, method),
-        None => (r, own, method),
+    let feedback = method.feedback(exit, unsafe { &*(*cx).code });
+    // A leave into a callee's activation already linked the frames and went on in it.
+    let (r, own, method) = match exit {
+        super::compiled::LaneExit::Callee => (r, own, method),
+        _ => match native_frames::advance_into_frames(cx) {
+            // SAFETY: the advance made the innermost frame the running activation.
+            Some((own, method)) => (unsafe { (*cx).registers }, own, method),
+            None => (r, own, method),
+        },
     };
     // SAFETY: the running activation's records start at the context's base.
     let base = unsafe { (*cx).base };
     (match exit.resumed() {
+        // SAFETY: the record that raised is one of the activation's function.
+        super::compiled::LaneExit::Threw { pc } => LaneBodyLeft::Raised(unsafe { base.add(pc) }),
         super::compiled::LaneExit::Terminated | super::compiled::LaneExit::Entry | super::compiled::LaneExit::Stub => unreachable!("termination leaves before recovery; an entry leave or an unentered call resumes at its first record"),
         super::compiled::LaneExit::At(pc) => lane_body_resume_at(cx, r, own, loop_body::header_for_tier_up(cx, own, pc).unwrap_or(pc)),
         super::compiled::LaneExit::Inlined { frame, pc } => {
@@ -15345,6 +15543,7 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
             completion: if skipped.is_some() { Completion::Forwarder } else { Completion::of(constructs, cross, SETTLES) },
             forwards: false,
             environment: false,
+            record: std::ptr::null_mut(),
         }),
     };
     // SAFETY: the capacity check above leaves room for the activation.
@@ -15495,6 +15694,9 @@ fn lane_activate_environment<H: Host>(
         if let Some(gathered) = gathered {
             local.add(usize::from(target.params) - 1).write(gathered);
         }
+        if let Some(slot) = body.self_binding_slot {
+            local.add(usize::from(slot)).write(target.callee);
+        }
         stack.values.set_top(registers.add(held + locals + usize::from(argc)));
         Registers(registers)
     };
@@ -15513,6 +15715,7 @@ fn lane_activate_environment<H: Host>(
             completion: Completion::of(false, cross, false),
             forwards: false,
             environment: true,
+            record: std::ptr::null_mut(),
         }),
     };
     // SAFETY: the capacity check above leaves room for the activation.
@@ -15539,7 +15742,10 @@ fn lane_activate_environment<H: Host>(
 /// captured ones from the locals, which then hold `DELETED` for them as a frame's do. The
 /// window reaches the new storage from then on. The environment binds the activation's
 /// `this`, where its closures' arrows find it (`Vm::captured_lexical_this`), as a frame's
-/// promotion carries its bindings; an arrow's own `this` is that same lexical value.
+/// promotion carries its bindings; an arrow's own `this` is that same lexical value. The
+/// environment of a window over a record also takes over the activation's dynamic `bindings`
+/// (`FrameRecord::dynamic_bindings`, `Activation::take_record_bindings`), as a frame's
+/// promotion takes its own (`Vm::promote_frame_environment`); any other passes none.
 ///
 /// # Safety
 /// `entries` starts the entries of a live environment window (`lane_activate_environment`).
@@ -15551,6 +15757,7 @@ unsafe fn window_environment<H: Host>(
     parent: Value,
     program: ProgramId,
     this: Value,
+    mut bindings: Vec<(crate::bytecode::Atom, Value)>,
 ) -> Value {
     // SAFETY: as the caller guarantees.
     unsafe {
@@ -15578,16 +15785,19 @@ unsafe fn window_environment<H: Host>(
         // can observe its implicit bindings (`Function::activation_bindings_observable`);
         // any other scope names only its program, which needs no allocation.
         let body = code.function(function as usize);
-        let scope = if !body.is_arrow && body.activation_bindings_observable(code) {
+        if !body.is_arrow && body.activation_bindings_observable(code) {
+            bindings.insert(0, (vm.runtime_atoms.lexical_this, this));
+        }
+        let scope = if bindings.is_empty() {
+            crate::heap::EnvironmentScopeRef::of_program(program.raw())
+        } else {
             crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(program.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
-                dynamic_bindings: vec![(vm.runtime_atoms.lexical_this, this)].into(),
+                dynamic_bindings: bindings.into(),
                 with_objects: Box::default(),
             })
-        } else {
-            crate::heap::EnvironmentScopeRef::of_program(program.raw())
         };
         let (environment, storage) = vm.heap.alloc_environment(parent, function, slots, scope);
         entries.add(usize::from(WINDOW_ENVIRONMENT)).write(environment);
@@ -15775,6 +15985,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
             },
             forwards: keeps,
             environment: false,
+            record: std::ptr::null_mut(),
         }),
     };
     // SAFETY: the capacity check above leaves room for the activation.
@@ -15984,15 +16195,17 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
         return None;
     }
     let destination = destination & crate::bytecode::REGISTER_MASK;
-    let (call, caller_registers, caller_base, window) = (top.call, top.caller_registers, top.caller_base, top.native.window as *mut Value);
+    let (call, caller_registers, caller_base, window) = (top.call, top.caller_registers, top.caller_base, top.window_word());
     let (this, env, capture) = (script.caller_this, script.caller_env, script.caller_capture);
     let caller_program = top.caller_program;
     // SAFETY: a script activation holds no drop glue and no Wasm storage
-    // (`Activation::frame_storage_bytes`); its window starts within the values.
+    // (`Activation::frame_storage_bytes`); the values hold no drop glue.
     unsafe {
-        stack.activations.set_len(stack.activations.len() - 1);
-        stack.values.set_top(window);
+        stack.activations.discard_top();
+        stack.values.release_window(window);
     }
+    // A return from inside a `with` leaves its scope without an exit.
+    stack.drop_with_objects_from(stack.activations.len());
     // The caller's memory view reads its program's records (`MemoryView::script`), which an
     // activation of the caller's own JavaScript program left in place.
     if CROSSES {
@@ -16091,7 +16304,7 @@ fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> 
     // ones go without its accounting.
     debug_assert!(activations[outermost..].iter().all(|activation| activation.frame_storage_bytes() == 0));
     vm.lane_stack.activations.truncate(outermost + 1);
-    vm.lane_stack.drop_iterators_from(outermost + 1);
+    vm.lane_stack.drop_owned_from(outermost + 1);
     if matches!(&vm.lane_stack.activations[outermost].kind, ActivationKind::Script(script) if script.completion == Completion::ReturnsToBody) {
         return lane_end_body_callee(cx, value);
     }
@@ -16124,7 +16337,7 @@ fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, value: Value)
     // (`Activation::frame_storage_bytes`); its slot stays as it is, unread by the stack, until
     // the next push, so it is read in place, as `lane_return_from` reads a plain one.
     unsafe { vm.lane_stack.activations.set_len(depth) };
-    vm.lane_stack.drop_iterators_from(depth);
+    vm.lane_stack.drop_owned_from(depth);
     let activation = unsafe { &*top };
     lane_restore_caller(cx, activation);
     vm.lane_native_returned = Some(value);
@@ -16138,8 +16351,8 @@ fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, value: Value)
 #[inline(always)]
 fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: &Activation) -> (MemoryView, Value) {
     let vm = unsafe { vm(cx) };
-    // SAFETY: an activation's window starts within the values, which hold no drop glue.
-    unsafe { vm.lane_stack.values.set_top(activation.native.window as *mut Value) };
+    // SAFETY: the values hold no drop glue.
+    unsafe { vm.lane_stack.values.release_window(activation.window_word()) };
     let caller_memory = activation.caller_memory(cx);
     let this = unsafe { (*cx).this };
     unsafe {
@@ -16161,14 +16374,20 @@ fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: &Activation
 /// after its call with `value` in the call's result register.
 #[inline(always)]
 fn lane_resume_after_call(activation: &Activation, memory: MemoryView, value: Value) -> Resumed {
+    // SAFETY: the call record belongs to the caller's live view.
+    activation.caller_registers.set(unsafe { (*activation.call).a }, value);
+    lane_resume_at(activation, memory, following(activation.call))
+}
+
+/// The caller of `activation`, restored with `memory`, resumes at the record `at` of its view.
+#[inline(always)]
+fn lane_resume_at(activation: &Activation, memory: MemoryView, at: Ip) -> Resumed {
     let view = Carried {
         memory,
         integers: crate::value::IntegerEncoding::TAG,
         acc: Slot::of(Value::UNDEFINED),
     };
-    // SAFETY: the call record belongs to the caller's live view.
-    activation.caller_registers.set(unsafe { (*activation.call).a }, value);
-    Resumed::At(activation.caller_registers, following(activation.call), view)
+    Resumed::At(activation.caller_registers, at, view)
 }
 
 /// Complete the innermost lane activation with `value`, which the record at `ip` of that
@@ -16203,6 +16422,9 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
             if script.completion == Completion::ArrayStep {
                 return Some(lane_step_array_iteration(cx, &activation, value));
             }
+            if script.completion.is_generator() {
+                return Some(lane_generator_returned(cx, &activation, caller_memory, value));
+            }
             // [[Construct]] of an ordinary constructor yields its returned object,
             // otherwise the receiver it allocated. A skipped forwarding constructor returns
             // `undefined` after the method, so its construction yields the receiver.
@@ -16212,7 +16434,8 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
             value = setters::completed_value(vm, &activation, script.completion, this, value);
             if script.completion == Completion::Forwarder {
                 value = this;
-                vm.lane_stack.forwarders.pop();
+                // A native frame's skipped constructor is its descriptor's, which no entry holds.
+                if activation.native.callee.is_null() { vm.lane_stack.forwarders.pop(); }
             }
             if script.completion == Completion::SettlesPromise {
                 value = lane_settle_promise(cx, value, then);
@@ -17277,7 +17500,7 @@ fn lane_push_frame_call<H: Host>(
     }
     vm.materialize_lane_activations(cx);
     // The caller is now the innermost frame, its registers the frame's.
-    let (frame, r) = unsafe { ((*cx).frame, (*cx).registers) };
+    let (frame, r) = unsafe { ((*cx).frame(), (*cx).registers) };
     // SAFETY: the call record lies in the running view.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     // SAFETY: the call's window is registers of the caller frame, which the push neither
@@ -17350,51 +17573,6 @@ fn lane_push_frame_call<H: Host>(
     }
 }
 
-/// `lane_generator_step` of a generator the general loop would resume in place
-/// (`Vm::try_in_loop_generator_step`): lane activations become frames, the generator's frame
-/// is pushed with the pending call its `yield` or return completes with the step's reused
-/// result, and the lane runs it. `None` leaves any other step to the native call.
-#[inline(never)]
-fn lane_resume_generator_frame<H: Host>(
-    cx: *mut LaneContext<H>,
-    ip: Ip,
-    i: &LaneInstruction,
-    method: Value,
-    generator: Value,
-) -> Option<Ip> {
-    let vm = unsafe { vm(cx) };
-    // A step that returns its result from the frame takes the native call.
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 || !vm.generator_resumes_in_place(generator) {
-        return None;
-    }
-    vm.materialize_lane_activations(cx);
-    let frame = unsafe { (*cx).frame };
-    // SAFETY: the call record lies in the running view.
-    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
-    let destination = i.a & crate::bytecode::REGISTER_MASK;
-    match vm.resume_generator_in_place(frame, call_pc + 1, method, generator, Value::UNDEFINED, true)? {
-        Ok((call_guard, resume)) => {
-            // SAFETY: the general loop's pending calls outlive the lane run.
-            unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
-                caller: frame,
-                caller_cursor: None,
-                call_pc: call_pc as u32,
-                destination,
-                completion: CallCompletion::Generator(resume),
-                returns: false,
-                call_guard: Some(call_guard),
-                caller_program: None,
-            });
-            vm.lane_stack.refresh_activation_limit();
-            Some(lane_enter_script_frame(cx, frame + 1).into_loop())
-        }
-        Err(error) => {
-            vm.lane_raised = Some(error);
-            Some(exit(ip))
-        }
-    }
-}
-
 /// `new` of a user constructor that needs a VM frame, made in place as the general loop's
 /// in-loop construction makes it (`Vm::inline_construct_target`): lane activations become
 /// frames, the receiver is allocated, and the constructor's frame is pushed with the pending
@@ -17435,7 +17613,7 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
     }
     vm.materialize_lane_activations(cx);
     // The caller is now the innermost frame, its registers the frame's.
-    let (frame, r) = unsafe { ((*cx).frame, (*cx).registers) };
+    let (frame, r) = unsafe { ((*cx).frame(), (*cx).registers) };
     let Some((program, id, env, this)) = vm.inline_construct_target(code, frame, callee) else {
         return exit(ip);
     };
@@ -17541,11 +17719,11 @@ fn lane_return_script_frame<H: Host>(
 ) -> Ip {
     let vm = unsafe { vm(cx) };
     let pending = unsafe { &mut *(*cx).pending };
-    let mut frame = unsafe { (*cx).frame };
+    let mut frame = unsafe { (*cx).frame() };
     let mut exit_ip = ip;
     loop {
         // An async callee's promise settles on the general path (`PendingGeneralCall::completion`);
-        // a generator resumed in place finishes here as there (`PendingGeneralCall::completion`).
+        // a generator whose activation became a frame finishes here as there (`PendingGeneralCall::completion`).
         let returns_here = pending.last().is_some_and(|call| lane_completes_return(cx, call, frame, retired));
         if !returns_here {
             // A record that has not run yet runs again on the general path; one that ran (a
@@ -17559,8 +17737,8 @@ fn lane_return_script_frame<H: Host>(
         let completed = vm.frames.pop().expect("the returning frame is the innermost");
         match call.completion.take_generator() {
             Some(resume) => {
-                let stop = super::generator::InLoopGeneratorStop::Returned;
-                value = vm.finish_in_loop_generator_step(completed, resume, value, stop);
+                let stop = super::generator::MaterializedStop::Returned;
+                value = vm.finish_materialized_generator_step(completed, resume, value, stop);
                 note_allocation(vm);
             }
             None => {
@@ -17790,7 +17968,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::CallForwardingArguments => Some(lane_forward_call::<H>),
         Class::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
         Class::Return => Some(lane_return::<H, NOT_LEAF>),
-        _ if yield_handler::<H>(opcode).is_some() => yield_handler::<H>(opcode),
+        _ if suspend_handler::<H>(opcode).is_some() => suspend_handler::<H>(opcode),
         _ => jump_handler::<H, BACKWARD, ACC>(opcode),
     }
 }
@@ -17974,7 +18152,7 @@ fn lane_operand(
 }
 
 /// A `Call` runs in the lane only as the general loop pushes one in place: it evaluates no
-/// direct or parameter-scope `eval`. It, `GetField`, `Unary` and `Binary` may return their
+/// direct or parameter-scope `eval`, which a window activation's call record runs apart (`lane_eval`). It, `GetField`, `Unary` and `Binary` may return their
 /// result from the frame (`lane_returns`, `lane_returning`); a returning record runs no
 /// other result flag.
 fn lane_call_fits(instruction: WideInstruction) -> bool {
@@ -20164,8 +20342,9 @@ fn environment_window_fields(i: &LaneInstruction) -> (usize, u16) {
     ((imm & ENVIRONMENT_WINDOW_FIELD) as usize, (imm >> ENVIRONMENT_WINDOW_SHIFT) as u16)
 }
 
-/// Gives a function whose locals an environment activation could hold
-/// (`CallPlan::environment_activation`) the local and closure records that read either a
+/// Gives a function whose locals an environment activation or a suspended frame's window could
+/// hold (`CallPlan::environment_activation`, `CallPlan::suspended_environment`) the local and
+/// closure records that read either a
 /// frame or such an activation's window (`lane_load_window_local`), each record's
 /// immediate also carrying the register count (`environment_window_fields`); the count
 /// when every such record took one. Each other record keeps its handler, and a function
@@ -20176,12 +20355,13 @@ fn specialize_environment_window<H: Host>(
     records: &mut [LaneInstruction],
 ) -> Option<EnvironmentWindow> {
     if u32::from(function.locals) > u64::BITS
-        || (function.arguments_slot.is_some() && !function.reads_passed_arguments_only())
-        || !function.local_registers.is_empty()
-        || function.selective_capture_slots.is_none()
+        || (function.arguments_slot.is_some() && !function.reads_passed_arguments_only() && !function.arguments_ride_window())
     {
         return None;
     }
+    // A function that resolves names at run time stores and makes closures through the scope
+    // its activation carries (`scoped_names`).
+    let scoped = function.has_dynamic_scope_access();
     let registers = function.registers;
     // The handlers derivation gives these records alone: a record any other pass gave a
     // handler, such as one carrying an accumulator to the next, keeps the function's.
@@ -20202,11 +20382,19 @@ fn specialize_environment_window<H: Host>(
     let mut replacements = Vec::new();
     for (pc, &instruction) in decoded.iter().enumerate() {
         let op = instruction.op();
+        // A direct eval runs in a window activation (`lane_eval`); in a frame's run it leaves.
+        if op.class().eq(Class::Call) && instruction.direct_eval() {
+            replacements.push((pc, lane_eval::direct_eval::<H>(), instruction.imm()));
+            continue;
+        }
         let own = match op.class() {
             Class::MakeClosure => instruction.imm(),
             Class::CloneEnv => 0,
             Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal | Class::StoreLocal | Class::StoreLocalPlain
             | Class::StoreEnvLocal | Class::InitializeTdz => instruction.local_slot() as u32,
+            // A function's Annex B store to its `var` binding is a store to the slot
+            // (`Function::window_reads_locals`).
+            _ if op == Op::StoreVarBinding && function.parent.is_some() => instruction.local_slot() as u32,
             _ => continue,
         };
         if own > ENVIRONMENT_WINDOW_FIELD
@@ -20215,16 +20403,27 @@ fn specialize_environment_window<H: Host>(
             return None;
         }
         let environment = !op.captures_environment() && function.local_slot_uses_environment(own as usize);
-        let handler: Handler = match (op.class(), environment) {
+        let mapped = mapped_windows::mapped_parameter_handler::<H>(function, op.class(), own as usize);
+        // A store to the function's own name is ignored or throws (`Function::strict`), which
+        // the general step decides.
+        let own_name_store = function.is_self_binding_slot(own as usize)
+            && matches!(op.class(), Class::StoreLocal | Class::StoreLocalPlain | Class::StoreEnvLocal);
+        // A program's root, whose slots may stand for bindings outside its window (`root_windows`).
+        let root = function.parent.is_none() && !scoped;
+        let handler: Handler = mapped.or_else(|| root.then(|| root_windows::root_local_handler::<H>(op.class(), environment)).flatten()).unwrap_or(match (op.class(), environment) {
+            _ if own_name_store => lane_exit::<H>,
+            (Class::MakeClosure, _) if scoped => scoped_names::scoped_closure::<H>(),
             (Class::MakeClosure, _) => lane_make_window_closure::<H>,
             (Class::CloneEnv, _) => lane_clone_window_env::<H>,
             (Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal, true) => lane_load_window_local::<H, true>,
             (Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal, false) => lane_load_window_local::<H, false>,
             (Class::InitializeTdz, true) => lane_initialize_window_tdz::<H, true>,
             (Class::InitializeTdz, false) => lane_initialize_window_tdz::<H, false>,
+            (Class::StoreEnvLocal, true) if scoped => scoped_names::scoped_store_local::<H, true>(),
+            (Class::StoreEnvLocal, false) if scoped => scoped_names::scoped_store_local::<H, false>(),
             (_, true) => lane_store_window_local::<H, true>,
             (_, false) => lane_store_window_local::<H, false>,
-        };
+        });
         replacements.push((pc, handler, own | u32::from(registers) << ENVIRONMENT_WINDOW_SHIFT));
     }
     for (pc, handler, imm) in replacements {
@@ -20773,98 +20972,37 @@ impl<H: Host> Vm<H> {
         let base = view.records();
         let registers = Registers(self.frames[*frame].registers.as_mut_ptr());
         let entered = self.enter_lane_floor(code, program);
-        self.lane_stack.refresh_activation_limit();
-        self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
-        let mut context = LaneContext {
-            binding: LaneBinding {
-                object_base: self.heap.object_record_base().unwrap_or(std::ptr::null()),
-                resume: resume_lane_binding::<H>,
-            },
-            vm: self,
+        let start = LaneStart {
             code,
             program,
-            frame: *frame,
+            root: LaneRoot::Frame(*frame),
             registers,
             base,
+            this: self.frame_lane_this(*frame),
             pending,
             executing,
-            views: self
-                .programs
-                .lane_views(program)
-                .map_or(&[][..], |views| views) as *const _,
-            constants: self.programs.constants(program) as *const _,
-            inline_calls: inline_calls
-                && code.kind == crate::bytecode::ProgramKind::Wasm,
-            memory: MemoryView::NONE,
-            resolved: (Value::UNDEFINED, MemoryView::NONE),
+            inline_calls,
             script_calls: inline_calls
                 && code.kind != crate::bytecode::ProgramKind::Wasm
-                && !self.direct_eval
-                && !self.parameter_eval
-                && *frame + 1 == self.frames.len(),
+                && root_calls::in_lane(*frame + 1 == self.frames.len(), self.frames[*frame].function),
             script_constructs: code
                 .function_get(self.frames[*frame].function as usize)
                 .is_some_and(|function| {
                     function.dispatch == crate::bytecode::DispatchClass::General
                 }),
-            this: self.frame_lane_this(*frame),
-            resumed_acc: Slot::of(Value::UNDEFINED),
-            callee_resume: std::ptr::null(),
-            callee_warming: false,
-            leaf: NO_LEAF_CALL,
-            callee_acc: Value::UNDEFINED,
-            backedges_left: self
-                .lane_credits_backedges(code, program)
-                .then_some(TIERS.wasm.backedges_per_entry),
-            env: Value::DELETED,
-            capture: std::ptr::null(),
-            outer: NO_OUTER_WALK,
-            frame_storage: NO_FRAME_STORAGE,
-            proofs: crate::heap::ArrayStorageProofs::new(),
             floor: entered.cell,
         };
-        let cx: *mut LaneContext<H> = &mut context;
-        let outer = LANE_CONTEXT.with(|current| current.replace(cx.cast()));
-        let _proofs = crate::heap::LaneProofScope::enter();
-        // SAFETY: `cx` is the only access path to the context during the run.
-        unsafe { (*cx).memory = frame_memory_view(cx, view, registers) };
-        // SAFETY: the view has one record per instruction, and residual
-        // validation establishes every reachable PC.
-        let ip = lane_dispatch(cx, unsafe { base.add(pc) });
-        #[cfg(feature = "profile-lane-exits")]
-        if let Some(activation) = self.lane_stack.activations.last() {
-            // SAFETY: the context's program outlives the run; `ip` is a record of
-            // the innermost activation's view.
-            let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
-            if let Some(body) = code.function_get(activation.function as usize) {
-                let instruction = body.instructions().nth(pc);
-                super::lane_exits::record_detail(format!(
-                    "exit in activation {:?} {} {:?} {} @{:?} pc={pc}",
-                    instruction,
-                    self.programs.source_name(unsafe { (*cx).program }).unwrap_or_default(),
-                    instruction
-                        .filter(|instruction| instruction.op().is_get_field())
-                        .and_then(|instruction| code.atoms.get(instruction.imm() as usize)),
-                    body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
-                    body.source_span.map(|span| span.start),
-                ));
-            }
-        }
-        self.materialize_lane_exit(cx);
-        LANE_CONTEXT.with(|current| current.set(outer));
-        if !outer.is_null() {
-            // SAFETY: every active context has this repr(C) prefix. Its callback owns the
-            // actual Host type, which may differ from this nested run's Host.
-            let binding = unsafe { &*outer.cast::<LaneBinding>() };
-            if binding.object_base.is_null() {
-                unsafe { (binding.resume)(outer) };
-            }
-        }
-        self.leave_lane_floor(entered);
-        // SAFETY: as above.
-        *frame = unsafe { (*cx).frame };
+        let mut context = self.lane_context(start);
+        let ip = self.drive_lane(&mut context, entered, |cx| {
+            // SAFETY: `cx` is the only access path to the context during the run.
+            unsafe { (*cx).memory = frame_memory_view(cx, view, registers) };
+            // SAFETY: the view has one record per instruction, and residual
+            // validation establishes every reachable PC.
+            unsafe { base.add(pc) }
+        });
+        *frame = context.frame();
         // SAFETY: handlers only return records of the active view.
-        unsafe { ip.offset_from((*cx).base) as usize }
+        unsafe { ip.offset_from(context.base) as usize }
     }
 
     /// Raises the stack floor for a lane run of `program`: below the native stack's slack, or
@@ -20977,7 +21115,7 @@ impl<H: Host> Vm<H> {
                 // SAFETY: handlers only return records of the active view.
                 let pc = unsafe { exit.offset_from((*cx).base) } as usize;
                 self.materialize_lane_exit(cx);
-                let frame = unsafe { (*cx).frame };
+                let frame = unsafe { (*cx).frame() };
                 debug_assert!(frame >= site.frames, "the callback's activation became a frame");
                 self.frames[frame].pc = pc;
                 let raised = self.lane_raised.take();
@@ -21099,7 +21237,7 @@ impl<H: Host> Vm<H> {
                     if let Some(made) = std::mem::replace(&mut self.lane_stack.boundary_frames, outer_boundary_frames) {
                         boundary_frames = Some(made);
                     }
-                    let frame = unsafe { (*cx).frame };
+                    let frame = unsafe { (*cx).frame() };
                     self.frames[frame].pc = pc;
                     frame
                 });
@@ -21114,7 +21252,7 @@ impl<H: Host> Vm<H> {
                 unsafe {
                     lane_restore_context(cx, saved);
                     let frame_registers = Registers(self.frames[caller].registers.as_mut_ptr());
-                    (*cx).frame = caller;
+                    (*cx).root = LaneRoot::Frame(caller);
                     (*cx).registers = frame_registers;
                     (*cx).this = self.frame_lane_this(caller);
                     (*cx).env = Value::DELETED;
@@ -21234,6 +21372,7 @@ impl PreparedShape {
                 completion: Completion::ReturnsToNative,
                 forwards: keeps,
                 environment: false,
+                record: std::ptr::null_mut(),
             }),
         };
         let room = usize::from(target.room).max(fill_room::<ACTIVATION_FILL_BLOCK>(size));
@@ -21297,22 +21436,21 @@ fn lane_push_prepared<H: Host>(
 }
 
 /// `lane_push_prepared`'s admission: `activation` pushed over a window at the lane stack's
-/// top with `room`, whose lane-stack index it answers for the entry to fill. `None`, which
+/// top with `room`, whose address it answers for the entry to fill. `None`, which
 /// changes nothing, where the lane stack lacks room.
 #[inline(always)]
-fn lane_admit_prepared<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, room: usize) -> Option<usize> {
+fn lane_admit_prepared<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, room: usize) -> Option<*mut Value> {
     let stack = &mut unsafe { vm(cx) }.lane_stack;
-    let window = stack.values.len();
-    if stack.activations.len() >= stack.activation_limit.get() || stack.values.capacity() - window < room {
+    if stack.activations.len() >= stack.activation_limit.get() || stack.values.room() < room {
         return None;
     }
     // SAFETY: as `lane_push_callback`'s.
-    let at = stack.values.as_mut_ptr().wrapping_add(window);
+    let at = stack.values.top();
     unsafe { stack.push_activation(*activation, at) };
-    Some(window)
+    Some(at)
 }
 
-/// The activation `entry` enters, whose window starts at the lane-stack index `window`,
+/// The activation `entry` enters, whose window starts at `registers`,
 /// for a call with `args`: the window filled and the context made the callee's. Its first
 /// record.
 ///
@@ -21323,16 +21461,15 @@ unsafe fn lane_enter_prepared<H: Host>(
     cx: *mut LaneContext<H>,
     entry: &PreparedEntry,
     args: &[Value],
-    window: usize,
+    registers: *mut Value,
 ) -> Ip {
     unsafe {
-        let registers = vm(cx).lane_stack.values.as_mut_ptr().add(window);
         fill_window(registers, entry.registers, Value::UNDEFINED);
         copy_arguments(registers, args.as_ptr(), entry.passed);
         if entry.keeps {
             copy_arguments(registers.add(entry.registers), args.as_ptr(), entry.argc);
         }
-        lane_enter_filled(cx, entry, registers, window)
+        lane_enter_filled(cx, entry, registers)
     }
 }
 
@@ -21346,11 +21483,11 @@ unsafe fn lane_enter_prepared_values<H: Host, const N: usize>(
     cx: *mut LaneContext<H>,
     entry: &PreparedEntry,
     values: [Value; N],
-    window: usize,
+    registers: *mut Value,
 ) -> Ip {
     unsafe {
-        let registers = lane_fill_prepared_values(cx, entry, values, window);
-        lane_enter_filled(cx, entry, registers, window)
+        let registers = lane_fill_prepared_values(cx, entry, values, registers);
+        lane_enter_filled(cx, entry, registers)
     }
 }
 
@@ -21361,23 +21498,23 @@ unsafe fn lane_enter_prepared_values<H: Host, const N: usize>(
 ///
 /// # Safety
 /// As `lane_enter_prepared_values`'s, for the innermost activation, whose window `entry`
-/// entered at `window` and whose return the context still holds.
+/// entered at `registers` and whose return the context still holds.
 #[inline(always)]
 unsafe fn lane_reenter_prepared_values<H: Host, const N: usize>(
     cx: *mut LaneContext<H>,
     entry: &PreparedEntry,
     values: [Value; N],
-    window: usize,
+    registers: *mut Value,
 ) -> Ip {
     unsafe {
-        let registers = lane_fill_prepared_values(cx, entry, values, window);
+        let registers = lane_fill_prepared_values(cx, entry, values, registers);
         debug_assert!(
             (*cx).registers.0 == registers
                 && (*cx).base == (*entry.view).records()
                 && (*cx).this == entry.this
                 && (*cx).env == entry.env
                 && (*cx).capture == entry.capture
-                && vm(cx).lane_stack.values.len() == window + entry.size,
+                && vm(cx).lane_stack.activations.last().is_some_and(|activation| activation.window_ptr() == registers),
             "a returning activation's context is its own"
         );
         let vm = vm(cx);
@@ -21387,7 +21524,7 @@ unsafe fn lane_reenter_prepared_values<H: Host, const N: usize>(
     }
 }
 
-/// The window of an activation of `entry` at the lane-stack index `window` filled for a call
+/// The window of an activation of `entry` at `registers` filled for a call
 /// passing `values` (`lane_enter_prepared_values`): its registers.
 ///
 /// # Safety
@@ -21397,11 +21534,10 @@ unsafe fn lane_fill_prepared_values<H: Host, const N: usize>(
     cx: *mut LaneContext<H>,
     entry: &PreparedEntry,
     values: [Value; N],
-    window: usize,
+    registers: *mut Value,
 ) -> *mut Value {
     debug_assert_eq!(usize::from(entry.argc), N);
     unsafe {
-        let registers = vm(cx).lane_stack.values.as_mut_ptr().add(window);
         fill_window(registers, entry.registers, Value::UNDEFINED);
         for (index, value) in values.into_iter().enumerate() {
             if index < usize::from(entry.passed) {
@@ -21415,8 +21551,7 @@ unsafe fn lane_fill_prepared_values<H: Host, const N: usize>(
     }
 }
 
-/// The activation `entry` enters whose window at the lane-stack index `window`, at
-/// `registers`, is filled: the context made the callee's. Its first record.
+/// The activation `entry` enters whose window, at `registers`, is filled: the context made the callee's. Its first record.
 ///
 /// # Safety
 /// As `lane_enter_prepared`'s; the window's values are written.
@@ -21425,20 +21560,45 @@ unsafe fn lane_enter_filled<H: Host>(
     cx: *mut LaneContext<H>,
     entry: &PreparedEntry,
     registers: *mut Value,
-    window: usize,
 ) -> Ip {
     let vm = unsafe { vm(cx) };
+    unsafe { vm.lane_stack.values.set_top(registers.add(entry.size)) };
+    lane_install_entry(cx, entry, registers);
+    vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
+    // SAFETY: the program store keeps a derived view alive with its program.
+    unsafe { (*entry.view).start() }
+}
+
+/// The context made `entry`'s callee's, running over the window at `registers`, wherever it lies.
+#[inline(always)]
+fn lane_install_entry<H: Host>(cx: *mut LaneContext<H>, entry: &PreparedEntry, registers: *mut Value) {
+    // SAFETY: the program store keeps a derived view alive with its program.
     unsafe {
-        vm.lane_stack.values.set_len(window + entry.size);
         (*cx).registers = Registers(registers);
         (*cx).base = (*entry.view).records();
         (*cx).this = entry.this;
         (*cx).env = entry.env;
         (*cx).capture = entry.capture;
     }
-    vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
+}
+
+/// The activation of a suspended frame (`generator_windows`) enters its window at `registers`,
+/// a register file of its own that no lane stack holds, at the record of `pc`, where the frame
+/// resumes: the context made the callee's.
+///
+/// # Safety
+/// `registers` holds the callee's registers, which nothing else writes while it runs, and `pc`
+/// is a record of its view.
+#[inline(always)]
+unsafe fn lane_enter_suspended<H: Host>(
+    cx: *mut LaneContext<H>,
+    entry: &PreparedEntry,
+    registers: *mut Value,
+    pc: usize,
+) -> Ip {
+    lane_install_entry(cx, entry, registers);
     // SAFETY: the program store keeps a derived view alive with its program.
-    unsafe { (*entry.view).start() }
+    unsafe { (*entry.view).records().add(pc) }
 }
 
 impl<H: Host> Vm<H> {
@@ -21552,7 +21712,7 @@ impl<H: Host> Vm<H> {
                 // SAFETY: handlers only return records of the active view.
                 let pc = unsafe { exit.offset_from((*cx).base) } as usize;
                 self.materialize_lane_exit(cx);
-                let frame = unsafe { (*cx).frame };
+                let frame = unsafe { (*cx).frame() };
                 debug_assert!(frame >= site.frames, "the callback's activation became a frame");
                 self.frames[frame].pc = pc;
                 let raised = self.lane_raised.take();
@@ -21605,8 +21765,8 @@ fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
             crate::value::IntegerEncoding::TAG,
             acc,
         );
-        let ip_next = next.map_addr(|address| address & !EXIT_TAG);
-        if next.addr() & EXIT_TAG != 0 {
+        let (ip_next, left) = exited(next);
+        if left {
             return ip_next;
         }
         ip = ip_next;

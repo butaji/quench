@@ -9,7 +9,7 @@ lane_handler! {
     /// resolves the memory view.
     pub(super) fn lane_instance_binding<MEMORY: bool>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let env = vm.frames[unsafe { (*cx).frame }].env;
+        let env = vm.frames[unsafe { (*cx).frame() }].env;
         let Some(value) = vm.wasm_binding(env, i.imm() as usize) else {
             return exit(ip);
         };

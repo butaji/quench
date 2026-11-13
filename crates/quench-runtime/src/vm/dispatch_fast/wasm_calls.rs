@@ -160,7 +160,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Resumed {
     let full = stack.full(window);
     vm.materialize_lane_activations(cx);
     vm.lane_stack.grow(full, window);
-    let caller = unsafe { (*cx).frame };
+    let caller = unsafe { (*cx).frame() };
     // SAFETY: `ip` is a record of the active view.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     let window = crate::bytecode::RegisterWindow {
@@ -202,7 +202,7 @@ fn lane_call_compiled<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, fu
     // runs, so before guest code could make the activations frames.
     let args = unsafe { lane_call_window(r, i) };
     let vm = unsafe { vm(cx) };
-    let (program, env) = (unsafe { (*cx).program }, vm.frames[unsafe { (*cx).frame }].env);
+    let (program, env) = (unsafe { (*cx).program }, vm.frames[unsafe { (*cx).frame() }].env);
     let Some(called) = lane_in_place(cx, ip, |vm, _| vm.run_compiled(program, env, function, args).transpose()) else {
         return Some(Resumed::Exit(exit(ip)));
     };

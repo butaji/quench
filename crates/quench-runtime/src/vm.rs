@@ -138,7 +138,7 @@ mod construction;
 mod data_view;
 mod date;
 mod dispatch;
-mod dispatch_fast; mod lane_values;
+mod dispatch_fast; mod lane_values; mod lane_activations;
 pub(crate) use dispatch_fast::{copy_arguments, fill_window as fill_registers};
 mod dispatch_frame;
 mod dispatch_wasm;
@@ -148,7 +148,11 @@ mod lane_exits;
 mod embedding;
 mod provenance;
 mod inspection;
+mod caller_view;
 mod environment;
+mod var_owner;
+mod root_bindings;
+mod handler_entry;
 mod equality;
 mod error;
 mod eval;
@@ -210,6 +214,8 @@ mod object_symbols;
 #[cfg(test)] mod lane_native_callback_tests;
 #[cfg(test)] mod lane_entry_tests;
 #[cfg(test)] mod call_out_tests;
+#[cfg(test)] mod native_frame_tests;
+#[cfg(test)] mod catch_tests;
 #[cfg(test)] mod object_tests;
 mod property_key;
 use call_arguments::CallArguments;
@@ -221,6 +227,8 @@ pub(crate) use regexp::RegExpFlags;
 use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;
+use root_bindings::RootBinding;
+use var_owner::{EvalCaller, VarOwner};
 pub(crate) mod operations;
 #[cfg(all(test, feature = "bench-primitives"))]
 mod primitive_bench;
@@ -1892,6 +1900,8 @@ pub(crate) struct Vm<H> {
     native_roots: Box<compiled::NativeRoots>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
+    /// The lane stacks of the runs a nested lane run parked, outermost first (`Vm::nested_lane_run`).
+    lane_roots: Vec<dispatch_fast::ParkedLane>,
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
     native_execution_rejections: u64,
@@ -1921,6 +1931,10 @@ pub(crate) struct Vm<H> {
     /// The error of a call the lane made in place (`dispatch_fast::lane_call_native`), which
     /// the general loop raises at that call's instruction once the lane exits there.
     lane_raised: Option<JsError>,
+    /// Where a lane body's native `throw` raised the error in `lane_raised`
+    /// (`compiled::raise_site`), which the lane gives it as its source location once it
+    /// escapes the native frames (`dispatch_fast::lane_raised_exit`).
+    lane_raise_site: u64,
     /// A lane native call running with its activations still frameless
     /// (`Native::runs_beside_activations`), which the first observer of the frame stack makes
     /// frames (`materialize_deferred_lane`).
@@ -1948,6 +1962,10 @@ pub(crate) struct Vm<H> {
     /// The completion of a native's frameless callback (`Completion::ReturnsToNative`), which
     /// its run hands to the native once the lane exits there.
     lane_native_returned: Option<Value>,
+    /// The value the activation a lane job ran awaited or yielded (`dispatch_fast::lane_await`,
+    /// `dispatch_fast::lane_yield`), which its run hands to the await's reactions, or to the
+    /// native `next` that stepped a sync generator, once the lane exits there.
+    lane_suspended: Option<Value>,
     /// `program_cache_layouts[active_program]`, kept by `set_active_program`.
     active_layout: ProgramCacheLayout,
     /// The active program's materialized constants, kept by `set_active_program` and by
@@ -2148,6 +2166,8 @@ pub(crate) struct Vm<H> {
     default_collation: Option<std::rc::Rc<intl_collator::Collation>>,
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
+    /// The direct evals running above lane activations (`var_owner::EvalCaller`), innermost last.
+    eval_callers: Vec<EvalCaller>,
     direct_eval_var_program: Option<ProgramId>,
     /// The Function-constructor programs this VM may still offer the host's compile cache
     /// (`DYNAMIC_FUNCTIONS_KEPT`).

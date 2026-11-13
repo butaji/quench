@@ -16,8 +16,6 @@ pub(super) struct LaneBodyHistory {
     pub(super) lifetimes: u8,
     /// The inlining budget halvings its last plan needed to fit (`PendingLaneMethod::shrinks`).
     shrinks: u8,
-    /// The warm-ups its compile waited for its callees' bodies (`LaneView::waits_for_callees`).
-    callee_waits: u8,
     /// The bodies it specialized past because a callee published one (`respecialize_callers`).
     callee_recompiles: u8,
     late_calls: u32,
@@ -108,7 +106,7 @@ impl LaneView {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier_lane.get() };
         let LaneBody::Specialized { leaves_at, completed, recompiles, stuck, method, .. } = body else { return };
-        if completed_region || matches!(exit, LaneExit::Returned { .. }) {
+        if completed_region || exit.completes() {
             completed.set(true);
             if self.entry.note_completions(1) % NATIVE_CREDIT_RUNS == 0 { credit_native_callees(method); }
             return;
@@ -192,17 +190,6 @@ impl LaneView {
     pub(super) fn affords_compile(&self) -> bool {
         let history = self.history.get();
         history.lifetimes <= TIERS.lane_body.max_lifetimes
-    }
-
-    /// Whether its compile waits one more warm-up for callees still warming, whose bodies it
-    /// then calls by their entries (`compiled::DirectCallee`).
-    pub(super) fn waits_for_callees(&self) -> bool {
-        let history = self.history.get();
-        let waits = history.callee_waits < TIERS.lane_body.max_callee_waits;
-        if waits {
-            self.history.set(LaneBodyHistory { callee_waits: history.callee_waits + 1, ..history });
-        }
-        waits
     }
 
     /// Whether a body compiled a call of this function (`note_caller`): native callers want its
@@ -445,7 +432,7 @@ pub(super) fn site_targets<'a, H: super::Host>(vm: &'a super::Vm<H>, view: &Lane
 
 
 /// What a first compile of `view` comes to before any planning. A function whose callees still compile waits for their bodies, which it then calls by their entries
-/// (`compiled::DirectCallee`).
+/// (`compiled::DirectCallee`); one whose callees only lack a body does not.
 pub(super) fn start_gate<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, body: Option<&crate::bytecode::Function>) -> Option<super::super::compiled::LaneBodyOutcome> {
     use super::super::compiled::LaneBodyOutcome;
     let body = body?;
@@ -456,7 +443,11 @@ pub(super) fn start_gate<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, bod
                 target.program == vm.active_program && !target.view.is_null() && !std::ptr::eq(target.view, view) && pending(unsafe { &*target.view })
             })
     });
-    (calls(LaneView::compiling) || (calls(LaneView::demand_body) && view.waits_for_callees())).then_some(LaneBodyOutcome::Deferred)
+    // A callee declined for its length warms toward the body this one calls by its entry
+    // (`LaneView::demand_body`); until it publishes, the call takes the helper path, which runs
+    // natively too, so nothing waits for it.
+    calls(LaneView::demand_body);
+    calls(LaneView::compiling).then_some(LaneBodyOutcome::Deferred)
 }
 
 /// Whether a compiling `body` lets this entry pass without looking for its code, counting it

@@ -51,6 +51,8 @@ mod polls;
 #[path = "lane_region/exits.rs"] mod exits;
 #[cfg(all(test, feature = "aot"))] #[path = "lane_region/exit_tests.rs"] mod exit_tests;
 #[cfg(all(test, feature = "aot"))] #[path = "lane_region/home_tests.rs"] mod home_tests;
+#[path = "lane_region/catches.rs"] mod catches;
+use catches::CallEdges;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
 #[path = "lane_region/captures.rs"] mod captures;
@@ -411,6 +413,8 @@ struct Lowering<'a, 'f> {
     /// The function's parameter count: an entry guard on a parameter declines the region
     /// when a call's value does not match the compiled entry fact.
     params: usize,
+    /// The lowered function, which an exception it raises names as its source (`Lowering::throw`).
+    function_id: u32,
     helpers: LaneHelpers,
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a FieldSites,
@@ -542,6 +546,8 @@ struct Lowering<'a, 'f> {
     /// The block the call-outs' statuses of a leave in a callee, or a termination, reach with the
     /// status, made at the first and filled at the region's end (`call_outs`).
     call_out_stop: Option<ir::Block>,
+    /// The throws native code catches itself, by unit PC (`catches::catch_edges`).
+    catches: BTreeMap<usize, catches::Catch>,
 }
 
 enum Liveness<'a> {
@@ -1532,6 +1538,9 @@ pub(super) fn lower(
     for alternative in unit.frames.iter().filter_map(|frame| frame.alternative) {
         if alternative < unit.instructions.len() { leaders.insert(alternative); }
     }
+    // A handler's block is entered by the throws it catches, edges no jump names.
+    let catches = catches::catch_edges(program, function, unit, coverage, completion);
+    for catch in catches.values() { leaders.insert(catch.target); }
     let blocks: Vec<_> = (0..unit.instructions.len()).map(|pc| leaders.contains(pc).then(|| builder.create_block())).collect();
     let (leave, stop) = (builder.create_block(), builder.create_block());
     builder.append_block_param(leave, types::I32);
@@ -1545,6 +1554,7 @@ pub(super) fn lower(
         program,
         unit,
         params: usize::from(function.params),
+        function_id,
         helpers,
         fields,
         entry_fields,
@@ -1606,6 +1616,7 @@ pub(super) fn lower(
         finishes: false,
         leave,
         stop,
+        catches,
     };
     let instructions = unit.instructions.clone();
     for instruction in &instructions {
@@ -1728,6 +1739,12 @@ pub(super) fn lower(
             matches!(unit.origins[read.pc], super::lane_unit::Origin::Inlined { .. })));
     }
     (lowering.forward, lowering.sealable) = edges::leader_edges(&instructions, &leaders, entry_pc);
+    // No forward edge of the bytecode's enters a handler's block: its proofs are none, and it
+    // seals once the region ends.
+    for catch in lowering.catches.values() {
+        lowering.forward[catch.target] = None;
+        lowering.sealable.remove(catch.target);
+    }
     lowering.entered.insert(entry_pc);
     lowering.stable.start = entry_pc;
     {
@@ -2416,6 +2433,7 @@ impl Lowering<'_, '_> {
         let pc32 = pc as u32;
         let plain = instruction.result_flags() == 0;
         let ran = match instruction.op() {
+            opcode if opcode.is_throw() => self.throw(state, pc, instruction),
             // A call, a construction in the caller's window and a return: the staged operations
             // the tier's facts admit (`call_rows`).
             _ if self.is_call_row(instruction) => self.call_row_step(state, pc, instruction),
@@ -2492,9 +2510,10 @@ impl Lowering<'_, '_> {
         let callee = self.builder.create_block();
         self.ins().brif(terminated, stopped, &[], callee, &[]);
         self.builder.switch_to_block(stopped);
-        let status = self.ins().iconst(types::I32, TERMINATED_STATUS);
-        self.leave_with(status, None);
+        let terminate = self.ins().iconst(types::I32, TERMINATED_STATUS);
+        self.leave_with(terminate, None);
         self.builder.switch_to_block(callee);
+        if let Some(raised) = raised { self.branch_if_raised(status, raised); }
         let word = self.ins().iconst(types::I64, LaneExit::Callee.word() as i64);
         let stop = self.stop;
         self.ins().jump(stop, &[word.into()]);
@@ -2977,8 +2996,6 @@ impl Lowering<'_, '_> {
             self.reload_result(state, site.result);
             return self.return_register(state, record, site.result);
         }
-        // The callee may have changed any object, and allocated, which may move the property
-        // arena: proofs of their shapes and storage retire, and the arena's base reloads.
         state.call_effect();
         self.reload_property_arena();
         self.reload_result(state, site.result);

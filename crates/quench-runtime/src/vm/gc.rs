@@ -739,6 +739,8 @@ impl<H: Host> Vm<H> {
                 .flat_map(|((global, _), template)| [*global, template.anchor]),
         );
         roots.extend(self.with_stack.iter().copied());
+        self.lane_stack.extend_roots(&self.programs, &mut roots);
+        self.lane_roots.iter().for_each(|parked| parked.extend_roots(&self.programs, &mut roots));
         roots.extend(std::iter::once(self.instanceof_has_instance_holder));
         roots.extend(self.active_call_roots.iter().copied());
         roots.extend(self.symbol_registry.values().copied());
@@ -867,6 +869,7 @@ impl<H: Host> Vm<H> {
         }
         let heap = &self.heap;
         self.lane_stack.forget_dead_callees(|value| heap.is_live(value));
+        self.lane_roots.iter_mut().for_each(|parked| parked.stack.forget_dead_callees(|value| heap.is_live(value)));
         // A hint names its prototype by record id, which an allocation may give another object
         // once this one is swept.
         for hint in self.holder_hints.iter_mut().filter(|hint| !heap.is_live(hint.holder)) {

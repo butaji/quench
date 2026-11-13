@@ -78,6 +78,9 @@ pub(crate) enum LoopOutcome {
     /// inside the loop, or a returning call. The lane completes the activation as its own
     /// body would (`lane_return_value_general`), which is not an exit.
     Returned { pc: u32, value: Value },
+    /// The region ended the activation by an exception, in `Vm::lane_raised`, raised at the
+    /// record `pc` (`LaneExit::Threw`): the lane unwinds from it.
+    Threw { pc: u32 },
     /// A call activated the callee's lane body, and the run left there (`LaneExit::Callee`):
     /// the lane resumes in the activation the call made, at `LaneContext::callee_resume`,
     /// not in this region's view.

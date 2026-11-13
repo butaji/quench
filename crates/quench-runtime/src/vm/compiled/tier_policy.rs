@@ -100,9 +100,6 @@ pub(in crate::vm) struct LaneBody {
     /// The most bodies of one function lifecycle edges may discard before it runs in the lane
     /// for good: past them a compile costs more than its runs regain.
     pub(in crate::vm) max_lifetimes: u8,
-    /// The warm-ups a function's first compile waits for callees still warming toward the
-    /// bodies it would call directly; a callee that never gets one stops holding it back.
-    pub(in crate::vm) max_callee_waits: u8,
     /// The times a function specializes again because a callee published its body
     /// (`LaneView::respecialize_callers`): each makes more of its calls direct, and the bound
     /// ends the exchange between functions that call each other.
@@ -247,7 +244,6 @@ const MEASURED: Tiers = Tiers {
         max_recompiles: 1,
         max_compiles: 3,
         max_lifetimes: 8,
-        max_callee_waits: 2,
         max_callee_recompiles: 3,
         late_call_calls: 4096,
         min_instructions: 40,

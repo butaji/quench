@@ -73,13 +73,6 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let callee = self.read(f, i.register_b());
-        // A generator's `next()` resumes its suspended frame in place.
-        if i.op() == Op::Call && i.call_window().count == 0 {
-            let generator = self.read(f, i.register_c());
-            if self.steps_as_generator(generator, callee) {
-                return self.try_in_loop_generator_step(f, pc, callee, generator, i.a(), false);
-            }
-        }
         let Some(entry) = self.in_loop_call_entry(p, callee) else { return self.try_forwarded_user_call(p, f, i, pc, callee) };
         let target = (entry.program, entry.function, entry.env);
         if entry.push == super::InLoopPush::Settles {
@@ -766,7 +759,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::MakeClosure => {
-                let env = with_binding_site_pc!(self, f, *pc, self.capture_binding_environment(f))?;
+                let env = with_binding_site_pc!(self, f, *pc, self.capture_binding_environment(VarOwner::Frame(f)))?;
                 let module_root = p.is_module()
                     && self.frames[f].function == super::ROOT_FUNCTION_ID
                     && self.programs.module_environment(self.frames[f].program) == Some(env);
@@ -1102,19 +1095,13 @@ impl<H: Host> Vm<H> {
                 };
                 let awaited_result = self.read(f, state_register);
                 let asynchronous = p.function(self.frames[f].function as usize).is_async;
-                // An awaited step's result, or a synchronous step made in place
-                // (`Vm::yield_star_in_place`), waits in the state register.
+                // An awaited step's result, or a synchronous delegate step the lane made as an
+                // activation (`Completion::Delegates`), waits in the state register.
                 let result = if !awaited_result.is_undefined() {
                     self.write(f, state_register, Value::UNDEFINED);
                     awaited_result
                 } else {
                     let input = self.read(f, i.result_register());
-                    if !asynchronous
-                        && self.steps_as_generator(iterator, next_method)
-                        && let Some(pushed) = self.yield_star_in_place(f, *pc - 1, next_method, iterator, input, state_register)
-                    {
-                        return pushed;
-                    }
                     let result =
                         self.iterator_next_with_cached_method(p, iterator, next_method, &[input])?;
                     if asynchronous {
@@ -1360,15 +1347,18 @@ impl<H: Host> Vm<H> {
                 caller.pc = *pc;
                 caller.pc_is_resume = true;
                 debug_assert_eq!(caller.program, self.active_program);
-                let direct_eval = i.direct_eval()
-                    && matches!(
-                        self.heap.function(callee),
-                        Some(FunctionRecord {
-                            kind: FunctionKind::Native(Native::Eval),
-                            realm,
-                            ..
-                        }) if *realm == self.realm.globals
-                    );
+                let direct_eval = i.direct_eval() && self.calls_direct_eval(callee);
+                // The one raise of a function whose parameters' `eval` declares `arguments`
+                // (`Function::parameter_eval_arguments_error`): its activations run as any
+                // other's until that call, which the lane leaves to this step.
+                if direct_eval
+                    && i.parameter_eval()
+                    && p.function(self.frames[f].function as usize).parameter_eval_arguments_error
+                {
+                    return Err(self
+                        .syntax_error_result(p, "arguments binding is not allowed in function parameters")
+                        .expect_err("syntax_error_result must throw"));
+                }
                 let previous_binding_site_pc = if direct_eval {
                     Some(self.frames[f].binding_site_pc.replace(*pc as u32))
                 } else {
@@ -1784,6 +1774,5 @@ fn suspends_in_loop(body: &crate::bytecode::Function) -> bool {
         && !body.is_generator
         && !body.is_class_constructor
         && !body.derived_constructor
-        && !body.parameter_eval_arguments_error
         && body.suspends()
 }

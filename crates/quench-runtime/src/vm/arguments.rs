@@ -104,6 +104,14 @@ impl<H: Host> Vm<H> {
             .iter()
             .rposition(|frame| self.frame_owns_arguments(frame, object))
         else {
+            // A suspended function's lane activation holds the parameters in its window.
+            let home = self
+                .programs
+                .residual(self.active_program)
+                .and_then(|code| self.lane_stack.window_parameter(&self.heap, code, object, slot));
+            if let Some(home) = home {
+                home.write(self, value);
+            }
             return;
         };
         if self.frames[owner].captured {

@@ -300,6 +300,7 @@ impl<H: Host> Vm<H> {
             js_native_contexts: _,
             native_roots: _,
             lane_stack: _,
+            lane_roots: _,
             execution_mode: _,
             native_execution_rejections: _,
             js_tier_pending: _,
@@ -317,9 +318,11 @@ impl<H: Host> Vm<H> {
             free_cache_layouts: _,
             active_registers: _,
             lane_raised,
+            lane_raise_site: _,
             lane_returned,
             lane_native,
             lane_native_returned,
+            lane_suspended,
             active_layout: _, active_constants: _, active_field_entries: _, field_entries_epoch: _,
             active_program: _,
             profile: _,
@@ -420,6 +423,8 @@ impl<H: Host> Vm<H> {
             // Each process keeps its own budget.
             dynamic_functions_to_keep: _,
             lane_deferred: _,
+            // A snapshot is taken between runs, with no lane activation's eval running.
+            eval_callers: _,
             // Resolutions are the process's (its files), not the snapshot's.
             resolved_module_requests: _,
             resolved_module_names: _,
@@ -441,7 +446,7 @@ impl<H: Host> Vm<H> {
             ("a with statement", with_stack.is_empty()),
             ("a pending job", jobs.is_empty() && kept_alive.is_empty() && !native_microtask_running),
             ("an Atomics waiter", shared_async_waiters.is_empty() && !test262_agent.installed),
-            ("a lane completion", lane_raised.is_none() && lane_returned.is_none() && lane_native_returned.is_none()),
+            ("a lane completion", lane_raised.is_none() && lane_returned.is_none() && lane_native_returned.is_none() && lane_suspended.is_none()),
             ("a lane native call", lane_native.is_none()),
             (
                 "an eval or construction",

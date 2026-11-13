@@ -1344,6 +1344,8 @@ pub struct Function {
     /// at creation.
     pub prototype_unobservable: bool,
     pub class_initializer: bool,
+    /// A parameter's direct `eval` declares `arguments`, which the call raises a SyntaxError for
+    /// (`Vm::step`'s `Call`); the function otherwise activates as any other.
     pub parameter_eval_arguments_error: bool,
     /// A mapped `arguments` binding whose mapping nothing can observe: nothing in the body
     /// rebinds a parameter, and it only reads `arguments.length` and `arguments[key]` or
@@ -1677,6 +1679,9 @@ call_plan_bits!(
     reads_passed_arguments,
     registers_only,
     environment_activation,
+    suspended_registers,
+    suspended_environment,
+    admits_direct_eval,
 );
 
 #[derive(Clone, Copy, Debug)]
@@ -1721,11 +1726,38 @@ pub(crate) struct CallPlan {
     pub(crate) registers_only: bool,
     /// The activation's state is its registers, its frame locals and the environment its
     /// closures capture, which it may make on entry: an ordinary body but for the closures
-    /// it makes and the iteration copies of its environment, with no `arguments`, self
-    /// binding, binding site, dynamic scope access or superinstruction, whose every local access is a plain or
+    /// it makes and the iteration copies of its environment, with no `arguments`, binding
+    /// site, dynamic scope access or superinstruction, whose every local access is a plain or
     /// environment load, store or dead-zone opening of a selectively captured layout. A lane
     /// may run such a body without a frame (`CallEntry::Environment`).
     pub(crate) environment_activation: bool,
+    /// A function that suspends (a generator, an async function or an async generator) laid out
+    /// as its registers: no locals, `arguments`, closures or dynamic scope, so what its
+    /// suspended frame holds is its registers, receiver and closure environment (its implicit
+    /// bindings are read through the frame an opcode that needs them makes of the record). A
+    /// lane resumes it as an activation whose window is the frame's register file, and its
+    /// `yield` or `await` suspends it back into that file.
+    pub(crate) suspended_registers: bool,
+    /// A function that suspends whose frame locals and environment ride a window past its
+    /// registers (`locals_ride_window`), which a lane resumes as an activation over the
+    /// frame's register file, binding the window from the record as a call binds a fresh one
+    /// (`FrameRecord::open_environment_window`) and storing it back at the suspension. Its
+    /// names may resolve through `with` objects and dynamic bindings, which its record carries
+    /// and its window's handlers read (`scoped_names`).
+    pub(crate) suspended_environment: bool,
+    /// A function whose window activations run the direct evals and the closures at binding
+    /// sites it holds in the lane (`evals_in_scope`): its window rides (`holds_window_scope`),
+    /// and the eval promotes the window's environment into the activation's record, which owns
+    /// the eval's variable environment (`Vm::eval_owner`).
+    pub(crate) admits_direct_eval: bool,
+}
+
+impl CallPlan {
+    /// Whether the function's activations run over an environment window (an ordinary body's or a
+    /// suspended frame's), where names resolve through the activation's scope (`scoped_names`).
+    pub(crate) fn holds_window_scope(self) -> bool {
+        self.environment_activation || self.suspended_environment
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2065,13 +2097,29 @@ impl Function {
     /// environment activation's window keeps those its closures may observe in the
     /// environment it makes (`window_environment`), which a copy shares as a frame's does.
     fn body_binding_reads_beside_clones(&self, tables: &impl FactTables) -> bool {
+        self.evals_in_scope() || self.reads_implicit_bindings(tables)
+    }
+
+    /// Whether the function runs a direct eval, which declares `var`s in its variable
+    /// environment and reads its scope by name, or records binding sites, the lexical scope
+    /// its closures and evals resolve names in.
+    pub(crate) fn evals_in_scope(&self) -> bool {
+        !self.binding_sites.is_empty()
+            || self.instructions().any(|instruction| {
+                instruction.op().is_call_with_eval_flags() && (instruction.direct_eval() || instruction.parameter_eval())
+            })
+    }
+
+    /// The implicit bindings (`new.target`, `super`, the home object, a derived constructor's
+    /// `this`) the body reads by a hidden name or a scope operation, which a window activation
+    /// leaves to the frame it becomes: not those of a direct eval, which its record serves.
+    fn reads_implicit_bindings(&self, tables: &impl FactTables) -> bool {
         self.derived_constructor
             // A field initializer or static block keeps its instance's implicit bindings; an
             // arrow inside one (also `class_initializer`) binds none of its own.
             || (self.class_initializer && !self.is_arrow)
             || self.instance_initializer.is_some()
             || self.inherited_with_scope
-            || !self.binding_sites.is_empty()
             || self.instructions().any(|instruction| {
                 name_bindings::reads_hidden_name(instruction, tables)
                     || matches!(
@@ -2084,8 +2132,6 @@ impl Function {
                             | Op::InitializeThis
                             | Op::SuperCallCheck
                     )
-                    || (instruction.op().is_call_with_eval_flags()
-                        && (instruction.direct_eval() || instruction.parameter_eval()))
             })
     }
 
@@ -2205,6 +2251,71 @@ impl Function {
             .any(|instruction| instruction.op().suspends())
     }
 
+    /// Whether a suspension of the function parks its frame in a record a lane resumes from: a
+    /// generator or an async function. An arrow's `this` is its environment's, which each
+    /// resumption reads again (`Vm::window_this`).
+    fn suspends_in_record(&self) -> bool {
+        self.is_generator || self.is_async
+    }
+
+    /// Whether its locals and the environment its closures capture can live in a window past
+    /// its registers: the layout an environment activation (`CallPlan::environment_activation`)
+    /// and a suspended generator's window (`CallPlan::suspended_environment`) share. Each
+    /// local that is not promoted is a frame local, the captured ones owned by the environment,
+    /// and every instruction that addresses one is a record the window's handlers read
+    /// (`window_reads_locals`); the promoted ones are registers, which the window's register
+    /// file holds as it holds every register. A function's own name binding is a local too,
+    /// which the entry initializes with the callee and whose stores leave the lane
+    /// (`specialize_environment_window`).
+    fn locals_ride_window(&self, tables: &impl FactTables) -> bool {
+        self.arguments_own_their_slots(|atom| tables.atom_name(atom))
+            && (self.arguments_slot.is_none() || self.reads_passed_arguments_only() || self.arguments_ride_window())
+            // The implicit bindings `activation_binding_reads` names, but for clones, are a frame's:
+            // a suspended function's record keeps them (and gives them to the environment its
+            // window makes, `window_environment`), and the opcodes that read them
+            // exit the lane to the frame it becomes.
+            && (!self.reads_implicit_bindings(tables) || self.suspends_in_record())
+            && self.instructions().all(|instruction| {
+                instruction.op().immediate_role() != ImmediateRole::SuperinstructionIndex
+                    && self.window_reads_locals(tables, instruction)
+            })
+    }
+
+    /// Whether the handlers of an environment window read every local `instruction` addresses:
+    /// the local loads, stores and dead-zone openings, a field read from a plain local
+    /// (`lane_plain_local_operand`), a binary operator of a suspending function over plain
+    /// locals, whose operands and numeric target the window holds (`lane_store_numeric_local`),
+    /// the reads of the values
+    /// passed, which the window keeps, and a function's store to a `var` binding its Annex B
+    /// block function declares (`StoreVarBinding`), which is a store to the slot: only a
+    /// program's root stores through the global object or an eval's record.
+    fn window_reads_locals(&self, tables: &impl FactTables, instruction: WideInstruction) -> bool {
+        let op = instruction.op();
+        instruction.addressed_local_slots().next().is_none()
+            || match op {
+                Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreLocal | Op::StoreLocalPlain | Op::StoreEnvLocal | Op::InitializeTdz => true,
+                Op::StoreVarBinding => self.parent.is_some(),
+                Op::GetField => instruction.addressed_local_slots().eq(instruction.local_field_base()),
+                Op::Binary | Op::NumericAdd | Op::NumericMultiply if self.suspends_in_record() => {
+                    instruction.addressed_local_slots().all(|slot| self.plain_local(tables, usize::from(slot)))
+                }
+                _ => op.reads_arguments(),
+            }
+    }
+
+    /// Whether the `arguments` object a suspending function made on entry rides its window as
+    /// the local it was stored in, which the lane reads in place (`lane_frame_arguments`): a
+    /// window local, or, for a binding a closure captures, its slot in the environment the
+    /// window makes (`mapped_windows::window_binding`). A mapped object (`arguments_alias_parameters`) aliases
+    /// parameters that live in the window as well, the captured ones among them, which ride the
+    /// window's locals until a closure makes its environment and its slots after
+    /// (`ParameterHome`): the window's parameter reads and writes go through the object
+    /// (`lane_load_mapped_parameter`), whose element writes reach the binding
+    /// (`LaneStack::window_parameter`).
+    pub(crate) fn arguments_ride_window(&self) -> bool {
+        self.arguments_slot.is_some() && self.suspends_in_record()
+    }
+
     /// The function's `CallPlan`, derived on first use.
     #[inline(always)] pub(crate) fn call_plan(&self, tables: &impl FactTables) -> CallPlan {
         *self.call_plan.get_or_init(|| self.derive_call_plan(tables))
@@ -2218,7 +2329,6 @@ impl Function {
             let registers_layout_of_any_kind = self.parent.is_some()
                 && !self.derived_constructor
                 && self.self_binding_slot.is_none()
-                && !self.parameter_eval_arguments_error
                 && !self.inherited_with_scope
                 && promoted_parameters == usize::from(self.params)
                 // A plain activation makes no closure, whichever bindings it would see.
@@ -2250,13 +2360,11 @@ impl Function {
             let in_loop = !self.is_async
                 && !self.is_generator
                 && !self.is_class_constructor
-                && !self.derived_constructor
-                && !self.parameter_eval_arguments_error;
+                && !self.derived_constructor;
             let settles_in_loop = self.is_async
                 && !self.is_generator
                 && !self.is_class_constructor
                 && !self.derived_constructor
-                && !self.parameter_eval_arguments_error
                 && !self.suspends();
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
             let live_parameters = self.reflects_live_parameters(tables);
@@ -2272,48 +2380,37 @@ impl Function {
                         .addressed_local_slots()
                         .all(|slot| Some(slot) == self.arguments_slot)
                 });
+            // An ordinary call places its arguments in the window's locals, which a promoted
+            // parameter has none of, and fills the registers with `undefined`; a suspended
+            // frame is made with both, and no suspending function starts its registers apart
+            // from `undefined` (Wasm's i32 zero belongs to its bodies, which never suspend).
             let environment_activation = in_loop
                 && self.parent.is_some()
-                && !self.is_class_constructor
-                // Each argument fills its own slot, a hidden one where the list binds its names
-                // apart; a rest list binding directly fills its slot with the gathered array
-                // (`lane_activate_environment`).
-                && self.arguments_own_their_slots(|atom| tables.atom_name(atom))
-                && self.self_binding_slot.is_none()
-                && !self.inherited_with_scope
                 && self.local_registers.is_empty()
-                && (self.arguments_slot.is_none() || self.reads_passed_arguments_only())
-                && self.binding_sites.is_empty()
-                && self.selective_capture_slots.is_some()
                 && self.initial_register == InitialRegister::Undefined
-                && !self.has_dynamic_scope_access()
-                // `in_loop` leaves out the other kinds `activation_binding_reads` names.
-                && !self.body_binding_reads_beside_clones(tables)
-                && self.instructions().all(|instruction| {
-                    let op = instruction.op();
-                    // An iteration's `CloneEnv` copies the window's environment, once a closure
-                    // made one (`lane_clone_window_env`).
-                    op.immediate_role() != ImmediateRole::SuperinstructionIndex
-                        && (instruction.addressed_local_slots().next().is_none()
-                            || matches!(
-                                op,
-                                Op::LoadLocal
-                                    | Op::LoadLocalPlain
-                                    | Op::LoadEnvLocal
-                                    | Op::StoreLocal
-                                    | Op::StoreLocalPlain
-                                    | Op::StoreEnvLocal
-                                    | Op::InitializeTdz
-                            )
-                            // A read whose base is a plain local reads the window's local
-                            // (`lane_plain_local_operand`).
-                            || (op == Op::GetField
-                                && instruction.addressed_local_slots().eq(instruction.local_field_base()))
-                            // The window keeps every value passed, which these answer.
-                            || op.reads_arguments())
-                });
+                && self.locals_ride_window(tables);
+            let suspendable = self.suspends_in_record();
+            let suspended_registers = suspendable
+                && registers_layout_of_any_kind
+                && !self.rest
+                && self.arguments_slot.is_none()
+                && !addresses_locals
+                && !self.has_dynamic_scope_access();
+            // Its locals and closures ride an environment window as an ordinary body's do, and so
+            // does the `arguments` object it made on entry (`arguments_ride_window`); so do its
+            // `with` objects and dynamic bindings, which its record and activation carry.
+            // An async module's body is a program's root, which no function encloses: its slots
+            // that stand for imports and global bindings are read through the activation
+            // (`Vm::root_binding`).
+            let suspended_environment = suspendable
+                && !suspended_registers
+                && (self.parent.is_some() || self.is_async)
+                && self.locals_ride_window(tables);
             CallPlan {
                 environment_activation,
+                suspended_registers,
+                suspended_environment,
+                admits_direct_eval: self.evals_in_scope() && (environment_activation || suspended_environment),
                 plain: ordinary && self.arguments_slot.is_none(),
                 in_loop,
                 settles_in_loop,

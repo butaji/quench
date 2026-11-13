@@ -29,6 +29,13 @@ pub(super) struct LaneArrayStep {
     pub(super) to_body: bool,
 }
 
+impl LaneArrayStep {
+    /// The values the step keeps alive: its iteration's and the entry's environment and receiver.
+    pub(super) fn roots(&self) -> impl Iterator<Item = Value> {
+        self.iteration.values(self.element).into_iter().chain([self.entry.env, self.entry.this])
+    }
+}
+
 /// An array callback method's callback and `thisArg` among the values it was passed; a
 /// reducer's second value is its initial accumulator, and its callback's `thisArg` is
 /// `undefined`.
@@ -343,9 +350,9 @@ pub(super) fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H
             step.element = element;
             step.index = index;
             // The callback's completed loops close nothing more.
-            vm.lane_stack.drop_iterators_from(depth);
+            vm.lane_stack.drop_owned_from(depth);
             // SAFETY: an activation runs, the innermost, at `depth`.
-            let window = unsafe { vm.lane_stack.activations.get_unchecked(depth) }.window(vm.lane_stack.values.as_ptr());
+            let window = unsafe { vm.lane_stack.activations.get_unchecked(depth) }.window_ptr();
             // SAFETY: the window the activation held, which its return left in place.
             let start = unsafe { lane_enter_array_step::<H, true>(cx, &step.entry, &step.iteration, element, index, window) };
             return Some(Resumed::At(unsafe { (*cx).registers }, start, Carried::script(cx)));
@@ -394,7 +401,7 @@ unsafe fn lane_enter_array_step<H: Host, const AGAIN: bool>(
     iteration: &super::super::array_indexed::ArrayIteration,
     element: Value,
     index: usize,
-    window: usize,
+    window: *mut Value,
 ) -> Ip {
     let (index, receiver) = (Value::length(index), iteration.receiver);
     unsafe {

@@ -1108,7 +1108,7 @@ impl<H: Host> Vm<H> {
     fn lexical_this(&mut self, frame: usize) -> Option<Value> {
         let atom = self.runtime_atoms.lexical_this;
         let value = self
-            .dynamic_binding(frame, atom)
+            .dynamic_binding(self.frame_caller(frame), atom)
             .unwrap_or(self.frames[frame].this);
         // An initialized `this` binding never changes (a second `super()` throws), so the
         // frame keeps it as its fixed receiver; only a derived constructor's binding before

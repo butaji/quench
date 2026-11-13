@@ -12,7 +12,7 @@ impl<H: Host> Vm<H> {
         }
         let frame = self.frames.len().saturating_sub(1);
         let key = self.heap.alloc_string(self.atom_name(atom).into());
-        let with_objects = self.with_objects_before_binding(frame, atom);
+        let with_objects = self.with_objects_before_binding(self.frame_caller(frame), atom);
         for object in with_objects.into_iter().rev() {
             if self.with_binding(p, object, key, atom)? {
                 return self.object_delete_property(p, &[object, key]);

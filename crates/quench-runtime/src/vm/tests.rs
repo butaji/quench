@@ -6947,7 +6947,7 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
 }
 
 /// A suspended async activation is traced by the registers live at its await alone
-/// (`Continuation::live_registers`): what it made between awaits survives minor collections
+/// (`FrameRecord::live_registers`): what it made between awaits survives minor collections
 /// under either promotion age and full ones, and reads back whole when it resumes.
 #[test]
 fn suspended_async_activations_keep_their_live_values_across_collections() {
@@ -9366,7 +9366,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
             };
             assert_eq!(resumed.completion, completion(completion_value));
             assert_eq!(resumed.promise, promise);
-            let resumed = resumed.resume(0);
+            let resumed = resumed.frame.into_frame(0);
             assert_eq!(resumed.locals, [local]);
             assert_eq!(resumed.dynamic_bindings, [(atom, binding)]);
             assert_eq!(resumed.registers, [register, iterator, Value::FALSE]);

@@ -382,11 +382,12 @@ impl<H: Host> Vm<H> {
         function
     }
 
+    /// A closure of function `id` over `env`, in the scope chain of the innermost VM frame.
     pub(super) fn closure_in_realm(
         &mut self,
         p: &ResidualProgram,
         id: u32,
-        mut env: Value,
+        env: Value,
         realm: Value,
     ) -> Result<Value, JsError> {
         // No `with` was ever entered, so no closure captures a `with` object
@@ -396,18 +397,30 @@ impl<H: Host> Vm<H> {
         {
             return Ok(self.closure_of_template(template, env));
         }
+        let chain = self.frames.last().map_or_else(Vec::new, |frame| {
+            self.with_stack[frame.with_base.min(self.with_stack.len())..].to_vec()
+        });
+        self.closure_over_scope(p, id, env, realm, &chain)
+    }
+
+    /// A closure of function `id` over `env` made by an activation whose scope chain is `chain`,
+    /// outermost first: its VM frame's (`closure_in_realm`) or a window activation's
+    /// (`LaneStack::with_chain`). The closure captures the objects the activation entered,
+    /// those past the ones its own environment already carries.
+    pub(super) fn closure_over_scope(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        mut env: Value,
+        realm: Value,
+        chain: &[Value],
+    ) -> Result<Value, JsError> {
         let function_plan = p.functions[id as usize].header();
         let with_objects = if env.is_null() {
             Vec::new()
         } else {
             let inherited = self.captured_with_objects_for_function(env, function_plan.inherited_with_scope, p.kind);
-            let active = self.frames.last().map_or(&[][..], |frame| {
-                &self.with_stack[frame.with_base.min(self.with_stack.len())..]
-            });
-            active
-                .strip_prefix(inherited.as_slice())
-                .unwrap_or(active)
-                .to_vec()
+            chain.strip_prefix(inherited.as_slice()).unwrap_or(chain).to_vec()
         };
         let template_index = closure_template_index(self.active_program, id);
         let plain_scope = with_objects.is_empty();
@@ -919,7 +932,6 @@ impl<H: Host> Vm<H> {
             && !function.is_generator
             && !function.derived_constructor
             && !function.class_initializer
-            && !function.parameter_eval_arguments_error
             && function.instance_initializer.is_none()
     }
 
@@ -1223,7 +1235,7 @@ impl<H: Host> Vm<H> {
             .frames
             .len()
             .checked_sub(1)
-            .and_then(|frame| self.dynamic_binding(frame, new_target_atom))
+            .and_then(|frame| self.dynamic_binding(self.frame_caller(frame), new_target_atom))
             .filter(|value| !value.is_undefined())
             .ok_or_else(|| {
                 self.reference_error(p, "new.target is unavailable for super()".into())
