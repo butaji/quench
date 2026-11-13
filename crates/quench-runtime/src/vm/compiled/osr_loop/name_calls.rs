@@ -196,6 +196,12 @@ impl Lowering<'_, '_> {
         }
         let index = capture_index(self.region, instruction)?;
         let value = self.capture(index);
+        // A native call's callee read is guarded here: the body runs only while the binding
+        // still holds the function it was admitted from.
+        if let Some(frame) = self.read_frame(pc) {
+            let other = self.body.builder.ins().icmp_imm_u(IntCC::NotEqual, value.value, frame.callee.to_bits() as i64);
+            self.guard(pc, other);
+        }
         self.define(instruction.result_register(), value);
         self.fall_through(pc)
     }

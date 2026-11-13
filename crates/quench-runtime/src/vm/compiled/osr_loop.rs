@@ -963,6 +963,7 @@ pub(super) fn inline_region<'a>(
         reached: crate::bitset::BitSet,
     }
     let mut calls: std::collections::BTreeMap<u32, Site<'a>> = std::collections::BTreeMap::new();
+    let mut guard_frames: Vec<InlineFrame> = Vec::new();
     // The caller PCs whose instructions drop out, the setup PCs by the PC they resume at, and
     // the caller instructions the region runs rewritten.
     let mut dropped = std::collections::BTreeSet::new();
@@ -1026,17 +1027,14 @@ pub(super) fn inline_region<'a>(
                     .is_none_or(|register| !crate::compile::liveness::register_in(at_resume, usize::from(register)))
             }))
         .then_some(())?;
-        // The callee as the read finds it now.
-        let mut chain = Vec::new();
-        if let Some(path) = &callee_path { intern_field(&mut chain, path, true); }
-        let callee = resolve(&chain, name_calls::callee_read(global, capture))?;
+        // The callee as the read finds it now (through the rerooted receiver).
+        let (callee, body, reached) = osr_call::resolved(resolve, callee_path.as_ref(), global, capture)?;
+        if let osr_call::CallForm::Guard(frame) = osr_call::call_form(pc, read, receiver, total,
+            &callee, &body, sites, capture.is_some() || global.is_some())?
+        {
+            guard_frames.push(frame); continue;
+        }
         (callee.params == argc && usize::from(argc) <= MAX_INLINE_PARAMS).then_some(())?;
-        let reached = crate::bytecode::reachable_from(&callee.instructions, [0]);
-        let body: Vec<WideInstruction> = callee.instructions.iter().copied().enumerate()
-            .filter(|(pc, _)| reached.contains(*pc)).map(|(_, instruction)| instruction).collect();
-        // A callee read by capture or by name binds no meaningful receiver, so its body may
-        // not touch `this`; recovery still performs the ordinary binding below.
-        name_calls::admits_body(&body, sites, capture.is_some() || global.is_some())?;
         // A parameter read as an object is bound to the caller register its argument was
         // moved from in the setup, which the region never writes; any other is a Number it
         // copies.
@@ -1082,7 +1080,7 @@ pub(super) fn inline_region<'a>(
             },
         );
     }
-    (!calls.is_empty()).then_some(())?;
+    (!calls.is_empty() || !guard_frames.is_empty()).then_some(())?;
     // Region PCs: each kept caller instruction takes one, a call its numeric parameters'
     // moves and its callee's reached instructions, each `Return` two (the result's move and
     // the jump past the call). A dropped instruction's PC is the next instruction's.
@@ -1254,6 +1252,7 @@ pub(super) fn inline_region<'a>(
             let callee = checked_reads.contains_key(pc).then(|| caller[(*pc - header) as usize].register_b());
             std::iter::once(site.frame.receiver).chain(callee)
         })
+        .chain(guard_frames.iter().map(|frame| frame.receiver))
         .collect();
     let header_live = masks.first().copied();
     let mut region = admit_region(
@@ -1264,7 +1263,7 @@ pub(super) fn inline_region<'a>(
         Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(masks))),
         header_live,
         header,
-        &receivers, globals.clone(),
+        &receivers, globals.clone(), !guard_frames.is_empty(),
     )
     .ok()?;
     // Dynamic receiver reads use the loop's caller registers and exact caller PCs. Keep
@@ -1306,6 +1305,7 @@ pub(super) fn inline_region<'a>(
         frame.guard = InlineGuard::Field(intern_field(&mut region.fields, &path, true));
         frames.push(frame);
     }
+    frames.extend(guard_frames);
     (region.fields.len() <= MAX_REGION_FIELDS).then_some(())?;
     region.inlining = Some(Box::new(Inlining { origins, frames, callee_captures, caller_registers }));
     Some(region)
@@ -1735,7 +1735,7 @@ pub(super) fn region(
         header_live,
         header,
         &std::collections::BTreeSet::new(),
-        globals,
+        globals, false,
     )
 }
 
@@ -1753,13 +1753,13 @@ fn admit_region(
     header_live: Option<RegisterSet>,
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
-    globals: Vec<(crate::bytecode::Atom, u16)>,
+    globals: Vec<(crate::bytecode::Atom, u16)>, pure_calls: bool,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     if let Err(offset) = iteration::iterates_natively(&instructions, header) {
         return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op() as u16), header, offset));
     }
     let attempt = |native_calls: bool| admit_register_roles(
-        instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects, &globals, native_calls,
+        instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects, &globals, native_calls, pure_calls,
     );
     match attempt(true).or_else(|_| attempt(false)) {
         Ok(region) => Ok(region),
@@ -1864,7 +1864,7 @@ fn admit_lifetime_roles(
             field(InstructionField::B, instruction.b())?,
             field(InstructionField::C, instruction.c())?, instruction.imm()));
     }
-    let mut region = admit_register_roles(analysis, roots.len(), constants, &[], None, None, header, &BTreeSet::new(), &[], false)
+    let mut region = admit_register_roles(analysis, roots.len(), constants, &[], None, None, header, &BTreeSet::new(), &[], false, false)
         .inspect_err(|&failure| {
             if crate::trace::Channel::OsrReject.on() {
                 eprintln!("QUENCH_JS_JIT_OSR_LIFETIME_REJECT header={header} failure={failure:?}");
@@ -1919,7 +1919,7 @@ fn admit_register_roles(
     live: Option<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     header_live: Option<RegisterSet>,
     header: u32,
-    objects: &std::collections::BTreeSet<Register>, globals: &[(crate::bytecode::Atom, u16)], native_calls: bool,
+    objects: &std::collections::BTreeSet<Register>, globals: &[(crate::bytecode::Atom, u16)], native_calls: bool, pure_calls: bool,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     let backedge = header + instructions.len() as u32 - 1;
     // A held register keeps the value its path read at entry, which a store to any name on
@@ -2127,7 +2127,7 @@ fn admit_register_roles(
         if let Some(register) = object_reads(instruction).filter(|register| paths.contains_key(register)) {
             admission.field_arrays.entry(register).or_insert(false);
         }
-        if admit(&mut admission, instruction, constants, &tagged, &defined_registers, &dynamic_arrays, osr_call::native_calls(&rooted, globals, &instructions, native_calls)).is_none() {
+        if admit(&mut admission, instruction, constants, &tagged, &defined_registers, &dynamic_arrays, osr_call::native_calls(&rooted, globals, &instructions, native_calls, pure_calls)).is_none() {
             if crate::trace::Channel::OsrReject.on() {
                 let constant = (instruction.op().is_load_const())
                     .then(|| constants.get(instruction.constant_index()).copied());
@@ -2261,7 +2261,7 @@ fn admit_register_roles(
     Ok(LoopRegion {
         header,
         backedge,
-        numbers, native_calls: osr_call::native_calls(&rooted, globals, &instructions, native_calls),
+        numbers, native_calls: osr_call::native_calls(&rooted, globals, &instructions, native_calls, pure_calls),
         tagged,
         lifetime_roles: None,
         arrays,
@@ -7053,7 +7053,7 @@ mod tests {
                 WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             ], 1, &[Value::number(number)], &[],
                 Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::default(), crate::compile::liveness::RegisterSet::from(1_u64)]))),
-                Some(crate::compile::liveness::RegisterSet::from(0_u64)), 0, &Default::default(), Vec::new(),)
+                Some(crate::compile::liveness::RegisterSet::from(0_u64)), 0, &Default::default(), Vec::new(), false,)
                 .unwrap_or_else(|failure| panic!("constant admission: {failure:?}"));
             let verified = verify_unprofiled(&region).unwrap();
             let definition = verified.webs.defined(&region, 0);
@@ -7102,7 +7102,7 @@ mod tests {
         ], 4, &[], &[],
             Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(15_u64); 4]))),
             Some(crate::compile::liveness::RegisterSet::from(15_u64)), 0, &Default::default(),
-         Vec::new(),).unwrap_or_else(|failure| panic!("nested probe admission: {failure:?}"));
+         Vec::new(), false,).unwrap_or_else(|failure| panic!("nested probe admission: {failure:?}"));
         // Exercise the callout projection rather than an entry-pinned or direct
         // native array view. Its receiver still needs the same SSA proof.
         region.dynamic_arrays.remove(&1);
@@ -7129,7 +7129,7 @@ mod tests {
             WideInstruction::new(Op::Jump, 0, 0, 0, 0),
         ], 3, &[], &[],
             Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(3_u64), crate::compile::liveness::RegisterSet::from(7_u64), crate::compile::liveness::RegisterSet::from(3_u64), crate::compile::liveness::RegisterSet::from(3_u64)]))),
-            Some(crate::compile::liveness::RegisterSet::from(3_u64)), 0, &Default::default(), Vec::new(),)
+            Some(crate::compile::liveness::RegisterSet::from(3_u64)), 0, &Default::default(), Vec::new(), false,)
             .unwrap_or_else(|failure| panic!("comparison admission: {failure:?}"));
         let widened = std::collections::BTreeSet::new();
         let observation = Observation {
@@ -7162,7 +7162,7 @@ mod tests {
                 WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             ], 2, &[constant], &[],
                 Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::default(), crate::compile::liveness::RegisterSet::from(1_u64), crate::compile::liveness::RegisterSet::default()]))),
-                Some(crate::compile::liveness::RegisterSet::from(0_u64)), 0, &Default::default(), Vec::new(),).unwrap();
+                Some(crate::compile::liveness::RegisterSet::from(0_u64)), 0, &Default::default(), Vec::new(), false,).unwrap();
             let widened = Default::default();
             let observation = Observation {
                 register: None, int32_elements: &|_| false, only_int32: &|_| false, double_elements: &|_| false, captures: &[], fields: &[],
@@ -7184,7 +7184,7 @@ mod tests {
         let region = admit_region(vec![branch,
             WideInstruction::new(Op::IncDec, 0, 0, 0, 1),
             WideInstruction::new(Op::Jump, 0, 0, 0, 0),
-        ], 2, &[], &[], None, None, 0, &Default::default(), Vec::new(),);
+        ], 2, &[], &[], None, None, 0, &Default::default(), Vec::new(), false,);
         assert!(region.is_ok(), "fused numeric AND branch: {:?}", region.err());
     }
 
@@ -7199,7 +7199,7 @@ mod tests {
         let region = admit_region(instructions, 4, &[], &[],
             Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(15_u64); 4]))),
             Some(crate::compile::liveness::RegisterSet::from(15_u64)), 0, &Default::default(),
-         Vec::new(),).unwrap_or_else(|failure| panic!("nested lifetime admission: {failure:?}"));
+         Vec::new(), false,).unwrap_or_else(|failure| panic!("nested lifetime admission: {failure:?}"));
         assert!(region.lifetime_roles.is_some());
         assert!(region.tagged_definition(0));
         assert!(!region.tagged_definition(2));
@@ -7217,7 +7217,7 @@ mod tests {
         ], 4, &[], &[],
             Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(15_u64); 3]))),
             Some(crate::compile::liveness::RegisterSet::from(15_u64)), 0, &Default::default(),
-         Vec::new(),).unwrap_or_else(|failure| panic!("nested receiver store: {failure:?}"));
+         Vec::new(), false,).unwrap_or_else(|failure| panic!("nested receiver store: {failure:?}"));
         // The element read defines the receiver, so the store reads its array from the record at
         // each access (`Lowering::dynamic_array`) instead of pinning an entry identity.
         assert!(region.dynamic_arrays.contains(&1));
@@ -7237,7 +7237,7 @@ mod tests {
             ], 4, &[], &[],
             Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(15_u64); 5]))),
             Some(crate::compile::liveness::RegisterSet::from(15_u64)), 0, &Default::default(),
-         Vec::new(),).unwrap_or_else(|failure| panic!("lifetime admission failed: {failure:?}"));
+         Vec::new(), false,).unwrap_or_else(|failure| panic!("lifetime admission failed: {failure:?}"));
         assert!(region.lifetime_roles.is_some());
         assert!(region.tagged_definition(0));
         assert!(!region.tagged_definition(2));
@@ -7273,7 +7273,7 @@ mod tests {
             let admitted = admit_region(instructions, 5, &[], &[],
                 Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(31_u64); 7]))),
                 Some(crate::compile::liveness::RegisterSet::from(31_u64)), 0, &Default::default(),
-             Vec::new(),).is_ok();
+             Vec::new(), false,).is_ok();
             assert_eq!(admitted, alternative == 0);
         }
     }
@@ -7287,7 +7287,7 @@ mod tests {
         ], 2, &[Value::NULL], &[],
             Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(vec![crate::compile::liveness::RegisterSet::from(3_u64); 3]))),
             Some(crate::compile::liveness::RegisterSet::from(3_u64)), 0, &Default::default(),
-         Vec::new(),).is_err());
+         Vec::new(), false,).is_err());
     }
 
     #[test]
@@ -7304,7 +7304,7 @@ mod tests {
                 WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             ],
             4, &[], &[], None, None, 0, &Default::default(),
-         Vec::new(),).unwrap_or_else(|_| panic!("numeric control region"));
+         Vec::new(), false,).unwrap_or_else(|_| panic!("numeric control region"));
         let webs = webs(&region);
         let old = webs.defined(&region, 0);
         let new = webs.defined(&region, 2);
@@ -7331,7 +7331,7 @@ mod tests {
                 WideInstruction::new(Op::Jump, 0, 0, 0, 0),
             ],
             6, &[], &[], None, None, 0, &Default::default(),
-         Vec::new(),).unwrap_or_else(|_| panic!("branch control region"));
+         Vec::new(), false,).unwrap_or_else(|_| panic!("branch control region"));
         let webs = webs(&region);
         let joined = webs.defined(&region, 1);
         let overwritten = webs.defined(&region, 5);
@@ -7352,7 +7352,7 @@ mod tests {
         let failure = match admit_region(
             vec![WideInstruction::new(Op::Move, 3, 1, 0, 0), instruction],
             4, &[], &[], None, None, 17, &std::collections::BTreeSet::from([0]),
-         Vec::new(),) {
+         Vec::new(), false,) {
             Ok(_) => panic!("tagged arithmetic must retain its existing rejection"),
             Err(failure) => failure,
         };

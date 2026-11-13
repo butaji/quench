@@ -12,9 +12,10 @@ pub(super) fn native_calls(
     globals: &[(crate::bytecode::Atom, u16)],
     instructions: &[WideInstruction],
     wanted: bool,
+    pure_calls: bool,
 ) -> bool {
-    wanted && rooted.is_empty() && globals.is_empty()
-        && !instructions.iter().any(|instruction| instruction.op().is_indexed_access())
+    wanted && (pure_calls || (rooted.is_empty() && globals.is_empty()
+        && !instructions.iter().any(|instruction| instruction.op().is_indexed_access())))
 }
 
 /// Admits a call: only a plain call with a register window; an `eval` call and an argument
@@ -104,3 +105,50 @@ impl Lowering<'_, '_> {
     }
 }
 
+/// What `inline_region` does with a call whose callee it resolved.
+pub(super) enum CallForm {
+    /// The body runs in place, inlined as the inliner does.
+    Inline,
+    /// The pure callee runs natively in place; the frame guards its identity at the read.
+    Guard(InlineFrame),
+}
+
+/// The form of a resolved call: inlined when its body admits inlining, guarded when the body
+/// writes no field, element or name (so the region's entry pins stay valid), else `None`.
+pub(super) fn call_form(
+    call: u32,
+    read: u32,
+    receiver: Register,
+    base: u32,
+    callee: &InlineCallee<'_>,
+    body: &[WideInstruction],
+    sites: &[FieldSite],
+    receiver_independent: bool,
+) -> Option<CallForm> {
+    if name_calls::admits_body(body, sites, receiver_independent).is_some() {
+        return Some(CallForm::Inline);
+    }
+    let pure = body.iter().all(|instruction| !admitted_store(instruction.op())
+        && !instruction.op().stores_name() && !instruction.op().is_ordinary_call()
+        && !instruction.op().captures_environment() && instruction.op().class() != Class::SetIndex);
+    pure.then(|| CallForm::Guard(InlineFrame {
+        call, callee: callee.callee, guard: InlineGuard::AtRead(read), receiver,
+        base: Register::try_from(base).unwrap_or(0), registers: 0, bound: [None; MAX_INLINE_PARAMS],
+    }))
+}
+
+/// The callee a call's read resolves now, with its reachable body.
+pub(super) fn resolved<'a>(
+    resolve: &mut dyn FnMut(&[FieldUse], CalleeRead) -> Option<InlineCallee<'a>>,
+    callee_path: Option<&FieldPath>,
+    global: Option<(crate::bytecode::Atom, u16)>,
+    capture: Option<u16>,
+) -> Option<(InlineCallee<'a>, Vec<WideInstruction>, crate::bitset::BitSet)> {
+    let mut chain = Vec::new();
+    if let Some(path) = callee_path { intern_field(&mut chain, path, true); }
+    let callee = resolve(&chain, name_calls::callee_read(global, capture))?;
+    let reached = crate::bytecode::reachable_from(&callee.instructions, [0]);
+    let body = callee.instructions.iter().copied().enumerate()
+        .filter(|(pc, _)| reached.contains(*pc)).map(|(_, instruction)| instruction).collect();
+    Some((callee, body, reached))
+}
