@@ -23,6 +23,14 @@ impl<'b, B: Builds<'b>> MachineFlow for B {
         builder.seal_block(block);
     }
 
+    fn enter_open(&mut self, block: ir::Block) {
+        self.function_builder().switch_to_block(block);
+    }
+
+    fn seal_all(&mut self) {
+        self.function_builder().seal_all_blocks();
+    }
+
     fn goto(&mut self, block: ir::Block, arguments: &[ir::Value]) {
         self.function_builder().ins().jump(block, &block_args(arguments));
     }

@@ -77,9 +77,8 @@ pub(super) fn lower_object_regions(
                 colocated: false,
                 patchable: false,
             });
-            let arguments = region_call_arguments(builder, isa, context, pc, result);
-            let call = builder.ins().call(callee, &arguments);
-            builder.inst_results(call)[0]
+            let arguments = region_call_arguments(builder, context, pc, result);
+            builder.call_function(callee, &arguments)[0]
         },
     )
 }
@@ -95,15 +94,13 @@ pub(super) fn lower_object_entry(
             body: &mut |builder, words| {
                 let callee = import_symbol(builder, &mut body_signature, symbols.0,
                     super::super::compiled::lane_body_signature(isa.pointer_type(), isa.default_call_conv()));
-                let call = builder.ins().call(callee, words);
-                let results = builder.inst_results(call);
+                let results = builder.call_function(callee, words);
                 (results[0], results[1])
             },
             fallback: &mut |builder, [context, pc, result]| {
                 let callee = import_symbol(builder, &mut fallback_signature, symbols.1,
                     super::super::compiled::native_js_operation_signature(isa));
-                let call = builder.ins().call(callee, &[context, pc, result, result]);
-                builder.inst_results(call)[0]
+                builder.call_function(callee, &[context, pc, result, result])[0]
             },
         })
 }

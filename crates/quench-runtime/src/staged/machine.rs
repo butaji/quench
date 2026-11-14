@@ -168,6 +168,10 @@ pub(crate) trait MachineFlow: MachineScalar {
     fn new_block(&mut self) -> Self::Block;
     /// Continues building at `block`, whose every predecessor has been built.
     fn enter(&mut self, block: Self::Block);
+    /// Continues building at `block`, which may still gain predecessors until `seal_all`.
+    fn enter_open(&mut self, block: Self::Block);
+    /// Declares that every block built has all its predecessors.
+    fn seal_all(&mut self);
     /// Continues at `block` with `arguments` as its parameters.
     fn goto(&mut self, block: Self::Block, arguments: &[Self::Word]);
     /// What a jump table is: the targets a selector indexes, the last being the default.

@@ -201,7 +201,7 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
                 let signature = *signature.get_or_insert_with(|| builder.import_signature(
                     native_entry_signature(isa.pointer_type(), isa.default_call_conv())));
                 let target = builder.ins().iconst(isa.pointer_type(), code[index].pointer() as usize as i64);
-                let arguments = super::native_graph::region_call_arguments(builder, isa, context, pc, result);
+                let arguments = super::native_graph::region_call_arguments(builder, context, pc, result);
                 let call = builder.ins().call_indirect(signature, target, &arguments);
                 builder.inst_results(call)[0]
             })?;
