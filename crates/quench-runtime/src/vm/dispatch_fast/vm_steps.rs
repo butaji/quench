@@ -221,8 +221,8 @@ unsafe fn lane_body_step_record<H: Host>(_vm: u64, _residual: u64, context: u64,
 }
 
 /// The step of the record at `call_pc` of the innermost lane activation: over its window where it is
-/// a local, capture or name step (`lane_owner_step_in`), else in the frames the activations become
-/// (`lane_frames_step_in`).
+/// a local, capture or name step (`lane_owner_step_in`), over its operand values where it is a value step
+/// (`value_steps`), else in the frames the activations become (`lane_frames_step_in`).
 ///
 /// # Safety
 /// As `lane_body_step`.
@@ -232,7 +232,7 @@ unsafe fn lane_activation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64
     if record.without_return().op().steps_on_owner() {
         unsafe { lane_owner_step_in(cx, call_pc, record) }
     } else {
-        unsafe { lane_frames_step_in(cx, call_pc, record) }
+        unsafe { super::value_steps::lane_activation_value_step(cx, call_pc, record) }.unwrap_or_else(|| unsafe { lane_frames_step_in(cx, call_pc, record) })
     }
 }
 
