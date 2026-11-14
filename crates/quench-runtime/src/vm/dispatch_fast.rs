@@ -5245,9 +5245,9 @@ fn lane_set_index_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Regist
 /// stack temporaries escape: the handler's frame then holds none.
 #[inline(never)]
 fn lane_set_index_slot_store<H: Host>(vm: &mut Vm<H>, ip: Ip, object: Value, key: Value, value: Value) -> bool {
-    if !vm.site_symbol_set(ip.addr(), object, key, value)
+    if !vm.try_fill_record_hole(object, key, value)
+        && !vm.site_symbol_set(ip.addr(), object, key, value)
         && !vm.try_replace_dense_element(object, key, value)
-        && !vm.try_fill_record_hole(object, key, value)
         && !vm.try_append_dense_element(object, key, value)
         && !vm.try_fill_dense_hole(object, key, value)
         && !vm.try_site_symbol_set(ip.addr(), object, key, value)

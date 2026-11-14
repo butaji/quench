@@ -72,6 +72,8 @@ pub(crate) enum ProofKind {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct IndexFreeChainProof {
     pub(crate) first: Value,
+    /// `first`'s prototype, whose chain the proof covers as well: a watched `first` keeps it.
+    pub(crate) next: Value,
 }
 
 /// The proofs the table holds, each cleared when a subject it read changes.

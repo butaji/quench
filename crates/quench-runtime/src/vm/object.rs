@@ -705,7 +705,7 @@ impl<H: Host> Vm<H> {
     /// Whether no prototype on the chain from `first` holds an array index: answered by the
     /// held proof (`IndexFreeChainProof`), which a change to any prototype it read retires.
     pub(super) fn chain_holds_no_index(&self, first: Value) -> bool {
-        self.heap.dependencies().index_free_chain().is_some_and(|proof| proof.first == first)
+        self.heap.dependencies().index_free_chain().is_some_and(|proof| proof.first == first || proof.next == first)
             || self.prove_index_free_chain(first)
     }
 
@@ -724,6 +724,7 @@ impl<H: Host> Vm<H> {
         let mut subjects = Vec::new();
         let mut array_holder = false;
         let mut current = first;
+        let mut next = Value::NULL;
         while !current.is_null() {
             let Some(data) = self.object_data(current) else {
                 return false;
@@ -747,11 +748,14 @@ impl<H: Host> Vm<H> {
                 array_holder = true;
             }
             subjects.push(data.watched_subject());
+            if current == first {
+                next = data.proto();
+            }
             current = data.proto();
         }
         if let Some(subjects) = subjects.into_iter().collect::<Option<Vec<u32>>>() {
             self.heap.dependencies().prove(crate::heap::ProofKind::IndexFreeChain, &subjects, |proofs| {
-                proofs.index_free_chain = Some(crate::heap::IndexFreeChainProof { first });
+                proofs.index_free_chain = Some(crate::heap::IndexFreeChainProof { first, next });
             });
         }
         true
