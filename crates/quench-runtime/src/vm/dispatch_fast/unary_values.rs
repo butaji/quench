@@ -15,6 +15,14 @@ pub(super) unsafe fn lane_unary_value<H: Host>(
 ) -> Option<Value> {
     let operator = i.imm();
     let operand = r.get(i.b);
+    // A Number operand of a Number operator (negation, plus, increments): its result made
+    // here, where `Vm::unary` would be a call (Box2D's `-x` on doubles).
+    if let Some(number) = operand.as_number()
+        && super::super::operations::NumberUnary::from_operator(operator).is_some()
+        && let Some(result) = super::super::operations::number_unary_result(operator, number)
+    {
+        return Some(Value::number(result));
+    }
     let vm = unsafe { vm(cx) };
     if let Some(answer) = lane_value_query(vm, operator, operand) {
         return Some(answer);
