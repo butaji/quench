@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::ops::Range;
 
 mod dispatch;
+pub mod matcher;
 pub mod native;
 mod scan;
 // The per-instruction semantics over a stage trait; a child module so it sees this module's private items.
@@ -21,13 +22,14 @@ mod scan;
 mod specialize;
 mod workspace;
 use dispatch::Dispatch;
+use matcher::{Admission, AssertionTest};
 use native::NativeSlot;
 pub use specialize::CAPTURE_REGISTERS;
 use specialize::{replay, step, Concrete, Cursor, Replay, Step};
 use workspace::{AnchoredRun, ClassRun, anchored_run_of, class_run_of};
 
 use super::{
-    canonical, canonical_preimages_of, class_is_single_unit, class_item_matches, class_matches, equal, escape_matches, is_line_terminator, is_word_mode, merge_flags,
+    canonical, canonical_preimages_of, class_is_single_unit, class_item_matches, class_matches, equal, escape_matches, is_line_terminator, merge_flags,
     literal_finder, Assertion, Backreference, ClassExpr, ClassItem, ClassKind, Expr, Flags, LiteralFinder, Lookaround,
     Unit, ASCII_MAX,
 };
@@ -417,15 +419,6 @@ fn escape_ascii_mask(escape: oxc::regular_expression::ast::CharacterClassEscapeK
     masks[index][usize::from(ignore_case)][usize::from(unicode)]
 }
 
-/// An assertion with the flags that decide it.
-#[derive(Clone, Copy)]
-struct AssertionTest {
-    assertion: Assertion,
-    multiline: bool,
-    /// `is_word_mode`'s case-folding argument.
-    word_ignore_case: bool,
-}
-
 #[derive(Clone, Copy)]
 enum Inst {
     Unit(UnitTest),
@@ -566,7 +559,7 @@ pub(crate) struct Program {
     /// Capture index lists for `ResetCaptures` and `Backreference`.
     lists: Box<[u32]>,
     /// The starts of guarded bodies, for `GuardedSplit`.
-    guards: Box<[MatchStarts]>,
+    guards: Box<[Admission<UnitTest>]>,
     dispatches: Box<[Dispatch]>,
     capture_count: usize,
     register_count: usize,
@@ -613,7 +606,7 @@ struct Compiler {
     instructions: Vec<Inst>,
     sets: Vec<MatchSet>,
     lists: Vec<u32>,
-    guards: Vec<MatchStarts>,
+    guards: Vec<Admission<UnitTest>>,
     dispatches: Vec<Dispatch>,
     registers: u32,
     /// Bodies being compiled that one path may run more than once, or whose registers a
@@ -650,8 +643,9 @@ impl Compiler {
     /// they are known.
     fn split(&mut self, alternative: u32, body: &Expr, flags: Flags) -> Inst {
         match starts(body, flags) {
-            Some(guard) => {
-                self.guards.push(guard.into());
+            Some(Starts { at_start, at_end, units, .. }) => {
+                let units = self.add_set(units);
+                self.guards.push(Admission { at_start, at_end, units });
                 Inst::GuardedSplit {
                     alternative,
                     guard: self.guards.len() as u32 - 1,
@@ -661,9 +655,13 @@ impl Compiler {
         }
     }
 
-    fn set(&mut self, beyond: Beyond) -> UnitTest {
-        self.sets.push(UnitSet::new(beyond).into());
+    fn add_set(&mut self, set: UnitSet) -> UnitTest {
+        self.sets.push(set.into());
         UnitTest::Set(self.sets.len() as u32 - 1)
+    }
+
+    fn set(&mut self, beyond: Beyond) -> UnitTest {
+        self.add_set(UnitSet::new(beyond))
     }
 
     /// The test of a single-unit expression, if `expr` is one.
@@ -1587,30 +1585,6 @@ impl Program {
                     return Some(Cursor::at(pc, position));
                 }
             }
-        }
-    }
-}
-
-fn assertion_holds<T: Text + ?Sized>(test: AssertionTest, text: &T, position: usize) -> bool {
-    let length = text.len();
-    let terminator_at = |index: usize| index < length && is_line_terminator(text.unit(index));
-    match test.assertion {
-        Assertion::Start => position == 0 || (test.multiline && terminator_at(position - 1)),
-        Assertion::End => position == length || (test.multiline && terminator_at(position)),
-        Assertion::StartBuffer => position == 0,
-        Assertion::EndBuffer => position == length,
-        Assertion::EndBufferOptionalNewline => {
-            position == length
-                || (position + 1 == length && terminator_at(position))
-                || (position + 2 == length
-                    && text.unit(position) == u32::from(b'\r')
-                    && text.unit(position + 1) == u32::from(b'\n'))
-        }
-        Assertion::Boundary | Assertion::NonBoundary => {
-            let word = |index: usize| is_word_mode(text.unit(index), test.word_ignore_case);
-            let left = position > 0 && word(position - 1);
-            let right = position < length && word(position);
-            matches!(test.assertion, Assertion::Boundary) == (left != right)
         }
     }
 }

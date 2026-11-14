@@ -1,5 +1,6 @@
 //! Unit repeats, loops and the resume blocks backtracking jumps to.
 use super::{Emit, Resume, FIRST_OPERAND, SECOND_OPERAND};
+use quench_regexp::backtrack::matcher::MatchStage;
 use crate::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
 use cranelift_codegen::ir::{self, MemFlagsData};
 use quench_regexp::backtrack::native::{NativeInst, NativeTest, NATIVE_UNBOUNDED as UNBOUNDED};
@@ -15,8 +16,8 @@ impl Emit<'_, '_> {
         let inside = self.compare(Relation::UnsignedLess, index, to);
         self.b.branch_if(inside, (body, &[]), (exit, &[index]));
         self.b.enter_open(body);
-        let byte = self.byte_at(index);
-        let passes = self.passes(test, byte);
+        let unit = self.unit_at(index);
+        let passes = self.passes(unit, test);
         let next = self.b.raw_binary_imm(Binary::Add, index, 1);
         self.b.branch_if(passes, (head, &[next]), (exit, &[index]));
         self.b.enter_open(exit);
@@ -152,8 +153,8 @@ impl Emit<'_, '_> {
     /// A lazy repeat takes a unit where its test passes, and keeps the frame below the ceiling.
     fn lazy_resume(&mut self, pc: u32, ceiling: ir::Value, at: ir::Value) {
         let NativeInst::UnitRepeat { test, .. } = self.plan.insts[pc as usize] else { unreachable!("a lazy frame names a repeat") };
-        let byte = self.byte_at(at);
-        let passes = self.passes(test, byte);
+        let unit = self.unit_at(at);
+        let passes = self.passes(unit, test);
         self.require(passes);
         let next = self.b.raw_binary_imm(Binary::Add, at, 1);
         let more = self.compare(Relation::UnsignedLess, next, ceiling);

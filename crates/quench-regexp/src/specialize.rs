@@ -29,9 +29,9 @@
 //! outer loop of the specialized code, and the lookahead body, which `Stage::look` runs as a
 //! nested interpreter until an emitting stage inlines it. Matching behaviour is unchanged.
 
-use super::{
-    assertion_holds, equal, AssertionTest, Frame, Inst, Program, Text, UnitTest, UNBOUNDED, UNSET,
-};
+use crate::in_units;
+use super::matcher::{admits, assertion_holds, takes_unit, Admission, MatchStage};
+use super::{equal, Frame, Inst, Program, Text, UnitTest, UNBOUNDED, UNSET};
 
 /// A machine position: the next instruction and the subject position it reads at.
 #[derive(Clone, Copy)]
@@ -78,21 +78,17 @@ impl Step {
 
 /// The dynamic accesses the instructions make. Positions are `usize` here; a code-generating
 /// stage keeps the same operations over its own values.
-pub(super) trait Stage {
-    fn length(&self) -> usize;
-    fn unit(&self, position: usize) -> u32;
-    fn test(&self, test: UnitTest, unit: u32) -> bool;
+pub(super) trait Stage: MatchStage<Pos = usize, Unit = u32, Flag = bool, Test = UnitTest> {
     /// The end of the run of units from `from` to at most `to` that pass `test`.
     fn run_end(&self, test: UnitTest, from: usize, to: usize) -> usize;
-    fn assertion(&self, test: AssertionTest, position: usize) -> bool;
     fn register(&self, register: u32) -> usize;
     /// Writes a register with no restore entry.
     fn assign(&mut self, register: u32, value: usize);
     fn push(&mut self, frame: Frame);
     /// The latest backtrack entry, if the stack holds one.
     fn pop(&mut self) -> Option<Frame>;
-    /// Whether the body behind guard `guard` can start at `position`.
-    fn admits(&self, guard: u32, position: usize) -> bool;
+    /// The positions the body behind guard `guard` can start at.
+    fn guard(&self, guard: u32) -> Admission<UnitTest>;
     /// The target of dispatch table `table` for the unit at `position`, its other branches
     /// pushed as choices.
     fn dispatch(&mut self, table: u32, position: usize) -> Option<u32>;
@@ -173,7 +169,8 @@ pub(super) fn replay<S: Stage>(stage: &mut S) -> Replay {
             Replay::Resume(Cursor::at(pc, at))
         }
         Some(Frame::Lazy { pc, test, ceiling, position }) => {
-            if !stage.test(test, stage.unit(position)) {
+            let unit = stage.unit_at(position);
+            if !stage.passes(unit, test) {
                 return Replay::Undone;
             }
             let at = position + 1;
@@ -191,7 +188,7 @@ pub(super) fn step<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
     match inst {
         Inst::Unit(test) => unit(stage, test, at),
         Inst::UnitRepeat { test, min, max, greedy } => unit_repeat(stage, (test, min, max, greedy), at),
-        Inst::Assert(test) => Step::when(stage.assertion(test, at.position), at.next()),
+        Inst::Assert(test) => Step::when(assertion_holds(stage, test, at.position), at.next()),
         Inst::Split { alternative } => {
             stage.push(Frame::Choice { pc: alternative, position: at.position });
             Step::Continue(at.next())
@@ -248,8 +245,8 @@ fn capture_open<S: Stage>(stage: &mut S, (temporary, restores): (u32, bool), at:
 }
 
 #[inline(always)]
-fn unit<S: Stage>(stage: &S, test: UnitTest, at: Cursor) -> Step {
-    let takes = at.position < stage.length() && stage.test(test, stage.unit(at.position));
+fn unit<S: Stage>(stage: &mut S, test: UnitTest, at: Cursor) -> Step {
+    let takes = takes_unit(stage, test, at.position);
     Step::when(takes, at.then_at(at.position + 1))
 }
 
@@ -278,7 +275,8 @@ fn unit_repeat<S: Stage>(stage: &mut S, (test, min, max, greedy): (UnitTest, u32
 
 #[inline(always)]
 fn guarded_split<S: Stage>(stage: &mut S, (alternative, guard): (u32, u32), at: Cursor) -> Step {
-    let admitted = stage.admits(guard, at.position);
+    let guard = stage.guard(guard);
+    let admitted = admits(stage, guard, at.position);
     if admitted {
         stage.push(Frame::Choice { pc: alternative, position: at.position });
     }
@@ -334,7 +332,7 @@ fn backreference<S: Stage>(stage: &mut S, (first, count, ignore_case, unicode): 
     let (from, to) = (stage.register(bound), stage.register(bound + 1));
     let width = to - from;
     let matches = at.position + width <= stage.length()
-        && (from..to).zip(at.position..).all(|(expected, actual)| equal(stage.unit(expected), stage.unit(actual), ignore_case, unicode));
+        && (from..to).zip(at.position..).all(|(expected, actual)| equal(stage.unit_at(expected), stage.unit_at(actual), ignore_case, unicode));
     Step::when(matches, at.then_at(at.position + width))
 }
 
@@ -346,30 +344,77 @@ pub(super) struct Concrete<'a, T: Text + ?Sized> {
     pub(super) stack: &'a mut Vec<Frame>,
 }
 
-impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
+impl<T: Text + ?Sized> MatchStage for Concrete<'_, T> {
+    type Pos = usize;
+    type Unit = u32;
+    type Flag = bool;
+    type Test = UnitTest;
+
     #[inline(always)]
-    fn length(&self) -> usize {
+    fn length(&mut self) -> usize {
         self.text.len()
     }
 
     #[inline(always)]
-    fn unit(&self, position: usize) -> u32 {
-        self.text.unit(position)
+    fn at_start(&mut self, position: usize) -> bool {
+        position == 0
     }
 
     #[inline(always)]
-    fn test(&self, test: UnitTest, unit: u32) -> bool {
+    fn equal(&mut self, left: usize, right: usize) -> bool {
+        left == right
+    }
+
+    #[inline(always)]
+    fn before(&mut self, left: usize, right: usize) -> bool {
+        left < right
+    }
+
+    #[inline(always)]
+    fn offset(&mut self, position: usize, delta: isize) -> usize {
+        position.wrapping_add_signed(delta)
+    }
+
+    #[inline(always)]
+    fn unit_at(&mut self, index: usize) -> u32 {
+        self.text.unit(index)
+    }
+
+    #[inline(always)]
+    fn passes(&mut self, unit: u32, test: UnitTest) -> bool {
         self.program.test(test, unit)
     }
 
     #[inline(always)]
-    fn run_end(&self, test: UnitTest, from: usize, to: usize) -> usize {
-        self.program.run_end(test, self.text, from, to)
+    fn in_ranges(&mut self, unit: u32, ranges: &[(u32, u32)]) -> bool {
+        in_units(unit, ranges)
     }
 
     #[inline(always)]
-    fn assertion(&self, test: AssertionTest, position: usize) -> bool {
-        assertion_holds(test, self.text, position)
+    fn not(&mut self, flag: bool) -> bool {
+        !flag
+    }
+
+    #[inline(always)]
+    fn differ(&mut self, left: bool, right: bool) -> bool {
+        left != right
+    }
+
+    #[inline(always)]
+    fn guarded(&mut self, condition: bool, then: impl FnOnce(&mut Self) -> bool) -> bool {
+        condition && then(self)
+    }
+
+    #[inline(always)]
+    fn or_else(&mut self, first: bool, otherwise: impl FnOnce(&mut Self) -> bool) -> bool {
+        first || otherwise(self)
+    }
+}
+
+impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
+    #[inline(always)]
+    fn run_end(&self, test: UnitTest, from: usize, to: usize) -> usize {
+        self.program.run_end(test, self.text, from, to)
     }
 
     #[inline(always)]
@@ -393,8 +438,8 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
     }
 
     #[inline(always)]
-    fn admits(&self, guard: u32, position: usize) -> bool {
-        self.program.guards[guard as usize].admits(self.text, position)
+    fn guard(&self, guard: u32) -> Admission<UnitTest> {
+        self.program.guards[guard as usize]
     }
 
     #[inline(always)]
