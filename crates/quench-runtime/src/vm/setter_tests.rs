@@ -133,3 +133,55 @@ print(out.join("|"));
 "#;
     assert_eq!(printed(CACHED, "setter_cache.js"), ["3000|300|3000,9|-4|-2999,3,f,v|-2999:3|TypeError|2999|8,_x|p12999|p24|p24,a,s|p24|1|2|2999|2999,y|2999|2999|2999"]);
 }
+
+/// A prototype holder's accessor read from a cached entry (`Vm::cached_field_accessor`)
+/// keeps following the holder: a getter redefined with other attributes, turned into data and
+/// back, deleted, shadowed by a nearer accessor, an intermediate prototype gaining one,
+/// `Object.setPrototypeOf` on the receiver, a subclass override defined later, a receiver
+/// that gains or loses fields, a proxy inserted up the chain and a function receiver each
+/// read what Node 24 prints for the same program.
+#[test]
+fn cached_getter_reads_follow_invalidation_like_node() {
+    const CACHED: &str = r#"const out = [];
+const log = (...a) => out.push(a.join(","));
+function read(o, n) { let s = 0; for (let i = 0; i < n; i++) s += o.v; return s; }
+// accessors with non-default attributes on a prototype (shape-held attributes)
+const P = {}; Object.defineProperty(P, "v", { get() { return 1; }, enumerable: false, configurable: true });
+const c = Object.create(P);
+log(read(c, 3000));
+// getter replaced on the same holder
+Object.defineProperty(P, "v", { get() { return 2; }, enumerable: false, configurable: true }); log(read(c, 5));
+Object.defineProperty(P, "v", { get() { return 3; }, enumerable: true, configurable: true }); log(read(c, 5));
+// turned into a data property, then an accessor again, then deleted
+Object.defineProperty(P, "v", { value: 4, writable: true, configurable: true }); log(read(c, 5));
+Object.defineProperty(P, "v", { get() { return 5; }, configurable: true }); log(read(c, 5));
+delete P.v; log(read(c, 3));
+// accessor appears later closer to the receiver
+const Q = {}; Object.defineProperty(Q, "v", { get() { return 6; }, configurable: true });
+const q2 = Object.create(Q); log(read(q2, 3000));
+Object.defineProperty(q2, "v", { get() { return 7; }, configurable: true }); log(read(q2, 5));
+// intermediate prototype gains the accessor
+const R = {}; const M = Object.create(R); const r = Object.create(M);
+Object.defineProperty(R, "v", { get() { return 8; }, configurable: true }); log(read(r, 3000));
+Object.defineProperty(M, "v", { get() { return 9; }, configurable: true }); log(read(r, 5));
+// setPrototypeOf moves the receiver
+const S1 = {}, S2 = {};
+Object.defineProperty(S1, "v", { get() { return 10; }, configurable: true }); Object.defineProperty(S2, "v", { get() { return 11; }, configurable: true });
+const s = Object.create(S1); log(read(s, 3000)); Object.setPrototypeOf(s, S2); log(read(s, 5)); Object.setPrototypeOf(s, null); log(read(s, 5));
+// class accessors, getter calling with the right receiver, subclass override later
+class A { constructor() { this.n = 1; } get v() { return this.n; } }
+class B extends A { constructor() { super(); this.n = 2; } }
+const b = new B(); log(read(b, 3000));
+Object.defineProperty(B.prototype, "v", { get() { return this.n * 10; }, configurable: true }); log(read(b, 5));
+// receiver shape changes after the cache
+b.extra = 1; log(read(b, 5)); delete b.n; log(read(b, 5));
+// proxy inserted into the chain
+const T = {}; Object.defineProperty(T, "v", { get() { return 12; }, configurable: true });
+const U = Object.create(T); const u = Object.create(U); log(read(u, 3000));
+const seen = []; Object.setPrototypeOf(U, new Proxy({}, { get(t, k, r) { seen.push(String(k)); return 13; } })); log(read(u, 3), seen.join());
+// getter on a function receiver and a symbol key
+function F() {} Object.defineProperty(F, "v", { get() { return 14; }, configurable: true }); log(read(F, 3000));
+print(out.join("|"));
+"#;
+    assert_eq!(printed(CACHED, "getter_cache.js"), ["3000|10|15|20|25|NaN|18000|35|24000|45|30000|55|NaN|6000|100|100|NaN|36000|39,v,v,v|42000"]);
+}
