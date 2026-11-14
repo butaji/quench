@@ -55,6 +55,7 @@ mod capture_profile;
 mod call_only;
 mod capture_scope;
 mod class;
+mod class_private;
 mod early;
 mod frame_registers;
 mod lazy_bodies;
