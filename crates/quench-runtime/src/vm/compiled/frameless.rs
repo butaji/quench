@@ -71,6 +71,8 @@ pub(crate) struct Frameless {
     windows: Box<[Value]>,
     shadow: Box<[ShadowRecord]>,
     cache: Box<[CallEntry]>,
+    /// Whether an admission was stored: a collection forgets them only then.
+    admitted: bool,
     /// Each function's last admission, by function index, with its program and closure
     /// environment: a fresh closure of it shares all but its callee and captures (`admit`).
     functions: Vec<(u32, Value, CallEntry)>,
@@ -86,6 +88,7 @@ impl Default for Frameless {
             windows: vec![Value::UNDEFINED; WINDOW_VALUES].into_boxed_slice(),
             shadow: vec![empty; SHADOW_RECORDS].into_boxed_slice(),
             cache: vec![CallEntry::default(); CACHE_ENTRIES].into_boxed_slice(),
+            admitted: false,
             functions: Vec::new(),
             materializations: rustc_hash::FxHashMap::default(),
         }
@@ -111,7 +114,9 @@ impl Frameless {
 
     /// Forgets every admission (`Vm::clear_call_targets`).
     pub(in crate::vm) fn clear(&mut self) {
-        self.cache.fill(CallEntry::default());
+        if std::mem::take(&mut self.admitted) {
+            self.cache.fill(CallEntry::default());
+        }
         self.functions.clear();
     }
 
