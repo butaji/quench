@@ -40,7 +40,7 @@ use crate::staged::wasm_operation::{Form, Operand as Right, WasmOperation};
 use crate::staged::ConcreteWasm;
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName, types};
 #[cfg(test)]
-use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
+use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_codegen::entity::{SecondaryMap, packed_option::PackedOption};
 use std::ops::{Deref, DerefMut};
@@ -1122,6 +1122,7 @@ impl LaneHelpers {
         let mut stage = object_slots::emit(builder);
         match self.table_address(helper) {
             HelperAddress::Embedded(address) => stage.raw_const(crate::staged::machine::Lane::I64, address),
+            #[cfg(feature = "aot")]
             HelperAddress::Loaded { table, offset } =>
                 stage.raw_load(crate::staged::machine::Lane::I64, invariant(), table, offset),
         }
@@ -1151,6 +1152,7 @@ impl LaneHelpers {
 #[derive(Clone, Copy)]
 enum HelperAddress {
     Embedded(i64),
+    #[cfg(feature = "aot")]
     Loaded { table: ir::Value, offset: i32 },
 }
 

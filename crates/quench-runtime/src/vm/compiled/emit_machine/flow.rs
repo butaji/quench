@@ -1,7 +1,9 @@
 //! The flow family of the machine: `MachineFlow` as Cranelift control transfers.
 
 use super::{Builds, machine_type};
-use crate::staged::machine::{Lane, MachineFlow, MachineTail};
+use crate::staged::machine::{Lane, MachineFlow};
+#[cfg(all(feature = "aot", feature = "jit"))]
+use crate::staged::machine::MachineTail;
 use cranelift_codegen::ir::{self, InstBuilder};
 
 /// The arguments of a block call.
@@ -60,6 +62,7 @@ impl<'b, B: Builds<'b>> MachineFlow for B {
     }
 }
 
+#[cfg(all(feature = "aot", feature = "jit"))]
 impl<'b, B: Builds<'b>> MachineTail for B {
     fn tail_call(&mut self, target: ir::FuncRef, arguments: &[ir::Value]) {
         self.function_builder().ins().return_call(target, arguments);
