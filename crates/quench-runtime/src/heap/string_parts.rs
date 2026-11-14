@@ -19,28 +19,15 @@ pub(super) fn trace_parts_if_new(records: &ParallelRecordMarks<'_, JsString>, re
     }
 }
 
-/// Marks the string `record_id` that an object property holds, and its parts, where the
-/// trace finds it (`Heap::object_children_marking`); answers whether that was its whole visit.
-/// A string whose parts are not all flat is left to the work list.
-pub(super) fn mark_leaf_string_if_new(records: &ParallelRecordMarks<'_, JsString>, record_id: RecordId) -> bool {
+/// Marks the string `record_id` that an object property holds where the trace finds it
+/// (`Heap::object_children_marking`), and traces its parts as its visit would: a flat part is
+/// marked in place and any other goes to `work`, so the string itself never enters it.
+pub(super) fn mark_leaf_string_if_new(records: &ParallelRecordMarks<'_, JsString>, record_id: RecordId, work: &mut Vec<Value>) -> bool {
     if cfg!(feature = "profile-aggregate") {
         return false;
     }
-    // SAFETY: an object holds live strings.
-    let parts = unsafe { records.get(record_id) }.parts();
-    if let Some(parts) = parts {
-        let mut flat = true;
-        parts.for_each_text(|part| flat &= unsafe { records.get(part) }.parts().is_none());
-        if !flat {
-            return false;
-        }
-    }
-    if records.mark_if_new(record_id)
-        && let Some(parts) = parts
-    {
-        parts.for_each_text(|part| {
-            records.mark_if_new(part);
-        });
+    if records.mark_if_new(record_id) {
+        trace_parts_if_new(records, record_id, work);
     }
     true
 }

@@ -224,7 +224,7 @@ impl<'heap> ParallelMarkView<'heap> {
         let deferred_roots = &mut batch.object_roots;
         let mut object_roots = |kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
             match parallel_object_roots {
-                Some(trace) => trace(kind, owner, shape, prototype, roots),
+                Some(trace) => trace.append(kind, owner, shape, prototype, roots),
                 None => deferred_roots.push((owner, shape, prototype)),
             }
         };
@@ -244,7 +244,7 @@ impl<'heap> ParallelMarkView<'heap> {
                     value,
                     object,
                     properties,
-                    |string| super::string_parts::mark_leaf_string_if_new(&strings, string),
+                    |string, work| super::string_parts::mark_leaf_string_if_new(&strings, string, work),
                     work,
                     &mut object_roots,
                     trace_kind,

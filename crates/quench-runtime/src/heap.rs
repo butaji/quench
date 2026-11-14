@@ -318,8 +318,29 @@ pub(crate) enum GcTraceKind {
     VerifyFull,
 }
 
-pub(crate) type ParallelObjectRootTrace<'a> =
-    dyn Fn(GcTraceKind, Value, u32, bool, &mut Vec<Value>) + Sync + 'a;
+/// The object-root trace parallel markers call (`ParallelMarkView::mark_value`), and the
+/// shapes whose roots it has already added for every holder that is no prototype: a marker
+/// tests that bit inline and calls the trace only for a shape it does not hold. Empty where
+/// every holder must reach the trace (owned roots, or a verifying trace).
+pub(crate) struct ParallelObjectRootTrace<'a> {
+    pub(crate) trace: &'a (dyn Fn(GcTraceKind, Value, u32, bool, &mut Vec<Value>) + Sync + 'a),
+    pub(crate) seen_shapes: &'a [std::sync::atomic::AtomicU64],
+}
+
+impl ParallelObjectRootTrace<'_> {
+    /// Calls the trace unless `shape`'s roots are already added and the holder is no prototype.
+    #[inline(always)]
+    pub(crate) fn append(&self, kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>) {
+        if !prototype
+            && kind != GcTraceKind::VerifyFull
+            && self.seen_shapes.get(shape as usize / u64::BITS as usize)
+                .is_some_and(|word| word.load(Ordering::Relaxed) & (1_u64 << (shape % u64::BITS)) != 0)
+        {
+            return;
+        }
+        (self.trace)(kind, owner, shape, prototype, roots);
+    }
+}
 
 pub(super) struct Slot {
     cell: Option<Cell>,
@@ -3934,7 +3955,7 @@ impl Heap {
         trace_kind: GcTraceKind,
         last_proto: &mut PushedProtos,
     ) {
-        Self::object_children_marking(owner, object, properties, |_| false, work, object_roots, trace_kind, last_proto);
+        Self::object_children_marking(owner, object, properties, |_, _| false, work, object_roots, trace_kind, last_proto);
     }
 
     /// `object_children`, marking each inline string value through `mark_string` where the
@@ -3947,7 +3968,7 @@ impl Heap {
         owner: Value,
         object: &Object,
         properties: &ValueArena,
-        mut mark_string: impl FnMut(RecordId) -> bool,
+        mut mark_string: impl FnMut(RecordId, &mut Vec<Value>) -> bool,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
@@ -3961,7 +3982,10 @@ impl Heap {
         object.visit_extras_roots(|value| work.push(value));
         if let Some(values) = object.inline_properties() {
             for value in values {
-                if value.is_heap() && !value.is_deleted() && !Self::mark_leaf(&mut mark_string, value) {
+                if value.is_heap()
+                    && !value.is_deleted()
+                    && !value.direct_string_index().is_some_and(|string| mark_string(string, work))
+                {
                     work.push(value);
                 }
             }

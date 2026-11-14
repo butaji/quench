@@ -809,10 +809,15 @@ impl<H: Host> Vm<H> {
             owned_root_filter: &owned_root_filter,
             _shape_borrow: std::marker::PhantomData,
         };
-        let parallel_object_roots =
+        let parallel_trace =
             |trace_kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
                 shape_trace.append(trace_kind, owner, shape, prototype, roots);
             };
+        // `ParallelShapeTrace::append`'s own early return, which markers then test inline.
+        let parallel_object_roots = crate::heap::ParallelObjectRootTrace {
+            trace: &parallel_trace,
+            seen_shapes: if owned_roots.is_empty() { &marked_constructor_shape_bits } else { &[] },
+        };
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(2, phase_started);
         let closure_reads = ProgramClosureReads {
