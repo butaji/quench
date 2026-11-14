@@ -7462,7 +7462,7 @@ script_handler! {
     /// (`Vm::ordinary_instanceof`), which runs no guest code. Any other case, which the full
     /// algorithm decides, takes the general path.
     fn lane_instanceof_value<>(cx, r, ip, i, view) {
-        let Some(holds) = (unsafe { vm(cx) }).steady_instanceof(r.get(i.b), r.get(i.c)) else {
+        let Some(holds) = (unsafe { vm(cx) }).proved_instanceof(r.get(i.b), r.get(i.c)) else {
             sibling!(lane_instanceof_value_walk::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
@@ -7477,7 +7477,7 @@ script_handler! {
     /// record carries the jump's distance from itself, and the result register is written
     /// as the pair would. A case the steady test leaves runs the pair unfused, from the walk.
     fn lane_instanceof_jump_true<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some(holds) = (unsafe { vm(cx) }).steady_instanceof(r.get(i.b), r.get(i.c)) else {
+        let Some(holds) = (unsafe { vm(cx) }).proved_instanceof(r.get(i.b), r.get(i.c)) else {
             sibling!(lane_instanceof_value_walk::<H>, r, ip, Carried::script(cx))
         };
         if holds {
@@ -7506,7 +7506,7 @@ script_handler! {
     /// `lane_jump_binary_false` of `instanceof` with register operands, decoded when the view
     /// was derived (`specialize_register_operands`), as `lane_instanceof_value` decides it.
     fn lane_jump_instanceof_false<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some(holds) = (unsafe { vm(cx) }).steady_instanceof(r.get(i.b), r.get(i.c)) else {
+        let Some(holds) = (unsafe { vm(cx) }).proved_instanceof(r.get(i.b), r.get(i.c)) else {
             sibling!(lane_jump_instanceof_false_walk::<H, BACKWARD>, r, ip, Carried::script(cx))
         };
         // `instanceof` is a JavaScript record, which carries the script state.

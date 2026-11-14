@@ -163,6 +163,7 @@ impl<H: Host> Vm<H> {
             prototype_atom: super::builtins::NO_CACHED_ATOM,
             instanceof_constructor_layouts: [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
             instanceof_inheriting_holders: [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
+            instanceof_proofs: std::array::from_fn(|_| (Value::UNDEFINED, crate::heap::ProtoLink::NULL, None)),
             closure_shapes: [None; 2],
             resolver_function_shape: None,
             closure_templates: Box::new([None; CLOSURE_TEMPLATES]),

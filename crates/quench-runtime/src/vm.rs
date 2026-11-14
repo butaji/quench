@@ -2072,6 +2072,9 @@ pub(crate) struct Vm<H> {
     /// a prototype, so any change to one, and every collection, retires it. Direct-mapped by
     /// the holder's cell.
     instanceof_inheriting_holders: [Option<(Value, u64)>; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
+    /// Per constructor, direct-mapped by its cell, the link of its `prototype` object while
+    /// a watch on its values and layout holds (`Vm::proved_instanceof`).
+    instanceof_proofs: [(Value, crate::heap::ProtoLink, Option<crate::heap::PrototypeValueWatch>); INSTANCEOF_CONSTRUCTOR_LAYOUTS],
     /// The shapes an ordinary closure's own properties step through, without and with a
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
@@ -3093,6 +3096,7 @@ impl<H: Host> Vm<H> {
         self.programs.reset(program.clone());
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.instanceof_inheriting_holders = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
+        self.instanceof_proofs = std::array::from_fn(|_| (Value::UNDEFINED, crate::heap::ProtoLink::NULL, None));
         self.closure_shapes = [None; 2];
         self.resolver_function_shape = None;
         self.function_name_shapes.clear();
