@@ -21606,7 +21606,7 @@ fn set_function_name_runs_the_staged_naming_row_from_the_site_it_recorded() {
         let answer = vm.own_property(global, atom).and_then(|value| vm.heap.string(value).map(|text| text.to_string()));
         answers.push(answer);
     }
-    assert!(answers[0].as_deref().is_some_and(|text| text.starts_with("f,string,f,string")));
+    assert!(answers[0].as_deref().is_some_and(|text| text.starts_with("f,function,f,string,f,string")));
     assert!(answers[0].as_deref().is_some_and(|text| text.ends_with("|g|false")));
     assert_eq!(answers[0], answers[1]);
 }
