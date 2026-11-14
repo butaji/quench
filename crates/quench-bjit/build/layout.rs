@@ -277,7 +277,12 @@ fn assemble(ops: &[Op], regions: &[Region]) -> Option<Layout> {
     relocs.sort_unstable();
     let hot_len = regions[0].bytes.len();
     let continues = relocs.iter().any(|r| r.1 == SUCCESSOR && u32::from(r.2) == NEXT && r.0 as usize + REL32_BYTES == hot_len);
-    continues.then_some(Layout { code: placed.code, relocs, hot_len })
+    // The encoder pre-filled each widened branch's displacement; its `LOCAL` relocation owns the field.
+    let mut code = placed.code;
+    for at in relocs.iter().filter(|r| r.2 == LOCAL).map(|r| r.0 as usize) {
+        code[at..at + REL32_BYTES].fill(0);
+    }
+    continues.then_some(Layout { code, relocs, hot_len })
 }
 
 /// The row with its cold exits folded and its code laid out hot part then cold part, or `None`
