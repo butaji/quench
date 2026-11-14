@@ -843,6 +843,8 @@ pub(crate) struct ProgramStore {
     js_entry_specializations_enabled: bool,
     js_jit_dataview_float64_get_entries: u64,
     js_jit_dataview_float64_set_entries: u64,
+    /// What the tiers did in this VM (`Vm::tier_events`).
+    tier_events: super::tier_events::TierEvents,
 }
 
 impl Default for ProgramStore {
@@ -877,6 +879,7 @@ impl Default for ProgramStore {
             js_entry_specializations_enabled: true,
             js_jit_dataview_float64_get_entries: 0,
             js_jit_dataview_float64_set_entries: 0,
+            tier_events: Default::default(),
         }
     }
 }
@@ -1904,6 +1907,10 @@ impl ProgramStore {
         self.js_jit_lane_methods_enabled
     }
 
+    pub(super) fn tier_events(&self) -> &super::tier_events::TierEvents {
+        &self.tier_events
+    }
+
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {
         self.js_jit_diagnostics.is_some()
     }
@@ -2017,6 +2024,28 @@ impl ProgramStore {
         };
         *entries = entries.saturating_add(1);
         (*entries >= JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES).then_some((*entries, *reason))
+    }
+
+    /// Counts, in the diagnostics report, an entry of a function no tier path claims: its entries
+    /// and, once rejected, its reason. The entry takes its general path whatever this finds.
+    pub(super) fn observe_unclaimed_entry(&mut self, program: &ResidualProgram, id: ProgramId, function: u32, parameters: &[Value]) {
+        if self.js_jit_diagnostics.is_none() { return; }
+        let Some(body) = program.function_get(function as usize) else { return };
+        let Some(arguments) = parameters.get(..usize::from(body.params)) else { return };
+        let numeric = arguments.iter().all(|value| value.as_number().is_some());
+        let rejected = matches!(self.js_tier_ref(id, function), Some(JsTierState::Rejected { .. })).then(|| self.note_js_rejected_entry(id, function)).flatten();
+        let reported = match rejected {
+            Some(rejection) => Some(rejection),
+            None if self.js_tier_ref(id, function).is_none() => {
+                let reason = super::js_compiled::candidate_rejection_reason(program, function);
+                self.reject_js_function(id, function, reason).map(|entries| (entries, reason))
+            }
+            None => None,
+        };
+        if let Some((entries, reason)) = reported {
+            self.record_js_jit_entry(id, function, numeric, body.params);
+            self.record_js_jit_rejection(id, function, reason, entries);
+        }
     }
 
     pub(super) fn record_js_jit_entry(

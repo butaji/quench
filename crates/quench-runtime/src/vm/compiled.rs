@@ -3396,8 +3396,6 @@ fn write_perf_map(kind: &str, base: usize, bytes: &[u8], spans: &[(usize, usize,
 thread_local! {
     /// Lane-ABI OSR runs in this test thread.
     pub(super) static LANE_OSR_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// Runs of lane bodies in this test thread, and those that completed their activation.
-    pub(super) static LANE_BODY_RUNS: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
     /// What the lane-ABI OSR runs in this test thread did (`OsrRunKinds`).
     pub(super) static LANE_OSR_KINDS: std::cell::Cell<OsrRunKinds> = const { std::cell::Cell::new(OsrRunKinds { lent: 0, left: 0, inlined: 0 }) };
 }
@@ -3936,25 +3934,6 @@ impl LaneExit {
         if matches!(self, Self::Entry | Self::Stub) { Self::At(0) } else { self }
     }
 }
-
-/// Lane bodies compiled by this process, for tests that a lane activation ran natively.
-#[cfg(test)]
-pub(super) static LANE_METHODS_COMPILED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-// Entries `Vm::run_lane_body` made on this thread and the runs they bound
-// (`LaneFrame::bind_run` writing its words), for the crossing-cost test.
-#[cfg(test)]
-thread_local! { pub(super) static LANE_ENTRIES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) }; }
-// Entries on this thread that changed a word of their run (`LaneFrame::run_words`): no more than
-// the runs they bound.
-#[cfg(test)]
-thread_local! { pub(super) static LANE_RUN_REWRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
-// Calls of lane bodies made through their entry cells before any activation
-// (`dispatch_fast::lane_enter_cell_body`) on this thread, for the crossing test.
-#[cfg(test)]
-thread_local! { pub(super) static LANE_CELL_CROSSINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
-/// Calls lane bodies compiled by this process inline, for tests that inlining happened.
-#[cfg(test)]
-pub(super) static LANE_CALLS_INLINED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// A lane body's callout. Every unsupported instruction and failed guard leaves native
 /// code here, with nothing of that instruction done; the lane executes it next.
@@ -4503,14 +4482,6 @@ struct LaneFrame {
 }
 
 impl LaneFrame {
-    /// The words `bind_run` writes, for the test that an entry of a run rewrites none of them.
-    #[cfg(test)]
-    fn run_words(&self) -> [usize; 8] {
-        let dispatch = &self.dispatch;
-        [dispatch.vm, dispatch.program_id.raw() as usize, dispatch.lane_context, dispatch.residual,
-            dispatch.stores_specialized, dispatch.field_entries, self.context.stack_limit, self.context.adapter_payload.addr()]
-    }
-
     /// Binds the payload and context to `run`'s words, written once per run: a nested entry
     /// of the same run (`Vm::run_nested_lane_method`) and each next entry of the lane's calls
     /// find them standing. `field_entries` derives the program's field cache entries, which
@@ -4521,12 +4492,12 @@ impl LaneFrame {
     /// frames), a deeper run (a native callback's) has its own context and so binds its own,
     /// and the nested entries of one run (`Vm::run_nested_lane_method`) spend the run's budget.
     /// The interrupt and the payload, whose address is the frame's, bind once per interrupt owner.
+    /// Whether the entry bound a different run than the last one's.
     #[inline(always)]
-    fn bind_run(&mut self, run: LaneRun, interrupt: &crate::ExecutionInterrupt, field_entries: impl FnOnce() -> usize) {
+    fn bind_run(&mut self, run: LaneRun, interrupt: &crate::ExecutionInterrupt, field_entries: impl FnOnce() -> usize) -> bool {
         let owner = std::ptr::from_ref(interrupt);
-        if LaneRun::of(&self.dispatch) != run {
-            #[cfg(test)]
-            LANE_ENTRIES.with(|counts| counts.set((counts.get().0, counts.get().1 + 1)));
+        let rebound = LaneRun::of(&self.dispatch) != run;
+        if rebound {
             self.dispatch.field_entries = field_entries();
             self.context.stack_limit = native_stack_limit();
             self.dispatch.program_id = run.program_id;
@@ -4539,6 +4510,7 @@ impl LaneFrame {
             self.context.interrupt_owner = owner;
             self.context.adapter_payload = (&raw mut self.dispatch).cast();
         }
+        rebound
     }
 
     fn new() -> Self {
@@ -8000,7 +7972,7 @@ impl<H: Host> Vm<H> {
         let lane_claims = self.programs.js_jit_lane_methods_enabled()
             && program.function_get(function as usize).is_some_and(lane_body_may_amortize);
         if super::tier_machine::js_tier_state(state.as_ref()) == super::tier_machine::TierState::Declined {
-            return lane_claims || self.programs.js_jit_diagnostics_enabled();
+            return lane_claims;
         }
         let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_native_entry);
         // Inlining may erase a short body's calls; a call-free candidate still has
@@ -8144,11 +8116,12 @@ impl<H: Host> Vm<H> {
         let function = self.frames[frame].function;
         let program_id = self.frames[frame].program;
         // Most entries are of functions no tier path can take.
-        let facts = self
-            .programs
-            .js_entry_facts(program_id, function)
-            .filter(|facts| facts.candidate || self.programs.js_jit_diagnostics_enabled())?;
-        let entry = self.frames.get(frame).filter(|record| record.pc == 0).and_then(|record| {
+        let facts = self.programs.js_entry_facts(program_id, function)?;
+        let at_entry = self.frames[frame].pc == 0;
+        if !facts.candidate && at_entry {
+            self.programs.observe_unclaimed_entry(program, program_id, function, &self.frames[frame].registers);
+        }
+        let entry = self.frames.get(frame).filter(|_| facts.candidate && at_entry).and_then(|record| {
             let params = program.function_get(record.function as usize)?.params;
             Some(TierEntry {
                 program: record.program,
@@ -8190,47 +8163,23 @@ impl<H: Host> Vm<H> {
         let facts = &*entry.facts;
         #[cfg(test)]
         if !self.programs.js_entry_specializations_enabled() { return None; }
-        // Most entries are of functions no entry path can claim; diagnostics still count them.
-        if !facts.candidate && !self.programs.js_jit_diagnostics_enabled() {
+        // Most entries are of functions no entry path can claim.
+        if !facts.candidate {
+            self.programs.observe_unclaimed_entry(program, program_id, function_id, &entry.parameters);
             return None;
         }
         let tier = self.programs.js_tier(program_id, function_id);
-        let rejected_entry = if self.programs.js_jit_diagnostics_enabled()
-            && matches!(tier.as_ref(), Some(super::program_store::JsTierState::Rejected { .. }))
-        {
-            self.programs.note_js_rejected_entry(program_id, function_id)
-        } else {
-            None
-        };
         if matches!(
             tier.as_ref(),
             Some(super::program_store::JsTierState::Unsupported | super::program_store::JsTierState::Rejected { .. })
-        ) && (!self.programs.js_jit_diagnostics_enabled() || rejected_entry.is_none())
-        {
+        ) {
+            self.programs.observe_unclaimed_entry(program, program_id, function_id, &entry.parameters);
             return None;
         }
         let params = usize::from(function.params);
         let arguments = entry.parameters.get(..params)?;
         let numeric = arguments.iter().all(|value| value.as_number().is_some());
-        if let Some((entries, reason)) = rejected_entry {
-            self.programs.record_js_jit_entry(program_id, function_id, numeric, function.params);
-            self.programs.record_js_jit_rejection(program_id, function_id, reason, entries);
-            return None;
-        }
-        if tier.is_none() && !facts.candidate {
-            let reason = super::js_compiled::candidate_rejection_reason(program, function_id);
-            let report_entries = self.programs.reject_js_function(program_id, function_id, reason);
-            if let Some(entries) = report_entries
-                && self.programs.js_jit_diagnostics_enabled()
-            {
-                self.programs.record_js_jit_entry(program_id, function_id, numeric, function.params);
-                self.programs.record_js_jit_rejection(program_id, function_id, reason, entries);
-            }
-            return None;
-        }
-        if self.programs.js_jit_diagnostics_enabled() {
-            self.programs.record_js_jit_entry(program_id, function_id, numeric, function.params);
-        }
+        self.programs.record_js_jit_entry(program_id, function_id, numeric, function.params);
         let compiled = match tier {
             Some(super::program_store::JsTierState::Compiled(compiled)) => {
                 if !numeric {
@@ -8254,9 +8203,7 @@ impl<H: Host> Vm<H> {
         if compiled.params() != params {
             return None;
         }
-        if self.programs.js_jit_diagnostics_enabled() {
-            self.programs.record_js_jit_native_entry(program_id, function_id);
-        }
+        self.programs.record_js_jit_native_entry(program_id, function_id);
         let poll_page = self.compiled_poll_page();
         let value = compiled.call(arguments, &self.execution_interrupt, poll_page)?;
         let last_pc = function.code.len().checked_sub(1)?;
@@ -8371,16 +8318,13 @@ impl<H: Host> Vm<H> {
     /// The direct run of `function`'s compiled body a frameless activation keeps
     /// (`LaneView::tier_direct`): where its body reads only its parameters
     /// (`CompiledJsFunction::direct_callable`) and ends in a `Return`, which its result
-    /// completes. Diagnostics count every entry through `js_jit_compiled_call` instead.
+    /// completes.
     pub(super) fn direct_tier_entry(
         &self,
         program: &ResidualProgram,
         id: ProgramId,
         function: u32,
     ) -> Option<DirectTierEntry> {
-        if self.programs.js_jit_diagnostics_enabled() {
-            return None;
-        }
         let super::program_store::JsTierState::Compiled(compiled) = self.programs.js_tier_ref(id, function)? else {
             return None;
         };
@@ -8394,6 +8338,8 @@ impl<H: Host> Vm<H> {
             compiled: Rc::downgrade(compiled),
             return_pc,
             return_register: terminal.register_a(),
+            function: (id, function),
+            params: body.params,
         })
     }
 
@@ -8407,6 +8353,9 @@ impl<H: Host> Vm<H> {
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
         let compiled = entry.compiled.upgrade()?;
         let value = direct_call(&compiled, parameters, &self.execution_interrupt)?;
+        let (program, function) = entry.function;
+        self.programs.record_js_jit_entry(program, function, true, entry.params);
+        self.programs.record_js_jit_native_entry(program, function);
         Some((entry.return_pc, entry.return_register, value))
     }
 
@@ -9482,6 +9431,9 @@ pub(super) struct DirectTierEntry {
     compiled: std::rc::Weak<CompiledJsFunction>,
     return_pc: usize,
     return_register: crate::bytecode::Register,
+    /// The function the entry runs, whose entries the diagnostics report counts.
+    function: (ProgramId, u32),
+    params: u16,
 }
 
 impl DirectTierEntry {

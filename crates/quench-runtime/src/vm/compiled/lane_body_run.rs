@@ -2,6 +2,7 @@
 //! through the body's entry word.
 
 use super::*;
+use crate::vm::tier_events::Event;
 
 /// The activations a run's window has no pending push for: its caller pushed the body's own.
 pub(in crate::vm) const NO_PENDING_ACTIVATIONS: usize = 0;
@@ -30,27 +31,23 @@ impl<H: Host> Vm<H> {
     /// Runs `run`'s body; where it left, or that it returned.
     pub(in crate::vm) fn run_lane_body(&mut self, run: &BodyRun) -> LaneExit {
         let frame = lane_frame();
-        #[cfg(test)]
-        LANE_ENTRIES.with(|counts| counts.set((counts.get().0 + 1, counts.get().1)));
+        self.programs.tier_events().record(Event::Entered);
         // SAFETY: the activation's capture slots outlive its body's run, which collects nothing.
         let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(super::super::dispatch_fast::capture_reads(run.captures)) }
             .unwrap_or((std::ptr::null(), 0));
         // SAFETY: the frame lives for the thread and is never moved once made; no reference
         // into it is held across the body's run, which may enter it again
         // (`run_nested_lane_method`).
-        #[cfg(test)]
-        let bound = unsafe { (*frame).run_words() };
         let context = unsafe { self.bind_body_entry(frame, run) };
-        #[cfg(test)]
-        LANE_RUN_REWRITES.with(|count| count.set(count.get() + usize::from(bound != unsafe { (*frame).run_words() })));
         let captures = entry_cell::capture_word(capture_values, capture_len, super::super::dispatch_fast::capture_stores(run.captures).is_some());
         // SAFETY: the body was compiled for this function, never allocates or collects, and
         // reads only the registers, constants and heap bases bound above.
         let BodyReturn { status, value: word } = unsafe { self.call_body(run, context, captures) };
-        #[cfg(test)]
-        LANE_BODY_RUNS.with(|runs| { let [all, returned] = runs.get(); runs.set([all + 1, returned + usize::from(status == LANE_BODY_RETURNED)]); });
         // SAFETY: as above; a completing body wrote the record before it returned.
-        LaneExit::read(status, word, || unsafe { (*frame).dispatch.returned_pc })
+        let exit = LaneExit::read(status, word, || unsafe { (*frame).dispatch.returned_pc });
+        self.programs.tier_events().record(Event::ended(exit));
+        if status == LANE_BODY_RETURNED { self.programs.tier_events().record(Event::Returned); }
+        exit
     }
 
     /// The words an entry of `run` binds in the thread's lane frame: those of its run
@@ -71,7 +68,9 @@ impl<H: Host> Vm<H> {
                 residual: std::ptr::from_ref(run.residual).addr(),
                 stores_specialized: usize::from(self.specialized && run.residual.specialized),
             };
-            (*frame).bind_run(bound, &self.execution_interrupt, || self.program_field_entries(run.program).unwrap_or(0));
+            if (*frame).bind_run(bound, &self.execution_interrupt, || self.program_field_entries(run.program).unwrap_or(0)) {
+                self.programs.tier_events().record(Event::RunBound);
+            }
             debug_assert_eq!((*dispatch).field_entries, self.program_field_entries(run.program).unwrap_or(0), "the run's field cache entries stand");
             (*dispatch).native_registers = run.registers;
             let locals = super::super::dispatch_fast::body_locals::<H>(run.lane_context);

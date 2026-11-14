@@ -1,5 +1,7 @@
 //! A lane view's lane-body counters, kept under `QUENCH_TRACE=js-jit`.
 
+use super::super::tier_events::Event;
+
 /// A view's lane-body counters, which only a diagnostics run keeps
 /// (`ProgramStore::js_jit_diagnostics_enabled`): its function, its compiles and the frames the
 /// last inlined, and its runs by how they ended (`LaneExit`), in that order.
@@ -14,7 +16,7 @@ pub(in crate::vm) struct LaneBodyStats {
     compiled_at: std::cell::RefCell<Vec<u64>>,
     /// Completed, left at a caller PC, inside an inlined callee, in a native call's callee,
     /// or irreversibly terminated.
-    ends: [std::cell::Cell<u32>; End::COUNT],
+    ends: [std::cell::Cell<u32>; Event::END_COUNT],
     /// The PCs it left at, and inside inlined frames as `frame:pc`, with their counts.
     leaves: std::cell::RefCell<Vec<(String, u32)>>,
     /// Entries of the specialized body that ran in the lane instead (`lane_body_admits`).
@@ -46,13 +48,13 @@ impl LaneBodyStats {
     /// to the lane, which a test reads to see that no exception made a frame.
     #[cfg(test)]
     pub(in crate::vm) fn ended_runs(&self) -> (u32, u32) {
-        let left = [End::LeftAt, End::LeftInlined, End::LeftInCallee].map(|end| self.ends[end as usize].get()).iter().sum();
-        (self.ends[End::Completed as usize].get(), left)
+        let left = [Event::LeftAt, Event::LeftInlined, Event::LeftInCallee].map(|end| self.ends[end.end_index()].get()).iter().sum();
+        (self.ends[Event::Completed.end_index()].get(), left)
     }
 
     /// `frames`, the body's inlined calls, name the function a leave inside one was in.
     pub(in crate::vm) fn ended(&self, exit: super::super::compiled::LaneExit, exits: &super::super::compiled::ExitTable, frames: &[super::super::compiled::InlinedCall], line: u64) {
-        let index = End::of(exit) as usize;
+        let index = Event::ended(exit).end_index();
         self.ends[index].set(self.ends[index].get() + 1);
         // Prefixed by the compile that left there, the first being `c1`.
         let compile = self.compiles.get();
@@ -100,26 +102,6 @@ impl LaneBodyStats {
                 self.compiles.get(), self.frames.get(), self.shape.borrow(), self.compiled_at.borrow(), self.refused.get(),
             )
         })
-    }
-}
-
-/// How a lane body's run ended, each with its `LaneBodyStats::ends` counter: completed, left
-/// at its own PC (its entry included), inside an inlined call, into a callee, or terminated.
-#[derive(Clone, Copy)]
-enum End { Completed, LeftAt, LeftInlined, LeftInCallee, Terminated }
-
-impl End {
-    const COUNT: usize = Self::Terminated as usize + 1;
-
-    fn of(exit: super::super::compiled::LaneExit) -> Self {
-        use super::super::compiled::LaneExit;
-        match exit {
-            LaneExit::Returned { .. } | LaneExit::Threw { .. } => Self::Completed,
-            LaneExit::At(_) | LaneExit::Entry | LaneExit::Stub => Self::LeftAt,
-            LaneExit::Inlined { .. } => Self::LeftInlined,
-            LaneExit::Callee => Self::LeftInCallee,
-            LaneExit::Terminated => Self::Terminated,
-        }
     }
 }
 

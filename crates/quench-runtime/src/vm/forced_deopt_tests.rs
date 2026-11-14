@@ -3,37 +3,16 @@
 //! wrongly shows as a different answer, so any mismatch is a bug in the projection that emitted
 //! that guard.
 
-use crate::test_host::TestHost;
-use crate::{Engine, Value};
-use super::super::{Vm, compiled::forced_miss};
+use crate::vm::test_oracle::{assert_tier_agrees, Expect, Tier};
 
-/// The `answer` global after one run in `mode`.
-fn answer(source: &str, name: &str, mode: crate::ExecutionMode) -> Option<f64> {
-    let program = Engine::specialize(source, name).unwrap();
-    let mut vm = Vm::new(TestHost::default());
-    vm.programs.enable_js_lane_methods();
-    vm.set_execution_mode(mode);
-    vm.execute(&program).unwrap();
-    let global = vm.realm.globals;
-    let atom = vm.intern_atom("answer");
-    vm.own_property(global, atom).and_then(Value::as_number)
-}
-
-/// Runs `source` with each of its first `limit` guards forced; returns (guards, mismatches).
-pub(super) fn forced_everywhere(source: &str, name: &str, limit: usize) -> (usize, Vec<usize>) {
-    let expected = answer(source, name, crate::ExecutionMode::Interpreted);
-    forced_miss::arm(None);
-    assert_eq!(answer(source, name, crate::ExecutionMode::Compiled), expected, "unforced compile");
-    let guards = forced_miss::emitted();
-    let mut mismatches = Vec::new();
+/// Runs `source` with each of its first `limit` guards forced, each run held to the interpreter's
+/// outcome by the oracle; the guards the unforced run emitted.
+pub(super) fn forced_everywhere(source: &str, limit: usize) -> usize {
+    let guards = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED).guards;
     for forced in 0..guards.min(limit) {
-        forced_miss::arm(Some(forced));
-        if answer(source, name, crate::ExecutionMode::Compiled) != expected {
-            mismatches.push(forced);
-        }
+        assert_tier_agrees(source, Tier::Forced(forced), Expect::ENGAGED);
     }
-    forced_miss::arm(None);
-    (guards, mismatches)
+    guards
 }
 
 #[test]
@@ -54,10 +33,9 @@ fn every_forced_guard_leaves_exactly_as_the_interpreter_runs() {
       globalThis.answer = t;
      })();
     "#;
-    let (guards, mismatches) = forced_everywhere(source, "forced-deopt-basic.js", 150);
-    eprintln!("forced deopt: {guards} guards, {} forced, mismatches {mismatches:?}", guards.min(150));
+    let guards = forced_everywhere(source, 150);
+    eprintln!("forced deopt: {guards} guards, {} forced", guards.min(150));
     assert!(guards > 0, "the program compiled no guard");
-    assert!(mismatches.is_empty(), "forced guards {mismatches:?} changed the answer");
 }
 
 /// Programs by the projections they stress: construction and prototype reads, captured
@@ -106,14 +84,13 @@ const PROGRAMS: &[(&str, &str)] = &[
 
 #[test]
 fn forced_guards_hold_across_the_corpus() {
-    let mut total = (0, 0);
+    let mut total = 0;
     for (name, source) in PROGRAMS {
-        let (guards, mismatches) = forced_everywhere(source, name, 250);
-        eprintln!("forced deopt {name}: {guards} guards, {} forced, mismatches {mismatches:?}", guards.min(250));
-        total = (total.0 + guards, total.1 + mismatches.len());
-        assert!(mismatches.is_empty(), "{name}: forced guards {mismatches:?} changed the answer");
+        let guards = forced_everywhere(source, 250);
+        eprintln!("forced deopt {name}: {guards} guards, {} forced", guards.min(250));
+        total += guards;
     }
-    eprintln!("forced deopt corpus: {} guards, {} mismatches", total.0, total.1);
+    eprintln!("forced deopt corpus: {total} guards");
 }
 
 /// Generated programs (`research/tools/gen-tiers.py`, thread 16): mixed argument types and a
@@ -137,13 +114,11 @@ const GENERATED: &[(&str, &str)] = &[
 #[test]
 #[ignore]
 fn forced_guards_hold_across_generated_programs() {
-    let mut total = (0, 0, 0);
+    let mut total = (0, 0);
     for (name, source) in GENERATED {
-        let (guards, mismatches) = forced_everywhere(source, name, 250);
-        eprintln!("forced deopt {name}: {guards} guards, {} forced, mismatches {mismatches:?}", guards.min(250));
-        total = (total.0 + guards, total.1 + guards.min(250), total.2 + mismatches.len());
-        if !mismatches.is_empty() { eprintln!("MISMATCH {name}: guards {mismatches:?}"); }
+        let guards = forced_everywhere(source, 250);
+        eprintln!("forced deopt {name}: {guards} guards, {} forced", guards.min(250));
+        total = (total.0 + guards, total.1 + guards.min(250));
     }
-    eprintln!("forced deopt generated: {} guards, {} forced, {} mismatches", total.0, total.1, total.2);
-    assert_eq!(total.2, 0);
+    eprintln!("forced deopt generated: {} guards, {} forced", total.0, total.1);
 }

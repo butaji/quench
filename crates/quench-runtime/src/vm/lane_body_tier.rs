@@ -102,14 +102,15 @@ impl LaneView {
     /// Counts how a run of the specialized body ended, at `exit`; at
     /// `TIERS.lane_body.reoptimize_exits` leaves, doubled per recompile, it takes its
     /// `verdict`. A body it compiles past keeps its code for the direct callers that name it.
-    pub(super) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool, left_new: impl FnOnce((Option<u32>, usize))) {
+    /// Whether the run retired the body.
+    pub(super) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool, left_new: impl FnOnce((Option<u32>, usize))) -> bool {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier_lane.get() };
-        let LaneBody::Specialized { leaves_at, completed, recompiles, stuck, method, .. } = body else { return };
+        let LaneBody::Specialized { leaves_at, completed, recompiles, stuck, method, .. } = body else { return false };
         if completed_region || exit.completes() {
             completed.set(true);
             if self.entry.note_completions(1) % NATIVE_CREDIT_RUNS == 0 { credit_native_callees(method); }
-            return;
+            return false;
         }
         let exits = self.entry.note_leave();
         name_leave(leaves_at, exit, method, left_new);
@@ -117,7 +118,7 @@ impl LaneView {
         let (completions, _) = self.entry.evidence();
         let (leaves, runs) = (exits, exits + completions);
         if exits < u64::from(TIERS.lane_body.reoptimize_exits) || leaves * PERCENT <= runs * u64::from(TIERS.lane_body.reoptimize_share) {
-            return;
+            return false;
         }
         let Some(stuck) = verdict(completed.get(), *recompiles, leaves_at.get(), *stuck) else {
             // A body that keeps leaving where no other body would, and has never completed a
@@ -126,11 +127,13 @@ impl LaneView {
             if !completed.get() || costly {
                 self.retire_body(body, LaneBody::Declined);
                 self.release_from_tier();
+                return true;
             }
-            return;
+            return false;
         };
         let next = LaneBody::Unspecialized { entries: 0, recompiles: *recompiles + 1, stuck };
         self.retire_body(body, next);
+        true
     }
 
     /// Counts a leave inside this function's body that a native caller's run made, which no

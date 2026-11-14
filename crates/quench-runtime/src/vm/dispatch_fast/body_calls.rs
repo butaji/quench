@@ -466,7 +466,7 @@ fn lane_body_activate<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target:
     let (resumed, feedback) = lane_body_left(cx, registers, own, &method, exit);
     drop(method);
     if lane_leave_counts(cx, exit) {
-        own.note_lane_body_end(feedback, false, |left| lane_note_leave(cx, target.function, left));
+        super::lane_note_body_end(cx, own, feedback, |left| lane_note_leave(cx, target.function, left));
     }
     match resumed {
         LaneBodyLeft::Terminated => LANE_CALL_TERMINATED,

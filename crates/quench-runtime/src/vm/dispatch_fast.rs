@@ -23,6 +23,7 @@
 
 use crate::staged::compare::{IN_OPERATOR, INSTANCEOF_OPERATOR};
 use super::compiled::tier_policy::TIERS;
+use super::tier_events::Event;
 use super::compiled::{CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
 use super::dispatch_frame::PendingGeneralCall;
 use smallvec::SmallVec;
@@ -8099,7 +8100,7 @@ fn lane_loop_run_native<H: Host>(
     };
     // The tier's state is borrowed only here, so the dispatch after it holds no borrow.
     let continuation = lane_loop_run(cx, r, site, region, entry, views, site.header);
-    count_continuation(&continuation);
+    count_continuation(cx, &continuation);
     if matches!(continuation, LoopContinuation::Jump) { site.note_decline(); }
     Some(continuation)
 }
@@ -8329,14 +8330,16 @@ enum LoopContinuation {
     Callee,
 }
 
-/// Counts what a loop run came to (`QUENCH_TRACE=js-jit`).
-fn count_continuation(continuation: &LoopContinuation) {
-    use super::compiled::base_region::{count, Event};
-    count(match continuation {
-        LoopContinuation::Jump | LoopContinuation::Compiling => Event::Declined,
-        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Recovered(_) | LoopContinuation::Safepoint | LoopContinuation::Callee | LoopContinuation::Threw(_) => Event::Left,
-        LoopContinuation::Resume(_) | LoopContinuation::Completed(..) => Event::Entered,
-    });
+/// Counts what a loop run came to: in the VM's tier events, and under `QUENCH_TRACE=js-jit` in the report's.
+fn count_continuation<H: Host>(cx: *mut LaneContext<H>, continuation: &LoopContinuation) {
+    use super::compiled::base_region::{count, Event as Region};
+    let (region, tier) = match continuation {
+        LoopContinuation::Jump | LoopContinuation::Compiling => (Region::Declined, None),
+        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Recovered(_) | LoopContinuation::Safepoint | LoopContinuation::Callee | LoopContinuation::Threw(_) => (Region::Left, Some(Event::OsrLeft)),
+        LoopContinuation::Resume(_) | LoopContinuation::Completed(..) => (Region::Entered, Some(Event::OsrEntered)),
+    };
+    count(region);
+    if let Some(event) = tier { unsafe { vm(cx) }.programs.tier_events().record(event); }
 }
 
 /// Compiles `site`'s region if it has no current code, for the element `views` its entry
@@ -14775,9 +14778,7 @@ script_handler! {
         if !lane_body_admits(cx, &method, NO_PENDING_ACTIVATIONS) {
             if lane_body_prepare_recovery(cx, &method) { return exit(base); }
             drop(method);
-            if vm.programs.js_jit_diagnostics_enabled() {
-                own.body_stats.refused.set(own.body_stats.refused.get() + 1);
-            }
+            lane_body_refused(vm, own);
             next!(cx, r, base, Carried::script(cx))
         }
         let receiver = lane_entry_receiver(cx, i.b != 0);
@@ -14823,12 +14824,11 @@ fn lane_body_concluded<H: Host>(
     started: Option<std::time::Instant>,
 ) -> Resumed {
     let base = unsafe { (*cx).base };
-    if let super::compiled::LaneExit::Returned { pc, value } = left
-        && !unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled()
-    {
+    if let super::compiled::LaneExit::Returned { pc, value } = left {
+        lane_record_end(cx, own, method, left);
         // SAFETY: as `lane_leave_counts`; a completed run carries no warming callee.
         unsafe { (*cx).callee_warming = false };
-        own.note_lane_body_end(left, false, |_| {});
+        lane_note_body_end(cx, own, left, |_| {});
         own.audit_body_run(started);
         // SAFETY: the record that completes the activation is one of its function's.
         return lane_returned(cx, unsafe { base.add(pc) }, value);
@@ -14837,7 +14837,7 @@ fn lane_body_concluded<H: Host>(
     let (resumed, feedback) = lane_body_left(cx, r, own, method, left);
     // Counted once the leave is resolved: a retirement or reoptimization moves the body.
     if counts {
-        own.note_lane_body_end(feedback, false, |left| lane_note_leave(cx, function, left));
+        lane_note_body_end(cx, own, feedback, |left| lane_note_leave(cx, function, left));
     }
     if matches!(left, super::compiled::LaneExit::Returned { .. }) {
         own.audit_body_run(started);
@@ -15324,6 +15324,33 @@ enum LaneBodyLeft {
 
 
 
+/// Records that a run of `own`'s body ended at `exit`, in the diagnostics report's leave table;
+/// nothing the lane does next reads it.
+#[inline(always)]
+fn lane_record_end<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, method: &super::compiled::LaneMethod, exit: super::compiled::LaneExit) {
+    if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
+        own.body_stats.ended(exit, &method.exits, &method.inlined, super::compiled::take_lane_exit_line());
+    }
+}
+
+/// `LaneView::note_lane_body_end`, counting the retirement it makes in the VM's tier events.
+#[inline(always)]
+fn lane_note_body_end<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, exit: super::compiled::LaneExit, left_new: impl FnOnce((Option<u32>, usize))) {
+    if own.note_lane_body_end(exit, false, left_new) {
+        unsafe { vm(cx) }.programs.tier_events().record(Event::Retired);
+    }
+}
+
+/// Counts an entry whose body the lane could not leave inside of (`lane_body_admits`): in the VM's
+/// tier events and, with diagnostics, the view's report.
+#[cold]
+fn lane_body_refused<H: Host>(vm: &Vm<H>, own: &LaneView) {
+    vm.programs.tier_events().record(Event::Refused);
+    if vm.programs.js_jit_diagnostics_enabled() {
+        own.body_stats.refused.set(own.body_stats.refused.get() + 1);
+    }
+}
+
 fn lane_body_left<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
@@ -15331,9 +15358,7 @@ fn lane_body_left<H: Host>(
     method: &super::compiled::LaneMethod,
     exit: super::compiled::LaneExit,
 ) -> (LaneBodyLeft, super::compiled::LaneExit) {
-    if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
-        own.body_stats.ended(exit, &method.exits, &method.inlined, super::compiled::take_lane_exit_line());
-    }
+    lane_record_end(cx, own, method, exit);
     if exit == super::compiled::LaneExit::Terminated {
         // A fault can bypass the native exit's register snapshots. Discard its
         // native frames instead of materializing stale homes for guest execution.
@@ -15538,9 +15563,8 @@ fn lane_push_passed<H: Host, const GENERAL: bool, const SETTLES: bool>(
 /// helper that observes activations (`lane_materialize_running_leaf`), make the activation the
 /// push would have made, in the room the run reserved for it (`CALLEE_ACTIVATION_PENDING`),
 /// and resume as the body's prologue would (`lane_body_concluded`). `None`, which changes
-/// nothing, where the body does not run: diagnostics count its entries (`lane_body_entry`), or
-/// the lane cannot make the activations a leave inside its inlined calls would
-/// (`lane_body_admits`).
+/// nothing, where the body does not run: the lane cannot make the activations a leave inside
+/// its inlined calls would (`lane_body_admits`).
 #[inline(never)]
 fn lane_enter_cell_body<H: Host>(
     cx: *mut LaneContext<H>,
@@ -15552,7 +15576,6 @@ fn lane_enter_cell_body<H: Host>(
     this: Value,
 ) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    if vm.programs.js_jit_diagnostics_enabled() { return None; }
     // SAFETY: the program store keeps a derived view alive with its program.
     let own = unsafe { &*target.view };
     let method = own.cell_method()?;
@@ -15576,8 +15599,7 @@ fn lane_enter_cell_body<H: Host>(
 #[inline(always)]
 fn lane_begin_cell_leaf<H: Host>(cx: *mut LaneContext<H>, ip: Ip, r: Registers, target: &ScriptCallTarget, argc: u16, this: Value, window: Registers) {
     unsafe { vm(cx) }.programs.record_js_jit_lane_entry(target.program, target.function);
-    #[cfg(test)]
-    super::compiled::LANE_CELL_CROSSINGS.with(|count| count.set(count.get() + 1));
+    unsafe { vm(cx) }.programs.tier_events().record(Event::CellCrossed);
     // SAFETY: the running lane's context, and the callee's view outlives its program.
     unsafe {
         (*cx).leaf = LeafCall {
@@ -15610,7 +15632,8 @@ fn lane_cell_body_ended<H: Host>(
             (*cx).callee_warming = false;
             vm(cx).lane_stack.values.set_top(window.0);
         }
-        own.note_lane_body_end(exit, false, |_| {});
+        lane_record_end(cx, own, method, exit);
+        lane_note_body_end(cx, own, exit, |_| {});
         let (registers, next) = lane_complete_leaf(cx, value, CONTEXT_LEAF).expect("the leaf runs until it completes or materializes");
         return Resumed::At(registers, next, Carried::script(cx));
     }

@@ -431,10 +431,6 @@ impl LanePlan {
         }
         // SAFETY: the lane region lowers a body with the lane body ABI (`lane_body_signature`).
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
-        #[cfg(test)]
-        LANE_METHODS_COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        #[cfg(test)]
-        LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
         Some(LaneMethod {
             dependencies, stable, invalidation: self.invalidation, _code: memory, entry, recovery_space,
             fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
