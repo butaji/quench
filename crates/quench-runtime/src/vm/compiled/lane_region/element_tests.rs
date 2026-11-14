@@ -181,3 +181,17 @@ fn matmul_indices_are_computed_in_integer_words_with_no_conversion_in_the_loop()
         operands.iter().any(|operand| is_sign_extension(function, *operand)));
     assert!(sums >= 2, "each index adds its int32 to a 64-bit product: {function}");
 }
+
+#[test]
+fn an_index_that_may_be_a_negative_zero_is_still_an_integer_word() {
+    use crate::heap::TypedArrayKind as Kind;
+    // `x * y` is `-0` for a zero and a negative factor, which no integer type holds; an element
+    // index reads no sign, so the product is the integer word it would be without that case.
+    let source = "function f(a, x, y) { var s = 0; for (var i = 0; i < 100; i++) s += a[x * y]; return s; }";
+    let function = entered_region(source, ElementViews::Typed(Some(Kind::Float64)));
+    let body = loop_body(&function);
+    assert_eq!(conversions(&function, &body), 0, "{function}");
+    let products = wide_operations(&function, &body, ir::Opcode::Imul, |function, operands|
+        operands.iter().all(|operand| is_sign_extension(function, *operand)));
+    assert_eq!(products, 1, "the product runs in 64-bit words: {function}");
+}

@@ -44,12 +44,16 @@ pub(in crate::vm::compiled) struct Seeds<'a> {
     pub(in crate::vm::compiled) entering: &'a [(Register, IntRange)],
     /// The unit the run proves ranges of; a type-only run has none and tracks no relations.
     pub(in crate::vm::compiled) model: Option<Model<'a>>,
+    /// The PCs (ascending) of the products no consumer reads the sign of a zero of
+    /// (`Lowering::signless_products`): where operands of ranges make a negative zero possible,
+    /// the result is still an integer of their product's range.
+    pub(in crate::vm::compiled) signless: &'a [usize],
 }
 
 impl<'a> Seeds<'a> {
     /// A type-only run that takes `observed` reads and no contract.
     pub(in crate::vm::compiled) fn observing(observed: Observed<'a>) -> Self {
-        Self { contracts: &[], observed, entering: &[], model: None }
+        Self { contracts: &[], observed, entering: &[], model: None, signless: &[] }
     }
 }
 
@@ -99,8 +103,13 @@ impl Point {
 
     /// The range of the result of the arithmetic of `instruction` where it leaves int32 but is
     /// an integer Number of `IntRange::WORD` (`ranges::index_range`).
-    pub(in crate::vm::compiled) fn index_range(&self, constants: &[Constant], instruction: WideInstruction) -> Option<IntRange> {
-        ranges::index_range(&ranges::lookup(&self.types, constants), instruction)
+    pub(in crate::vm::compiled) fn index_range(&self, constants: &[Constant], instruction: WideInstruction, signless: bool) -> Option<IntRange> {
+        ranges::index_range(&ranges::lookup(&self.types, constants), instruction, signless)
+    }
+
+    /// Whether the product of `instruction` is no negative zero, whatever operands reach it.
+    pub(in crate::vm::compiled) fn zero_free(&self, constants: &[Constant], instruction: WideInstruction) -> bool {
+        ranges::zero_free(&ranges::lookup(&self.types, constants), instruction)
     }
 }
 
@@ -131,7 +140,11 @@ fn step(point: &mut Point, text: &Text<'_>, seeds: Seeds<'_>, pc: usize) -> Flow
     // A direct own read proves its receiver before defining its result.
     // If result and receiver alias, transfer kills that refinement.
     if let Some((register, shape)) = (text.own_shape)(pc) { set(&mut point.types, register, Type::direct_object(shape)); }
-    transfer_observed(&mut point.types, instruction, text.constants, text.written, text.native_calls, seeds.observed.at(pc))
+    let signless = seeds.signless.binary_search(&pc).is_ok()
+        .then(|| ranges::signless_range(&ranges::lookup(&point.types, text.constants), instruction)).flatten();
+    let flow = transfer_observed(&mut point.types, instruction, text.constants, text.written, text.native_calls, seeds.observed.at(pc));
+    if let Some(range) = signless { set(&mut point.types, instruction.result_register(), Type::int(range)); }
+    flow
 }
 
 /// The block led by `leader` run from `point`, where `visit` sees the state before each

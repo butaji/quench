@@ -17,12 +17,22 @@ pub(super) struct IntRanges {
     in_bounds: CompoundBitSet,
     /// The arithmetic whose result leaves int32 within `IntRange::WORD`, by PC (ascending), with its range.
     index_ranges: Vec<(usize, IntRange)>,
+    /// The products no consumer reads the sign of a zero of, by PC (ascending).
+    signless: Vec<usize>,
+    /// The products no operands make a negative zero of.
+    zero_free: CompoundBitSet,
 }
 
 impl IntRanges {
     pub(super) fn new(instructions: usize) -> Self {
         Self { overflow_free: CompoundBitSet::with_capacity(instructions), in_bounds: CompoundBitSet::with_capacity(instructions),
-            index_ranges: Vec::new() }
+            index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions) }
+    }
+
+    /// Whether the product at `pc` may keep the int32 zero for a negative one: no operands make a
+    /// negative zero of it, or no consumer reads its sign.
+    pub(super) fn ignores_negative_zero(&self, pc: usize) -> bool {
+        self.zero_free.contains(pc) || self.signless.binary_search(&pc).is_ok()
     }
 
     /// The range of the int64 result of the arithmetic at `pc`, where it leaves int32 but is an
@@ -40,6 +50,18 @@ impl IntRanges {
 }
 
 impl Lowering<'_, '_> {
+    /// The products of `instructions` whose results only an index or a bitwise operation reads
+    /// (`Demand::sign_insensitive`): a negative zero is the zero to them.
+    fn signless_products(&self, instructions: &[WideInstruction]) -> Vec<usize> {
+        use super::super::operations::NumberArithmetic;
+        instructions.iter().enumerate().filter(|(pc, instruction)| {
+            instruction.op().js_denotation() == JsDenotation::NumericBinary && !instruction.returns_from_frame()
+                && instruction.result_flags() == 0
+                && NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()) == Some(NumberArithmetic::Multiply)
+                && self.demand_from(pc + 1, usize::from(instruction.result_register())).sign_insensitive()
+        }).map(|(pc, _)| pc).collect()
+    }
+
     /// The element reads the entry observed to yield Numbers (`observed`), and the reads of a
     /// hoisted typed array of a fixed kind, each of which yields a Number of the kind's element
     /// type: an integer kind's range, a typed-array load being its elements' own integers.
@@ -61,15 +83,20 @@ impl Lowering<'_, '_> {
         let dense = |pc: usize| self.dense_loop_access(pc);
         let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
         let reads = self.element_reads(instructions);
-        let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model) };
+        let signless = self.signless_products(instructions);
+        let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),
+            signless: &signless };
         let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
             native_calls: self.native_calls };
         let mut proved = IntRanges::new(instructions.len());
         facts::analyze_text(&text, initial, seeds).replay(&text, seeds, |pc, point| {
             if point.overflow_free(&self.program.constants, instructions[pc]) { proved.overflow_free.insert(pc); }
             if point.in_bounds(&model, pc, instructions[pc]) { proved.in_bounds.insert(pc); }
-            if let Some(range) = point.index_range(&self.program.constants, instructions[pc]) { proved.index_ranges.push((pc, range)); }
+            let signless = signless.binary_search(&pc).is_ok();
+            if let Some(range) = point.index_range(&self.program.constants, instructions[pc], signless) { proved.index_ranges.push((pc, range)); }
+            if point.zero_free(&self.program.constants, instructions[pc]) { proved.zero_free.insert(pc); }
         });
+        proved.signless = signless;
         proved
     }
 }

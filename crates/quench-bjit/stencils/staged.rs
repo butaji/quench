@@ -22,7 +22,7 @@ pub(crate) use crate::bytecode::Register;
 pub(crate) use global::{lexical_read, GlobalFrame};
 #[path = "../../quench-runtime/src/staged/math.rs"] pub(crate) mod math;
 #[path = "../../quench-runtime/src/staged/numeric.rs"] pub(crate) mod numeric;
-pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
+pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
 #[path = "../../quench-runtime/src/staged/value.rs"] pub(crate) mod value;
 #[path = "../../quench-runtime/src/staged/object.rs"] pub(crate) mod object;
 #[path = "../../quench-runtime/src/staged/narrow.rs"] mod narrow;

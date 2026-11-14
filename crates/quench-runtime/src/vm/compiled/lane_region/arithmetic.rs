@@ -6,7 +6,7 @@
 use super::*;
 use super::super::operations::NumberArithmetic;
 use crate::staged::number_machine;
-use crate::staged::{Domain, NumberOperation, Operation, Overflow};
+use crate::staged::{Domain, NegativeZero, NumberOperation, Operation, Overflow};
 
 /// What a Number arithmetic step reads and writes: its result register and its operands.
 type Operands = (Register, [Operand; 2]);
@@ -18,7 +18,7 @@ impl Lowering<'_, '_> {
         operation: NumberArithmetic, exit: ir::Block) -> Option<()> {
         let operands = (instruction.result_register(), [instruction.operand_b(), instruction.operand_c()]);
         if operation == NumberArithmetic::Divide || self.float_operand(state, operands.1) {
-            self.arithmetic_step(state, operands, (operation, Domain::Float64, Overflow::Exit), exit);
+            self.arithmetic_step(state, (operands, operation), (Domain::Float64, Overflow::Exit, NegativeZero::Exit), exit);
         } else if let Some(range) = self.index_math(state, pc, instruction) {
             self.index_arithmetic(state, operands, (operation, range), exit)?;
         } else if self.proved_int(state, operands.1) {
@@ -51,13 +51,15 @@ impl Lowering<'_, '_> {
         let wrapping = self.ranges.overflow_free(pc)
             || (operation.int32_projection_is_wrapping() && self.truncated(pc, operands.0));
         let overflow = if wrapping { Overflow::Wrap } else { Overflow::Exit };
-        self.arithmetic_step(state, operands, (operation, Domain::Int32, overflow), exit);
+        let zero = if self.ranges.ignores_negative_zero(pc) { NegativeZero::Ignore } else { NegativeZero::Exit };
+        self.arithmetic_step(state, (operands, operation), (Domain::Int32, overflow, zero), exit);
     }
 
-    /// The staged Number arithmetic of `operands` in `domain`.
-    fn arithmetic_step(&mut self, state: &mut State, (destination, [left, right]): Operands,
-        (operation, domain, overflow): (NumberArithmetic, Domain, Overflow), exit: ir::Block) {
-        let operation = Operation::Number(NumberOperation::Arithmetic { destination, left, right, operation, domain, overflow });
+    /// The staged Number arithmetic of `operation` over `operands`, in a domain with its overflow
+    /// and negative-zero policies.
+    fn arithmetic_step(&mut self, state: &mut State, ((destination, [left, right]), operation): (Operands, NumberArithmetic),
+        (domain, overflow, zero): (Domain, Overflow, NegativeZero), exit: ir::Block) {
+        let operation = Operation::Number(NumberOperation::Arithmetic { destination, left, right, operation, domain, overflow, zero });
         self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
     }
 

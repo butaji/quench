@@ -31,6 +31,10 @@ impl Demand {
     /// Whether every remaining use reads an integer index and no other view.
     pub(super) fn index_only(self) -> bool { self == Self::INDEX }
 
+    /// Whether some use remains and every one reads an index or a bitwise operation's int32,
+    /// neither of which tells a negative zero from zero.
+    pub(super) fn sign_insensitive(self) -> bool { self.0 != 0 && self.0 & !(Self::INDEX.0 | Self::INT32.0) == 0 }
+
     fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
 }
 
