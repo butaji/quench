@@ -117,6 +117,20 @@ impl PropertyBuffer {
         true
     }
 
+    /// `resize` to a longer `length` whose new values hold whatever bits their memory holds,
+    /// where it is a reservation's (zero on first touch, else values a run held before): for
+    /// space whose every run is written before it is read (`ValueArena::grow_nursery`), so
+    /// pages are made resident by the runs that use them, not by a fill ahead of them. A
+    /// heap allocation's tail is filled, as `resize` fills it.
+    pub(super) fn extend_unfilled(&mut self, length: usize) -> bool {
+        #[cfg(unix)]
+        if length > self.length && (length <= self.capacity || self.grow(length)) && matches!(self.allocation, Allocation::Reserved { .. }) {
+            self.length = length;
+            return true;
+        }
+        self.resize(length)
+    }
+
     pub(super) fn truncate(&mut self, length: usize) {
         self.length = self.length.min(length);
     }

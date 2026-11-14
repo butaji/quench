@@ -798,7 +798,11 @@ impl ValueArena {
             self.nursery = Nursery { floor: tail, top: tail, end: tail };
         }
         let end = self.nursery.top + capacity.max(NURSERY_GROWTH);
-        if self.nursery.end == tail && end <= MAX_ARENA_START && self.values.resize(end) {
+        // Every young run is written whole before it is read, as a range reused after a young
+        // cycle holds the dead runs' values: the range's values are not filled, so only the
+        // runs taken make its pages resident (1 MB of `undefined` before, for any program
+        // that took one young run: V8-v7 RegExp's harness check).
+        if self.nursery.end == tail && end <= MAX_ARENA_START && self.values.extend_unfilled(end) {
             self.nursery.end = end;
             let start = self.nursery.top;
             self.nursery.top = start + capacity;
