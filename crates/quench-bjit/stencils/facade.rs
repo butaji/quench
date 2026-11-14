@@ -124,7 +124,10 @@ pub(crate) mod vm {
     pub(crate) use crate::layout::NATIVE_FIELD_CACHE_LAYOUT;
     pub(crate) mod wtf16 {
         pub(crate) struct JsString;
-        pub(crate) use crate::layout::string_form as native_string;
+        pub(crate) mod native_string {
+            pub(crate) use crate::layout::shared_words::string_tag::*;
+            pub(crate) use crate::layout::string_form::*;
+        }
     }
 }
 

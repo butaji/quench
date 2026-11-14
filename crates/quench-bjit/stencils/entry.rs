@@ -22,10 +22,11 @@
 //! returns (a body calls bodies: a callee's entry replaces the words its caller's rows read).
 
 use crate::layout::{
-    CALL_CONTEXT_ADAPTER_PAYLOAD, CAPTURE_ADDRESS_BITS, CAPTURE_ADDRESS_PAD, CAPTURE_STORES_BIT, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES,
+    CALL_CONTEXT_ADAPTER_PAYLOAD, CAPTURE_ADDRESS_PAD, CAPTURE_STORES_BIT, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES,
     JS_STEP_RECEIVER, JS_STEP_RETURNED_PC,
 };
 use crate::layout::call_record::NATIVE_JS_STOPPED;
+use crate::layout::shared_words::CAPTURE_ADDRESS_BITS;
 use crate::words::HOLE_V0;
 
 unsafe extern "C" {
