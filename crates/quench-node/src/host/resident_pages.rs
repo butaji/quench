@@ -126,6 +126,15 @@ pub fn release_read_only_pages_after_load() {
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_pages() {
     if run_code_stays() { return }
+    release_read_only_pages_now();
+}
+
+/// Releases the read-only pages whatever the run's code budget says (`run_code_stays`): at a
+/// paced collection boundary (`release_at_collection`) and before teardown, so the resident
+/// code is what the run touched since the last release, its working set, not every page it
+/// ever touched.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_read_only_pages_now() {
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
@@ -169,8 +178,25 @@ pub fn release_at_collection(returns_pages: bool) {
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         release_read_only_pages();
         release_free_heap_pages();
+        return;
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    if !released_within(RUN_CODE_RELEASE_INTERVAL) {
+        release_read_only_pages_now();
     }
 }
+
+/// The default policy's pace for releasing the run's code at collection boundaries. Code a run
+/// touched once (start-up, compilation, warm-up paths, the first collection's) otherwise stays
+/// resident for the whole run beside the code it executes; a release keeps only the working
+/// set the next interval refaults, a few hundred pages, so at this pace the refaults cost well
+/// under 1% of a run's time (V8-v7 no-JIT max RSS, x86_64, median of 3, 2026-11-14: richards
+/// 6.1 -> 5.2 MB, deltablue 6.8 -> 6.1, crypto 7.6 -> 6.4, raytrace 6.8 -> 6.0, earley-boyer
+/// 11.8 -> 10.7, regexp 16.3 -> 14.7, navier-stokes 7.3 -> 6.7, splay unchanged; scores within
+/// noise). A 250 ms clock thread releasing between collections peaked higher: the refaulted
+/// working set came back within the interval.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const RUN_CODE_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// Read-only file mappings the host made after start-up (compile-cache entries), released with
 /// the segments above. They are mapped side by side in one reserved span (`Arena`), which a
@@ -1016,6 +1042,9 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_pages() {}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_read_only_pages_now() {}
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_tracked_bytes(_bytes: &[u8]) {}
