@@ -12,6 +12,10 @@ impl<H: Host> Vm<H> {
     /// The accessor functions the site's recorded entry answers for `object` (a store's
     /// setter, a read's getter): its getter, and its setter where it has one.
     pub(super) fn cached_field_accessor(&self, object: Value, atom: Atom, site: usize) -> Option<ShapeAccessors> {
+        // A site that never met an accessor has no entry to match, whatever the receiver.
+        if self.accessor_field_indices.get(site) == NO_ACCESSOR_FIELD {
+            return None;
+        }
         let receiver = self.shape_property_lookup(object, atom)?;
         let cache = self.accessor_entry(receiver, site)?;
         let holder = if cache.holder == OWN_ACCESSOR {

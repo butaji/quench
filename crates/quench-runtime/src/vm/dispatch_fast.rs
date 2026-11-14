@@ -467,7 +467,7 @@ impl LaneView {
                     (lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, { $leaf }>),
                     (lane_returning::<H, RETURNING_FIELD_HOLDER, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_HOLDER, { $leaf }>),
                     (lane_returning::<H, RETURNING_FIELD_INHERITED, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_INHERITED, { $leaf }>),
-                    (lane_returning::<H, RETURNING_FIELD_NESTED, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_NESTED, { $leaf }>),
+                    (lane_returning::<H, RETURNING_FIELD_NESTED, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_NESTED, { $leaf }>), (lane_returning::<H, RETURNING_FIELD_GETTER, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_GETTER, { $leaf }>),
                 ];
                 returns.into_iter().chain(arithmetic_operators!(all pick).into_iter().flatten()).collect::<Vec<(Handler, Handler)>>()
             }};
@@ -2719,6 +2719,8 @@ lane_handler! {
 
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
+mod local_fields;
+use local_fields::local_field_handler;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
@@ -6088,6 +6090,9 @@ script_handler! {
     #[inline(never)]
     fn lane_get_field_first<>(cx, r, ip, i, view) {
         if crate::bytecode::FieldBase(i.b).local_index().is_some() {
+            if let Some(handler) = local_field_handler(cx, i) {
+                requicken::<H>(ip, handler);
+            }
             sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
         }
         let vm = unsafe { vm(cx) };
@@ -6215,6 +6220,10 @@ script_handler! {
         let string_base = base.is_some_and(|base| {
             (unsafe { vm(cx) }).heap.is_string(base)
         });
+        if let Some(handler) = local_field_handler(cx, i) {
+            requicken::<H>(ip, handler);
+            sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
+        }
         let handler: Option<Handler> = match lane_field_site_tier(unsafe { vm(cx) }, code, i) {
             // A string primitive reads `String.prototype`, whatever tier its entries name,
             // where the site admits that read; any other read of one is the general read's.
@@ -16569,6 +16578,9 @@ const RETURNING_FIELD_NESTED: u8 = 9;
 /// A returning `MakeObjectLiteral` (`return { ... }`): the literal `lane_make_object_literal`
 /// makes, returned from the frame.
 const RETURNING_OBJECT_LITERAL: u8 = 10;
+/// `RETURNING_FIELD` at a site whose reads met a getter (`FieldSiteTier::Getter`): the getter
+/// activation first, as `lane_get_field_getter` makes it, so no cached data probe precedes it.
+const RETURNING_FIELD_GETTER: u8 = 11;
 
 /// The cached read of a single-base returning `GetField` of `KIND` (`RETURNING_FIELD_OWN`,
 /// `_POLYMORPHIC`, `_HOLDER`, `_INHERITED`) at `cache`: a hit, which runs no guest code.
@@ -17289,6 +17301,14 @@ script_handler! {
                 // A read that meets its site's getter activates it, as `lane_get_field`
                 // does: the record returns from the frame, so the getter's completion
                 // completes this activation too (`lane_complete_activation`).
+                RETURNING_FIELD_GETTER => {
+                    return match lane_getter_activation(cx, r, ip, i) {
+                        Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+                        // A native getter that raised is not called again: the general path raises it.
+                        Err(next) if (vm(cx)).lane_raised.is_some() => next,
+                        Err(_) => sibling!(lane_returning::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script(cx)),
+                    };
+                }
                 RETURNING_FIELD => match lane_field_value(cx, r, i) {
                     Some(value) => Some(value),
                     None => {
@@ -17412,7 +17432,8 @@ script_handler! {
                 Some(lane_returning::<H, RETURNING_FIELD, LEAF>)
             }
             FieldSiteTier::Nested => Some(lane_returning::<H, RETURNING_FIELD_NESTED, LEAF>),
-            FieldSiteTier::General | FieldSiteTier::Getter => Some(lane_returning::<H, RETURNING_FIELD, LEAF>),
+            FieldSiteTier::General => Some(lane_returning::<H, RETURNING_FIELD, LEAF>),
+            FieldSiteTier::Getter => Some(lane_returning::<H, RETURNING_FIELD_GETTER, LEAF>),
             FieldSiteTier::Polymorphic => Some(lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, LEAF>),
             FieldSiteTier::Holder => Some(lane_returning::<H, RETURNING_FIELD_HOLDER, LEAF>),
             FieldSiteTier::Inherited => Some(lane_returning::<H, RETURNING_FIELD_INHERITED, LEAF>),

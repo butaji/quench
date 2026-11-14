@@ -129,3 +129,41 @@ pub(super) use owned_dictionary::{owned_dictionaries, owned_slots, rebuild_owned
 
 #[cfg(test)]
 mod tests;
+
+/// Transitions an attribute walk may take before it counts toward its shape's lookup index
+/// (`Vm::note_long_shape_walk`): a walk this long costs more than the index's one probe.
+const SHAPE_ATTRIBUTE_WALK_DISTANCE: usize = 4;
+
+impl ShapeTransition {
+    /// The attributes this transition gives `slot`, where it describes that slot.
+    fn slot_attributes(self, slot: usize) -> Option<ShapeAttributes> {
+        match self {
+            Self::Descriptor { slot: described, attributes } if described as usize == slot => Some(attributes),
+            Self::Add { slot: described, attributes, .. } if described as usize == slot => Some(attributes.shape()),
+            Self::Delete { slot: described, .. } if described as usize == slot => Some(DEFAULT_SHAPE_ATTRIBUTES),
+            _ => None,
+        }
+    }
+}
+
+impl<H: Host> Vm<H> {
+    /// The attributes the nearest transition describing `slot` gives it, walking `shape`'s
+    /// chain. A shape whose walks keep running long earns its lookup index, which answers in
+    /// one probe (`shape_slot_attributes`).
+    pub(super) fn walked_shape_attribute(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
+        let mut current = Some(shape);
+        let mut distance = 0;
+        while let Some(id) = current {
+            let entry = &self.shapes[id as usize];
+            if let Some(attributes) = entry.transition.slot_attributes(slot) {
+                if distance >= SHAPE_ATTRIBUTE_WALK_DISTANCE {
+                    self.note_long_shape_walk(shape);
+                }
+                return Some(attributes);
+            }
+            current = entry.parent();
+            distance += 1;
+        }
+        None
+    }
+}

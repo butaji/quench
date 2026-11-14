@@ -320,7 +320,7 @@ impl<H: Host> Vm<H> {
     /// `SHAPE_INDEX_LONG_WALKS` walks of at least that order already ran, so
     /// index memory stays proportional to walking work already spent.
     #[cold]
-    fn note_long_shape_walk(&self, shape: u32) {
+    pub(super) fn note_long_shape_walk(&self, shape: u32) {
         let entry = &self.shapes[shape as usize];
         let walks = entry.long_walks.get() + 1;
         if walks < SHAPE_INDEX_LONG_WALKS {
@@ -403,40 +403,6 @@ impl<H: Host> Vm<H> {
             return (slot < layout.storage_len()).then_some(DEFAULT_SHAPE_ATTRIBUTES);
         }
         self.walked_shape_attribute(shape, slot)
-    }
-    /// The attributes the nearest transition describing `slot` gives it, walking `shape`'s chain.
-    fn walked_shape_attribute(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
-        let mut current = Some(shape);
-        while let Some(id) = current {
-            let shape = &self.shapes[id as usize];
-            match shape.transition {
-                ShapeTransition::Descriptor {
-                    slot: candidate,
-                    attributes,
-                } if candidate as usize == slot => {
-                    return Some(attributes);
-                }
-                ShapeTransition::Add {
-                    slot: candidate,
-                    attributes,
-                    ..
-                } if candidate as usize == slot => {
-                    return Some(attributes.shape());
-                }
-                ShapeTransition::Delete {
-                    slot: candidate, ..
-                } if candidate as usize == slot => return Some(DEFAULT_SHAPE_ATTRIBUTES),
-                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
-                | ShapeTransition::Constructed { .. }
-                | ShapeTransition::Root
-                | ShapeTransition::Add { .. }
-                | ShapeTransition::Delete { .. }
-                | ShapeTransition::Vacant
-                | ShapeTransition::Descriptor { .. }
-                | ShapeTransition::Dictionary { .. } => current = shape.parent(),
-            }
-        }
-        None
     }
     pub(super) fn shape_keys(&self, shape: u32) -> Vec<PropertyKey> {
         self.shape_entries(shape)

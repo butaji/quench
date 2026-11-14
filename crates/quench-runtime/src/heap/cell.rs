@@ -2697,8 +2697,11 @@ impl Object {
         extras.structured_serialization = StructuredSerialization::Forbidden;
     }
 
+    /// A namespace is exotic (`set_module_namespace`), so the flag in the object's own word
+    /// rules out every other object without reading its extras.
+    #[inline(always)]
     pub(crate) fn is_module_namespace(&self) -> bool {
-        self.brand() == ObjectBrand::ModuleNamespace
+        self.has_exotic_access() && self.brand() == ObjectBrand::ModuleNamespace
     }
     /// A proxy's own object: the handler answers every access, so no shape a cache records
     /// may match it.

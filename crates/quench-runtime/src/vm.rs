@@ -204,7 +204,7 @@ mod object_symbols;
 #[cfg(test)] mod lane_native_callback_tests;
 #[cfg(test)] mod lane_entry_tests;
 #[cfg(test)] mod call_out_tests;
-#[cfg(test)] mod object_tests;
+#[cfg(test)] mod object_tests; #[cfg(test)] mod shape_attribute_tests;
 mod property_key;
 use call_arguments::CallArguments;
 use object::AtomClass;
