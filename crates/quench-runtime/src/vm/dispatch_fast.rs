@@ -11345,46 +11345,7 @@ impl<H: Host> Vm<H> {
                         window,
                     );
                     if script.environment {
-                        // The frame its promotion would have made: the environment it holds,
-                        // and its locals.
-                        let held = count;
-                        // SAFETY: the activation's window, intact.
-                        let environment = unsafe {
-                            window_environment(
-                                self,
-                                code,
-                                activation.window_ptr().add(held),
-                                activation.function,
-                                state.env,
-                                program,
-                                state.this,
-                                Vec::new(),
-                            )
-                        };
-                        let frame = self.frames.last_mut().expect("the activation pushed a frame");
-                        frame.env = environment;
-                        frame.captured = true;
-                        let locals = held + usize::from(WINDOW_LOCALS);
-                        let count = frame.locals.len();
-                        // The activation never binds `arguments`: its body only reads the
-                        // values passed and its parameters (`Function::reads_passed_arguments_only`),
-                        // so the object the push made from the values is the binding, with
-                        // each element a parameter aliases holding that parameter now.
-                        let body = code.function(activation.function as usize);
-                        let arguments = body.arguments_slot.map(usize::from);
-                        let object = arguments.map(|slot| frame.locals[slot]);
-                        // SAFETY: the window holds the environment's locals after the registers.
-                        frame.locals.copy_from_slice(&unsafe { activation.window(locals + count) }[locals..]);
-                        if let (Some(slot), Some(object)) = (arguments, object) {
-                            frame.locals[slot] = object;
-                            if body.arguments_alias_parameters() {
-                                for parameter in 0..usize::from(body.params).min(argc) {
-                                    // SAFETY: as the locals' read.
-                                    let value = unsafe { activation.window(locals + parameter + 1) }[locals + parameter];
-                                    self.store_mapped_argument(object, parameter, value);
-                                }
-                            }
-                        }
+                        self.materialize_environment_frame(code, &activation, (program, state.env, state.this), argc);
                     }
                     // Its frame closes the iterators its loops pushed (`LaneStack::iterators`).
                     let frame = self.frames.last_mut().expect("the activation pushed a frame");
@@ -11447,6 +11408,40 @@ impl<H: Host> Vm<H> {
             (*cx).env = Value::DELETED;
             (*cx).capture = std::ptr::null();
             (*cx).outer = NO_OUTER_WALK;
+        }
+    }
+
+    /// Gives the frame an environment activation became its environment and locals: the frame its
+    /// promotion would have made, `argc` values having been passed to `activation`.
+    fn materialize_environment_frame(&mut self, code: &ResidualProgram, activation: &Activation, (program, env, this): (ProgramId, Value, Value), argc: usize) {
+        // The frame its promotion would have made: the environment it holds,
+        // and its locals.
+        let held = usize::from(code.function(activation.function as usize).registers);
+        // SAFETY: the activation's window, intact.
+        let environment = unsafe { window_environment(self, code, activation.window_ptr().add(held), activation.function, env, program, this, Vec::default()) };
+        let frame = self.frames.last_mut().expect("the activation pushed a frame");
+        frame.env = environment;
+        frame.captured = true;
+        let locals = held + usize::from(WINDOW_LOCALS);
+        let count = frame.locals.len();
+        // The activation never binds `arguments`: its body only reads the
+        // values passed and its parameters (`Function::reads_passed_arguments_only`),
+        // so the object the push made from the values is the binding, with
+        // each element a parameter aliases holding that parameter now.
+        let body = code.function(activation.function as usize);
+        let arguments = body.arguments_slot.map(usize::from);
+        let object = arguments.map(|slot| frame.locals[slot]);
+        // SAFETY: the window holds the environment's locals after the registers.
+        frame.locals.copy_from_slice(&unsafe { activation.window(locals + count) }[locals..]);
+        if let (Some(slot), Some(object)) = (arguments, object) {
+            frame.locals[slot] = object;
+            if body.arguments_alias_parameters() {
+                for parameter in 0..usize::from(body.params).min(argc) {
+                    // SAFETY: as the locals' read.
+                    let value = unsafe { activation.window(locals + parameter + 1) }[locals + parameter];
+                    self.store_mapped_argument(object, parameter, value);
+                }
+            }
         }
     }
 
