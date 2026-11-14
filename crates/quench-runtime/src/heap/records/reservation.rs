@@ -14,7 +14,7 @@ pub(super) enum Reservation {
     Failed,
 }
 
-impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
+impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE> {
     /// Whether `base` names its address range.
     #[inline(always)]
     pub(super) fn is_reserved(&self) -> bool {
@@ -48,7 +48,7 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     }
 }
 
-impl<T, const CAPACITY: usize> Drop for RecordSpace<T, CAPACITY> {
+impl<T, const CAPACITY: usize, const HOLE: usize> Drop for RecordSpace<T, CAPACITY, HOLE> {
     fn drop(&mut self) {
         if !self.is_reserved() {
             return;

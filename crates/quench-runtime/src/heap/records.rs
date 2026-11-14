@@ -38,8 +38,12 @@ pub(super) type IteratorRecordSpace = RecordSpace<IteratorRecord>;
 pub(super) type V128RecordSpace = RecordSpace<[u8; crate::wasm::V128_BYTES]>;
 /// Strings have no legacy-slot fallback, so their space holds as many records as the legacy
 /// slots do (`MAX_HEAP_CELLS`).
-pub(super) type StringRecordSpace = RecordSpace<JsString, STRING_RECORD_CAPACITY>;
+/// The ids `[STRING_RECORD_HOLE, 2 * STRING_RECORD_HOLE)` are never this space's: they name the
+/// records of small strings (`super::small_strings`), which stay below the narrow index limit.
+pub(super) type StringRecordSpace = RecordSpace<JsString, STRING_RECORD_CAPACITY, STRING_RECORD_HOLE>;
 pub(super) const STRING_RECORD_CAPACITY: usize = super::MAX_HEAP_CELLS;
+pub(super) const STRING_RECORD_HOLE: usize = 1 << 24;
+const _: () = assert!(STRING_RECORD_HOLE.is_multiple_of(RECORDS_PER_BLOCK) && 2 * STRING_RECORD_HOLE <= STRING_RECORD_CAPACITY);
 const _: () = assert!(STRING_RECORD_CAPACITY.is_power_of_two());
 const _: () = assert!(STRING_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 const _: () = assert!(STRING_RECORD_CAPACITY <= u32::MAX as usize);
@@ -83,7 +87,7 @@ pub(super) trait RecordFamily {
     fn for_each_marked(&self, visit: &mut dyn FnMut(RecordId));
 }
 
-impl<T, const CAPACITY: usize> RecordFamily for RecordSpace<T, CAPACITY> {
+impl<T, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T, CAPACITY, HOLE> {
     fn clear_marks(&mut self) {
         RecordSpace::clear_marks(self);
     }
@@ -157,8 +161,9 @@ const _: () = assert!(RECORD_SPACE_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 const _: () = assert!(RECORD_SPACE_CAPACITY <= u32::MAX as usize);
 
 /// Each record family owns one fixed address range. Block metadata controls
-/// allocation and sweep, but resolving a live locator never walks it.
-pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY> {
+/// allocation and sweep, but resolving a live locator never walks it. A nonzero `HOLE` keeps
+/// the ids `[HOLE, 2 * HOLE)` out of use: their blocks exist, with every id withheld.
+pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY, const HOLE: usize = 0> {
     pub(super) base: NonNull<MaybeUninit<T>>,
     reservation: Reservation,
     blocks: Vec<RecordBlock>,
@@ -215,7 +220,7 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY> 
     satb_reused_words: Vec<RecordId>,
 }
 
-impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
+impl<T, const CAPACITY: usize, const HOLE: usize> Default for RecordSpace<T, CAPACITY, HOLE> {
     fn default() -> Self {
         Self {
             base: NonNull::dangling(),
@@ -244,7 +249,7 @@ impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
     }
 }
 
-impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
+impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE> {
     /// The first address in this record family's reserved range, if it has been reserved.
     ///
     /// The range is allocated once and kept for the lifetime of the record space. A native
@@ -278,7 +283,7 @@ pub(super) const NATIVE_RECORD_BLOCK_SIZE: usize = size_of::<RecordBlock>();
 pub(super) const NATIVE_RECORD_MARK_OFFSET: usize = std::mem::offset_of!(RecordBlock, marked);
 const _: () = assert!(NATIVE_RECORD_MARK_OFFSET + size_of::<[u64; BLOCK_WORDS]>() <= NATIVE_RECORD_BLOCK_SIZE);
 
-impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
+impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE> {
     /// The blocks never move once the range is reserved (`ensure_reserved`); the count grows
     /// as allocation makes blocks.
     pub(super) fn native_mark_blocks(&self) -> (*const u8, usize) {
@@ -424,7 +429,7 @@ impl RecordBlock {
     }
 }
 
-impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
+impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE> {
     /// A dense identity claimed with no value written (the Value tag carries it): its record is
     /// uninitialized, to be written before the next safepoint (`try_insert` writes it at once).
     #[inline(always)]
@@ -523,14 +528,15 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         if self.free_word != 0 {
             return Some(self.take_free_word_id());
         }
+        if HOLE != 0 && self.next_id as usize == HOLE {
+            self.next_id = 2 * HOLE as RecordId;
+        }
         let id = self.next_id;
         if id as usize >= CAPACITY {
             return None;
         }
         let (block_index, record_index) = Self::split_id(id);
-        while self.blocks.len() <= block_index {
-            self.blocks.push(RecordBlock::new());
-        }
+        self.add_blocks_through(block_index);
         if !self.blocks[block_index].claim(record_index) {
             return None;
         }
@@ -538,17 +544,32 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         Some(id)
     }
 
+    /// Whether `id` lies in the ids `HOLE` keeps out of use.
+    #[inline(always)]
+    pub(super) const fn in_hole(id: RecordId) -> bool {
+        HOLE != 0 && id as usize >= HOLE && (id as usize) < 2 * HOLE
+    }
+
+    /// Adds blocks until `block_index` exists; a block of the hole withholds every id.
+    fn add_blocks_through(&mut self, block_index: usize) {
+        while self.blocks.len() <= block_index {
+            let mut block = RecordBlock::new();
+            if Self::in_hole((self.blocks.len() * RECORDS_PER_BLOCK) as RecordId) {
+                block.withheld = [u64::MAX; BLOCK_WORDS];
+            }
+            self.blocks.push(block);
+        }
+    }
+
     /// Places `value` at `id`, as a snapshot restores it (`crate::snapshot`): ids arrive in
     /// increasing order, each marked (old), as after a full collection; the ids skipped are
     /// reusable once `finish_snapshot_inserts` runs. `false` when the id cannot be placed.
     pub(super) fn insert_snapshot(&mut self, id: RecordId, value: T) -> bool {
-        if !self.ensure_reserved() || id as usize >= CAPACITY || id < self.next_id {
+        if !self.ensure_reserved() || id as usize >= CAPACITY || id < self.next_id || Self::in_hole(id) {
             return false;
         }
         let (block_index, record_index) = Self::split_id(id);
-        while self.blocks.len() <= block_index {
-            self.blocks.push(RecordBlock::new());
-        }
+        self.add_blocks_through(block_index);
         if !self.blocks[block_index].claim(record_index) {
             return false;
         }
@@ -1295,8 +1316,9 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         if self.withheld == 0 {
             return;
         }
-        for block in &mut self.blocks {
-            block.withheld = [0; BLOCK_WORDS];
+        for (block_index, block) in self.blocks.iter_mut().enumerate() {
+            let hole = Self::in_hole((block_index * RECORDS_PER_BLOCK) as RecordId);
+            block.withheld = [if hole { u64::MAX } else { 0 }; BLOCK_WORDS];
         }
         self.withheld = 0;
         self.free_cursor = self.next_id;

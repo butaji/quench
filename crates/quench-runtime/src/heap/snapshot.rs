@@ -174,9 +174,9 @@ impl Heap {
     }
 }
 
-fn write_records<T, const CAPACITY: usize>(
+fn write_records<T, const CAPACITY: usize, const HOLE: usize>(
     writer: &mut Writer,
-    space: &records::RecordSpace<T, CAPACITY>,
+    space: &records::RecordSpace<T, CAPACITY, HOLE>,
     mut write: impl FnMut(&mut Writer, &T) -> SnapshotResult<()>,
 ) -> SnapshotResult<()> {
     writer.len(space.live_count());
@@ -192,9 +192,9 @@ fn write_records<T, const CAPACITY: usize>(
     Ok(())
 }
 
-fn read_records<T, const CAPACITY: usize>(
+fn read_records<T, const CAPACITY: usize, const HOLE: usize>(
     reader: &mut Reader<'_>,
-    space: &mut records::RecordSpace<T, CAPACITY>,
+    space: &mut records::RecordSpace<T, CAPACITY, HOLE>,
     mut read: impl FnMut(&mut Reader<'_>) -> SnapshotResult<T>,
 ) -> SnapshotResult<()> {
     let live = reader.len()?;
