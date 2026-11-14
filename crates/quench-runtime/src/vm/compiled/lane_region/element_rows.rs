@@ -52,7 +52,7 @@ impl Lowering<'_, '_> {
             self.set_tagged(state, destination, value);
         }
         match self.observed.at(pc) {
-            Some(ty) if ty == Type::INT32 => { self.int(state, destination, exit); }
+            Some(ty) if ty.is_int32() => { self.int(state, destination, exit); }
             Some(_) => { self.number(state, destination, exit); }
             None => {}
         }

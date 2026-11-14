@@ -12,9 +12,10 @@
 //! never the body. Constants, definitions and joins use the one `crate::typed_ir` lattice.
 
 use crate::bytecode::{Class, Constant, ControlFlowLayout, Operand, OperandKind, Register, WideInstruction};
-use crate::typed_ir::Type;
+use crate::typed_ir::{Type, WIDENING_ROUNDS};
 use cranelift_codegen::bitset::CompoundBitSet;
 use std::num::NonZeroUsize;
+use lengths::Relations;
 
 /// Scratch storage spills for larger functions without limiting region size.
 const INLINE_ANALYSIS_ITEMS: usize = 16;
@@ -38,11 +39,31 @@ pub(super) struct Facts {
     /// The element reads observed to hold Numbers (sorted PCs): each defines a Number the
     /// lowering proves at the read.
     observed: Vec<ObservedRead>,
+    /// How often a merge changed each block's row: past `WIDENING_ROUNDS` a range that grows widens.
+    rounds: Vec<u8>,
+    /// The length relations at each row, parallel to its types (empty where the run tracks none).
+    length_of: Vec<Option<Register>>,
+    below: Vec<Option<Register>>,
 }
 
 impl Facts {
     pub(super) fn reached(&self, pc: usize) -> bool { self.reached.contains(pc) }
     pub(super) fn backedge(&self) -> &[Type] { &self.backedge }
+    pub(super) fn contracts(&self) -> &[Contract] { &self.contracts }
+
+    /// A run over `blocks` PCs of `registers` registers.
+    fn new(blocks: usize, registers: usize, seeds: run::Seeds<'_>) -> Self {
+        Self { offsets: vec![None; blocks], registers, reached: CompoundBitSet::with_capacity(blocks),
+            contracts: seeds.contracts.to_vec(), observed: seeds.observed.0.to_vec(), rounds: vec![0; blocks], ..Self::default() }
+    }
+
+    /// The state on entry to the block led by `pc`.
+    fn point_at(&self, pc: usize) -> run::Point {
+        let start = self.offsets[pc].expect("a pending leader has facts").get() - 1;
+        let relations = |rows: &[Option<Register>]| rows.get(start..start + self.registers).map_or_else(Vec::new, <[_]>::to_vec);
+        run::Point { types: self.types[start..start + self.registers].iter().copied().collect(),
+            relations: Relations { length_of: relations(&self.length_of), below: relations(&self.below) } }
+    }
 
     /// The types on entry to the block led by `pc`. Rows share one flat buffer;
     /// the PC table stores element offsets, including reachable zero-register rows.
@@ -104,21 +125,41 @@ impl Facts {
         }
     }
 
+    #[cfg(test)]
     fn merge(&mut self, pc: usize, incoming: &[Type]) -> bool {
+        self.merge_row(pc, incoming, &Relations::default())
+    }
+
+    /// `merge` of the state `point`: its types, and the relations it keeps.
+    fn merge_point(&mut self, pc: usize, point: &run::Point) -> bool {
+        self.merge_row(pc, &point.types, &point.relations)
+    }
+
+    /// Joins `incoming` and the relations both it and the row keep into the row of `pc`;
+    /// whether the row changed. Past `WIDENING_ROUNDS` changes a range that grows widens.
+    fn merge_row(&mut self, pc: usize, incoming: &[Type], relations: &Relations) -> bool {
         let Some(slot) = self.offsets.get_mut(pc) else { return false };
         let (start, mut changed) = match *slot {
             None => {
                 *slot = NonZeroUsize::new(self.types.len() + 1);
                 self.types.extend_from_slice(incoming);
+                self.length_of.extend_from_slice(&relations.length_of);
+                self.below.extend_from_slice(&relations.below);
                 (self.types.len() - incoming.len(), true)
             }
             Some(offset) => {
                 let start = offset.get() - 1;
+                let widening = self.rounds.get(pc).is_some_and(|rounds| *rounds >= WIDENING_ROUNDS);
                 let mut changed = false;
                 for (known, incoming) in self.types[start..start + self.registers].iter_mut().zip(incoming) {
-                    let joined = known.join(*incoming);
+                    let joined = if widening { known.widen(*incoming) } else { known.join(*incoming) };
                     changed |= joined != *known;
                     *known = joined;
+                }
+                for (rows, theirs) in [(&mut self.length_of, &relations.length_of), (&mut self.below, &relations.below)] {
+                    for (known, theirs) in rows.get_mut(start..start + theirs.len()).into_iter().flatten().zip(theirs) {
+                        changed |= lengths::meet(known, *theirs);
+                    }
                 }
                 (start, changed)
             }
@@ -130,6 +171,7 @@ impl Facts {
                 changed = true;
             }
         }
+        if let Some(rounds) = self.rounds.get_mut(pc).filter(|_| changed) { *rounds = rounds.saturating_add(1); }
         changed
     }
 }
@@ -162,13 +204,6 @@ pub(super) fn prove_number(types: &mut [Type], operands: [Operand; 2]) {
         if !types.get(usize::from(register)).is_some_and(|ty| ty.is_subtype(Type::NUMBER)) {
             set(types, register, Type::NUMBER);
         }
-    }
-}
-
-/// Proves each register operand int32: the instruction leaves where one is not.
-fn prove_int32(types: &mut [Type], operands: [Operand; 2]) {
-    for register in operands.into_iter().filter_map(register) {
-        set(types, register, Type::INT32);
     }
 }
 
@@ -210,8 +245,7 @@ fn transfer(
         }
         Class::IncDec if instruction.numeric_local_target().is_none() => {
             // The operand is proved int32 or the instruction leaves.
-            set(types, instruction.register_b(), Type::INT32);
-            set(types, instruction.result_register(), Type::INT32);
+            ranges::step(types, instruction);
             Flow::Next
         }
         _ if op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary => binary::numeric_binary(types, instruction, constants, written),
@@ -229,8 +263,7 @@ fn transfer(
             let operator = instruction.binary_operator_field();
             let numeric = super::super::operations::NumberRelation::from_operator(operator).is_some()
                 && super::super::operations::equality_operator(operator).is_none();
-            if operand_types.iter().all(|ty| ty.is_subtype(Type::INT32)) { prove_int32(types, operands); }
-            else if numeric { prove_number(types, operands); }
+            if numeric && !operand_types.iter().all(|ty| ty.is_subtype(Type::INT32)) { prove_number(types, operands); }
             Flow::To(instruction.jump_target() as usize)
         }
         _ => {
@@ -334,66 +367,6 @@ fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants
     flow
 }
 
-/// The fixpoint of `transfer` over the CFG, seeded by checked region-entry facts.
-pub(super) fn analyze(
-    entry: usize,
-    initial: &[Type],
-    instructions: &[WideInstruction],
-    leaders: &CompoundBitSet,
-    constants: &[Constant],
-    written: &dyn Fn(WideInstruction) -> Vec<Register>,
-    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
-    native_calls: bool,
-    contracts: &[Contract], observed: Observed<'_>,
-) -> Facts {
-    let mut facts = Facts { offsets: vec![None; instructions.len()], types: Vec::new(), registers: initial.len(),
-        reached: CompoundBitSet::with_capacity(instructions.len()), backedge: smallvec::SmallVec::new(),
-        contracts: contracts.to_vec(), observed: observed.0.to_vec() };
-    let mut pending = smallvec::SmallVec::<[usize; INLINE_ANALYSIS_ITEMS]>::new();
-    let mut types = smallvec::SmallVec::<[Type; INLINE_ANALYSIS_ITEMS]>::new();
-    if entry < instructions.len() && facts.merge(entry, initial) {
-        pending.push(entry);
-    }
-    while let Some(leader) = pending.pop() {
-        types.clear();
-        types.extend_from_slice(facts.at(leader).expect("a pending leader has facts"));
-        let mut pc = leader;
-        loop {
-            facts.reached.insert(pc);
-            let instruction = instructions[pc];
-            // A direct own read proves its receiver before defining its result.
-            // If result and receiver alias, transfer kills that refinement.
-            if let Some((register, shape)) = own_shape(pc) {
-                set(&mut types, register, Type::direct_object(shape));
-            }
-            let conditional = instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump;
-            match transfer_observed(&mut types, instruction, constants, written, native_calls, observed.at(pc)) {
-                Flow::Leaves => break,
-                Flow::To(target) => {
-                    if target == entry && target <= pc {
-                        if facts.backedge.is_empty() { facts.backedge.extend_from_slice(&types); }
-                        else { for (known, incoming) in facts.backedge.iter_mut().zip(&types) { *known = known.join(*incoming); } }
-                    }
-                    if facts.merge(target, &types) { pending.push(target); }
-                    if conditional && facts.merge(pc + 1, &types) { pending.push(pc + 1); }
-                    break;
-                }
-                Flow::Next => {
-                    pc += 1;
-                    if pc >= instructions.len() {
-                        break;
-                    }
-                    if leaders.contains(pc) {
-                        if facts.merge(pc, &types) { pending.push(pc); }
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    facts
-}
-
 /// Prove a checked integer entry contract by induction. Every native write
 /// and every backedge must preserve the entry hypothesis. Rejecting one input
 /// removes that assumption from all dependent proofs on the next iteration.
@@ -407,14 +380,14 @@ pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitS
     while !candidates.is_empty() {
         let mut inputs = initial.to_vec();
         for register in candidates.iter() { inputs[register] = Type::INT32; }
-        let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls, &[], observed);
+        let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls, Seeds::observing(observed));
         let mut rejected: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
         for register in candidates.iter() {
-            if facts.backedge().get(register) != Some(&Type::INT32) { rejected.insert(register); }
+            if !facts.backedge().get(register).is_some_and(|ty| ty.is_int32()) { rejected.insert(register); }
         }
         facts.for_each_definition(instructions, leaders, constants, written, native_calls, |pc, register, ty| {
             let index = usize::from(register);
-            if body.contains(&pc) && candidates.contains(index) && ty != Type::INT32 { rejected.insert(index); }
+            if body.contains(&pc) && candidates.contains(index) && !ty.is_int32() { rejected.insert(index); }
         });
         if rejected.is_empty() {
             initial.copy_from_slice(&inputs);
@@ -435,7 +408,8 @@ pub(super) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Co
     native_calls: bool, observed: Observed<'_>) -> Option<Facts> {
     while !candidates.is_empty() {
         let contracts: Vec<Contract> = candidates.iter().map(|(contract, _)| *contract).collect();
-        let facts = analyze(entry, initial, instructions, leaders, constants, written, own_shape, native_calls, &contracts, observed);
+        let seeds = Seeds { contracts: &contracts, ..Seeds::observing(observed) };
+        let facts = analyze(entry, initial, instructions, leaders, constants, written, own_shape, native_calls, seeds);
         let mut rejected = vec![false; candidates.len()];
         facts.for_each_definition(instructions, leaders, constants, written, native_calls, |pc, register, ty| {
             for (index, ((_, candidate, required), body)) in candidates.iter().enumerate() {
@@ -455,8 +429,12 @@ pub(super) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Co
 #[path = "facts/written.rs"] mod written;
 #[path = "facts/binary.rs"] mod binary;
 #[path = "facts/widen.rs"] mod widen;
+#[path = "facts/ranges.rs"] pub(super) mod ranges;
+#[path = "facts/lengths.rs"] mod lengths;
+#[path = "facts/run.rs"] mod run;
 pub(in crate::vm) use immediates::{constant_number, constant_type, immediate, is_int32};
 pub(in crate::vm) use binary::{generic_operator, heap_primitive_binary};
+pub(super) use run::{analyze, analyze_text, Model, Seeds, Text};
 
 #[cfg(test)]
 #[path = "facts/decode_ratchet.rs"] mod decode_ratchet;

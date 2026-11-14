@@ -525,7 +525,7 @@ struct Lowering<'a, 'f> {
     /// Successful write-through stores defining a loop-header field's SSA variable.
     loop_fields: Vec<LoopField>,
     loop_stores: BTreeMap<usize, LoopStore>,
-    /// The unit's integer ranges, computed once before lowering (`int_ranges::analyze`): the
+    /// The unit's integer proofs, computed once before lowering (`Lowering::prove_ranges`): the
     /// arithmetic that cannot overflow and the hoisted element accesses within their array.
     ranges: int_ranges::IntRanges,
     /// The registers whose int32 range the entry guards once and the ranges pass takes as
@@ -1693,7 +1693,7 @@ pub(super) fn lower(
         let [field] = site_loads(fields, cache_site)?.as_slice() else { return None };
         field.own_direct().then_some((base.register_index()?, field.shape))
     };
-    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], observed);
+    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, super::facts::Seeds::observing(observed));
     lowering.intrinsics = native_calls::intrinsic_calls(unit, global_reads, |pc| direct.contains_key(&pc));
     let loops = local_loops(unit, &program.constants, entry_pc, &lowering.intrinsics);
     // One entry query of the call depth replaces each binding's helper with its cached
@@ -1709,9 +1709,9 @@ pub(super) fn lower(
         // same verified SSA view. This is an admission requirement, not a fact
         // assumed about the source program or a TypeScript annotation.
         let mut refined = false;
-        for (input, carried) in initial.iter_mut().take(usize::from(unit.caller_registers)).zip(lowering.facts.backedge()) {
-            if matches!(*carried, Type::INT32 | Type::NUMBER) && *input != *carried {
-                *input = *carried;
+        for (input, carried) in initial.iter_mut().take(usize::from(unit.caller_registers)).zip(lowering.facts.backedge().iter().map(|ty| ty.machine())) {
+            if matches!(carried, Type::INT32 | Type::NUMBER) && *input != carried {
+                *input = carried;
                 refined = true;
             }
         }
@@ -1725,7 +1725,7 @@ pub(super) fn lower(
                         | super::operations::NumberRelation::GreaterThan | super::operations::NumberRelation::GreaterEqual)) {
             let operands = [instruction.operand_b(), instruction.operand_c()];
             if operands.iter().any(|operand| super::facts::operand_type(&program.constants, *operand,
-                |register| lowering.facts.backedge().get(usize::from(register)).copied().unwrap_or(Type::ANY)) == Type::INT32) {
+                |register| lowering.facts.backedge().get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_int32()) {
                 for register in operands.into_iter().filter_map(Operand::register_index)
                     .filter(|register| *register < unit.caller_registers && !lowering.written.contains(usize::from(*register))) {
                     if initial[usize::from(register)] == Type::NUMBER {
@@ -1736,7 +1736,7 @@ pub(super) fn lower(
             }
         }
         if refined {
-            lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], observed);
+            lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, super::facts::Seeds::observing(observed));
         }
         lowering.refine_inductive_inputs(&mut initial, &instructions, &leaders, &loops, &own_shape);
     }
@@ -1750,7 +1750,7 @@ pub(super) fn lower(
             read.pc == at && read.owner.is_none() && instructions[at].op().is_load_capture())),
         lowering.views, typed_captures);
     lowering.entering = lowering.entering_ranges(entry_pc);
-    lowering.ranges = int_ranges::analyze(program, unit, &lowering.facts, entry_pc, &lowering.entering, generic, &|pc| lowering.dense_loop_access(pc));
+    lowering.ranges = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape);
     lowering.arrays_fixed = lowering.arrays_stay_put(&leaders, &writes);
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
@@ -2201,7 +2201,7 @@ impl Lowering<'_, '_> {
                     for site in sites {
                         let writes = if instruction.op().is_field_store() {
                             self.facts.before(pc, instruction.register_a(), instructions, _leaders,
-                                &self.program.constants, &writes, self.native_calls)
+                                &self.program.constants, &writes, self.native_calls).machine()
                         } else if instruction.writes_current_this()
                             && matches!(instruction.field_lookup(), Some(FieldLookup::Site(index))
                                 if self.program.field_sites[index].sink.is_some_and(|(_, sink)| sink == site)) {
@@ -3142,7 +3142,7 @@ impl Lowering<'_, '_> {
         if !self.fault_poll || !self.shared_headers.contains(target) || !self.entered.contains(target) { return false; }
         let Some(block) = self.blocks.get(target).copied().flatten() else { return false };
         let Some(types) = self.facts.at(target) else { return false };
-        if !types.iter().copied().enumerate().all(|(index, ty)| {
+        if !types.iter().copied().map(Type::machine).enumerate().all(|(index, ty)| {
             if !self.is_live(target, index as Register) { return true; }
             let fact = state.values[index];
             fact.value.ty.is_subtype(ty) && if ty == Type::INT32 {
@@ -3237,7 +3237,7 @@ impl Lowering<'_, '_> {
     /// Whether a loop definition of `register` of type `ty` makes it a candidate for an int32
     /// entry contract: the definition yields an int32, or the register held one at entry.
     fn int32_candidate(&self, register: Register, ty: Type) -> bool {
-        ty == Type::INT32 || self.int_entries.iter().any(|(entry, _)| *entry == register)
+        ty.is_int32() || self.int_entries.iter().any(|(entry, _)| *entry == register)
     }
 
     /// An unchanged arm preserves a checked entry hypothesis. Every definition
@@ -3316,10 +3316,10 @@ impl Lowering<'_, '_> {
     /// an admitted field read carries its actual loop-entry contract, even when
     /// the general analysis has no field feedback (as in linked AOT).
     fn int32_operand_at(&self, pc: usize, operand: Operand, boundaries: &CompoundBitSet) -> bool {
-        if super::facts::operand_type(&self.program.constants, operand, |_| Type::ANY) == Type::INT32 { return true; }
+        if super::facts::operand_type(&self.program.constants, operand, |_| Type::ANY).is_int32() { return true; }
         let Some(mut register) = operand.register_index() else { return false };
         if self.facts.before(pc, register, &self.unit.instructions, boundaries,
-            &self.program.constants, &writes, self.native_calls) == Type::INT32 { return true; }
+            &self.program.constants, &writes, self.native_calls).is_int32() { return true; }
         for at in (0..pc).rev() {
             if boundaries.contains(at + 1) || self.unit.markers.contains(&at) { return false; }
             let instruction = self.unit.instructions[at];
@@ -3442,7 +3442,7 @@ impl Lowering<'_, '_> {
             let int32 = if carried {
                 self.loop_fields[field.unwrap()].stores.iter().all(|store| {
                     self.facts.before(*store, self.unit.instructions[*store].register_a(),
-                        &self.unit.instructions, &boundaries, &self.program.constants, &writes, self.native_calls) == Type::INT32
+                        &self.unit.instructions, &boundaries, &self.program.constants, &writes, self.native_calls).is_int32()
                 })
             } else { int32 };
             if int32 {

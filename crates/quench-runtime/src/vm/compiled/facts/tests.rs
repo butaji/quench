@@ -118,3 +118,40 @@ fn zero_register_blocks_keep_reachability_without_allocating_type_rows() {
     assert_eq!(facts.at(2), Some([].as_slice()));
     assert!(facts.types.is_empty());
 }
+
+/// The unit PCs of `source`'s first function whose int32 arithmetic or step the run proves
+/// overflow-free, and the PCs of all its arithmetic and steps.
+fn overflow_proofs(source: &str) -> (Vec<usize>, Vec<usize>) {
+    use crate::vm::operations::NumberArithmetic;
+    let program = crate::Engine::specialize(source, "ranges.js").unwrap();
+    let function = program.function(1);
+    let instructions: Vec<_> = function.instructions().collect();
+    let leaders = super::super::lane_region::leaders(&instructions);
+    let initial = vec![Type::ANY; usize::from(function.registers)];
+    let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants,
+        written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: false };
+    let seeds = Seeds::observing(Observed::NONE);
+    let mut free = Vec::new();
+    analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
+        if point.overflow_free(&program.constants, instructions[pc]) { free.push(pc); }
+    });
+    let steps = instructions.iter().enumerate().filter(|(_, instruction)| instruction.op().class().eq(Class::IncDec)
+        || (instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
+            && NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()).is_some()))
+        .map(|(pc, _)| pc).collect();
+    (free, steps)
+}
+
+#[test]
+fn a_counted_loops_induction_variable_and_sum_are_overflow_free() {
+    let (free, steps) = overflow_proofs("function run(){let s=0;for(let i=0;i<100;i++){s=i+1;}return s;}");
+    assert!(steps.len() >= 2, "the step and the sum");
+    assert!(steps.iter().all(|pc| free.contains(pc)), "{free:?} of {steps:?}");
+}
+
+#[test]
+fn an_unbounded_counter_widens_to_a_fixpoint_and_keeps_its_overflow_exit() {
+    let (free, steps) = overflow_proofs("function run(n){let i=0;while(n){i=i+1;}return i;}");
+    assert!(!steps.is_empty());
+    assert!(steps.iter().all(|pc| !free.contains(pc)), "{free:?} of {steps:?}");
+}
