@@ -405,6 +405,11 @@ impl Value {
         (!self.is_tagged()).then_some(self.0)
     }
 
+    /// Whether the value is a Number stored as a double: no tag claims its bits.
+    #[inline(always)] pub(crate) fn is_double(self) -> bool {
+        !self.is_tagged()
+    }
+
     #[inline(always)] pub(crate) fn as_int(self) -> Option<i32> {
         ((self.0 & TAG_MASK) == TAG_INT).then_some(self.0 as u32 as i32)
     }
