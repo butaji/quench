@@ -1534,9 +1534,9 @@ impl<H: Host> Vm<H> {
     /// `own_field_entry_hit` through a lane record's own-field hint (`form_hint`), whose
     /// receiver is a whole auxiliary word: one compare proves the shape and storage form.
     #[inline(always)]
-    pub(super) fn own_field_hint_hit(&self, hint: FieldCache, receiver: &Object) -> Option<Value> {
+    pub(super) fn own_field_hint_hit<const FORM: u32>(&self, hint: FieldCache, receiver: &Object) -> Option<Value> {
         // SAFETY: as for `own_field_entry_hit`; the hint's shape is an own entry's.
-        unsafe { self.heap.own_field_hint_hit(receiver, hint.receiver, hint.slot) }
+        unsafe { self.heap.own_field_hint_hit::<FORM>(receiver, hint.receiver, hint.slot) }
     }
 
     /// `entry`, an own entry `object` just answered, as a lane record's own-field hint: its
@@ -1584,7 +1584,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn record_field_formed_hit_in(&self, cache: FieldCache, receiver: &crate::heap::Object) -> Option<Value> {
         if cache.holder == NO_FIELD_HOLDER {
-            return self.own_field_hint_hit(cache, receiver);
+            return self.own_field_hint_hit::<{ crate::staged::HINTED_FORM }>(cache, receiver);
         }
         let holder = self.heap.object_record_by_id(receiver.proto_link().object_record_id()?);
         if cache.receiver != receiver.hint_shape() || holder.hint_shape() != cache.holder {

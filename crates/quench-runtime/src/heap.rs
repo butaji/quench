@@ -3792,8 +3792,8 @@ impl Heap {
     /// # Safety
     /// As for `own_field_hit`.
     #[inline(always)]
-    pub(crate) unsafe fn own_field_hint_hit(&self, object: &Object, hint: u32, slot: u16) -> Option<Value> {
-        unsafe { crate::staged::concrete_hinted_own_field_hit(object, self.properties.values_base(), hint, slot) }
+    pub(crate) unsafe fn own_field_hint_hit<const FORM: u32>(&self, object: &Object, hint: u32, slot: u16) -> Option<Value> {
+        unsafe { crate::staged::concrete_hinted_own_field_hit::<FORM>(object, self.properties.values_base(), hint, slot) }
     }
     /// `property_get_flat` of a prototype holder, whose values usually live behind extras
     /// (`Object::extras_storage_start`), read without first testing the forms a holder

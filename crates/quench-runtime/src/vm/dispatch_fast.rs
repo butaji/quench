@@ -5995,6 +5995,8 @@ fn is_single_field_base(base: u16) -> bool {
     base == crate::bytecode::FieldBase::THIS.0 || crate::bytecode::FieldBase(base).register_index().is_some()
 }
 
+use crate::staged::HINTED_FORM;
+
 script_handler! {
     /// `GetField` of a register or `this`: the site's primary own entry inline. Any other
     /// read goes through `lane_get_field_miss`, which may move the record to a fitting
@@ -6003,15 +6005,15 @@ script_handler! {
         if unsafe { (*cx).binding.object_base.is_null() } {
             sibling!(lane_get_field_own_refresh::<H, THIS, false>, r, ip, Carried::script_in(cx, view))
         }
-        requicken::<H>(ip, lane_get_field_own_bound::<H, THIS>);
-        sibling!(lane_get_field_own_bound::<H, THIS>, r, ip, Carried::script_in(cx, view))
+        requicken::<H>(ip, lane_get_field_own_bound::<H, THIS, HINTED_FORM>);
+        sibling!(lane_get_field_own_bound::<H, THIS, HINTED_FORM>, r, ip, Carried::script_in(cx, view))
     }
 }
 
 script_handler! {
     /// The record range is fixed for the owning heap's lifetime; only this value's type
     /// and shape vary. Each resolved record borrow ends before the next instruction.
-    fn lane_get_field_own_bound<THIS: bool>(cx, r, ip, i, view) {
+    fn lane_get_field_own_bound<THIS: bool, FORM: u32>(cx, r, ip, i, view) {
         let value = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) }).and_then(|object| {
             let record = object.direct_object_index()?;
             // SAFETY: binding preceded handler installation; the rooted direct Value names
@@ -6044,7 +6046,7 @@ script_handler! {
             #[cfg(not(all(target_arch = "aarch64", target_pointer_width = "64")))]
             let (base, machine) = unsafe { ((*cx).binding.object_base, (*cx).vm.cast_const()) };
             let receiver = unsafe { &*base.add(record as usize) };
-            unsafe { &*machine }.own_field_hint_hit(i.field_hint(), receiver)
+            unsafe { &*machine }.own_field_hint_hit::<FORM>(i.field_hint(), receiver)
         });
         let Some(value) = value else {
             sibling!(lane_get_field_own_refresh::<H, THIS, true>, r, ip, Carried::script_in(cx, view))
@@ -6070,12 +6072,26 @@ script_handler! {
         if !BOUND {
             // SAFETY: a successful direct-object lookup proves the range is reserved.
             unsafe { (*cx).binding.object_base = vm.heap.object_record_base().unwrap_unchecked() };
-            requicken::<H>(ip, lane_get_field_own_bound::<H, THIS>);
         }
         // The hit proved the entry an own one of the receiver's shape.
-        set_field_hint(ip, vm.form_hint(vm.field_cache_entry(i.c), object));
+        let hint = vm.form_hint(vm.field_cache_entry(i.c), object);
+        set_field_hint(ip, hint);
+        requicken::<H>(ip, own_formed_handler::<H, THIS>(hint.receiver));
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+/// The bound own-field read (`lane_get_field_own_bound`) for the storage form the hint word
+/// `hint`'s bits name: an arena run or extras, whose layout it then reads untested; a packed
+/// form keeps the read that tests the bits.
+fn own_formed_handler<H: Host, const THIS: bool>(hint: u32) -> Handler {
+    use crate::value_vec::{EXTRAS_FORM, INLINE_FORM};
+    match hint & (INLINE_FORM | EXTRAS_FORM) {
+        0 => lane_get_field_own_bound::<H, THIS, 0>,
+        EXTRAS_FORM => lane_get_field_own_bound::<H, THIS, EXTRAS_FORM>,
+        INLINE_FORM => lane_get_field_own_bound::<H, THIS, HINTED_FORM>,
+        _ => lane_get_field_own_bound::<H, THIS, { EXTRAS_FORM | INLINE_FORM }>,
     }
 }
 
@@ -6468,7 +6484,7 @@ script_handler! {
         let (this, register): (Handler, Handler) = if unsafe { (*cx).binding.object_base.is_null() } {
             (lane_get_field_own::<H, true>, lane_get_field_own::<H, false>)
         } else {
-            (lane_get_field_own_bound::<H, true>, lane_get_field_own_bound::<H, false>)
+            (lane_get_field_own_bound::<H, true, HINTED_FORM>, lane_get_field_own_bound::<H, false, HINTED_FORM>)
         };
         let own = single_base_handler(i.b, this, register, lane_get_field_miss::<H>);
         requicken::<H>(ip, own);
@@ -17326,6 +17342,17 @@ enum FieldHit {
     Holder(u16),
 }
 
+/// Every bound own-field read (`own_formed_handler`), of `this` and of a register.
+fn own_bound_handlers<H: Host>() -> [*const (); 8] {
+    use crate::value_vec::{EXTRAS_FORM, INLINE_FORM};
+    macro_rules! forms {
+        ($($form:expr),*) => {
+            [$(lane_get_field_own_bound::<H, true, { $form }> as *const (), lane_get_field_own_bound::<H, false, { $form }> as *const ()),*]
+        };
+    }
+    forms!(HINTED_FORM, 0, EXTRAS_FORM, EXTRAS_FORM | INLINE_FORM)
+}
+
 impl FieldHit {
     /// The hit `record`'s quickened handler names; `None` for any other record state.
     #[inline(always)]
@@ -17333,8 +17360,7 @@ impl FieldHit {
         let handler = record.handler;
         if handler == lane_get_field_own::<H, true> as *const ()
             || handler == lane_get_field_own::<H, false> as *const ()
-            || handler == lane_get_field_own_bound::<H, true> as *const ()
-            || handler == lane_get_field_own_bound::<H, false> as *const ()
+            || own_bound_handlers::<H>().contains(&handler)
         {
             Some(Self::Own(record.c))
         } else if handler == lane_get_field_holder::<H, true> as *const ()

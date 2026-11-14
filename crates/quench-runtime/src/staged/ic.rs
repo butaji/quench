@@ -143,6 +143,9 @@ pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, proper
     Some(crate::Value::from_bits(read_slot(&mut stage, layout, slot)))
 }
 
+/// `concrete_hinted_own_field_hit`'s form: the one the hint's bits name at run time.
+pub(crate) const HINTED_FORM: u32 = u32::MAX;
+
 /// `concrete_own_field_hit` through a lane record's own-field hint, whose `hint` is a whole
 /// auxiliary word (`Object::hint_shape`): one compare proves the exact shape and the storage
 /// form, which the hint's form bits, equal to the record's, then tell.
@@ -150,15 +153,20 @@ pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, proper
 /// # Safety
 /// As for `concrete_own_field_hit`.
 #[inline(always)]
-pub(crate) unsafe fn concrete_hinted_own_field_hit(object: &crate::heap::Object, property_values: *const crate::Value,
-    hint: u32, slot: u16) -> Option<crate::Value> {
+pub(crate) unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &crate::heap::Object,
+    property_values: *const crate::Value, hint: u32, slot: u16) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
     let record = object as *const crate::heap::Object as u64;
     let word = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
+    // A fixed form replaces the hint's form bits: equality then proves that form, so its
+    // layout is read without testing the bits, whatever form the hint names.
+    let forms = OBJECT.inline_form | OBJECT.extras_form;
+    let hint = if FORM == HINTED_FORM { hint } else { hint & !forms | FORM };
     let hint = stage.site(u64::from(hint));
     let same = stage.eq_imm(word, hint);
     stage.guard(same, ())?;
-    let layout = formed_own_layout(&mut stage, record, hint, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, ())?;
+    let formed = if FORM == HINTED_FORM { hint } else { stage.constant(u64::from(FORM)) };
+    let layout = formed_own_layout(&mut stage, record, formed, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, ())?;
     Some(crate::Value::from_bits(read_slot(&mut stage, layout, slot)))
 }
 
