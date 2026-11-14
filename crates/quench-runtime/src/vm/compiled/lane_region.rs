@@ -84,6 +84,7 @@ use call_frames::{CallSite, Leave, ReturnSite, Site};
 #[path = "lane_region/element_rows.rs"] mod element_rows;
 #[path = "lane_region/fixed_arrays.rs"] mod fixed_arrays;
 #[cfg(test)] #[path = "lane_region/element_tests.rs"] mod element_tests;
+#[cfg(test)] #[path = "lane_region/loop_shape_tests.rs"] mod loop_shape_tests;
 use loop_arrays::{ArraySource, LoopArray};
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
