@@ -120,12 +120,12 @@ fn declare_symbol(function: &mut cranelift_codegen::ir::Function, namespace: u32
     })
 }
 
-/// The address of symbol `(namespace, key)`, as a value of type `ty` built at `builder`.
+/// The address of symbol `(namespace, key)`, as a 64-bit value built at `builder`.
 #[cfg(any(feature = "jit", feature = "aot"))]
-pub(super) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'_>, ty: cranelift_codegen::ir::Type, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
-    use cranelift_codegen::ir::InstBuilder;
+pub(super) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'_>, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
+    use crate::staged::machine::MachineAccess;
     let symbol = declare_symbol(builder.func, namespace, key);
-    builder.ins().symbol_value(ty, symbol)
+    builder.symbol_address(symbol)
 }
 
 /// The address of symbol `(namespace, key)` as a 64-bit value built at `cursor`.

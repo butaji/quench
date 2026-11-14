@@ -44,12 +44,12 @@ pub(in crate::vm::compiled) fn atom_key(namespace: u32, key: u32) -> Option<u32>
 
 /// The symbol of the atom numbered `atom`, which an ahead image's loader resolves to that atom in its VM.
 pub(in crate::vm::compiled) fn atom_symbol(builder: &mut FunctionBuilder<'_>, atom: u32) -> ir::Value {
-    crate::vm::jit_backend::symbol_address(builder, types::I64, RelocKind::Atom as u32, atom)
+    crate::vm::jit_backend::symbol_address(builder, RelocKind::Atom as u32, atom)
 }
 
 /// The address of `helper` as the symbol a frameless Number region's loader resolves.
 pub(in crate::vm::compiled) fn helper_symbol(builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
-    crate::vm::jit_backend::symbol_address(builder, types::I64, RelocKind::Helper as u32, helper as u32)
+    crate::vm::jit_backend::symbol_address(builder, RelocKind::Helper as u32, helper as u32)
 }
 
 impl Lowering<'_, '_> {
@@ -80,5 +80,5 @@ pub(super) fn address(helpers: LaneHelpers, builder: &mut FunctionBuilder<'_>, k
     if !helpers.links() {
         return emit(builder).raw_const(Lane::I64, live as i64);
     }
-    crate::vm::jit_backend::symbol_address(builder, types::I64, kind as u32, key)
+    crate::vm::jit_backend::symbol_address(builder, kind as u32, key)
 }

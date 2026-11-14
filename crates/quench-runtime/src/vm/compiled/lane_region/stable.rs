@@ -84,7 +84,7 @@ impl StableHold<'_> {
 /// for a live lowering, a symbol the loader resolves for a linking one.
 fn invalidation_word(builder: &mut FunctionBuilder<'_>, helpers: LaneHelpers, online: OnlineFacts<'_>) -> ir::Value {
     let address = if helpers.links() {
-        crate::vm::jit_backend::symbol_address(builder, types::I64, RelocKind::Invalidation as u32, 0)
+        crate::vm::jit_backend::symbol_address(builder, RelocKind::Invalidation as u32, 0)
     } else {
         emit(builder).raw_const(Lane::I64, online.invalidation as i64)
     };
