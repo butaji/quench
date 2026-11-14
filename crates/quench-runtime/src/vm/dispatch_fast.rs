@@ -6969,26 +6969,33 @@ script_handler! {
         // SAFETY: `lane_get_field_sink_first` installs this handler only on a nested site.
         let site = unsafe { code.field_sites.get_unchecked(i.imm() as usize) };
         let base = match site.base.register_index() {
-            Some(register) => Some(r.get(register)),
-            None => Some(unsafe { lane_held_this(cx) }),
+            Some(register) => r.get(register),
+            None => unsafe { lane_held_this(cx) },
         };
-        let value = base
-            .and_then(|base| vm.record_field_entry_hit(i.field_hint(), base).or_else(|| unsafe { lane_sink_first_refresh(cx, ip, base) }))
-            .and_then(|value| match site.second {
-                Some((_, cache)) => vm.primary_own_field_hit(code, value, cache),
-                None => Some(value),
-            });
-        let stored = match (value, site.sink, unsafe { lane_held_this(cx) }) {
-            (Some(value), Some((atom, cache)), this) => {
-                vm.primary_own_field_store_hit::<false>(code, this, atom, value, cache, crate::heap::PropertyStoreLayout::Preserve)
-            }
-            _ => false,
+        // Each step declines on its own branch: the `Option` chain kept a materialized
+        // `Some` flag tested between the reads (V8-v7 Richards, 0.85M runs).
+        macro_rules! or_general {
+            ($step:expr) => {
+                match $step {
+                    Some(value) => value,
+                    None => sibling!(lane_get_field_sink::<H>, r, ip, Carried::script_in(cx, view)),
+                }
+            };
+        }
+        let value = match vm.record_field_entry_hit(i.field_hint(), base) {
+            Some(value) => value,
+            None => or_general!(unsafe { lane_sink_first_refresh(cx, ip, base) }),
         };
-        if !stored {
+        let value = match site.second {
+            Some((_, cache)) => or_general!(vm.primary_own_field_hit(code, value, cache)),
+            None => value,
+        };
+        let (atom, cache) = or_general!(site.sink);
+        let this = unsafe { lane_held_this(cx) };
+        if !vm.primary_own_field_store_hit::<false>(code, this, atom, value, cache, crate::heap::PropertyStoreLayout::Preserve) {
             sibling!(lane_get_field_sink::<H>, r, ip, Carried::script_in(cx, view))
         }
-        // SAFETY: a store happened only with a value.
-        r.set(i.a & crate::bytecode::REGISTER_MASK, unsafe { value.unwrap_unchecked() });
+        r.set(i.a & crate::bytecode::REGISTER_MASK, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
