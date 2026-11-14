@@ -67,6 +67,18 @@ impl Op {
         )
     }
 
+    /// A step that reads and writes only the variables of the activation that runs it (its locals,
+    /// captures and names) and the registers it addresses, so a frameless activation makes it over
+    /// its window (`Vm::step_owner`) as a frame does: the local, capture and name loads and stores.
+    pub(crate) const fn steps_on_owner(self) -> bool {
+        matches!(
+            self,
+            Op::LoadLocal | Op::StoreLocal | Op::LoadEnvLocal | Op::StoreEnvLocal | Op::StoreVarBinding
+                | Op::LoadCapture | Op::StoreCapture
+                | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof | Op::StoreName
+        )
+    }
+
     /// An op that always completes abruptly, raising its operand: no row follows it, and a handler
     /// of its function may take it.
     pub(crate) const fn raises(self) -> bool {

@@ -219,6 +219,7 @@ mod object_symbols;
 #[cfg(test)] mod lane_entry_tests;
 #[cfg(test)] mod call_out_tests;
 #[cfg(test)] mod native_frame_tests;
+#[cfg(test)] mod owner_step_tests;
 #[cfg(test)] mod catch_tests;
 mod property_key;
 use call_arguments::CallArguments;
@@ -231,7 +232,7 @@ use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;
 use root_bindings::RootBinding;
-use var_owner::{EvalCaller, VarOwner};
+use var_owner::{EvalCaller, VarOwner, WINDOW_ACTIVATION};
 pub(crate) mod operations;
 #[cfg(all(test, feature = "bench-primitives"))]
 mod primitive_bench;

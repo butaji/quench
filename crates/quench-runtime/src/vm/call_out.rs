@@ -75,8 +75,7 @@ impl<H: Host> Vm<H> {
     /// running activation; `value` is the operand a store takes.
     fn name_step(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut, value: Option<Value>)
         -> Result<Option<Value>, JsError> {
-        let owner = if operation.reads_frame_locals() { self.own_frame(site.owner) } else { site.owner };
-        let resume = site.resume;
+        let CallSite { owner, resume, .. } = site;
         let value = value.unwrap_or(Value::UNDEFINED);
         match operation {
             CallOut::LoadEnvLocal { slot } => self.load_local_binding(p, owner, usize::from(slot), None).map(Some),
@@ -84,8 +83,8 @@ impl<H: Host> Vm<H> {
                 Ok(self.store_env_local(p, owner, usize::from(slot), value, initialize)?.then_some(value))
             }
             CallOut::ArgumentsLength { slot } => {
-                let binding = self.load_local_binding(p, owner, usize::from(slot), None)?;
-                let frame = self.owner_frame(owner).expect("an arguments length reads its own frame");
+                let frame = self.own_frame();
+                let binding = self.load_local_binding(p, VarOwner::Frame(frame), usize::from(slot), None)?;
                 self.read_arguments_binding(p, frame, binding, None).map(Some)
             }
             CallOut::GlobalWrite { atom, site, initialize, .. } => {
@@ -143,13 +142,19 @@ impl<H: Host> Vm<H> {
         Ok(true)
     }
 
-    /// `owner` in the running function's own frame. A step made beside frameless activations
-    /// (`lane_in_place`) has the caller's frame innermost, which holds none of the function's
-    /// locals: the activations become frames first, as guest code would make them.
-    fn own_frame(&mut self, owner: VarOwner) -> VarOwner {
-        if self.lane_deferred.is_none() { return owner; }
+    /// The running function's own frame, for the steps that read state only a frame has (its
+    /// `arguments` object). A step made beside frameless activations (`lane_in_place`) has the
+    /// caller's frame innermost: the activations become frames first, as guest code would make them.
+    fn own_frame(&mut self) -> usize {
         self.materialize_deferred_lane();
-        VarOwner::Frame(self.frames.len() - 1)
+        self.frames.len() - 1
+    }
+
+    /// The owner a call-out of `operation` made by a lane's helper runs for: the running
+    /// activation where the step reads its names or locals (`CallOut::names_activation`), else
+    /// the innermost frame.
+    pub(super) fn call_out_owner(&mut self, operation: CallOut) -> VarOwner {
+        if operation.names_activation() { self.running_owner() } else { VarOwner::Frame(self.frames.len().saturating_sub(1)) }
     }
 
     /// `action` with `resume` as the activation's binding-site PC, restored after.
