@@ -21,6 +21,7 @@
 //! which unwinds it; a due collection raises the floor so that the next
 //! safepoint jump leaves the lane.
 
+use crate::staged::compare::{IN_OPERATOR, INSTANCEOF_OPERATOR};
 use super::compiled::tier_policy::TIERS;
 use super::compiled::{CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
 use super::dispatch_frame::PendingGeneralCall;
@@ -7508,13 +7509,6 @@ script_handler! {
         jump_on_edge!(cx, r, ip, BACKWARD, holds_edge(holds))
     }
 }
-
-/// The `instanceof` operator as a `Binary` immediate or a test's operator field.
-const INSTANCEOF_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::Instanceof as u32;
-
-/// The `in` operator as a `Binary` immediate; `Vm::plain_in` decides an ordinary-object
-/// HasProperty without running guest code and leaves every other case to the general path.
-const IN_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::In as u32;
 
 script_handler! {
     /// `Binary` `instanceof` of two registers, decoded when the view was derived

@@ -22,6 +22,7 @@ mod specialize;
 mod workspace;
 use dispatch::Dispatch;
 use native::NativeSlot;
+pub use specialize::CAPTURE_REGISTERS;
 use specialize::{replay, step, Concrete, Cursor, Replay, Step};
 use workspace::{AnchoredRun, ClassRun, anchored_run_of, class_run_of};
 
