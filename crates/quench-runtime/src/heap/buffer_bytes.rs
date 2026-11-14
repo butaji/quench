@@ -240,6 +240,7 @@ impl BufferBytes {
 
     /// A non-allocating mutable view for fast-lane operations. Shared,
     /// address-pinned, Wasm and atomic backing stores stay on the general path.
+    #[inline(always)]
     pub(crate) fn lane_mut(&mut self) -> Option<&mut [u8]> {
         match Rc::get_mut(&mut self.0)? {
             BufferStore::Owned(bytes) => Some(bytes),

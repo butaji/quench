@@ -202,6 +202,7 @@ impl SlotArena {
         self.len += 1;
     }
 
+    #[inline(always)]
     pub(super) fn get_mut(&mut self, index: usize) -> Option<&mut Slot> {
         // SAFETY: slots below `len` are initialized and accessible.
         (index < self.len).then(|| unsafe { &mut *self.base().add(index) })
@@ -331,6 +332,7 @@ impl SlotArena {
         *self.get_mut(index).unwrap() = slot;
     }
 
+    #[inline(always)]
     pub(super) fn get_mut(&mut self, index: usize) -> Option<&mut Slot> {
         (index < self.len).then(|| &mut self.slabs[index / SLOTS_PER_SLAB][index % SLOTS_PER_SLAB])
     }

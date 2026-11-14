@@ -55,6 +55,7 @@ const _: () = {
 impl TypedArrayKind {
     pub(crate) const COUNT: usize = Self::Float64 as usize + 1;
 
+    #[inline(always)]
     pub(crate) const fn is_bigint(self) -> bool {
         matches!(self, Self::BigInt64 | Self::BigUint64)
     }
@@ -75,6 +76,7 @@ impl TypedArrayKind {
         matches!(self, Self::Int32 | Self::BigInt64)
     }
 
+    #[inline(always)]
     pub(crate) const fn width(self) -> usize {
         TYPED_ARRAYS[self as usize].width
     }
