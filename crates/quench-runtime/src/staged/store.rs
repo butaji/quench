@@ -2,7 +2,8 @@
 //! a value at a slot, whichever of the two plain storage forms it keeps its values in. The
 //! interpreter runs it on `Concrete`; a specializer emits it from the same rows.
 
-use super::object::{inline_storage, HALF_BYTES, NOT_NARROW, UPPER_WORD};
+use super::narrow::{NOT_NARROW, UPPER_WORD};
+use super::object::{inline_storage, HALF_BYTES};
 use super::slot_store::{admitted_payload, gate_open, gated_payload, store_flat};
 use super::Stage;
 use super::region::Region;

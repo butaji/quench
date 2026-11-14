@@ -54,6 +54,7 @@ pub(crate) mod entry;
 pub(crate) mod environment;
 pub(crate) mod ic;
 pub(crate) mod object;
+mod narrow;
 pub(crate) mod store;
 pub(crate) mod slot_store;
 pub(crate) mod strings;
@@ -379,6 +380,8 @@ pub(crate) enum Edge {
 mod test_words;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod layout_tests;
 #[cfg(test)]
 mod property_tests;
 #[cfg(test)]
