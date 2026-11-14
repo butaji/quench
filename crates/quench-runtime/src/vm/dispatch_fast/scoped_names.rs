@@ -41,6 +41,28 @@ pub(super) fn window_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
     })
 }
 
+/// The innermost activation as the owner of its steps where it is a plain one (registers only, no locals window): its
+/// closure's environment is the one its captures read, it has no locals, no record and no `with` objects. `None` in an
+/// environment window (`window_scope`) or a frame's run.
+pub(super) fn plain_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers) -> Option<WindowScope> {
+    let vm = unsafe { vm(cx) };
+    let activation = vm.lane_stack.activations.last()?;
+    let script = activation.script().filter(|script| !script.environment)?;
+    Some(WindowScope {
+        function: activation.function,
+        program: unsafe { (*cx).program },
+        this: unsafe { (*cx).this },
+        env: unsafe { (*cx).env },
+        captured: false,
+        record: script.record,
+        site: None,
+        chain: WithChain::new(),
+        registers: r,
+        locals: r.0,
+        local_count: 0,
+    })
+}
+
 impl<H: Host> Vm<H> {
     /// The innermost object of `scope`'s chain that has `atom`, with its value there, as
     /// `find_with_binding` finds it for a frame: `Some(None)` where none does, `None` where the
