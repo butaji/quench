@@ -283,6 +283,26 @@ pub(super) fn lane_planned_construction<H: Host>(
     planned_construction(vm, callee, lane_construct_argument(r, i))
 }
 
+/// `lane_planned_construction` of a plan of passed fields that fit the inline slots, where it
+/// calls nothing out of line (`Heap::alloc_planned_inline_quick`); `None`, before any effect,
+/// for anything else, which `lane_planned_construction` makes.
+#[inline(always)]
+pub(super) fn lane_planned_inline_quick<H: Host>(vm: &mut Vm<H>, callee: Value, r: Registers, i: &LaneInstruction) -> Option<Value> {
+    let index = holding_construct_plan_index(vm, callee)?;
+    let plan = &vm.lane_stack.construct_plans[index];
+    let len = usize::from(plan.fields);
+    if plan.kind != ConstructPlanKind::Passed || len > INLINE_PROPERTY_COUNT {
+        return None;
+    }
+    const _: () = assert!(INLINE_PROPERTY_COUNT == 2, "the inline slots are filled one by one");
+    let argument = lane_construct_argument(r, i);
+    let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
+    if len > 0 { inline[0] = plan.passed_value(0, &argument); }
+    if len > 1 { inline[1] = plan.passed_value(1, &argument); }
+    let header = plan.header;
+    vm.heap.alloc_planned_inline_quick(header, inline, len)
+}
+
 /// `lane_planned_construction` from the parameters' values `argument` gives.
 #[inline(always)]
 fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {

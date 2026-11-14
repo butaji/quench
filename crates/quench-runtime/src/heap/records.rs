@@ -452,6 +452,30 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         Some(id)
     }
 
+    /// `claim_uninit` without its slow path: `None`, with nothing claimed, wherever that would run.
+    #[inline(always)]
+    pub(super) fn claim_uninit_quick(&mut self) -> Option<RecordId> {
+        let id = if self.free_word != 0 {
+            self.take_free_word_id()
+        } else if self.free_cursor == 0
+            && self.is_reserved()
+            && (self.next_id as usize) < CAPACITY
+            && Self::split_id(self.next_id).0 < self.blocks.len()
+        {
+            let id = self.next_id;
+            let (block_index, record_index) = Self::split_id(id);
+            if !self.blocks[block_index].claim(record_index) {
+                return None;
+            }
+            self.next_id += 1;
+            id
+        } else {
+            return None;
+        };
+        self.live += 1;
+        Some(id)
+    }
+
     #[inline(always)]
     pub(super) fn record_ptr(&mut self, id: RecordId) -> *mut T { unsafe { self.base.as_ptr().add(id as usize).cast::<T>() } }
 

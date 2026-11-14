@@ -19,6 +19,23 @@ impl ValueArena {
         }
     }
 
+    /// Whether `note_plan_values` of `values` into `shape` would widen nothing, read only, so a
+    /// caller that may not call out of line can leave before any effect.
+    #[inline(always)]
+    pub(crate) fn plan_values_admitted(&self, shape: u32, values: &[Value]) -> bool {
+        if !self.tracking { return true; }
+        // SAFETY: as `note_plan_values`.
+        let chain = unsafe { *self.shape_chains.get_unchecked(shape as usize) } as usize;
+        for (slot, value) in values.iter().copied().enumerate() {
+            let owner = unsafe { *self.chain_owners.get_unchecked(chain + slot) };
+            let held = unsafe { *self.owner_types.get_unchecked(owner as usize) };
+            if held.join(SlotType::of(value)) != held {
+                return false;
+            }
+        }
+        true
+    }
+
     #[inline(never)]
     fn widen_owner_type(&mut self, owner: u32, incoming: SlotType) -> bool {
         self.join_owner_type(owner, || incoming)

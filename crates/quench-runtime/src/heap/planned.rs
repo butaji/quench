@@ -52,6 +52,22 @@ impl Heap {
         }
     }
 
+    /// `alloc_planned_inline` where it calls nothing out of line: `None`, before any effect,
+    /// where a value widens its slot's type, has no narrow form, or the record space needs its
+    /// slow path, so a handler's hit path builds no frame.
+    #[inline(always)]
+    pub(crate) fn alloc_planned_inline_quick(&mut self, header: InlineObjectHeader, inline: [Value; INLINE_PROPERTY_COUNT], len: usize) -> Option<Value> {
+        if !self.properties.plan_values_admitted(header.shape(), &inline[..len]) {
+            return None;
+        }
+        let object = Object::from_inline_header(header, inline)?;
+        let id = self.object_records.claim_uninit_quick()?;
+        self.allocated += 1;
+        // SAFETY: the claimed record is uninitialized and written whole, before any safepoint.
+        unsafe { self.object_records.record_ptr(id).write(object) };
+        Some(Value::direct_object(id))
+    }
+
     /// A fresh direct object record claimed with nothing written: its `Value` and the address
     /// to write an `Object` at, `None` where the record space needs its slow path (the caller
     /// then allocates as `alloc_planned_object` does). Allocation never collects, so the

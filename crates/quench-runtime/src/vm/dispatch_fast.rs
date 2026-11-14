@@ -602,7 +602,7 @@ mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::lane_loop_field_stores;
 mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters; mod proxy_traps; mod completions; use completions::*;
-use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_initialize_stores, lane_add_stores, lane_return_constructed, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
+use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_initialize_stores, lane_add_stores, lane_return_constructed, lane_planned_construction, lane_planned_inline_quick, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_body_receiver, lane_context_constructs};
 use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
@@ -14415,6 +14415,24 @@ script_handler! {
         if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() {
             return exit(ip);
         }
+        let Some(this) = lane_planned_inline_quick(vm, r.get(i.b), r, i) else {
+            sibling!(lane_planned_construct_full::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, this);
+        // Allocating the receiver can make a collection due.
+        if vm.heap.should_collect() {
+            sibling!(lane_construct_allocation_due::<H>, r, ip, Carried::script_in(cx, view))
+        }
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `lane_planned_construct` past its quick case (`lane_planned_inline_quick`): any plan, and
+    /// the slow allocations, out of line so the quick case calls nothing.
+    #[inline(never)]
+    fn lane_planned_construct_full<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
         let Some(this) = lane_planned_construction(vm, r.get(i.b), r, i) else {
             requicken::<H>(ip, lane_script_construct::<H>);
             sibling!(lane_script_construct::<H>, r, ip, Carried::script_in(cx, view))
@@ -14422,6 +14440,16 @@ script_handler! {
         // Allocating the receiver can make a collection due.
         note_allocation(vm);
         r.set(i.a, this);
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// A construction whose receiver is already in its register and whose allocation made a
+    /// collection due: notes it (`note_allocation`) and goes on, out of line.
+    #[inline(never)]
+    fn lane_construct_allocation_due<>(cx, r, ip, i, view) {
+        note_allocation(unsafe { vm(cx) });
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
