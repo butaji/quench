@@ -7,6 +7,7 @@
 use super::*;
 use crate::vm::compiled::regions;
 use crate::heap::PlainPropertyStorage;
+use crate::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
 
 /// A non-null table reservation admitted for this native run. This proves no
 /// receiver identity, ID range, record liveness or property-storage lifetime.
@@ -15,7 +16,7 @@ pub(super) struct CheckedObjectTable(ir::Value);
 
 impl CheckedObjectTable {
     pub(super) fn prove(builder: &mut FunctionBuilder<'_>, base: ir::Value, miss: ir::Block) -> Self {
-        let present = builder.ins().icmp_imm_u(IntCC::NotEqual, base, 0);
+        let present = emit(builder).raw_compare_imm(Relation::NotEqual, base, 0);
         emit_js_guard(builder, present, miss);
         Self(base)
     }
@@ -65,7 +66,7 @@ impl ObjectRecord {
             ObjectTable::Checked(table) => table.base(),
         };
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-        let id = builder.ins().ireduce(types::I32, bits);
+        let id = emit(builder).raw_unary(Unary::Narrow(Lane::I32), bits);
         // Only a dominating verified definition/edge can supply this fact.
         // No safepoint or layout-changing operation may cross its lifetime.
         if !known.is_some_and(|fact| fact.ty.is_direct_object_family()) {
@@ -74,15 +75,15 @@ impl ObjectRecord {
         }
         // A direct object's id names a record of the reservation, whose base every native
         // entry and allocating callout reads (`JsStepDispatch::refresh_allocation_bases`).
-        let id = builder.ins().uextend(types::I64, id);
-        let offset = builder.ins().imul_imm_u(id, layout.record_size as i64);
+        let id = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I64), id);
+        let offset = emit(builder).raw_binary_imm(Binary::Mul, id, layout.record_size as i64);
         Self::Indexed { base: records, offset }
     }
 
     pub(super) fn address(self, builder: &mut FunctionBuilder<'_>) -> ir::Value {
         match self {
             Self::Address(address) => address,
-            Self::Indexed { base, offset } => builder.ins().iadd(base, offset),
+            Self::Indexed { base, offset } => emit(builder).raw_binary(Binary::Add, base, offset),
         }
     }
 
@@ -91,17 +92,17 @@ impl ObjectRecord {
     pub(super) fn offset_address(self, builder: &mut FunctionBuilder<'_>, displacement: ir::Value) -> ir::Value {
         let (base, offset) = match self {
             Self::Address(address) => (address, displacement),
-            Self::Indexed { base, offset } => (base, builder.ins().iadd(offset, displacement)),
+            Self::Indexed { base, offset } => (base, emit(builder).raw_binary(Binary::Add, offset, displacement)),
         };
-        builder.ins().iadd(base, offset)
+        emit(builder).raw_binary(Binary::Add, base, offset)
     }
 
     pub(super) fn header(self, builder: &mut FunctionBuilder<'_>, known: Option<typed_ir::VerifiedFact>) -> ObjectHeader {
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
         let address = self.address(builder);
         let shape = match known.and_then(|fact| fact.ty.object_shape()) {
-            Some(shape) => builder.ins().iconst(types::I32, i64::from(shape)),
-            None => builder.ins().load(types::I32, regions::shape_word(), address, layout.auxiliary_offset as i32),
+            Some(shape) => emit(builder).raw_const(Lane::I32, i64::from(shape)),
+            None => emit(builder).raw_load(Lane::I32, regions::shape_word(), address, layout.auxiliary_offset as i32),
         };
         ObjectHeader { record: self, shape, inline: inline_storage(builder, address), address }
     }
@@ -124,25 +125,25 @@ impl ObjectHeader {
         // A function's own read is the rare one; the object path stays the straight line.
         builder.set_cold_block(function_block);
         let record = builder.append_block_param(join, types::I64);
-        let id = builder.ins().ireduce(types::I32, bits);
-        let id = builder.ins().uextend(types::I64, id);
+        let id = emit(builder).raw_unary(Unary::Narrow(Lane::I32), bits);
+        let id = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I64), id);
         let object = crate::staged::value::is_direct_object(&mut emit(builder), bits);
-        builder.ins().brif(object, object_block, &[], function_block, &[]);
+        emit(builder).branch_if(object, (object_block, &[]), (function_block, &[]));
         builder.switch_to_block(object_block);
-        let offset = builder.ins().imul_imm_u(id, layout.record_size as i64);
-        let object_record = builder.ins().iadd(records, offset);
-        builder.ins().jump(join, &[ir::BlockArg::Value(object_record)]);
+        let offset = emit(builder).raw_binary_imm(Binary::Mul, id, layout.record_size as i64);
+        let object_record = emit(builder).raw_binary(Binary::Add, records, offset);
+        emit(builder).goto(join, &[object_record]);
         builder.switch_to_block(function_block);
         let is_function = crate::staged::value::is_direct_function(&mut emit(builder), bits);
-        let reserved = builder.ins().icmp_imm_u(IntCC::NotEqual, functions, 0);
-        let readable = builder.ins().band(is_function, reserved);
+        let reserved = emit(builder).raw_compare_imm(Relation::NotEqual, functions, 0);
+        let readable = emit(builder).raw_binary(Binary::And, is_function, reserved);
         emit_js_guard(builder, readable, miss);
-        let offset = builder.ins().imul_imm_u(id, function.record_size as i64);
-        let function_record = builder.ins().iadd(functions, offset);
-        let function_object = builder.ins().iadd_imm_u(function_record, function.object_offset as i64);
-        builder.ins().jump(join, &[ir::BlockArg::Value(function_object)]);
+        let offset = emit(builder).raw_binary_imm(Binary::Mul, id, function.record_size as i64);
+        let function_record = emit(builder).raw_binary(Binary::Add, functions, offset);
+        let function_object = emit(builder).raw_binary_imm(Binary::Add, function_record, function.object_offset as i64);
+        emit(builder).goto(join, &[function_object]);
         builder.switch_to_block(join);
-        let shape = builder.ins().load(types::I32, regions::shape_word(), record, layout.auxiliary_offset as i32);
+        let shape = emit(builder).raw_load(Lane::I32, regions::shape_word(), record, layout.auxiliary_offset as i32);
         Self { record: ObjectRecord::Address(record), shape, inline: inline_storage(builder, record), address: record }
     }
 }
@@ -221,10 +222,10 @@ pub(super) fn shape_in_set(builder: &mut FunctionBuilder<'_>, shape: ir::Value, 
     let (low, high) = (shapes[0], shapes[shapes.len() - 1]);
     let span = u64::from(high - low) + 1;
     if shapes.len() == 1 || span > SHAPE_SET_WORDS as u64 * u64::from(SHAPE_SET_WORD_BITS) {
-        let mut tests = shapes.iter().map(|&known| builder.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(known)));
+        let mut tests = shapes.iter().map(|&known| emit(builder).raw_compare_imm(Relation::Equal, shape, i64::from(known)));
         let first = tests.next().expect("a shape set is non-empty");
         let rest: Vec<_> = tests.collect();
-        return rest.into_iter().fold(first, |any, test| builder.ins().bor(any, test));
+        return rest.into_iter().fold(first, |any, test| emit(builder).raw_binary(Binary::Or, any, test));
     }
     let mut words = [0_u64; SHAPE_SET_WORDS];
     for &known in shapes {
@@ -232,21 +233,21 @@ pub(super) fn shape_in_set(builder: &mut FunctionBuilder<'_>, shape: ir::Value, 
         words[(offset / SHAPE_SET_WORD_BITS) as usize] |= 1 << (offset % SHAPE_SET_WORD_BITS);
     }
     let used = span.div_ceil(u64::from(SHAPE_SET_WORD_BITS)) as usize;
-    let offset = builder.ins().iadd_imm_u(shape, -i64::from(low));
-    let in_span = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, offset, span as i64);
-    let offset = builder.ins().uextend(types::I64, offset);
-    let index = builder.ins().ushr_imm_u(offset, i64::from(SHAPE_SET_WORD_BITS.trailing_zeros()));
-    let mut word = builder.ins().iconst(types::I64, words[used - 1] as i64);
+    let offset = emit(builder).raw_binary_imm(Binary::Add, shape, -i64::from(low));
+    let in_span = emit(builder).raw_compare_imm(Relation::UnsignedLess, offset, span as i64);
+    let offset = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I64), offset);
+    let index = emit(builder).raw_binary_imm(Binary::ShiftRightUnsigned, offset, i64::from(SHAPE_SET_WORD_BITS.trailing_zeros()));
+    let mut word = emit(builder).raw_const(Lane::I64, words[used - 1] as i64);
     for (position, &bits) in words[..used - 1].iter().enumerate().rev() {
-        let here = builder.ins().icmp_imm_u(IntCC::Equal, index, position as i64);
-        let bits = builder.ins().iconst(types::I64, bits as i64);
-        word = builder.ins().select(here, bits, word);
+        let here = emit(builder).raw_compare_imm(Relation::Equal, index, position as i64);
+        let bits = emit(builder).raw_const(Lane::I64, bits as i64);
+        word = emit(builder).raw_select(here, bits, word);
     }
-    let bit = builder.ins().band_imm_u(offset, i64::from(SHAPE_SET_WORD_BITS - 1));
-    let bit = builder.ins().ushr(word, bit);
-    let bit = builder.ins().band_imm_u(bit, 1);
-    let member = builder.ins().icmp_imm_u(IntCC::NotEqual, bit, 0);
-    builder.ins().band(in_span, member)
+    let bit = emit(builder).raw_binary_imm(Binary::And, offset, i64::from(SHAPE_SET_WORD_BITS - 1));
+    let bit = emit(builder).raw_binary(Binary::ShiftRightUnsigned, word, bit);
+    let bit = emit(builder).raw_binary_imm(Binary::And, bit, 1);
+    let member = emit(builder).raw_compare_imm(Relation::NotEqual, bit, 0);
+    emit(builder).raw_binary(Binary::And, in_span, member)
 }
 
 /// The most prototypes of one holder shape an inherited read folds: sibling classes whose
@@ -466,13 +467,12 @@ impl CheckedObject {
             Slots::Packed(_) => return None,
             Slots::Flat(base) => base,
             Slots::Either { inline, flat, .. } => {
-                let is_flat = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
+                let is_flat = emit(builder).raw_compare_imm(Relation::Equal, inline, 0);
                 emit_js_guard(builder, is_flat, miss);
                 flat
             }
         };
-        Some(builder.ins().iadd_imm_u(base,
-            i64::from(slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64))
+        Some(emit(builder).raw_binary_imm(Binary::Add, base, i64::from(slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64))
     }
 
     /// The projection of the record `record` whose `storage_len` values the arena at `base` holds
