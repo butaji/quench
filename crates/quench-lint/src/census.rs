@@ -40,8 +40,6 @@ enum Source {
 enum Extract {
     Syntax(fn(&syn::File) -> usize),
     Text(fn(&str) -> usize),
-    /// A count over all of the metric's files at once, where it relates one file to another.
-    Joined(fn(&[syn::File]) -> usize),
 }
 
 struct Metric {
@@ -160,24 +158,17 @@ fn source_files(sources: &[Source]) -> Result<Vec<PathBuf>, String> {
 }
 
 fn count_file(path: &Path, how: Extract) -> Result<usize, String> {
-    match how {
-        Extract::Text(count) => fs::read_to_string(path).map(|text| count(&text)).map_err(|error| format!("{}: {error}", path.display())),
-        Extract::Syntax(count) => parse_file(path).map(|syntax| count(&syntax)),
-        Extract::Joined(_) => Err(format!("{}: a joined metric counts all its files at once", path.display())),
-    }
-}
-
-fn parse_file(path: &Path) -> Result<syn::File, String> {
     let name = path.display();
     let text = fs::read_to_string(path).map_err(|error| format!("{name}: {error}"))?;
-    syn::parse_file(&text).map_err(|error| format!("{name}:{}: {error}", error.span().start().line))
+    match how {
+        Extract::Text(count) => Ok(count(&text)),
+        Extract::Syntax(count) => syn::parse_file(&text)
+            .map(|syntax| count(&syntax))
+            .map_err(|error| format!("{name}:{}: {error}", error.span().start().line)),
+    }
 }
 
 fn measure(metric: &Metric) -> Result<Measurement, String> {
-    if let Extract::Joined(count) = metric.extract {
-        let parsed = source_files(metric.sources)?.iter().map(|path| parse_file(path)).collect::<Result<Vec<_>, _>>()?;
-        return Ok(Measurement { total: count(&parsed), files: BTreeMap::new() });
-    }
     let mut files = BTreeMap::new();
     for path in source_files(metric.sources)? {
         let count = count_file(&path, metric.extract)?;
