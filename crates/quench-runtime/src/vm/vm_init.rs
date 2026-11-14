@@ -182,7 +182,7 @@ impl<H: Host> Vm<H> {
             runtime_atoms: RuntimeAtoms::default(),
             constructed_shapes: [provenance::ConstructedShape::EMPTY; provenance::CONSTRUCTED_SHAPE_ENTRIES],
             object_templates: Vec::new(),
-            method_caches: vec![],
+            method_caches: vec![], method_site_count: 0,
             megamorphic_methods: vec![],
             method_cache_atoms: Default::default(),
             #[cfg(feature = "profile-aggregate")]
