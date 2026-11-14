@@ -13,7 +13,7 @@ use super::*;
 use super::call_plan::inline::{Callee, Context, InlineSite};
 use super::call_plan::{CallForm, CallShape, DirectFacts};
 use super::super::{DirectCallee, DirectCandidates};
-use crate::bytecode::Function;
+use crate::bytecode::{Function, Op};
 use crate::compile::liveness::RegisterMasks;
 use crate::heap::GlobalFact;
 use std::rc::Rc;
@@ -51,7 +51,8 @@ pub(in crate::vm::compiled) struct Callees {
 
 /// Whether the call at `instruction` is a plain call a body's call chain makes: a call whose result
 /// is its register's, or one that returns its result (`return f(x)`), which the row after it
-/// completes with. The other forms record no callee (`call_plan::CallForm`).
+/// completes with. The other forms record no callee (`call_plan::CallForm`), but a method call's, which its site's method cache
+/// remembers (`Vm::add_method_callees`).
 pub(super) fn chains(instruction: WideInstruction) -> bool {
     CallForm::of(instruction.split_return().0) == Some(CallForm::Plain)
 }
@@ -60,6 +61,11 @@ pub(super) fn chains(instruction: WideInstruction) -> bool {
 /// latest its site reached.
 fn called<'a>(instruction: WideInstruction, site: &'a DirectCandidates) -> Option<&'a DirectCallee> {
     site.first().filter(|_| chains(instruction))
+}
+
+/// `called`, or the callee of a method call, which has candidates only where its rows make the call (`methods::makes_rows`).
+fn called_by_entry<'a>(instruction: WideInstruction, site: &'a DirectCandidates) -> Option<&'a DirectCallee> {
+    site.first().filter(|_| chains(instruction) || matches!(instruction.op(), Op::CallMethod | Op::CallThisMethod))
 }
 
 impl Callees {
@@ -73,7 +79,7 @@ impl Callees {
     pub(in crate::vm::compiled) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(&DirectCallee) -> Option<InlineBody>, stable: Vec<Option<GlobalFact>>) -> Self {
         let mut owned = Vec::new();
         let at = code.iter().zip(candidates).map(|(instruction, site)| {
-            owned.push(called(*instruction, site)?.clone());
+            owned.push(called_by_entry(*instruction, site)?.clone());
             Some(owned.len() - 1)
         }).collect();
         let bodies = owned.iter().map(body_of).collect();

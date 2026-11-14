@@ -4,13 +4,13 @@
 
 use crate::layout::{JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_ENV_STORAGE, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver};
-use crate::words::hole;
+use crate::words::{hole, hole64};
 use crate::places::tagged_place;
 use crate::stage::StencilStage;
 use crate::staged::object::{self, Layout, Slots};
 use crate::staged::region::Region;
-use crate::staged::{RecordSpace, environment};
-use crate::codes::{CAPTURE_ROW, CAPTURE_SET_ROW, ENV_ROW, ENV_SET_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW};
+use crate::staged::{RecordSpace, environment, lexical_read};
+use crate::codes::{CAPTURE_ROW, CAPTURE_SET_ROW, ENV_ROW, ENV_SET_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW};
 use crate::heap_rows::{hop, word_at};
 
 /// The depth-0 capture slot (holes 1 and 2) into the destination; a hit continues at TAKEN, as every row that may
@@ -109,6 +109,25 @@ fn global_store_row<const A: u8, const GATED: bool>(s: S, payload: usize) -> Out
     Out::Next(s)
 }
 
+/// The global lexical binding at the address in hole 1 (`staged::lexical_read`) into the destination; a hit continues at NEXT, a binding in
+/// its dead zone leaves.
+#[inline(always)]
+fn lexical_read_row<const D: u8>(s: S) -> Out {
+    let mut stage = StencilStage::from_hole(0);
+    deliver::<D>(s, need!(s, lexical_read(&mut stage, hole64::<HOLE_A>(), ())))
+}
+
+/// The first operand (hole 1) stored to the initialized global lexical binding at the address in hole 2. No code holds the binding's value
+/// (the cell is `Mutable`) and the record is a root the collector scans whole, so the store is one write.
+#[inline(always)]
+fn lexical_write_row<const A: u8>(s: S) -> Out {
+    let mut stage = StencilStage::from_hole(0);
+    let (address, value) = (hole64::<HOLE_B>(), tagged_place::<A, HOLE_A>(&s));
+    need!(s, lexical_read(&mut stage, address, ()));
+    stage.store_u64(Region::Cells.mutable(), address, 0, value);
+    Out::Next(s)
+}
+
 /// The environment row of kind `KIND`.
 #[inline(always)]
 pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8>(s: S, payload: usize) -> Out {
@@ -119,6 +138,8 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8>(s
         ENV_SET_ROW => env_set_row::<A>(s, payload),
         GLOBAL_READ_ROW => global_read_row::<D>(s, payload),
         GLOBAL_STORE_ROW => global_store_row::<A, ENTRY>(s, payload),
+        LEXICAL_READ_ROW => lexical_read_row::<D>(s),
+        LEXICAL_WRITE_ROW => lexical_write_row::<A>(s),
         _ => env_define_row::<A>(s, payload),
     }
 }

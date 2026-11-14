@@ -121,6 +121,12 @@ pub(super) enum Heap {
     /// The first operand stored to that slot (hole 0: the record id), where the row's `entry` variant takes the
     /// store gate for an operand that may be a heap reference, and a Number operand needs none.
     GlobalStore,
+    /// The word of the global lexical binding at the address in hole 1 into the destination where it is initialized
+    /// (`staged::lexical_read`), else the row leaves, for the interpreter to raise the dead zone's `ReferenceError`: a Stable
+    /// fact holds the address (the global layout).
+    LexicalRead,
+    /// The first operand stored to the initialized global lexical binding at the address in hole 2, which no code holds the value of.
+    LexicalWrite,
     /// The tagged word of hole 1 into the destination: an immutable global, a folded `typeof` name, and
     /// the `undefined` receiver of a name call.
     Word,
@@ -221,6 +227,8 @@ impl Heap {
             Heap::Realm => library::REALM_ROW,
             Heap::GlobalRead => library::GLOBAL_READ_ROW,
             Heap::GlobalStore => library::GLOBAL_STORE_ROW,
+            Heap::LexicalRead => library::LEXICAL_READ_ROW,
+            Heap::LexicalWrite => library::LEXICAL_WRITE_ROW,
             _ => return None,
         })
     }

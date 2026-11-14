@@ -838,6 +838,11 @@ impl LaneRecoverySpace {
         }
         space
     }
+
+    /// Room for `registers` frame slots past the caller's, which a body's rows name beyond its inlined windows (its scratch).
+    pub(super) fn reaching(self, registers: usize) -> Self {
+        if registers == 0 { self } else { Self { values: self.values.max(fill_room::<SCRIPT_FILL_BLOCK>(registers)), ..self } }
+    }
 }
 
 /// A lane view's frameless body (`LaneView::tier_lane`). Shape compaction
@@ -15075,6 +15080,16 @@ fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, pc: u
         target, method, body, call: view.records().wrapping_add(pc).addr(), cell: view_of.entry_cell(),
         callee: target.callee, registers: target.registers, sloppy, capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None,
     })
+}
+
+impl<H: Host> Vm<H> {
+    /// The `compiled::DirectCallee` of `callee`, the method the method call at `pc` of `view`, a function of `code`, passes `argc`
+    /// arguments, which its site's method cache remembers: its call target, resolved as a call by its entry resolves it
+    /// (`lane_direct_callee`).
+    pub(super) fn method_direct_callee(&mut self, code: &ResidualProgram, view: &LaneView, (function, pc, argc): (u32, usize, u16), callee: Value) -> Option<super::compiled::DirectCallee> {
+        let target = self.resolve_script_call_target(code, callee)?;
+        lane_direct_callee(self, view, function, pc, argc, target)
+    }
 }
 
 /// Whether a lane body's run may call bodies by their compiled entries: the lane may make

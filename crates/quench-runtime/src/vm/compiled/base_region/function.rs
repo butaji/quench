@@ -59,6 +59,9 @@ pub(in crate::vm::compiled) struct Body {
     pub(in crate::vm::compiled) slot_types: Box<[crate::code_dependencies::SlotDependency]>,
     /// Where a run that left a loop region at a PC re-enters it (`resume`); none for a body.
     pub(in crate::vm::compiled) resumes: ResumeTable,
+    /// The registers its rows name past the function's own: its inlined callees' windows and the scratch of its method calls and
+    /// `instanceof`/`in` jumps, whose frame slots its recovery room covers (`LaneRecoverySpace::reaching`).
+    pub(in crate::vm::compiled) scratch: usize,
 }
 
 /// What a stitch decides its call sites by: the callees they recorded and the stitch's budget, the
@@ -98,11 +101,11 @@ fn lowered(region: &LoopRegion, pc: u32, sites: &Sites, (instruction, returning)
     }
 }
 
-/// Whether the row is a fast arm of its instruction: a fast step, a constant written as it is, or the value a Stable
-/// fact folded (`Decoded::folded`).
+/// Whether the row is a fast arm of its instruction: a fast step, a constant written as it is, the value a Stable
+/// fact folded (`Decoded::folded`), or a global lexical binding's word read or written in place.
 #[cfg(test)]
 fn is_fast(row: &Decoded) -> bool {
-    matches!(row.step, Some(Step::Fast(_) | Step::Guard(_))) || matches!(row.a, Some(Source::Value(_))) || row.folded.is_some()
+    matches!(row.step, Some(Step::Fast(_) | Step::Guard(_))) || matches!(row.a, Some(Source::Value(_))) || row.folded.is_some() || row.lexical.is_some()
 }
 
 /// Whether a row may be followed by the completion of the activation with its result: it falls
@@ -143,6 +146,29 @@ fn call(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstru
     };
     let completion = shape.returning.then(|| What::Row(returned(shape.result)));
     std::iter::once(first).chain(completion).collect()
+}
+
+/// The rows of an instruction a body makes in the scratch registers past the function's own (`scratch`): the comparison and the jump on it
+/// of an `instanceof` or `in` jump (`sites::compare_jump`), or the method call whose chain loads its callee (`methods::method_call`). A
+/// region reads its entry record, and leaves these instructions to `cover`.
+fn expanded(sites: &Sites, pc: u32, instruction: WideInstruction) -> Option<Vec<What>> {
+    (sites.ending == Ending::Body).then_some(())?;
+    let direct = sites.facts.get(pc as usize).and_then(Option::as_ref);
+    let rows = compare_jump(sites.known, pc, instruction, sites.registers).or_else(|| method_call(sites.known, pc, instruction, sites.registers, direct).map(|call| vec![call]))?;
+    #[cfg(test)]
+    note_fast(instruction.op());
+    Some(rows.into_iter().map(What::Row).collect())
+}
+
+/// The registers the rows name above the function's own `registers`: the scratch the rows of `expanded` write or load a method call's callee
+/// and receiver to, and inlined windows, whose frame slots the body's recovery room covers (`LaneRecoverySpace::reaching`).
+fn scratch(rows: &[Decoded], registers: u16) -> usize {
+    let loaded = rows.iter().filter_map(|row| match row.step {
+        Some(Step::Call(shape)) if shape.form == CallForm::Method => Some(shape.callee.max(shape.this)),
+        _ => None,
+    });
+    let reach = rows.iter().flat_map(Decoded::registers).chain(loaded).map(|register| usize::from(register) + 1).max().unwrap_or(0);
+    reach.saturating_sub(usize::from(registers))
 }
 
 /// The facts the rows of the instructions that are no planned call decode by: a body's read the heap
@@ -394,7 +420,7 @@ fn parts(region: &LoopRegion, sites: &mut Sites, helpers: LaneHelpers) -> Vec<Pa
     let facts = decode_facts(region, sites, &calls);
     let mut parts: Vec<Part> = region.instructions().iter().enumerate().flat_map(|(k, instruction)| {
         let pc = at(k);
-        let whats = calls[k].take().unwrap_or_else(|| vec![cover(region, pc, sites, *instruction, (facts, helpers))]);
+        let whats = calls[k].take().or_else(|| expanded(sites, pc, *instruction)).unwrap_or_else(|| vec![cover(region, pc, sites, *instruction, (facts, helpers))]);
         whats.into_iter().map(move |what| Part { pc, what })
     }).collect();
     if sites.ending == Ending::Region {
@@ -407,6 +433,7 @@ fn parts(region: &LoopRegion, sites: &mut Sites, helpers: LaneHelpers) -> Vec<Pa
 fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: LaneHelpers) -> Result<Body, String> {
     let (ending, callees) = (sites.ending, sites.facts);
     let stitched = stitch(region, parts(region, &mut sites, helpers), spec.registers, spec.known.invalidation, ending);
+    let scratch = scratch(&stitched.rows, spec.registers);
     let span = Span::of(region, stitched.rows.len(), &stitched.live);
     let reached = reachable(&span, &stitched.rows)?;
     if ending == Ending::Body && stitched.rows[0].step == Some(Step::Leave) {
@@ -430,5 +457,5 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let (atoms, holders) = (held_atoms(&decoded), held_holders(&decoded));
     Ok(Body { code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter()), atoms, holders,
         instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,
-        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes })
+        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes, scratch })
 }

@@ -7,14 +7,24 @@
 use super::*;
 use crate::vm::in_presence::InPresence;
 
-/// Whether `instruction` is `left instanceof right`, which writes a boolean to a register.
-fn is_instanceof(instruction: WideInstruction) -> bool {
-    instruction.op().class() == Class::Binary && instruction.binary_operator() == BinaryOperator::Instanceof as u32
+/// The operator of a comparison that is a `Binary`, which writes a boolean to a register, or a `JumpBinaryFalse`, which branches
+/// where the comparison fails.
+fn comparison_operator(instruction: WideInstruction) -> Option<u32> {
+    match instruction.op().class() {
+        Class::Binary => Some(instruction.binary_operator()),
+        Class::JumpBinaryFalse => Some(instruction.binary_operator_field()),
+        _ => None,
+    }
 }
 
-/// Whether `instruction` is `key in object`, which writes a boolean to a register.
+/// Whether `instruction` is `left instanceof right`, as a value or as a jump.
+fn is_instanceof(instruction: WideInstruction) -> bool {
+    comparison_operator(instruction) == Some(BinaryOperator::Instanceof as u32)
+}
+
+/// Whether `instruction` is `key in object`, as a value or as a jump.
 fn is_membership(instruction: WideInstruction) -> bool {
-    instruction.op().class() == Class::Binary && instruction.binary_operator() == BinaryOperator::In as u32
+    comparison_operator(instruction) == Some(BinaryOperator::In as u32)
 }
 
 /// Where the value of a register at some PC comes from, along the straight-line code before it.
@@ -67,6 +77,28 @@ fn membership_keys(code: &[WideInstruction], constants: &[Value]) -> Vec<Option<
     }).collect()
 }
 
+/// The facts rows hold, each once, in order.
+pub(super) fn distinct<T: Ord>(facts: impl Iterator<Item = T>) -> Box<[T]> {
+    let mut facts: Vec<T> = facts.collect();
+    facts.sort_unstable();
+    facts.dedup();
+    facts.into()
+}
+
+/// The exact shapes of the holders whose values the rows hold folded (`Decoded::folded`), and the owners
+/// of the chain proofs the adding stores hold (`adds::Add::chain_owner`): the Stable facts the code
+/// takes, which a change of a value a prototype of that shape holds, or of any prototype's layout, retires it.
+pub(super) fn held_holders(decoded: &[Decoded]) -> Box<[u32]> {
+    let chained = decoded.iter().filter_map(|row| row.add.and_then(adds::Add::chain_owner));
+    distinct(decoded.iter().filter_map(|row| row.folded.map(|folded| folded.holder)).chain(chained))
+}
+
+/// The atoms the rows hold unnamed by method caches (`Decoded::atom`): the Stable facts the code
+/// takes, which a cache naming one retires it.
+pub(super) fn held_atoms(decoded: &[Decoded]) -> Box<[Atom]> {
+    distinct(decoded.iter().filter_map(|row| row.atom))
+}
+
 /// The exact shapes of the holders the rows' `instanceof`s inherit the native `@@hasInstance` from, with the slots and
 /// shapes of their constructors' `prototype`s (`Decoded::instanceof`): the Stable facts the code takes, which a write
 /// of a `prototype`, a departure of a constructor's shape or a change of a holder's values retires it.
@@ -81,25 +113,55 @@ pub(super) fn held_constructors(decoded: &[Decoded]) -> Box<[Value]> {
 }
 
 /// The row of `key in object` over a register's object, where the VM remembers exactly one receiver layout answering the
-/// key (`Known::presences`): the boolean it answered, while the object has that exact shape and prototype link
-/// (`Heap::Held`, the folded read's row over a constant), under the dependency on the prototypes' layouts that
+/// key (`Known::presences`): the boolean it answered to the register `dst`, while the object has that exact shape and prototype
+/// link (`Heap::Held`, the folded read's row over a constant), under the dependency on the prototypes' layouts that
 /// `Folded::holder` names.
-pub(super) fn membership_row(known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+pub(super) fn membership_row(known: Known, pc: u32, instruction: WideInstruction, dst: Register) -> Option<Decoded> {
     let fact = known.presences?.get(pc as usize).copied().flatten().filter(|_| is_membership(instruction))?;
     let object = Some(Source::Register(instruction.operand_c().register_index()?));
-    let row = Decoded::heap(Heap::Held, Some(instruction.result_register()), object, None);
+    let row = Decoded::heap(Heap::Held, Some(dst), object, None);
     Some(Decoded { hole: Value::boolean(fact.present).to_bits(), folded: Some(Folded { shape: fact.shape, link: fact.link, holder: fact.holder }), ..row })
 }
 
-/// The step `row` of the `instanceof` at `pc` as the fast arm of a constructor the VM proved steady
-/// (`Known::instanceofs`): the value and constructor registers are its operands, the constructor's identity its
-/// `hole`, with the helper step behind it as the slow arm. Any other row is as it is.
+/// What the fast arm of the `instanceof` at `pc` stands on: its value and constructor registers, and the constructor's identity with
+/// what the VM proved of it (`Known::instanceofs`).
+type InstanceofArm = (Source, Source, (Value, InstanceofFact));
+
+fn instanceof_operands(known: Known, pc: u32, instruction: WideInstruction) -> Option<InstanceofArm> {
+    is_instanceof(instruction).then_some(())?;
+    let (value, constructor) = instruction.operand_b().register_index().zip(instruction.operand_c().register_index())?;
+    Some((Source::Register(value), Source::Register(constructor), known.instanceofs.and_then(|facts| facts(pc as usize))?))
+}
+
+/// `row` standing on the operands of an `instanceof` fast arm: the constructor's identity is its `hole`, which the constructor register
+/// must hold, and the proved facts are the Stable facts the code takes.
+fn standing_on(row: Decoded, (value, constructor, proved): InstanceofArm) -> Decoded {
+    Decoded { a: Some(value), b: Some(constructor), hole: proved.0.to_bits(), instanceof: Some(proved), ..row }
+}
+
+/// The step `row` of the `instanceof` at `pc` as the fast arm of a constructor the VM proved steady, with the helper step behind it as
+/// the slow arm. Any other row is as it is.
 pub(super) fn instanceof_arm(known: Known, pc: u32, instruction: WideInstruction, row: Decoded) -> Decoded {
-    let operands = is_instanceof(instruction).then(|| instruction.operand_b().register_index().zip(instruction.operand_c().register_index())).flatten();
-    let proved = known.instanceofs.zip(operands).filter(|_| row.step == Some(Step::Helper) && row.dst.is_some());
-    let Some((proved, (value, constructor))) = proved.and_then(|(facts, operands)| facts(pc as usize).map(|found| (found, operands))) else { return row };
-    let hole = proved.0.to_bits();
-    Decoded { step: Some(Step::Fast(Heap::Instanceof)), a: Some(Source::Register(value)), b: Some(Source::Register(constructor)), hole, instanceof: Some(proved), ..row }
+    match instanceof_operands(known, pc, instruction).filter(|_| row.step == Some(Step::Helper) && row.dst.is_some()) {
+        Some(operands) => standing_on(Decoded { step: Some(Step::Fast(Heap::Instanceof)), ..row }, operands),
+        None => row,
+    }
+}
+
+/// The `instanceof` of a jump as the fast arm writing its boolean to the register `dst`, whose miss leaves at the jump
+/// (`Step::Guard`), where the interpreter decides it.
+fn instanceof_jump(known: Known, pc: u32, instruction: WideInstruction, dst: Register) -> Option<Decoded> {
+    let operands = instanceof_operands(known, pc, instruction)?;
+    Some(standing_on(Decoded::step(Step::Guard(Heap::Instanceof), Some(dst)), operands))
+}
+
+/// The rows of a `JumpBinaryFalse` of `instanceof` or `in` the VM remembers an answer for: the comparison's row, writing its boolean to
+/// the register `scratch`, then the jump to the instruction's target where that boolean is false.
+pub(super) fn compare_jump(known: Known, pc: u32, instruction: WideInstruction, scratch: Register) -> Option<Vec<Decoded>> {
+    (instruction.op().class() == Class::JumpBinaryFalse).then_some(())?;
+    let compared = instanceof_jump(known, pc, instruction, scratch).or_else(|| membership_row(known, pc, instruction, scratch))?;
+    let jump = Decoded::number(Kind::JumpFalse, None, Some(Source::Register(scratch)), None, Some(instruction.jump_target()));
+    Some(vec![compared, jump])
 }
 
 impl<H: crate::Host> crate::vm::Vm<H> {

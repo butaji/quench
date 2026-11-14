@@ -40,12 +40,12 @@ pub(crate) const FROZEN_FIELD: BindingTime = BindingTime::Static;
 
 impl GlobalBinding {
     /// What this binding leaves known: an immutable global's value and a closed program's
-    /// value are fixed at specialization, a held value rests on a dependency, and a
-    /// dynamic binding is the lane's own read.
+    /// value are fixed at specialization, a held value or a lexical binding's address rests on a
+    /// dependency, and a dynamic binding is the lane's own read.
     pub(crate) const fn time(&self) -> BindingTime {
         match self {
             Self::Constant(_) | Self::Frozen { .. } => BindingTime::Static,
-            Self::Held { .. } | Self::Typed { .. } => BindingTime::Stable,
+            Self::Held { .. } | Self::Typed { .. } | Self::Lexical { .. } => BindingTime::Stable,
             Self::Dynamic => BindingTime::Dynamic,
         }
     }

@@ -1,6 +1,6 @@
 //! The forms a whole-function body makes in place: each has its row (or its helper step), and a body
 //! that holds it runs as the interpreter does, with the interpreter's step behind a fast arm.
-use super::tests::{run_both, run_in};
+use super::tests::{run_after, run_both, run_in};
 use crate::JitMode;
 use crate::bytecode::Op as Opcode;
 use crate::vm::compiled::base_region::fast_rows;
@@ -239,5 +239,76 @@ fn new_of_a_constructor_that_captures_variables_runs_as_a_body() {
         let (interpreted, compiled, [runs, _]) = run_in(mode, source);
         assert_eq!(interpreted, compiled, "{mode:?}");
         assert!(runs > 100, "{mode:?}: the bodies ran {runs} times");
+    }
+}
+
+/// `v instanceof C` and `'k' in o` as a branch are the comparison's row writing its boolean to a scratch register and the jump on it, as the
+/// value forms are rows: the same answers the VM remembered, which leave at the jump for any other value and layout, where the
+/// interpreter decides.
+#[test]
+fn instanceof_and_in_jumps_are_rows_followed_by_the_branch() {
+    let before = fast_rows(Opcode::JumpBinaryFalse);
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "class A {} class B extends A {} function F() {}
+         function pick(v) { if (v instanceof A) return 1; return 2; }
+         function has(o) { if ('a' in o) return 4; return 8; }
+         function both(v, o) { let s = 0; for (let i = 0; i < 3; i++) { if (v instanceof A) s = s + 1; if ('a' in o) s = s + 2; } return s; }
+         const q = new B(); const p = { a: 1 };
+         let t = 0;
+         for (let k = 0; k < 600; k++) t = (t + pick(q) + has(p) + both(q, p)) | 0;
+         print(t); print(pick(new F())); print(has({})); print(both({}, { a: 2 })); print(pick(q)); print(has(p));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+    assert!(fast_rows(Opcode::JumpBinaryFalse) > before, "no instanceof or `in` jump row");
+}
+
+/// `o.m(x)` and `this.m(x)` of a method the site's method cache remembered are loads of the method (the prototype's value folded, or
+/// the cache entry's slot) into a scratch slot, then the direct call through the callee's entry cell with that slot as its callee, whose
+/// miss, for another receiver layout or another method, is the step helper that makes the whole call.
+#[test]
+fn a_method_call_of_a_cached_callee_is_a_direct_call_after_its_load() {
+    let ops = [Opcode::CallMethod, Opcode::CallThisMethod];
+    let before = ops.map(fast_rows);
+    let (interpreted, compiled, [runs, returns]) = run_both(
+        "class A { constructor(n) { this.n = n; } add(x) { return this.n + x; } twice(x) { return this.add(x) + this.add(1); } }
+         function drive(o, n) { let s = 0; for (let i = 0; i < n; i++) s = (s + o.add(i) + o.twice(i)) | 0; return s; }
+         const a = new A(3); let t = 0;
+         for (let k = 0; k < 300; k++) t = (t + drive(a, 5)) | 0;
+         print(t); print(drive(a, 7)); print(drive(new A(9), 4));
+         print(drive({ n: 1, add(x) { return x; }, twice(x) { return x * 2; } }, 3));
+         A.prototype.add = function (x) { return x - 1; };
+         print(drive(a, 6));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100 && returns > 100, "the bodies ran {runs} times and completed {returns}");
+    for (op, before) in ops.into_iter().zip(before) {
+        assert!(fast_rows(op) > before, "{op:?} has no method call row");
+    }
+}
+
+/// A global lexical binding the declarative record retains (a finished script's top-level `let`) is read and written by a row over its word at
+/// an address of the record, under the global layout: a new declaration, which moves the record, retires the body, and a name that is
+/// no binding, or a binding in its dead zone, is the interpreter's.
+#[test]
+fn global_lexical_bindings_are_read_and_written_live_by_rows() {
+    let ops = [Opcode::LoadName, Opcode::StoreName];
+    let before = ops.map(fast_rows);
+    let (interpreted, compiled, [runs, returns]) = run_after(
+        JitMode::BaseOnly,
+        &[("let counter = 0; let limit = 5;", "declarations.js")],
+        "function bump(i) { counter = (counter + i) | 0; return counter + limit; }
+         function absent() { return missing; }
+         let t = 0;
+         for (let k = 0; k < 600; k++) t = (t + bump(k % 7)) | 0;
+         print(t); print(counter); print(limit);
+         try { absent(); } catch (e) { print(e instanceof ReferenceError); }
+         for (let k = 0; k < 600; k++) t = (t + bump(k % 5)) | 0;
+         print(t); print(counter);",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100 && returns > 100, "the bodies ran {runs} times and completed {returns}");
+    for (op, before) in ops.into_iter().zip(before) {
+        assert!(fast_rows(op) > before, "{op:?} has no lexical binding row");
     }
 }

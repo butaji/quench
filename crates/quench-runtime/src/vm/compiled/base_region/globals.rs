@@ -13,13 +13,19 @@
 //!    through the store gate where the value may be a heap reference; any other store, and any
 //!    access with no slot fact, is the VM's own (`Step::CallOut`) or the interpreter's.
 //!
+//! A global lexical binding (a script's top-level `let`, `const` or class the declarative record holds, not
+//! the global object) is the same access one level down: its word lives at an address of the record
+//! (`Vm::global_lexical_slot`), which stays put until a new declaration changes the global layout (the
+//! same dependency), so a load reads it live (`Heap::LexicalRead`) and a store of a binding no code holds the
+//! value of writes it (`Heap::LexicalWrite`); a binding in its dead zone leaves, for the interpreter to raise.
+//!
 //! A name call's receiver, `undefined`, is a second definition of the row (`Decoded::also`).
 
 use super::*;
 use crate::code_dependencies::SlotDependency;
 use crate::heap::GlobalLayoutFact;
 use crate::typed_ir::Type;
-use crate::vm::global_facts::{GlobalRead, GlobalSlot};
+use crate::vm::global_facts::{GlobalRead, GlobalSlot, LexicalSlot};
 use quench_bjit::{padded_holes, HOLES};
 
 /// The global object's slot a row holds: the fact the VM took (`Vm::stable_global_slot`) and the
@@ -66,6 +72,7 @@ pub(super) fn global_row(known: Known, pc: u32, instruction: WideInstruction) ->
             Some(word_row(instruction, value, None))
         }
         GlobalRead::Slot(slot) => slot_row(known, instruction, Access::of(slot)?),
+        GlobalRead::Lexical(slot) => lexical_row(instruction, slot),
         _ => None,
     }
 }
@@ -93,6 +100,17 @@ fn slot_row(known: Known, instruction: WideInstruction, access: Access) -> Optio
         Class::StoreName => store_row(known, instruction, access),
         _ => None,
     }
+}
+
+/// The row of an access of a global lexical binding's word at its address: a load reads it, leaving where it is in its dead zone, and a store
+/// writes it where it is initialized. Any other access is the VM's.
+fn lexical_row(instruction: WideInstruction, slot: LexicalSlot) -> Option<Decoded> {
+    let row = match instruction.op().class() {
+        Class::LoadName | Class::LoadNameCall => Decoded { also: receiver(instruction), ..Decoded::heap(Heap::LexicalRead, Some(instruction.result_register()), None, None) },
+        Class::StoreName => Decoded::heap(Heap::LexicalWrite, None, Some(Source::Register(instruction.register_a())), None),
+        _ => return None,
+    };
+    Some(Decoded { hole: slot.address as u64, lexical: Some(slot), ..row })
 }
 
 /// Whether `instruction` stores to a global name, which may write a field of the global object that a
@@ -145,6 +163,8 @@ pub(super) fn global_holes(
     Some(padded_holes(match heap {
         Heap::GlobalRead => [dst_hole, id, decoded.hole],
         Heap::GlobalStore => [id, a_hole, decoded.hole],
+        Heap::LexicalRead => [dst_hole, decoded.hole, 0],
+        Heap::LexicalWrite => [0, a_hole, decoded.hole],
         Heap::Word => [dst_hole, decoded.hole, 0],
         _ => return None,
     }))
@@ -177,25 +197,17 @@ pub(super) fn receiver_row(homes: &Homes, register: Register, pc: u32) -> Result
     ))
 }
 
-/// The realm the rows' slots belong to: every row of one compile names the same one.
+/// The realm the rows' slots and lexical bindings belong to: every row of one compile names the same one.
 pub(super) fn held_realm(decoded: &[Decoded]) -> Option<RealmProof> {
-    decoded
-        .iter()
-        .find_map(|row| row.global)
-        .map(|access| RealmProof {
-            global: access.slot.global.to_bits(),
-            offset: u64::from(access.slot.realm_offset.unsigned_abs()),
-        })
+    let proof = |global: Value, realm_offset: i32| RealmProof { global: global.to_bits(), offset: u64::from(realm_offset.unsigned_abs()) };
+    decoded.iter().find_map(|row| {
+        row.global.map(|access| proof(access.slot.global, access.slot.realm_offset)).or_else(|| row.lexical.map(|slot| proof(slot.global, slot.realm_offset)))
+    })
 }
 
 /// The global objects whose layout the rows hold (a Stable fact): a change of one retires the code.
 pub(super) fn held_layouts(decoded: &[Decoded]) -> Box<[GlobalLayoutFact]> {
-    distinct(
-        decoded
-            .iter()
-            .filter_map(|row| row.global)
-            .map(|access| access.slot.layout),
-    )
+    distinct(decoded.iter().filter_map(|row| row.global.map(|access| access.slot.layout).or_else(|| row.lexical.map(|slot| slot.layout))))
 }
 
 /// The slot types the rows rely on, each once: a write of another type retires the code.

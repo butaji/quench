@@ -180,6 +180,14 @@ impl Lowering<'_, '_> {
         self.prove_realm(state, exit, (slot.global, slot.realm_offset));
     }
 
+    /// Holds the layout of the global object `slot` names (`hold_stable`), under which a new declaration is the only change that moves the
+    /// declarative record's words, and the realm active that the record belongs to: a global lexical binding is read live, at its address.
+    pub(super) fn hold_lexical(&mut self, state: &mut State, exit: ir::Block, slot: crate::vm::global_facts::LexicalSlot) {
+        self.hold_stable(state, exit);
+        self.stable.layouts.insert(slot.layout);
+        self.prove_realm(state, exit, (slot.global, slot.realm_offset));
+    }
+
     /// Proves the realm of global object `global` active, from the VM's field at `realm_offset`.
     /// A call returns to its caller's realm, so the proof outlives every call.
     pub(super) fn prove_realm(&mut self, state: &mut State, exit: ir::Block, realm: (Value, i32)) {
