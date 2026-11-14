@@ -3784,6 +3784,31 @@ script_handler! {
     }
 }
 
+/// The fast case of `proved_updated_read`: the key `i.b ± 1` as a word-range index
+/// (`Value::int_key_offset`, then the step), which an int32 whose step stays in `[0, bound)`
+/// alone passes, so no tag test, overflow test or retagging runs: the update written is the
+/// key word stepped by one, with no carry into the tag below 2^31. `None` writes nothing and
+/// leaves the pair to its checked form (an index past the proof, any other key, a hole).
+/// The pair's base is one its loop does not redefine (`specialize_proved_arrays`), so it is
+/// never the updated register.
+macro_rules! proved_stepped_read {
+    ($cx:expr, $r:expr, $ip:expr, $update:expr, $decrement:expr) => {{
+        // SAFETY: the pair is two records, the second never the view's last.
+        let read = unsafe { &*following($ip) };
+        debug_assert_ne!(read.b, $update.a);
+        let word = $r.get($update.b);
+        let key = if $decrement { word.int_key_offset().wrapping_sub(1) } else { word.int_key_offset().wrapping_add(1) };
+        match unsafe { (*$cx).proofs.element(read.b, $r.get(read.b), key) } {
+            Some(element) => {
+                let stepped = if $decrement { word.to_bits() - 1 } else { word.to_bits() + 1 };
+                $r.set($update.a, Value::from_bits(stepped));
+                Some(element)
+            }
+            None => None,
+        }
+    }};
+}
+
 /// The proved read (`lane_get_index_proved`) of `lane_update_get_index`'s pair at `ip`, of
 /// the integer update `index` of record `update`, which it writes first; a read the proofs
 /// decline takes `lane_updated_proof_miss`, as the pair's own fast path leaves it.
@@ -3806,6 +3831,10 @@ script_handler! {
     /// the proved read of its element (`proved_updated_read`); any other update takes
     /// `lane_update_get_index`.
     fn lane_update_get_index_proved<DECREMENT: bool>(cx, r, ip, i, view) {
+        if let Some(element) = proved_stepped_read!(cx, r, ip, i, DECREMENT) {
+            r.set(unsafe { &*following(ip) }.a, element);
+            next!(cx, r, following(following(ip)), Carried::script_in(cx, view))
+        }
         let Some(index) = integer_increment::<DECREMENT>(r.get(i.b)) else {
             sibling!(lane_update_get_index::<H, DECREMENT>, r, ip, Carried::script_in(cx, view))
         };
@@ -3821,6 +3850,10 @@ script_handler! {
     ///
     /// With `RAW` the operation's result keeps its double form (`raw_results`).
     fn lane_update_get_index_operator_proved<DECREMENT: bool, OP: u32, RAW: bool>(cx, r, ip, i, view) {
+        if let Some(element) = proved_stepped_read!(cx, r, ip, i, DECREMENT) {
+            r.set(unsafe { &*following(ip) }.a, element);
+            resume!(cx, lane_read_operator::<H, OP, RAW>(cx, r, ip, element));
+        }
         let Some(index) = integer_increment::<DECREMENT>(r.get(i.b)) else {
             sibling!(lane_update_get_index_operator::<H, DECREMENT, OP>, r, ip, Carried::script_in(cx, view))
         };
