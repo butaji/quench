@@ -98,3 +98,20 @@ impl<H: Host> Vm<H> {
         }
     }
 }
+
+/// The numeric binary operator an immediate names (`numeric_binary_operator`), for a
+/// number loop's plan (`number_loop`).
+pub(in crate::vm) fn numeric_operator(immediate: u32) -> Option<BinaryOperator> {
+    numeric_binary_operator(immediate)
+}
+
+/// Whether `operator` is bitwise, and then whether its result is always an int32 (all but
+/// `>>>`).
+pub(in crate::vm) fn int32_bitwise_kind(operator: BinaryOperator) -> Option<bool> {
+    NumberBitwise::from_binary_operator(operator).map(|operation| operation != NumberBitwise::ShiftRightUnsigned)
+}
+
+/// `numeric_number_result` of `operator` on two doubles.
+pub(in crate::vm) fn number_operator_result(operator: BinaryOperator, left: f64, right: f64) -> f64 {
+    numeric_number_result(operator, left, right)
+}

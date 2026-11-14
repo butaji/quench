@@ -136,6 +136,8 @@ union LaneOperand {
     site: *const LoopSite,
     /// The first record of a vector region: the region, which the view owns.
     region: *const vector_region::VectorRegion,
+    /// The update record of a number loop (`lane_number_loop`): the loop, which the view owns.
+    number_loop: *const number_loop::NumberLoop,
 }
 
 /// A `GetField` record's operand: its immediate, and the exact receiver shape its own-field
@@ -211,6 +213,13 @@ impl LaneInstruction {
         // SAFETY: `install_loop_sites` writes `site` for the records it gives
         // `lane_loop_jump`, the only handler that reads it; the sites live in the view.
         unsafe { &*self.operand.site }
+    }
+
+    #[inline(always)]
+    fn number_loop(&self) -> *const number_loop::NumberLoop {
+        // SAFETY: the view writes `number_loop` for the records it gives `lane_number_loop`,
+        // the only handler that reads it.
+        unsafe { self.operand.number_loop }
     }
 
     #[inline(always)]
@@ -344,6 +353,10 @@ pub(super) struct LaneView {
     /// those records read them.
     #[cfg_attr(not(test), allow(dead_code))]
     vector_regions: Box<[vector_region::VectorRegion]>,
+    /// The number loops whose update records point into them (`lane_number_loop`): owned
+    /// for those records, their only readers.
+    #[allow(dead_code)]
+    number_loops: Box<[number_loop::NumberLoop]>,
     /// The record an activation starts at (`LaneView::start`): its first, or `prologue`
     /// while the JavaScript tier may claim the function (`LaneView::claim_for_tier`).
     start: std::cell::Cell<Ip>,
@@ -9619,6 +9632,30 @@ lane_handler! {
 
 #[path = "vector_region.rs"]
 mod vector_region;
+#[path = "number_loop.rs"]
+mod number_loop;
+
+script_handler! {
+    /// A counted loop whose body is C (`number_loop::NumberLoop`), run whole from its update
+    /// record: on to the loop's exit, or the general path at the record a step left at. Entry
+    /// kinds no plan fits run the update record's own fused handler, which a loop out of
+    /// plans keeps.
+    fn lane_number_loop<>(cx, r, ip, i, view) {
+        // SAFETY: the view owns the loop its record names (`LaneView::number_loops`).
+        let found = unsafe { &*i.number_loop() };
+        let vm = unsafe { vm(cx) };
+        let update = found.update() as isize;
+        match found.run(cx, vm, r) {
+            // SAFETY: the exit and every leave are records of this function.
+            number_loop::Ran::Done => next!(cx, r, unsafe { ip.offset(found.exit() as isize - update) }, Carried::script_in(cx, view)),
+            number_loop::Ran::Leave(at) => exit(unsafe { ip.offset(at as isize - update) }),
+            number_loop::Ran::Decline => {
+                requicken::<H>(ip, found.fallback());
+                next!(cx, r, ip, Carried::script_in(cx, view))
+            }
+        }
+    }
+}
 mod wasm_instance;
 use wasm_instance::{lane_global_get, lane_global_set, lane_instance_binding, lane_wasm_memory_address, lane_wasm_memory_load, lane_wasm_memory_store, lane_wasm_simd, lane_wasm_simd_shuffle};
 
@@ -20539,6 +20576,22 @@ fn derive_lane_view<'live, H: Host>(
         specialize_relation_jumps::<H>(&mut records);
         specialize_array_literals::<H>(&mut records);
     }
+    // Counted loops whose bodies are C run whole in their update record (`number_loop`),
+    // after every fusion, over the handler those left the update record.
+    let number_loops: Box<[number_loop::NumberLoop]> = if wasm {
+        Box::default()
+    } else {
+        let handlers: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
+        number_loop::NumberLoop::find(&decoded, constants, &jump_targets, &handlers, |operator, decrement, counter| {
+            update_loop_handler::<H>(operator, decrement, counter)
+        })
+        .into_boxed_slice()
+    };
+    for found in &number_loops {
+        let record = &mut records[found.update() as usize];
+        record.handler = lane_number_loop::<H> as Handler as *const ();
+        record.operand = LaneOperand { number_loop: found };
+    }
     let min_run = if closes_loop(&decoded, &exits) {
         LANE_ENTRY_MIN_RUN
     } else {
@@ -20591,6 +20644,7 @@ fn derive_lane_view<'live, H: Host>(
         loops,
         loop_at_backedge: loop_at_backedge.into_boxed_slice(),
         vector_regions,
+        number_loops,
         start: std::cell::Cell::new(first),
         prologue: std::cell::UnsafeCell::new(LaneInstruction {
             handler: std::ptr::null(),

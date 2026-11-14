@@ -4,7 +4,7 @@ use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 mod number_operators;
 mod primitive_comparison;
 pub(crate) use number_operators::static_number_binary;
-pub(super) use number_operators::immediate_number_pair;
+pub(super) use number_operators::{immediate_number_pair, int32_bitwise_kind, number_operator_result, numeric_operator};
 use number_operators::*;
 
 /// Shared Number/BigInt content mismatch diagnostic.
