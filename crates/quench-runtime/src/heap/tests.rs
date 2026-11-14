@@ -1777,41 +1777,44 @@ fn adaptive_cycles_follow_the_measured_cost() {
     let refusal = |heap: &Heap| heap.concurrent_cycle_refusal_with(CycleMode::Adaptive, false);
     assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
     heap.resident_at_full_start = 2000;
-    heap.resident_after_full = 1000;
-    // The first full collection has no interval or growth to weigh.
-    heap.judge_cycles(false, 10_000);
+    heap.live_weight_after_full = 1000;
+    heap.weight_between_fulls = 1000;
+    // The first full collection has no interval or live weight before it to weigh.
+    heap.judge_cycles(false, 10_000, 10_000);
     assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
     // A long mark, a large share of the (short) time since the last full collection.
-    heap.judge_cycles(false, 10_000);
+    heap.judge_cycles(false, 10_000, 10_000);
     assert_eq!(refusal(&heap), None);
     assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, false), None);
     // A short mark pauses too little.
-    heap.judge_cycles(false, 100);
+    heap.judge_cycles(false, 100, 10_000);
     assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
-    heap.judge_cycles(false, 10_000);
+    heap.judge_cycles(false, 10_000, 10_000);
     assert_eq!(refusal(&heap), None);
-    // A cycle that kept the occupancy's growth and ran half past its due point keeps cycles on.
-    heap.last_cycle_extent = CycleExtent { weight: 100, late_weight: 50, planned: true, ..CycleExtent::default() };
-    heap.judge_cycles(true, 500);
+    // A cycle within the stop-the-world peak and pause per weight keeps cycles on.
+    heap.last_cycle_extent = CycleExtent { mutator_micros: 1_000, planned: true, ..CycleExtent::default() };
+    heap.judge_cycles(true, 500, 1_000);
     assert_eq!(refusal(&heap), None);
-    // One that ran mostly past its due point falls back for a full collection, then cycles are measured anew.
-    heap.last_cycle_extent = CycleExtent { weight: 100, late_weight: 51, planned: true, ..CycleExtent::default() };
-    heap.judge_cycles(true, 500);
+    // One that paused the mutator longer per weight falls back for a full collection, then
+    // cycles are measured anew.
+    heap.last_cycle_extent = CycleExtent { mutator_micros: 9_500, planned: true, ..CycleExtent::default() };
+    heap.judge_cycles(true, 500, 1_000);
     assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
-    heap.judge_cycles(false, 10_000);
+    heap.judge_cycles(false, 10_000, 10_000);
     assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
-    heap.judge_cycles(false, 10_000);
+    heap.judge_cycles(false, 10_000, 10_000);
     assert_eq!(refusal(&heap), None);
-    // One whose interval grew past the stop-the-world interval's falls back for two.
-    heap.resident_at_full_start = 2300;
-    heap.last_cycle_extent = CycleExtent { weight: 100, late_weight: 0, planned: true, ..CycleExtent::default() };
-    heap.judge_cycles(true, 500);
+    // One whose interval peaked past the stop-the-world peak for its live weight falls back
+    // for two.
+    heap.resident_at_full_start = 2200;
+    heap.last_cycle_extent = CycleExtent { mutator_micros: 0, planned: true, ..CycleExtent::default() };
+    heap.judge_cycles(true, 500, 1_000);
     assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
     heap.resident_at_full_start = 2000;
-    heap.judge_cycles(false, 10_000);
-    heap.judge_cycles(false, 10_000);
+    heap.judge_cycles(false, 10_000, 10_000);
+    heap.judge_cycles(false, 10_000, 10_000);
     assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
-    heap.judge_cycles(false, 10_000);
+    heap.judge_cycles(false, 10_000, 10_000);
     assert_eq!(refusal(&heap), None);
 }
 

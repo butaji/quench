@@ -233,6 +233,8 @@ struct MarkerShared {
     /// Marks set by the marker and assists, and the marker's busy time.
     marked: AtomicU64,
     busy_nanos: AtomicU64,
+    /// The longest the marker's stack grew, in values.
+    peak_work: AtomicU64,
 }
 
 /// The marker thread of a running cycle. Dropping it stops and joins the thread.
@@ -252,6 +254,7 @@ impl MarkerThread {
             assist: AtomicBool::new(false),
             marked: AtomicU64::new(0),
             busy_nanos: AtomicU64::new(0),
+            peak_work: AtomicU64::new(0),
         });
         let marker = Arc::clone(&shared);
         let thread = std::thread::Builder::new()
@@ -312,6 +315,11 @@ impl MarkerThread {
         (self.shared.marked.load(Ordering::Relaxed), self.shared.busy_nanos.load(Ordering::Relaxed))
     }
 
+    /// The longest the marker's stack grew, in values.
+    pub(super) fn peak_work(&self) -> u64 {
+        self.shared.peak_work.load(Ordering::Relaxed)
+    }
+
     /// Stops and joins the marker: every value it held or was sent, and what it deferred.
     pub(super) fn stop(mut self) -> Vec<Value> {
         self.stop_and_join()
@@ -366,7 +374,14 @@ fn marker_loop(shared: &MarkerShared) -> Vec<Value> {
                     return work;
                 }
                 if !handoff.inbox.is_empty() {
-                    std::mem::swap(&mut work, &mut handoff.inbox);
+                    // A large inbox (the initial mark's snapshot) is taken a chunk at a time,
+                    // so the marker's stack grows from a chunk, not from the whole inbox.
+                    let len = handoff.inbox.len();
+                    if len > 2 * MARKER_CHUNK {
+                        work.extend(handoff.inbox.drain(len - MARKER_CHUNK..));
+                    } else {
+                        std::mem::swap(&mut work, &mut handoff.inbox);
+                    }
                     handoff.idle = false;
                     busy_since = std::time::Instant::now();
                     break;
@@ -379,6 +394,7 @@ fn marker_loop(shared: &MarkerShared) -> Vec<Value> {
             let Some(value) = work.pop() else { break };
             shared.view.mark_value(value, &mut work, &mut deferred, &mut marked);
         }
+        shared.peak_work.fetch_max(work.capacity() as u64, Ordering::Relaxed);
         let share = shared.assist.load(Ordering::Relaxed) && work.len() > 2 * MARKER_CHUNK;
         if deferred.len() >= MARKER_DEFERRED_PUBLISH || share {
             let mut handoff = shared.handoff.lock().expect("marker handoff poisoned");

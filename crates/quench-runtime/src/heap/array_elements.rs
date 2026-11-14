@@ -72,8 +72,7 @@ pub(crate) fn end_quarantine() {
     }
 }
 
-/// Bytes the quarantine holds (tests).
-#[cfg(test)]
+/// Bytes the quarantine holds.
 pub(crate) fn quarantined_bytes() -> usize {
     QUARANTINED.with(|held| held.borrow().iter().map(|(_, layout)| layout.size()).sum())
 }

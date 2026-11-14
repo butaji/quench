@@ -2941,7 +2941,8 @@ impl Heap {
             },
         );
         if full {
-            self.judge_cycles(premarked, full_mark_micros);
+            let pause_micros = full_started.map_or(0, |started| started.elapsed().as_micros() as u64);
+            self.judge_cycles(premarked, full_mark_micros, pause_micros);
         }
         if crate::trace::Channel::Gc.on() {
             let (mark_us, sweep_us) = trace_times;
