@@ -1,36 +1,36 @@
 //! Unit repeats, loops and the resume blocks backtracking jumps to.
 use super::{Emit, Resume, FIRST_OPERAND, SECOND_OPERAND};
-use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
+use crate::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
+use cranelift_codegen::ir::{self, MemFlagsData};
 use quench_regexp::backtrack::native::{NativeInst, NativeTest, NATIVE_UNBOUNDED as UNBOUNDED};
 
 impl Emit<'_, '_> {
     /// The first position in `from..to` whose unit fails `test`, or `to`.
     fn scan(&mut self, test: NativeTest, from: ir::Value, to: ir::Value) -> ir::Value {
-        let (head, body, exit) = (self.b.create_block(), self.b.create_block(), self.b.create_block());
-        self.b.append_block_param(head, types::I64);
-        self.b.append_block_param(exit, types::I64);
-        self.b.ins().jump(head, &[from.into()]);
-        self.b.switch_to_block(head);
-        let index = self.b.block_params(head)[0];
-        let inside = self.compare(IntCC::UnsignedLessThan, index, to);
-        self.b.ins().brif(inside, body, &[], exit, &[index.into()]);
-        self.b.switch_to_block(body);
+        let (head, body, exit) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
+        let index = self.b.block_parameter(head, Lane::I64);
+        let end = self.b.block_parameter(exit, Lane::I64);
+        self.b.goto(head, &[from]);
+        self.b.enter_open(head);
+        let inside = self.compare(Relation::UnsignedLess, index, to);
+        self.b.branch_if(inside, (body, &[]), (exit, &[index]));
+        self.b.enter_open(body);
         let byte = self.byte_at(index);
         let passes = self.passes(test, byte);
-        let next = self.b.ins().iadd_imm_s(index, 1);
-        self.b.ins().brif(passes, head, &[next.into()], exit, &[index.into()]);
-        self.b.switch_to_block(exit);
-        self.b.block_params(exit)[0]
+        let next = self.b.raw_binary_imm(Binary::Add, index, 1);
+        self.b.branch_if(passes, (head, &[next]), (exit, &[index]));
+        self.b.enter_open(exit);
+        end
     }
 
     /// Pushes `resume` with its two operands where `condition` holds.
     fn push_resume_if(&mut self, condition: ir::Value, resume: Resume, first: ir::Value, second: ir::Value) {
-        let (push, done) = (self.b.create_block(), self.b.create_block());
+        let (push, done) = (self.b.new_block(), self.b.new_block());
         self.branch(condition, push, done);
-        self.b.switch_to_block(push);
+        self.b.enter_open(push);
         self.push_resume(resume, first, second);
-        self.b.ins().jump(done, &[]);
-        self.b.switch_to_block(done);
+        self.b.goto(done, &[]);
+        self.b.enter_open(done);
     }
 
     pub(super) fn unit_repeat(&mut self, pc: u32, test: NativeTest, (min, max): (u32, u32), greedy: bool) {
@@ -38,18 +38,19 @@ impl Emit<'_, '_> {
         let ceiling = if max == UNBOUNDED {
             self.length
         } else {
-            let reach = self.b.ins().iadd_imm_s(position, i64::from(max));
-            self.b.ins().umin(reach, self.length)
+            let reach = self.b.raw_binary_imm(Binary::Add, position, i64::from(max));
+            let within = self.compare(Relation::UnsignedLess, reach, self.length);
+            self.b.raw_select(within, reach, self.length)
         };
-        let floor = self.b.ins().iadd_imm_s(position, i64::from(min));
-        let fits = self.compare(IntCC::UnsignedLessThanOrEqual, floor, self.length);
+        let floor = self.b.raw_binary_imm(Binary::Add, position, i64::from(min));
+        let fits = self.compare(Relation::UnsignedLessEqual, floor, self.length);
         self.require(fits);
         let (end, more, resume) = if greedy {
-            (self.scan(test, position, ceiling), IntCC::UnsignedGreaterThan, (Resume::Greedy(pc), floor))
+            (self.scan(test, position, ceiling), Relation::UnsignedGreater, (Resume::Greedy(pc), floor))
         } else {
-            (self.scan(test, position, floor), IntCC::UnsignedLessThan, (Resume::Lazy(pc), ceiling))
+            (self.scan(test, position, floor), Relation::UnsignedLess, (Resume::Lazy(pc), ceiling))
         };
-        let enough = self.compare(IntCC::UnsignedGreaterThanOrEqual, end, floor);
+        let enough = self.compare(Relation::UnsignedGreaterEqual, end, floor);
         self.require(enough);
         let bound = if greedy { floor } else { ceiling };
         let more = self.compare(more, end, bound);
@@ -75,7 +76,7 @@ impl Emit<'_, '_> {
             NativeInst::EmptyCheck { start } => {
                 let position = self.position();
                 let began = self.register(*start);
-                let moved = self.compare(IntCC::NotEqual, position, began);
+                let moved = self.compare(Relation::NotEqual, position, began);
                 self.require(moved);
                 self.next(pc);
             }
@@ -86,19 +87,19 @@ impl Emit<'_, '_> {
 
     fn loop_head(&mut self, pc: u32, (counter, min, max): (u32, u32, u32), greedy: bool, exit: u32) {
         let count = self.register(counter);
-        let (enter, decide) = (self.b.create_block(), self.b.create_block());
-        let below = self.compare_constant(IntCC::UnsignedLessThan, count, i64::from(min));
+        let (enter, decide) = (self.b.new_block(), self.b.new_block());
+        let below = self.compare_constant(Relation::UnsignedLess, count, i64::from(min));
         self.branch(below, enter, decide);
-        self.b.switch_to_block(enter);
+        self.b.enter_open(enter);
         self.next(pc);
-        self.b.switch_to_block(decide);
+        self.b.enter_open(decide);
         if max != UNBOUNDED {
-            let (leave, choose) = (self.b.create_block(), self.b.create_block());
-            let full = self.compare_constant(IntCC::UnsignedGreaterThanOrEqual, count, i64::from(max));
+            let (leave, choose) = (self.b.new_block(), self.b.new_block());
+            let full = self.compare_constant(Relation::UnsignedGreaterEqual, count, i64::from(max));
             self.branch(full, leave, choose);
-            self.b.switch_to_block(leave);
+            self.b.enter_open(leave);
             self.goto(exit);
-            self.b.switch_to_block(choose);
+            self.b.enter_open(choose);
         }
         let position = self.position();
         let (kept, taken) = if greedy { (exit, pc + 1) } else { (pc + 1, exit) };
@@ -108,17 +109,17 @@ impl Emit<'_, '_> {
 
     fn loop_tail(&mut self, counter: u32, start: u32, min: u32, head: u32) {
         let count = self.register(counter);
-        let enough = self.compare_constant(IntCC::UnsignedGreaterThanOrEqual, count, i64::from(min));
+        let enough = self.compare_constant(Relation::UnsignedGreaterEqual, count, i64::from(min));
         let position = self.position();
         let began = self.register(start);
-        let empty = self.compare(IntCC::Equal, position, began);
-        let rejected = self.b.ins().band(enough, empty);
-        let (reject, continues) = (self.b.create_block(), self.b.create_block());
+        let empty = self.compare(Relation::Equal, position, began);
+        let rejected = self.b.raw_binary(Binary::And, enough, empty);
+        let (reject, continues) = (self.b.new_block(), self.b.new_block());
         self.branch(rejected, reject, continues);
-        self.b.switch_to_block(reject);
+        self.b.enter_open(reject);
         self.fail();
-        self.b.switch_to_block(continues);
-        let next = self.b.ins().iadd_imm_s(count, 1);
+        self.b.enter_open(continues);
+        let next = self.b.raw_binary_imm(Binary::Add, count, 1);
         self.set_register(counter, next);
         self.goto(head);
     }
@@ -127,8 +128,8 @@ impl Emit<'_, '_> {
     pub(super) fn resume(&mut self, resume: Resume) {
         let frame = self.top();
         let flags = MemFlagsData::trusted();
-        let first = self.b.ins().load(types::I64, flags, frame, FIRST_OPERAND);
-        let second = self.b.ins().load(types::I64, flags, frame, SECOND_OPERAND);
+        let first = self.b.raw_load(Lane::I64, flags, frame, FIRST_OPERAND);
+        let second = self.b.raw_load(Lane::I64, flags, frame, SECOND_OPERAND);
         match resume {
             Resume::Choice(target) => {
                 self.set_position(second);
@@ -141,8 +142,8 @@ impl Emit<'_, '_> {
 
     /// A greedy repeat gives back a unit: the frame goes back down to the floor.
     fn greedy_resume(&mut self, pc: u32, floor: ir::Value, end: ir::Value) {
-        let at = self.b.ins().iadd_imm_s(end, -1);
-        let more = self.compare(IntCC::UnsignedGreaterThan, at, floor);
+        let at = self.b.raw_binary_imm(Binary::Add, end, -1);
+        let more = self.compare(Relation::UnsignedGreater, at, floor);
         self.push_resume_if(more, Resume::Greedy(pc), floor, at);
         self.set_position(at);
         self.next(pc);
@@ -154,8 +155,8 @@ impl Emit<'_, '_> {
         let byte = self.byte_at(at);
         let passes = self.passes(test, byte);
         self.require(passes);
-        let next = self.b.ins().iadd_imm_s(at, 1);
-        let more = self.compare(IntCC::UnsignedLessThan, next, ceiling);
+        let next = self.b.raw_binary_imm(Binary::Add, at, 1);
+        let more = self.compare(Relation::UnsignedLess, next, ceiling);
         self.push_resume_if(more, Resume::Lazy(pc), ceiling, next);
         self.set_position(next);
         self.next(pc);
