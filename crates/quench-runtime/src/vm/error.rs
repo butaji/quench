@@ -1178,12 +1178,14 @@ impl<H: Host> Vm<H> {
         let prototype = self.primitive_prototype(value).unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         // A String wrapper's index properties are its text's (`string_wrapper`).
-        if let Some(text) = self.heap.string(value).cloned() {
+        // Its length is read without the units: boxing a rope for a sloppy function's `this`
+        // left it flat for its life (V8-v7 RegExp's harness check: 491 input variants, 1.6 MB).
+        if let Some(units) = self.heap.string(value).map(JsString::len) {
             let length = self.length_atom;
             self.set_property_with_attributes(
                 object,
                 length,
-                Value::number(text.units().len() as f64),
+                Value::number(units as f64),
                 PropertyAttributes {
                     writable: false,
                     enumerable: false,
