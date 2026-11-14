@@ -82,7 +82,7 @@ fusion_recipes! {
         LoadConst, Move; LoadLocal, Move; LoadEnvLocal, Move; LoadCapture, Move;
         LoadName, Move; Binary, Move; Unary, Move; GetField, Move; IncDec, Move;
         Call, Move; CallKnown, Move; CallMethod, Move; CallThisMethod, Move; Construct, Move;
-        LoadThis, Move; MakeObject2, Move; SuperConstArrayObject2, Move
+        LoadThis, Move; MakeObject2, Move; SuperConstArrayObject2, Move; GetIndex, Move
     ] => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
         if second.register_b() != first.result_register() { return None; }
         first.set_result_register(second.result_register());
@@ -189,9 +189,11 @@ pub(super) fn coalesce_promoted_moves(
     }
 }
 
-/// Removes each `Move` whose destination no path reads before writing it again: the copy into
-/// a temporary or a promoted local that coalescing left behind once its readers moved to the
-/// source. A parameter's register is kept, as legacy `f.arguments` reflection reads it.
+/// Removes each `Move` or `LoadConst` whose destination no path reads before writing it again:
+/// the copy into a temporary or a promoted local that coalescing left behind once its readers
+/// moved to the source, or the `undefined` a promoted local was opened with before its first
+/// real write. Both are pure and write only their result, so a dead one is unobservable. A
+/// parameter's register is kept, as legacy `f.arguments` reflection reads it.
 fn remove_dead_moves(
     function: &mut BcFunction,
     methods: &(impl liveness::MethodArguments + ?Sized),
@@ -199,20 +201,15 @@ fn remove_dead_moves(
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
 ) -> bool {
-    if !function.code.iter().any(|instruction| instruction.op() == Op::Move) {
+    let removable = |i: Instr| matches!(i.op(), Op::Move | Op::LoadConst) && !i.is_wide() && i.result_flags() == 0;
+    if !function.code.iter().any(|&instruction| removable(instruction)) {
         return false;
     }
     let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
     else {
         return false;
     };
-    let protected = protected_positions(
-        &function.code,
-        &function.wide,
-        &function.handlers,
-        function.parameter_end_pc,
-        &function.binding_sites,
-    );
+    let protected = function_protected_positions(function);
     let parameter_storage = function
         .local_registers
         .iter()
@@ -221,7 +218,7 @@ fn remove_dead_moves(
     let mut changed = Vec::new();
     for (pc, is_protected) in (0..function.code.len()).map(|pc| (pc, protected.contains(pc))) {
         let mov = function.code[pc];
-        if mov.op() != Op::Move || mov.is_wide() || is_protected {
+        if !removable(mov) || is_protected {
             continue;
         }
         let destination = register_bit(mov.result_register());
@@ -829,6 +826,11 @@ fn fuse_const_array_object2(
         0,
         site,
     ))
+}
+
+/// `protected_positions` of `function` as it stands.
+fn function_protected_positions(function: &BcFunction) -> crate::bitset::BitSet {
+    protected_positions(&function.code, &function.wide, &function.handlers, function.parameter_end_pc, &function.binding_sites)
 }
 
 pub(super) fn protected_positions(
@@ -1549,7 +1551,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
 
     #[test]
     fn recipe_schema_generates_ordered_pattern_rows() {
-        assert_eq!(RULES.len(), 35);
+        assert_eq!(RULES.len(), 36);
         assert_eq!(RULES[0].pattern, [Op::LoadConst, Op::Binary]);
         assert_eq!(RULES[1].pattern, [Op::LoadConst, Op::Binary]);
         assert!(matches!(RULES[0].recipe, Recipe::ConstantLeft));

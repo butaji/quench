@@ -2590,6 +2590,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn report_execution(&mut self, program: &ResidualProgram) {
+        self.report_bytecode();
         #[cfg(feature = "profile-field-primitives")]
         self.profile.field_primitives.report();
         #[cfg(feature = "profile-memory")]
@@ -2629,8 +2630,7 @@ impl<H: Host> Vm<H> {
             self.report_memory_if_enabled("complete");
             return;
         }
-        self.profile
-            .report(&self.heap, ProgramId::MAIN.raw(), program);
+        self.profile.report(&self.heap, ProgramId::MAIN.raw(), program);
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("complete");
     }

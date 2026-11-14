@@ -77,6 +77,8 @@ setting! {
         GcTime = "gc-time",
         Shapes = "shapes",
         Rewrite = "rewrite",
+        /// Every loaded program's finished bytecode, printed at exit.
+        Bytecode = "bytecode",
         JsJit = "js-jit",
         /// BaseJIT region exits by instruction, most frequent first (printed at exit).
         BjitLeave = "bjit-leave",

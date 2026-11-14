@@ -8,6 +8,18 @@ fn constructor_name_is_specific(name: &JsString) -> bool {
 }
 
 impl<H: Host> Vm<H> {
+    /// Prints every loaded program's finished bytecode when `QUENCH_TRACE=bytecode` is set.
+    pub(super) fn report_bytecode(&self) {
+        if !crate::trace::Channel::Bytecode.on() {
+            return;
+        }
+        for index in 0..self.programs.len() {
+            if let Some(residual) = self.programs.get(ProgramId::from_raw(index as u32)) {
+                eprintln!("program {index} {:?}\n{}", residual.source_name, residual.disassemble());
+            }
+        }
+    }
+
     pub(super) fn constructor_name(&self, value: Value) -> Option<JsString> {
         let object = self.object_data(value)?;
         if self.proxy_parts(value).is_some() {
