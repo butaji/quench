@@ -57,17 +57,33 @@ impl<H: Host> Vm<H> {
             GlobalTable::Lane => reads,
             GlobalTable::Base => {
                 let loads: Vec<(usize, GlobalRead)> = reads.range(0..=usize::MAX).map(|(pc, read)| (pc, *read)).collect();
-                loads.into_iter().map(|(pc, read)| (pc, self.slot_load(unit, pc, read))).collect()
+                let stores = self.lexical_stores(program, function, unit);
+                loads.into_iter().map(|(pc, read)| (pc, self.slot_load(unit, pc, read))).chain(stores).collect()
             }
         }
     }
 
     /// The by-name load at `pc` held as a slot of the global object's layout where its read is no
-    /// constant and the object owns the name as a data property (`Vm::stable_global_slot`); `read` otherwise.
+    /// constant and the object owns the name as a data property (`Vm::stable_global_slot`), or as a global lexical
+    /// binding's word read live (`Vm::global_lexical_slot`); `read` otherwise.
     fn slot_load(&mut self, unit: &lane_unit::Unit, pc: usize, read: GlobalRead) -> GlobalRead {
         let instruction = unit.instructions[pc];
         let loads = matches!(read, GlobalRead::Stable { .. } | GlobalRead::Dynamic) && instruction.op().is_throwing_name_load();
-        loads.then(|| self.stable_global_slot(instruction.atom_index(), false)).flatten().map_or(read, GlobalRead::Slot)
+        if !loads {
+            return read;
+        }
+        let atom = instruction.atom_index();
+        match self.stable_global_slot(atom, false) {
+            Some(slot) => GlobalRead::Slot(slot),
+            None => self.global_lexical_slot(atom, false).map_or(read, GlobalRead::Lexical),
+        }
+    }
+
+    /// The `StoreName`s of `unit` (not a declaration's) of a global lexical binding that is assignable and that no code holds the value of
+    /// (`Vm::global_lexical_slot`), each with the binding's word, which its row writes live.
+    fn lexical_stores(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> Vec<(usize, GlobalRead)> {
+        let sites = self.global_store_sites(program, function, unit);
+        sites.into_iter().filter(|(_, _, store)| *store).filter_map(|(pc, atom, _)| Some((pc, GlobalRead::Lexical(self.global_lexical_slot(atom, true)?)))).collect()
     }
 
     /// Whether a by-name load of `atom` in `function` reads the global scope as the lane's own load does
@@ -124,7 +140,14 @@ impl<H: Host> Vm<H> {
     /// global scope as `lane_global_reads` decides for a load, each with the global object's
     /// slot it holds (`Vm::stable_global_slot`), where it holds one.
     fn lane_global_slots(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> Vec<(usize, bool, GlobalRead)> {
-        let sites: Vec<(usize, crate::bytecode::Atom, bool)> = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
+        let sites = self.global_store_sites(program, function, unit);
+        sites.into_iter().filter_map(|(pc, atom, store)| Some((pc, store, GlobalRead::Slot(self.stable_global_slot(atom, store)?)))).collect()
+    }
+
+    /// The PCs of `unit` with an access (the atom's, and whether it is a store) the global scope answers as the lane's own does: a
+    /// `StoreName` that is no declaration's or a `LoadNameTypeof` of a name no internal binding owns, in a function whose names are global.
+    fn global_store_sites(&self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> Vec<(usize, crate::bytecode::Atom, bool)> {
+        unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
             let store = match crate::staged::Operation::<(), ()>::decode(*instruction, crate::staged::DecodeContext::EMPTY)? {
                 crate::staged::Operation::GlobalWrite { initialize: false, .. } => true,
                 crate::staged::Operation::GlobalTypeof { .. } => false,
@@ -138,8 +161,7 @@ impl<H: Host> Vm<H> {
                 && self.programs.names_are_global(self.active_program);
             (statically_global && !self.atom_class(instruction.atom_index()).contains(super::super::object::AtomClass::INTERNAL))
                 .then_some((pc, instruction.atom_index(), store))
-        }).collect();
-        sites.into_iter().filter_map(|(pc, atom, store)| Some((pc, store, GlobalRead::Slot(self.stable_global_slot(atom, store)?)))).collect()
+        }).collect()
     }
 
     /// The field read that follows the global read `read` at `pc` and reads its register, where

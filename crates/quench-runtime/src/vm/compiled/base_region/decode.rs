@@ -94,11 +94,17 @@ pub(super) struct Decoded {
     /// The global object's slot the row holds under the object's layout and the slot's observed type
     /// (`globals`): Stable facts the code takes.
     pub(super) global: Option<Access>,
+    /// The global lexical binding's word the row reads or stores live (`globals`), at the address in `hole`, under the global
+    /// object's layout: a Stable fact the code takes.
+    pub(super) lexical: Option<LexicalSlot>,
+    /// The heap row a method call's chain loads its callee by (`methods`), over the receiver `a` (none for the activation's own
+    /// `this`), with the cache entry's byte offset, or the folded value and its receiver (`folded`), as that row has them.
+    pub(super) load: Option<Heap>,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, completes: false, instanceof: None, global: None, add: None, name: None }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, load: None, add: None, name: None }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -109,11 +115,11 @@ impl Decoded {
         Self { step: Some(step), ..Self::number(Kind::Move, dst, None, None, None) }
     }
 
-    /// Whether the row holds a Stable fact its code took: a folded prototype-held read, an `instanceof` of a constructor's
-    /// `prototype`, a global object's slot, an add, or a store in place for an atom no method cache names. A change of the fact
-    /// retires the code, and a run already inside it learns that from the invalidation word (`Heap::Live`).
+    /// Whether the row holds a Stable fact its code took: a folded prototype-held read (a heap row's, or the load of a method call), an
+    /// `instanceof` of a constructor's `prototype`, a global object's slot, an add, or a store in place for an atom no method cache
+    /// names. A change of the fact retires the code, and a run already inside it learns that from the invalidation word (`Heap::Live`).
     pub(super) fn holds_stable(&self) -> bool {
-        self.add.is_some() || matches!(self.heap, Some(Heap::Held | Heap::ThisHeld | Heap::SiteStore | Heap::ThisStore)) || self.instanceof.is_some() || self.global.is_some()
+        self.add.is_some() || self.folded.is_some() || matches!(self.heap, Some(Heap::SiteStore | Heap::ThisStore)) || self.instanceof.is_some() || self.global.is_some() || self.lexical.is_some()
     }
 
     /// Whether the row makes a call or a step the interpreter's operation runs, either of which may
@@ -238,10 +244,15 @@ fn site_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
             (site.base, site.first.1, site.second.map(|(_, cache_site)| cache_site))
         }
     };
-    let receiver = base == FieldBase::THIS;
-    let object = if receiver { None } else { Some(Source::Register(base.register_index()?)) };
+    let object = if base == FieldBase::THIS { None } else { Some(base.register_index()?) };
+    Some(cached_read(known, (object, first, second), instruction.result_register()))
+}
+
+/// The row that reads cache site `first` (and, chained, `second`) of the object in register `object`, or of the receiver where there is
+/// none, into the register `dst`: folded to the prototype's value where the site proves exactly that (`folded_read`).
+pub(super) fn cached_read(known: Known, (object, first, second): (Option<Register>, u16, Option<u16>), dst: Register) -> Decoded {
     let folded = second.is_none().then(|| folded_read(known, first)).flatten();
-    let heap = match (receiver, second.is_some(), folded.is_some()) {
+    let heap = match (object.is_none(), second.is_some(), folded.is_some()) {
         (false, false, false) => Heap::Site,
         (false, true, _) => Heap::SiteChain,
         (true, false, false) => Heap::ThisSite,
@@ -250,11 +261,11 @@ fn site_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
         (true, false, true) => Heap::ThisHeld,
     };
     let hole = entry_offset(first) | second.map_or(0, |second| entry_offset(second) << numeric::library::CHAIN_SECOND_AT);
-    let row = Decoded::heap(heap, Some(instruction.result_register()), object, None);
-    Some(match folded {
+    let row = Decoded::heap(heap, Some(dst), object.map(Source::Register), None);
+    match folded {
         Some((folded, value)) => Decoded { hole: value, folded: Some(folded), ..row },
         None => Decoded { hole, ..row },
-    })
+    }
 }
 
 /// The row of a field the loop's entry recorded: its value, which the loop does not write (`Facts::Entry`).
@@ -299,28 +310,6 @@ fn field_store_row(known: Known, instruction: WideInstruction) -> Option<Decoded
 /// Whether `instruction` is a field store a row makes (`field_store_row`).
 pub(super) fn stores_field(known: Known, instruction: WideInstruction) -> bool {
     instruction.result_flags() == 0 && instruction.op().is_field_store() && field_store_row(known, instruction).is_some()
-}
-
-/// The facts rows hold, each once, in order.
-pub(super) fn distinct<T: Ord>(facts: impl Iterator<Item = T>) -> Box<[T]> {
-    let mut facts: Vec<T> = facts.collect();
-    facts.sort_unstable();
-    facts.dedup();
-    facts.into()
-}
-
-/// The exact shapes of the holders whose values the rows hold folded (`Decoded::folded`), and the owners
-/// of the chain proofs the adding stores hold (`adds::Add::chain_owner`): the Stable facts the code
-/// takes, which a change of a value a prototype of that shape holds, or of any prototype's layout, retires it.
-pub(super) fn held_holders(decoded: &[Decoded]) -> Box<[u32]> {
-    let chained = decoded.iter().filter_map(|row| row.add.and_then(adds::Add::chain_owner));
-    distinct(decoded.iter().filter_map(|row| row.folded.map(|folded| folded.holder)).chain(chained))
-}
-
-/// The atoms the rows hold unnamed by method caches (`Decoded::atom`): the Stable facts the code
-/// takes, which a cache naming one retires it.
-pub(super) fn held_atoms(decoded: &[Decoded]) -> Box<[Atom]> {
-    distinct(decoded.iter().filter_map(|row| row.atom))
 }
 
 /// Whether `instruction` stores to a depth-0 capture and nothing else (`general_capture::lower_capture`'s
@@ -396,7 +385,7 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32,
         Class::GetIndex | Class::SetIndex | Class::RequireObjectCoercible => array_row(region, facts, instruction),
         Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
         Class::LoadThis | Class::LoadLocalPlain | Class::StoreLocalPlain => activation_row(instruction),
-        Class::Binary => membership_row(known, pc, instruction),
+        Class::Binary => membership_row(known, pc, instruction, instruction.result_register()),
         Class::LoadName | Class::LoadNameCall | Class::LoadNameTypeof | Class::StoreName => global_row(known, pc, instruction),
         _ if instruction.op().is_field_store() => field_store_row(known, instruction),
         _ => None,

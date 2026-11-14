@@ -6,8 +6,9 @@ use crate::staged::GlobalBinding;
 impl Lowering<'_, '_> {
     /// `LoadName` or `LoadNameCall` at `pc` of a name the global scope resolves: an immutable
     /// global's constant (`builtins::immutable_globals`); a global cell's value, held as a
-    /// Stable fact while the realm compiled against is the active one (`hold_global`); else
-    /// the lane's own read, which leaves where it misses.
+    /// Stable fact while the realm compiled against is the active one (`hold_global`); a global
+    /// lexical binding no code folds, read live from its word under the global layout
+    /// (`hold_lexical`); else the lane's own read, which leaves where it misses.
     pub(super) fn global_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let (binding, held) = self.global_binding(pc);
         let exit = (!matches!(binding, GlobalBinding::Constant(_))).then(|| self.guard_exit(state, pc as u32));
@@ -16,6 +17,9 @@ impl Lowering<'_, '_> {
         }
         if let (GlobalBinding::Typed { .. }, Some(&GlobalRead::Slot(slot)), Some(exit)) = (binding, self.global_reads.get(&pc), exit) {
             self.hold_global_slot(state, exit, slot);
+        }
+        if let (GlobalBinding::Lexical { .. }, Some(&GlobalRead::Lexical(slot)), Some(exit)) = (binding, self.global_reads.get(&pc), exit) {
+            self.hold_lexical(state, exit, slot);
         }
         let proof = super::EmitProof::GlobalRead { miss: exit, binding };
         let edges = exit.map_or(frame::Edges::Value, |miss| frame::Edges::ValueGuarded { miss });
@@ -32,6 +36,7 @@ impl Lowering<'_, '_> {
             GlobalRead::Stable { value, ty, fact, global, realm_offset } =>
                 (GlobalBinding::Held { value, ty }, Some((fact, global, realm_offset))),
             GlobalRead::Frozen { value, ty } => (GlobalBinding::Frozen { value, ty }, None),
+            GlobalRead::Lexical(slot) => (GlobalBinding::Lexical { address: slot.address as u64 }, None),
             GlobalRead::Slot(slot) if slot.dependency.is_some() => (GlobalBinding::Typed { ty: slot.ty }, None),
             GlobalRead::Slot(_) | GlobalRead::Dynamic | GlobalRead::NativeMember { .. } => (GlobalBinding::Dynamic, None),
         };

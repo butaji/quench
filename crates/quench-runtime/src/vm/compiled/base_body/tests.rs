@@ -9,6 +9,12 @@ pub(super) fn run_both(source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
 
 /// `run_both` with the compiled run under `mode`.
 pub(super) fn run_in(mode: JitMode, source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
+    run_after(mode, &[], source)
+}
+
+/// `run_in` of `source` after the global scripts `scripts` (source and name) ran in the same realm: what they declare
+/// is retained in the realm's records when `source` runs.
+pub(super) fn run_after(mode: JitMode, scripts: &[(&str, &str)], source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
     super::super::tier_policy::force_admission();
     let program = Engine::specialize(source, "base-body.js").unwrap();
     let printed = |mode: ExecutionMode| {
@@ -16,7 +22,7 @@ pub(super) fn run_in(mode: JitMode, source: &str) -> (Vec<String>, Vec<String>, 
         let mut vm = crate::vm::Vm::new(TestHost::writing_to(output.clone()));
         vm.set_execution_mode(mode);
         vm.programs.enable_js_lane_methods();
-        vm.execute(&program).unwrap();
+        vm.execute_after_scripts(scripts, &program).unwrap();
         output.take()
     };
     let interpreted = printed(ExecutionMode::Interpreted);

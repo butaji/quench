@@ -129,6 +129,12 @@ pub const IC_SET_INT_ROW: u8 = 45;
 /// offset; the `entry` variant takes the store gate, for a value that may be a heap reference).
 pub const GLOBAL_READ_ROW: u8 = 29;
 pub const GLOBAL_STORE_ROW: u8 = 30;
+/// The destination (hole 0) takes the word of the global lexical binding at the address in hole 1 (`staged::lexical_read`), or the
+/// first operand (hole 1) is stored to it (address in hole 2) where it is initialized: a binding in its temporal dead zone (the deleted
+/// marker) leaves through EXIT0, so the interpreter's step raises. The address is held under the global layout, which a new declaration
+/// changes.
+pub const LEXICAL_READ_ROW: u8 = 49;
+pub const LEXICAL_WRITE_ROW: u8 = 50;
 /// The destination takes the tagged word of hole 1.
 pub const CONSTANT_ROW: u8 = 31;
 /// Leaves through the taken successor unless the VM's active realm (the word at the byte offset of

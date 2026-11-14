@@ -33,7 +33,7 @@ mod delete;
 mod decode;
 mod captures;
 pub(crate) mod compare;
-pub(crate) use global::{GlobalBinding, GlobalFrame};
+pub(crate) use global::{lexical_read, GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::{CallOut, OperandValues};
 pub(crate) use spread::Passing;

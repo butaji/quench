@@ -43,7 +43,7 @@ impl LaneMethod {
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
         Some(Self {
             dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, atoms: body.atoms, instanceofs: body.instanceofs, layouts: body.layouts, slots: body.slot_types, ..Default::default() }, invalidation, _code: memory, entry,
-            recovery_space: super::super::dispatch_fast::LaneRecoverySpace::inlined(&body.frames), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
+            recovery_space: super::super::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
             caller_registers: registers, amortizes: body.loops || body.covered >= TIERS.amortizing_instructions(super::tier_policy::lane_body_tier()) || !direct.is_empty(),
             direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames,
@@ -69,6 +69,21 @@ impl<H: Host> Vm<H> {
         Callees::of(code, candidates, &inline_body, stable)
     }
 
+    /// The callee each method call of `code` that the body makes as rows (`methods::makes_rows`) reaches, by PC, into `candidates`: the
+    /// functions its site's method cache remembers, resolved as call targets by their entries as a plain call's are
+    /// (`Vm::method_direct_callee`).
+    fn add_method_callees(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], view: &super::super::dispatch_fast::LaneView, candidates: &mut [DirectCandidates]) {
+        for (pc, instruction) in code.iter().enumerate().filter(|(_, instruction)| super::base_region::methods::makes_rows(program, **instruction)) {
+            let argc = program.method_sites[instruction.method_site_index()].argument_count;
+            for callee in self.method_cache_callees(instruction.method_site_index()) {
+                let found = self.method_direct_callee(program, view, (function, pc, argc), callee);
+                if let Some(site) = candidates.get_mut(pc) {
+                    site.extend(found);
+                }
+            }
+        }
+    }
+
     /// The realm a stitch finds its inlined callees in: the active one, which its entry proves active.
     pub(in crate::vm::compiled) fn realm_proof(&self) -> RealmProof {
         RealmProof { offset: u64::from(Self::realm_globals_offset().unsigned_abs()), global: self.realm.globals.to_bits() }
@@ -86,7 +101,9 @@ impl<H: Host> Vm<H> {
         if !super::base_region::covers(&code) { return LaneBodyOutcome::Declined }
         let Some(region) = LoopRegion::of_function(code.clone(), self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let (ints, doubles) = observed(parameters);
-        let callees = self.stitch_callees(program, function, &code, &direct(self));
+        let mut candidates = direct(self);
+        self.add_method_callees(program, function, &code, caller, &mut candidates);
+        let callees = self.stitch_callees(program, function, &code, &candidates);
         let helpers = super::process_lane_helpers::<H>();
         let invalidation = Invalidation::default();
         // Where the VM and the program run specialized, the code holds Stable facts: its stores run in

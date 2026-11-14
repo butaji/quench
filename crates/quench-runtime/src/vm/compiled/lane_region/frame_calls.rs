@@ -242,6 +242,16 @@ fn global_held(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination:
     define_immediate(frame, stage, destination, value, held)
 }
 
+/// A global lexical binding's word, read live from its address (`staged::lexical_read`): a binding in its temporal dead zone leaves at the
+/// miss edge, any other word is the destination's tagged value.
+fn global_lexical(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, address: u64, proof: EmitProof) -> Option<()> {
+    let EmitProof::GlobalRead { miss: Some(miss), .. } = proof else { return None };
+    let at = immediate(stage, address as i64);
+    let value = crate::staged::lexical_read(stage, at, miss)?;
+    <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value, RegisterFact::definition(Type::ANY, Representation::Tagged));
+    Some(())
+}
+
 /// A whole-program value the read checks: a changed binding leaves, then the checked constant is held.
 fn global_frozen(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
     (atom, site): (u32, u16), (value, ty): (Value, Type), proof: EmitProof) -> Option<()> {
@@ -263,6 +273,7 @@ impl crate::staged::GlobalFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn global_frozen(&mut self, stage: &mut Emit<'_, '_>, destination: Register, atom: u32, site: u16, value: Value, ty: Type, proof: EmitProof) -> Option<()> {
         global_frozen(self, stage, destination, (atom, site), (value, ty), proof)
     }
+    fn global_lexical(&mut self, stage: &mut Emit<'_, '_>, destination: Register, address: u64, proof: EmitProof) -> Option<()> { global_lexical(self, stage, destination, address, proof) }
     fn global_read(&mut self, stage: &mut Emit<'_, '_>, destination: Register, atom: u32, site: u16, ty: Type, proof: EmitProof) -> Option<()> { global_read(self, stage, destination, atom, site, ty, proof) }
     fn global_write(&mut self, stage: &mut Emit<'_, '_>, source: Register, _atom: u32, _site: u16, value: ir::Value, _initialize: bool) -> Option<()> {
         super::call_out::global_write(self, stage, source, value)

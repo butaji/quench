@@ -266,7 +266,7 @@ pub(super) fn decode_step(pc: u32, instruction: WideInstruction, known: Known, (
 /// helper steps leave instead. A fast arm stays: its hit stores as a `Store` row does, in the
 /// backing the views read live, and only its slow arm becomes the leave (`Step::Guard`).
 pub(super) fn settle(rows: &mut [&mut Decoded]) {
-    if rows.iter().any(|row| row.heap.is_some_and(Heap::reads_snapshot) || row.global.is_some()) {
+    if rows.iter().any(|row| row.heap.is_some_and(Heap::reads_snapshot) || row.global.is_some() || row.lexical.is_some()) {
         for row in rows.iter_mut() {
             row.step = match row.step {
                 Some(Step::Fast(fast)) => Some(Step::Guard(fast)),
@@ -321,7 +321,7 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
             let slot = operand(&layout.homes, decoded.a).1;
             Ok(Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) })
         }
-        Step::Call(shape) => plan_call(layout, shape, pc, helpers),
+        Step::Call(shape) => plan_call(layout, (decoded, shape), pc, helpers),
     }
 }
 
@@ -481,11 +481,11 @@ fn branching(mut row: Planned, layout: &Layout, (pc, target): (u32, u32)) -> Res
 /// The chain of the call `shape` names at row `pc`: spills, the direct row where the site's target
 /// is stable, the helper row, reloads. The direct row's record is the row's `owned`. A plain call's
 /// helper is the ending's (`Ending::call_helper`), another form's its own (`CallForm::helper`).
-fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
+fn plan_call(layout: &Layout, (decoded, shape): (&Decoded, CallShape), pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     let helper = if shape.form == CallForm::Plain { layout.ending.call_helper() } else { shape.form.helper() };
     let helper = call_plan::helper_address(helpers, helper).ok_or("call: no helper address")?;
     let (spills, reloads) = (layout.spills(pc), if shape.returning { Vec::new() } else { layout.spills(pc + 1) });
-    let plan = CallPlan { shape, direct: layout.callee(shape.call_pc), helper, spills: &spills, reloads: &reloads };
+    let plan = CallPlan { shape, direct: layout.callee(shape.call_pc), helper, spills: &spills, reloads: &reloads, load: method_load(decoded, &layout.homes, &shape) };
     let CallChain { parts, record, choice } = call_plan::plan_call(&plan)?;
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     chained(parts, spills.len(), record)

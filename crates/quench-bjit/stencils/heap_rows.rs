@@ -36,10 +36,10 @@ use crate::value::ValueLayout;
 use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
 use crate::staged::object::{self, Form, Layout, Slots};
 use crate::staged::region::Region;
-use crate::staged::{Frame, RecordSpace, Stage, Step, add, elements, entry, environment, iteration, load_this, naming, read_initialized_local, read_local, string_length, value, write_initialized_local, write_local};
+use crate::staged::{Frame, RecordSpace, Stage, Step, add, elements, entry, environment, iteration, lexical_read, load_this, naming, read_initialized_local, read_local, string_length, value, write_initialized_local, write_local};
 
 pub(crate) use crate::codes::{
-    ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, CONSTANT_ROW, ENV_DEFINE_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM,
+    ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, CONSTANT_ROW, ENV_DEFINE_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LOAD_LOCAL_ROW, MEM,
     SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
     STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, INSTANCEOF_ROW, APPEND_ROW,
     ADD_AFTER_AT, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_LINK_AT, ADD_LINK_BITS, ADD_OBJECT_AT, ADD_PACKED_ROW, ADD_SLOT_BITS, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW,
@@ -270,6 +270,25 @@ fn global_store_row<const A: u8, const GATED: bool>(s: S, payload: usize) -> Out
     let offset = stage.site(0);
     let address = stage.add_imm(base, offset);
     stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value);
+    Out::Next(s)
+}
+
+/// The global lexical binding at the address in hole 1 (`staged::lexical_read`) into the destination; a hit continues at NEXT, a binding in
+/// its dead zone leaves.
+#[inline(always)]
+fn lexical_read_row<const D: u8>(s: S) -> Out {
+    let mut stage = StencilStage::from_hole(0);
+    deliver::<D>(s, need!(s, lexical_read(&mut stage, hole64::<HOLE_A>(), ())))
+}
+
+/// The first operand (hole 1) stored to the initialized global lexical binding at the address in hole 2. No code holds the binding's value
+/// (the cell is `Mutable`) and the record is a root the collector scans whole, so the store is one write.
+#[inline(always)]
+fn lexical_write_row<const A: u8>(s: S) -> Out {
+    let mut stage = StencilStage::from_hole(0);
+    let (address, value) = (hole64::<HOLE_B>(), tagged_place::<A, HOLE_A>(&s));
+    need!(s, lexical_read(&mut stage, address, ()));
+    stage.store_u64(Region::Cells.mutable(), address, 0, value);
     Out::Next(s)
 }
 
@@ -557,6 +576,8 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         REALM_ROW => realm_row(s, payload),
         GLOBAL_READ_ROW => global_read_row::<D>(s, payload),
         GLOBAL_STORE_ROW => global_store_row::<A, ENTRY>(s, payload),
+        LEXICAL_READ_ROW => lexical_read_row::<D>(s),
+        LEXICAL_WRITE_ROW => lexical_write_row::<A>(s),
         CONSTANT_ROW => constant_row::<D>(s),
         REALM_ROW => realm_row(s, payload),
         ARRAY_ROW => array_row(s),

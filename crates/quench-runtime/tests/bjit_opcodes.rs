@@ -136,6 +136,8 @@ const FAMILIES: &[(&str, &str)] = &[
     ("returning-arithmetic-field-unary-relational-typeof", "var f = function (a, b) { return a + b; }, g = function (v) { return v.p; }, h = function (a) { return -a; }, k = function (a, b) { return a < b; }, m = function (v) { return typeof v; }; acc += f(i, 1) + g(o) + h(i & 3) + (k(i, 9) ? 1 : 0) + m(i).length;"),
     ("returning-calls-chain", "var leaf = function (x) { return x + 1; }, mid = function (x) { return leaf(x); }; acc += mid(i) | 0;"),
     ("returning-misses", "var f2 = function (a, b) { return a + b; }; acc += f2(i < 1500 ? i : 'k', 1).length | 0;"),
+    ("instanceof-in-jumps", "t = i & 1 ? new C() : o; if (t instanceof C) acc += 1; else acc -= 1; if ('p' in o) acc += 2; else acc -= 2; if (arr instanceof Array) acc += 4; if (!(t instanceof K)) acc += 8;"),
+    ("method-call-direct-rows", "var md = { b: 2, m(x) { return x + this.b; }, n(x) { return this.m(x) + this.m(1); } }; acc += md.m(i) + md.n(i) + (kk.has(kk) ? 1 : 0) + new C().get();"),
     ("call-method-this-method", "var ob = { b: 2, m(x) { return x + this.b; }, n() { return this.m(1); } }; acc += ob.m(i) + ob.n();"),
     ("call-spread-array-and-forwarded", "var sum3 = function () { var r = 0; for (var q = 0; q < arguments.length; q++) r += arguments[q]; return r; }; acc += sum3(...arr) + sum3(i, ...arr) + sum3.apply(null, arr) + sum3.call(null, i);"),
     ("construct-returning-and-super", "class P2 { constructor(v) { this.v = v; } } class Q2 extends P2 { constructor(v) { super(v + 1); } } var mk2 = function (v) { return new Q2(v); }; acc += mk2(i & 3).v + new P2(i & 1).v;"),

@@ -19,7 +19,7 @@ pub(crate) enum CallOut {}
 pub(crate) use register_frame::{Constant, Frame, Step, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
 pub(crate) use crate::bytecode::Register;
 #[path = "../../quench-runtime/src/staged/global.rs"] mod global;
-pub(crate) use global::GlobalFrame;
+pub(crate) use global::{lexical_read, GlobalFrame};
 #[path = "../../quench-runtime/src/staged/math.rs"] pub(crate) mod math;
 #[path = "../../quench-runtime/src/staged/numeric.rs"] pub(crate) mod numeric;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};

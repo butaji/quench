@@ -40,6 +40,7 @@ pub(in crate::vm) use function::inlined_exit_key;
 mod globals;
 mod link;
 mod locals;
+pub(in crate::vm::compiled) mod methods;
 pub(in crate::vm::compiled) use locals::env_owned;
 mod plan;
 mod repr;
@@ -52,6 +53,7 @@ mod stitch;
 mod tile;
 mod webs;
 use sites::*;
+use methods::{method_call, method_load};
 #[cfg(test)]
 #[path = "base_region/region_tests.rs"]
 mod region_tests;
