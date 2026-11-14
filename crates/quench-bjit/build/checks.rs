@@ -32,8 +32,12 @@ fn starts_with_push(code: &[u8]) -> bool {
     matches!(code, [first, ..] if PUSH_OPCODES.contains(first)) || matches!(code, [REX_B, second, ..] if PUSH_OPCODES.contains(second))
 }
 
+/// Bytes of an `rsp`-relative store with an 8-bit displacement: ModRM, SIB, displacement.
+const RSP_DISP8_LEN: usize = 3;
+
 fn spills_below_rsp(code: &[u8]) -> bool {
-    code.windows(3).any(|w| w[0] & RSP_DISP8_MODRM.0 == RSP_DISP8_MODRM.1 && w[1] == RSP_ONLY_SIB && NEGATIVE_DISP8.contains(&w[2]))
+    code.windows(RSP_DISP8_LEN).any(|w| matches!(w, [modrm, sib, disp]
+        if modrm & RSP_DISP8_MODRM.0 == RSP_DISP8_MODRM.1 && *sib == RSP_ONLY_SIB && NEGATIVE_DISP8.contains(disp)))
 }
 
 /// Whether the row adjusts or uses the stack: a pinned register spilled, which a tail-called row

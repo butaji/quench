@@ -309,9 +309,11 @@ pub(crate) mod string_form {
     pub(crate) const SHORT_UNITS_OFFSET: u64 = 2;
     /// A shared record's pointer follows its tag at the next word.
     pub(crate) const SHARED_POINTER_OFFSET: i32 = core::mem::size_of::<usize>() as i32;
-    /// How far into the shared allocation the units start: the two reference counts of an `Rc`.
+    /// The reference counts (strong and weak) an `Rc` allocation holds before its value.
+    const RC_COUNTS: u64 = 2;
+    /// How far into the shared allocation the units start: past the reference counts of an `Rc`.
     pub(crate) const fn shared_units_offset() -> u64 {
-        2 * core::mem::size_of::<usize>() as u64
+        RC_COUNTS * core::mem::size_of::<usize>() as u64
     }
 }
 /// What an inline-cache row reads of the dispatch payload (`stencils/ic_rows.rs`): the method-cache atom bits and their

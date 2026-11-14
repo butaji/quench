@@ -248,6 +248,26 @@ fn tag_init(s: S) -> Out {
     Out::Next(s)
 }
 
+/// The control rows: a jump (polling the interrupt flag, watching the loop's budget, or neither) and the poll alone.
+#[inline(always)]
+fn control_row<const K: u8>(s: S) -> Out {
+    match K {
+        JUMP => jump::<false, false>(s),
+        JUMP_POLL => jump::<true, true>(s),
+        JUMP_WATCH => jump::<true, false>(s),
+        _ => poll(s),
+    }
+}
+
+/// The unary rows: logical and Number negation.
+#[inline(always)]
+fn unary_row<const K: u8, const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>) -> Out {
+    match K {
+        NOT => not_row(frame),
+        _ => neg_row(frame),
+    }
+}
+
 /// One row, by kind and places. `SPEC` rows take int32 operands only.
 #[inline(always)]
 pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: bool>(s: S) -> Out {
@@ -257,15 +277,11 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
         ADD..=DIV => arith_row::<K, D, A, B, SPEC>(frame),
         AND..=USHR => bitwise_row::<K, D, A, B, SPEC>(frame),
         LT..=NE => compare_row::<K, D, A, B, SPEC>(frame),
-        JUMP => jump::<false, false>(frame.s),
-        JUMP_POLL => jump::<true, true>(frame.s),
-        JUMP_WATCH => jump::<true, false>(frame.s),
-        POLL => poll(frame.s),
+        JUMP | JUMP_POLL | JUMP_WATCH | POLL => control_row::<K>(frame.s),
         GUARD => guard_row(frame),
         JUMP_TRUE => truth_row::<true, D, A, B>(frame),
         JUMP_FALSE => truth_row::<false, D, A, B>(frame),
-        NOT => not_row(frame),
-        NEG => neg_row(frame),
+        NOT | NEG => unary_row::<K, D, A, B>(frame),
         _ => tag_init(frame.s),
     }
 }

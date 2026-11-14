@@ -35,11 +35,11 @@ unsafe extern "C" {
 }
 
 /// The thunk around a call of the row chain: saves rbp, rbx, r12-r15, takes the context in r13 and the register file
-/// in r12 (the row convention), calls the chain through `$call` and returns (status, word) as the lane body ABI's
-/// (eax, rdx): the chain leaves them in (rdx, rax). The pad keeps the stack 16-byte aligned at the call, as the six
-/// pushes and the return address leave it 8 off. Written once for both entries.
+/// in r12 (the row convention), runs `$pre`, calls the chain through `$call`, runs `$post` and returns (status, word)
+/// as the lane body ABI's (eax, rdx): the chain leaves them in (rdx, rax). The pad (`sub rsp, 8`) keeps the stack
+/// 16-byte aligned at the call, as the six pushes and the return address leave it 8 off. Written once for every entry.
 macro_rules! thunk {
-    ($call:literal $(, $($binding:tt)*)?) => {
+    ([$($pre:literal),*], $call:literal, [$($post:literal),*] $(, $($binding:tt)*)?) => {
         core::arch::naked_asm!(
             "push rbp",
             "push rbx",
@@ -49,9 +49,9 @@ macro_rules! thunk {
             "push r15",
             "mov r13, rdi",
             "mov r12, rcx",
-            "sub rsp, 8",
+            $($pre,)*
             $call,
-            "add rsp, 8",
+            $($post,)*
             "pop r15",
             "pop r14",
             "pop r13",
@@ -69,7 +69,7 @@ macro_rules! thunk {
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_thunk() {
-    thunk!("call {first}", first = sym HOLE_NEXT)
+    thunk!(["sub rsp, 8"], "call {first}", ["add rsp, 8"], first = sym HOLE_NEXT)
 }
 
 /// Calls the address in rdx (the body ABI's `captures` argument, which a stencil region does not
@@ -78,7 +78,7 @@ pub unsafe extern "C" fn entry_thunk() {
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_resume() {
-    thunk!("call rdx")
+    thunk!(["sub rsp, 8"], "call rdx", ["add rsp, 8"])
 }
 
 /// Returns hole 0 (a word the region leaves with: a PC or a lane exit), status `NATIVE_JS_STOPPED`.
@@ -95,67 +95,24 @@ pub unsafe extern "C" fn leave_pop() {
     core::arch::naked_asm!("pop rax", "mov edx, {stopped}", "ret", stopped = const NATIVE_JS_STOPPED)
 }
 
-/// The body entry: saves the callee-saved registers, takes the context in r13 and the register
-/// file in r12, saves the payload's capture and receiver words (those of the body that entered
-/// this one, if a body did) and publishes in their place its captures word (the dense slots'
-/// address below `CAPTURE_ADDRESS_BITS`, whose low bit says they admit every direct store, and
-/// their count above) and the receiver it is entered with (rsi), calls the first row, puts the
-/// saved words back, and returns (status, word) as the chain left them in (rdx, rax). The pad
-/// keeps the stack 16-byte aligned at the call, as the six pushes, the four saved words and the
-/// return address leave it 8 off.
+/// The body entry: saves the payload's capture and receiver words (those of the body that entered this one, if a
+/// body did) and publishes in their place its captures word (the dense slots' address below `CAPTURE_ADDRESS_BITS`,
+/// whose low bit says they admit every direct store, and their count above) and the receiver it is entered with
+/// (rsi), calls the first row and puts the saved words back. The pad keeps the stack aligned past the four words.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_body() {
-    core::arch::naked_asm!(
-        "push rbp",
-        "push rbx",
-        "push r12",
-        "push r13",
-        "push r14",
-        "push r15",
-        "mov r13, rdi",
-        "mov r12, rcx",
-        "mov rax, [rdi + {payload}]",
-        "push qword ptr [rax + {stores}]",
-        "push qword ptr [rax + {values}]",
-        "push qword ptr [rax + {len}]",
-        "push qword ptr [rax + {receiver}]",
-        "sub rsp, 8",
-        "mov [rax + {receiver}], rsi",
-        "mov r8, rdx",
-        "shl r8, {pad}",
-        "shr r8, {pad}",
-        "mov r9, r8",
-        "and r9, {stores_bit}",
-        "mov [rax + {stores}], r9",
-        "xor r8, r9",
-        "mov [rax + {values}], r8",
-        "shr rdx, {bits}",
-        "mov [rax + {len}], rdx",
+    thunk!(
+        ["mov rax, [rdi + {payload}]", "push qword ptr [rax + {stores}]", "push qword ptr [rax + {values}]",
+            "push qword ptr [rax + {len}]", "push qword ptr [rax + {receiver}]", "sub rsp, 8", "mov [rax + {receiver}], rsi",
+            "mov r8, rdx", "shl r8, {pad}", "shr r8, {pad}", "mov r9, r8", "and r9, {stores_bit}",
+            "mov [rax + {stores}], r9", "xor r8, r9", "mov [rax + {values}], r8", "shr rdx, {bits}", "mov [rax + {len}], rdx"],
         "call {first}",
-        "mov rcx, [r13 + {payload}]",
-        "add rsp, 8",
-        "pop qword ptr [rcx + {receiver}]",
-        "pop qword ptr [rcx + {len}]",
-        "pop qword ptr [rcx + {values}]",
-        "pop qword ptr [rcx + {stores}]",
-        "pop r15",
-        "pop r14",
-        "pop r13",
-        "pop r12",
-        "pop rbx",
-        "pop rbp",
-        "xchg rax, rdx",
-        "ret",
-        first = sym HOLE_NEXT,
-        payload = const CALL_CONTEXT_ADAPTER_PAYLOAD,
-        values = const JS_STEP_CAPTURE_VALUES,
-        len = const JS_STEP_CAPTURE_LEN,
-        stores = const JS_STEP_CAPTURE_STORES,
-        stores_bit = const CAPTURE_STORES_BIT,
-        receiver = const JS_STEP_RECEIVER,
-        bits = const CAPTURE_ADDRESS_BITS,
-        pad = const CAPTURE_ADDRESS_PAD,
+        ["mov rcx, [r13 + {payload}]", "add rsp, 8", "pop qword ptr [rcx + {receiver}]", "pop qword ptr [rcx + {len}]",
+            "pop qword ptr [rcx + {values}]", "pop qword ptr [rcx + {stores}]"],
+        first = sym HOLE_NEXT, payload = const CALL_CONTEXT_ADAPTER_PAYLOAD, values = const JS_STEP_CAPTURE_VALUES,
+        len = const JS_STEP_CAPTURE_LEN, stores = const JS_STEP_CAPTURE_STORES, stores_bit = const CAPTURE_STORES_BIT,
+        receiver = const JS_STEP_RECEIVER, bits = const CAPTURE_ADDRESS_BITS, pad = const CAPTURE_ADDRESS_PAD
     )
 }
 

@@ -142,6 +142,18 @@ fn successor_target(layout: &Layout, rows: &[Row], out: usize, k: usize, r: &Rel
     }
 }
 
+/// Copy row `k`'s hot and cold parts to their places in `out`.
+///
+/// # Safety
+/// `out` must hold `layout`, whose parts' spans are disjoint.
+unsafe fn copy_parts(layout: &Layout, stencil: &Stencil, k: usize, out: *mut u8) {
+    // SAFETY: as the caller guarantees.
+    unsafe {
+        std::ptr::copy_nonoverlapping(stencil.code.as_ptr(), out.add(layout.hot[k]), layout.hot_sizes[k]);
+        std::ptr::copy_nonoverlapping(stencil.code[stencil.hot_len..].as_ptr(), out.add(layout.cold[k]), stencil.code.len() - stencil.hot_len);
+    }
+}
+
 /// Copy `rows` into `out`, every hot part back to back and then every cold part, and patch
 /// their holes; `exit` gives each row's exit stub address for an exit kind. Returns the code
 /// length and each row's start offset.
@@ -152,11 +164,8 @@ pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize, u32) -
     let layout = layout(rows);
     for (k, row) in rows.iter().enumerate() {
         let stencil = row.stencil;
-        // SAFETY: the caller guarantees `out` holds the layout computed above, and the parts' spans are disjoint.
-        unsafe {
-            std::ptr::copy_nonoverlapping(stencil.code.as_ptr(), out.add(layout.hot[k]), layout.hot_sizes[k]);
-            std::ptr::copy_nonoverlapping(stencil.code[stencil.hot_len..].as_ptr(), out.add(layout.cold[k]), stencil.code.len() - stencil.hot_len);
-        }
+        // SAFETY: the caller guarantees `out` holds the layout computed above.
+        unsafe { copy_parts(&layout, stencil, k, out) };
         let part_slice = |at: usize| {
             let (start, size, base) = layout.part(rows, k, at);
             // SAFETY: as above; the part is `size` bytes at `start`.
