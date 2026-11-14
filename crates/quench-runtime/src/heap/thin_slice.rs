@@ -129,6 +129,7 @@ impl<T> ThinBoxSlice<T> {
     /// # Safety
     /// `words` is valid for writes of `IN_PLACE_WORDS` words and the `len` initialized
     /// elements follow them.
+    #[inline(always)]
     pub(crate) unsafe fn lay_out_in_place(words: *mut usize, len: usize) -> *const Self {
         const { assert!(Self::ELEMENTS_OFFSET == size_of::<usize>()) };
         debug_assert_eq!(len & MARK_BIT, 0);

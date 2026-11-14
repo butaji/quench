@@ -3450,6 +3450,7 @@ impl EnvironmentSlots {
     ///
     /// # Safety
     /// As `ThinBoxSlice::lay_out_in_place`; each slot is an owned value.
+    #[inline(always)]
     pub(crate) unsafe fn lay_out_in_place(words: *mut Value, len: usize) -> *const Self {
         // SAFETY: as the caller guarantees; a slot is a `Value`, a word.
         unsafe { super::thin_slice::ThinBoxSlice::<EnvironmentSlot>::lay_out_in_place(words.cast(), len).cast() }
