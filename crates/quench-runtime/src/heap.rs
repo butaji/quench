@@ -3621,6 +3621,18 @@ impl Heap {
     /// As for `property_get_flat`, where the shape matches.
     #[inline(always)]
     pub(crate) unsafe fn own_field_hit(&self, object: &Object, shape: u32, slot: u16) -> Option<Value> {
+        // The common form first, as `GuardShape, LoadSlot` reads it: a plain object's arena run,
+        // whose start is the payload itself, so neither the extras tag nor the start mask is
+        // decoded. Packed inline values and extras take the staged reading.
+        if let Some(start) = object.plain_arena_start() {
+            if object.exact_shape() != shape {
+                return None;
+            }
+            // SAFETY: the caller's: the shape matched, so its run holds `slot`.
+            let value = unsafe { *self.properties.values_base().add(start + usize::from(slot)) };
+            debug_assert_eq!(Some(value), unsafe { crate::staged::concrete_own_field_hit(object, self.properties.values_base(), shape, slot) });
+            return Some(value);
+        }
         unsafe { crate::staged::concrete_own_field_hit(object, self.properties.values_base(), shape, slot) }
     }
     /// `property_get_flat` of a prototype holder, whose values usually live behind extras

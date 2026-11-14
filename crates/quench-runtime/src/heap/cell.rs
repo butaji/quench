@@ -2042,6 +2042,16 @@ impl Object {
         plain.then_some(self.payload as usize)
     }
 
+    /// `plain_storage_start` as one compare of the payload: a start never exceeds
+    /// `VALUE_VEC_START_BITS`, and an extras word always does, so without inline storage a
+    /// payload at most that bound is the start itself.
+    #[inline(always)]
+    pub(crate) fn plain_arena_start(&self) -> Option<usize> {
+        let plain = self.meta & OBJECT_INLINE_STORAGE == 0 && self.payload <= u64::from(VALUE_VEC_START_BITS);
+        debug_assert_eq!(plain.then_some(self.payload as usize), self.plain_storage_start());
+        plain.then_some(self.payload as usize)
+    }
+
     pub(crate) fn plain_property_storage(&self) -> Option<PlainPropertyStorage> {
         if self.properties().is_dictionary() || self.extras_pointer().is_some() {
             return None;
