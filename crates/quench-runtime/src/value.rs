@@ -383,19 +383,19 @@ impl Value {
     /// same bits, which also excludes -0 (+0's bits differ) and NaN.
     #[inline] pub fn number(value: f64) -> Self {
         let integer = truncate_to_i32(value);
-        // An ordered-equal comparison finds the integral values (and -0, which equals +0);
-        // every other double reaches the NaN test with no bit compare of its own.
         let back = f64::from(integer);
-        if back == value {
-            if integer != 0 || value.to_bits() == 0 {
-                return Self::integer(integer);
-            }
-            // -0 keeps its sign as a double.
+        // Ordered and unequal (`fcmp one`, one `ucomisd` and `jne`): a non-integral double,
+        // never NaN, stored as its bits with no further test. Equal or unordered is left.
+        if back < value || back > value {
             return Self(value.to_bits());
         }
         if value.is_nan() {
             std::hint::cold_path();
             return Self(CANONICAL_NAN);
+        }
+        // Integral; -0 (which equals +0) keeps its sign as a double.
+        if integer != 0 || value.to_bits() == 0 {
+            return Self::integer(integer);
         }
         Self(value.to_bits())
     }
