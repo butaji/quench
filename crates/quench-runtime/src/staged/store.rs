@@ -105,7 +105,21 @@ pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::
 pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id: u32, shape: u32, slot: u16,
     value: crate::Value) -> bool {
     // SAFETY: the caller's contract; the gate reads the heap before any write.
-    let record = unsafe { heap.unlogged_object_record(record_id) } as u64;
+    let record = unsafe { heap.unlogged_object_record(record_id) };
+    // The common form first, as `own_store` takes it: a plain object's arena run, whose start
+    // is the payload itself (`Object::plain_arena_start`), after the same shape guard and
+    // store gate; neither the extras tag nor the start mask is decoded. Packed inline values
+    // and every miss take the staged store, which changes nothing on a miss.
+    // SAFETY: a live record, read before any write.
+    if let Some(start) = unsafe { (*record).plain_arena_start() } {
+        if unsafe { (*record).exact_shape() } != shape || !heap.store_unlogged(record_id, value) {
+            return false;
+        }
+        // SAFETY: the shape matched, so its run holds `slot`; the gate admitted the write.
+        unsafe { heap.arena_values_base().cast_mut().add(start + usize::from(slot)).write(value) };
+        return true;
+    }
+    let record = record as u64;
     let mut stage = super::Concrete::storing(heap);
     own_store(&mut stage, record, u64::from(record_id), shape, slot, value.to_bits(), ()).is_some()
 }

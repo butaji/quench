@@ -14050,7 +14050,11 @@ script_handler! {
     /// keep their code.
     #[inline(never)]
     fn lane_script_construct_keeping<>(cx, r, ip, i, view) {
-        match lane_construct_keeping_activation(cx, r, ip, i) {
+        let finished = match lane_construct_planned_fields(cx, r, i) {
+            Some(this) => Ok(KeepingConstruction::Finished(this)),
+            None => lane_construct_keeping_activation(cx, r, ip, i),
+        };
+        match finished {
             Ok(KeepingConstruction::Activated(registers, base)) => next!(cx, registers, base, Carried::script(cx)),
             Ok(KeepingConstruction::Finished(this)) => {
                 if i.a & crate::bytecode::RETURN_REGISTER == 0 {
@@ -14091,6 +14095,25 @@ fn lane_finishes_construction<H: Host>(cx: *mut LaneContext<H>, i: &LaneInstruct
     i.a & crate::bytecode::RETURN_REGISTER == 0
         || !unsafe { vm(cx) }.lane_stack.activations.is_empty()
         || lane_returning_call_admitted(cx)
+}
+
+/// The receiver a forwarding constructor's holding plan finishes with its recorded fields
+/// (`lane_forwarded_fields`), the first case `lane_construct_keeping_activation` tries, in a
+/// function of its own: inlined there it ran inside that function's frame (six saved
+/// registers and 1.3 KB of stack for the activation paths). `None` for any other case, which
+/// that function then decides from the start.
+#[inline(never)]
+fn lane_construct_planned_fields<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some()
+        || !lane_finishes_construction(cx, i)
+    {
+        return None;
+    }
+    let this = lane_forwarded_fields(vm, r.get(i.b), lane_construct_argument(r, i))?;
+    // Allocating the receiver can make a collection due.
+    note_allocation(vm);
+    Some(this)
 }
 
 /// `lane_script_construct_keeping`'s activation, under `lane_script_construct`'s admission:
