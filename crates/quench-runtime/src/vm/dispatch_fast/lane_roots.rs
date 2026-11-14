@@ -175,7 +175,7 @@ impl<H: Host> Vm<H> {
             script_calls,
             script_constructs,
             this,
-            backedges_left: self.lane_credits_backedges(code, program).then_some(TIERS.wasm.backedges_per_entry),
+            backedges_left: self.lane_credits_backedges(code, program).then_some(self.programs.tiers().wasm.backedges_per_entry),
             floor,
             memory: MemoryView::NONE,
             resolved: (Value::UNDEFINED, MemoryView::NONE),

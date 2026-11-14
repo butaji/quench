@@ -22,7 +22,8 @@
 //! safepoint jump leaves the lane.
 
 use crate::staged::compare::{IN_OPERATOR, INSTANCEOF_OPERATOR};
-use super::compiled::tier_policy::TIERS;
+use super::compiled::tier_policy::Tiers;
+use super::tier_events::Event;
 use super::compiled::{CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
 use super::dispatch_frame::PendingGeneralCall;
 use smallvec::SmallVec;
@@ -265,6 +266,8 @@ pub(super) struct LoopSite {
     entering: std::cell::Cell<bool>,
     /// Whether this VM requested OSR diagnostics when its lane view was derived.
     diagnostics: bool,
+    /// The thresholds its VM's tier controllers read.
+    tiers: &'static Tiers,
     lane_backedge_count: std::cell::Cell<u64>,
     native_entry_attempts: std::cell::Cell<u64>,
     native_region_runs: std::cell::Cell<u64>,
@@ -292,7 +295,7 @@ impl LoopSite {
     /// entries are not declining, and it has code or may compile it. A site without it
     /// retires at its next backward jump (`lane_loop_retire`).
     fn may_run_natively(&self, policy: crate::MemoryPolicy) -> bool {
-        self.enters() && self.tier.borrow().may_run(policy)
+        self.enters() && self.tier.borrow().may_run(self.tiers, policy)
     }
 
     fn enters(&self) -> bool {
@@ -320,6 +323,8 @@ pub(super) struct LaneView {
     /// entry cost, and its record does not read the accumulator. Kept apart
     /// from the records, which only the lane reads.
     entries: Box<[u64]>,
+    /// The thresholds its VM's tier controllers read, as the VM held them when the view was derived.
+    tiers: &'static Tiers,
     memory_register: Option<u16>,
     /// How a lane call activates the function without a frame; `None`
     /// when its activation needs a frame (locals outside registers).
@@ -7952,7 +7957,7 @@ fn lane_count_backedge<H: Host>(cx: *mut LaneContext<H>) {
         .last()
         .map_or_else(|| machine.frames[unsafe { (*cx).frame() }].function, |activation| activation.function);
     machine.programs.note_wasm_tier_backedges(program, function);
-    unsafe { (*cx).backedges_left = Some(TIERS.wasm.backedges_per_entry) };
+    unsafe { (*cx).backedges_left = Some(machine.programs.tiers().wasm.backedges_per_entry) };
 }
 
 lane_handler! {
@@ -8099,7 +8104,7 @@ fn lane_loop_run_native<H: Host>(
     };
     // The tier's state is borrowed only here, so the dispatch after it holds no borrow.
     let continuation = lane_loop_run(cx, r, site, region, entry, views, site.header);
-    count_continuation(&continuation);
+    count_continuation(cx, &continuation);
     if matches!(continuation, LoopContinuation::Jump) { site.note_decline(); }
     Some(continuation)
 }
@@ -8161,7 +8166,7 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
                 || matches!(op.class(), Class::LoadCapture)).then(|| op.is_get_index())
         })
     });
-    if let Some(read) = counted { site.tier.borrow_mut().left_at(pc as usize, read); }
+    if let Some(read) = counted { site.tier.borrow_mut().left_at(site.tiers, pc as usize, read); }
 }
 
 /// Gives `site` its `header` record (`LoopSite::hookable`) once its region has code: the
@@ -8329,14 +8334,16 @@ enum LoopContinuation {
     Callee,
 }
 
-/// Counts what a loop run came to (`QUENCH_TRACE=js-jit`).
-fn count_continuation(continuation: &LoopContinuation) {
-    use super::compiled::base_region::{count, Event};
-    count(match continuation {
-        LoopContinuation::Jump | LoopContinuation::Compiling => Event::Declined,
-        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Recovered(_) | LoopContinuation::Safepoint | LoopContinuation::Callee | LoopContinuation::Threw(_) => Event::Left,
-        LoopContinuation::Resume(_) | LoopContinuation::Completed(..) => Event::Entered,
-    });
+/// Counts what a loop run came to: in the VM's tier events, and under `QUENCH_TRACE=js-jit` in the report's.
+fn count_continuation<H: Host>(cx: *mut LaneContext<H>, continuation: &LoopContinuation) {
+    use super::compiled::base_region::{count, Event as Region};
+    let (region, tier) = match continuation {
+        LoopContinuation::Jump | LoopContinuation::Compiling => (Region::Declined, None),
+        LoopContinuation::Exit(_) | LoopContinuation::Inlined { .. } | LoopContinuation::Recovered(_) | LoopContinuation::Safepoint | LoopContinuation::Callee | LoopContinuation::Threw(_) => (Region::Left, Some(Event::OsrLeft)),
+        LoopContinuation::Resume(_) | LoopContinuation::Completed(..) => (Region::Entered, Some(Event::OsrEntered)),
+    };
+    count(region);
+    if let Some(event) = tier { unsafe { vm(cx) }.programs.tier_events().record(event); }
 }
 
 /// Compiles `site`'s region if it has no current code, for the element `views` its entry
@@ -8354,12 +8361,12 @@ fn lane_loop_run<H: Host>(
 ) -> LoopContinuation {
     use super::compiled::LoopOutcome;
     let mut tier = site.tier.borrow_mut();
-    if !tier.select(views) {
+    if !tier.select(site.tiers, views) {
         return LoopContinuation::Jump;
     }
     if !tier.is_published() {
         // SAFETY: the lane's VM is live, and nothing borrows it across the read.
-        if !tier.may_run(unsafe { vm(cx) }.heap.memory_policy()) {
+        if !tier.may_run(site.tiers, unsafe { vm(cx) }.heap.memory_policy()) {
             return LoopContinuation::Jump;
         }
         let number_arrays = loop_tier::number_arrays(unsafe { vm(cx) }, r, region);
@@ -8541,7 +8548,7 @@ fn lane_inlined_continuation<H: Host>(cx: *mut LaneContext<H>, r: Registers, sit
     }
     // The exit is feedback as a top-level one is: the callee's instruction widens in the next plan, and is counted.
     let call = code.calls.inlined[frame];
-    site.tier.borrow_mut().left_at(super::compiled::base_region::inlined_exit_key(call.call, pc), false);
+    site.tier.borrow_mut().left_at(site.tiers, super::compiled::base_region::inlined_exit_key(call.call, pc), false);
     // SAFETY: the context's program outlives the lane run.
     if let Some(body) = unsafe { &*(*cx).code }.function_get(call.target.function as usize) {
         super::compiled::base_region::leave(call.target.function, pc, decoded_instruction(body, body.code[pc as usize]).op());
@@ -11030,7 +11037,7 @@ fn lane_frame_state<H: Host>(
     let lane_view = match derived {
         Some(view) => view,
         None => {
-            let diagnostics = vm.programs.reports_on_drop();
+            let (diagnostics, tiers) = (vm.programs.reports_on_drop(), vm.programs.tiers());
             let Some(lane_view) = vm.programs.lane_view(program, function, |code, constants, kind, live, sites| {
                 derive_lane_view::<H>(
                     function,
@@ -11042,6 +11049,7 @@ fn lane_frame_state<H: Host>(
                     sites,
                     vm.tier_may_run(crate::jit_mode::Tier::ANY),
                     diagnostics,
+                    tiers,
                 )
             }) else {
                 unreachable!("an inline Wasm frame runs a function of its program");
@@ -11840,6 +11848,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn lane_view_any(&self, program: ProgramId, function: u32) -> Option<*const LaneView> {
         if !self.execution_mode.allows_dynamic_execution() { return None; }
         let diagnostics = self.programs.reports_on_drop();
+        let tiers = self.programs.tiers();
         self.programs.lane_view(program, function, |code, constants, kind, live, sites| {
             derive_lane_view::<H>(
                 function,
@@ -11851,6 +11860,7 @@ impl<H: Host> Vm<H> {
                 sites,
                 self.tier_may_run(crate::jit_mode::Tier::ANY),
                 diagnostics,
+                tiers,
             )
         })
     }
@@ -14777,9 +14787,7 @@ script_handler! {
         if !lane_body_admits(cx, &method, NO_PENDING_ACTIVATIONS) {
             if lane_body_prepare_recovery(cx, &method) { return exit(base); }
             drop(method);
-            if vm.programs.js_jit_diagnostics_enabled() {
-                own.body_stats.refused.set(own.body_stats.refused.get() + 1);
-            }
+            lane_body_refused(vm, own);
             next!(cx, r, base, Carried::script(cx))
         }
         let receiver = lane_entry_receiver(cx, i.b != 0);
@@ -14825,12 +14833,11 @@ fn lane_body_concluded<H: Host>(
     started: Option<std::time::Instant>,
 ) -> Resumed {
     let base = unsafe { (*cx).base };
-    if let super::compiled::LaneExit::Returned { pc, value } = left
-        && !unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled()
-    {
+    if let super::compiled::LaneExit::Returned { pc, value } = left {
+        lane_record_end(cx, own, method, left);
         // SAFETY: as `lane_leave_counts`; a completed run carries no warming callee.
         unsafe { (*cx).callee_warming = false };
-        own.note_lane_body_end(left, false, |_| {});
+        lane_note_body_end(cx, own, left, |_| {});
         own.audit_body_run(started);
         // SAFETY: the record that completes the activation is one of its function's.
         return lane_returned(cx, unsafe { base.add(pc) }, value);
@@ -14839,7 +14846,7 @@ fn lane_body_concluded<H: Host>(
     let (resumed, feedback) = lane_body_left(cx, r, own, method, left);
     // Counted once the leave is resolved: a retirement or reoptimization moves the body.
     if counts {
-        own.note_lane_body_end(feedback, false, |left| lane_note_leave(cx, function, left));
+        lane_note_body_end(cx, own, feedback, |left| lane_note_leave(cx, function, left));
     }
     if matches!(left, super::compiled::LaneExit::Returned { .. }) {
         own.audit_body_run(started);
@@ -15326,6 +15333,33 @@ enum LaneBodyLeft {
 
 
 
+/// Records that a run of `own`'s body ended at `exit`, in the diagnostics report's leave table;
+/// nothing the lane does next reads it.
+#[inline(always)]
+fn lane_record_end<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, method: &super::compiled::LaneMethod, exit: super::compiled::LaneExit) {
+    if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
+        own.body_stats.ended(exit, &method.exits, &method.inlined, super::compiled::take_lane_exit_line());
+    }
+}
+
+/// `LaneView::note_lane_body_end`, counting the retirement it makes in the VM's tier events.
+#[inline(always)]
+fn lane_note_body_end<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, exit: super::compiled::LaneExit, left_new: impl FnOnce((Option<u32>, usize))) {
+    if own.note_lane_body_end(exit, false, left_new) {
+        unsafe { vm(cx) }.programs.tier_events().record(Event::Retired);
+    }
+}
+
+/// Counts an entry whose body the lane could not leave inside of (`lane_body_admits`): in the VM's
+/// tier events and, with diagnostics, the view's report.
+#[cold]
+fn lane_body_refused<H: Host>(vm: &Vm<H>, own: &LaneView) {
+    vm.programs.tier_events().record(Event::Refused);
+    if vm.programs.js_jit_diagnostics_enabled() {
+        own.body_stats.refused.set(own.body_stats.refused.get() + 1);
+    }
+}
+
 fn lane_body_left<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
@@ -15333,9 +15367,7 @@ fn lane_body_left<H: Host>(
     method: &super::compiled::LaneMethod,
     exit: super::compiled::LaneExit,
 ) -> (LaneBodyLeft, super::compiled::LaneExit) {
-    if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
-        own.body_stats.ended(exit, &method.exits, &method.inlined, super::compiled::take_lane_exit_line());
-    }
+    lane_record_end(cx, own, method, exit);
     if exit == super::compiled::LaneExit::Terminated {
         // A fault can bypass the native exit's register snapshots. Discard its
         // native frames instead of materializing stale homes for guest execution.
@@ -15540,9 +15572,8 @@ fn lane_push_passed<H: Host, const GENERAL: bool, const SETTLES: bool>(
 /// helper that observes activations (`lane_materialize_running_leaf`), make the activation the
 /// push would have made, in the room the run reserved for it (`CALLEE_ACTIVATION_PENDING`),
 /// and resume as the body's prologue would (`lane_body_concluded`). `None`, which changes
-/// nothing, where the body does not run: diagnostics count its entries (`lane_body_entry`), or
-/// the lane cannot make the activations a leave inside its inlined calls would
-/// (`lane_body_admits`).
+/// nothing, where the body does not run: the lane cannot make the activations a leave inside
+/// its inlined calls would (`lane_body_admits`).
 #[inline(never)]
 fn lane_enter_cell_body<H: Host>(
     cx: *mut LaneContext<H>,
@@ -15577,8 +15608,7 @@ fn lane_enter_cell_body<H: Host>(
 #[inline(always)]
 fn lane_begin_cell_leaf<H: Host>(cx: *mut LaneContext<H>, ip: Ip, r: Registers, target: &ScriptCallTarget, argc: u16, this: Value, window: Registers) {
     unsafe { vm(cx) }.programs.record_js_jit_lane_entry(target.program, target.function);
-    #[cfg(test)]
-    super::compiled::LANE_CELL_CROSSINGS.with(|count| count.set(count.get() + 1));
+    unsafe { vm(cx) }.programs.tier_events().record(Event::CellCrossed);
     // SAFETY: the running lane's context, and the callee's view outlives its program.
     unsafe {
         (*cx).leaf = LeafCall {
@@ -15611,7 +15641,8 @@ fn lane_cell_body_ended<H: Host>(
             (*cx).callee_warming = false;
             vm(cx).lane_stack.values.set_top(window.0);
         }
-        own.note_lane_body_end(exit, false, |_| {});
+        lane_record_end(cx, own, method, exit);
+        lane_note_body_end(cx, own, exit, |_| {});
         let (registers, next) = lane_complete_leaf(cx, value, CONTEXT_LEAF).expect("the leaf runs until it completes or materializes");
         return Resumed::At(registers, next, Carried::script(cx));
     }
@@ -18565,6 +18596,7 @@ fn derive_lane_view<'live, H: Host>(
     sites: &[crate::bytecode::FieldSite],
     loop_tier: bool,
     diagnostics: bool,
+    tiers: &'static Tiers,
 ) -> LaneView {
     // Each pass below reads instructions by PC; they are decoded once, here.
     let decoded: Vec<WideInstruction> = function.instructions().collect();
@@ -19584,7 +19616,7 @@ fn derive_lane_view<'live, H: Host>(
             constants,
             sites,
             live,
-            diagnostics,
+            (diagnostics, tiers),
             &mut records,
         )
     } else {
@@ -19646,6 +19678,7 @@ fn derive_lane_view<'live, H: Host>(
     LaneView {
         records,
         entries,
+        tiers,
         memory_register,
         activation,
         target_body: std::cell::OnceCell::new(),
@@ -19716,7 +19749,7 @@ fn install_loop_sites<'live, H: Host>(
     constants: &[Value],
     sites: &[crate::bytecode::FieldSite],
     live: &dyn Fn() -> Option<&'live std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
-    diagnostics: bool,
+    (diagnostics, tiers): (bool, &'static Tiers),
     records: &mut [LaneInstruction],
 ) -> (Box<[LoopSite]>, Vec<(super::compiled::RegionRejection, usize)>) {
     let backward = lane_jump_always::<H, true> as Handler as *const ();
@@ -19806,9 +19839,10 @@ fn install_loop_sites<'live, H: Host>(
                     header_handler: std::cell::Cell::new(std::ptr::null()),
                     hookable: holds_no_call_link(decoded[header as usize].op()),
                     taken: std::cell::Cell::new(0),
-                    needed: std::cell::Cell::new(TIERS.loops.warmup_taken),
+                    needed: std::cell::Cell::new(tiers.loops.warmup_taken),
                     entering: std::cell::Cell::new(true),
                     diagnostics,
+                    tiers,
                     lane_backedge_count: std::cell::Cell::new(0),
                     native_entry_attempts: std::cell::Cell::new(0),
                     native_region_runs: std::cell::Cell::new(0),
@@ -21017,6 +21051,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn entry_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
         if !self.execution_mode.allows_dynamic_execution() { return std::ptr::null(); }
         let diagnostics = self.programs.reports_on_drop();
+        let tiers = self.programs.tiers();
         // A Wasm function that may loop gets its view at entry; a JavaScript one derives it
         // once a loop turns hot (`Vm::note_back_edge`).
         let wasm = self.programs.residual(program).is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm);
@@ -21031,7 +21066,8 @@ impl<H: Host> Vm<H> {
                     live,
                     sites,
                     self.tier_may_run(crate::jit_mode::Tier::ANY),
-                        diagnostics,
+                    diagnostics,
+                    tiers,
                 )
             })
             .unwrap_or(std::ptr::null())

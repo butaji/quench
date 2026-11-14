@@ -4,6 +4,7 @@ use super::tests::{run_after, run_both, run_in};
 use crate::JitMode;
 use crate::bytecode::Op as Opcode;
 use crate::vm::compiled::base_region::fast_rows;
+use crate::vm::test_oracle::{assert_tier_agrees, Expect, Tier};
 
 /// A read of a binding in its temporal dead zone, and an assignment that is no initialization, leave a fast row
 /// into the interpreter's step, which raises; an initialized binding is read and written by the row.
@@ -203,11 +204,8 @@ fn environment_declarations_and_reads_run_in_a_body_without_leaving() {
          }
          let t = 0; for (let k = 0; k < 300; k++) t = (t + tally(8 + k % 5)) | 0;
          print(t); print(tally(3));";
-    for mode in [JitMode::BaseOnly, JitMode::UltraOnly] {
-        let (interpreted, compiled, [runs, returns]) = run_in(mode, source);
-        assert_eq!(interpreted, compiled, "{mode:?}");
-        assert!(runs > 100, "{mode:?}: the bodies ran {runs} times");
-        assert_eq!(runs, returns, "{mode:?}: a body run left before completing");
+    for tier in [Tier::BJit, Tier::UJit] {
+        assert_tier_agrees(source, tier, Expect { completed: 101, leaves: 0 });
     }
 }
 

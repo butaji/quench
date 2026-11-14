@@ -6,6 +6,8 @@ use super::{
 };
 use crate::{Engine, Value};
 use crate::test_host::TestHost;
+use crate::vm::test_oracle::{assert_tier_agrees, Expect, Tier};
+use crate::vm::tier_events::Event;
 use std::cell::RefCell;
 use std::rc::Rc;
 #[path = "osr_retirement_tests.rs"] mod osr_retirement_tests;
@@ -14489,7 +14491,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
         );
         assert!(
             site.tier_threshold_reached
-                && site.lane_backedge_count >= u64::from(crate::vm::compiled::tier_policy::TIERS.loops.warmup_taken)
+                && site.lane_backedge_count >= u64::from(crate::vm::compiled::tier_policy::TierRows::PROCESS.table().loops.warmup_taken)
         );
         assert_eq!(site.analysis_rejection, None);
         let body = program.function_get(function_id).unwrap();
@@ -17556,7 +17558,7 @@ fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
 
     // Each fixed look spends alpha/4 under p=0.8. Testing at these points
     // bounds false promotion across looks for this function at 5%.
-    for (observations, minimum) in crate::vm::compiled::tier_policy::TIERS.js_function.promotion_looks {
+    for (observations, minimum) in crate::vm::compiled::tier_policy::TierRows::PROCESS.table().js_function.promotion_looks {
         assert!(upper_tail(observations, minimum, 0.8) <= 0.05 / 4.0);
         assert!(upper_tail(observations, minimum - 1, 0.8) > 0.05 / 4.0);
     }
@@ -20654,7 +20656,6 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
     let program = Engine::specialize(source, "lane-inline.js").unwrap();
     let mut answers = Vec::new();
     for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let before = super::compiled::LANE_CALLS_INLINED.load(std::sync::atomic::Ordering::Relaxed);
         let mut vm = Vm::new(TestHost::default());
         vm.programs.enable_js_lane_methods();
         vm.set_execution_mode(mode);
@@ -20705,8 +20706,7 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         assert_eq!(vm.own_property(receiver, total), Some(Value::number(expected_total)));
         assert_eq!(vm.own_property(receiver, calls), Some(Value::number(before_calls + 1.0)));
         if mode == crate::ExecutionMode::Compiled && super::compiled::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
-            let after = super::compiled::LANE_CALLS_INLINED.load(std::sync::atomic::Ordering::Relaxed);
-            assert!(after > before, "the storing callee runs inlined in its caller's lane body");
+            assert!(vm.tier_events().count(Event::Inlined) > 0, "the storing callee runs inlined in its caller's lane body");
         }
     }
     assert!(answers[0].0.is_some() && answers[0].1.is_some());
@@ -20759,25 +20759,9 @@ fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
       }
       globalThis.answer = total;
     })();"#;
-    let program = Engine::specialize(source, "lane-bodies.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let before = super::compiled::LANE_METHODS_COMPILED.load(std::sync::atomic::Ordering::Relaxed);
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        let answer = vm.own_property(global, atom).and_then(Value::as_number);
-        answers.push(answer);
-        if mode == crate::ExecutionMode::Compiled && super::compiled::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
-            let after = super::compiled::LANE_METHODS_COMPILED.load(std::sync::atomic::Ordering::Relaxed);
-            assert!(after > before, "a declined method runs as a lane body");
-        }
-    }
-    assert!(answers[0].is_some());
-    assert_eq!(answers[0], answers[1]);
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    assert!(run.outcome.answer.is_some());
+    assert!(run.events.count(Event::Published) > 0, "a declined method runs as a lane body");
 }
 
 /// Lane bodies call the callees they do not inline natively (`dispatch_fast::lane_body_call`):
@@ -20897,7 +20881,6 @@ fn lane_bodies_call_method_sites_with_listed_arguments_like_the_interpreter() {
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "drive")).unwrap();
     let mut answers = Vec::new();
     for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let before = super::compiled::LANE_METHODS_COMPILED.load(std::sync::atomic::Ordering::Relaxed);
         let mut vm = Vm::new(TestHost::default());
         vm.programs.enable_js_lane_methods();
         #[cfg(not(quench_profiled))]
@@ -20908,8 +20891,7 @@ fn lane_bodies_call_method_sites_with_listed_arguments_like_the_interpreter() {
         let atom = vm.intern_atom("answer");
         answers.push(vm.own_property(global, atom).and_then(Value::as_number));
         if mode == crate::ExecutionMode::Compiled && super::compiled::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
-            let after = super::compiled::LANE_METHODS_COMPILED.load(std::sync::atomic::Ordering::Relaxed);
-            assert!(after > before, "a method making method calls runs as a lane body");
+            assert!(vm.tier_events().count(Event::Published) > 0, "a method making method calls runs as a lane body");
             #[cfg(not(quench_profiled))]
             assert_drive_leaves_no_method_call(&vm, &program, drive);
         }
@@ -23964,59 +23946,22 @@ fn lane_builtin_rows_keep_builtin_semantics() {
     assert_eq!(output.borrow().as_slice(), [LANE_BUILTIN_ROWS_EXPECTED]);
 }
 
-/// What `lane_entry_counts` measured of a run.
-struct LaneEntryCounts {
-    /// The number the source left in `globalThis.answer`.
-    answer: Option<f64>,
-    /// The lane body entries the run made.
-    entries: usize,
-    /// The runs those entries bound (`LaneFrame::bind_run`).
-    binds: usize,
-    /// The calls that entered a body through its entry cell before any activation.
-    crossings: usize,
-    /// Whether the memory policy compiles lane bodies at all.
-    compiles: bool,
-}
-
-/// Runs `source` and measures it: its answer, and the lane body entries it made.
-fn lane_entry_counts(source: &str, mode: crate::ExecutionMode) -> LaneEntryCounts {
-    let program = Engine::specialize(source, "lane-crossing.js").unwrap();
-    super::compiled::LANE_ENTRIES.with(|counts| counts.set((0, 0)));
-    super::compiled::LANE_CELL_CROSSINGS.with(|count| count.set(0));
-    let mut vm = Vm::new(TestHost::default());
-    vm.programs.enable_js_lane_methods();
-    vm.set_execution_mode(mode);
-    vm.execute(&program).unwrap();
-    let atom = vm.intern_atom("answer");
-    let answer = vm.own_property(vm.realm.globals, atom).and_then(Value::as_number);
-    let (entries, binds) = super::compiled::LANE_ENTRIES.with(std::cell::Cell::get);
-    LaneEntryCounts {
-        answer, entries, binds,
-        crossings: super::compiled::LANE_CELL_CROSSINGS.with(std::cell::Cell::get),
-        compiles: super::compiled::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY),
-    }
-}
-
 /// The interpreter enters a hot callee's body through its function's one entry word, and a run
 /// binds the dispatch payload once: entries of one lane run find its program, residual, lane
 /// context and interrupt standing, so the runs bound are a small fraction of the entries.
 #[test]
 fn interpreter_calls_cross_into_bodies_with_one_payload_per_lane_run() {
-    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"(function () {
       function step(a, b) { let s = 0; for (let i = 0; i < 4; i++) { s = (s + a * i + b) | 0; } return s; }
       let total = 0;
       for (let round = 0; round < 20000; round++) { total = (total + step(round & 7, round & 3)) & 1048575; }
       globalThis.answer = total;
     })();"#;
-    let expected = lane_entry_counts(source, crate::ExecutionMode::Interpreted).answer;
-    let LaneEntryCounts { answer, entries, binds, crossings, compiles } = lane_entry_counts(source, crate::ExecutionMode::Compiled);
-    assert_eq!(answer, expected, "entering through the cell matches the interpreter");
-    if compiles {
-        assert!(entries > 1000, "the hot callee runs as a body, entered {entries} times");
-        assert!(binds * 200 < entries, "{binds} payload binds for {entries} entries");
-        assert!(crossings > 1000, "the interpreter's calls enter the body through its cell before any activation, {crossings} times");
-    }
+    let events = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED).events;
+    let (entries, binds, crossings) = (events.count(Event::Entered), events.count(Event::RunBound), events.count(Event::CellCrossed));
+    assert!(entries > 1000, "the hot callee runs as a body, entered {entries} times");
+    assert!(binds * 200 < entries, "{binds} payload binds for {entries} entries");
+    assert!(crossings > 1000, "the interpreter's calls enter the body through its cell before any activation, {crossings} times");
 }
 
 /// Callees whose cell holds the stub (no body yet, a declined or a retired one) run in the
@@ -24038,19 +23983,14 @@ fn interpreter_calls_of_stub_callees_match_the_interpreter() {
       }
       globalThis.answer = total * 8 + caught;
     })();"#;
-    let expected = lane_entry_counts(source, crate::ExecutionMode::Interpreted).answer;
-    let answer = lane_entry_counts(source, crate::ExecutionMode::Compiled).answer;
-    assert!(expected.is_some());
-    assert_eq!(answer, expected);
+    assert_cell_crossings_match(source);
 }
 
 /// Runs `source` interpreted and compiled and requires the same answer, which the interpreter
 /// leaves in `globalThis.answer`.
 fn assert_cell_crossings_match(source: &str) {
-    let expected = lane_entry_counts(source, crate::ExecutionMode::Interpreted).answer;
-    let compiled = lane_entry_counts(source, crate::ExecutionMode::Compiled);
-    assert!(expected.is_some(), "the source leaves its answer");
-    assert_eq!(compiled.answer, expected);
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    assert!(run.outcome.answer.is_some(), "the source leaves its answer");
 }
 
 /// A body entered through its cell that leaves at its first instruction (its receiver's shape

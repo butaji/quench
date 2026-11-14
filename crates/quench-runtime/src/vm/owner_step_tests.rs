@@ -3,7 +3,7 @@
 //! are made over the activation's window: a chain of compiled callees whose innermost ones make
 //! them leaves none of its runs, and prints what the interpreter prints.
 use crate::vm::catch_tests::{bodies_match_interpreter, BodyRuns};
-use crate::{JitMode, jit_mode::with_mode};
+use crate::vm::test_oracle::Tier;
 
 /// Ten chained functions: `c9` reads and writes names (a `typeof` of an unbound name too), `c8` reads
 /// and writes a local its closure captures, `c7` looks its names up through a `with` object, and each
@@ -39,9 +39,9 @@ const CHAIN: &str = r#"
 
 const NAMES: [&str; 10] = ["c0", "c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9"];
 
-/// The body runs of the chain in `mode`, whose output equals the interpreter's (`bodies_match_interpreter`).
-fn chain_runs(mode: JitMode) -> Vec<BodyRuns> {
-    with_mode(mode, || bodies_match_interpreter(CHAIN, &NAMES))
+/// The body runs of the chain under `tier`, whose outcome equals the interpreter's (`bodies_match_interpreter`).
+fn chain_runs(tier: Tier) -> Vec<BodyRuns> {
+    bodies_match_interpreter(CHAIN, tier, &NAMES)
 }
 
 /// Every body ran natively to its end (`ended`) and none left for the general path.
@@ -54,10 +54,10 @@ fn all_native_and_none_left(runs: &[BodyRuns]) {
 
 #[test]
 fn a_base_jit_chain_of_name_local_and_with_steps_runs_natively_without_leaving() {
-    all_native_and_none_left(&chain_runs(JitMode::BaseOnly));
+    all_native_and_none_left(&chain_runs(Tier::BJit));
 }
 
 #[test]
 fn an_ultra_jit_chain_of_name_local_and_with_steps_runs_natively_without_leaving() {
-    all_native_and_none_left(&chain_runs(JitMode::UltraOnly));
+    all_native_and_none_left(&chain_runs(Tier::UJit));
 }

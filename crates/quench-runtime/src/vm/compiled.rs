@@ -23,7 +23,7 @@
 //! interpreter's `WasmTrap`, and an imported call is a callout through which
 //! the VM makes the call exactly as the interpreter would (`import_callout`).
 
-use tier_policy::TIERS;
+use tier_policy::Tiers;
 use super::dispatch_fast::Activation;
 use super::*;
 use crate::bytecode::{Class, Traits,
@@ -1645,6 +1645,8 @@ pub(super) struct VmFacts<'a> {
     pub(super) html_dda: bool,
     /// Whether leaves record the guard they took (`JsStepDispatch::exit_line`).
     pub(super) diagnostics: bool,
+    /// The thresholds the compiling VM's tier controllers read: a Static fact of the code it makes.
+    pub(super) tiers: &'static Tiers,
     /// The Stable facts the code may fold under a code dependency: `None` for code that takes
     /// no dependency on this VM (`Division::Offline`).
     pub(super) online: Option<OnlineFacts<'a>>,
@@ -1660,14 +1662,14 @@ pub(super) struct VmFacts<'a> {
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
-    pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, online: None, frozen: false,
+    pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
         frozen_fields: None, frozen_constants: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
-        VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), online: None, frozen: false,
+        VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
             frozen_fields: None, frozen_constants: None }
     }
 }
@@ -3392,35 +3394,12 @@ fn write_perf_map(kind: &str, base: usize, bytes: &[u8], spans: &[(usize, usize,
     let _ = std::fs::write(format!("/tmp/quench-jit-{pid}-{base:x}.bin"), bytes);
 }
 
-#[cfg(test)]
-thread_local! {
-    /// Lane-ABI OSR runs in this test thread.
-    pub(super) static LANE_OSR_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// Runs of lane bodies in this test thread, and those that completed their activation.
-    pub(super) static LANE_BODY_RUNS: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
-    /// What the lane-ABI OSR runs in this test thread did (`OsrRunKinds`).
-    pub(super) static LANE_OSR_KINDS: std::cell::Cell<OsrRunKinds> = const { std::cell::Cell::new(OsrRunKinds { lent: 0, left: 0, inlined: 0 }) };
-}
-
-/// The runs of lane-ABI OSR regions that ran on the lane frame's payload (a direct row), that left
-/// inside their loop (an exit, a leave inside a callee), and that left inside an inlined callee.
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct OsrRunKinds {
-    pub(super) lent: usize,
-    pub(super) left: usize,
-    pub(super) inlined: usize,
-}
-
-#[cfg(test)]
-impl OsrRunKinds {
-    /// Counts a run that ended in `outcome`, `lent` the payload.
-    fn note(outcome: &LoopOutcome, lent: bool) {
-        let left = matches!(outcome, LoopOutcome::Exit(_) | LoopOutcome::Inlined { .. } | LoopOutcome::Left { .. } | LoopOutcome::Callee);
-        LANE_OSR_KINDS.with(|kinds| {
-            let now = kinds.get();
-            kinds.set(Self { lent: now.lent + usize::from(lent), left: now.left + usize::from(left), inlined: now.inlined + usize::from(matches!(outcome, LoopOutcome::Inlined { .. })) });
-        });
+/// Counts a lane-ABI region's run that ended in `outcome`, `lent` the payload, in the VM's tier events.
+fn note_osr_run(events: &super::tier_events::TierEvents, outcome: &LoopOutcome, lent: bool) {
+    use super::tier_events::Event;
+    let left = matches!(outcome, LoopOutcome::Exit(_) | LoopOutcome::Inlined { .. } | LoopOutcome::Left { .. } | LoopOutcome::Callee);
+    for (event, happened) in [(Event::OsrLent, lent), (Event::OsrExited, left), (Event::OsrInlined, matches!(outcome, LoopOutcome::Inlined { .. }))] {
+        if happened { events.record(event); }
     }
 }
 
@@ -3482,6 +3461,8 @@ impl CompiledOsrRegion {
         from: u32,
     ) -> LoopOutcome {
         let start = self.start_at(region, from);
+        // SAFETY: the caller's contract covers `vm`.
+        unsafe { (*vm).programs.tier_events().record(super::tier_events::Event::OsrRun) };
         // SAFETY: the caller's contract; the region runs the same lane entry ABI.
         unsafe { if self.crossing == Crossing::Bare { stencil_run::run_bare(start, registers, entry, region, interrupt) }
             else { self.run_lane(start, registers, entry, region, vm, program, function, frame, interrupt, lane) } }
@@ -3506,8 +3487,6 @@ impl CompiledOsrRegion {
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
         (lane_context, direct_calls): (usize, bool),
     ) -> LoopOutcome {
-        #[cfg(test)]
-        LANE_OSR_RUNS.with(|count| count.set(count.get() + 1));
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
         let outcome = unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, self.crossing == Crossing::General, |native, vm| {
             osr_lane::bind_loop(native, vm, region, entry, (frame, lane_context));
@@ -3518,8 +3497,8 @@ impl CompiledOsrRegion {
             let lend = self.calls.enters_callees().then_some(direct_calls);
             osr_lane::enter(native, vm, region, program, (code, resume), registers, interrupt, (lane_context, lend))
         }) }.unwrap_or(LoopOutcome::Terminated);
-        #[cfg(test)]
-        OsrRunKinds::note(&outcome, self.calls.enters_callees());
+        // SAFETY: as above; the activation that held `vm` has returned.
+        note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, self.calls.enters_callees());
         outcome
     }
 
@@ -3937,25 +3916,6 @@ impl LaneExit {
     }
 }
 
-/// Lane bodies compiled by this process, for tests that a lane activation ran natively.
-#[cfg(test)]
-pub(super) static LANE_METHODS_COMPILED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-// Entries `Vm::run_lane_body` made on this thread and the runs they bound
-// (`LaneFrame::bind_run` writing its words), for the crossing-cost test.
-#[cfg(test)]
-thread_local! { pub(super) static LANE_ENTRIES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) }; }
-// Entries on this thread that changed a word of their run (`LaneFrame::run_words`): no more than
-// the runs they bound.
-#[cfg(test)]
-thread_local! { pub(super) static LANE_RUN_REWRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
-// Calls of lane bodies made through their entry cells before any activation
-// (`dispatch_fast::lane_enter_cell_body`) on this thread, for the crossing test.
-#[cfg(test)]
-thread_local! { pub(super) static LANE_CELL_CROSSINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
-/// Calls lane bodies compiled by this process inline, for tests that inlining happened.
-#[cfg(test)]
-pub(super) static LANE_CALLS_INLINED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 /// A lane body's callout. Every unsupported instruction and failed guard leaves native
 /// code here, with nothing of that instruction done; the lane executes it next.
 unsafe extern "C" fn lane_method_exit(_context: u64, pc: u64, result: u64, _unused: u64) -> i64 {
@@ -4292,7 +4252,7 @@ impl<H: Host> Vm<H> {
             .flat_map(|instruction| Self::instruction_field_sites(program, instruction))
             .filter(|(site, _)| !generic.contains(site))
             .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }.into_iter().map(|load| NativeFieldLoad { function_shape: functions.contains(load.shape as usize), ..load }).collect::<Vec<_>>()))
-            .filter(|(site, shapes)| !shapes.is_empty() && site_posterior::SiteEvidence::of(self.field_site_leaves(self.field_cache_index(*site)), shapes.len()).speculates())
+            .filter(|(site, shapes)| !shapes.is_empty() && site_posterior::SiteEvidence::of(self.programs.tiers(), self.field_site_leaves(self.field_cache_index(*site)), shapes.len()).speculates())
             .map(|(site, shapes)| (usize::from(site), shapes));
         lane_region::flat_table(sites)
     }
@@ -4503,14 +4463,6 @@ struct LaneFrame {
 }
 
 impl LaneFrame {
-    /// The words `bind_run` writes, for the test that an entry of a run rewrites none of them.
-    #[cfg(test)]
-    fn run_words(&self) -> [usize; 8] {
-        let dispatch = &self.dispatch;
-        [dispatch.vm, dispatch.program_id.raw() as usize, dispatch.lane_context, dispatch.residual,
-            dispatch.stores_specialized, dispatch.field_entries, self.context.stack_limit, self.context.adapter_payload.addr()]
-    }
-
     /// Binds the payload and context to `run`'s words, written once per run: a nested entry
     /// of the same run (`Vm::run_nested_lane_method`) and each next entry of the lane's calls
     /// find them standing. `field_entries` derives the program's field cache entries, which
@@ -4521,12 +4473,12 @@ impl LaneFrame {
     /// frames), a deeper run (a native callback's) has its own context and so binds its own,
     /// and the nested entries of one run (`Vm::run_nested_lane_method`) spend the run's budget.
     /// The interrupt and the payload, whose address is the frame's, bind once per interrupt owner.
+    /// Whether the entry bound a different run than the last one's.
     #[inline(always)]
-    fn bind_run(&mut self, run: LaneRun, interrupt: &crate::ExecutionInterrupt, field_entries: impl FnOnce() -> usize) {
+    fn bind_run(&mut self, run: LaneRun, interrupt: &crate::ExecutionInterrupt, field_entries: impl FnOnce() -> usize) -> bool {
         let owner = std::ptr::from_ref(interrupt);
-        if LaneRun::of(&self.dispatch) != run {
-            #[cfg(test)]
-            LANE_ENTRIES.with(|counts| counts.set((counts.get().0, counts.get().1 + 1)));
+        let rebound = LaneRun::of(&self.dispatch) != run;
+        if rebound {
             self.dispatch.field_entries = field_entries();
             self.context.stack_limit = native_stack_limit();
             self.dispatch.program_id = run.program_id;
@@ -4539,6 +4491,7 @@ impl LaneFrame {
             self.context.interrupt_owner = owner;
             self.context.adapter_payload = (&raw mut self.dispatch).cast();
         }
+        rebound
     }
 
     fn new() -> Self {
@@ -7938,7 +7891,7 @@ const FUNCTION_ALIGNMENT: usize = 64;
 
 impl<H: Host> Vm<H> {
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
-        self.execution_mode = mode; super::regexp_native::enable(mode != ExecutionMode::Interpreted);
+        self.execution_mode = mode; super::regexp_native::enable(mode != ExecutionMode::Interpreted, self.programs.tiers().regexp_native_runs);
     }
 
     /// Lets hot functions reach lane bodies by the tier gate (`Runtime` runs for speed).
@@ -7998,9 +7951,9 @@ impl<H: Host> Vm<H> {
         // costs a short call-free one its leaf calls. A function the numeric tier cannot take
         // is still theirs to claim.
         let lane_claims = self.programs.js_jit_lane_methods_enabled()
-            && program.function_get(function as usize).is_some_and(lane_body_may_amortize);
+            && program.function_get(function as usize).is_some_and(|body| lane_body_may_amortize(self.programs.tiers(), body));
         if super::tier_machine::js_tier_state(state.as_ref()) == super::tier_machine::TierState::Declined {
-            return lane_claims || self.programs.js_jit_diagnostics_enabled();
+            return lane_claims;
         }
         let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_native_entry);
         // Inlining may erase a short body's calls; a call-free candidate still has
@@ -8144,11 +8097,12 @@ impl<H: Host> Vm<H> {
         let function = self.frames[frame].function;
         let program_id = self.frames[frame].program;
         // Most entries are of functions no tier path can take.
-        let facts = self
-            .programs
-            .js_entry_facts(program_id, function)
-            .filter(|facts| facts.candidate || self.programs.js_jit_diagnostics_enabled())?;
-        let entry = self.frames.get(frame).filter(|record| record.pc == 0).and_then(|record| {
+        let facts = self.programs.js_entry_facts(program_id, function)?;
+        let at_entry = self.frames[frame].pc == 0;
+        if !facts.candidate && at_entry {
+            self.programs.observe_unclaimed_entry(program, program_id, function, &self.frames[frame].registers);
+        }
+        let entry = self.frames.get(frame).filter(|_| facts.candidate && at_entry).and_then(|record| {
             let params = program.function_get(record.function as usize)?.params;
             Some(TierEntry {
                 program: record.program,
@@ -8190,47 +8144,23 @@ impl<H: Host> Vm<H> {
         let facts = &*entry.facts;
         #[cfg(test)]
         if !self.programs.js_entry_specializations_enabled() { return None; }
-        // Most entries are of functions no entry path can claim; diagnostics still count them.
-        if !facts.candidate && !self.programs.js_jit_diagnostics_enabled() {
+        // Most entries are of functions no entry path can claim.
+        if !facts.candidate {
+            self.programs.observe_unclaimed_entry(program, program_id, function_id, &entry.parameters);
             return None;
         }
         let tier = self.programs.js_tier(program_id, function_id);
-        let rejected_entry = if self.programs.js_jit_diagnostics_enabled()
-            && matches!(tier.as_ref(), Some(super::program_store::JsTierState::Rejected { .. }))
-        {
-            self.programs.note_js_rejected_entry(program_id, function_id)
-        } else {
-            None
-        };
         if matches!(
             tier.as_ref(),
             Some(super::program_store::JsTierState::Unsupported | super::program_store::JsTierState::Rejected { .. })
-        ) && (!self.programs.js_jit_diagnostics_enabled() || rejected_entry.is_none())
-        {
+        ) {
+            self.programs.observe_unclaimed_entry(program, program_id, function_id, &entry.parameters);
             return None;
         }
         let params = usize::from(function.params);
         let arguments = entry.parameters.get(..params)?;
         let numeric = arguments.iter().all(|value| value.as_number().is_some());
-        if let Some((entries, reason)) = rejected_entry {
-            self.programs.record_js_jit_entry(program_id, function_id, numeric, function.params);
-            self.programs.record_js_jit_rejection(program_id, function_id, reason, entries);
-            return None;
-        }
-        if tier.is_none() && !facts.candidate {
-            let reason = super::js_compiled::candidate_rejection_reason(program, function_id);
-            let report_entries = self.programs.reject_js_function(program_id, function_id, reason);
-            if let Some(entries) = report_entries
-                && self.programs.js_jit_diagnostics_enabled()
-            {
-                self.programs.record_js_jit_entry(program_id, function_id, numeric, function.params);
-                self.programs.record_js_jit_rejection(program_id, function_id, reason, entries);
-            }
-            return None;
-        }
-        if self.programs.js_jit_diagnostics_enabled() {
-            self.programs.record_js_jit_entry(program_id, function_id, numeric, function.params);
-        }
+        self.programs.record_js_jit_entry(program_id, function_id, numeric, function.params);
         let compiled = match tier {
             Some(super::program_store::JsTierState::Compiled(compiled)) => {
                 if !numeric {
@@ -8254,9 +8184,7 @@ impl<H: Host> Vm<H> {
         if compiled.params() != params {
             return None;
         }
-        if self.programs.js_jit_diagnostics_enabled() {
-            self.programs.record_js_jit_native_entry(program_id, function_id);
-        }
+        self.programs.record_js_jit_native_entry(program_id, function_id);
         let poll_page = self.compiled_poll_page();
         let value = compiled.call(arguments, &self.execution_interrupt, poll_page)?;
         let last_pc = function.code.len().checked_sub(1)?;
@@ -8371,16 +8299,13 @@ impl<H: Host> Vm<H> {
     /// The direct run of `function`'s compiled body a frameless activation keeps
     /// (`LaneView::tier_direct`): where its body reads only its parameters
     /// (`CompiledJsFunction::direct_callable`) and ends in a `Return`, which its result
-    /// completes. Diagnostics count every entry through `js_jit_compiled_call` instead.
+    /// completes.
     pub(super) fn direct_tier_entry(
         &self,
         program: &ResidualProgram,
         id: ProgramId,
         function: u32,
     ) -> Option<DirectTierEntry> {
-        if self.programs.js_jit_diagnostics_enabled() {
-            return None;
-        }
         let super::program_store::JsTierState::Compiled(compiled) = self.programs.js_tier_ref(id, function)? else {
             return None;
         };
@@ -8394,6 +8319,8 @@ impl<H: Host> Vm<H> {
             compiled: Rc::downgrade(compiled),
             return_pc,
             return_register: terminal.register_a(),
+            function: (id, function),
+            params: body.params,
         })
     }
 
@@ -8407,6 +8334,9 @@ impl<H: Host> Vm<H> {
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
         let compiled = entry.compiled.upgrade()?;
         let value = direct_call(&compiled, parameters, &self.execution_interrupt)?;
+        let (program, function) = entry.function;
+        self.programs.record_js_jit_entry(program, function, true, entry.params);
+        self.programs.record_js_jit_native_entry(program, function);
         Some((entry.return_pc, entry.return_register, value))
     }
 
@@ -9464,8 +9394,8 @@ const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 /// Whether a lane body for `body` could amortize an entry (`lane_facts::amortizes_entry`): a
 /// loop, a call (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
-pub(super) fn lane_body_may_amortize(body: &crate::bytecode::Function) -> bool {
-    body.loops() || body.code.len() >= TIERS.amortizing_instructions(tier_policy::lane_body_tier())
+pub(super) fn lane_body_may_amortize(tiers: &Tiers, body: &crate::bytecode::Function) -> bool {
+    body.loops() || body.code.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
         || body.code.iter().any(|packed| super::dispatch_fast::decoded_instruction(body, *packed).op().is_call())
 }
 
@@ -9482,6 +9412,9 @@ pub(super) struct DirectTierEntry {
     compiled: std::rc::Weak<CompiledJsFunction>,
     return_pc: usize,
     return_register: crate::bytecode::Register,
+    /// The function the entry runs, whose entries the diagnostics report counts.
+    function: (ProgramId, u32),
+    params: u16,
 }
 
 impl DirectTierEntry {

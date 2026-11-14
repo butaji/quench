@@ -1,5 +1,7 @@
-use crate::{Engine, ExecutionMode, JitMode};
+use crate::{Engine, JitMode};
 use crate::test_host::TestHost;
+use crate::vm::test_oracle::{assert_tier_agrees_after, Expect, Tier};
+use crate::vm::tier_events::Event;
 
 #[path = "tests/inlined.rs"]
 mod inlined;
@@ -18,22 +20,13 @@ pub(super) fn run_in(mode: JitMode, source: &str) -> (Vec<String>, Vec<String>, 
 }
 
 /// `run_in` of `source` after the global scripts `scripts` (source and name) ran in the same realm: what they declare
-/// is retained in the realm's records when `source` runs.
+/// is retained in the realm's records when `source` runs. The oracle has the tiers agree and engage; the printed lines
+/// come twice, as the two runs share them.
 pub(super) fn run_after(mode: JitMode, scripts: &[(&str, &str)], source: &str) -> (Vec<String>, Vec<String>, [usize; 2]) {
-    super::super::tier_policy::force_admission();
-    let program = Engine::specialize(source, "base-body.js").unwrap();
-    let printed = |mode: ExecutionMode| {
-        let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        let mut vm = crate::vm::Vm::new(TestHost::writing_to(output.clone()));
-        vm.set_execution_mode(mode);
-        vm.programs.enable_js_lane_methods();
-        vm.execute_after_scripts(scripts, &program).unwrap();
-        output.take()
-    };
-    let interpreted = printed(ExecutionMode::Interpreted);
-    super::super::LANE_BODY_RUNS.with(|runs| runs.set([0; 2]));
-    let compiled = crate::jit_mode::with_mode(mode, || printed(ExecutionMode::Compiled));
-    (interpreted, compiled, super::super::LANE_BODY_RUNS.with(std::cell::Cell::get))
+    let tier = if mode == JitMode::UltraOnly { Tier::UJit } else { Tier::BJit };
+    let run = assert_tier_agrees_after(scripts, source, tier, Expect::ENGAGED);
+    let runs = [Event::Entered, Event::Returned].map(|event| run.events.count(event) as usize);
+    (run.outcome.printed.clone(), run.outcome.printed, runs)
 }
 
 /// A loop function entered many times runs as a whole-function body, which completes its

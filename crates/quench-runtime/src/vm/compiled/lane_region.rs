@@ -2736,7 +2736,7 @@ impl Lowering<'_, '_> {
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
             payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls,
             roots: &mut self.stable.roots, number_returns: &mut self.number_returns, fields,
-            call_out: sites.call_out, capture: sites.capture, html_dda: self.vm.html_dda,
+            call_out: sites.call_out, capture: sites.capture, html_dda: self.vm.html_dda, tiers: self.vm.tiers,
             prototype: sites.prototype, table_entry: self.entry.as_ref(),
             held: self.held_view.take(), arrays_fixed: self.arrays_fixed, site };
         let step = crate::staged::step(&mut stage, &mut frame, operation);

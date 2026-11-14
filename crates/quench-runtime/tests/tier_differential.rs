@@ -4,7 +4,7 @@
 //! type flips make compiled code leave through its guards. A `tier-stress` build compiles at
 //! the first chance as well. `TIER_FUZZ_SEED` and `TIER_FUZZ_CASES` widen a local campaign.
 
-use quench_runtime::{Engine, ExecutionMode, Runtime, SystemHost};
+use quench_runtime::{Engine, ExecutionMode, MemoryPolicy, Runtime, SystemHost, TierEvent};
 use std::fmt::Write;
 
 /// Calls of each generated function: past every tier's warm-up in `tier_policy`.
@@ -138,15 +138,20 @@ fn program(seed: u64) -> String {
     out
 }
 
-fn run(source: &str, mode: ExecutionMode) -> String {
+/// How a run ended, and the lane bodies it entered: a tier that entered none agrees with anything.
+fn run(source: &str, mode: ExecutionMode) -> (String, u64) {
+    let mut entered = 0;
     let outcome = Engine::specialize(source, "tier-differential.js")
         .map_err(|errors| format!("{errors:?}"))
         .and_then(|program| {
             let mut runtime = Runtime::new(SystemHost);
+            runtime.set_memory_policy(MemoryPolicy::Throughput);
             runtime.set_execution_mode(mode);
-            runtime.execute(&program).map_err(|error| error.to_string())
+            let outcome = runtime.execute(&program).map_err(|error| error.to_string());
+            entered = runtime.tier_events().count(TierEvent::Entered);
+            outcome
         });
-    format!("{outcome:?}")
+    (format!("{outcome:?}"), entered)
 }
 
 fn environment(name: &str, default: u64) -> u64 {
@@ -157,15 +162,18 @@ fn environment(name: &str, default: u64) -> u64 {
 fn compiled_tiers_end_as_the_interpreter_does() {
     let first = environment("TIER_FUZZ_SEED", 1);
     let cases = environment("TIER_FUZZ_CASES", DEFAULT_CASES);
+    let mut entered = 0;
     let divergent: Vec<String> = (first..first + cases)
         .filter_map(|seed| {
             let source = program(seed);
-            let interpreted = run(&source, ExecutionMode::Interpreted);
-            let compiled = run(&source, ExecutionMode::Compiled);
+            let (interpreted, _) = run(&source, ExecutionMode::Interpreted);
+            let (compiled, bodies) = run(&source, ExecutionMode::Compiled);
+            entered += bodies;
             (interpreted != compiled).then(|| format!("seed {seed}:\n  interpreter {interpreted}\n  jit {compiled}\n{source}"))
         })
         .collect();
     assert!(divergent.is_empty(), "{} of {cases} programs diverge\n{}", divergent.len(), divergent.join("\n"));
+    assert!(entered > 0, "the compiled tier entered no lane body in {cases} programs: the campaign compared the interpreter with itself");
 }
 
 /// Regressions the campaigns found, kept as fixed programs.
@@ -181,6 +189,6 @@ const FOUND: &[&str] = &[
 #[test]
 fn found_programs_end_as_the_interpreter_does() {
     for source in FOUND {
-        assert_eq!(run(source, ExecutionMode::Interpreted), run(source, ExecutionMode::Compiled), "{source}");
+        assert_eq!(run(source, ExecutionMode::Interpreted).0, run(source, ExecutionMode::Compiled).0, "{source}");
     }
 }

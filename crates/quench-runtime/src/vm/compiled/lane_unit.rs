@@ -325,6 +325,8 @@ struct Planner<'t, 'f> {
     body: &'t dyn Fn(u32) -> Option<&'f Function>,
     registers: u32,
     budget: usize,
+    /// The longest callee body one call inlines (`LaneBody::max_inlined_instructions`).
+    max_inlined: usize,
     /// The loop trip counts the caller's run observed, by function and loop header.
     trips: &'t dyn Fn(u32, u32) -> Option<u64>,
     /// The expected executions of the call being planned, relative to the caller's entry.
@@ -435,7 +437,7 @@ impl Planner<'_, '_> {
         };
         let plan = DirectPlan { kind: CalleeKind::Script, identity: Identity::Guarded(target.identity().map_or(0, Value::to_bits)),
             sloppy: None, registers: callee.registers, returned: super::LANE_BODY_RETURNED, bound: None };
-        let budget = self.budget.min(super::tier_policy::TIERS.lane_body.max_inlined_instructions);
+        let budget = self.budget.min(self.max_inlined);
         plan_entry(Some(Resolved { plan, binding, body: Some(size) }), budget)
     }
 
@@ -646,7 +648,7 @@ pub(crate) fn with_budget<'f>(
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
-    with_trips(program, function_id, function, budget, targets, &|_, _| None, body)
+    with_trips(program, function_id, function, (budget, super::tier_policy::STATIC_ROWS.lane_body.max_inlined_instructions), targets, &|_, _| None, body)
 }
 
 /// `with_budget` weighing each call site by the loop trip counts `trips` gives (by function
@@ -656,13 +658,13 @@ pub(crate) fn with_trips<'f>(
     program: &crate::ResidualProgram,
     function_id: u32,
     function: &Function,
-    budget: usize,
+    (budget, max_inlined): (usize, usize),
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     trips: &dyn Fn(u32, u32) -> Option<u64>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
     let caller_registers = function.registers;
-    let mut planner = Planner { program, targets: &|function, pc| targets(function, pc).into_iter().filter(|target| target.function != function_id).collect(), body, registers: u32::from(caller_registers), budget, trips, weight: 1, path: Vec::new(), choice: weights::Choice::default() };
+    let mut planner = Planner { program, targets: &|function, pc| targets(function, pc).into_iter().filter(|target| target.function != function_id).collect(), body, registers: u32::from(caller_registers), budget, max_inlined, trips, weight: 1, path: Vec::new(), choice: weights::Choice::default() };
     let plan = planner.plan_weighted(function_id, function, budget);
     let registers = u16::try_from(planner.registers).ok()?;
     let mut emitter = Emitter {

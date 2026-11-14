@@ -5,37 +5,12 @@
 use super::*;
 use crate::Engine;
 use crate::test_host::TestHost;
+use crate::vm::test_oracle::{assert_tier_agrees, Expect, Tier};
 use std::{cell::RefCell, rc::Rc};
 
-/// The printed lines of `source` run in `mode`, and the native region runs of its function
-/// `name` (`None` in the interpreter).
-fn run_in(mode: crate::ExecutionMode, source: &str, name: &str) -> (Vec<String>, Option<u64>) {
-    let program = Engine::specialize(source, "catch-tests.js").unwrap();
-    let function_id = program.functions.iter()
-        .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name))
-        .unwrap();
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
-    vm.set_execution_mode(mode);
-    vm.programs.enable_js_jit_diagnostics();
-    vm.programs.enable_js_lane_methods();
-    vm.execute(&program).unwrap();
-    let runs = (mode == crate::ExecutionMode::Compiled).then(|| {
-        let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
-        let view = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("lane view");
-        u64::from(view.osr_diagnostics().native_region_runs)
-    });
-    let lines = output.borrow().clone();
-    (lines, runs)
-}
-
-/// The compiled run's output, which must equal the interpreter's, and its native runs.
-fn matches_interpreter(source: &str, name: &str) -> u64 {
-    let (expected, _) = run_in(crate::ExecutionMode::Interpreted, source, name);
-    let (actual, runs) = run_in(crate::ExecutionMode::Compiled, source, name);
-    assert_eq!(actual, expected);
-    runs.unwrap()
+/// The compiled run's output, which the oracle holds to the interpreter's, and its loop regions' runs.
+fn matches_interpreter(source: &str) -> u64 {
+    assert_tier_agrees(source, Tier::Full, Expect::ENGAGED).regions()
 }
 
 /// A throw and its catch in a hot loop run in the loop's native region: the thrown value
@@ -55,7 +30,7 @@ fn a_throw_caught_in_a_hot_loop_runs_natively() {
       for (let repeat = 0; repeat < 512; repeat++) result = run(64);
       print(String(result));
     "#;
-    let runs = matches_interpreter(&format!("(function(){{{source}}})();"), "run");
+    let runs = matches_interpreter(&format!("(function(){{{source}}})();"));
     assert!(runs > 0, "the loop with a caught throw runs in a native region");
 }
 
@@ -77,7 +52,7 @@ fn a_binding_less_catch_and_object_throws_match_the_interpreter() {
       for (let repeat = 0; repeat < 256; repeat++) result = run(70);
       print(String(result));
     "#;
-    matches_interpreter(&format!("(function(){{{source}}})();"), "run");
+    matches_interpreter(&format!("(function(){{{source}}})();"));
 }
 
 /// A callee's throw reaches the caller's catch, and a `finally` runs on both paths, whatever
@@ -101,7 +76,7 @@ fn nested_throws_and_finally_blocks_match_the_interpreter() {
       for (let repeat = 0; repeat < 256; repeat++) result = run(48);
       print(String(result));
     "#;
-    matches_interpreter(&format!("(function(){{{source}}})();"), "run");
+    matches_interpreter(&format!("(function(){{{source}}})();"));
 }
 
 /// An uncaught throw still reaches the caller's handler exactly, with the value intact.
@@ -122,7 +97,7 @@ fn an_uncaught_throw_in_a_hot_loop_reaches_the_outer_handler() {
       }
       print(String(seen));
     "#;
-    matches_interpreter(&format!("(function(){{{source}}})();"), "run");
+    matches_interpreter(&format!("(function(){{{source}}})();"));
 }
 
 /// The runs of a function's lane body: those a Rust entry ended and those it left to the lane
@@ -130,19 +105,18 @@ fn an_uncaught_throw_in_a_hot_loop_reaches_the_outer_handler() {
 /// (`EntryCell::raised_runs`), which only direct calls make.
 pub(super) type BodyRuns = (u32, u32, u32);
 
-/// Runs `source` compiled and returns its printed lines and the `BodyRuns` of each function of
-/// `names`: a throw that crossed native frames made no frame, so no run left.
-fn body_runs(source: &str, names: &[&str]) -> (Vec<String>, Vec<BodyRuns>) {
+/// Runs `source` compiled and returns the `BodyRuns` of each function of `names`: a throw that
+/// crossed native frames made no frame, so no run left.
+fn body_runs(source: &str, names: &[&str]) -> Vec<BodyRuns> {
     let program = Engine::specialize(source, "catch-tests.js").unwrap();
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let mut vm = Vm::new(TestHost::writing_to(Rc::new(RefCell::new(Vec::new()))));
     vm.set_memory_policy(crate::MemoryPolicy::Throughput);
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.programs.enable_js_lane_methods();
     vm.execute(&program).unwrap();
     let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
-    let runs = names.iter().map(|name| {
+    names.iter().map(|name| {
         let id = program.functions.iter()
             .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == *name))
             .unwrap();
@@ -151,18 +125,14 @@ fn body_runs(source: &str, names: &[&str]) -> (Vec<String>, Vec<BodyRuns>) {
         // SAFETY: the view owns its entry cell, which lives as long as the view.
         let raised = unsafe { &*(view.entry_cell() as *const super::compiled::entry_cell::EntryCell) }.raised_runs();
         (ended, left, raised)
-    }).collect();
-    let lines = output.borrow().clone();
-    (lines, runs)
+    }).collect()
 }
 
-/// The compiled run's lines, which must equal the interpreter's, and the body runs of `names`.
-pub(super) fn bodies_match_interpreter(source: &str, names: &[&str]) -> Vec<BodyRuns> {
+/// The body runs of `names` in a run under `tier`, which the oracle holds to the interpreter's outcome.
+pub(super) fn bodies_match_interpreter(source: &str, tier: Tier, names: &[&str]) -> Vec<BodyRuns> {
     let wrapped = format!("(function(){{{source}}})();");
-    let (expected, _) = run_in(crate::ExecutionMode::Interpreted, &wrapped, names[0]);
-    let (actual, runs) = body_runs(&wrapped, names);
-    assert_eq!(actual, expected);
-    runs
+    assert_tier_agrees(&wrapped, tier, Expect::ENGAGED);
+    crate::jit_mode::with_mode(tier.jit_mode(), || body_runs(&wrapped, names))
 }
 
 /// A compiled callee's throw reaches the compiled caller's catch through the native call:
@@ -186,7 +156,7 @@ fn a_throw_from_a_compiled_callee_is_caught_by_a_compiled_caller_without_leaving
       }
       print(String(result));
     "#;
-    let runs = bodies_match_interpreter(source, &["caller", "thrower"]);
+    let runs = bodies_match_interpreter(source, Tier::Full, &["caller", "thrower"]);
     assert!(runs[0].0 > 0, "the caller's body runs natively");
     assert_eq!(runs[0].1, 0, "the callee's throw is caught by native code: no run of the caller leaves");
     assert!(runs[1].2 > 0, "the callee's body ended by an exception through its native caller");
@@ -213,7 +183,7 @@ fn an_uncaught_throw_crosses_three_compiled_frames_to_the_interpreter() {
       }
       print(String(seen) + ':' + String(total));
     "#;
-    let runs = bodies_match_interpreter(source, &["first", "second", "third"]);
+    let runs = bodies_match_interpreter(source, Tier::Full, &["first", "second", "third"]);
     assert!(runs[0].0 > 0, "the outermost compiled frame runs natively");
     assert_eq!(runs[0].1, 0, "the exception unwinds through the native frames without a leave");
     assert!(runs[1].2 > 0 && runs[2].2 > 0, "the second and third frames ended by the exception through native callers");
@@ -248,7 +218,7 @@ fn finally_blocks_and_rethrows_across_compiled_frames_match_the_interpreter() {
       for (let repeat = 0; repeat < 256; repeat++) { log = 0; result = run(24); }
       print(String(result));
     "#;
-    let runs = bodies_match_interpreter(source, &["run", "rethrower", "guarded", "inner"]);
+    let runs = bodies_match_interpreter(source, Tier::Full, &["run", "rethrower", "guarded", "inner"]);
     assert_eq!(runs[0].1, 0, "calls stay native in functions with a finally: no run of the driver leaves");
 }
 
@@ -281,9 +251,9 @@ fn an_uncaught_exception_from_compiled_frames_reports_the_throws_location() {
 }
 
 /// `source` wrapped in a function, which compiled equals the interpreter in the lines it
-/// prints; the native region runs of its function `name`.
-fn wrapped_matches_interpreter(source: &str, name: &str) -> u64 {
-    matches_interpreter(&format!("(function(){{{source}}})();"), name)
+/// prints; its loop regions' runs.
+fn wrapped_matches_interpreter(source: &str) -> u64 {
+    matches_interpreter(&format!("(function(){{{source}}})();"))
 }
 
 /// A catch binding a closure of the catch block captures lives in the frame's environment, a
@@ -306,7 +276,7 @@ fn a_catch_binding_a_closure_captures_is_fresh_per_entry() {
       for (let repeat = 0; repeat < 256; repeat++) result = run(48);
       print(String(result));
     "#;
-    let runs = wrapped_matches_interpreter(thrown, "run");
+    let runs = wrapped_matches_interpreter(thrown);
     assert!(runs > 0, "the loop with a caught throw runs in a native region");
     let called = r#"
       function boom(k) { if (k % 3 === 0) throw k; return k; }
@@ -324,7 +294,7 @@ fn a_catch_binding_a_closure_captures_is_fresh_per_entry() {
       for (let repeat = 0; repeat < 256; repeat++) result = run(48);
       print(String(result));
     "#;
-    wrapped_matches_interpreter(called, "run");
+    wrapped_matches_interpreter(called);
 }
 
 /// A throw inside a `with` statement caught outside it leaves the `with` scope at the handler
@@ -346,7 +316,7 @@ fn a_catch_unwinds_the_with_scopes_it_leaves() {
       for (let repeat = 0; repeat < 256; repeat++) result = run(48);
       print(String(result));
     "#;
-    wrapped_matches_interpreter(outside, "run");
+    wrapped_matches_interpreter(outside);
     let inside = r#"
       var o = { x: 7 };
       function boom(k) { if (k % 3 === 0) throw k; return k; }
@@ -364,7 +334,7 @@ fn a_catch_unwinds_the_with_scopes_it_leaves() {
       for (let repeat = 0; repeat < 256; repeat++) result = run(48);
       print(String(result));
     "#;
-    wrapped_matches_interpreter(inside, "run");
+    wrapped_matches_interpreter(inside);
 }
 
 /// A catch inside a generator body, of a `throw` and of a call's exception, serves from the
@@ -393,5 +363,5 @@ fn a_catch_inside_a_generator_body_matches_the_interpreter() {
       for (let repeat = 0; repeat < 256; repeat++) result = run(48);
       print(String(result));
     "#;
-    wrapped_matches_interpreter(source, "gen");
+    wrapped_matches_interpreter(source);
 }

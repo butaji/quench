@@ -1,15 +1,15 @@
-use super::super::{OsrRunKinds, LANE_OSR_KINDS, LANE_OSR_RUNS};
+use crate::vm::tier_events::{Event, TierEvents};
 use crate::test_host::TestHost;
 use crate::{Engine, ExecutionMode, JitMode};
 
 /// What a program printed in the interpreter and as BaseJIT loop regions (`--b-jit`), the runs of
-/// lane-ABI regions the second made (all, and what they did: `OsrRunKinds`) and the call sites the
+/// lane-ABI regions the second made (all, and what they did: `Event::OsrLent` and its kin) and the call sites the
 /// stitch inlined meanwhile.
 struct Regions {
     interpreted: Vec<String>,
     compiled: Vec<String>,
-    runs: usize,
-    kinds: OsrRunKinds,
+    runs: u64,
+    kinds: TierEvents,
     inlined: u64,
 }
 
@@ -23,14 +23,12 @@ fn run_regions(source: &str) -> Regions {
         vm.programs.enable_js_lane_methods();
         vm.programs.disable_js_entry_specializations();
         vm.execute(&program).unwrap();
-        output.take()
+        (output.take(), vm.tier_events().clone())
     };
-    let interpreted = printed(ExecutionMode::Interpreted);
-    LANE_OSR_RUNS.with(|runs| runs.set(0));
-    LANE_OSR_KINDS.with(|kinds| kinds.set(OsrRunKinds::default()));
+    let (interpreted, _) = printed(ExecutionMode::Interpreted);
     let before = super::inlined_sites();
-    let compiled = crate::jit_mode::with_mode(JitMode::BaseOnly, || printed(ExecutionMode::Compiled));
-    Regions { interpreted, compiled, runs: LANE_OSR_RUNS.with(std::cell::Cell::get), kinds: LANE_OSR_KINDS.with(std::cell::Cell::get), inlined: super::inlined_sites() - before }
+    let (compiled, kinds) = crate::jit_mode::with_mode(JitMode::BaseOnly, || printed(ExecutionMode::Compiled));
+    Regions { interpreted, compiled, runs: kinds.count(Event::OsrRun), kinds, inlined: super::inlined_sites() - before }
 }
 
 /// A hot loop that calls a small function runs the callee's rows inside its region: the call site is
@@ -45,7 +43,7 @@ fn a_hot_loop_calling_a_small_function_runs_inlined_with_no_leaves() {
     assert_eq!(ran.interpreted, ran.compiled);
     assert!(ran.runs > 0, "the region ran");
     assert!(ran.inlined > 0, "the callee's site was inlined into the region");
-    assert_eq!(ran.kinds.left, 0, "no run left the loop but where it ended: {:?}", ran.kinds);
+    assert_eq!(ran.kinds.count(Event::OsrExited), 0, "no run left the loop but where it ended: {:?}", ran.kinds);
 }
 
 /// A guard that fails inside the inlined callee of a region (an int32 overflow after some iterations
@@ -61,7 +59,7 @@ fn a_guard_failing_inside_an_inlined_callee_resumes_in_the_callee() {
     );
     assert_eq!(ran.interpreted, ran.compiled);
     assert!(ran.inlined > 0, "the callee's site was inlined into the region");
-    assert!(ran.kinds.inlined > 0, "a run left inside the inlined callee: {:?}", ran.kinds);
+    assert!(ran.kinds.count(Event::OsrInlined) > 0, "a run left inside the inlined callee: {:?}", ran.kinds);
 }
 
 /// A callee too large or too varied to inline, whose body is published, is called by its entry from
@@ -76,5 +74,5 @@ fn a_callee_with_a_published_body_is_called_by_its_entry_from_a_region() {
     );
     assert_eq!(ran.interpreted, ran.compiled);
     assert!(ran.runs > 0, "a region ran");
-    assert!(ran.kinds.lent > 0, "a region called its callee by the entry: {:?}", ran.kinds);
+    assert!(ran.kinds.count(Event::OsrLent) > 0, "a region called its callee by the entry: {:?}", ran.kinds);
 }

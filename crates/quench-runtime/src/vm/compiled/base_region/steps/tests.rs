@@ -7,7 +7,7 @@ fn instruction(op: Op) -> WideInstruction {
 
 /// The facts of a program that has recorded nothing: no add, no store in place, no fold.
 fn known(program: &ResidualProgram) -> Known<'_> {
-    Known { program, stores: None, reads: None, adds: None, names: None, invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: None }
+    Known { program, stitch: &crate::vm::compiled::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None, invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: None }
 }
 
 fn empty_program() -> ResidualProgram {

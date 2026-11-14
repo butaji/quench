@@ -31,7 +31,7 @@ use crate::heap::GlobalFact;
 use crate::value::Value;
 use super::super::super::lane_unit::{CallRecovery, CallTarget, CalleeBinding, Frame};
 use super::super::super::osr_loop::{inlined_returning, renamed};
-use super::super::super::tier_policy::TIERS;
+use super::super::super::tier_policy::Stitch;
 use super::super::decode::{numeric_row, register_of, Decoded, Numbers, Source};
 use quench_bjit::numeric::Kind;
 
@@ -61,14 +61,15 @@ pub(in super::super) struct Context {
     /// The first register no window may reach: the caller's registers and the policy's window.
     limit: u32,
     budget: usize,
+    /// The thresholds this stitch plans under (`Known::stitch`).
+    policy: &'static Stitch,
 }
 
 impl Context {
     /// The context of `caller`, which has `registers` registers.
-    pub(in super::super) fn root(caller: u32, registers: u16) -> Self {
-        let policy = &TIERS.stitch;
+    pub(in super::super) fn root(caller: u32, registers: u16, policy: &'static Stitch) -> Self {
         let limit = (u32::from(registers) + policy.window_registers).min(u32::from(REGISTER_MASK) + 1);
-        Self { chain: vec![caller], top: u32::from(registers), limit, budget: policy.max_total_instructions }
+        Self { chain: vec![caller], top: u32::from(registers), limit, budget: policy.max_total_instructions, policy }
     }
 
     fn reserve(&mut self, bytecodes: usize) {
@@ -140,7 +141,7 @@ pub(in super::super) struct InlineSite {
 
 /// The first reason `callee` does not inline at `shape`.
 fn admit(shape: &CallShape, facts: &DirectFacts, callee: &Callee, context: &Context) -> Result<(), Refused> {
-    let policy = &TIERS.stitch;
+    let policy = context.policy;
     let window = context.top + u32::from(callee.registers);
     let refusals = [
         // A returning call grows no stack where it inlines, so it is direct as the call that does not return is.
@@ -327,6 +328,7 @@ impl InlineSite {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::super::super::tier_policy::TierRows;
     use crate::bytecode::{Op, Operand, RETURN_REGISTER};
     use crate::code_dependencies::{DependentCode, PublishedCode};
     use crate::heap::{global_value_fact, note_global_write, subscribe_global_value, GlobalCell};
@@ -376,7 +378,7 @@ mod tests {
 
     #[test]
     fn a_small_arithmetic_callee_is_two_rows_over_the_argument_registers() {
-        let (code, live, mut context) = (sum(), parameters_live(), Context::root(CALLER, BASE));
+        let (code, live, mut context) = (sum(), parameters_live(), Context::root(CALLER, BASE, &TierRows::Measured.table().stitch));
         let site = InlineSite::plan(&SHAPE, &facts(), &callee(&code, &HOMES, &live), &mut context).expect("inlined");
         assert_eq!(rows(&site), [(Kind::Add, None), (Kind::Move, None)], "the add into a window register, and the move to the result");
         let add = &site.rows[0].decoded;
@@ -393,7 +395,7 @@ mod tests {
             WideInstruction::new(Op::Move, 0, 1, 0, 0),
             WideInstruction::new(Op::Return, 0, 0, 0, 0),
         ];
-        let (live, mut context) = (parameters_live(), Context::root(CALLER, BASE));
+        let (live, mut context) = (parameters_live(), Context::root(CALLER, BASE, &TierRows::Measured.table().stitch));
         let site = InlineSite::plan(&SHAPE, &facts(), &callee(&code, &HOMES, &live), &mut context).expect("inlined");
         let end = site.rows.len() as u32;
         assert_eq!(rows(&site), [(Kind::Move, None), (Kind::Move, None), (Kind::Jump, Some(end)), (Kind::Move, None), (Kind::Move, None)]);
@@ -409,7 +411,7 @@ mod tests {
             WideInstruction::new(Op::Return, 0, 0, 0, 0),
             WideInstruction::new(Op::Return, 1, 0, 0, 0),
         ];
-        let (live, mut context) = (parameters_live(), Context::root(CALLER, BASE));
+        let (live, mut context) = (parameters_live(), Context::root(CALLER, BASE, &TierRows::Measured.table().stitch));
         let site = InlineSite::plan(&SHAPE, &facts(), &callee(&code, &HOMES, &live), &mut context).expect("inlined");
         assert_eq!(rows(&site), [(Kind::Jump, Some(3)), (Kind::Move, None), (Kind::Jump, Some(4)), (Kind::Move, None)]);
         assert_eq!(site.rows.iter().map(|row| row.pc).collect::<Vec<_>>(), [Some(0), Some(1), Some(1), Some(2)]);
@@ -417,36 +419,36 @@ mod tests {
 
     #[test]
     fn size_budget_opcode_recursion_depth_and_window_are_bounded_by_the_policy() {
-        let (policy, live) = (&TIERS.stitch, parameters_live());
+        let (policy, live) = (&TierRows::Measured.table().stitch, parameters_live());
         let long = vec![WideInstruction::new(Op::Move, 2, 0, 0, 0); policy.max_instructions + 1];
         let plan = |code: &[WideInstruction], context: &mut Context| InlineSite::plan(&SHAPE, &facts(), &callee(code, &HOMES, &live), context).err();
-        assert_eq!(plan(&long, &mut Context::root(CALLER, BASE)), Some(Refused::Size));
-        let mut spent = Context::root(CALLER, BASE);
+        assert_eq!(plan(&long, &mut Context::root(CALLER, BASE, &TierRows::Measured.table().stitch)), Some(Refused::Size));
+        let mut spent = Context::root(CALLER, BASE, &TierRows::Measured.table().stitch);
         spent.budget = 0;
         assert_eq!(plan(&sum(), &mut spent), Some(Refused::Budget));
         let throws = vec![WideInstruction::new(Op::Throw, 0, 0, 0, 0)];
-        assert_eq!(plan(&throws, &mut Context::root(CALLER, BASE)), Some(Refused::Opcode(Class::Throw)));
-        assert_eq!(plan(&sum(), &mut Context::root(CALLEE, BASE)), Some(Refused::Recursion));
-        let mut deep = Context::root(CALLER, BASE);
+        assert_eq!(plan(&throws, &mut Context::root(CALLER, BASE, &TierRows::Measured.table().stitch)), Some(Refused::Opcode(Class::Throw)));
+        assert_eq!(plan(&sum(), &mut Context::root(CALLEE, BASE, &TierRows::Measured.table().stitch)), Some(Refused::Recursion));
+        let mut deep = Context::root(CALLER, BASE, &TierRows::Measured.table().stitch);
         deep.chain.extend((0..policy.max_depth as u32).map(|function| function + CALLEE + 1));
         assert_eq!(plan(&sum(), &mut deep), Some(Refused::Depth));
-        let mut high = Context::root(CALLER, BASE);
+        let mut high = Context::root(CALLER, BASE, &TierRows::Measured.table().stitch);
         high.top = high.limit;
         assert_eq!(plan(&sum(), &mut high), Some(Refused::Registers));
         let (few, code) = ([HOMES[0], (2, 2)], sum());
         let missing = Callee { homes: &few, ..callee(&code, &HOMES, &live) };
-        assert_eq!(InlineSite::plan(&SHAPE, &facts(), &missing, &mut Context::root(CALLER, BASE)).err(), Some(Refused::Arguments));
+        assert_eq!(InlineSite::plan(&SHAPE, &facts(), &missing, &mut Context::root(CALLER, BASE, &TierRows::Measured.table().stitch)).err(), Some(Refused::Arguments));
         let record = DirectFacts { callee: IDENTITY + 1, ..facts() };
-        assert_eq!(InlineSite::plan(&SHAPE, &record, &callee(&code, &HOMES, &live), &mut Context::root(CALLER, BASE)).err(), Some(Refused::Identity));
+        assert_eq!(InlineSite::plan(&SHAPE, &record, &callee(&code, &HOMES, &live), &mut Context::root(CALLER, BASE, &TierRows::Measured.table().stitch)).err(), Some(Refused::Identity));
     }
 
     #[test]
     fn a_returning_call_has_no_result_register_to_resume_into() {
-        let (code, live, mut context) = (sum(), parameters_live(), Context::root(CALLER, BASE));
+        let (code, live, mut context) = (sum(), parameters_live(), Context::root(CALLER, BASE, &TierRows::Measured.table().stitch));
         let returning = CallShape { returning: true, ..SHAPE };
         let site = InlineSite::plan(&returning, &facts(), &callee(&code, &HOMES, &live), &mut context).expect("inlined");
         assert_eq!((site.frame.result, site.frame.call), (None, SHAPE.call_pc));
-        let site = InlineSite::plan(&SHAPE, &facts(), &callee(&code, &HOMES, &live), &mut Context::root(CALLER, BASE)).expect("inlined");
+        let site = InlineSite::plan(&SHAPE, &facts(), &callee(&code, &HOMES, &live), &mut Context::root(CALLER, BASE, &TierRows::Measured.table().stitch)).expect("inlined");
         assert_eq!(site.frame.result, Some(SHAPE.result));
     }
 
@@ -454,7 +456,7 @@ mod tests {
     fn a_global_callee_is_held_by_its_fact_and_a_redefinition_retires_the_code() {
         let table = crate::heap::new_table();
         let first = global_value_fact(table, GlobalCell::Slot(0)).expect("a cell nothing wrote is folded");
-        let (code, live, mut context) = (sum(), parameters_live(), Context::root(CALLER, BASE));
+        let (code, live, mut context) = (sum(), parameters_live(), Context::root(CALLER, BASE, &TierRows::Measured.table().stitch));
         let held = Callee { stable: Some(first), ..callee(&code, &HOMES, &live) };
         let site = InlineSite::plan(&SHAPE, &facts(), &held, &mut context).expect("inlined");
         assert_eq!(site.proof, Proof::Held(first));
@@ -469,13 +471,13 @@ mod tests {
     #[test]
     fn a_register_read_before_it_is_written_keeps_the_call() {
         let (code, live) = (sum(), RegisterMasks::Narrow(vec![0b111; 16].into()));
-        let plan = InlineSite::plan(&SHAPE, &facts(), &callee(&code, &HOMES, &live), &mut Context::root(CALLER, BASE));
+        let plan = InlineSite::plan(&SHAPE, &facts(), &callee(&code, &HOMES, &live), &mut Context::root(CALLER, BASE, &TierRows::Measured.table().stitch));
         assert_eq!(plan.err(), Some(Refused::Uninitialized));
     }
 
     #[test]
     fn a_refused_site_reserves_nothing_and_an_accepted_one_takes_budget() {
-        let (live, mut context) = (parameters_live(), Context::root(CALLER, BASE));
+        let (live, mut context) = (parameters_live(), Context::root(CALLER, BASE, &TierRows::Measured.table().stitch));
         let budget = context.budget;
         let throws = vec![WideInstruction::new(Op::Throw, 0, 0, 0, 0)];
         assert!(InlineSite::plan(&SHAPE, &facts(), &callee(&throws, &HOMES, &live), &mut context).is_err());

@@ -2,7 +2,7 @@
 //! section 4). A site that fails reads in place through the VM's cache (`lane_region::field_probe`,
 //! no exit) instead of guarding its shapes and leaving.
 
-use super::tier_policy::{self, SPECULATION};
+use super::tier_policy::{Tiers, SPECULATION};
 
 /// What a site's record holds, with no per-execution counter: its executions are bounded below
 /// by the entries its function made before planning (`LaneBody::warmup_entries`), its leaves are
@@ -15,10 +15,10 @@ pub(super) struct SiteEvidence {
 }
 
 impl SiteEvidence {
-    pub(super) fn of(leaves: u8, shapes: usize) -> Self {
+    pub(super) fn of(tiers: &Tiers, leaves: u8, shapes: usize) -> Self {
         let shape_misses = u32::try_from(shapes.saturating_sub(1)).unwrap_or(u32::MAX);
         let misses = u32::from(leaves).saturating_add(shape_misses);
-        let executions = u32::from(tier_policy::TIERS.lane_body.warmup_entries);
+        let executions = u32::from(tiers.lane_body.warmup_entries);
         Self { hits: executions.saturating_sub(misses), misses }
     }
 
@@ -50,6 +50,7 @@ pub(super) fn break_even() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::tier_policy::TierRows;
 
     fn evidence(hits: u32, misses: u32) -> SiteEvidence { SiteEvidence { hits, misses } }
 
@@ -82,8 +83,8 @@ mod tests {
 
     #[test]
     fn leaves_and_extra_shapes_count_as_misses() {
-        assert_eq!(SiteEvidence::of(3, 1).misses, 3);
-        assert_eq!(SiteEvidence::of(0, 3).misses, 2);
-        assert!(!SiteEvidence::of(u8::MAX, 1).speculates());
+        assert_eq!(SiteEvidence::of(TierRows::Measured.table(), 3, 1).misses, 3);
+        assert_eq!(SiteEvidence::of(TierRows::Measured.table(), 0, 3).misses, 2);
+        assert!(!SiteEvidence::of(TierRows::Measured.table(), u8::MAX, 1).speculates());
     }
 }

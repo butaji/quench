@@ -73,12 +73,12 @@ impl LoopTier {
     /// Counts a run of the code that left at `pc`. An operation or element read left `widen_after_leaves`
     /// times joins the widened ones and the code goes, where a compilation remains: the next
     /// entry compiles the loop holding that operation's result as a double.
-    pub(super) fn left_at(&mut self, pc: usize, read: bool) {
+    pub(super) fn left_at(&mut self, tiers: &Tiers, pc: usize, read: bool) {
         let widened = self.widened.binary_search(&pc).is_ok();
-        if !(read || !widened) || self.abandoned.binary_search(&pc).is_ok() || self.compilations >= TIERS.loops.max_compilations { return; }
+        if !(read || !widened) || self.abandoned.binary_search(&pc).is_ok() || self.compilations >= tiers.loops.max_compilations { return; }
         let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
         self.leaves[at].1 += 1;
-        if self.leaves[at].1 < TIERS.loops.widen_after_leaves { return; }
+        if self.leaves[at].1 < tiers.loops.widen_after_leaves { return; }
         self.leaves.swap_remove(at);
         let list = if widened { &mut self.abandoned } else { &mut self.widened };
         list.push(pc);
@@ -89,10 +89,10 @@ impl LoopTier {
     /// Whether code over the element `views` an entry found may run: typed code of no kind runs
     /// over any typed kind; code over any other views goes where a compilation remains, which the
     /// entry then makes over these, or over no kind where two kinds were found.
-    pub(super) fn select(&mut self, views: ElementViews) -> bool {
+    pub(super) fn select(&mut self, tiers: &Tiers, views: ElementViews) -> bool {
         let common = self.views.common(views);
         if common == Some(self.views) { return true; }
-        if self.compilations >= TIERS.loops.max_compilations { return false; }
+        if self.compilations >= tiers.loops.max_compilations { return false; }
         self.views = common.unwrap_or(views);
         if let Some(code) = self.code.take() { code.retire(); }
         true
@@ -102,9 +102,9 @@ impl LoopTier {
     /// ran out, or under a policy that compiles no loop regions, takes its backward jump in
     /// the interpreter without reading an entry: reading one at every iteration had cost
     /// V8-v7 Crypto `--jit` a third of its instructions under memory-first.
-    pub(super) fn may_run(&self, policy: crate::MemoryPolicy) -> bool {
+    pub(super) fn may_run(&self, tiers: &Tiers, policy: crate::MemoryPolicy) -> bool {
         self.is_published()
-            || (self.compilations < TIERS.loops.max_compilations && super::super::compiled::loop_tier_compiles(policy))
+            || (self.compilations < tiers.loops.max_compilations && super::super::compiled::loop_tier_compiles(policy))
     }
 
     /// Whether this entry passes to the interpreter's jump while the code compiles: entries
@@ -126,13 +126,13 @@ impl LoopTier {
         use super::super::compiled::OsrCompile;
         match pending.poll() {
             Err(pending) => {
-                self.wait = TIERS.lane_body.compile_poll_interval;
+                self.wait = site.tiers.lane_body.compile_poll_interval;
                 self.pending = Some(pending);
                 return true;
             }
             Ok(OsrCompile::Done(region)) => self.publish(vm, region),
             Ok(OsrCompile::Stale) => {}
-            Ok(OsrCompile::Failed) => self.compilations = TIERS.loops.max_compilations,
+            Ok(OsrCompile::Failed) => self.compilations = site.tiers.loops.max_compilations,
         }
         if site.diagnostics && self.is_published() {
             site.compile_successes.set(site.compile_successes.get().saturating_add(1));
@@ -146,7 +146,7 @@ impl LoopTier {
         self.pending = started.filter(|pending| pending.watch(&mut vm.heap, vm.method_cache_atoms.readers())).map(Box::new);
         self.wait = 0;
         if self.pending.is_none() {
-            self.compilations = TIERS.loops.max_compilations;
+            self.compilations = site.tiers.loops.max_compilations;
             // A declined or failed region retires the site now: later entries build no entry record.
             site.entering.set(false);
         }
@@ -210,7 +210,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     // Stores run in place for the atoms no method cache names, while the VM and the program run specialized.
     let stores = program.as_deref().filter(|program| machine.specialized && program.specialized).map(|_| machine.method_cache_atoms.bits().clone());
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
-        &observation, policy, program, function, helpers,
+        &observation, (policy, machine.programs.tiers()), program, function, helpers,
         &mut |unit, table| machine.global_table(program, function, unit, table), (&tier.widened, stores.as_ref()), calls));
     if let Some(pending) = &started {
         let (watch, callees) = pending.native_calls();

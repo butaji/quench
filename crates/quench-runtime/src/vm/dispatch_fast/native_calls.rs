@@ -96,8 +96,8 @@ pub(super) fn lane_body_native_call<H: Host>(cx: *mut LaneContext<H>, call: &sup
     use super::super::compiled::LANE_CALL_COMPLETED;
     let vm = unsafe { vm(cx) };
     // A returning call's completion is its activation's, which the lane makes.
-    if call.site.returns { return super::lane_body_stats::miss(super::lane_body_stats::Miss::NativeReturning); }
-    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else { return super::lane_body_stats::miss(super::lane_body_stats::Miss::NativeNotNative) };
+    if call.site.returns { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::NativeReturning); }
+    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::NativeNotNative) };
     let native = *native;
     // SAFETY: the context's program outlives the lane run; the values are registers of the
     // running function, which the native reads before anything can move them.
@@ -128,7 +128,7 @@ fn lane_body_native_out<H: Host>(cx: *mut LaneContext<H>, call: &super::body_for
         return status;
     }
     let Some(value) = lane_call_native(cx, ip, native, callee, receiver, args) else {
-        return super::lane_body_stats::miss(super::lane_body_stats::Miss::NativeNotCompleted);
+        return super::lane_body_stats::miss(unsafe { vm(cx) }, super::lane_body_stats::Miss::NativeNotCompleted);
     };
     // Guest code the native ran may have made the activations frames, whose registers these are.
     let after = unsafe { (*cx).registers };

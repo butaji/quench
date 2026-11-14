@@ -2,7 +2,7 @@
 //! publishes, one entry in `audit_period` runs timed, alternating the body and the interpreter
 //! (the activation run nested to its return, `body_calls::interpret_timed`). Once each side has
 //! `audit_samples` timed runs, a body not faster by `audit_margin_permille` retires and its
-//! function stays interpreted (`TIERS.lane_body`). Per function this holds the invariant that
+//! function stays interpreted (`self.tiers.lane_body`). Per function this holds the invariant that
 //! compiled code is never slower than the interpreter, from the one statistic it is about.
 
 use std::time::Instant;
@@ -10,7 +10,7 @@ use std::time::Instant;
 /// The sides an audit alternates between: the compiled body and the interpreter.
 const AUDITED_SIDES: u32 = 2;
 
-use super::{LaneBody, LaneView, TIERS};
+use super::{LaneBody, LaneView};
 use super::super::compiled::tier_policy::PER_MILLE;
 
 /// The timed runs of one body and of its function's interpreted runs.
@@ -49,7 +49,7 @@ impl LaneView {
         }
         history.audit.seen = history.audit.seen.wrapping_add(1);
         self.history.set(history);
-        let period = TIERS.lane_body.audit_period;
+        let period = self.tiers.lane_body.audit_period;
         (history.audit.seen % period == 0)
             .then(|| if (history.audit.seen / period) % AUDITED_SIDES == 0 { Timed::Body } else { Timed::Interpreter })
     }
@@ -76,7 +76,7 @@ impl LaneView {
     /// interpreter's retires, and its function runs in the lane for good.
     fn audit_verdict(&self) {
         let mut history = self.history.get();
-        let lane = &TIERS.lane_body;
+        let lane = &self.tiers.lane_body;
         let [body, interpreted] = history.audit.sides;
         if history.audit.done || body.runs < lane.audit_samples || interpreted.runs < lane.audit_samples {
             return;

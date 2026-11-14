@@ -16,6 +16,14 @@ pub(in crate::vm) struct Tiers {
     pub(in crate::vm) wasm: Wasm,
     pub(in crate::vm) stitch: Stitch,
     pub(in crate::vm) priors: Priors,
+    /// Whether every eligible compile is admitted and every JavaScript compilation arm is on, so a
+    /// run checks each tier against the interpreter (`Tiers::admits_all`).
+    pub(in crate::vm) stress: bool,
+    /// Whether the tier models admit every eligible compile, whatever it would repay.
+    pub(in crate::vm) admits_all: bool,
+    /// The searches a regexp program runs interpreted before it is compiled to native code
+    /// (`regexp_native`): compiling costs about what this many searches of a small program do.
+    pub(in crate::vm) regexp_native_runs: u32,
 }
 
 /// The priors the model tests pin their arithmetic to.
@@ -227,32 +235,46 @@ pub(in crate::vm) const SPECULATION: Speculation =
 /// outweighs one outside it, and that nesting orders deeper sites first.
 pub(in crate::vm) const ASSUMED_LOOP_TRIP: u64 = 8;
 
-/// A `tier-stress` build: the floor row, and every JavaScript compilation arm on, so its
-/// Test262 run and `tests/tier_differential.rs` check each tier against the interpreter.
-pub(in crate::vm) const STRESS: bool = cfg!(feature = "tier-stress");
-
-/// The searches a regexp program runs interpreted before it is compiled to native code
-/// (`regexp_native`): compiling costs about what this many searches of a small program do.
-pub(in crate::vm) const REGEXP_NATIVE_RUNS: u32 = if STRESS { 1 } else { 2000 };
-
 #[cfg(test)]
 thread_local! { static FORCED_ADMISSION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
-/// Makes this thread's tier models admit every eligible compile, as `tier-stress` does for the
-/// process: for tests of what compiled code does, on fixtures too small to repay a compile.
+/// Makes the VMs this thread makes next admit every eligible compile (`ADMITTING`), as the floor
+/// row does: for tests of what compiled code does, on fixtures too small to repay a compile.
 #[cfg(test)]
 pub(in crate::vm) fn force_admission() { FORCED_ADMISSION.set(true); }
 
-/// Whether the tier models admit every eligible compile (`tier-stress`, or a test that forced it).
-pub(in crate::vm) fn admits_every_compile() -> bool {
-    #[cfg(test)]
-    if FORCED_ADMISSION.get() { return true; }
-    STRESS
+/// The rows a VM's tier controllers read, held by the VM from its construction: the measured
+/// thresholds a process runs by, or the floor row, which makes every eligible site compile on
+/// its first chance, so a Test262 run and the tier differential check each tier against the
+/// interpreter. Code compiled under a row takes it as a Static fact (`VmFacts::tiers`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TierRows { Measured, Floor }
+
+impl TierRows {
+    /// The rows a process starts with: the floor under a `tier-stress` build, the measured otherwise.
+    pub(in crate::vm) const PROCESS: Self = if cfg!(feature = "tier-stress") { Self::Floor } else { Self::Measured };
+
+    /// The rows a VM made now holds: `PROCESS`, admitting every compile where a test forced it.
+    pub(in crate::vm) fn made() -> &'static Tiers {
+        #[cfg(test)]
+        if FORCED_ADMISSION.get() { return &ADMITTING; }
+        Self::PROCESS.table()
+    }
+
+    pub(in crate::vm) fn table(self) -> &'static Tiers {
+        match self { Self::Measured => &MEASURED, Self::Floor => &FLOOR }
+    }
 }
 
-/// The thresholds every tier controller compares against: the measured row, or under
-/// `STRESS` the floor row, which makes every eligible site compile on its first chance.
-pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };
+#[cfg(test)]
+impl<H: crate::host::Host> super::super::Vm<H> {
+    /// A VM whose tier controllers read `rows`: a stress run needs no build of its own.
+    pub(in crate::vm) fn with_tier_rows(host: H, rows: TierRows) -> Self {
+        let mut vm = Self::new(host);
+        vm.programs.hold_tiers(rows.table());
+        vm
+    }
+}
 
 /// Each threshold at the least value its controller accepts. Thresholds only price
 /// compilation, so this row must compute what `MEASURED` computes.
@@ -263,6 +285,9 @@ const FLOOR: Tiers = Tiers {
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
     stitch: MEASURED.stitch,
     priors: MEASURED.priors,
+    stress: true,
+    admits_all: true,
+    regexp_native_runs: 1,
 };
 
 impl LaneBody {
@@ -274,12 +299,12 @@ impl LaneBody {
 
 impl Tiers {
     /// The length a body without loops or calls needs for one entry to pay in the lane body
-    /// `tier` compiles: none where every eligible compile is admitted (`admits_every_compile`), so
+    /// `tier` compiles: none where every eligible compile is admitted (`Tiers::admits_all`), so
     /// a fixture too short to repay one still gets its body. A Cranelift body asks
     /// `min_instructions`; a stencil body asks the entries' crossing over the interpretation it saves per
     /// bytecode (`interpreter_ns` less its `base_body_share`), a few bytecodes, as it compiles in microseconds.
     pub(in crate::vm) fn amortizing_instructions(&self, tier: Tier) -> usize {
-        if admits_every_compile() { return 0; }
+        if self.admits_all { return 0; }
         match tier {
             Tier::Base => {
                 let saved = self.priors.interpreter_ns * (PER_MILLE - self.priors.base_body_share);
@@ -332,7 +357,18 @@ const MEASURED: Tiers = Tiers {
         ],
     },
     priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800 },
+    stress: false,
+    admits_all: false,
+    regexp_native_runs: 2000,
 };
+
+/// The rows code compiled for no particular VM is compiled under (`VmFacts::STATIC`).
+pub(in crate::vm) const STATIC_ROWS: &Tiers = &MEASURED;
+
+/// The measured rows admitting every eligible compile: for tests of what compiled code does, on
+/// fixtures too small to repay one (`force_admission`).
+#[cfg(test)]
+const ADMITTING: Tiers = Tiers { admits_all: true, ..MEASURED };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)
 /// observes every PC up to its stop, and a tier would run past it.
@@ -391,21 +427,22 @@ mod tests {
     /// speed), a Cranelift body in `min_instructions`.
     #[test]
     fn each_lane_body_tier_has_its_own_amortizing_length() {
-        if admits_every_compile() { return; }
-        let (base, ultra) = (TIERS.amortizing_instructions(Tier::Base), TIERS.amortizing_instructions(Tier::Ultra));
+        let tiers = TierRows::PROCESS.table();
+        if tiers.admits_all { return; }
+        let (base, ultra) = (tiers.amortizing_instructions(Tier::Base), tiers.amortizing_instructions(Tier::Ultra));
         assert!(base > 0 && base < ultra, "{base} and {ultra}");
-        assert_eq!([ultra, TIERS.amortizing_instructions(Tier::Quick)], [TIERS.lane_body.min_instructions; 2]);
+        assert_eq!([ultra, tiers.amortizing_instructions(Tier::Quick)], [tiers.lane_body.min_instructions; 2]);
     }
 
     #[test]
     fn the_tier_table_is_consistent() {
-        let lane = &TIERS.lane_body;
+        let lane = &TierRows::PROCESS.table().lane_body;
         assert!(lane.warmup_entries > 0 && lane.base_entries > 0 && lane.base_entries <= lane.warmup_entries);
         // The warm-up doubles per dropped body, at most seven times, and must not overflow.
         assert!(u32::from(lane.warmup_entries) << 7 <= u32::from(u16::MAX));
         // The reoptimization threshold doubles per recompile and must not overflow its counter.
         assert!(u32::from(lane.reoptimize_exits) << lane.max_recompiles <= u32::from(u16::MAX));
-        let looks = TIERS.js_function.promotion_looks;
+        let looks = TierRows::PROCESS.table().js_function.promotion_looks;
         assert!(looks.windows(2).all(|pair| pair[0].0 < pair[1].0), "looks grow");
         assert!(looks.iter().all(|(observations, minimum)| minimum <= observations));
         for policy in crate::MemoryPolicy::ALL {

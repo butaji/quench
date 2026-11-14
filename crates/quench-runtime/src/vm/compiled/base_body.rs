@@ -35,7 +35,7 @@ impl LaneMethod {
     /// (the globals that hold the callees it inlines, the atoms its stores hold unnamed by method
     /// caches and the values its folded reads hold of prototypes), whose change retires it and
     /// sets `invalidation`: the word its rows read, whose address its code names.
-    fn of_base_body(body: Body, function: u32, registers: u16, direct: Box<[DirectCallee]>, closed: bool, invalidation: Invalidation) -> Option<Self> {
+    fn of_base_body(tiers: &Tiers, body: Body, function: u32, registers: u16, direct: Box<[DirectCallee]>, closed: bool, invalidation: Invalidation) -> Option<Self> {
         // Each inlined callee's registers are the frame slots from the caller's end (`Frame::base`).
         let scratch_width = window_width(&body.frames, registers);
         let memory = super::code_heap::publishing("b-jit-body", function as usize, || CodeMemory::new(&body.code))?;
@@ -45,7 +45,7 @@ impl LaneMethod {
             dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, atoms: body.atoms, instanceofs: body.instanceofs, layouts: body.layouts, slots: body.slot_types, ..Default::default() }, invalidation, _code: memory, entry,
             recovery_space: super::super::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
-            caller_registers: registers, amortizes: body.loops || body.covered >= TIERS.amortizing_instructions(super::tier_policy::lane_body_tier()) || !direct.is_empty(),
+            caller_registers: registers, amortizes: body.loops || body.covered >= tiers.amortizing_instructions(super::tier_policy::lane_body_tier()) || !direct.is_empty(),
             direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames,
         })
     }
@@ -96,7 +96,7 @@ impl<H: Host> Vm<H> {
     /// Publishes the built body of `function` once its entry pays, binding the callees it names to `caller`.
     fn publish_base_body(&mut self, built: Body, (function, registers): (u32, u16), callees: Callees, (code, invalidation): (&[WideInstruction], Invalidation), caller: &super::super::dispatch_fast::LaneView) -> LaneBodyOutcome {
         let closed = callees.closed(code);
-        let Some(method) = LaneMethod::of_base_body(built, function, registers, callees.owned, closed, invalidation) else { return LaneBodyOutcome::Declined };
+        let Some(method) = LaneMethod::of_base_body(self.programs.tiers(), built, function, registers, callees.owned, closed, invalidation) else { return LaneBodyOutcome::Declined };
         if !method.amortizes_entry() { return LaneBodyOutcome::Short }
         bind_callees(&method.direct, caller);
         self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()).map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)
@@ -125,7 +125,7 @@ impl<H: Host> Vm<H> {
         let adds = |site: u16, atom, chained| self.native_field_add(site, atom, chained);
         let names = |site: u16, atom| self.native_function_name(site, atom);
         let known = Known {
-            program, stores: folds.then(|| self.method_cache_atoms.bits()),
+            program, stitch: &self.programs.tiers().stitch, stores: folds.then(|| self.method_cache_atoms.bits()),
             reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
             adds: folds.then_some(&adds as &dyn Fn(u16, crate::bytecode::Atom, bool) -> Option<crate::staged::add_plan::AddSite>),
             names: folds.then_some(&names as &dyn Fn(u16, crate::bytecode::Atom) -> Option<(crate::staged::add_plan::Transition, u64)>),
