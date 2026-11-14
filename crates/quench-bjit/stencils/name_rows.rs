@@ -8,7 +8,7 @@ use crate::words::hole64;
 use crate::places::tagged_place;
 use crate::stage::StencilStage;
 use crate::staged::object::Form;
-use crate::staged::{add, naming};
+use crate::staged::{Frame, Stage, add, naming};
 use crate::codes::{ADD_AFTER_AT, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_LINK_AT, ADD_LINK_BITS, ADD_OBJECT_AT, ADD_PACKED_ROW, ADD_SLOT_BITS, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, NAME_EITHER_ROW, NAME_FUNCTION_AT};
 use crate::heap_rows::word_at;
 

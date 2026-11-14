@@ -66,6 +66,7 @@ pub(super) mod tier_policy;
 mod stable_fact_tests;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
+#[path = "compiled/emit_machine.rs"]
 mod emit_machine;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
@@ -96,7 +97,6 @@ mod static_loops;
 #[path = "compiled/wasm_callable.rs"]
 mod wasm_callable;
 #[path = "compiled/wasm_stage.rs"]
-mod emit_machine;
 mod wasm_stage;
 mod wasm_instance_stage;
 mod instance_context;

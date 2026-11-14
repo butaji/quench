@@ -12,7 +12,7 @@ pub(in crate::vm::dispatch_fast) fn staged_jump_if<const TAKEN: bool>(r: Registe
 
 /// The edge a staged jump's step takes, or `None` where the interpreter's own path decides it.
 #[inline(always)]
-fn jump_edge(step: Step) -> Option<Edge> {
+fn jump_edge(step: Step<u64, Edge>) -> Option<Edge> {
     match step {
         Step::Control(edge) => Some(edge),
         Step::Unresolved => None,

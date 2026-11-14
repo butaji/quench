@@ -29,7 +29,7 @@ use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of, number_word};
 use crate::words::{hole, hole64};
 use crate::places::{DEST, LEFT, Places};
 use crate::stage::StencilStage;
-use crate::staged::{Step, elements, entry, load_this, read_initialized_local, read_local, string_length, value, write_initialized_local, write_local};
+use crate::staged::{Frame, Stage, Step, elements, entry, load_this, read_initialized_local, read_local, string_length, value, write_initialized_local, write_local};
 use crate::codes::{ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CONSTANT_ROW, ENV_DEFINE_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LOAD_LOCAL_ROW, MEM, SITE_ROW, SITE_STORE_ROW, STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_ROW, LIVE_ROW, REALM_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, INSTANCEOF_ROW, APPEND_ROW, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, FOR_IN_ROW, NAME_ARENA_ROW, NAME_EITHER_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_INT_ROW, IC_SET_ROW};
 use crate::{environment_rows, key_rows, name_rows, site_rows};
 

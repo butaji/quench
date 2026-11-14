@@ -2498,7 +2498,7 @@ impl<H: Host> Vm<H> {
         }
         Ok(())
     }
-    pub(super) fn mirror_global_lexical_binding(
+    pub(in crate::vm) fn mirror_global_lexical_binding(
         &mut self,
         program: &ResidualProgram,
         owner: VarOwner,

@@ -9,7 +9,7 @@ use crate::places::tagged_place;
 use crate::stage::StencilStage;
 use crate::staged::object::{self, Layout, Slots};
 use crate::staged::region::Region;
-use crate::staged::{RecordSpace, environment, lexical_read};
+use crate::staged::{Stage, RecordSpace, environment, lexical_read};
 use crate::codes::{CAPTURE_ROW, CAPTURE_SET_ROW, ENV_ROW, ENV_SET_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW};
 use crate::heap_rows::{hop, word_at};
 

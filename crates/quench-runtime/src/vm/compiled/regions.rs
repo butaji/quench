@@ -43,24 +43,16 @@ macro_rules! region_flags {
 region_flags! {
     /// An activation's register or local slot, or a call record.
     frame => Frame.mutable,
-    /// A property value of an object.
-    object_slots => ObjectSlots.mutable,
     /// An object record's exact shape word.
     shape_word => ShapeWord.mutable,
-    /// A record's payload word, or a narrow value packed in it.
-    payload => Payload.mutable,
     /// A word of the step dispatch, call context or result.
     dispatch => Dispatch.mutable,
     /// Heap bookkeeping (`Region::HeapMeta`): a cache entry, the property arena's header.
     heap_meta => HeapMeta.mutable,
-    /// The code's invalidation word.
-    invalidation => Invalidation.mutable,
     /// A record-reservation base word of the dispatch.
     record_base => RecordBases.readonly,
     /// A per-site feedback counter.
     miss_counter => MissCounters.mutable,
-    /// A word of the loop entry record: written before the run, never during it.
-    loop_entry => LoopEntry.readonly,
     /// A word of the frozen constant pool.
     constant => Constants.readonly,
 }

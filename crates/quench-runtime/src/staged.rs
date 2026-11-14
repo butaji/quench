@@ -89,7 +89,6 @@ mod generic;
 pub(crate) use steps::step;
 pub(crate) mod effects;
 pub(crate) mod region;
-pub(crate) mod machine;
 pub(crate) mod wasm;
 pub(crate) mod wasm_float;
 mod wasm_concrete;

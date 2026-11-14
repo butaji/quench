@@ -1,4 +1,5 @@
 use super::*;
+use crate::vm::global_facts::LexicalSlot;
 
 /// The row kind of a binary operator, from one table for arithmetic, bitwise and relational
 /// operators.

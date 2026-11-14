@@ -9,7 +9,7 @@ use crate::places::{DEST, LEFT, Places, Rep};
 use crate::stage::StencilStage;
 use crate::value::ValueLayout;
 use crate::staged::object;
-use crate::staged::{Step, iteration, value};
+use crate::staged::{Frame, Stage, Step, iteration, value};
 use crate::codes::{MEM, SITE_OBJECT_AT, HELD_LINK_AT, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, INSTANCEOF_ROW};
 use crate::heap_rows::{finish_fast, word_at};
 

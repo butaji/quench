@@ -1,6 +1,6 @@
 //! The native readers' views of the fixed record layouts: where an array, function, object or environment
 //! record keeps the words generated code reads, each derived from the storage types themselves.
-use super::{array_elements, cell, records, thin_slice};
+use super::{RECORD_SPACE_CAPACITY, array_elements, cell, records, thin_slice};
 use crate::value::Value;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 

@@ -1,7 +1,6 @@
 use super::property_key::PropertyKey;
 use std::ops::ControlFlow;
 use super::*;
-use crate::heap::PrivateAtom;
 mod plain_key_set;
 mod private;
 mod proxy_get;

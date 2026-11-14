@@ -7,7 +7,7 @@ use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver};
 use crate::words::{hole, hole64};
 use crate::places::tagged_place;
 use crate::stage::StencilStage;
-use crate::staged::entry;
+use crate::staged::{Frame, Stage, entry};
 use crate::codes::{CHAIN_SECOND_AT, FIELD_ROW, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW};
 use crate::heap_rows::{stage_site, word_at};
 

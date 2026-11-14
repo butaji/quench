@@ -7,6 +7,7 @@
 //! the activation answers, leaves the instruction to the general path before any effect.
 use super::*;
 use super::window_owner::WindowScope;
+use super::with_scopes::WithChain;
 use crate::bytecode::Atom;
 
 /// The scope of the innermost activation, when it is an environment window: registers `r` and
@@ -192,7 +193,7 @@ fn lane_scoped_closure_value<H: Host>(
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     // The environment takes over the record's bindings, as a frame's promotion takes its own.
-    let bindings = scope.record_bindings().map(std::mem::take).unwrap_or_default();
+    let bindings = scope.record_bindings().map(std::mem::take);
     // SAFETY: the running window activation's entries start at `registers`, and its
     // environment's parent is the context's.
     let environment = unsafe {

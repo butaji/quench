@@ -48,8 +48,8 @@ mod string_atoms;
 mod native_layout;
 mod record_layouts;
 pub(crate) use record_layouts::{
-    NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, NativeArrayLayout,
-    NativeEnvironmentLayout, NativeFunctionLayout, NativeObjectLayout, PropertyStoreLayout, absent_environment_storage,
+    NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, PropertyStoreLayout,
+    absent_environment_storage,
 };
 mod string_parts;
 mod thin_slice;

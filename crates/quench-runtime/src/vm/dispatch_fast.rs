@@ -601,6 +601,7 @@ const ACTIVATION_FILL_BLOCK: usize = 8;
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 
 mod closure_targets;
+use closure_targets::target_entry;
 mod window_records;
 use window_records::{plain_window_handlers, window_local_handler, window_record, WindowRecord};
 mod getters;

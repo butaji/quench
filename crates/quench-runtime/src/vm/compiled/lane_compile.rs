@@ -471,6 +471,7 @@ impl LaneMethod {
     }
 }
 
+#[path = "lane_compile/dependencies.rs"]
 mod dependencies;
 pub(in crate::vm) use dependencies::LaneDependencies;
 

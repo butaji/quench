@@ -174,7 +174,8 @@ impl<H: Host> Vm<H> {
     pub(super) fn owner_binding_value(&self, owner: VarOwner, atom: Atom) -> Option<Value> {
         let view = self.owner_view(owner);
         let slot = self.activation_binding_slot(view, atom)?;
-        self.owner_binding(&self.programs.get(view.program())?, owner, slot)
+        let program = self.programs.get(view.program())?;
+        self.owner_binding(&program, owner, slot)
     }
 
     /// The local `slot` of `owner`'s activation, whose own it is while its environment holds

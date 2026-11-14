@@ -4,9 +4,13 @@
 //! Wasm tier's, and `Emit`, the JavaScript tier's stage) build into one `FunctionBuilder`, so each
 //! primitive body exists once, over `Builds`; one family per file: scalar, memory, flow, vector.
 
+#[path = "emit_machine/flow.rs"]
 mod flow;
+#[path = "emit_machine/memory.rs"]
 mod memory;
+#[path = "emit_machine/scalar.rs"]
 mod scalar;
+#[path = "emit_machine/vector.rs"]
 mod vector;
 
 use super::object_slots::Emit;

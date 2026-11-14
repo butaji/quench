@@ -1,7 +1,9 @@
 use crate::{Engine, ExecutionMode, JitMode};
 use crate::test_host::TestHost;
 
+#[path = "tests/inlined.rs"]
 mod inlined;
+#[path = "tests/returns.rs"]
 mod returns;
 
 /// What a program prints, run in the interpreter and under `--b-jit`, and the runs of lane bodies

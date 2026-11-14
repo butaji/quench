@@ -121,7 +121,7 @@ pub(in crate::vm) unsafe extern "C" fn lane_decide<H: Host>(vm: u64, _residual: 
 /// # Safety
 /// As `lane_body_step`; `record` is the record at `call_pc` of the innermost activation's function.
 unsafe fn lane_frames_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: WideInstruction) -> u64 {
-    use super::super::compiled::{LANE_CALL_LEFT, LANE_CALL_MISSED};
+    use super::super::compiled::LANE_CALL_MISSED;
     let instruction = record.without_return();
     if !(instruction.op().steps_in_body() || instruction.op().makes_script_call()) { return LANE_CALL_MISSED; }
     let (base, pc) = unsafe { ((*cx).base, call_pc as usize) };
