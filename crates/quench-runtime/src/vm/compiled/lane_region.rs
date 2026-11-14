@@ -2084,36 +2084,8 @@ impl Lowering<'_, '_> {
         let receiver = if accesses_fields { emit_lane_receiver(&mut self.builder, self.payload, this_bits) } else { self.absent_receiver() };
         let this = self.builder.declare_var(types::I64);
         self.builder.def_var(this, this_bits);
-        let mut receiver_shapes = BTreeMap::new();
-        for field in self.fields.iter().flatten().flatten() {
-            if receiver_shapes.contains_key(&field.shape) {
-                continue;
-            }
-            let shape = self.builder.use_var(receiver.shape);
-            let same = self.builder.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
-            let variable = self.builder.declare_var(types::I8);
-            self.builder.def_var(variable, same);
-            receiver_shapes.insert(field.shape, variable);
-        }
-        // A direct store of an atom needs a specialized run and no method cache naming it; a
-        // run that makes no call changes neither (`emit_js_own_field_set`, `Lowering::site_store`).
-        let mut store_atoms = BTreeMap::new();
-        let stored = instructions.iter().filter_map(|instruction| match instruction.op() {
-            _ if instruction.op().is_field_store() => Some(instruction.atom_index()),
-            opcode if opcode.is_get_field() && instruction.writes_current_this() => match instruction.field_lookup() {
-                Some(FieldLookup::Site(index)) => self.program.field_sites.get(index).and_then(|site| site.sink).map(|(atom, _)| atom),
-                _ => None,
-            },
-            _ => None,
-        }).collect::<Vec<_>>();
-        for atom in stored {
-            if let std::collections::btree_map::Entry::Vacant(slot) = store_atoms.entry(atom) {
-                let admitted = self.emit_store_atom_admitted(atom);
-                let variable = self.builder.declare_var(types::I8);
-                self.builder.def_var(variable, admitted);
-                slot.insert(variable);
-            }
-        }
+        let receiver_shapes = self.entry_receiver_shapes(&receiver);
+        let store_atoms = self.entry_store_atoms(instructions);
         // The running activation's dense capture slots (`EnvironmentSlots::native_dense_view`),
         // fixed for the run; each read loads its slot where it runs, after any call that may
         // have stored to it.
@@ -2270,6 +2242,46 @@ impl Lowering<'_, '_> {
             self.builder.switch_to_block(admitted);
         }
         Entry { receiver, object_table, records, receiver_shapes, store_atoms, capture_values, capture_len, environment, this, fields, calls, call_receivers }
+    }
+
+    /// Per receiver shape a field site folds, whether the receiver has it.
+    fn entry_receiver_shapes(&mut self, receiver: &LaneReceiver) -> BTreeMap<u32, Variable> {
+        let mut receiver_shapes = BTreeMap::new();
+        for field in self.fields.iter().flatten().flatten() {
+            if receiver_shapes.contains_key(&field.shape) {
+                continue;
+            }
+            let shape = self.builder.use_var(receiver.shape);
+            let same = self.builder.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
+            let variable = self.builder.declare_var(types::I8);
+            self.builder.def_var(variable, same);
+            receiver_shapes.insert(field.shape, variable);
+        }
+        receiver_shapes
+    }
+
+    /// Per atom the unit stores, whether the run admits direct stores of it. A direct store of an
+    /// atom needs a specialized run and no method cache naming it; a run that makes no call
+    /// changes neither (`emit_js_own_field_set`, `Lowering::site_store`).
+    fn entry_store_atoms(&mut self, instructions: &[WideInstruction]) -> BTreeMap<Atom, Variable> {
+        let mut store_atoms = BTreeMap::new();
+        let stored = instructions.iter().filter_map(|instruction| match instruction.op() {
+            _ if instruction.op().is_field_store() => Some(instruction.atom_index()),
+            opcode if opcode.is_get_field() && instruction.writes_current_this() => match instruction.field_lookup() {
+                Some(FieldLookup::Site(index)) => self.program.field_sites.get(index).and_then(|site| site.sink).map(|(atom, _)| atom),
+                _ => None,
+            },
+            _ => None,
+        }).collect::<Vec<_>>();
+        for atom in stored {
+            if let std::collections::btree_map::Entry::Vacant(slot) = store_atoms.entry(atom) {
+                let admitted = self.emit_store_atom_admitted(atom);
+                let variable = self.builder.declare_var(types::I8);
+                self.builder.def_var(variable, admitted);
+                slot.insert(variable);
+            }
+        }
+        store_atoms
     }
 
     /// Whether the entry edge admits the inlined call at `pc`, a call a run may skip
