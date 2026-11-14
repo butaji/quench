@@ -105,26 +105,15 @@ pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id:
     value: crate::Value) -> bool {
     // SAFETY: the caller's contract; the gate reads the heap before any write.
     let record = unsafe { heap.unlogged_object_record(record_id) };
-    // A hinted store's hint is the whole auxiliary word (`Object::hint_shape`): one compare
-    // proves the shape and the arena form, whose payload is the start.
-    if hinted {
-        // SAFETY: a live record, read before any write.
-        if let Some(start) = unsafe { (*record).formed_plain_start(shape) } {
-            if !heap.store_unlogged(record_id, value) {
-                return false;
-            }
-            // SAFETY: the shape matched, so its run holds `slot`; the gate admitted the write.
-            unsafe { heap.arena_values_base().cast_mut().add(start + usize::from(slot)).write(value) };
-            return true;
-        }
-    }
     // The common form first, as `own_store` takes it: a plain object's arena run, whose start
-    // is the payload itself (`Object::plain_arena_start`), after the same shape guard and
-    // store gate; neither the extras tag nor the start mask is decoded. Packed inline values
-    // and every miss take the staged store, which changes nothing on a miss.
+    // is the payload itself, after the same store gate. The hint, an exact shape or a hinted
+    // store's whole auxiliary word (`Object::hint_shape`), equals the record's word in the
+    // arena form alone, so one compare proves the shape and the form
+    // (`Object::formed_plain_start`). Packed inline values and every miss take the staged
+    // store, which changes nothing on a miss.
     // SAFETY: a live record, read before any write.
-    if let Some(start) = unsafe { (*record).plain_arena_start() } {
-        if unsafe { (*record).exact_shape() } != shape || !heap.store_unlogged(record_id, value) {
+    if let Some(start) = unsafe { (*record).formed_plain_start(shape) } {
+        if !heap.store_unlogged(record_id, value) {
             return false;
         }
         // SAFETY: the shape matched, so its run holds `slot`; the gate admitted the write.
