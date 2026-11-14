@@ -701,6 +701,9 @@ impl JsStringInner {
     }
 }
 
+/// The largest reused buffer `JsString::with_ascii_rope_bytes` keeps between reads.
+const ROPE_BYTES_KEPT: usize = 64 << 10;
+
 /// Concatenation copies a piece at most this long into its flat neighbor instead of making a
 /// rope node: a node and the separate halves it keeps alive cost more than copying a short
 /// piece, and a rope's leaves then hold at least this many units each.
@@ -921,6 +924,38 @@ impl JsString {
         }
     }
 
+    /// `read` of the bytes of an ASCII rope not yet flat, written into a reused buffer instead of
+    /// a copy made and freed per read (`flat_unkept`), or `None` for any other string. A reader
+    /// that keeps only positions in the units (a search's match ranges) or text it copies out
+    /// reads a rope the program keeps (V8-v7 RegExp's input variants) with no allocation.
+    pub(crate) fn with_ascii_rope_bytes<R>(&self, read: impl FnOnce(&[u8]) -> R) -> Option<R> {
+        let Repr::Shared(inner) = &self.repr else {
+            return None;
+        };
+        if !inner.ascii || inner.flat.get().is_some() {
+            return None;
+        }
+        thread_local! {
+            static ROPE_BYTES: std::cell::Cell<Vec<u8>> = const { std::cell::Cell::new(Vec::new()) };
+        }
+        // Taken while read, so a nested read (none is expected) fills its own buffer.
+        let mut bytes = ROPE_BYTES.with(std::cell::Cell::take);
+        bytes.clear();
+        bytes.reserve(inner.length as usize);
+        inner.for_each_run(|run| {
+            if let Units::Ascii(run) = run {
+                bytes.extend_from_slice(run);
+            }
+        });
+        debug_assert_eq!(bytes.len(), inner.length as usize);
+        let result = read(&bytes);
+        // A buffer past this size is not kept for the next read.
+        if bytes.capacity() <= ROPE_BYTES_KEPT {
+            ROPE_BYTES.with(|kept| kept.set(bytes));
+        }
+        Some(result)
+    }
+
     /// A flat string with this string's units that leaves a rope unflattened (`flat_unkept`):
     /// the copy lives only as long as the returned string. An operation that reads a rope
     /// many times through helpers that take a string uses it in place of the rope, so the
@@ -1125,6 +1160,16 @@ impl JsString {
         let rope = |left: &Self, right: &Self| {
             Self::shared(JsStringInner::concat(left.node(), right.node()))
         };
+        // A long slice stays a view of the text it was cut from: a copy to join a short piece
+        // would hold the run twice, and a text cut, given a unit and joined back (V8-v7
+        // RegExp's input variants, 2-4 KB each) once more per variant. V8 joins a sliced
+        // string the same way, by a cons string.
+        if matches!(self.existing_flat(), Some(FlatUnits::AsciiSlice(_) | FlatUnits::WideSlice(_)))
+            && self.len() > APPEND_BUFFER_MIN_UNITS
+        {
+            *self = rope(self, text);
+            return;
+        }
         // A flattened rope joins as the flat text it holds.
         if self.existing_flat().is_some() && text.existing_flat().is_some() && short(text) {
             *self = Self::extended(self, text);

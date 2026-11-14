@@ -416,11 +416,40 @@ impl<H: Host> Vm<H> {
     }
 }
 
+/// `steady_search` of an ASCII rope, searched in a reused buffer of its bytes
+/// (`JsString::with_ascii_rope_bytes`): the match keeps the rope and positions in it.
+#[cold]
+#[inline(never)]
+fn steady_rope_search(
+    meta: &crate::heap::RegExpMeta,
+    regex: &Rc<quench_regexp::Regex>,
+    input: &JsString,
+    slot: usize,
+    last_index: Value,
+    index: f64,
+    captures: bool,
+) -> SteadyRead {
+    let stateful = meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
+    let start = if stateful { crate::units::to_length(index) } else { 0 };
+    let sticky = meta.flags.contains(RegExpFlags::STICKY);
+    match input.with_ascii_rope_bytes(|bytes| regex.find_ascii(bytes, start, sticky, captures)) {
+        Some(Some(found)) => SteadyRead::Ascii {
+            slot,
+            stateful,
+            matched: found.map(|found| (Rc::clone(regex), input.clone(), found)),
+        },
+        _ => SteadyRead::Prefiltered(slot, last_index, Prefilter::Undecided),
+    }
+}
+
 /// `regexp_steady_state`'s search of the flat `input` from the regexp's `lastIndex` number `index`.
 #[inline(always)]
 fn steady_search(meta: &crate::heap::RegExpMeta, input: &JsString, slot: usize, last_index: Value, index: f64, captures: bool) -> SteadyRead {
-    let (Some(regex), Some(units)) = (meta.matcher.0.get(), input.existing_flat()) else {
+    let Some(regex) = meta.matcher.0.get() else {
         return SteadyRead::Prefiltered(slot, last_index, Prefilter::Undecided);
+    };
+    let Some(units) = input.existing_flat() else {
+        return steady_rope_search(meta, regex, input, slot, last_index, index, captures);
     };
     let stateful = meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
     let start = if stateful { crate::units::to_length(index) } else { 0 };
