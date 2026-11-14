@@ -10,11 +10,12 @@
 use crate::{Value, ValueType};
 
 mod int_range;
+mod int_type;
 mod representation;
 pub(crate) use representation::Representation;
 mod slot_type;
 pub(crate) use slot_type::SlotType;
-pub(crate) use int_range::IntRange;
+pub(crate) use int_range::{IntRange, WIDENING_ROUNDS};
 
 /// Whether residual execution can export ownership or enter another guest activation.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -28,7 +29,7 @@ pub(crate) use binding::{BindingTime, Division, Proof};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TypeKind {
     Language(u16),
-    Int32,
+    Int(IntRange),
     DirectObjectFamily,
     NullableDirectObjectFamily(u16),
     DirectObjectShape { shape: u32, nullish: u16 },
@@ -52,7 +53,8 @@ impl Type {
         (1 << ValueType::Number as u16) | (1 << ValueType::Boolean as u16)
             | (1 << ValueType::Null as u16) | (1 << ValueType::Undefined as u16)));
     pub(crate) const NUMBER: Self = Self::language(ValueType::Number);
-    pub(crate) const INT32: Self = Self(TypeKind::Int32);
+    /// The integers of the whole int32 span, the widest range an int32-represented value holds.
+    pub(crate) const INT32: Self = Self(TypeKind::Int(IntRange::FULL));
     /// The canonical direct-object tag only: no object-table range, base,
     /// shape or storage permission follows from this refinement.
     pub(crate) const DIRECT_OBJECT_FAMILY: Self = Self(TypeKind::DirectObjectFamily);
@@ -66,7 +68,7 @@ impl Type {
     const fn kinds(self) -> u16 {
         match self.0 {
             TypeKind::Language(kinds) => kinds,
-            TypeKind::Int32 => 1 << ValueType::Number as u16,
+            TypeKind::Int(_) => 1 << ValueType::Number as u16,
             TypeKind::DirectObjectFamily => 1 << ValueType::Object as u16,
             TypeKind::DirectObjectShape { nullish, .. } => (1 << ValueType::Object as u16) | nullish,
             TypeKind::NullableDirectObjectFamily(nullish) => (1 << ValueType::Object as u16) | nullish,
@@ -168,11 +170,8 @@ impl Type {
     }
 
     pub(crate) fn join(self, other: Self) -> Self {
-        if self == other || other == Self::NEVER {
-            return self;
-        }
-        if self == Self::NEVER {
-            return other;
+        if let Some(joined) = self.trivial_join(other) {
+            return joined;
         }
         let shaped = match (self.0, other.0) {
             (TypeKind::DirectObjectShape { shape, nullish: left }, TypeKind::DirectObjectShape { shape: right, nullish })
@@ -197,6 +196,7 @@ impl Type {
 
     pub(crate) fn is_subtype(self, expected: Self) -> bool {
         self == Self::NEVER || self == expected
+            || matches!((self.0, expected.0), (TypeKind::Int(known), TypeKind::Int(allowed)) if allowed.contains(known))
             || matches!(expected.0, TypeKind::DirectObjectShape { shape, nullish }
                 if matches!(self.0, TypeKind::DirectObjectShape { shape: actual, nullish: alternatives }
                     if actual == shape && alternatives & !nullish == 0)

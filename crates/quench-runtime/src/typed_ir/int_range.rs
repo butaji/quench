@@ -1,52 +1,75 @@
-/// A closed interval of semantic signed-int32 values, not wrapping arithmetic.
-/// Unknown/overflowing operations are represented by the caller's `None`.
+/// Joins at one program point before a range that keeps growing widens (`IntRange::widen`).
+pub(crate) const WIDENING_ROUNDS: u8 = 6;
+
+/// A closed interval of integers a Number may hold, exact over `i64`: arithmetic on ranges is
+/// mathematical, not wrapping, and a result `None` where it leaves even `i64`. Whether a range
+/// fits int32 (`fits_int32`) is the caller's question.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct IntRange {
-    pub(crate) min: i32,
-    pub(crate) max: i32,
+    pub(crate) min: i64,
+    pub(crate) max: i64,
 }
 
 impl IntRange {
-    pub(crate) const FULL: Self = Self { min: i32::MIN, max: i32::MAX };
+    /// The span of int32: what an int32-represented value holds at widest, and where widening settles.
+    pub(crate) const FULL: Self = Self { min: i32::MIN as i64, max: i32::MAX as i64 };
 
-    pub(crate) const NON_NEGATIVE: Self = Self { min: 0, max: i32::MAX };
+    pub(crate) const NON_NEGATIVE: Self = Self { min: 0, max: Self::FULL.max };
 
     /// What an int32 observed to be `value` gives a later entry to guard once: its sign.
     pub(crate) const fn entering(value: i32) -> Self { if value >= 0 { Self::NON_NEGATIVE } else { Self::FULL } }
 
-    pub(crate) const fn singleton(value: i32) -> Self { Self { min: value, max: value } }
+    pub(crate) fn singleton(value: impl Into<i64>) -> Self {
+        let value = value.into();
+        Self { min: value, max: value }
+    }
 
     pub(crate) fn packed() -> Self {
-        let half = 1_i32 << (crate::value::NarrowLayout::INTEGER_BITS - 1);
+        let half = 1_i64 << (crate::value::NarrowLayout::INTEGER_BITS - 1);
         Self { min: -half, max: half - 1 }
     }
 
-    pub(crate) fn bounds(min: i64, max: i64) -> Option<Self> {
-        (min <= max).then_some(Self { min: i32::try_from(min).ok()?, max: i32::try_from(max).ok()? })
-    }
+    pub(crate) fn bounds(min: i64, max: i64) -> Option<Self> { (min <= max).then_some(Self { min, max }) }
+
+    pub(crate) fn fits_int32(&self) -> bool { Self::FULL.contains(*self) }
 
     pub(crate) fn join(self, other: Self) -> Self {
         Self { min: self.min.min(other.min), max: self.max.max(other.max) }
     }
 
+    /// Open upward: the maximum up to int32's.
+    pub(crate) fn widen_up(self) -> Self { Self { max: self.max.max(Self::FULL.max), ..self } }
+
+    /// Open downward: the minimum down to int32's.
+    pub(crate) fn widen_down(self) -> Self { Self { min: self.min.min(Self::FULL.min), ..self } }
+
+    /// `self` joined with `next`, each bound `next` moved opened to int32's, so a chain of
+    /// widenings is finite.
+    pub(crate) fn widen(self, next: Self) -> Self {
+        let hull = self.join(next);
+        let up = if hull.max > self.max { hull.widen_up() } else { hull };
+        if hull.min < self.min { up.widen_down() } else { up }
+    }
+
     pub(crate) fn intersect(self, other: Self) -> Option<Self> {
-        Self::bounds(i64::from(self.min.max(other.min)), i64::from(self.max.min(other.max)))
+        Self::bounds(self.min.max(other.min), self.max.min(other.max))
     }
 
     pub(crate) fn contains(self, other: Self) -> bool { self.min <= other.min && other.max <= self.max }
 
     pub(crate) fn add(self, other: Self) -> Option<Self> {
-        Self::bounds(i64::from(self.min) + i64::from(other.min), i64::from(self.max) + i64::from(other.max))
+        Some(Self { min: self.min.checked_add(other.min)?, max: self.max.checked_add(other.max)? })
     }
 
     pub(crate) fn subtract(self, other: Self) -> Option<Self> {
-        Self::bounds(i64::from(self.min) - i64::from(other.max), i64::from(self.max) - i64::from(other.min))
+        Some(Self { min: self.min.checked_sub(other.max)?, max: self.max.checked_sub(other.min)? })
     }
 
     pub(crate) fn multiply(self, other: Self) -> Option<Self> {
-        let products = [self.min, self.max].map(|left| [other.min, other.max].map(|right| i64::from(left) * i64::from(right)));
-        let (min, max) = products.iter().flatten().fold((i64::MAX, i64::MIN), |(low, high), &product| (low.min(product), high.max(product)));
-        Self::bounds(min, max)
+        let corners = [(self.min, other.min), (self.min, other.max), (self.max, other.min), (self.max, other.max)];
+        let [a, b, c, d] = corners.map(|(left, right)| left.checked_mul(right));
+        let products = [a?, b?, c?, d?];
+        Some(Self { min: *products.iter().min()?, max: *products.iter().max()? })
     }
 
     /// Sign-extended N-bit operands remain sign-extended after &, | or ^.
@@ -54,10 +77,10 @@ impl IntRange {
     /// bits with the sign even when the input interval crosses zero.
     pub(crate) fn bitwise_hull(self, other: Self) -> Self {
         let inputs = self.join(other);
-        let magnitude = [inputs.min, inputs.max].map(|value| if value < 0 { !value as u32 } else { value as u32 });
-        let width = u32::BITS - (magnitude[0] | magnitude[1]).leading_zeros() + 1;
+        let magnitude = [inputs.min, inputs.max].map(|value| value.max(!value) as u64);
+        let width = u64::BITS - (magnitude[0] | magnitude[1]).leading_zeros() + 1;
         let half = 1_i64 << (width - 1);
-        Self { min: (-half) as i32, max: (half - 1) as i32 }
+        Self { min: -half, max: half - 1 }
     }
 
     pub(crate) fn shift_right(self, count: Self) -> Option<Self> {
@@ -96,7 +119,7 @@ mod tests {
                 let bound = range.shift_right(IntRange::singleton(count)).unwrap();
                 for value in [range.min, range.max, -1, 0, 1] {
                     if range.contains(IntRange::singleton(value)) {
-                        assert!(bound.contains(IntRange::singleton(value.wrapping_shr(count as u32))));
+                        assert!(bound.contains(IntRange::singleton((value as i32).wrapping_shr(count as u32))));
                     }
                 }
             }
@@ -112,14 +135,17 @@ mod tests {
     #[test]
     fn mathematical_bounds_reject_overflow_and_close_positive_packed_decrement() {
         let packed = IntRange::packed();
-        let positive = packed.intersect(IntRange { min: 1, max: i32::MAX }).unwrap();
+        let positive = packed.intersect(IntRange { min: 1, max: IntRange::FULL.max }).unwrap();
         assert!(packed.contains(positive.subtract(IntRange::singleton(1)).unwrap()));
         assert!(!packed.contains(packed.subtract(IntRange::singleton(1)).unwrap()));
-        assert_eq!(IntRange::FULL.add(IntRange::singleton(1)), None);
-        assert_eq!(IntRange::FULL.subtract(IntRange::singleton(1)), None);
+        let beyond = |range: Option<IntRange>| !range.unwrap().fits_int32();
+        assert!(beyond(IntRange::FULL.add(IntRange::singleton(1))));
+        assert!(beyond(IntRange::FULL.subtract(IntRange::singleton(1))));
         assert_eq!(IntRange::singleton(i32::MIN).subtract(IntRange::singleton(i32::MIN)), Some(IntRange::singleton(0)));
-        assert_eq!(IntRange::FULL.multiply(IntRange::singleton(2)), None);
-        assert_eq!(IntRange::singleton(i32::MIN).multiply(IntRange::singleton(-1)), None);
+        assert!(beyond(IntRange::FULL.multiply(IntRange::singleton(2))));
+        assert!(beyond(IntRange::singleton(i32::MIN).multiply(IntRange::singleton(-1))));
+        assert_eq!(IntRange::singleton(i64::MAX).add(IntRange::singleton(1)), None);
+        assert_eq!(IntRange::singleton(i64::MAX).multiply(IntRange::singleton(2)), None);
         assert_eq!(IntRange { min: -3, max: 2 }.multiply(IntRange { min: -4, max: 5 }), Some(IntRange { min: -15, max: 12 }));
         for a in -8..=8 { for b in a..=8 { for c in -8..=8 { for d in c..=8 {
             let left = IntRange { min: a, max: b };
@@ -130,5 +156,19 @@ mod tests {
                 assert!(left.subtract(right).unwrap().contains(IntRange::singleton(x - y)));
             }}
         }}}}
+    }
+
+    #[test]
+    fn widening_contains_the_join_and_settles_at_int32_in_finitely_many_steps() {
+        let start = IntRange::singleton(0);
+        let mut range = start;
+        for step in 1..=i64::from(WIDENING_ROUNDS) * 2 {
+            let next = range.widen(IntRange { min: 0, max: step });
+            assert!(next.contains(range.join(IntRange { min: 0, max: step })));
+            range = next;
+        }
+        assert_eq!(range, IntRange::NON_NEGATIVE);
+        assert_eq!(range.widen(IntRange { min: -1, max: 0 }), IntRange::FULL);
+        assert_eq!(IntRange::FULL.widen(start), IntRange::FULL);
     }
 }

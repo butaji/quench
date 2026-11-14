@@ -573,7 +573,6 @@ complexity crates/quench-runtime/src/owned_clone.rs::Capture::value 28
 complexity crates/quench-runtime/src/owned_clone.rs::import 16
 complexity crates/quench-runtime/src/profile.rs::Profile::opcode 14
 complexity crates/quench-runtime/src/profile.rs::Profile::report 13
-complexity crates/quench-runtime/src/typed_ir.rs::Type::join 12
 complexity crates/quench-runtime/src/typed_ir/int_range.rs::tests::signed_width_encloses_bitwise_results_across_zero_and_word_boundaries 12
 complexity crates/quench-runtime/src/typed_ir/slot_type.rs::SlotType::from_type 11
 complexity crates/quench-runtime/src/typed_ir/slot_type.rs::SlotType::label 11

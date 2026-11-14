@@ -148,8 +148,8 @@ fn relation_ranges(relation: NumberRelation, truth: bool, left: IntRange, right:
             if relation == GreaterThan { LessThan } else { LessEqual }, true, right, left).map(|(right, left)| (left, right)),
         LessThan | LessEqual => {
             let strict = i64::from(relation == LessThan);
-            Some((IntRange::bounds(i64::from(left.min), i64::from(left.max).min(i64::from(right.max) - strict))?,
-                IntRange::bounds(i64::from(right.min).max(i64::from(left.min) + strict), i64::from(right.max))?))
+            Some((IntRange::bounds(left.min, left.max.min(right.max - strict))?,
+                IntRange::bounds(right.min.max(left.min + strict), right.max)?))
         }
     }
 }
@@ -174,17 +174,19 @@ pub(super) fn result(state: &State, program: &ResidualProgram, instruction: Wide
 fn step_result(state: &State, instruction: WideInstruction) -> Option<IntRange> {
     if instruction.numeric_local_target().is_some() { return None; }
     let (source, one) = (state.ranges[usize::from(instruction.register_b())]?, IntRange::singleton(1));
-    if instruction.boolean_flag()? { source.subtract(one) } else { source.add(one) }
+    let stepped = if instruction.boolean_flag()? { source.subtract(one) } else { source.add(one) };
+    stepped.filter(IntRange::fits_int32)
 }
 
 /// The range of an arithmetic operation over operands of ranges `left` and `right`.
 fn arithmetic_result(operation: NumberArithmetic, left: Option<IntRange>, right: Option<IntRange>) -> Option<IntRange> {
-    match operation {
+    let exact = match operation {
         NumberArithmetic::Add => left?.add(right?),
         NumberArithmetic::Subtract => left?.subtract(right?),
         NumberArithmetic::Multiply => left?.multiply(right?),
         _ => None,
-    }
+    };
+    exact.filter(IntRange::fits_int32)
 }
 
 /// The range of a bitwise operation over operands of ranges `left` and `right`.

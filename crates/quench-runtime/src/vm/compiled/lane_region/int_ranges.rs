@@ -13,14 +13,10 @@ use super::packed_ranges::{result, State};
 use super::*;
 use crate::vm::operations::NumberArithmetic;
 
-/// Passes before a unit proves nothing: each failed pass relaxes at least one header
-/// assumption of a register, so a unit settles in a few and the bound guards compile time.
-const WIDENING_ROUNDS: usize = 6;
-
 /// What a loop header assumes of a register its entering edge proved a range of.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Widening {
-    /// Upward-open: the entering range's minimum, up to int32's maximum.
+    /// Upward-open (`IntRange::widen_up`): the entering range's minimum, up to int32's maximum.
     Upward,
     /// Only the register's type facts.
     Unknown,
@@ -73,7 +69,9 @@ pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit:
     }
     let analysis = Analysis { program, unit, facts, entry, entering, headers, generic, hoisted_dense };
     let mut relaxed = Relaxed::new();
-    for _ in 0..WIDENING_ROUNDS {
+    // Each failed pass relaxes at least one header assumption of a register, so a unit settles
+    // in a few passes, and the bound guards compile time.
+    for _ in 0..crate::typed_ir::WIDENING_ROUNDS {
         match analysis.pass(&relaxed) {
             Ok(ranges) => return ranges,
             Err(failures) => relaxed.extend(failures),
@@ -140,7 +138,7 @@ impl Analysis<'_> {
             state.ranges[slot] = match (state.ranges[slot], relaxed.get(&(pc, register))) {
                 (Some(known), None) => { carried.push((register, known)); Some(known) }
                 (Some(known), Some(Widening::Upward)) => {
-                    let widened = IntRange { min: known.min, max: i32::MAX };
+                    let widened = known.widen_up();
                     carried.push((register, widened));
                     Some(widened)
                 }

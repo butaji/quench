@@ -273,3 +273,63 @@ fn admission_rejects_missing_types_and_unproved_machine_views() {
     assert!(Fact { representation: Representation::Float64, ..fact }.verified().is_none());
     assert_eq!(canonical.verified().unwrap().ty, Type::ANY);
 }
+
+fn integer_types() -> Vec<Type> {
+    let ranges = [(0, 0), (0, 255), (-128, 127), (-1, 1), (5, 9), (0, i64::from(u32::MAX)), (i64::from(i32::MIN), i64::from(i32::MAX))];
+    ranges.into_iter().map(|(min, max)| Type::int(IntRange { min, max })).collect()
+}
+
+#[test]
+fn integer_ranges_are_number_subtypes_and_int32_is_the_widest_machine_range() {
+    let wide = Type::int(IntRange { min: 0, max: i64::from(u32::MAX) });
+    assert_eq!(Type::INT32, Type::int(IntRange::FULL));
+    assert!(Type::int(IntRange { min: 0, max: 255 }).is_subtype(Type::INT32));
+    assert!(Type::INT32.is_subtype(Type::NUMBER) && wide.is_subtype(Type::NUMBER));
+    assert!(!wide.is_subtype(Type::INT32) && !Type::NUMBER.is_subtype(Type::INT32));
+    assert!(Type::int(IntRange::singleton(3)).is_int32() && !wide.is_int32() && !Type::NUMBER.is_int32());
+    assert_eq!(Type::int(IntRange::singleton(3)).machine(), Type::INT32);
+    assert_eq!(wide.machine(), Type::NUMBER);
+    assert_eq!(Type::ANY.machine(), Type::ANY);
+    assert_eq!(SlotType::from_type(Type::int(IntRange { min: 0, max: 255 })), SlotType::Int32);
+    assert_eq!(SlotType::from_type(wide), SlotType::Number);
+    let hull = Type::int(IntRange { min: 0, max: 9 }).join(Type::int(IntRange { min: 100, max: 200 }));
+    assert_eq!(hull, Type::int(IntRange { min: 0, max: 200 }));
+    assert_eq!(hull.join(Type::NUMBER), Type::NUMBER);
+    assert!(!hull.join(Type::language(ValueType::String)).is_subtype(Type::NUMBER));
+}
+
+#[test]
+fn integer_joins_are_commutative_idempotent_associative_and_monotone() {
+    let mut types = integer_types();
+    types.extend([Type::NEVER, Type::NUMBER, Type::ANY, Type::language(ValueType::String), Type::direct_object(3)]);
+    for a in &types { for b in &types {
+        assert_eq!(a.join(*b), b.join(*a));
+        assert_eq!(a.join(*a), *a);
+        assert!(a.is_subtype(a.join(*b)) && b.is_subtype(a.join(*b)));
+        for c in &types {
+            assert_eq!(a.join(*b).join(*c), a.join(b.join(*c)), "{a:?}, {b:?}, {c:?}");
+            if a.is_subtype(*b) { assert!(a.join(*c).is_subtype(b.join(*c)), "{a:?} <= {b:?}, {c:?}"); }
+        }
+    }}
+}
+
+#[test]
+fn widening_contains_the_join_and_every_chain_of_widenings_terminates() {
+    let mut types = integer_types();
+    types.extend([Type::NEVER, Type::NUMBER, Type::language(ValueType::String)]);
+    for start in &types { for next in &types {
+        assert!(start.join(*next).is_subtype(start.widen(*next)), "{start:?} widen {next:?}");
+        let mut settled = *start;
+        let mut steps = 0;
+        loop {
+            let widened = settled.widen(*next);
+            if widened == settled { break; }
+            settled = widened;
+            steps += 1;
+            assert!(steps <= 3, "a widening chain of {start:?} by {next:?} does not settle");
+        }
+    }}
+    let counter = (1..=i64::from(WIDENING_ROUNDS) * 4).fold(Type::int(IntRange::singleton(0)),
+        |known, step| known.widen(Type::int(IntRange { min: 0, max: step })));
+    assert_eq!(counter, Type::int(IntRange::NON_NEGATIVE));
+}

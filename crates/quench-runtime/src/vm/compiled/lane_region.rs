@@ -2438,7 +2438,7 @@ impl Lowering<'_, '_> {
         for (register, range) in self.entering.clone() {
             let exit = self.guard_exit(state, pc as u32);
             let value = self.int(state, register, exit);
-            let within = self.raw_compare_imm(Relation::SignedGreaterEqual, value, i64::from(range.min));
+            let within = self.raw_compare_imm(Relation::SignedGreaterEqual, value, range.min);
             emit_js_guard(&mut self.builder, within, exit);
         }
     }
