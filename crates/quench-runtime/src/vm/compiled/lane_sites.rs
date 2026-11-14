@@ -171,8 +171,8 @@ impl<H: Host> Vm<H> {
 }
 
 /// The PCs a jump or a branch table enters: where control may arrive other than by falling through.
-fn branch_targets(code: &[crate::bytecode::WideInstruction]) -> std::collections::BTreeSet<usize> {
-    let mut entered = std::collections::BTreeSet::new();
+fn branch_targets(code: &[crate::bytecode::WideInstruction]) -> cranelift_codegen::bitset::CompoundBitSet {
+    let mut entered = cranelift_codegen::bitset::CompoundBitSet::with_capacity(code.len());
     for (pc, instruction) in code.iter().enumerate() {
         crate::bytecode::for_each_instruction_successor(pc, *instruction, |successor| {
             if successor != pc + 1 {
@@ -186,8 +186,8 @@ fn branch_targets(code: &[crate::bytecode::WideInstruction]) -> std::collections
 /// The PC of the instruction defining the callee register of the call at `call`, if it is the only
 /// one reaching it: the nearest before the call that writes the register, with no jump landing
 /// between the two.
-fn straight_definition(code: &[crate::bytecode::WideInstruction], entered: &std::collections::BTreeSet<usize>, call: usize) -> Option<usize> {
+fn straight_definition(code: &[crate::bytecode::WideInstruction], entered: &cranelift_codegen::bitset::CompoundBitSet, call: usize) -> Option<usize> {
     let callee = code[call].register_b();
     let defined = (0..call).rev().find(|pc| code[*pc].written_registers().any(|register| register == callee))?;
-    entered.range(defined + 1..=call).next().is_none().then_some(defined)
+    (defined + 1..=call).all(|pc| !entered.contains(pc)).then_some(defined)
 }
