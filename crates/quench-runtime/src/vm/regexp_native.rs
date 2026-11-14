@@ -5,15 +5,16 @@
 use super::compiled::CodeMemory;
 use super::jit_backend::{compile_function, run_in_background, target_isa, NativeCompileRejection};
 use std::task::Poll;
-use crate::staged::machine::{Binary, Extend, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
+use crate::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
 use cranelift_codegen::ir::{self, types, MemFlagsData};
 use cranelift_codegen::isa::TargetIsa;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use quench_regexp::backtrack::CAPTURE_REGISTERS;
-use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativeGuard, NativeInst, NativePlan, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
+use quench_regexp::backtrack::matcher::{admits, assertion_holds, takes_unit, Admission, AssertionTest};
+use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativeInst, NativePlan, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
 
-mod assertions;
 mod repeats;
+mod stage;
 
 /// The largest native search, in bytes of machine code.
 const MAX_CODE_BYTES: usize = 256 * 1024;
@@ -30,9 +31,6 @@ const SECOND_OPERAND: i32 = 2 * WORD;
 const PARAMETERS: usize = 6;
 /// An address of register `n` is `n << REGISTER_SHIFT` bytes on.
 const REGISTER_SHIFT: i64 = 3;
-/// The bits of a mask word, and the mask of a shift within one.
-const WORD_BITS: i64 = 64;
-const WORD_SHIFT_MASK: i64 = WORD_BITS - 1;
 
 /// Whether this thread's hot regexp programs run natively: only under a compiling mode.
 pub(super) fn enable(enabled: bool, runs: u32) {
@@ -196,38 +194,12 @@ impl<'a, 'f> Emit<'a, 'f> {
         self.b.raw_compare_imm(relation, value, constant)
     }
 
-    fn byte_at(&mut self, index: ir::Value) -> ir::Value {
-        let address = self.b.raw_binary(Binary::Add, self.bytes, index);
-        self.b.raw_load_extended(Lane::I8, Extend::Zero, Lane::I64, MemFlagsData::trusted(), address, 0)
-    }
-
     fn register(&mut self, index: u32) -> ir::Value {
         self.b.raw_load(Lane::I64, MemFlagsData::trusted(), self.registers, index as i32 * WORD)
     }
 
     fn store_register(&mut self, index: u32, value: ir::Value) {
         self.b.raw_store(Lane::I64, MemFlagsData::trusted(), (value, false), self.registers, index as i32 * WORD);
-    }
-
-    /// Whether the unit `byte` passes `test`.
-    fn passes(&mut self, test: NativeTest, byte: ir::Value) -> ir::Value {
-        match test {
-            NativeTest::Never => self.b.raw_const(Lane::I8, 0),
-            NativeTest::Exact(unit) => self.compare_constant(Relation::Equal, byte, i64::from(unit)),
-            NativeTest::Mask(mask) => self.in_mask(mask, byte),
-        }
-    }
-
-    /// Bit `byte` of the 128-bit `mask`.
-    fn in_mask(&mut self, mask: [u64; 2], byte: ir::Value) -> ir::Value {
-        let low = self.constant(mask[0] as i64);
-        let high = self.constant(mask[1] as i64);
-        let below = self.compare_constant(Relation::UnsignedLess, byte, WORD_BITS);
-        let word = self.b.raw_select(below, low, high);
-        let shift = self.b.raw_binary_imm(Binary::And, byte, WORD_SHIFT_MASK);
-        let bit = self.b.raw_binary(Binary::ShiftRightUnsigned, word, shift);
-        let bit = self.b.raw_binary_imm(Binary::And, bit, 1);
-        self.compare_constant(Relation::NotEqual, bit, 0)
     }
 
     /// Pushes a frame `(id, first, second)`, returning from the search at once where the
@@ -281,7 +253,7 @@ impl<'a, 'f> Emit<'a, 'f> {
         match inst {
             NativeInst::Unit(test) => self.unit(pc, *test),
             NativeInst::UnitRepeat { test, min, max, greedy } => self.unit_repeat(pc, *test, (*min, *max), *greedy),
-            NativeInst::Assert(assertion) => self.assertion(pc, *assertion),
+            NativeInst::Assert(test) => self.assertion(pc, *test),
             NativeInst::Split { alternative } => {
                 let position = self.position();
                 self.push_resume(Resume::Choice(*alternative), position, position);
@@ -299,34 +271,25 @@ impl<'a, 'f> Emit<'a, 'f> {
 
     fn unit(&mut self, pc: u32, test: NativeTest) {
         let position = self.position();
-        let inside = self.compare(Relation::UnsignedLess, position, self.length);
-        self.require(inside);
-        let byte = self.byte_at(position);
-        let passes = self.passes(test, byte);
-        self.require(passes);
+        let takes = takes_unit(self, test, position);
+        self.require(takes);
         let after = self.b.raw_binary_imm(Binary::Add, position, 1);
         self.set_position(after);
         self.next(pc);
     }
 
-    fn guarded_split(&mut self, pc: u32, alternative: u32, guard: NativeGuard) {
-        let (admit, refuse) = (self.b.new_block(), self.b.new_block());
+    fn assertion(&mut self, pc: u32, test: AssertionTest) {
         let position = self.position();
-        if guard.at_start {
-            let probe = self.b.new_block();
-            let at_start = self.compare_constant(Relation::Equal, position, 0);
-            self.branch(at_start, admit, probe);
-            self.b.enter_open(probe);
-        }
-        let (load, edge) = (self.b.new_block(), self.b.new_block());
-        let inside = self.compare(Relation::UnsignedLess, position, self.length);
-        self.branch(inside, load, edge);
-        self.b.enter_open(load);
-        let byte = self.byte_at(position);
-        let starts = self.in_mask(guard.mask, byte);
-        self.branch(starts, admit, refuse);
-        self.b.enter_open(edge);
-        self.b.goto(if guard.at_end { admit } else { refuse }, &[]);
+        let holds = assertion_holds(self, test, position);
+        self.require(holds);
+        self.next(pc);
+    }
+
+    fn guarded_split(&mut self, pc: u32, alternative: u32, guard: Admission<NativeTest>) {
+        let position = self.position();
+        let admitted = admits(self, guard, position);
+        let (admit, refuse) = (self.b.new_block(), self.b.new_block());
+        self.branch(admitted, admit, refuse);
         self.b.enter_open(admit);
         self.push_resume(Resume::Choice(alternative), position, position);
         self.next(pc);
