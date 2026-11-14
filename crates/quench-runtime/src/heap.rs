@@ -3777,10 +3777,9 @@ impl Heap {
         // The common form first, as `GuardShape, LoadSlot` reads it: a plain object's arena run,
         // whose start is the payload itself, so neither the extras tag nor the start mask is
         // decoded. Packed inline values and extras take the staged reading.
-        if let Some(start) = object.plain_arena_start() {
-            if object.exact_shape() != shape {
-                return None;
-            }
+        // An exact shape has no form bits, so the whole auxiliary word equals it only in the
+        // arena form, whose payload is the start (`Object::formed_plain_start`).
+        if let Some(start) = object.formed_plain_start(shape) {
             // SAFETY: the caller's: the shape matched, so its run holds `slot`.
             let value = unsafe { *self.properties.values_base().add(start + usize::from(slot)) };
             debug_assert_eq!(Some(value), unsafe { crate::staged::concrete_own_field_hit(object, self.properties.values_base(), shape, slot) });
