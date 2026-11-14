@@ -7,7 +7,7 @@
 //! sorted static table (`OUT_DIR/rustc_stencils.rs`).
 //!
 //! Extension point: a new row family adds its `*_row!` macro to `rows.rs` and a generator line
-//! to `instances`; a new source file adds an entry to `SOURCES`. Sharding, per-shard checks and
+//! to `instances`; a new source file is found by its `#[path]` (`sources::watched`). Sharding, per-shard checks and
 //! the merge apply to both without further edits. A row that contains a `call` or a `ret` is a
 //! build error: rows chain by `become` only, and only the `leave_*` rows return. Other targets
 //! get an empty table.
@@ -25,6 +25,8 @@ mod layout;
 mod library;
 #[path = "build/macho.rs"]
 mod macho;
+#[path = "build/sources.rs"]
+mod sources;
 #[path = "stencils/shards.rs"]
 mod shards;
 #[path = "stencils/supernodes.rs"]
@@ -67,35 +69,6 @@ const RUSTC_FLAGS: &[&str] = &[
     "-C", "no-vectorize-slp", "-C", "no-vectorize-loops",
 ];
 
-/// Every file whose change must recompile the stencils: the stencil sources and the runtime's
-/// staged rows they include, and nothing else.
-const SOURCES: [&str; 24] = [
-    "stencils",
-    "../quench-runtime/src/staged/stage.rs",
-    "../quench-runtime/src/staged/value.rs",
-    "../quench-runtime/src/staged/object.rs",
-    "../quench-runtime/src/staged/narrow.rs",
-    "../quench-runtime/src/staged/elements.rs",
-    "../quench-runtime/src/staged/environment.rs",
-    "../quench-runtime/src/staged/entry.rs",
-    "../quench-runtime/src/staged/frame.rs",
-    "../quench-runtime/src/staged/call.rs",
-    "../quench-runtime/src/staged/ic.rs",
-    "../quench-runtime/src/staged/slot_store.rs",
-    "build.rs",
-    "build",
-    "src/class.rs",
-    "src/numeric.rs",
-    "src/call_record.rs",
-    "src/shared_words.rs",
-    "../quench-runtime/src/staged/numeric.rs",
-    "../quench-runtime/src/staged/iteration.rs",
-    "../quench-runtime/src/staged/register_frame.rs",
-    "../quench-runtime/src/staged/effects.rs",
-    "../quench-runtime/src/staged/global.rs",
-    "../quench-runtime/src/vm/operations/number_rows.rs",
-];
-
 /// The architecture and object reader of a build target, if its stencils are supported.
 fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
     let var = |name| env::var(name).unwrap_or_default();
@@ -108,8 +81,8 @@ fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
 }
 
 fn main() {
-    for source in SOURCES {
-        println!("cargo::rerun-if-changed={source}");
+    for source in sources::watched(Path::new(env!("CARGO_MANIFEST_DIR"))) {
+        println!("cargo::rerun-if-changed={}", source.display());
     }
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let table = out.join("rustc_stencils.rs");
