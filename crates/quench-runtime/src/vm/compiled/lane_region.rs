@@ -1073,6 +1073,23 @@ fn int32_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideI
         && shapes.iter().all(|field| field.ty == Type::INT32))
 }
 
+/// The register whose value `register` copies at the comparison at `pc`: following the moves and
+/// nops back to `header` within one block, so copies share the comparison's SSA value.
+fn move_root(instructions: &[WideInstruction], leaders: &CompoundBitSet, (header, pc): (usize, usize), mut register: Register) -> Register {
+    for at in (header..pc).rev() {
+        if at + 1 < pc && leaders.contains(at + 1) { break; }
+        let instruction = instructions[at];
+        match instruction.op() {
+            opcode if opcode.is_move() && instruction.result_flags() == 0 => {
+                if instruction.register_a() == register { register = instruction.register_b(); }
+            }
+            opcode if opcode.is_nop() => {},
+            _ => break,
+        }
+    }
+    register
+}
+
 /// Whether `instruction` can change no heap value natively: anything else it would do (a
 /// non-Number operand, a missed cache) leaves the body first.
 fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> bool {
@@ -2300,6 +2317,25 @@ impl Lowering<'_, '_> {
         self.invariant_field_records(instructions, receiver, object_table, miss)
     }
 
+    /// The register (or `unit.registers` for `this`) whose object the field access at `pc` reads or
+    /// writes, where `instruction` is one.
+    fn field_owner(&self, pc: usize, instruction: WideInstruction) -> Option<usize> {
+        let count = usize::from(self.unit.registers);
+        match instruction.op() {
+            opcode if opcode.is_get_field() && !super::reads_length(self.program, instruction) => {
+                let base = self.field_base(pc, instruction);
+                base.and_then(|base| if base == crate::bytecode::FieldBase::THIS { Some(count) }
+                    else { base.register_index().map(usize::from) }).filter(|_| self.reads_own_field(instruction))
+            }
+            _ if instruction.op().is_field_store() => Some(match (instruction.field_store_register(), self.unit.origins[pc]) {
+                (Some(register), _) => usize::from(register),
+                (None, super::lane_unit::Origin::Inlined { frame, .. }) => usize::from(self.unit.frames[frame].receiver),
+                (None, _) => count,
+            }),
+            _ => None,
+        }
+    }
+
     /// Bind physical receiver facts once. The expanded unit's write set owns
     /// invariance, including renamed callee registers and synthesized returns.
     fn invariant_field_records(&mut self, instructions: &[WideInstruction], receiver: &LaneReceiver,
@@ -2310,19 +2346,7 @@ impl Lowering<'_, '_> {
         for (pc, instruction) in instructions.iter().enumerate() {
             if self.blocks[pc].is_some() { reachable = self.facts.at(pc).is_some(); }
             if !reachable { continue; }
-            let owner = match instruction.op() {
-                opcode if opcode.is_get_field() && !super::reads_length(self.program, *instruction) => {
-                    let base = self.field_base(pc, *instruction);
-                    base.and_then(|base| if base == crate::bytecode::FieldBase::THIS { Some(count) }
-                        else { base.register_index().map(usize::from) }).filter(|_| self.reads_own_field(*instruction))
-                }
-                _ if instruction.op().is_field_store() => Some(match (instruction.field_store_register(), self.unit.origins[pc]) {
-                    (Some(register), _) => usize::from(register),
-                    (None, super::lane_unit::Origin::Inlined { frame, .. }) => usize::from(self.unit.frames[frame].receiver),
-                    (None, _) => count,
-                }),
-                _ => None,
-            };
+            let owner = self.field_owner(pc, *instruction);
             if let Some(owner) = owner.filter(|owner| *owner == count
                 || (*owner < usize::from(self.unit.caller_registers) && !self.written.contains(*owner))) {
                 owners.insert(owner);
@@ -3207,21 +3231,7 @@ impl Lowering<'_, '_> {
             let Some(comparison) = nullish_comparison(&self.program.constants, instructions[pc], |_| Type::ANY)
                 .filter(|comparison| !comparison.strict && comparison.negated
                     && instructions[pc].jump_target() as usize > back) else { continue };
-            // Copies before the comparison share its SSA value as well.
-            let root = |mut register| {
-                for at in (header..pc).rev() {
-                    if at + 1 < pc && leaders.contains(at + 1) { break; }
-                    let instruction = instructions[at];
-                    match instruction.op() {
-                        opcode if opcode.is_move() && instruction.result_flags() == 0 => {
-                            if instruction.register_a() == register { register = instruction.register_b(); }
-                        }
-                        opcode if opcode.is_nop() => {},
-                        _ => break,
-                    }
-                }
-                register
-            };
+            let root = |register| move_root(instructions, leaders, (header, pc), register);
             if root(required) != root(comparison.source) { continue; }
             if !inputs.iter().any(|&(leader, _)| leader == pc + 1) { inputs.push((pc + 1, required)); }
             if !inputs.iter().all(|&(pc, register)| self.facts.at(pc)
