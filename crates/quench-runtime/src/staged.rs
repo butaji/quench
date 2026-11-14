@@ -14,7 +14,7 @@
 //! (`docs/v2/specialization.md`). `staged_coverage` in this module's tests keeps hand-written
 //! decodes of the same layouts from reappearing elsewhere.
 
-use crate::bytecode::{FieldBase, FieldLookup, Op, Operand, Register, WideInstruction};
+use crate::bytecode::{Decoder, FieldBase, FieldLookup, Op, Operand, Register, WideInstruction};
 use crate::typed_ir::Type;
 
 mod concrete;
@@ -252,23 +252,21 @@ pub(crate) enum Operation<W, P> {
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes and the
-    /// tables of `context` its operands index. `None` where the opcode has no staged operation,
-    /// or where its constant or method site is not available to this tier: the caller then takes
-    /// its own exact path. The heap operations are the frame's (`Frame::field_read`); a tier
-    /// decodes those itself.
+    /// tables of `context` its operands index, by the decoder the catalog names for its opcode
+    /// (`Op::staged`). `None` where the opcode has no staged operation, or where its constant or
+    /// method site is not available to this tier: the caller then takes its own exact path. The
+    /// heap operations are the frame's (`Frame::field_read`); a tier decodes those itself.
     pub(crate) fn decode(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
-        match instruction.op() {
-            Op::Move | Op::LoadConst | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::Return => Self::decode_flow(instruction, context),
-            Op::LoadLocalPlain | Op::StoreLocalPlain => Self::decode_local(instruction),
-            Op::Binary | Op::ToPropertyKey | Op::JumpBinaryFalse => Self::decode_generic(instruction),
-            Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::IncDec
-                | Op::LoadCapture | Op::StoreCapture => Self::decode_value(instruction),
-            Op::GetField | Op::Delete => Self::decode_property(instruction),
-            op if op.is_field_store() => Self::decode_property(instruction),
-            Op::GetIndex | Op::SetIndex => Self::decode_element(instruction),
-            Op::Call | Op::CallForwardingArguments | Op::Construct | Op::CallKnown | Op::CallMethod | Op::CallThisMethod =>
-                Self::decode_call(instruction, context),
-            _ => names::decode(instruction),
+        match instruction.op().staged()? {
+            Decoder::Flow => Self::decode_flow(instruction, context),
+            Decoder::Local => Self::decode_local(instruction),
+            Decoder::Generic => Self::decode_generic(instruction),
+            Decoder::Value => Self::decode_value(instruction),
+            Decoder::Property => Self::decode_property(instruction),
+            Decoder::Element => Self::decode_element(instruction),
+            Decoder::Call => Self::decode_call(instruction, context),
+            Decoder::Names => names::decode(instruction),
+            Decoder::Proved => None,
         }
     }
 
