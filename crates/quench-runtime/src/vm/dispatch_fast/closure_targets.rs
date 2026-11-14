@@ -34,11 +34,48 @@ impl<H: Host> Vm<H> {
         if program != entry.program || function != entry.function {
             return None;
         }
+        if let Some(target) = self.sibling_closure_target(&entry, callee, env) {
+            self.lane_stack.remember_script_target(target, self.heap.memory_policy());
+            return self.script_call_index(callee);
+        }
         let known = self.lane_stack.function_target(program, function, false)?;
         // SAFETY: no program is installed or retired while a call resolves.
         let code = unsafe { &*std::ptr::from_ref(self.programs.residual(program)?) };
         let target = self.closure_target(code, program, callee, env, known)?;
         self.lane_stack.remember_script_target(target, self.heap.memory_policy());
         self.script_call_index(callee)
+    }
+
+    /// `entry`'s target for `callee`, another closure of its function, read from the entry
+    /// alone where the closures' environments are activations of one function in one
+    /// program: their capture facts then match (`target_capture`), and a receiver-binding
+    /// callee has no lexical `this` to read. Anything else resolves in `closure_target`.
+    #[inline(always)]
+    fn sibling_closure_target(&mut self, entry: &ScriptCallTarget, callee: Value, env: Value) -> Option<ScriptCallTarget> {
+        if !entry.this_binding.binds_receiver() {
+            return None;
+        }
+        if entry.view.is_null() {
+            return Some(ScriptCallTarget { callee, env, ..*entry });
+        }
+        if entry.capture.is_null() {
+            return None;
+        }
+        let Some(Cell::Environment { function: old, scope: old_scope, .. }) = self.heap.get(entry.env) else {
+            return None;
+        };
+        let (old, old_program) = (*old, old_scope.program());
+        let Some(Cell::Environment { function, slots, scope, .. }) = self.heap.get(env) else {
+            return None;
+        };
+        if *function != old || scope.program() != old_program {
+            return None;
+        }
+        let storage = slots.dense_storage()?;
+        let stores = entry.capture.addr() & CAPTURE_STORES;
+        if stores != 0 {
+            self.heap.remember_cell(env);
+        }
+        Some(ScriptCallTarget { callee, env, capture: storage.map_addr(|address| address | stores), ..*entry })
     }
 }
