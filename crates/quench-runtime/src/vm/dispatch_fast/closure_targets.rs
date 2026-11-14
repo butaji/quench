@@ -27,11 +27,11 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     pub(super) fn relink_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
         let entry = *self.lane_stack.script_targets.entries.get(linked)?;
-        if entry.generation != self.lane_stack.generation || entry.program != self.active_program {
+        if entry.generation() != self.lane_stack.generation || entry.program() != self.active_program {
             return None;
         }
         let (program, function, env) = self.same_realm_user_target(callee)?;
-        if program != entry.program || function != entry.function {
+        if program != entry.program() || function != entry.function {
             return None;
         }
         if let Some(target) = self.sibling_closure_target(&entry, callee, env) {
@@ -56,8 +56,8 @@ impl<H: Host> Vm<H> {
     pub(super) fn relink_known_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
         let (function, env) = callee.as_known_closure()?;
         let entry = self.lane_stack.script_targets.entries.get(linked)?;
-        if entry.generation != self.lane_stack.generation
-            || entry.program != self.active_program
+        if entry.generation() != self.lane_stack.generation
+            || entry.program() != self.active_program
             || entry.function != function
             || !entry.this_binding.binds_receiver()
         {

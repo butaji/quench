@@ -58,7 +58,7 @@ script_handler! {
         if vm.with_scope_entered || !lane_admits_window(vm, target, ARGC) {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
-        vm.programs.record_js_jit_lane_entry(target.program, target.function);
+        vm.programs.record_js_jit_lane_entry(target.program(), target.function);
         let stack = &mut vm.lane_stack;
         // SAFETY: as `lane_push_passed`'s window, which the stack's length covers only once
         // the leaf is materialized: no collection runs before.

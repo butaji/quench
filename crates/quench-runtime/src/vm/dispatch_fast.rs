@@ -1570,9 +1570,8 @@ enum ActivationArguments {
 #[derive(Clone, Copy)]
 pub(super) struct ScriptCallTarget {
     callee: Value,
-    /// The `LaneStack::generation` it was resolved in.
-    generation: ScriptGeneration,
-    program: ProgramId,
+    /// The generation it was resolved in and the program it serves (`Admission`).
+    admission: Admission,
     pub(super) function: u32,
     env: Value,
     pub(super) view: *const LaneView,
@@ -1638,6 +1637,39 @@ impl ScriptCallTarget {
 /// line; its wrap clears every entry, so no stale one can match a reused number.
 type ScriptGeneration = u32;
 
+/// A generation and a program in one word, so admitting a cached target or memo against the
+/// running lane (`LaneStack::admission`) is one compare.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Admission(u64);
+
+impl Admission {
+    const fn new(generation: ScriptGeneration, program: ProgramId) -> Self {
+        Self(generation as u64 | (program.raw() as u64) << 32)
+    }
+
+    #[inline(always)]
+    const fn generation(self) -> ScriptGeneration {
+        self.0 as u32
+    }
+
+    #[inline(always)]
+    const fn program(self) -> ProgramId {
+        ProgramId::from_raw((self.0 >> 32) as u32)
+    }
+}
+
+impl ScriptCallTarget {
+    #[inline(always)]
+    fn generation(&self) -> ScriptGeneration {
+        self.admission.generation()
+    }
+
+    #[inline(always)]
+    pub(super) fn program(&self) -> ProgramId {
+        self.admission.program()
+    }
+}
+
 /// The rest values a gathering activation collects inline before its array is made.
 const GATHERED_INLINE_VALUES: usize = 8;
 
@@ -1651,8 +1683,7 @@ const NO_FORWARDED_METHOD: u16 = u16::MAX;
 
 const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     callee: Value::UNDEFINED,
-    generation: NO_SCRIPT_GENERATION,
-    program: ProgramId::MAIN,
+    admission: Admission::new(NO_SCRIPT_GENERATION, ProgramId::MAIN),
     function: 0,
     env: Value::UNDEFINED,
     view: std::ptr::null(),
@@ -1741,7 +1772,7 @@ impl ScriptTargets {
             return;
         };
         if self.entries[set].callee != target.callee {
-            if self.entries[set | 1].generation == target.generation {
+            if self.entries[set | 1].generation() == target.generation() {
                 self.displaced += 1;
             }
             self.entries[set | 1] = self.entries[set];
@@ -1877,6 +1908,9 @@ pub(super) struct LaneStack {
     /// changes: a target resolved under another generation is stale. Lane runs move between
     /// programs far more often than either changes, so each target names its program instead.
     generation: ScriptGeneration,
+    /// `generation` and the running program (`Vm::active_program`), which a cached target's
+    /// own admission must equal.
+    admission: Admission,
     /// The epoch and realm `generation` names.
     generation_key: (u64, Value),
     /// The boundary below a deferred native's callback while it runs (`NativeBoundary`).
@@ -1913,6 +1947,7 @@ impl Default for LaneStack {
             forwarded_methods: Vec::new(),
             activation_limit: std::cell::Cell::new(0),
             generation: NO_SCRIPT_GENERATION,
+            admission: Admission::new(NO_SCRIPT_GENERATION, ProgramId::MAIN),
             generation_key: (0, Value::UNDEFINED),
             native_boundary: None,
             body_boundary: None,
@@ -1948,7 +1983,7 @@ impl LaneStack {
     fn function_target(&self, program: ProgramId, function: u32, cross: bool) -> Option<ScriptCallTarget> {
         let targets = if cross { &self.cross_function_targets } else { &self.function_targets };
         let known = targets[function as usize & (FUNCTION_TARGETS - 1)];
-        (known.generation == self.generation && known.program == program && known.function == function)
+        (known.generation() == self.generation && known.program() == program && known.function == function)
             .then_some(known)
     }
 
@@ -2072,7 +2107,14 @@ impl LaneStack {
                 self.generation = NO_SCRIPT_GENERATION + 1;
             }
             self.generation_key = key;
+            self.admission = Admission::new(self.generation, self.admission.program());
         }
+    }
+
+    /// Notes the program the lane now runs (`Vm::activate_program`).
+    #[inline(always)]
+    pub(super) fn enter_program(&mut self, program: ProgramId) {
+        self.admission = Admission::new(self.generation, program);
     }
 }
 
@@ -9409,7 +9451,7 @@ fn lane_inlined_target<H: Host>(
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
     let target = unsafe { &*target_pointer };
     (target.entry.activates()
-        && target.program == unsafe { (*cx).program }
+        && target.program() == unsafe { (*cx).program }
         && unsafe { (*cx).script_calls }
         && !vm.with_scope_entered
         && lane_activation_room(vm, target)
@@ -9463,7 +9505,7 @@ fn lane_inlining_region<H: Host>(
         let vm = unsafe { vm(cx) };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
         let target = unsafe { &*vm.script_call_entry(callee)? };
-        (target.entry.activates() && target.program == program).then_some(())?;
+        (target.entry.activates() && target.program() == program).then_some(())?;
         let body = code.function_get(target.function as usize)?;
         Some(super::compiled::InlineCallee {
             callee,
@@ -12192,9 +12234,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn script_call_holds(&self, index: usize, callee: Value) -> bool {
         self.lane_stack.script_targets.entries.get(index).is_some_and(|cached| {
-            cached.callee == callee
-                && cached.generation == self.lane_stack.generation
-                && cached.program == self.active_program
+            cached.callee == callee && cached.admission == self.lane_stack.admission
         })
     }
 
@@ -12261,7 +12301,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn cross_call_holds(&self, index: usize, callee: Value) -> bool {
         self.lane_stack.cross_targets.entries.get(index).is_some_and(|cached| {
-            cached.callee == callee && cached.generation == self.lane_stack.generation && cached.program != self.active_program
+            cached.callee == callee && cached.generation() == self.lane_stack.generation && cached.program() != self.active_program
         })
     }
 
@@ -12294,7 +12334,7 @@ impl<H: Host> Vm<H> {
     /// (`lane_body_inlined_activation`), admitted once when its body is published; a
     /// lifecycle edge retires the body before they can expire.
     pub(super) fn lane_inlined_target_admitted(&mut self, code: &ResidualProgram, callee: Value, function: u32) -> bool {
-        self.resolve_script_call_target(code, callee).is_some_and(|target| target.program == self.active_program
+        self.resolve_script_call_target(code, callee).is_some_and(|target| target.program() == self.active_program
             && target.function == function
             && target.entry.activates_registers_only()
             && target.this_binding.binds_receiver())
@@ -12406,8 +12446,7 @@ impl<H: Host> Vm<H> {
             // without resolving it again.
             let target = ScriptCallTarget {
                 callee,
-                generation: self.lane_stack.generation,
-                program,
+                admission: Admission::new(self.lane_stack.generation, program),
                 function,
                 env,
                 entry: CallEntry::Frame,
@@ -12452,8 +12491,7 @@ impl<H: Host> Vm<H> {
         let capture = self.target_capture(code, program, env);
         let target = ScriptCallTarget {
             callee,
-            generation: self.lane_stack.generation,
-            program,
+            admission: Admission::new(self.lane_stack.generation, program),
             function,
             env,
             view,
@@ -13234,7 +13272,7 @@ script_handler! {
             sibling!(lane_script_call_cross::<H>, r, ip, Carried::script_in(cx, view))
         }
         if let Some(target) = vm.resolve_script_call_target(code, callee) {
-            if target.program == vm.active_program {
+            if target.program() == vm.active_program {
                 sibling!(lane_script_call::<H, ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
             }
             // Another program's callee that needs a frame takes it as `lane_frame_call`
@@ -13751,7 +13789,7 @@ fn lane_passed_target<H: Host>(cx: *mut LaneContext<H>, callee: Value, passed: u
             let own = || {
                 vm.script_call_entry(callee)
                     .map(|entry| unsafe { &*entry })
-                    .filter(|target| target.entry == CallEntry::Environment && target.program == vm.active_program)
+                    .filter(|target| target.entry == CallEntry::Environment && target.program() == vm.active_program)
             };
             match cross {
                 Some(target) => *target,
@@ -13761,7 +13799,7 @@ fn lane_passed_target<H: Host>(cx: *mut LaneContext<H>, callee: Value, passed: u
     };
     if target.entry == CallEntry::Environment
         && passed > usize::from(target.params)
-        && !vm.programs.residual(target.program)?.function(target.function as usize).rest
+        && !vm.programs.residual(target.program())?.function(target.function as usize).rest
     {
         return None;
     }
@@ -14904,7 +14942,7 @@ fn lane_construct_keeping_activation<H: Host>(
             let argument = lane_construct_argument(r, i);
             if let Some(fields) = construct_plan::lane_finish_forwarded(vm, code, forwarded.env, this, forwarded.function, argument) {
                 if let Some(fields) = fields {
-                    lane_record_forwarded_fields(vm, callee, (forwarded.program, forwarded.function), this, &fields);
+                    lane_record_forwarded_fields(vm, callee, (forwarded.program(), forwarded.function), this, &fields);
                 }
                 return Ok(KeepingConstruction::Finished(this));
             }
@@ -15446,7 +15484,7 @@ fn lane_script_target_in<H: Host>(
     }
     let active = vm.active_program;
     *resolved = vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee)
-        .filter(|target| target.program == active && lane_admits_activation(target));
+        .filter(|target| target.program() == active && lane_admits_activation(target));
     resolved.as_ref()
 }
 
@@ -15758,14 +15796,14 @@ fn lane_site_targets<H: Host>(vm: &Vm<H>, view: &LaneView, pc: u32) -> Vec<super
     // generation, where a call resolved it again, is the same target. A linked entry another
     // site's callee took since names no callee of this site.
     let latest = vm.lane_stack.script_targets.entries.get(usize::from(record.call_link.get())).and_then(|linked| {
-        if linked.generation == vm.lane_stack.generation {
+        if linked.generation() == vm.lane_stack.generation {
             Some(linked)
         } else {
             // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
             vm.script_call_entry(linked.callee).map(|target| unsafe { &*target })
         }
     }).filter(|target| {
-        target.program == vm.active_program
+        target.program() == vm.active_program
             && target.entry.activates_registers_only()
             && target.this_binding.binds_receiver()
             && recorded.is_none_or(|recorded| recorded.iter().any(|site| site.identity() == Some(target.callee)))
@@ -15890,7 +15928,7 @@ fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, pc: u
         ThisBinding::Strict => None,
         _ => return None,
     };
-    (target.generation == vm.lane_stack.generation && target.program == vm.active_program
+    (target.generation() == vm.lane_stack.generation && target.program() == vm.active_program
         && target.entry.activates() && !target.view.is_null() && argc <= target.params)
         .then_some(())?;
     // SAFETY: a resolved target's view outlives its program.
@@ -16363,7 +16401,7 @@ fn lane_construct_target<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, calle
     // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
     vm.script_call_entry(callee).map(|entry| unsafe { *entry }).or_else(|| {
         // SAFETY: the context's program outlives the lane run.
-        vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee).filter(|target| target.program == vm.active_program)
+        vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee).filter(|target| target.program() == vm.active_program)
     })
 }
 
@@ -16386,7 +16424,7 @@ fn lane_body_call_target<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, calle
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let resolved = vm.resolve_script_call_target(code, callee)?;
-        if resolved.program != vm.active_program { return None; }
+        if resolved.program() != vm.active_program { return None; }
         vm.linked_script_call_entry(callee, link)
     })
 }
@@ -16594,7 +16632,7 @@ fn lane_body_resume_at<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &Lan
 /// forms take that fact as proven (`MAY_CROSS` false) and only the general activation asks.
 #[inline(always)]
 fn lane_crosses<H: Host, const MAY_CROSS: bool>(cx: *mut LaneContext<H>, target: &ScriptCallTarget) -> bool {
-    MAY_CROSS && target.program != unsafe { (*cx).program }
+    MAY_CROSS && target.program() != unsafe { (*cx).program }
 }
 
 /// `lane_activate` past its checks: the call passes at most `target`'s parameters, the lane
@@ -16686,7 +16724,7 @@ fn lane_enter_cell_body<H: Host>(
 /// registers and records are the context's, the caller's are the leaf's; the entry is counted.
 #[inline(always)]
 fn lane_begin_cell_leaf<H: Host>(cx: *mut LaneContext<H>, ip: Ip, r: Registers, target: &ScriptCallTarget, argc: u16, this: Value, window: Registers) {
-    unsafe { vm(cx) }.programs.record_js_jit_lane_entry(target.program, target.function);
+    unsafe { vm(cx) }.programs.record_js_jit_lane_entry(target.program(), target.function);
     #[cfg(test)]
     super::compiled::LANE_CELL_CROSSINGS.with(|count| count.set(count.get() + 1));
     // SAFETY: the running lane's context, and the callee's view outlives its program.
@@ -16795,9 +16833,9 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
         (*cx).capture = target.capture;
     }
     if cross {
-        lane_enter_program(cx, target.program);
+        lane_enter_program(cx, target.program());
     }
-    vm.programs.record_js_jit_lane_entry(target.program, target.function);
+    vm.programs.record_js_jit_lane_entry(target.program(), target.function);
     // A construction runs its body from the first record; the tier enters plain calls.
     let start = if constructs { base } else { unsafe { (*target.view).start() } };
     (callee_registers, start)
@@ -16854,7 +16892,7 @@ fn lane_activate_environment<H: Host>(
     // SAFETY: `ip` is a record of the running view.
     let i = unsafe { &*ip };
     // Another program's callee enters its program and completes across (`Completion::Cross`).
-    let cross = target.program != unsafe { (*cx).program };
+    let cross = target.program() != unsafe { (*cx).program };
     let Ok(argc) = u16::try_from(passed.len()) else {
         return Err(exit(ip));
     };
@@ -16871,7 +16909,7 @@ fn lane_activate_environment<H: Host>(
     // observes them, and the window keeps only those its parameters bind. Only a call
     // passing more values than the parameters reads the body's plan.
     let extra = argc > target.params && !rest && {
-        let Some(code) = vm.programs.residual(target.program) else {
+        let Some(code) = vm.programs.residual(target.program()) else {
             return Err(exit(ip));
         };
         let plan = code.function(target.function as usize).call_plan(code);
@@ -16971,9 +17009,9 @@ fn lane_activate_environment<H: Host>(
         (*cx).capture = target.capture;
     }
     if cross {
-        lane_enter_program(cx, target.program);
+        lane_enter_program(cx, target.program());
     }
-    vm.programs.record_js_jit_lane_entry(target.program, target.function);
+    vm.programs.record_js_jit_lane_entry(target.program(), target.function);
     Ok((callee_registers, base))
 }
 
@@ -17248,9 +17286,9 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         (*cx).capture = target.capture;
     }
     if cross {
-        lane_enter_program(cx, target.program);
+        lane_enter_program(cx, target.program());
     }
-    vm.programs.record_js_jit_lane_entry(target.program, target.function);
+    vm.programs.record_js_jit_lane_entry(target.program(), target.function);
     let start = if constructs { base } else { unsafe { (*target.view).start() } };
     Ok((callee_registers, start))
 }
@@ -18058,8 +18096,7 @@ struct ReadMemo {
     /// The call record that made it, whose slot (`CallOperand::memo`) it is.
     site: Ip,
     callee: Value,
-    generation: ScriptGeneration,
-    program: ProgramId,
+    admission: Admission,
     this_binding: ThisBinding,
     read: MemoRead,
 }
@@ -18089,7 +18126,7 @@ fn lane_note_read<H: Host>(
 ) {
     let stack = unsafe { &vm(cx).lane_stack };
     // SAFETY: `site` is a call record of the running view.
-    if site_read_memo(&stack.read_memos, unsafe { &*site }).is_none_or(|held| held.generation != stack.generation) {
+    if site_read_memo(&stack.read_memos, unsafe { &*site }).is_none_or(|held| held.admission.generation() != stack.generation) {
         lane_memoize_read(cx, site, target, arguments, this);
     }
 }
@@ -18171,8 +18208,7 @@ fn lane_memoize_read<H: Host>(
     let memo = ReadMemo {
         site,
         callee: target.callee,
-        generation: vm.lane_stack.generation,
-        program: vm.active_program,
+        admission: vm.lane_stack.admission,
         this_binding: target.this_binding,
         read,
     };
@@ -18209,8 +18245,7 @@ unsafe fn lane_memo_read<H: Host, const SHAPE: u8>(
     let callee = r.get(i.b);
     let held = site_read_memo(&vm.lane_stack.read_memos, i)?;
     if held.callee != callee
-        || held.generation != vm.lane_stack.generation
-        || held.program != vm.active_program
+        || held.admission != vm.lane_stack.admission
         || lane_constructing(vm, callee)
     {
         return None;
@@ -22591,7 +22626,7 @@ impl<H: Host> Vm<H> {
         self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
         let target = lane_script_target(cx, callee)?;
         // A callback of another program would enter it from the native's caller's view.
-        if target.program != unsafe { (*cx).program } {
+        if target.program() != unsafe { (*cx).program } {
             return None;
         }
         let this = lane_call_this(self, &target, receiver)?;
@@ -22830,7 +22865,7 @@ impl PreparedShape {
             argc: self.argc as u16,
             keeps: self.keeps,
             size: self.size,
-            program: target.program,
+            program: target.program(),
             function: target.function,
         }
     }

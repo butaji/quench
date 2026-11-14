@@ -3300,6 +3300,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn activate_program(&mut self, program: ProgramId, constants: *const [Value]) {
         self.active_program = program;
+        self.lane_stack.enter_program(program);
         self.active_layout = self.program_cache_layouts[program.raw() as usize];
         self.active_constants = constants;
         self.refresh_active_field_entries();
