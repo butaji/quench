@@ -6938,7 +6938,18 @@ script_handler! {
     /// path, which repeats the side-effect-free lookup.
     #[inline(never)]
     fn lane_get_field<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { lane_field_value(cx, r, i) }) else {
+        // A method read whose receivers find it at different prototype depths (an override in
+        // one class, the base's in another) stays here: the site's primary holder entry and its
+        // proved inherited entry first, neither of which walks the chain.
+        let quick = crate::bytecode::FieldBase(i.b).register_index().and_then(|register| {
+            let vm = unsafe { vm(cx) };
+            // SAFETY: the context's program outlives the lane run.
+            let code = unsafe { &*(*cx).code };
+            let object = r.get(register);
+            vm.specialized_operations_enabled(code).then_some(())?;
+            vm.primary_record_holder_field_hit(code, object, i.c).or_else(|| vm.proved_inherited_field_hit(code, object, i.c))
+        });
+        let Some(value) = quick.or_else(|| unsafe { lane_field_value(cx, r, i) }) else {
             if lane_field_read_beside_activations(cx, r, i).is_some() {
                 sibling!(lane_get_field_beside_activations::<H>, r, ip, Carried::script_in(cx, view))
             }
