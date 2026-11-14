@@ -1,4 +1,4 @@
-use super::compiled::tier_policy::{STRESS, TIERS};
+use super::compiled::tier_policy::TIERS;
 use super::wtf16::JsString;
 use crate::Value;
 use crate::bytecode::ResidualProgram;
@@ -850,6 +850,7 @@ pub(crate) struct ProgramStore {
 impl Default for ProgramStore {
     fn default() -> Self {
         crate::jit_coverage::sample_this_thread();
+        super::compiled::tier_policy::install(super::compiled::tier_policy::TierRows::PROCESS);
         Self {
             native_call_bindings: Default::default(),
             lane_installed: Default::default(),
@@ -874,7 +875,7 @@ impl Default for ProgramStore {
                 WasmModuleCompile::ADAPTIVE
             },
             js_jit_diagnostics: (crate::trace::Channel::JsJit.on() || crate::trace::Channel::Census.on()).then(FxHashMap::default),
-            js_jit_lane_methods_enabled: STRESS,
+            js_jit_lane_methods_enabled: TIERS.stress,
             #[cfg(test)]
             js_entry_specializations_enabled: true,
             js_jit_dataview_float64_get_entries: 0,
@@ -894,7 +895,7 @@ impl ProgramStore {
             entry.residual.functions.iter().map(|_| std::cell::OnceCell::new()).collect()
         });
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
-            let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body, !(STRESS || cfg!(test))); // tests pin tiny fixtures
+            let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body, !(TIERS.stress || cfg!(test))); // tests pin tiny fixtures
             #[cfg(test)]
             let facts = if self.js_entry_specializations_enabled { facts } else { Default::default() };
             if facts.is_unset() {

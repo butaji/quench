@@ -2,7 +2,7 @@
 //! must end alike (printed lines, completion or exception, the `answer` global). The tier's own
 //! `TierEvents` must also show that it engaged: a tier that never ran agrees with anything.
 
-use super::compiled::tier_policy;
+use super::compiled::tier_policy::{self, TierRows};
 use super::compiled::forced_miss;
 use super::tier_events::{Event, TierEvents};
 use super::Vm;
@@ -21,14 +21,18 @@ pub(super) enum Tier {
     Full,
     /// Both tiers, with the guard of this index forced to leave (`forced_miss`).
     Forced(usize),
+    /// Both tiers under the floor rows, which compile at the first chance (`TierRows::Floor`).
+    Floor,
 }
 
 impl Tier {
+    fn rows(self) -> TierRows { if matches!(self, Self::Floor) { TierRows::Floor } else { TierRows::Measured } }
+
     pub(super) fn jit_mode(self) -> JitMode {
         match self {
             Self::BJit => JitMode::BaseOnly,
             Self::UJit => JitMode::UltraOnly,
-            Self::Full | Self::Forced(_) => JitMode::Full,
+            Self::Full | Self::Forced(_) | Self::Floor => JitMode::Full,
         }
     }
 }
@@ -69,11 +73,11 @@ impl Run {
 
 /// `source` run after the global scripts `scripts` (source and name) in one realm, in `mode`
 /// under `jit`, with every eligible compile admitted.
-pub(super) fn run(source: &str, scripts: &[(&str, &str)], mode: ExecutionMode, jit: JitMode) -> Run {
+pub(super) fn run(source: &str, scripts: &[(&str, &str)], mode: ExecutionMode, jit: JitMode, rows: TierRows) -> Run {
     tier_policy::force_admission();
     let program = Engine::specialize(source, "oracle.js").unwrap();
     let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let mut vm = Vm::with_tier_rows(TestHost::writing_to(output.clone()), rows);
     vm.set_memory_policy(crate::MemoryPolicy::Throughput);
     vm.set_execution_mode(mode);
     vm.programs.enable_js_lane_methods();
@@ -91,9 +95,9 @@ pub(super) fn run(source: &str, scripts: &[(&str, &str)], mode: ExecutionMode, j
 /// Runs `source` after `scripts` in the interpreter and under `tier`, asserts that the outcomes
 /// agree and that the tier engaged as `expect` says; the tier's run.
 pub(super) fn assert_tier_agrees_after(scripts: &[(&str, &str)], source: &str, tier: Tier, expect: Expect) -> Run {
-    let interpreted = run(source, scripts, ExecutionMode::Interpreted, JitMode::Full);
+    let interpreted = run(source, scripts, ExecutionMode::Interpreted, JitMode::Full, TierRows::Measured);
     forced_miss::arm(match tier { Tier::Forced(guard) => Some(guard), _ => None });
-    let compiled = run(source, scripts, ExecutionMode::Compiled, tier.jit_mode());
+    let compiled = run(source, scripts, ExecutionMode::Compiled, tier.jit_mode(), tier.rows());
     forced_miss::arm(None);
     assert_eq!(compiled.outcome, interpreted.outcome, "{tier:?} ended unlike the interpreter");
     let events = &compiled.events;

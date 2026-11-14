@@ -16,6 +16,12 @@ pub(in crate::vm) struct Tiers {
     pub(in crate::vm) wasm: Wasm,
     pub(in crate::vm) stitch: Stitch,
     pub(in crate::vm) priors: Priors,
+    /// Whether every eligible compile is admitted and every JavaScript compilation arm is on, so a
+    /// run checks each tier against the interpreter (`admits_every_compile`).
+    pub(in crate::vm) stress: bool,
+    /// The searches a regexp program runs interpreted before it is compiled to native code
+    /// (`regexp_native`): compiling costs about what this many searches of a small program do.
+    pub(in crate::vm) regexp_native_runs: u32,
 }
 
 /// The priors the model tests pin their arithmetic to.
@@ -227,32 +233,62 @@ pub(in crate::vm) const SPECULATION: Speculation =
 /// outweighs one outside it, and that nesting orders deeper sites first.
 pub(in crate::vm) const ASSUMED_LOOP_TRIP: u64 = 8;
 
-/// A `tier-stress` build: the floor row, and every JavaScript compilation arm on, so its
-/// Test262 run and `tests/tier_differential.rs` check each tier against the interpreter.
-pub(in crate::vm) const STRESS: bool = cfg!(feature = "tier-stress");
-
-/// The searches a regexp program runs interpreted before it is compiled to native code
-/// (`regexp_native`): compiling costs about what this many searches of a small program do.
-pub(in crate::vm) const REGEXP_NATIVE_RUNS: u32 = if STRESS { 1 } else { 2000 };
-
 #[cfg(test)]
 thread_local! { static FORCED_ADMISSION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
-/// Makes this thread's tier models admit every eligible compile, as `tier-stress` does for the
-/// process: for tests of what compiled code does, on fixtures too small to repay a compile.
+/// Makes this thread's tier models admit every eligible compile, as the floor row does: for
+/// tests of what compiled code does, on fixtures too small to repay a compile.
 #[cfg(test)]
 pub(in crate::vm) fn force_admission() { FORCED_ADMISSION.set(true); }
 
-/// Whether the tier models admit every eligible compile (`tier-stress`, or a test that forced it).
+/// Whether the tier models admit every eligible compile (the floor row, or a test that forced it).
 pub(in crate::vm) fn admits_every_compile() -> bool {
     #[cfg(test)]
     if FORCED_ADMISSION.get() { return true; }
-    STRESS
+    TIERS.stress
 }
 
-/// The thresholds every tier controller compares against: the measured row, or under
-/// `STRESS` the floor row, which makes every eligible site compile on its first chance.
-pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };
+/// The rows a VM's tier controllers read: the measured thresholds a process runs by, or the floor
+/// row, which makes every eligible site compile on its first chance, so a Test262 run and the
+/// tier differential check each tier against the interpreter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TierRows { Measured, Floor }
+
+impl TierRows {
+    /// The rows a process starts with: the floor under a `tier-stress` build, the measured otherwise.
+    pub(in crate::vm) const PROCESS: Self = if cfg!(feature = "tier-stress") { Self::Floor } else { Self::Measured };
+
+    fn table(self) -> &'static Tiers {
+        static MEASURED_ROW: Tiers = MEASURED;
+        static FLOOR_ROW: Tiers = FLOOR;
+        match self { Self::Measured => &MEASURED_ROW, Self::Floor => &FLOOR_ROW }
+    }
+}
+
+thread_local! { static ROWS: std::cell::Cell<&'static Tiers> = std::cell::Cell::new(TierRows::PROCESS.table()); }
+
+/// Makes `rows` the thresholds this thread's controllers read; a VM installs the process's rows as it is made.
+pub(in crate::vm) fn install(rows: TierRows) { ROWS.set(rows.table()); }
+
+/// The thresholds every tier controller compares against, read from the installed rows.
+pub(in crate::vm) struct ActiveRows;
+
+impl std::ops::Deref for ActiveRows {
+    type Target = Tiers;
+    fn deref(&self) -> &Tiers { ROWS.get() }
+}
+
+pub(in crate::vm) static TIERS: ActiveRows = ActiveRows;
+
+#[cfg(test)]
+impl<H: crate::host::Host> super::super::Vm<H> {
+    /// A VM whose tier controllers read `rows`: a stress run needs no build of its own.
+    pub(in crate::vm) fn with_tier_rows(host: H, rows: TierRows) -> Self {
+        let vm = Self::new(host);
+        install(rows);
+        vm
+    }
+}
 
 /// Each threshold at the least value its controller accepts. Thresholds only price
 /// compilation, so this row must compute what `MEASURED` computes.
@@ -263,6 +299,8 @@ const FLOOR: Tiers = Tiers {
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
     stitch: MEASURED.stitch,
     priors: MEASURED.priors,
+    stress: true,
+    regexp_native_runs: 1,
 };
 
 impl LaneBody {
@@ -332,6 +370,8 @@ const MEASURED: Tiers = Tiers {
         ],
     },
     priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800 },
+    stress: false,
+    regexp_native_runs: 2000,
 };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)

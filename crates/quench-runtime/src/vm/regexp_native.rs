@@ -41,7 +41,7 @@ pub(super) fn enable(enabled: bool) {
 
 /// The compiler `quench_regexp` asks for code.
 pub(super) fn compiler() -> NativeCompiler {
-    NativeCompiler { runs: super::compiled::tier_policy::REGEXP_NATIVE_RUNS, start }
+    NativeCompiler { runs: super::compiled::tier_policy::TIERS.regexp_native_runs, start }
 }
 
 /// Compiles `plan` on the code generator's thread; the program polls for the code and keeps

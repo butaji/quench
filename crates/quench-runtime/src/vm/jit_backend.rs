@@ -30,7 +30,7 @@ type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 /// which compiles everything it can; not in release, where the verifier cost about a quarter
 /// of every JIT compile's instructions (npm semver/browserslist `--jit`, 2026-10-24).
 #[cfg(any(feature = "jit", feature = "aot"))]
-const VERIFY_IR: bool = cfg!(debug_assertions) || super::compiled::tier_policy::STRESS;
+fn verify_ir() -> bool { cfg!(debug_assertions) || super::compiled::tier_policy::TIERS.stress }
 
 /// Publication determines relocation policy and code-generation effort, not language
 /// semantics or lowering.
@@ -187,7 +187,7 @@ fn target_isa_with(
         flags.set(name, value).ok()?;
     }
     for check in ["enable_verifier", "regalloc_checker"] {
-        flags.set(check, if VERIFY_IR { "true" } else { "false" }).ok()?;
+        flags.set(check, if verify_ir() { "true" } else { "false" }).ok()?;
     }
     let isa = cranelift_native::builder()
         .ok()?
