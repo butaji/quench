@@ -311,17 +311,23 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
         Step::CallOut => plan_helper(layout, pc, decoded, (LaneHelper::VmStep, helpers)),
         Step::Throw => plan_throw(layout, pc, helpers),
         Step::Catch => plan_catch(decoded, layout, pc, helpers),
-        Step::Fast(Heap::Add { .. }) => adds::plan(decoded, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?)),
-        Step::Guard(Heap::Add { .. }) => adds::plan(decoded, layout, pc, None),
-        Step::Fast(Heap::Name { .. }) => names::plan(decoded, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?)),
-        Step::Guard(Heap::Name { .. }) => names::plan(decoded, layout, pc, None),
-        Step::Fast(fast) => plan_fast(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?), helpers),
-        Step::Guard(fast) => plan_fast(decoded, fast, layout, pc, None, helpers),
+        Step::Fast(fast) => plan_guarded(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?), helpers),
+        Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, None, helpers),
         Step::Return => {
             let slot = operand(&layout.homes, decoded.a).1;
             Ok(Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) })
         }
         Step::Call(shape) => plan_call(layout, shape, pc, helpers),
+    }
+}
+
+/// The plan of a fast arm or guard of `fast`: an add or a name call has its own planner, the rest
+/// share `plan_fast`; `chain` is the helper chain a fast arm falls back to.
+fn plan_guarded(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, chain: Option<Planned>, helpers: LaneHelpers) -> Result<Planned, String> {
+    match fast {
+        Heap::Add { .. } => adds::plan(decoded, layout, pc, chain),
+        Heap::Name { .. } => names::plan(decoded, layout, pc, chain),
+        _ => plan_fast(decoded, fast, layout, pc, chain, helpers),
     }
 }
 

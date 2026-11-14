@@ -89,8 +89,12 @@ pub(super) fn result_repr(row: &Decoded, reprs: &[Repr], widened: bool, numbers:
     if let Some(heap) = row.heap {
         return if heap.yields_tagged() { Repr::Tagged } else { heap_repr(numbers, widened) };
     }
-    let operands = operand_repr(reprs, row.a).max(operand_repr(reprs, row.b));
-    match row.kind {
+    kind_repr(row.kind, operand_repr(reprs, row.a).max(operand_repr(reprs, row.b)), widened)
+}
+
+/// The representation a non-heap row of `kind` writes, given the greatest representation of its `operands`.
+fn kind_repr(kind: Kind, operands: Repr, widened: bool) -> Repr {
+    match kind {
         Kind::Not => Repr::Tagged,
         _ if operands == Repr::Tagged => Repr::Tagged,
         Kind::Neg => Repr::Double,

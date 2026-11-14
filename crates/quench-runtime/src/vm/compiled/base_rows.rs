@@ -164,44 +164,78 @@ pub(super) struct HeapRow {
 impl Heap {
     /// The row's code in `quench_bjit::numeric::library`.
     pub(super) fn code(self) -> u8 {
-        match self {
+        self.slot_code().or_else(|| self.object_code()).or_else(|| self.test_code()).or_else(|| self.global_code()).unwrap_or_else(|| self.other_code())
+    }
+
+    /// The code of a row addressed by a frame, capture or environment slot.
+    fn slot_code(self) -> Option<u8> {
+        Some(match self {
             Heap::Capture(_) => library::CAPTURE_ROW,
-            Heap::Index => library::INDEX_ROW,
-            Heap::Store => library::STORE_ROW,
-            Heap::Field => library::FIELD_ROW,
-            Heap::Array => library::ARRAY_ROW,
-            Heap::Site | Heap::SiteChain => library::SITE_ROW,
-            Heap::ThisSite | Heap::ThisChain => library::THIS_SITE_ROW,
-            Heap::Length => library::LENGTH_ROW,
             Heap::CaptureSet(_) => library::CAPTURE_SET_ROW,
             Heap::EnvLocal(_) => library::ENV_ROW,
             Heap::EnvStore(_) => library::ENV_SET_ROW,
             Heap::EnvDefine(_) => library::ENV_DEFINE_ROW,
-            Heap::SiteStore => library::SITE_STORE_ROW,
-            Heap::ThisStore => library::THIS_STORE_ROW,
-            Heap::This => library::THIS_ROW,
             Heap::LoadLocal(_) => library::LOAD_LOCAL_ROW,
             Heap::StoreLocal(_) => library::STORE_LOCAL_ROW,
             Heap::LoadChecked(_) => library::LOAD_CHECKED_ROW,
             Heap::StoreChecked(_) => library::STORE_CHECKED_ROW,
-            Heap::Identity => library::IDENTITY_ROW,
+            _ => return None,
+        })
+    }
+
+    /// The code of a row that reads or writes an object's fields, elements or sites.
+    fn object_code(self) -> Option<u8> {
+        Some(match self {
+            Heap::Index => library::INDEX_ROW,
+            Heap::Store => library::STORE_ROW,
+            Heap::Field => library::FIELD_ROW,
+            Heap::Site | Heap::SiteChain => library::SITE_ROW,
+            Heap::ThisSite | Heap::ThisChain => library::THIS_SITE_ROW,
+            Heap::SiteStore => library::SITE_STORE_ROW,
+            Heap::ThisStore => library::THIS_STORE_ROW,
+            Heap::This => library::THIS_ROW,
             Heap::Held | Heap::ThisHeld => library::HELD_ROW,
-            Heap::Live => library::LIVE_ROW,
-            Heap::Object => library::OBJECT_ROW,
-            Heap::Key => library::KEY_ROW,
+            _ => return None,
+        })
+    }
+
+    /// The code of a row that tests a value: its identity, type or prototype chain.
+    fn test_code(self) -> Option<u8> {
+        Some(match self {
+            Heap::Identity => library::IDENTITY_ROW,
             Heap::TypeofIndex => library::TYPEOF_INDEX_ROW,
             Heap::TypeofString => library::TYPEOF_STRING_ROW,
             Heap::Instanceof => library::INSTANCEOF_ROW,
             Heap::TypeofIs { negated: false, .. } => library::TYPEOF_IS_ROW,
             Heap::TypeofIs { negated: true, .. } => library::TYPEOF_ISNOT_ROW,
+            Heap::Live => library::LIVE_ROW,
+            Heap::Object => library::OBJECT_ROW,
+            Heap::Key => library::KEY_ROW,
+            _ => return None,
+        })
+    }
+
+    /// The code of a row that reads or writes the realm's globals.
+    fn global_code(self) -> Option<u8> {
+        Some(match self {
             Heap::Realm => library::REALM_ROW,
             Heap::GlobalRead => library::GLOBAL_READ_ROW,
             Heap::GlobalStore => library::GLOBAL_STORE_ROW,
+            _ => return None,
+        })
+    }
+
+    /// The code of the remaining rows: arrays, constants, names and adds.
+    fn other_code(self) -> u8 {
+        match self {
+            Heap::Array => library::ARRAY_ROW,
+            Heap::Length => library::LENGTH_ROW,
             Heap::Word => library::CONSTANT_ROW,
             Heap::Append => library::APPEND_ROW,
             Heap::ForIn => library::FOR_IN_ROW,
             Heap::Name { form } => library::NAME_ROWS[usize::from(form == Form::Arena)],
             Heap::Add { form, this } => library::ADD_ROWS[usize::from(this) * FORMS.len() + FORMS.iter().position(|known| *known == form).unwrap_or_default()],
+            _ => unreachable!("every other row has a code of an earlier group"),
         }
     }
 
@@ -266,12 +300,11 @@ mod tests {
     }
 
 
-    /// Every payload field a stencil row reads, as (name, the runtime's offset, the stencil layout's).
-    fn payload_offsets() -> Vec<(&'static str, usize, usize)> {
+    /// The dispatch record's fields a stencil row reads, as (name, the runtime's offset, the stencil layout's).
+    fn dispatch_offsets() -> Vec<(&'static str, usize, usize)> {
         use stencil_layout as m;
         use std::mem::offset_of as at;
-                vec![
-            ("adapter_payload", at!(CallContext, adapter_payload), m::CALL_CONTEXT_ADAPTER_PAYLOAD),
+        vec![
             ("loop_entry", at!(JsStepDispatch, loop_entry), m::JS_STEP_LOOP_ENTRY),
             ("capture_values", at!(JsStepDispatch, capture_values), m::JS_STEP_CAPTURE_VALUES),
             ("capture_len", at!(JsStepDispatch, capture_len), m::JS_STEP_CAPTURE_LEN),
@@ -304,6 +337,15 @@ mod tests {
             ("function_mark_block_count", at!(JsStepDispatch, function_mark_block_count), m::JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
             ("empty_string", at!(JsStepDispatch, empty_string), m::JS_STEP_EMPTY_STRING),
             ("environment_storage", at!(JsStepDispatch, environment_storage), m::JS_STEP_ENV_STORAGE),
+        ]
+    }
+
+    /// Every payload field a stencil row reads, as (name, the runtime's offset, the stencil layout's).
+    fn payload_offsets() -> Vec<(&'static str, usize, usize)> {
+        use stencil_layout as m;
+        use std::mem::offset_of as at;
+        let own = vec![
+            ("adapter_payload", at!(CallContext, adapter_payload), m::CALL_CONTEXT_ADAPTER_PAYLOAD),
             ("property_buffer_base", crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, m::PROPERTY_BUFFER_BASE),
             ("capture_address_bits", super::super::entry_cell::CAPTURE_ADDRESS_BITS as usize, m::CAPTURE_ADDRESS_BITS as usize),
             ("capture_stores_bit", super::super::super::dispatch_fast::CAPTURE_STORES, m::CAPTURE_STORES_BIT as usize),
@@ -318,12 +360,31 @@ mod tests {
             ("short_units", form::SHORT_UNITS_OFFSET as usize, m::string_form::SHORT_UNITS_OFFSET as usize),
             ("shared_pointer", form::SHARED_POINTER_OFFSET as usize, m::string_form::SHARED_POINTER_OFFSET as usize),
             ("shared_units", form::shared_units_offset() as usize, m::string_form::shared_units_offset() as usize),
-        ]
+        ];
+        [own, dispatch_offsets()].concat()
+    }
+
+    /// The value and narrow-value words the stencils are compiled with are the runtime's own.
+    fn value_words_match() {
+        use crate::value::{NarrowLayout, ValueLayout};
+        use stencil_layout as mirror;
+        use mirror::words as w;
+        assert_eq!(
+            [ValueLayout::TAG_MASK, ValueLayout::INT_TAG, ValueLayout::INTERNAL_TAG, ValueLayout::HEAP_TAG, ValueLayout::DIRECT_ARRAY_TAG, ValueLayout::DIRECT_OBJECT_TAG, ValueLayout::DIRECT_FUNCTION_TAG, ValueLayout::HEAP_FAMILY_MASK, ValueLayout::DIRECT_STRING_TAG, u64::from(ValueLayout::TAG_SHIFT), ValueLayout::FIRST_TAG_FIELD, ValueLayout::TAG_FIELD_SPAN, ValueLayout::CANONICAL_NAN, crate::Value::NULL.to_bits(), crate::Value::UNDEFINED.to_bits(), crate::Value::DELETED.to_bits(), crate::Value::FALSE.to_bits(), crate::Value::TRUE.to_bits()],
+            [w::TAG_MASK, w::INT_TAG, w::INTERNAL_TAG, w::HEAP_TAG, w::DIRECT_ARRAY_TAG, w::DIRECT_OBJECT_TAG, w::DIRECT_FUNCTION_TAG, w::HEAP_FAMILY_MASK, w::DIRECT_STRING_TAG, u64::from(w::TAG_SHIFT), w::FIRST_TAG_FIELD, w::TAG_FIELD_SPAN, w::CANONICAL_NAN, w::NULL, w::UNDEFINED, w::DELETED, w::FALSE, w::TRUE]
+        );
+        assert_eq!(
+            [crate::value::LOWER_WORD, crate::value::HEAP_FAMILY_BITS, u64::from(crate::value::HEAP_FAMILY_SHIFT), crate::value::NARROW_HEAP_FAMILIES as u64, crate::value::TAG_UNDEFINED, crate::value::TAG_NULL, crate::value::TAG_BOOL, crate::value::TAG_DELETED],
+            [w::LOWER_WORD, w::HEAP_FAMILY_BITS, u64::from(w::HEAP_FAMILY_SHIFT), w::NARROW_HEAP_FAMILIES as u64, w::UNDEFINED, w::NULL, w::FALSE, w::DELETED]
+        );
+        assert_eq!(
+            [u64::from(NarrowLayout::INTEGER_FLAG), u64::from(NarrowLayout::INTEGER_BITS), u64::from(NarrowLayout::CODE_SHIFT), u64::from(NarrowLayout::CODE_MASK), u64::from(NarrowLayout::INDEX_SHIFT), u64::from(NarrowLayout::INDEX_BITS), NarrowLayout::DIRECT_OBJECT_UPPER, u64::from(NarrowLayout::DIRECT_OBJECT_CODE)],
+            [u64::from(w::NARROW_INT_FLAG), u64::from(w::NARROW_INTEGER_BITS), u64::from(w::NARROW_CODE_SHIFT), u64::from(w::NARROW_CODE_MASK), u64::from(w::NARROW_INDEX_SHIFT), u64::from(w::NARROW_INDEX_BITS), w::DIRECT_OBJECT_UPPER, u64::from(w::DIRECT_OBJECT_NARROW_CODE)]
+        );
     }
 
     #[test]
     fn stencil_layout_matches() {
-        use crate::value::{NarrowLayout, ValueLayout};
         use stencil_layout as mirror;
         eprintln!("OFFSETS {:?}", payload_offsets());
         assert_eq!(format!("{:?}", crate::heap::NATIVE_OBJECT_LAYOUT), format!("{:?}", mirror::NATIVE_OBJECT_LAYOUT));
@@ -341,19 +402,7 @@ mod tests {
             [crate::heap::OTHERS_UNKNOWN as u64, crate::heap::LENGTH_FROM_VALUES as i64 as u64, crate::heap::OTHERS_FROM_VALUES as i64 as u64, crate::value_vec::INLINE_PROPERTY_COUNT as u64],
             [mirror::OTHERS_UNKNOWN as u64, mirror::LENGTH_FROM_VALUES as i64 as u64, mirror::OTHERS_FROM_VALUES as i64 as u64, mirror::INLINE_PROPERTIES as u64]
         );
-        use mirror::words as w;
-        assert_eq!(
-            [ValueLayout::TAG_MASK, ValueLayout::INT_TAG, ValueLayout::INTERNAL_TAG, ValueLayout::HEAP_TAG, ValueLayout::DIRECT_ARRAY_TAG, ValueLayout::DIRECT_OBJECT_TAG, ValueLayout::DIRECT_FUNCTION_TAG, ValueLayout::HEAP_FAMILY_MASK, ValueLayout::DIRECT_STRING_TAG, u64::from(ValueLayout::TAG_SHIFT), ValueLayout::FIRST_TAG_FIELD, ValueLayout::TAG_FIELD_SPAN, ValueLayout::CANONICAL_NAN, crate::Value::NULL.to_bits(), crate::Value::UNDEFINED.to_bits(), crate::Value::DELETED.to_bits(), crate::Value::FALSE.to_bits(), crate::Value::TRUE.to_bits()],
-            [w::TAG_MASK, w::INT_TAG, w::INTERNAL_TAG, w::HEAP_TAG, w::DIRECT_ARRAY_TAG, w::DIRECT_OBJECT_TAG, w::DIRECT_FUNCTION_TAG, w::HEAP_FAMILY_MASK, w::DIRECT_STRING_TAG, u64::from(w::TAG_SHIFT), w::FIRST_TAG_FIELD, w::TAG_FIELD_SPAN, w::CANONICAL_NAN, w::NULL, w::UNDEFINED, w::DELETED, w::FALSE, w::TRUE]
-        );
-        assert_eq!(
-            [crate::value::LOWER_WORD, crate::value::HEAP_FAMILY_BITS, u64::from(crate::value::HEAP_FAMILY_SHIFT), crate::value::NARROW_HEAP_FAMILIES as u64, crate::value::TAG_UNDEFINED, crate::value::TAG_NULL, crate::value::TAG_BOOL, crate::value::TAG_DELETED],
-            [w::LOWER_WORD, w::HEAP_FAMILY_BITS, u64::from(w::HEAP_FAMILY_SHIFT), w::NARROW_HEAP_FAMILIES as u64, w::UNDEFINED, w::NULL, w::FALSE, w::DELETED]
-        );
-        assert_eq!(
-            [u64::from(NarrowLayout::INTEGER_FLAG), u64::from(NarrowLayout::INTEGER_BITS), u64::from(NarrowLayout::CODE_SHIFT), u64::from(NarrowLayout::CODE_MASK), u64::from(NarrowLayout::INDEX_SHIFT), u64::from(NarrowLayout::INDEX_BITS), NarrowLayout::DIRECT_OBJECT_UPPER, u64::from(NarrowLayout::DIRECT_OBJECT_CODE)],
-            [u64::from(w::NARROW_INT_FLAG), u64::from(w::NARROW_INTEGER_BITS), u64::from(w::NARROW_CODE_SHIFT), u64::from(w::NARROW_CODE_MASK), u64::from(w::NARROW_INDEX_SHIFT), u64::from(w::NARROW_INDEX_BITS), w::DIRECT_OBJECT_UPPER, u64::from(w::DIRECT_OBJECT_NARROW_CODE)]
-        );
+        value_words_match();
         assert_eq!(super::super::NATIVE_JS_STOPPED, mirror::call_record::NATIVE_JS_STOPPED);
         for (name, runtime, copy) in payload_offsets() {
             assert_eq!(runtime, copy, "{name}: the runtime's offset is the stencil layout's");
