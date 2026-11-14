@@ -33,7 +33,7 @@ pub(super) fn number_return(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>,
     let machine = match fact.representation {
         Representation::Int32 => types::I32,
         Representation::Float64 => types::F64,
-        Representation::Tagged => unreachable!("Number return has an unboxed view"),
+        Representation::Int64 | Representation::Tagged => unreachable!("Number return has an int32 or binary64 view"),
     };
     let block = stage.builder.create_block();
     stage.builder.append_block_param(block, machine);

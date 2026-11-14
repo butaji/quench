@@ -23,6 +23,12 @@ pub(super) fn box_unboxed(builder: &mut FunctionBuilder<'_>, registers: &mut Reg
             let int = builder.use_var(variable);
             int_tagged(builder, int)
         }
+        Representation::Int64 => {
+            let variable = frame::register_long(builder, registers, index);
+            let word = builder.use_var(variable);
+            let number = super::object_slots::emit(builder).raw_unary(Unary::FromSigned(Lane::F64), word);
+            emit_js_box_number(builder, number)
+        }
         Representation::Float64 => {
             let variable = frame::register_float(builder, registers, index);
             let number = builder.use_var(variable);

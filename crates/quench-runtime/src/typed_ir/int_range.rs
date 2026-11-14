@@ -1,6 +1,18 @@
 /// Joins at one program point before a range that keeps growing widens (`IntRange::widen`).
 pub(crate) const WIDENING_ROUNDS: u8 = 6;
 
+/// The magnitude bits within which a signed 64-bit word holds an integer Number and the sum,
+/// difference or product of two int32s without wrapping: the span of `IntRange::WORD`.
+pub(crate) const WORD_BITS: u32 = i64::BITS - 2;
+
+/// The significand bits of a binary64: the integers within `IntRange::EXACT` are the Numbers
+/// that hold them exactly, so a 64-bit word of that span and the Number are the same value.
+pub(crate) const EXACT_BITS: u32 = f64::MANTISSA_DIGITS;
+
+/// An element index is below its array's length, which every layout stores in 32 bits: it
+/// lies within `IntRange::EXACT`, so an index word and the Number it came from agree on it.
+const _: () = assert!((crate::bytecode::MAX_ARRAY_LENGTH as u64) <= (1 << EXACT_BITS));
+
 /// A closed interval of integers a Number may hold, exact over `i64`: arithmetic on ranges is
 /// mathematical, not wrapping, and a result `None` where it leaves even `i64`. Whether a range
 /// fits int32 (`fits_int32`) is the caller's question.
@@ -15,6 +27,13 @@ impl IntRange {
     pub(crate) const FULL: Self = Self { min: i32::MIN as i64, max: i32::MAX as i64 };
 
     pub(crate) const NON_NEGATIVE: Self = Self { min: 0, max: Self::FULL.max };
+
+    /// The widest span integer arithmetic over int32s stays within without wrapping an i64,
+    /// where widening settles a range that left int32: a result outside it has no range.
+    pub(crate) const WORD: Self = Self { min: -(1 << WORD_BITS), max: 1 << WORD_BITS };
+
+    /// The integers a Number holds exactly.
+    pub(crate) const EXACT: Self = Self { min: -(1 << EXACT_BITS), max: 1 << EXACT_BITS };
 
     /// What an int32 observed to be `value` gives a later entry to guard once: its sign.
     pub(crate) const fn entering(value: i32) -> Self { if value >= 0 { Self::NON_NEGATIVE } else { Self::FULL } }
@@ -33,18 +52,28 @@ impl IntRange {
 
     pub(crate) fn fits_int32(&self) -> bool { Self::FULL.contains(*self) }
 
+    /// The range of the binary64 Numbers the integers of `self` round to. Rounding to nearest
+    /// is monotone, so the bounds' own are the range's: `self` within `EXACT`, wider beyond.
+    pub(crate) fn rounded(self) -> Self {
+        Self { min: self.min as f64 as i64, max: self.max as f64 as i64 }
+    }
+
     pub(crate) fn join(self, other: Self) -> Self {
         Self { min: self.min.min(other.min), max: self.max.max(other.max) }
     }
 
-    /// Open upward: the maximum up to int32's.
-    pub(crate) fn widen_up(self) -> Self { Self { max: self.max.max(Self::FULL.max), ..self } }
+    /// Open upward: the maximum to int32's, or from there to `WORD`'s.
+    pub(crate) fn widen_up(self) -> Self {
+        Self { max: if self.max <= Self::FULL.max { Self::FULL.max } else { Self::WORD.max }, ..self }
+    }
 
-    /// Open downward: the minimum down to int32's.
-    pub(crate) fn widen_down(self) -> Self { Self { min: self.min.min(Self::FULL.min), ..self } }
+    /// Open downward: the minimum to int32's, or from there to `WORD`'s.
+    pub(crate) fn widen_down(self) -> Self {
+        Self { min: if self.min >= Self::FULL.min { Self::FULL.min } else { Self::WORD.min }, ..self }
+    }
 
-    /// `self` joined with `next`, each bound `next` moved opened to int32's, so a chain of
-    /// widenings is finite.
+    /// `self` joined with `next`, each bound `next` moved opened a step (int32's, then
+    /// `WORD`'s), so a chain of widenings is finite.
     pub(crate) fn widen(self, next: Self) -> Self {
         let hull = self.join(next);
         let up = if hull.max > self.max { hull.widen_up() } else { hull };
@@ -170,5 +199,30 @@ mod tests {
         assert_eq!(range, IntRange::NON_NEGATIVE);
         assert_eq!(range.widen(IntRange { min: -1, max: 0 }), IntRange::FULL);
         assert_eq!(IntRange::FULL.widen(start), IntRange::FULL);
+    }
+
+    #[test]
+    fn an_integer_word_and_its_number_agree_within_the_exact_span_and_rounding_is_monotone() {
+        assert_eq!(IntRange::EXACT.rounded(), IntRange::EXACT);
+        assert!(IntRange::EXACT.contains(IntRange::singleton(crate::bytecode::MAX_ARRAY_LENGTH as i64)));
+        assert!(IntRange::WORD.contains(IntRange::WORD.rounded()));
+        let beyond = IntRange { min: -(1 << 60) - 1, max: (1 << 60) + 1 };
+        assert!(beyond.rounded().contains(IntRange::singleton((1_i64 << 59) + 3)));
+        for value in [beyond.min, -(1 << 57) - 5, 1 << 53 | 1, (1 << 55) + 3, beyond.max] {
+            let number = value as f64 as i64;
+            assert!(IntRange { min: value.min(number), max: value.max(number) }.rounded().contains(IntRange::singleton(number)));
+        }
+        let odd = IntRange::singleton((1 << 53) + 1);
+        assert_eq!(odd.rounded(), IntRange::singleton(1 << 53), "ties round to even");
+    }
+
+    #[test]
+    fn a_range_that_leaves_int32_widens_to_the_word_span_and_no_further() {
+        let past = IntRange { min: 0, max: i64::from(i32::MAX) + 1 };
+        assert_eq!(IntRange::FULL.widen(past), IntRange { min: IntRange::FULL.min, max: IntRange::WORD.max });
+        let beyond = IntRange { min: IntRange::FULL.min - 1, max: 0 };
+        assert_eq!(IntRange::FULL.widen(beyond), IntRange { min: IntRange::WORD.min, max: IntRange::FULL.max });
+        let word = IntRange { min: IntRange::WORD.min, max: IntRange::WORD.max };
+        assert_eq!(word.widen(IntRange::singleton(0)), word);
     }
 }

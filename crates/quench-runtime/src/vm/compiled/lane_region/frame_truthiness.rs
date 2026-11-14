@@ -16,6 +16,10 @@ pub(super) fn register_truthiness(builder: &mut FunctionBuilder<'_>, registers: 
             let word = stage.uextend32(int);
             stage.ne_imm(word, 0u32)
         }
+        Representation::Int64 => {
+            let word = { let variable = register_long(builder, registers, usize::from(register)); builder.use_var(variable) };
+            super::super::super::object_slots::emit(builder).ne_imm(word, 0u32)
+        }
         Representation::Float64 => {
             let number = { let variable = register_float(builder, registers, usize::from(register)); builder.use_var(variable) };
             crate::staged::number_machine::number_truthy(&mut super::super::super::object_slots::emit(builder), number)

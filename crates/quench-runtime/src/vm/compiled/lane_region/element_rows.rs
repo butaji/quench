@@ -71,7 +71,7 @@ impl Lowering<'_, '_> {
     /// access is not one, with nothing emitted.
     fn integer_element_read(&mut self, state: &mut State, (destination, key): (Register, crate::bytecode::Operand),
         array: LoopArray, exit: ir::Block) -> bool {
-        let Some(index) = self.operand_int(state, key, exit) else { return false };
+        let Some(index) = self.operand_index(state, key, exit) else { return false };
         let frame_elements::Held::Typed(view) = self.held_array(array, (false, false)) else { return false };
         let word = {
             let mut stage = super::super::object_slots::emit(&mut self.builder);

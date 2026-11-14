@@ -134,3 +134,50 @@ fn a_uint8_load_is_an_int32_word_that_no_conversion_touches() {
     let bytes = region_over(crc, false, false, ElementViews::Typed(Some(Kind::Uint8)));
     assert_eq!(conversions(&bytes, &loop_body(&bytes)), 0, "a byte is read as the int32 it is: {bytes}");
 }
+
+const MATMUL: &str = "function mm(a, b, c, n) { for (var i = 0; i < n; i++) for (var j = 0; j < n; j++) { var s = 0; \
+    for (var k = 0; k < n; k++) s += a[i * n + k] * b[k * n + j]; c[i * n + j] = s; } }";
+
+/// The innermost loop of the function `source` declares entered natively at its header as an OSR region
+/// is, over typed `views`, every register an int32 there (`int_entries`).
+fn entered_region(source: &str, views: ElementViews) -> ir::Function {
+    let program = crate::Engine::specialize(source, "index-math.js").unwrap();
+    let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
+    let (header, backedge) = unit.instructions.iter().enumerate().find_map(|(pc, instruction)|
+        successors(pc, *instruction).into_iter().flatten().find(|target| *target <= pc).map(|target| (target, pc)))
+        .expect("the function has a loop");
+    let entries: Vec<(Register, IntRange)> = (0..unit.registers).map(|register| (register, IntRange::FULL)).collect();
+    let isa = super::super::super::jit_backend::target_isa().unwrap();
+    let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
+    lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
+        &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &entries, &[], &[],
+        Coverage::Loop { header, backedge, poll: false }, Completion::Body, views).expect("a loop region").function
+}
+
+/// Whether `value` is the sign extension of an int32.
+fn is_sign_extension(function: &ir::Function, value: ir::Value) -> bool {
+    let ir::ValueDef::Result(def, _) = function.dfg.value_def(function.dfg.resolve_aliases(value)) else { return false };
+    function.dfg.insts[def].opcode() == ir::Opcode::Sextend
+}
+
+/// The instructions of `body` of `opcode` with 64-bit operands of which `accepts` takes the operands' definitions.
+fn wide_operations(function: &ir::Function, body: &[ir::Inst], opcode: ir::Opcode,
+    accepts: impl Fn(&ir::Function, [ir::Value; 2]) -> bool) -> usize {
+    body.iter().filter(|&&inst| function.dfg.insts[inst].opcode() == opcode
+        && function.dfg.value_type(function.dfg.first_result(inst)) == types::I64
+        && accepts(function, [function.dfg.inst_args(inst)[0], function.dfg.inst_args(inst)[1]])).count()
+}
+
+#[test]
+fn matmul_indices_are_computed_in_integer_words_with_no_conversion_in_the_loop() {
+    use crate::heap::TypedArrayKind as Kind;
+    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)));
+    let body = loop_body(&function);
+    assert_eq!(conversions(&function, &body), 0, "an index is no Number that converts to an integer and back: {function}");
+    let products = wide_operations(&function, &body, ir::Opcode::Imul, |function, operands|
+        operands.iter().all(|operand| is_sign_extension(function, *operand)));
+    assert_eq!(products, 2, "`i * n` and `k * n` multiply int32s in 64-bit words: {function}");
+    let sums = wide_operations(&function, &body, ir::Opcode::Iadd, |function, operands|
+        operands.iter().any(|operand| is_sign_extension(function, *operand)));
+    assert!(sums >= 2, "each index adds its int32 to a 64-bit product: {function}");
+}

@@ -333,3 +333,20 @@ fn widening_contains_the_join_and_every_chain_of_widenings_terminates() {
         |known, step| known.widen(Type::int(IntRange { min: 0, max: step })));
     assert_eq!(counter, Type::int(IntRange::NON_NEGATIVE));
 }
+
+#[test]
+fn a_64_bit_integer_view_holds_the_integers_a_number_holds_exactly() {
+    let exact = Type::int(IntRange::EXACT);
+    assert!(Representation::Int64.accepts(exact));
+    assert!(Representation::Int64.accepts(Type::INT32));
+    assert!(!Representation::Int64.accepts(Type::int(IntRange::WORD)));
+    assert!(!Representation::Int64.accepts(Type::NUMBER));
+    assert!(!Representation::Int64.accepts(Type::NEVER));
+    assert!(Representation::Float64.accepts(Type::int(IntRange::WORD)) && !Representation::Int32.accepts(exact));
+    assert!(Representation::Int64.can_receive(Representation::Int32) && !Representation::Int32.can_receive(Representation::Int64));
+    assert!(Representation::Float64.can_receive(Representation::Int64) && !Representation::Int64.can_receive(Representation::Float64));
+    let held = Fact { ty: exact, representation: Representation::Int64, binding: BindingTime::Dynamic,
+        proof: Proof::Definition, projection: Projection::Exact };
+    assert!(held.verified().is_some());
+    assert!(Fact { ty: Type::int(IntRange::WORD), ..held }.verified().is_none());
+}

@@ -15,11 +15,20 @@ use super::super::facts::{self, Model, Observed, ObservedRead, Seeds, Text};
 pub(super) struct IntRanges {
     overflow_free: CompoundBitSet,
     in_bounds: CompoundBitSet,
+    /// The arithmetic whose result leaves int32 within `IntRange::WORD`, by PC (ascending), with its range.
+    index_ranges: Vec<(usize, IntRange)>,
 }
 
 impl IntRanges {
     pub(super) fn new(instructions: usize) -> Self {
-        Self { overflow_free: CompoundBitSet::with_capacity(instructions), in_bounds: CompoundBitSet::with_capacity(instructions) }
+        Self { overflow_free: CompoundBitSet::with_capacity(instructions), in_bounds: CompoundBitSet::with_capacity(instructions),
+            index_ranges: Vec::new() }
+    }
+
+    /// The range of the int64 result of the arithmetic at `pc`, where it leaves int32 but is an
+    /// integer Number of `IntRange::WORD`.
+    pub(super) fn index_range(&self, pc: usize) -> Option<IntRange> {
+        self.index_ranges.binary_search_by_key(&pc, |(at, _)| *at).ok().map(|found| self.index_ranges[found].1)
     }
 
     /// Whether the int32 addition, subtraction, product or step at `pc` has an exact int32
@@ -59,6 +68,7 @@ impl Lowering<'_, '_> {
         facts::analyze_text(&text, initial, seeds).replay(&text, seeds, |pc, point| {
             if point.overflow_free(&self.program.constants, instructions[pc]) { proved.overflow_free.insert(pc); }
             if point.in_bounds(&model, pc, instructions[pc]) { proved.in_bounds.insert(pc); }
+            if let Some(range) = point.index_range(&self.program.constants, instructions[pc]) { proved.index_ranges.push((pc, range)); }
         });
         proved
     }

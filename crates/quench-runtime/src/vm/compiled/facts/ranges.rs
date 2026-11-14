@@ -62,21 +62,35 @@ pub(in crate::vm::compiled) fn exact(lookup: Lookup<'_>, instruction: WideInstru
     arithmetic(operation, left, right)
 }
 
-/// The type of an arithmetic operator's result: its range where that fits int32 and holds no
-/// negative zero, else a Number.
+/// The range of the Number an add, subtract or multiply of integer Numbers in ranges `left` and
+/// `right` makes: its binary64 rounding (`IntRange::rounded`), where it stays within
+/// `IntRange::WORD` and is no negative zero; `None` otherwise.
+fn number_range(operation: NumberArithmetic, left: IntRange, right: IntRange) -> Option<IntRange> {
+    arithmetic(operation, left, right).map(IntRange::rounded)
+        .filter(|range| IntRange::WORD.contains(*range) && !negative_zero(operation, left, right))
+}
+
+/// The type of an arithmetic operator's result: its range (`number_range`), else a Number.
 pub(super) fn arithmetic_type(lookup: Lookup<'_>, instruction: WideInstruction) -> Type {
     let Some((operation, left, right)) = operation(lookup, instruction) else { return Type::NUMBER };
-    arithmetic(operation, left, right)
-        .filter(|range| range.fits_int32() && !negative_zero(operation, left, right))
-        .map_or(Type::NUMBER, Type::int)
+    number_range(operation, left, right).map_or(Type::NUMBER, Type::int)
+}
+
+/// The range of the result of the arithmetic operator at `instruction` where it leaves int32:
+/// an integer Number a 64-bit word holds (`IntRange::WORD`), which an index is computed in.
+pub(in crate::vm::compiled) fn index_range(lookup: Lookup<'_>, instruction: WideInstruction) -> Option<IntRange> {
+    if instruction.result_flags() != 0 { return None; }
+    let (operation, left, right) = operation(lookup, instruction)?;
+    number_range(operation, left, right).filter(|range| !range.fits_int32())
 }
 
 /// The transfer of an int32 increment or decrement: its operand is proved int32 (keeping the
-/// range it has), and its result is the stepped range within int32: a step that would leave
-/// int32 leaves the native code instead.
+/// range it has within int32), and its result is the stepped range within int32: a step that
+/// would leave int32 leaves the native code instead.
 pub(super) fn step(types: &mut [Type], instruction: WideInstruction) {
     let operand = instruction.register_b();
-    let range = types.get(usize::from(operand)).and_then(|ty| ty.int_range()).unwrap_or(IntRange::FULL);
+    let range = types.get(usize::from(operand)).and_then(|ty| ty.int_range())
+        .and_then(|range| range.intersect(IntRange::FULL)).unwrap_or(IntRange::FULL);
     set(types, operand, Type::int(range));
     let result = stepped(&lookup(types, &[]), instruction).and_then(|range| range.intersect(IntRange::FULL));
     set(types, instruction.result_register(), Type::int(result.unwrap_or(IntRange::FULL)));

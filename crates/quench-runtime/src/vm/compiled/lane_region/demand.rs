@@ -22,28 +22,47 @@ impl Demand {
     const INT32: Self = Self(2);
     const FLOAT64: Self = Self(4);
     const NUMBER: Self = Self(Self::INT32.0 | Self::FLOAT64.0);
+    /// An integer index: the key of an element read, or an operand of arithmetic whose result
+    /// is only one, which an exact integer word of any width serves.
+    const INDEX: Self = Self(8);
 
     pub(super) fn tagged(self) -> bool { self.0 & Self::TAGGED.0 != 0 }
+
+    /// Whether every remaining use reads an integer index and no other view.
+    pub(super) fn index_only(self) -> bool { self == Self::INDEX }
 
     fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
 }
 
-/// The view `instruction` reads of its register operands: a bitwise operation reads int32
-/// views, a Number operation or relation either unboxed view, anything else tagged bits.
-fn read_demand(instruction: WideInstruction) -> Demand {
+/// The view `instruction` reads of its register operand `register`: a bitwise operation reads int32
+/// views, an element read's key an index, the operands of an add, subtraction or product an
+/// index where the demand on its result (`after`) is one, any other Number operation or
+/// relation either unboxed view, anything else tagged bits.
+fn read_demand(instruction: WideInstruction, register: usize, after: &dyn Fn() -> Demand) -> Demand {
     use super::super::operations::{equality_operator, NumberArithmetic, NumberBitwise, NumberRelation};
     let op = instruction.op();
     match op.class() {
         Class::JumpBinaryFalse if NumberRelation::from_operator(instruction.binary_operator_field()).is_some()
             && equality_operator(instruction.binary_operator_field()).is_none() => Demand::NUMBER,
+        _ if op.is_get_index() => element_read_demand(instruction, register),
         _ if op.js_denotation() == JsDenotation::NumericBinary && !instruction.returns_from_frame() => {
             let operator = instruction.binary_operator();
-            if NumberBitwise::from_js_instruction(op, operator).is_some() { Demand::INT32 }
-            else if NumberArithmetic::from_js_instruction(op, operator).is_some() { Demand::NUMBER }
-            else { Demand::TAGGED }
+            match NumberArithmetic::from_js_instruction(op, operator) {
+                _ if NumberBitwise::from_js_instruction(op, operator).is_some() => Demand::INT32,
+                Some(arithmetic) if arithmetic.integral() && instruction.result_flags() == 0 && after().index_only() => Demand::INDEX,
+                Some(_) => Demand::NUMBER,
+                None => Demand::TAGGED,
+            }
         }
         _ => Demand::TAGGED,
     }
+}
+
+/// What the element read `instruction` reads of `register`: its key an index, its base tagged bits.
+fn element_read_demand(instruction: WideInstruction, register: usize) -> Demand {
+    let operand = |operand: crate::bytecode::Operand| operand.register_index().map(usize::from) == Some(register);
+    let key = if operand(instruction.operand_c()) { Demand::INDEX } else { Demand::default() };
+    if operand(instruction.operand_b()) { key.union(Demand::TAGGED) } else { key }
 }
 
 /// Whether the lane writes the live caller registers back to its frame at `instruction`, for
@@ -60,8 +79,8 @@ fn homes_registers(instruction: WideInstruction) -> bool {
 ///   activation it builds reads the variables (`exits::materialize_inlined`);
 /// - the leave of a live caller register: none, its cold block boxes the unboxed view.
 fn reads(unit: &super::super::lane_unit::Unit, pc: usize, instruction: WideInstruction, used: bool,
-    register: usize, live: &impl Fn(usize, Register) -> bool) -> Demand {
-    let operand = if used { read_demand(instruction) } else { Demand::default() };
+    register: usize, (live, after): (&impl Fn(usize, Register) -> bool, &dyn Fn() -> Demand)) -> Demand {
+    let operand = if used { read_demand(instruction, register, after) } else { Demand::default() };
     let recovered = register >= usize::from(unit.caller_registers) || homes_registers(instruction);
     if recovered && live(pc, register as Register) { operand.union(Demand::TAGGED) } else { operand }
 }
@@ -106,9 +125,10 @@ impl Demands {
         for pc in (start..end).rev() {
             let instruction = unit.instructions[pc];
             let (uses, defs) = transfer(instruction, program, &program.field_sites, &program.superinstructions);
+            let after = instruction.defined_register().and_then(|result| row.get(usize::from(result))).copied().unwrap_or_default();
             for (register, demand) in row.iter_mut().enumerate() {
                 if defs.contains(register) { *demand = Demand::default(); }
-                *demand = demand.union(reads(unit, pc, instruction, uses.contains(register), register, live));
+                *demand = demand.union(reads(unit, pc, instruction, uses.contains(register), register, (live, &|| after)));
             }
         }
         row
@@ -147,8 +167,9 @@ impl Lowering<'_, '_> {
         for (at, instruction) in self.unit.instructions.iter().copied().enumerate().skip(pc) {
             if at != pc && let Some(row) = self.demands.row(at) { return demand.union(row[register]); }
             let (uses, defs) = transfer(instruction, self.program, &self.program.field_sites, &self.program.superinstructions);
+            let after = || self.demand_from(at + 1, usize::from(instruction.result_register()));
             demand = demand.union(reads(self.unit, at, instruction, uses.contains(register), register,
-                &|pc, register| self.is_live(pc, register)));
+                (&|pc, register| self.is_live(pc, register), &after)));
             if defs.contains(register) { return demand; }
             if !instruction.op().control_flow_layout().falls_through() || instruction.op().control_flow_layout().jumps() {
                 return successors(at, instruction).into_iter().flatten().filter_map(|target| self.demands.row(target))

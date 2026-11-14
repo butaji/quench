@@ -53,3 +53,18 @@ fn bitwise_operands_outside_int32_or_unranged_are_any_int32() {
     let zero = |operand: Operand| Some(if operand.register_index() == Some(0) { IntRange { min: 3, max: 9 } } else { IntRange::singleton(0) });
     assert_eq!(bitwise(&zero, NumberBitwise::Or, operands), IntRange { min: 3, max: 9 });
 }
+
+#[test]
+fn a_sum_or_product_of_int32s_keeps_an_integer_range_within_the_word_span() {
+    let range = |min: i64, max: i64| IntRange { min, max };
+    let positive = range(0, i64::from(i32::MAX));
+    let product = number_range(NumberArithmetic::Multiply, positive, range(1, i64::from(i32::MAX))).expect("a product of int32s");
+    assert!(!product.fits_int32() && IntRange::WORD.contains(product));
+    let sum = number_range(NumberArithmetic::Add, product, positive).expect("an index: a product and a counter");
+    assert!(!sum.fits_int32() && sum.min == 0);
+    let negative = range(i64::from(i32::MIN), -1);
+    let beyond = number_range(NumberArithmetic::Multiply, negative, negative).expect("the span's own bound is inside it");
+    assert_eq!(beyond.max, IntRange::WORD.max);
+    assert_eq!(number_range(NumberArithmetic::Add, beyond, IntRange::singleton(1)), None, "past the word span there is no range");
+    assert_eq!(number_range(NumberArithmetic::Multiply, range(-3, 2), range(0, 5)), None, "a possible negative zero has none");
+}

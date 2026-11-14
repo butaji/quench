@@ -48,6 +48,9 @@ mod polls;
 #[path = "lane_region/allocations.rs"] mod allocations;
 #[path = "lane_region/edges.rs"] mod edges;
 #[path = "lane_region/demand.rs"] mod demand;
+#[path = "lane_region/arithmetic.rs"] mod arithmetic;
+#[path = "lane_region/index_math.rs"] mod index_math;
+#[path = "lane_region/int_inputs.rs"] mod int_inputs;
 #[path = "lane_region/exits.rs"] mod exits;
 #[cfg(all(test, feature = "aot"))] #[path = "lane_region/exit_tests.rs"] mod exit_tests;
 #[cfg(all(test, feature = "aot"))] #[path = "lane_region/home_tests.rs"] mod home_tests;
@@ -163,10 +166,11 @@ impl RegisterFact {
 
 struct Registers {
     tagged: Vec<Variable>,
-    /// Each register's int32 and float64 views, declared at their first use: most registers
-    /// never take one, and the SSA builder's tables grow with variables times blocks. A view
-    /// read before any definition reads zero, as only a state that defined it reads it.
+    /// Each register's int32, 64-bit integer and float64 views, declared at their first use: most
+    /// registers never take one, and the SSA builder's tables grow with variables times blocks. A
+    /// view read before any definition reads zero, as only a state that defined it reads it.
     int: Vec<Option<Variable>>,
+    long: Vec<Option<Variable>>,
     float: Vec<Option<Variable>>,
 }
 
@@ -907,7 +911,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
                 self.builder.def_var(variable, number);
             }
             Representation::Tagged => { self.tagged(state, register); }
-            Representation::Int32 | Representation::Float64 => {}
+            Representation::Int32 | Representation::Int64 | Representation::Float64 => {}
         }
         self.conform_object(state, target, register, ty);
         // A fact this edge does not prove and cannot guard leaves at the target, exactly:
@@ -1551,6 +1555,7 @@ pub(super) fn lower(
     let registers = Registers {
         tagged: (0..count).map(|_| builder.declare_var(types::I64)).collect(),
         int: vec![None; count],
+        long: vec![None; count],
         float: vec![None; count],
     };
     // An alternative of a call's switch starts a block: a callee other than the one before
@@ -1735,9 +1740,8 @@ pub(super) fn lower(
                 }
             }
         }
-        if refined {
-            lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, super::facts::Seeds::observing(observed));
-        }
+        refined |= lowering.seed_loop_ints(&mut initial, &loops);
+        if refined { lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, super::facts::Seeds::observing(observed)); }
         lowering.refine_inductive_inputs(&mut initial, &instructions, &leaders, &loops, &own_shape);
     }
     lowering.refine_loop_inputs(entry_pc, &initial, &instructions, &leaders, &loops, &own_shape);
@@ -2039,7 +2043,7 @@ impl Lowering<'_, '_> {
                     let integer = match representation {
                         Representation::Int32 => value,
                         Representation::Float64 => self.raw_unary(Unary::ToSignedSaturating(Lane::I32), value),
-                        Representation::Tagged => unreachable!("typed numeric return"),
+                        Representation::Int64 | Representation::Tagged => unreachable!("typed numeric return"),
                     };
                     self.raw_unary(Unary::ZeroExtend(Lane::I64), integer)
                 }
@@ -2048,7 +2052,7 @@ impl Lowering<'_, '_> {
                     self.raw_unary(Unary::Bitcast(Lane::I64), number)
                 }
                 (NativeNumberResult::Float64, Representation::Float64) => self.raw_unary(Unary::Bitcast(Lane::I64), value),
-                (_, Representation::Tagged) => unreachable!("typed numeric return"),
+                (_, Representation::Int64 | Representation::Tagged) => unreachable!("typed numeric return"),
             };
             let success = self.raw_const(Lane::I32, 0);
             self.leave(&[success, value]);
@@ -4158,91 +4162,7 @@ impl Lowering<'_, '_> {
         }
         match (arithmetic, bitwise) {
             _ if remainder => { self.remainder(state, destination, [left, right], exit); }
-            (Some(arithmetic), _) => {
-                let float_operand = [left, right].iter().any(|operand| match operand.kind() {
-                    Some(OperandKind::Register) => state.values[usize::from(operand.payload())].value.representation == Representation::Float64,
-                    Some(OperandKind::Constant) => self.program.constants.get(usize::from(operand.payload()))
-                        .and_then(super::facts::immediate).is_some_and(|value| !super::facts::is_int32(value)),
-                    _ => false,
-                }) || self.left_here;
-                // Operands proved int32 stay int32, as C keeps them: an overflow, or a product's
-                // negative zero, is a value no int32 holds and leaves, rather than every result
-                // becoming a double that the next operation converts back.
-                let proved_int = self.proved_int(state, [left, right]);
-                if arithmetic == super::operations::NumberArithmetic::Divide || float_operand {
-                    let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic { destination, left, right,
-                        operation: arithmetic, domain: crate::staged::Domain::Float64,
-                        overflow: crate::staged::Overflow::Exit });
-                    self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
-                } else if proved_int {
-                    // A result the unit's ranges keep inside int32, or a sum or difference only
-                    // `| 0` reads (its ToInt32), is the wrapping int32 result: no overflow exit.
-                    let overflow = if self.ranges.overflow_free(pc)
-                        || (arithmetic.int32_projection_is_wrapping() && self.truncated(pc, destination)) {
-                        crate::staged::Overflow::Wrap
-                    } else {
-                        crate::staged::Overflow::Exit
-                    };
-                    let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic { destination, left, right,
-                        operation: arithmetic, domain: crate::staged::Domain::Int32, overflow });
-                    self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
-                } else if arithmetic.int32_projection_is_wrapping()
-                    && self.truncated(pc, destination) {
-                    // Only its ToInt32 is read: int32 operands wrap, any other numbers take
-                    // ToInt32 of their double result, and both join as an int32.
-                    let float = self.builder.create_block();
-                    self.builder.set_cold_block(float);
-                    let mut float_state = state.clone();
-                    let left_int = self.operand_int(state, left, float).expect("supported operand");
-                    let right_int = self.operand_int(state, right, float).expect("supported operand");
-                    let wrapped = if arithmetic == super::operations::NumberArithmetic::Add {
-                        self.raw_binary(Binary::Add, left_int, right_int)
-                    } else {
-                        self.raw_binary(Binary::Sub, left_int, right_int)
-                    };
-                    let join = self.builder.create_block();
-                    let int = self.builder.append_block_param(join, types::I32);
-                    self.goto(join, &[wrapped]);
-                    self.builder.switch_to_block(float);
-                    let left_number = self.operand_number(&mut float_state, left, exit)?;
-                    let right_number = self.operand_number(&mut float_state, right, exit)?;
-                    let number = crate::staged::number_machine::float_arithmetic(&mut super::object_slots::emit(&mut self.builder), arithmetic, left_number, right_number);
-                    let truncated = self.number_to_int32(number, exit);
-                    self.goto(join, &[truncated]);
-                    self.builder.switch_to_block(join);
-                    self.join_states(state, &float_state, pc);
-                    self.set_int(state, destination, int);
-                } else {
-                    let float = self.builder.create_block();
-                    self.builder.set_cold_block(float);
-                    let mut float_state = state.clone();
-                    let left_int = self.operand_int(state, left, float).expect("supported operand");
-                    let right_int = self.operand_int(state, right, float).expect("supported operand");
-                    let (result, overflow) = crate::staged::number_machine::checked_int32_arithmetic(&mut super::object_slots::emit(&mut self.builder), arithmetic, left_int, right_int);
-                    let int_done = self.builder.create_block();
-                    self.branch_if(overflow, (float, &[]), (int_done, &[]));
-                    self.builder.switch_to_block(int_done);
-                    if arithmetic == super::operations::NumberArithmetic::Multiply {
-                        let zero = self.raw_compare_imm(Relation::Equal, result, 0);
-                        let signs = self.raw_binary(Binary::Or, left_int, right_int);
-                        let negative = self.raw_compare_imm(Relation::SignedLess, signs, 0);
-                        let negative_zero = self.raw_binary(Binary::And, zero, negative);
-                        emit_js_guard_not(&mut self.builder, negative_zero, float);
-                    }
-                    let join = self.builder.create_block();
-                    let number = self.builder.append_block_param(join, types::F64);
-                    let result = self.raw_unary(Unary::FromSigned(Lane::F64), result);
-                    self.goto(join, &[result]);
-                    self.builder.switch_to_block(float);
-                    let left_number = self.operand_number(&mut float_state, left, exit)?;
-                    let right_number = self.operand_number(&mut float_state, right, exit)?;
-                    let result = crate::staged::number_machine::float_arithmetic(&mut super::object_slots::emit(&mut self.builder), arithmetic, left_number, right_number);
-                    self.goto(join, &[result]);
-                    self.builder.switch_to_block(join);
-                    self.join_states(state, &float_state, pc);
-                    self.set_number(state, destination, number);
-                }
-            }
+            (Some(arithmetic), _) => { self.arithmetic(state, pc, instruction, arithmetic, exit)?; }
             (_, Some(bitwise)) => {
                 let left_int = self.operand_to_int32(state, left, exit)?;
                 let right_int = self.operand_to_int32(state, right, exit)?;

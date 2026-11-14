@@ -96,6 +96,12 @@ impl Point {
     pub(in crate::vm::compiled) fn overflow_free(&self, constants: &[Constant], instruction: WideInstruction) -> bool {
         ranges::exact(&ranges::lookup(&self.types, constants), instruction).is_some_and(|range| range.fits_int32())
     }
+
+    /// The range of the result of the arithmetic of `instruction` where it leaves int32 but is
+    /// an integer Number of `IntRange::WORD` (`ranges::index_range`).
+    pub(in crate::vm::compiled) fn index_range(&self, constants: &[Constant], instruction: WideInstruction) -> Option<IntRange> {
+        ranges::index_range(&ranges::lookup(&self.types, constants), instruction)
+    }
 }
 
 impl Model<'_> {
