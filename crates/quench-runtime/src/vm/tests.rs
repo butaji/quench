@@ -20211,6 +20211,40 @@ fn lane_name_loads_resolve_undefined_intrinsics_and_call_receivers() {
 }
 
 #[test]
+fn lane_generator_window_mapped_arguments_alias_parameters_through_the_owning_activation() {
+    // Elements of a sloppy generator's mapped `arguments` write through to its parameters while
+    // it runs as a lane activation (`LaneStack::window_parameter`), nested beside another
+    // generator's activation; the expectations are Node's.
+    let source = r#"
+      function* inner(b) { arguments[0] = b + 1; yield b; }
+      function* outer(a) {
+        arguments[0] = a * 2;
+        for (var v of inner(a)) yield v;
+        yield a;
+        a = 5;
+        yield arguments[0];
+      }
+      var total = 0;
+      for (var i = 0; i < 2000; i++) {
+        var got = [];
+        for (var v of outer(i)) got.push(v);
+        if (got.join() !== [i * 2 + 1, i * 2, 5].join()) throw Error(got.join());
+        total++;
+      }
+      print(String(total));
+    "#;
+    let program = Engine::specialize(source, "lane-window-arguments.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["2000"], "{mode:?}");
+    }
+}
+
+#[test]
 fn lane_intrinsic_native_reads_keep_each_name_its_own_native() {
     // Hot reads of several intrinsic names (`{ __proto__: v }`, `super.x = v`) interleave: each
     // atom reads the native its own first run recorded (`Vm::intrinsic_natives`, by atom).

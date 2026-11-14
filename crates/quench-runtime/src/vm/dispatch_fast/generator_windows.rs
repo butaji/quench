@@ -202,6 +202,7 @@ fn push_generator_window<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, (r, i
         vm.lane_stack.push_generator_activation(activation);
         vm.lane_stack.restore_iterators(depth, &mut (*frame).active_iterators);
         vm.lane_stack.restore_with_objects(depth, &mut (*frame).with_objects);
+        vm.record_window_owner(&*(*cx).code, depth);
     }
 }
 

@@ -1725,6 +1725,10 @@ struct ObjectExtras {
     /// An array's storage position, displaced from its first payload word.
     arena_start: u32,
     arguments_map: Option<Vec<u16>>,
+    /// The depth of the lane activation whose window holds this arguments object, as its latest
+    /// push recorded it (`Vm::record_window_owner`); stale once that activation ends, which its
+    /// reader checks against the activation's own binding.
+    window_depth: Option<u32>,
     brand: ObjectBrand,
     external_address: Option<usize>,
     boxed_primitive: Option<Value>,
@@ -2559,6 +2563,14 @@ impl Object {
     }
     pub(crate) fn arguments_map_mut(&mut self) -> Option<&mut Vec<u16>> {
         self.extras_mut_existing()?.arguments_map.as_mut()
+    }
+    pub(crate) fn window_depth(&self) -> Option<usize> {
+        self.extras()?.window_depth.map(|depth| depth as usize)
+    }
+    pub(crate) fn set_window_depth(&mut self, depth: usize) {
+        if let Some(extras) = self.extras_mut_existing() {
+            extras.window_depth = u32::try_from(depth).ok();
+        }
     }
     pub(crate) fn mapped_argument_slot(&self, index: usize) -> Option<usize> {
         self.arguments_map()?
