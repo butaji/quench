@@ -16045,10 +16045,14 @@ fn lane_activate_environment<H: Host>(
     }
     // The rest array, made before the window is: the values past the other parameters,
     // which the rest parameter's local holds (`lane_activate_keeping` gathers likewise).
-    let gathered = rest.then(|| {
+    // A plain branch: `bool::then` with this closure stayed an out-of-line call on every
+    // activation.
+    let gathered = if rest {
         let fixed = usize::from(target.params) - 1;
-        vm.rest_parameter_array(passed.get(fixed..).unwrap_or_default())
-    });
+        Some(vm.rest_parameter_array(passed.get(fixed..).unwrap_or_default()))
+    } else {
+        None
+    };
     let count = usize::from(target.registers);
     let locals = usize::from(layout.locals);
     let stack = &mut vm.lane_stack;
