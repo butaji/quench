@@ -4540,6 +4540,49 @@ script_handler! {
 }
 
 script_handler! {
+    /// `lane_operator` whose double result may stay raw (`raw_results::raw_result_allowed`,
+    /// `specialize_raw_operators`): integers as there; the first other operands switch the
+    /// record to `lane_operator_numbers_raw`.
+    fn lane_operator_raw<OP: u32>(cx, r, ip, i, view) {
+        let (Some(left), Some(right)) = (r.int(i.b), r.int(i.c)) else {
+            sibling!(lane_operator_first_miss_raw::<H, OP>, r, ip, Carried::script_in(cx, view))
+        };
+        let Some(value) = super::operations::integer_pair_operator::<OP>(left, right) else {
+            sibling!(lane_operator_first_miss_raw::<H, OP>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `lane_operator_first_miss` of `lane_operator_raw`.
+    #[inline(never)]
+    fn lane_operator_first_miss_raw<OP: u32>(cx, r, ip, i, view) {
+        // SAFETY: the record is an arithmetic record of the running view.
+        unsafe { note_first_miss(cx, ip, r.get(i.b), r.get(i.c)) };
+        requicken::<H>(ip, lane_operator_numbers_raw::<H, OP>);
+        sibling!(lane_operator_numbers_raw::<H, OP>, r, ip, Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `lane_operator_numbers` whose result of two Numbers not both int32 keeps its double
+    /// form (`raw_results::raw_number`); every other case runs `lane_operator_numbers`.
+    fn lane_operator_numbers_raw<OP: u32>(cx, r, ip, i, view) {
+        if let Some((left, left_int)) = r.number_kind(i.b)
+            && let Some((right, right_int)) = r.number_kind(i.c)
+            && !(left_int && right_int)
+            && let Some(number) = super::operations::number_operator::<OP>(left, right)
+        {
+            r.set(i.a, raw_results::raw_number(number));
+            next!(cx, r, following(ip), Carried::script_in(cx, view))
+        }
+        sibling!(lane_operator_numbers::<H, OP>, r, ip, Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
     /// `lane_operator_numbers` of operands not both Numbers: a concatenation of strings or
     /// BigInt arithmetic in place; anything else takes the general path.
     #[inline(never)]
@@ -20486,6 +20529,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_store_moves::<H>(&mut records);
         specialize_operator_pairs::<H>(&decoded, &function.handlers, &mut records, live().map(|masks| &**masks));
         specialize_int32_truncations::<H>(&mut records, live().map(|masks| &**masks));
+        specialize_raw_operators::<H>(&decoded, &function.handlers, &mut records, live().map(|masks| &**masks));
         specialize_capture_updates::<H>(&mut records);
         specialize_constant_returns::<H>(&mut records);
         specialize_script_calls::<H>(&mut records, function.undefined_register);
@@ -21200,6 +21244,32 @@ fn specialize_int32_truncations<H: Host>(records: &mut [LaneInstruction], live: 
                 .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(first.a)));
         if truncates && dead {
             records[pc].handler = fused as *const ();
+        }
+    }
+}
+
+/// Gives each lone arithmetic record (`lane_operator`, `lane_operator_numbers`) whose result
+/// may stay raw (`raw_results::raw_result_allowed`) its raw form (`lane_operator_raw`,
+/// `lane_operator_numbers_raw`): as `a*b + c*d + e*f`'s first product, which waits for the
+/// next product's pair. A record a fused record before it covers runs inside that record.
+fn specialize_raw_operators<H: Host>(decoded: &[WideInstruction], handlers: &[crate::bytecode::Handler], records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>) {
+    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
+    if !handlers.is_empty() || live.is_none() {
+        return;
+    }
+    macro_rules! forms {
+        ($($operator:ident),*) => {
+            [$((lane_operator::<H, $operator> as Handler, lane_operator_raw::<H, $operator> as Handler),
+               (lane_operator_numbers::<H, $operator> as Handler, lane_operator_numbers_raw::<H, $operator> as Handler)),*]
+        };
+    }
+    let forms = fused_arithmetic!(forms);
+    for pc in 0..records.len() {
+        let Some(&(_, raw)) = forms.iter().find(|(own, _)| *own as *const () == records[pc].handler) else {
+            continue;
+        };
+        if raw_results::raw_result_allowed(decoded, handlers, live, pc) {
+            records[pc].handler = raw as *const ();
         }
     }
 }
