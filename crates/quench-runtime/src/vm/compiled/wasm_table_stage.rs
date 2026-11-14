@@ -16,7 +16,7 @@ use super::{
 };
 use crate::bytecode::WideInstruction;
 use crate::heap::{TableTarget, TableWords};
-use crate::staged::machine::MachineStage;
+use crate::staged::machine::{MachineAccess, MachineStage};
 use crate::staged::wasm::Width;
 use crate::staged::wasm_call::{WasmTable, indirect_target};
 use crate::wasm::CanonicalSignature;

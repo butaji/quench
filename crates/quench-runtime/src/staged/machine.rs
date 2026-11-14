@@ -4,6 +4,7 @@
 //! the operators.
 
 use super::wasm::Width;
+use super::wasm_memory::Access;
 use super::wasm_float::{Float, Truncation};
 use crate::WasmTrap;
 use crate::wasm::conversion::ScalarConversionOperator;
@@ -59,4 +60,22 @@ pub(crate) trait MachineStage {
     fn convert(&mut self, operator: ScalarConversionOperator, value: Self::Word) -> Self::Word;
     /// Continues where `flag` is 0; traps where it is 1.
     fn trap_when(&mut self, flag: Self::Word, trap: WasmTrap) -> Result<(), Self::Exit>;
+}
+
+/// A machine that addresses memory and calls leaves: loads and stores of a word, or of an
+/// `Access`'s bytes, at an address with the flags the caller proved (`Flags`), and a call of a
+/// leaf that takes and returns words. Open to extension: the rules over it name no layout.
+pub(crate) trait MachineAccess: MachineStage {
+    /// What an access carries beside its address: its alias region and whether it may trap.
+    type Flags: Copy;
+    /// The `access` at `address`, narrow bytes extended as the access asks, in its type.
+    fn load_access(&mut self, access: Access, flags: Self::Flags, address: Self::Word) -> Self::Word;
+    /// The low bytes of `value` as `access` at `address`.
+    fn store_access(&mut self, access: Access, flags: Self::Flags, address: Self::Word, value: Self::Word);
+    /// The `width` word `offset` bytes from `base`.
+    fn load_word(&mut self, width: Width, flags: Self::Flags, base: Self::Word, offset: i32) -> Self::Word;
+    /// Stores `value`, a word of its own width, `offset` bytes from `base`.
+    fn store_word(&mut self, flags: Self::Flags, value: Self::Word, base: Self::Word, offset: i32);
+    /// A call of the leaf at address `leaf` on word `arguments`: its word.
+    fn call_leaf(&mut self, leaf: usize, arguments: &[Self::Word]) -> Self::Word;
 }

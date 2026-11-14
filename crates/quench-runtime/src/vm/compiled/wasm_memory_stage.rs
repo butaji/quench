@@ -6,19 +6,18 @@ use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
 use super::{
     Analysis, AnalysisState, CONTEXT_MEMORY_LENGTH, CallContext, Emitter, Host, Kind, Region, Slot,
-    Vm, compiled_memory_copy, compiled_memory_fill, refresh_memory_length, scalar_ir,
+    Vm, compiled_memory_copy, compiled_memory_fill, refresh_memory_length,
 };
 use crate::bytecode::{Function, WideInstruction};
+use crate::staged::machine::{MachineAccess, MachineStage};
+use crate::staged::wasm::Width;
+use crate::wasm::conversion::ScalarConversionOperator as Conversion;
+use crate::wasm::integer::I64BinaryOperator as Binary;
 use crate::staged::wasm_memory::{
     Access, Memory, WasmMemory, WasmMemoryGrow, WasmMemoryWrite, copy, fill, load, size, store,
 };
 use crate::wasm::INDEX_GROW_FAILURE;
-use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, Signature, types};
-
-/// The byte widths of the narrow accesses.
-const BYTE: usize = size_of::<u8>();
-const HALF: usize = size_of::<u16>();
-const WORD: usize = size_of::<u32>();
+use cranelift_codegen::ir::{self, MemFlagsData};
 
 impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
     fn guarded(&self) -> bool {
@@ -30,12 +29,10 @@ impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
     fn memory_length(&mut self) -> ir::Value {
         match self.length {
             Some(length) if !self.analysis.callouts => length,
-            _ => self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            ),
+            _ => {
+                let context = self.body.core.context;
+                self.load_word(Width::I64, MemFlagsData::trusted(), context, CONTEXT_MEMORY_LENGTH)
+            }
         }
     }
 
@@ -46,20 +43,7 @@ impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
     fn memory_load(&mut self, access: Access, index: ir::Value, offset: u32) -> ir::Value {
         let host = self.host_address(index, offset);
         let flags = self.load_flags();
-        let kind = Kind::of(access.ty).expect("a scalar access");
-        let ty = kind.ir();
-        let ins = self.body.core.builder.ins();
-        match (access.bytes, access.signed) {
-            // A float loads straight into its view.
-            _ if access.ty != kind.integer() => ins.load(scalar_ir(access.ty), flags, host, 0),
-            (BYTE, false) => ins.uload8(ty, flags, host, 0),
-            (BYTE, true) => ins.sload8(ty, flags, host, 0),
-            (HALF, false) => ins.uload16(ty, flags, host, 0),
-            (HALF, true) => ins.sload16(ty, flags, host, 0),
-            (WORD, false) if kind == Kind::I64 => ins.uload32(flags, host, 0),
-            (WORD, true) if kind == Kind::I64 => ins.sload32(flags, host, 0),
-            _ => ins.load(ty, flags, host, 0),
-        }
+        self.load_access(access, flags, host)
     }
 }
 
@@ -67,19 +51,12 @@ impl<H: Host> WasmMemoryWrite for Emitter<'_, '_, H> {
     fn memory_store(&mut self, access: Access, index: ir::Value, offset: u32, value: ir::Value) {
         let host = self.host_address(index, offset);
         let flags = self.flags(Region::LinearMemory);
-        let kind = Kind::of(access.ty).expect("a scalar access");
-        let ins = self.body.core.builder.ins();
-        match access.bytes {
-            BYTE => ins.istore8(flags, value, host, 0),
-            HALF => ins.istore16(flags, value, host, 0),
-            WORD if kind == Kind::I64 => ins.istore32(flags, value, host, 0),
-            _ => ins.store(flags, value, host, 0),
-        };
+        self.store_access(access, flags, host, value);
     }
 
     fn memory_fill(&mut self, index: ir::Value, byte: ir::Value, length: ir::Value) {
-        let address = self.body.core.builder.ins().iadd(self.base, index);
-        let byte = self.body.core.builder.ins().uextend(types::I64, byte);
+        let address = self.operate(Binary::Add, Width::I64, self.base, index);
+        let byte = self.convert(Conversion::ExtendI32Unsigned, byte);
         self.call_leaf(
             compiled_memory_fill as *const () as usize,
             &[address, byte, length],
@@ -87,8 +64,8 @@ impl<H: Host> WasmMemoryWrite for Emitter<'_, '_, H> {
     }
 
     fn memory_copy(&mut self, destination: ir::Value, source: ir::Value, length: ir::Value) {
-        let destination = self.body.core.builder.ins().iadd(self.base, destination);
-        let source = self.body.core.builder.ins().iadd(self.base, source);
+        let destination = self.operate(Binary::Add, Width::I64, self.base, destination);
+        let source = self.operate(Binary::Add, Width::I64, self.base, source);
         self.call_leaf(
             compiled_memory_copy as *const () as usize,
             &[destination, source, length],
@@ -116,7 +93,7 @@ impl<H: Host> WasmMemoryGrow for Emitter<'_, '_, H> {
         let delta = self.memory_index(pages);
         let context = self.body.core.context;
         let before = self.call_leaf(memory_grow_callout::<H> as *const () as usize, &[context, delta]);
-        self.body.core.builder.ins().ireduce(types::I32, before)
+        self.convert(Conversion::WrapI64, before)
     }
 }
 
@@ -136,31 +113,9 @@ impl<H: Host> Emitter<'_, '_, H> {
 
     /// The host address of the memory's byte at `index + offset`.
     fn host_address(&mut self, index: ir::Value, offset: u32) -> ir::Value {
-        let host = self.body.core.builder.ins().iadd(self.base, index);
-        self.body
-            .core
-            .builder
-            .ins()
-            .iadd_imm_s(host, i64::from(offset))
-    }
-
-    /// A call of a leaf: words in, a word out (the status of a checked range or a stored
-    /// word, which never fails, or a growth's or a load's result).
-    pub(super) fn call_leaf(&mut self, leaf: usize, arguments: &[ir::Value]) -> ir::Value {
-        let mut signature = Signature::new(self.call_conv);
-        for _ in arguments {
-            signature.params.push(AbiParam::new(types::I64));
-        }
-        signature.returns.push(AbiParam::new(types::I64));
-        let signature = self.body.core.builder.import_signature(signature);
-        let target = self.body.core.builder.ins().iconst(types::I64, leaf as i64);
-        let call = self
-            .body
-            .core
-            .builder
-            .ins()
-            .call_indirect(signature, target, arguments);
-        self.body.core.builder.inst_results(call)[0]
+        let host = self.operate(Binary::Add, Width::I64, self.base, index);
+        let offset = self.constant(Width::I64, i64::from(offset));
+        self.operate(Binary::Add, Width::I64, host, offset)
     }
 
     /// Lowers a linear-memory step. An access's address is a 32-bit index plus an offset plus

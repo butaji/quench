@@ -3,8 +3,9 @@
 //! is the interpreter's (`staged::wasm`, `staged::wasm_float`); this file only says what one
 //! operator is on the machine.
 
-use super::{Emitter, Host, scalar_ir};
-use crate::staged::machine::MachineStage;
+use super::{Emitter, Host, Kind, scalar_ir};
+use crate::staged::machine::{MachineAccess, MachineStage};
+use crate::staged::wasm_memory::Access;
 use crate::staged::wasm::Width;
 use crate::staged::wasm_float::{Float, Truncation};
 use crate::wasm::conversion::{ScalarConversionOperator as Conversion, truncation_bounds};
@@ -14,7 +15,7 @@ use cranelift_codegen::ir::{
     self, InstBuilder, MemFlagsData,
     condcodes::{FloatCC, IntCC},
     immediates::{Ieee32, Ieee64},
-    types,
+    types, AbiParam, Signature,
 };
 use std::convert::Infallible;
 
@@ -339,5 +340,62 @@ impl<H: Host> Emitter<'_, '_, H> {
         let ty = self.body.core.builder.func.dfg.value_type(value);
         let low = self.body.core.builder.ins().ireduce(narrow, value);
         self.body.core.builder.ins().sextend(ty, low)
+    }
+}
+
+/// The byte widths of the narrow accesses.
+const BYTE: usize = size_of::<u8>();
+const HALF: usize = size_of::<u16>();
+const WORD: usize = size_of::<u32>();
+
+impl<H: Host> MachineAccess for Emitter<'_, '_, H> {
+    type Flags = MemFlagsData;
+
+    fn load_access(&mut self, access: Access, flags: MemFlagsData, address: ir::Value) -> ir::Value {
+        let kind = Kind::of(access.ty).expect("a scalar access");
+        let ty = kind.ir();
+        let ins = self.body.core.builder.ins();
+        match (access.bytes, access.signed) {
+            // A float loads straight into its view.
+            _ if access.ty != kind.integer() => ins.load(scalar_ir(access.ty), flags, address, 0),
+            (BYTE, false) => ins.uload8(ty, flags, address, 0),
+            (BYTE, true) => ins.sload8(ty, flags, address, 0),
+            (HALF, false) => ins.uload16(ty, flags, address, 0),
+            (HALF, true) => ins.sload16(ty, flags, address, 0),
+            (WORD, false) if kind == Kind::I64 => ins.uload32(flags, address, 0),
+            (WORD, true) if kind == Kind::I64 => ins.sload32(flags, address, 0),
+            _ => ins.load(ty, flags, address, 0),
+        }
+    }
+
+    fn store_access(&mut self, access: Access, flags: MemFlagsData, address: ir::Value, value: ir::Value) {
+        let kind = Kind::of(access.ty).expect("a scalar access");
+        let ins = self.body.core.builder.ins();
+        match access.bytes {
+            BYTE => ins.istore8(flags, value, address, 0),
+            HALF => ins.istore16(flags, value, address, 0),
+            WORD if kind == Kind::I64 => ins.istore32(flags, value, address, 0),
+            _ => ins.store(flags, value, address, 0),
+        };
+    }
+
+    fn load_word(&mut self, width: Width, flags: MemFlagsData, base: ir::Value, offset: i32) -> ir::Value {
+        self.body.core.builder.ins().load(integer_type(width), flags, base, offset)
+    }
+
+    fn store_word(&mut self, flags: MemFlagsData, value: ir::Value, base: ir::Value, offset: i32) {
+        self.body.core.builder.ins().store(flags, value, base, offset);
+    }
+
+    fn call_leaf(&mut self, leaf: usize, arguments: &[ir::Value]) -> ir::Value {
+        let mut signature = Signature::new(self.call_conv);
+        for _ in arguments {
+            signature.params.push(AbiParam::new(types::I64));
+        }
+        signature.returns.push(AbiParam::new(types::I64));
+        let signature = self.body.core.builder.import_signature(signature);
+        let target = self.constant(Width::I64, leaf as i64);
+        let call = self.body.core.builder.ins().call_indirect(signature, target, arguments);
+        self.body.core.builder.inst_results(call)[0]
     }
 }
