@@ -21660,6 +21660,46 @@ fn lane_strict_equality_decides_like_the_interpreter() {
 }
 
 #[test]
+fn lane_raw_sums_of_element_reads_store_canonical_numbers() {
+    // Chained sums of element reads keep raw double intermediates (`raw_results`), a NaN
+    // as the machine leaves it; what is stored, compared or used as a key is canonical: an
+    // integral sum is an int (=== and Map keys), a NaN is the one NaN (Map and Object.is).
+    let source = r#"
+      function run(x, out, n) {
+        for (var i = 1; i < n - 3; i++) {
+          var k = i - 1;
+          out[i] = x[++k] + x[++k] + x[++k] + x[++k];
+        }
+      }
+      var n = 64, x = [], out = [];
+      for (var i = 0; i < n; i++) { x.push(i % 7 == 3 ? Infinity : i % 7 == 4 ? -Infinity : (i % 2 ? 0.5 : 1.5)); out.push(0); }
+      for (var r = 0; r < 3000; r++) run(x, out, n);
+      var keys = new Map(), ints = 0, nans = 0, same = 0;
+      for (var i = 1; i < n - 3; i++) {
+        var v = out[i];
+        keys.set(v, 1);
+        if (v === (v | 0)) ints++;
+        if (v !== v) nans++;
+        if (Object.is(v, NaN)) same++;
+      }
+      globalThis.answer = keys.size * 1000000 + ints * 10000 + nans * 100 + same;
+    "#;
+    let program = Engine::specialize(source, "lane-raw-sums.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(4162727.0); 2]);
+}
+
+#[test]
 fn lane_outer_captures_read_like_the_interpreter() {
     // A lane body reads a capture of an outer scope by the lane's own lookup, so a
     // reassigned `var`, a `let` and a widened value read as the interpreter's.

@@ -25,17 +25,22 @@ const NEXT_READ: usize = 2;
 const NEXT_OPERATION: usize = 3;
 
 /// `number_value_operator` of an arithmetic `OP` (not bitwise) whose double result keeps its
-/// double form, integral or not; NaN stays canonical, as every Number's must.
+/// double form, integral or not, NaN included (`raw_number`).
 #[inline(always)]
 pub(super) fn raw_number_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
     let (left, right) = Value::number_pair(left, right)?;
     Some(raw_number(super::super::operations::number_operator::<OP>(left, right)?))
 }
 
-/// A Number in double form whatever its value; NaN canonical, as every Number's must be.
+/// A Number in double form whatever its value, a NaN as the arithmetic left it. A raw result
+/// only ever reaches the next arithmetic's operand (`raw_result_dies`), which reads it by its
+/// tag as a double and computes the same Number from it; that arithmetic stores its own result
+/// canonical, or raw under the same rule, so a NaN's bits are never compared, hashed or stored.
+/// An arithmetic NaN is either an operand's canonical NaN or the machine's default NaN, and
+/// neither has a tag's upper bits, so the bits always read as a double.
 #[inline(always)]
 pub(super) fn raw_number(value: f64) -> Value {
-    if value.is_nan() { Value::NAN } else { Value::from_bits(value.to_bits()) }
+    Value::from_bits(value.to_bits())
 }
 
 /// Whether the arithmetic at `operation` may leave its result raw (`raw_result_dies`), in a
