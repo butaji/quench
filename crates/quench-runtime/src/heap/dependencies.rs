@@ -170,7 +170,7 @@ impl Dependencies {
     }
 
     /// The held index-free chain proof, if any (`ProofKind::IndexFreeChain`).
-#[inline]
+    #[inline]
     pub(crate) fn index_free_chain(&self) -> Option<IndexFreeChainProof> {
         self.table().proofs.index_free_chain
     }

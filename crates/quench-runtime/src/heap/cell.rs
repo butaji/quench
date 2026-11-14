@@ -752,7 +752,7 @@ impl Native {
     /// are not objects, run no guest code and have no effect beyond allocating their result.
     /// `split` looks `Symbol.split` up only on an object separator (ES2025), so it is among
     /// them; `match` and `search`, which make a RegExp of a string, are not.
-#[inline]
+    #[inline]
     pub(crate) fn is_pure_string_method(self) -> bool {
         matches!(
             self,
@@ -2607,7 +2607,7 @@ impl Object {
         properties.set_extensible(value);
         self.meta = (self.meta & !VALUE_VEC_INTEGRITY_BITS) | properties.into_parts().0;
     }
-#[inline]
+    #[inline]
     pub(crate) fn is_frozen(&self) -> bool {
         self.properties().is_frozen()
     }
@@ -2619,7 +2619,7 @@ impl Object {
         properties.set_frozen(value);
         self.meta = (self.meta & !VALUE_VEC_INTEGRITY_BITS) | properties.into_parts().0;
     }
-#[inline]
+    #[inline]
     pub(crate) fn arguments_map(&self) -> Option<&[u16]> {
         self.extras()?.arguments_map.as_deref()
     }
@@ -2655,7 +2655,7 @@ impl Object {
     #[inline] pub(crate) fn is_arguments_object(&self) -> bool {
         self.brand() == ObjectBrand::Arguments
     }
-#[inline]
+    #[inline]
     pub(crate) fn has_indexed_descriptors(&self) -> bool {
         self.element_facts().has(ElementFacts::INDEXED_DESCRIPTORS)
     }

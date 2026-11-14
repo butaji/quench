@@ -175,7 +175,7 @@ impl ExecutionInterrupt {
         }
     }
 
-#[inline]
+    #[inline]
     pub fn is_termination_requested(&self) -> bool {
         self.state.requested.load(Ordering::Acquire)
     }

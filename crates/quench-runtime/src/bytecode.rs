@@ -774,7 +774,7 @@ macro_rules! opcodes {
                 Self::JS_DENOTATIONS[self as usize]
             }
 
-#[inline(always)]
+            #[inline(always)]
             pub(crate) const fn is_wide_marker(self) -> bool {
                 matches!(self.immediate_role(), ImmediateRole::WideInstructionIndex)
             }

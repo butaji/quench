@@ -1012,8 +1012,7 @@ impl Instr {
         Self::unpack_plain_field(packed)
     }
 
-#[inline(always)]
-    const fn unpack_plain_field(packed: u16) -> u16 {
+    #[inline(always)] const fn unpack_plain_field(packed: u16) -> u16 {
         let packed = packed & Self::FIELD_MASK as u16;
         (packed & Self::FIELD_PAYLOAD_MASK)
             | ((packed >> Self::FIELD_PACKED_HIGH_SHIFT) << Self::FIELD_SOURCE_HIGH_SHIFT)
