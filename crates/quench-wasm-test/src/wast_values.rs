@@ -81,14 +81,17 @@ pub(crate) fn scalar_matches(want: &WastRetCore<'_>, got: WasmValue) -> bool {
         (WastRetCore::I64(want), WasmValue::I64(got)) => *want == got,
         (WastRetCore::F32(want), WasmValue::F32(got)) => nan_f32(want, got),
         (WastRetCore::F64(want), WasmValue::F64(got)) => nan_f64(want, got),
-        (
-            WastRetCore::RefNull(_),
-            WasmValue::FuncRef(value) | WasmValue::ExternRef(value) | WasmValue::GcRef(value),
-        ) => value.is_null(),
+        (WastRetCore::RefNull(_) | WastRetCore::RefExtern(_) | WastRetCore::RefFunc(_), got) => reference_matches(want, got),
+        _ => false,
+    }
+}
+
+/// A returned reference against a null, extern or func reference pattern.
+fn reference_matches(want: &WastRetCore<'_>, got: WasmValue) -> bool {
+    match (want, got) {
+        (WastRetCore::RefNull(_), WasmValue::FuncRef(value) | WasmValue::ExternRef(value) | WasmValue::GcRef(value)) => value.is_null(),
         (WastRetCore::RefExtern(None), WasmValue::ExternRef(value)) => !value.is_null(),
-        (WastRetCore::RefExtern(Some(id)), WasmValue::ExternRef(value)) => {
-            value.as_number() == Some(f64::from(*id))
-        }
+        (WastRetCore::RefExtern(Some(id)), WasmValue::ExternRef(value)) => value.as_number() == Some(f64::from(*id)),
         (WastRetCore::RefFunc(None), WasmValue::FuncRef(value)) => !value.is_null(),
         _ => false,
     }

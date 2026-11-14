@@ -50,22 +50,17 @@ fn size_classes_step_by_powers_of_two_and_three_quarters() {
     assert_eq!(capacity_class(12 + 1), 16);
 }
 
-#[test]
-fn young_runs_reclaim_the_dead_at_once_and_move_survivors_below_the_floor() {
-    let mut arena = ValueArena::default();
-    arena.register_shape(1, 3);
-    let values = |n: f64| [Value::number(n), Value::number(n + 0.5), Value::number(n + 0.25), Value::UNDEFINED];
-    let young = |arena: &mut ValueArena, n: f64| ValueVec { start: arena.young_run_padded(&values(n), 3).unwrap(), auxiliary: 1 };
-    let ordinary = arena.with_values(1, &values(9.0)[..3]);
-    let mut runs: Vec<ValueVec> = (0..8).map(|n| young(&mut arena, f64::from(n))).collect();
-    assert!(runs.iter().all(|run| arena.holds_young_run(*run)));
-    assert!(!arena.holds_young_run(ordinary));
-    let floor = runs[0].start();
-    assert_eq!(floor, MIN_CAPACITY, "the nursery starts at the arena's end");
-    // A dead young run releases nothing.
-    arena.release(runs[1]);
-    assert_eq!(arena.stats().2, 0);
-    // Survivors 3 and 6 move down to the floor in start order; the rest is reclaimed.
+/// The values of a young run of shape 1 (three slots, padded): `n`, `n + 0.5`, `n + 0.25`.
+fn young_values(n: f64) -> [Value; 4] {
+    [Value::number(n), Value::number(n + 0.5), Value::number(n + 0.25), Value::UNDEFINED]
+}
+
+fn young(arena: &mut ValueArena, n: f64) -> ValueVec {
+    ValueVec { start: arena.young_run_padded(&young_values(n), 3).unwrap(), auxiliary: 1 }
+}
+
+/// Survivors 3 and 6 move down to the floor in start order; the rest is reclaimed.
+fn evacuate_survivors(arena: &mut ValueArena, runs: &mut [ValueVec], floor: usize) {
     for index in [3, 6] {
         arena.evacuate_young(&mut runs[index]);
     }
@@ -75,6 +70,39 @@ fn young_runs_reclaim_the_dead_at_once_and_move_survivors_below_the_floor() {
         assert!(!arena.holds_young_run(runs[index]));
         assert_eq!(arena.get(runs[index], 2).unwrap().as_number(), Some(index as f64 + 0.25));
     }
+}
+
+/// A range that no longer ends the arena serves young runs up to its end, then ordinary
+/// runs take over; one a compaction emptied starts again at the arena's end.
+fn nursery_growth_overflows_into_ordinary_runs(arena: &mut ValueArena) {
+    let _ = arena.with_values(1, &[Value::number(1.0); 5][..3]);
+    arena.finish_young_cycle();
+    let kept = young(arena, 50.0);
+    assert!(arena.holds_young_run(kept), "the range stays");
+    let overflows = (0..NURSERY_GROWTH).any(|n| {
+        let run = young(arena, n as f64);
+        !arena.holds_young_run(run)
+    });
+    assert!(overflows, "a range that cannot grow overflows into ordinary runs");
+    let length = arena.stats().0;
+    arena.finish_compaction(length);
+    assert_eq!(young(arena, 60.0).start(), length);
+}
+
+#[test]
+fn young_runs_reclaim_the_dead_at_once_and_move_survivors_below_the_floor() {
+    let mut arena = ValueArena::default();
+    arena.register_shape(1, 3);
+    let ordinary = arena.with_values(1, &young_values(9.0)[..3]);
+    let mut runs: Vec<ValueVec> = (0..8).map(|n| young(&mut arena, f64::from(n))).collect();
+    assert!(runs.iter().all(|run| arena.holds_young_run(*run)));
+    assert!(!arena.holds_young_run(ordinary));
+    let floor = runs[0].start();
+    assert_eq!(floor, MIN_CAPACITY, "the nursery starts at the arena's end");
+    // A dead young run releases nothing.
+    arena.release(runs[1]);
+    assert_eq!(arena.stats().2, 0);
+    evacuate_survivors(&mut arena, &mut runs, floor);
     // The next cycle's runs reuse the reclaimed range above the survivors.
     assert_eq!(young(&mut arena, 20.0).start(), floor + 2 * MIN_CAPACITY);
     // A survivor takes a released run of its class before the floor.
@@ -83,20 +111,7 @@ fn young_runs_reclaim_the_dead_at_once_and_move_survivors_below_the_floor() {
     arena.evacuate_young(&mut survivor);
     assert_eq!(survivor.start(), floor);
     assert_eq!(arena.get(survivor, 1).unwrap().as_number(), Some(30.5));
-    // A range that no longer ends the arena serves young runs up to its end, then ordinary
-    // runs take over; one a compaction emptied starts again at the arena's end.
-    let _ = arena.with_values(1, &[Value::number(1.0); 5][..3]);
-    arena.finish_young_cycle();
-    let kept = young(&mut arena, 50.0);
-    assert!(arena.holds_young_run(kept), "the range stays");
-    let overflows = (0..NURSERY_GROWTH).any(|n| {
-        let run = young(&mut arena, n as f64);
-        !arena.holds_young_run(run)
-    });
-    assert!(overflows, "a range that cannot grow overflows into ordinary runs");
-    let length = arena.stats().0;
-    arena.finish_compaction(length);
-    assert_eq!(young(&mut arena, 60.0).start(), length);
+    nursery_growth_overflows_into_ordinary_runs(&mut arena);
 }
 
 #[test]
