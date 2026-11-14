@@ -1185,6 +1185,21 @@ impl Registers {
         None
     }
 
+    /// `number`, and whether the register held an int32.
+    #[inline(always)]
+    fn number_kind(self, register: u16) -> Option<(f64, bool)> {
+        // SAFETY: as for `number`.
+        let word = unsafe { self.0.add(usize::from(register)) };
+        let field = unsafe { word.cast::<u16>().add(3).read() };
+        if !crate::value::tag_field_is_tagged(field) {
+            return Some((unsafe { word.cast::<f64>().read() }, false));
+        }
+        if u32::from(field) << 16 == crate::value::INT_TAG_HIGH {
+            return Some((f64::from(unsafe { word.cast::<i32>().read() }), true));
+        }
+        None
+    }
+
     #[inline(always)]
     fn i32(self, register: u16) -> i32 {
         self.get(register).wasm_bits32() as i32
@@ -4499,6 +4514,20 @@ script_handler! {
     /// so this handler saves no registers for them.
     #[inline(never)]
     fn lane_operator_numbers<OP: u32>(cx, r, ip, i, view) {
+        // Arithmetic on two Numbers not both int32, its operands read in memory
+        // (`Registers::number`): such a pair notes no widening, so the feedback is untouched.
+        {
+            use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
+            if matches!(OP, ADDITION | SUBTRACTION | MULTIPLICATION | DIVISION)
+                && let Some((left, left_int)) = r.number_kind(i.b)
+                && let Some((right, right_int)) = r.number_kind(i.c)
+                && !(left_int && right_int)
+                && let Some(number) = super::operations::number_operator::<OP>(left, right)
+            {
+                r.set(i.a, Value::number(number));
+                next!(cx, r, following(ip), Carried::script_in(cx, view))
+            }
+        }
         let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), r.get(i.c))
         else {
             sibling!(lane_operator_other::<H, OP>, r, ip, Carried::script_in(cx, view))
@@ -8153,7 +8182,10 @@ script_handler! {
     /// (`integer_relation`); any other takes `lane_jump_binary_false_small_other`.
     fn lane_jump_binary_false_small<BACKWARD: bool, OP: u32, TABLE: bool>(cx, r, ip, i, view) {
         let right = lane_small_constant::<H, TABLE>(cx, i);
-        let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(i), r.get(i.b), right) else {
+        let Some(holds) = (match (r.int(i.b), right.as_int()) {
+            (Some(left), Some(right)) => super::operations::integer_relation_i32(relation_operator::<OP>(i), left, right),
+            _ => None,
+        }) else {
             sibling!(lane_jump_binary_false_small_other::<H, BACKWARD, TABLE>, r, ip, view)
         };
         if !holds {
