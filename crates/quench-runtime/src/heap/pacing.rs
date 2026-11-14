@@ -216,6 +216,11 @@ pub(super) struct PacingState {
     /// Weight minor collections promoted since the last full collection, which it compares
     /// with the old garbage it reclaims (`GenerationalPacing::promoted_garbage_aging`).
     promoted_since_full: usize,
+    /// Whether the last full collection found most of what minors promoted since the one
+    /// before dead (`GenerationalPacing::promoted_garbage_aging`): survivors that outlive a
+    /// young generation and die soon after, which a wider one frees young
+    /// (`GenerationalPacing::surviving_young_budget`).
+    promotions_die_old: bool,
     /// Whether minors promote at `PromotionAge::OLDEST`, and what decides when that changes.
     aging: Aging,
     /// Where the old-generation sizing stands (`GenerationalPacing::old_sizing`).
@@ -350,6 +355,7 @@ impl GenerationalPacing {
             // aging had just stopped freeing, not old garbage: it leaves the back-off reset.
             let aging_just_off = state.aging.off_since_no_full(self.aging_interval);
             state.aging.after_full(promoted_garbage);
+            state.promotions_die_old = promoted_garbage;
             state.promoted_since_full = 0;
             state.steady = state.live_after_last_full != 0
                 && outcome.live
@@ -382,7 +388,10 @@ impl GenerationalPacing {
             state.survival = (state.survival + survival) / 2;
         }
         let young = NextCollection {
-            threshold: self.surviving_young_budget(outcome.live, state.survival, state.steady),
+            // A heap whose promotions die old widens its young generation as a steady one
+            // does: Boyer's rewrites promote 40% of each young generation, and its full
+            // collections free most of it.
+            threshold: self.surviving_young_budget(outcome.live, state.survival, state.steady || state.promotions_die_old),
             full: self.next_full(state, &outcome),
         };
         match state.regime(self) {

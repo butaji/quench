@@ -295,3 +295,21 @@ fn aging_turning_off_resets_the_full_collection_back_off() {
     pacing.plan(&mut state, full_after_promoting(live, 1 << 14, 1 << 14));
     assert_eq!(state.cap_backoff, 1);
 }
+
+#[test]
+fn promotions_dying_old_widen_a_surviving_young_generation() {
+    let pacing = aging_on_evidence();
+    let mut state = PacingState::default();
+    let live = 1 << 16;
+    let promoted = 1 << 15;
+    // Minors keeping half of what they allocate, on a live set that grows past steady.
+    pacing.plan(&mut state, minor(live + promoted, live, promoted * 2));
+    pacing.plan(&mut state, minor(live + promoted * 2, live + promoted, promoted * 2));
+    let narrow = pacing.plan(&mut state, minor(live * 2, live + promoted * 2, promoted * 2)).threshold;
+    // The full collection finds those promotions dead: the next young generation widens.
+    pacing.plan(&mut state, full_after_promoting(live, live, 0));
+    let wide = pacing.plan(&mut state, minor(live + promoted, live, promoted * 2)).threshold;
+    assert!(state.survival >= pacing.surviving_young_from);
+    assert_eq!(wide, pacing.young_budget(live + promoted) * pacing.surviving_young_factor);
+    assert!(wide > narrow / 2);
+}
