@@ -94,6 +94,7 @@ impl<K: Copy + Eq + Hash, V: Copy> Default for ShapeMemo<K, V> {
 /// the top bits of its Fx hash. An Fx hash's low bits depend only on its input's low bits,
 /// so masking them would crowd keys built from small shape ids and heap indices into a few
 /// entries, which then evict each other on every use.
+#[inline(always)]
 pub(super) fn direct_mapped_index(key: impl Hash, entries: usize) -> usize {
     debug_assert!(entries.is_power_of_two() && entries > 1);
     direct_mapped_index_by_shift(key, direct_mapped_shift(entries))
@@ -101,6 +102,7 @@ pub(super) fn direct_mapped_index(key: impl Hash, entries: usize) -> usize {
 
 /// The shift that keeps the top bits of a hash naming one of `entries`
 /// (`direct_mapped_index`), for a table that derives it once for its size.
+#[inline(always)]
 pub(super) const fn direct_mapped_shift(entries: usize) -> u32 {
     u64::BITS - entries.trailing_zeros()
 }

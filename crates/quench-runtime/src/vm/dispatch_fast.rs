@@ -6550,7 +6550,7 @@ fn lane_getter_activation<H: Host>(
             let base = unsafe { lane_field_base(cx, r, site.base) }?;
             match site.second {
                 Some((atom, cache)) => {
-                    Some((lane_cached_field(cx, code, base, site.first.0, site.first.1)?, atom, cache))
+                    Some((lane_cached_field(cx, code, base, site.first.0, site.first.1, NO_PRIVATE_RECORD)?, atom, cache))
                 }
                 None => Some((base, site.first.0, site.first.1)),
             }
@@ -6658,14 +6658,14 @@ unsafe fn lane_field_value<H: Host>(
     if i.b == crate::bytecode::FieldBase::NESTED {
         let site = *code.field_sites.get(i.imm() as usize)?;
         let base = unsafe { lane_field_base(cx, r, site.base) }?;
-        let value = lane_cached_field(cx, code, base, site.first.0, site.first.1)?;
+        let value = lane_cached_field(cx, code, base, site.first.0, site.first.1, NO_PRIVATE_RECORD)?;
         return match site.second {
-            Some((atom, cache)) => lane_cached_field(cx, code, value, atom, cache),
+            Some((atom, cache)) => lane_cached_field(cx, code, value, atom, cache, NO_PRIVATE_RECORD),
             None => Some(value),
         };
     }
     let base = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }?;
-    lane_cached_field(cx, code, base, i.imm(), i.c)
+    lane_cached_field(cx, code, base, i.imm(), i.c, std::ptr::from_ref(i) as usize)
 }
 
 /// The object a field base names: a register, or `this` where the lane knows it.
@@ -6695,8 +6695,7 @@ fn lane_cached_field<H: Host>(
     cx: *mut LaneContext<H>,
     code: &ResidualProgram,
     object: Value,
-    atom: crate::bytecode::Atom,
-    site: u16,
+    atom: crate::bytecode::Atom, site: u16, record: usize,
 ) -> Option<Value> {
     let probe = {
         let vm = unsafe { vm(cx) };
@@ -6723,8 +6722,41 @@ fn lane_cached_field<H: Host>(
         // reach the same accessor and decline it.
         probe => unsafe { lane_getter_read(cx, object, atom, site) }.or_else(|| {
             // SAFETY: the context outlives the lane run.
-            lane_cached_field_miss(unsafe { vm(cx) }, code, object, atom, site, probe, unsafe { (*cx).env })
+            lane_cached_field_miss(cx, code, object, atom, site, probe, record)
         }),
+    }
+}
+
+/// The record of a private-name read the site's private home cache (`PrivateSiteHomes`)
+/// cannot serve: a field site names one atom per record, which a nested site's two do not.
+const NO_PRIVATE_RECORD: usize = 0;
+
+/// A private field's read from the object's private elements, before any cache, as the
+/// general loop's `GetField` does. Its home follows the running function and the environment
+/// its frame would capture from: the lane's frame, or a frameless activation's function and
+/// environment, whose frame would hold that environment as its closure's.
+#[inline(never)]
+fn lane_private_field_read<H: Host>(
+    cx: *mut LaneContext<H>,
+    code: &ResidualProgram,
+    object: Value,
+    atom: crate::bytecode::Atom,
+    record: usize,
+) -> Option<Value> {
+    // SAFETY: the context outlives the lane run.
+    let vm = unsafe { vm(cx) };
+    if record != NO_PRIVATE_RECORD {
+        let (environment, function, frame) = lane_private_site(cx)?;
+        let (brand, hint) = vm.site_private_brand(code, record, environment, function, frame, atom)?;
+        let data = vm.object_data(object)?;
+        return vm.site_private_position(record, data, brand, hint).and_then(|position| data.private_data(position));
+    }
+    match vm.lane_stack.activations.last() {
+        None => vm.private_field_value(code, object, atom),
+        Some(activation) => {
+            let function = activation.script().map(|_| activation.function)?;
+            vm.memoized_private_field_value(code, unsafe { (*cx).env }, function, object, atom)
+        }
     }
 }
 
@@ -6732,26 +6764,18 @@ fn lane_cached_field<H: Host>(
 /// keeps the lookups' stack locals, which would cost it the tail call to the next record.
 #[inline(never)]
 fn lane_cached_field_miss<H: Host>(
-    vm: &mut Vm<H>,
+    cx: *mut LaneContext<H>,
     code: &ResidualProgram,
     object: Value,
     atom: crate::bytecode::Atom,
     site: u16,
     probe: super::object::FieldCacheProbe,
-    environment: Value,
+    record: usize,
 ) -> Option<Value> {
-    // A private field reads from the object's private elements before any cache, as the
-    // general loop's `GetField` does. Its home follows the running function and the
-    // environment its frame would capture from: the lane's frame, or a frameless activation's
-    // function and environment, whose frame would hold that environment as its closure's.
+    // SAFETY: the context outlives the lane run.
+    let vm = unsafe { vm(cx) };
     if vm.is_private_name(atom) {
-        return match vm.lane_stack.activations.last() {
-            None => vm.private_field_value(code, object, atom),
-            Some(activation) => {
-                let function = activation.script().map(|_| activation.function)?;
-                vm.memoized_private_field_value(code, environment, function, object, atom)
-            }
-        };
+        return lane_private_field_read(cx, code, object, atom, record);
     }
     match probe {
         super::object::FieldCacheProbe::Hit(value) => Some(value),
@@ -6945,7 +6969,7 @@ fn lane_private_brand<H: Host>(
     ip: Ip,
     code: &ResidualProgram,
     atom: crate::bytecode::Atom,
-) -> Option<crate::heap::PrivateBrand> {
+) -> Option<(crate::heap::PrivateBrand, usize)> {
     let (environment, function, frame) = lane_private_site(cx)?;
     unsafe { vm(cx) }.site_private_brand(code, ip.addr(), environment, function, frame, atom)
 }
@@ -6985,10 +7009,14 @@ fn lane_private_field_store<H: Host>(
     atom: crate::bytecode::Atom,
     value: Value,
 ) -> bool {
-    let Some(brand) = lane_private_brand(cx, ip, code, atom) else {
+    let Some((brand, hint)) = lane_private_brand(cx, ip, code, atom) else {
         return false;
     };
-    (unsafe { vm(cx) }).object_data_mut(object).is_some_and(|data| data.set_private_field(brand, value))
+    let vm = unsafe { vm(cx) };
+    let Some(position) = vm.object_data(object).and_then(|data| vm.site_private_position(ip.addr(), data, brand, hint)) else {
+        return false;
+    };
+    vm.object_data_mut(object).is_some_and(|data| data.set_private_data(position, value))
 }
 
 /// Leave the lane at `ip` after its instruction failed with `error` before any effect: a frame
@@ -7111,8 +7139,11 @@ script_handler! {
     fn lane_check_private<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let present = lane_private_brand(cx, ip, code, i.imm()).is_some_and(|brand| {
-            (unsafe { vm(cx) }).object_data(r.get(i.a)).is_some_and(|data| data.private_field(brand).is_some())
+        let present = lane_private_brand(cx, ip, code, i.imm()).is_some_and(|(brand, hint)| {
+            let vm = unsafe { vm(cx) };
+            vm.object_data(r.get(i.a)).is_some_and(|data| {
+                vm.site_private_position(ip.addr(), data, brand, hint).and_then(|position| data.private_data(position)).is_some()
+            })
         });
         if !present {
             sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))
@@ -7145,8 +7176,9 @@ script_handler! {
     fn lane_private_in<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let carries = lane_private_brand(cx, ip, code, i.imm()).and_then(|brand| {
-            (unsafe { vm(cx) }).object_data(r.get(i.b)).map(|data| data.has_private_name(brand))
+        let carries = lane_private_brand(cx, ip, code, i.imm()).and_then(|(brand, hint)| {
+            let vm = unsafe { vm(cx) };
+            vm.object_data(r.get(i.b)).map(|data| vm.site_private_position(ip.addr(), data, brand, hint).is_some())
         });
         let Some(carries) = carries else {
             sibling!(lane_general_step::<H>, r, ip, Carried::script(cx))
@@ -7166,13 +7198,15 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let read = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }.and_then(|object| {
-            let brand = lane_private_brand(cx, ip, code, i.imm())?;
-            let data = (unsafe { vm(cx) }).object_data(object)?;
-            match data.private_field(brand) {
+            let (brand, hint) = lane_private_brand(cx, ip, code, i.imm())?;
+            let vm = unsafe { vm(cx) };
+            let data = vm.object_data(object)?;
+            let position = vm.site_private_position(ip.addr(), data, brand, hint);
+            match position.and_then(|position| data.private_data(position)) {
                 Some(value) => Some(PrivateRead::Value(value)),
                 // A method or accessor of a brand the object carries (`Vm::site_private_element`).
-                None if data.has_private_name(brand) => {
-                    match (unsafe { vm(cx) }).site_private_element(ip.addr(), brand, object)? {
+                None if position.is_some() => {
+                    match vm.site_private_element(ip.addr(), brand, object)? {
                         super::private_site_home::PrivateElement::Method(value) => Some(PrivateRead::Value(value)),
                         super::private_site_home::PrivateElement::Getter(getter) => Some(PrivateRead::Getter(object, getter)),
                     }
@@ -14055,14 +14089,14 @@ fn lane_forwarded_construction<H: Host>(
         .flatten()
     {
         Some(function) => function,
-        None => lane_cached_field(cx, code, this, method.method.0, method.method.1)?,
+        None => lane_cached_field(cx, code, this, method.method.0, method.method.1, NO_PRIVATE_RECORD)?,
     };
     let apply = match (!vm.reads_function_info(method.apply.0))
         .then(|| vm.cell_holder_field_hit(code, function, method.apply.1))
         .flatten()
     {
         Some(apply) => apply,
-        None => lane_cached_field(cx, code, function, method.apply.0, method.apply.1)?,
+        None => lane_cached_field(cx, code, function, method.apply.0, method.apply.1, NO_PRIVATE_RECORD)?,
     };
     if !matches!(
         vm.heap.function(apply),

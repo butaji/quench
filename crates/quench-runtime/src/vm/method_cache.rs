@@ -166,28 +166,20 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn record_method_cache(&mut self, site: usize, cache: MethodCache) {
         self.method_cache_atoms.name(cache.atom);
-        if let Some(set) = self
-            .megamorphic_methods
-            .iter_mut()
-            .find(|set| set.site == site)
-        {
-            let held = &mut set.entries[..usize::from(set.len)];
-            let named = held.iter().any(|entry| entry.atom == cache.atom);
-            if let Some(entry) = held.iter_mut().find(|entry| entry.records_same(&cache)) {
+        if let Some(set) = self.megamorphic_methods.iter_mut().find(|set| set.site == site) {
+            let len = usize::from(set.len);
+            if let Some(entry) = set.entries[..len].iter_mut().find(|entry| entry.records_same(&cache)) {
                 *entry = cache;
-            } else if usize::from(set.len) < super::compiled::tier_policy::POLYMORPHISM {
-                set.entries[usize::from(set.len)] = cache;
+            } else if len < super::compiled::tier_policy::POLYMORPHISM {
+                set.entries[len] = cache;
                 set.len += 1;
-            }
-            if !named {
                 self.method_cache_atoms.list_site(cache.atom, site, true);
             }
             return;
         }
         let entries = &mut self.method_caches[site];
-        if entries.iter().any(|entry| entry.records_same(&cache)) || entries[1].target.is_none()
-        {
-            let named = entries.iter().any(|entry| entry.atom == cache.atom);
+        if entries.iter().any(|entry| entry.records_same(&cache)) || entries[1].target.is_none() {
+            let named = entries[0].atom == cache.atom || entries[1].atom == cache.atom;
             entries[1] = entries[0];
             entries[0] = cache;
             if !named {
@@ -203,7 +195,7 @@ impl<H: Host> Vm<H> {
         set.entries[..METHOD_CACHE_WAYS].copy_from_slice(entries);
         set.entries[METHOD_CACHE_WAYS] = cache;
         // The entries the set now holds are listed with its flag.
-        for entry in set.entries[..=METHOD_CACHE_WAYS].iter().filter(|entry| entry.target.is_some()) {
+        for entry in &set.entries[..=METHOD_CACHE_WAYS] {
             self.method_cache_atoms.list_site(entry.atom, site, true);
         }
         self.megamorphic_methods.push(set);

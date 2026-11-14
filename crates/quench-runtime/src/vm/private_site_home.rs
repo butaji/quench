@@ -28,6 +28,9 @@ struct SiteHome {
     environment: Value,
     home: Value,
     element: Option<PrivateElement>,
+    /// Where the site last found the name's element among an object's private elements
+    /// (`Object::private_position`), saturated at `u8::MAX`.
+    position: u8,
 }
 
 /// A private name's method or accessor, which an object carrying its brand reads.
@@ -46,26 +49,33 @@ pub(super) struct PrivateSiteHomes {
 
 
 impl PrivateSiteHomes {
+    #[inline(always)]
     fn index(site: usize) -> usize {
         super::shape_memo::direct_mapped_index(site, PRIVATE_SITE_HOME_ENTRIES)
     }
 
-    /// The home site `site` found for `environment`.
+    /// The home site `site` found for `environment`, and where it last found its name's
+    /// element among an object's private elements (`note_position`).
     #[inline(always)]
-    pub(super) fn home(&self, site: usize, environment: Value) -> Option<Value> {
+    pub(super) fn home(&self, site: usize, environment: Value) -> Option<(Value, usize)> {
         let entry = self.entries.get(Self::index(site))?;
-        (entry.site == site && entry.environment == environment).then_some(entry.home)
+        (entry.site == site && entry.environment == environment).then_some((entry.home, usize::from(entry.position)))
     }
 
     pub(super) fn record(&self, site: usize, environment: Value, home: Value) {
         let index = Self::index(site);
         // The element found under the same home stays (`element`).
-        let element = self
-            .entries
-            .get(index)
-            .filter(|entry| entry.site == site && entry.home == home)
-            .and_then(|entry| entry.element);
-        self.entries.set(index, SiteHome { site, environment, home, element });
+        let kept = self.entries.get(index).filter(|entry| entry.site == site && entry.home == home);
+        self.entries.set(
+            index,
+            SiteHome {
+                site,
+                environment,
+                home,
+                element: kept.and_then(|entry| entry.element),
+                position: kept.map_or(0, |entry| entry.position),
+            },
+        );
     }
 
     /// The private method or accessor site `site` found for its name under `home`
@@ -87,6 +97,18 @@ impl PrivateSiteHomes {
         }
     }
 
+    /// Records that site `site` found its name's element at `position`.
+    #[inline(always)]
+    pub(super) fn note_position(&self, site: usize, position: usize) {
+        let index = Self::index(site);
+        if let Some(entry) = self.entries.get(index)
+            && entry.site == site
+        {
+            let position = u8::try_from(position).unwrap_or(u8::MAX);
+            self.entries.set(index, SiteHome { position, ..entry });
+        }
+    }
+
     pub(super) fn clear(&self) {
         self.entries.clear();
     }
@@ -105,8 +127,20 @@ impl PrivateSiteHomes {
 }
 
 impl<H: Host> Vm<H> {
+    /// The position of the element carrying `brand` among `data`'s private elements, found
+    /// from `hint`, where lane site `site` found its last; a new position is recorded for the
+    /// next.
+    #[inline(always)]
+    pub(super) fn site_private_position(&self, site: usize, data: &super::Object, brand: PrivateBrand, hint: usize) -> Option<usize> {
+        let position = data.private_position(brand, hint)?;
+        if position != hint {
+            self.private_site_homes.note_position(site, position);
+        }
+        Some(position)
+    }
+
     /// The private brand of `atom` at lane site `site` of `function`, whose frame captures
-    /// from `environment`: the home the site found last for that environment, inline, else
+    /// from `environment`, with the position its name's element had last: the home the site found last for that environment, inline, else
     /// `site_private_brand_miss`. `None` leaves the access to the general path.
     #[inline(always)]
     pub(super) fn site_private_brand(
@@ -117,10 +151,10 @@ impl<H: Host> Vm<H> {
         function: u32,
         frame: bool,
         atom: Atom,
-    ) -> Option<PrivateBrand> {
+    ) -> Option<(PrivateBrand, usize)> {
         match self.private_site_homes.home(site, environment) {
-            Some(home) => Some(PrivateBrand { home, name: atom }),
-            None => self.site_private_brand_miss(p, site, environment, function, frame, atom),
+            Some((home, hint)) => Some((PrivateBrand { home, name: atom }, hint)),
+            None => Some((self.site_private_brand_miss(p, site, environment, function, frame, atom)?, 0)),
         }
     }
 
