@@ -31,7 +31,7 @@ script_handler! {
         if target.entry != CallEntry::leaf(LEAF) {
             std::hint::cold_path();
             if target.entry == CallEntry::Activates {
-                lane_plain_activation!(cx, vm, r, ip, i, target, ARGC)
+                lane_plain_activation!(cx, vm, r, ip, i, target, ARGC, false)
             }
             let other: Handler = match target.entry.leaf_form() {
                 PLAIN_LEAF => lane_script_call_leaf::<H, PLAIN_LEAF, ARGC>,

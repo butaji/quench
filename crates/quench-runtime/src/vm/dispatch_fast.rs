@@ -12329,8 +12329,10 @@ script_handler! {
     /// push would have set held by the activation until it returns or the lane exits.
     /// Any other call takes the general path. `ARGC` is the record's argument count where
     /// the view resolved it (`script_call_handler`), so the window's copy makes no test, else
-    /// `ANY_ARGC`.
-    fn lane_script_call<ARGC: u16>(cx, r, ip, i, view) {
+    /// `ANY_ARGC`. `PLAIN` where the record's receiver is its function's `undefined`
+    /// register (`Function::undefined_register`, `specialize_script_calls`), whose value the
+    /// handler then knows without reading it.
+    fn lane_script_call<ARGC: u16, PLAIN: bool>(cx, r, ip, i, view) {
         if !unsafe { (*cx).script_calls } {
             return exit(ip);
         }
@@ -12351,7 +12353,7 @@ script_handler! {
         }
         #[cfg(feature = "profile-lane-exits")]
         profile_script_call_target(cx, ip, callee, target);
-        lane_plain_activation!(cx, vm, r, ip, i, target, ARGC)
+        lane_plain_activation!(cx, vm, r, ip, i, target, ARGC, PLAIN)
     }
 }
 
@@ -12359,11 +12361,13 @@ script_handler! {
 /// whose argument count is `ARGC` (`call_argument_count`), past its target's proof
 /// (`lane_script_call`, `lane_script_call_leaf`).
 macro_rules! lane_plain_activation {
-    ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident) => {{
+    ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident, $plain:expr) => {{
         let (cx, vm, r, ip, i, target) = ($cx, $vm, $r, $ip, $i, $target);
+        // A plain call's receiver is `undefined` by its record (`lane_script_call`'s `PLAIN`).
+        let receiver = if $plain { Value::UNDEFINED } else { r.get(i.c) };
         // A receiver whose binding needs the heap takes the out-of-line form, so this
         // handler makes no call and keeps its registers.
-        let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else {
+        let Some(this) = lane_direct_call_this(vm, target, receiver) else {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         };
         // Values past the parameters and a full lane stack take the out-of-line form too,
@@ -12469,22 +12473,34 @@ fn call_argument_count<const ARGC: u16>(i: &LaneInstruction) -> u16 {
 /// its argument count where the copy of its window is one fixed move
 /// (`FIXED_ARGUMENT_COPIES`), else the general one.
 fn script_call_handler<H: Host>(imm: u32) -> Handler {
+    script_call_handler_of::<H, false>(imm)
+}
+
+/// `script_call_handler` of a record whose receiver is its function's `undefined` register
+/// where `PLAIN`.
+fn script_call_handler_of<H: Host, const PLAIN: bool>(imm: u32) -> Handler {
     const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
     match ImmediateLayout::argument_count(imm) {
-        0 => lane_script_call::<H, 0>,
-        1 => lane_script_call::<H, 1>,
-        2 => lane_script_call::<H, 2>,
-        3 => lane_script_call::<H, 3>,
-        4 => lane_script_call::<H, 4>,
-        _ => lane_script_call::<H, ANY_ARGC>,
+        0 => lane_script_call::<H, 0, PLAIN>,
+        1 => lane_script_call::<H, 1, PLAIN>,
+        2 => lane_script_call::<H, 2, PLAIN>,
+        3 => lane_script_call::<H, 3, PLAIN>,
+        4 => lane_script_call::<H, 4, PLAIN>,
+        _ => lane_script_call::<H, ANY_ARGC, PLAIN>,
     }
 }
 
-/// Gives each call record the `lane_script_call` instantiation of its argument count.
-fn specialize_script_calls<H: Host>(records: &mut [LaneInstruction]) {
-    let general = lane_script_call::<H, ANY_ARGC> as Handler as *const ();
+/// Gives each call record the `lane_script_call` instantiation of its argument count, and
+/// of a receiver that is the function's `undefined` register (`undefined`).
+fn specialize_script_calls<H: Host>(records: &mut [LaneInstruction], undefined: Option<crate::bytecode::Register>) {
+    let general = lane_script_call::<H, ANY_ARGC, false> as Handler as *const ();
     for record in records.iter_mut().filter(|record| record.handler == general) {
-        record.handler = script_call_handler::<H>(record.imm()) as *const ();
+        let handler = if undefined.is_some_and(|register| u16::from(register) == record.c) {
+            script_call_handler_of::<H, true>(record.imm())
+        } else {
+            script_call_handler::<H>(record.imm())
+        };
+        record.handler = handler as *const ();
     }
 }
 
@@ -12749,7 +12765,7 @@ script_handler! {
             super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
                 sibling!(lane_generator_step::<H>, r, ip, Carried::script_in(cx, view))
             }
-            super::iterators::IterationStep::Call => sibling!(lane_script_call::<H, ANY_ARGC>, r, ip, Carried::script_in(cx, view)),
+            super::iterators::IterationStep::Call => sibling!(lane_script_call::<H, ANY_ARGC, false>, r, ip, Carried::script_in(cx, view)),
             _ => {}
         }
         let Some(result) = lane_array_iteration_result(vm, iterator) else {
@@ -12856,7 +12872,7 @@ script_handler! {
         }
         let Some(target) = vm.linked_cross_call_entry(callee, &i.call_link) else {
             requicken::<H>(ip, script_call_handler::<H>(i.imm()));
-            sibling!(lane_script_call::<H, ANY_ARGC>, r, ip, Carried::script_in(cx, view))
+            sibling!(lane_script_call::<H, ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
@@ -12903,7 +12919,7 @@ script_handler! {
         }
         if let Some(target) = vm.resolve_script_call_target(code, callee) {
             if target.program == vm.active_program {
-                sibling!(lane_script_call::<H, ANY_ARGC>, r, ip, Carried::script_in(cx, view))
+                sibling!(lane_script_call::<H, ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
             }
             // Another program's callee that needs a frame takes it as `lane_frame_call`
             // pushes one.
@@ -18723,7 +18739,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::WasmGlobalSet => Some(lane_global_set::<H>),
         Class::WasmFillRegisters => Some(lane_fill_registers::<H>),
         Class::CallKnown => Some(known_call_handler::<H>()),
-        Class::Call => Some(lane_script_call::<H, ANY_ARGC>),
+        Class::Call => Some(lane_script_call::<H, ANY_ARGC, false>),
         Class::CallArray => Some(lane_call_array::<H>),
         Class::CallSpread => Some(lane_call_spread::<H>),
         Class::Delete => Some(lane_delete::<H>),
@@ -20217,7 +20233,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_int32_truncations::<H>(&mut records, live().map(|masks| &**masks));
         specialize_capture_updates::<H>(&mut records);
         specialize_constant_returns::<H>(&mut records);
-        specialize_script_calls::<H>(&mut records);
+        specialize_script_calls::<H>(&mut records, function.undefined_register);
         specialize_proved_arrays::<H>(&decoded, &mut records, &raw_results::raw_result_triples(&decoded, &function.handlers, || live().map(|masks| &**masks)));
         specialize_moved_index_reads::<H>(&mut records);
         specialize_relation_jumps::<H>(&mut records);
