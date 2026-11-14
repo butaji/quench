@@ -19,6 +19,11 @@ pub(in crate::vm) enum VarOwner {
     Window,
 }
 
+/// The activation index a `Vm::step` of the running window activation names, which has no frame
+/// (`Vm::step_owner`): the lane's step of a record of a frameless activation passes it where the
+/// interpreter passes its frame.
+pub(in crate::vm) const WINDOW_ACTIVATION: usize = usize::MAX;
+
 /// A direct eval run from a lane activation: the activation's record, which owns the eval's
 /// variable environment, and the depth of the frame stack the eval's code runs above
 /// (`Vm::eval_callers`).
@@ -29,6 +34,12 @@ pub(in crate::vm) struct EvalCaller {
 }
 
 impl<H: Host> Vm<H> {
+    /// The owner a step made for the activation `activation` runs over: the frame, or the running
+    /// activation of the lane's frameless ones (`WINDOW_ACTIVATION`), which `running_owner` reads.
+    pub(super) fn step_owner(&mut self, activation: usize) -> VarOwner {
+        if activation == WINDOW_ACTIVATION { self.running_owner() } else { VarOwner::Frame(activation) }
+    }
+
     /// `owner` as it stands: a window owner whose activations became frames is the innermost frame.
     fn live_owner(&self, owner: VarOwner) -> VarOwner {
         match owner {
@@ -183,8 +194,7 @@ impl<H: Host> Vm<H> {
         self.owner_locals(owner).get(slot).copied()
     }
 
-    /// `value` stored to `slot` of `owner`'s function, mirrored into a mapped `arguments` of a
-    /// frame (a record's or a window's activation reflects none: `Function::locals_ride_window`);
+    /// `value` stored to `slot` of `owner`'s function, mirrored into a mapped `arguments`;
     /// `false` where it has no such slot.
     pub(super) fn store_owner_slot(&mut self, owner: VarOwner, slot: usize, value: Value) -> bool {
         let Some(program) = self.programs.get(self.owner_view(owner).program()) else {
@@ -194,9 +204,7 @@ impl<H: Host> Vm<H> {
             return false;
         };
         *binding = value;
-        if let Some(frame) = self.owner_frame(owner) {
-            self.mapped_argument_store(&program, frame, slot, value);
-        }
+        self.mapped_argument_store(&program, owner, slot, value);
         true
     }
 

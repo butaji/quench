@@ -2995,7 +2995,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let binding = if unsafe { (*cx).env }.is_deleted() {
             // SAFETY: the context's program outlives the lane run.
-            vm.frame_binding_mut(unsafe { &*(*cx).code }, unsafe { (*cx).frame() }, slot)
+            vm.owner_binding_mut(unsafe { &*(*cx).code }, VarOwner::Frame(unsafe { (*cx).frame() }), slot)
         } else if ENVIRONMENT {
             // SAFETY: as `lane_store_window_local_window`'s write to the window's storage; a marker needs no barrier.
             if unsafe { crate::staged::environment::concrete_environment_slot_open(window_storage(r, registers), slot as u16) } {
@@ -3209,12 +3209,12 @@ lane_handler! {
 
 script_handler! {
     /// `InitializeTdz`: opens the binding's dead zone wherever the frame keeps it, as the
-    /// general path does (`Vm::frame_binding_mut`).
+    /// general path does (`Vm::owner_binding_mut`).
     fn lane_initialize_tdz<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
-        let Some(binding) = (unsafe { vm(cx) }).frame_binding_mut(
+        let Some(binding) = (unsafe { vm(cx) }).owner_binding_mut(
             unsafe { &*(*cx).code },
-            unsafe { (*cx).frame() },
+            VarOwner::Frame(unsafe { (*cx).frame() }),
             i.imm() as usize,
         ) else {
             return exit(ip);
@@ -3445,7 +3445,7 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
         .and_then(|row| row.call_out()).expect("a result step is a call-out row");
     let operands = operation.operands().read(&code.method_arguments, |register| r.get(register));
     let Some(value) = lane_in_place(cx, ip, |vm, code| {
-        let site = super::call_out::CallSite { frame: vm.frames.len().saturating_sub(1), function, resume: pc + 1 };
+        let site = super::call_out::CallSite { owner: VarOwner::Frame(vm.frames.len().saturating_sub(1)), function, resume: pc + 1 };
         vm.call_out(code, site, operation, operands)
     }) else {
         return Resumed::Exit(exit(ip));
@@ -5019,7 +5019,7 @@ fn lane_projected_capture<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u1
     let vm = unsafe { vm(cx) };
     let env = unsafe { (*cx).env };
     let env = if env.is_deleted() {
-        vm.capture_env(unsafe { (*cx).frame() }, depth)?
+        vm.owner_capture_env(VarOwner::Frame(unsafe { (*cx).frame() }), depth)?
     } else {
         vm.environment_capture_env(env, false, depth)?
     };
@@ -5040,7 +5040,7 @@ fn lane_frame_capture<H: Host>(cx: *mut LaneContext<H>) -> Option<*const usize> 
     // SAFETY: the frame's cache names live slots this collection; none runs in the lane.
     let dense = unsafe { &*slots }.dense_storage()?;
     // The cache's slots are those of the frame's depth-0 capture environment.
-    let env = vm.capture_env(frame, 0)?;
+    let env = vm.owner_capture_env(VarOwner::Frame(frame), 0)?;
     // SAFETY: the context's program outlives the lane run.
     let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
     if vm.admits_every_direct_store(code, program, env) {
@@ -14556,7 +14556,7 @@ script_handler! {
         let frame = unsafe { (*cx).frame() };
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Ok(binding) = vm.load_local_binding(code, frame, i.imm() as usize, None) else {
+        let Ok(binding) = vm.load_local_binding(code, VarOwner::Frame(frame), i.imm() as usize, None) else {
             return exit(ip);
         };
         let kept = &vm.frames[frame].original_arguments;

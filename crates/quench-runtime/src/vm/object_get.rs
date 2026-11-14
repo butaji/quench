@@ -1216,7 +1216,7 @@ impl<H: Host> Vm<H> {
         if let Some(binding) = self.name_binding(self.frame_caller(frame_index), atom)
             && binding.kind == crate::bytecode::LexicalBindingKind::PrivateName
         {
-            let home = self.load_name_binding(p, frame_index, binding).ok();
+            let home = self.load_name_binding(p, VarOwner::Frame(frame_index), binding).ok();
             if static_bindings && let Some(home) = home {
                 self.private_homes.insert(key, home);
             }

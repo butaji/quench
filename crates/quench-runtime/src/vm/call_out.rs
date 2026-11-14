@@ -26,12 +26,12 @@ pub(crate) mod counts {
     }
 }
 
-/// Where a call-out runs: the running frame, the function whose code holds the instruction (the
-/// strictness a refusal throws by), and the PC after its instruction, which the binding rules of
-/// a name read for their error site.
+/// Where a call-out runs: the owner of the running activation's variables and registers, the
+/// function whose code holds the instruction (the strictness a refusal throws by), and the PC
+/// after its instruction, which the binding rules of a name read for their error site.
 #[derive(Clone, Copy)]
 pub(super) struct CallSite {
-    pub(super) frame: usize,
+    pub(super) owner: VarOwner,
     pub(super) function: u32,
     pub(super) resume: usize,
 }
@@ -72,47 +72,50 @@ impl<H: Host> Vm<H> {
     }
 
     /// The name, environment and arguments steps of `call_out`, by the binding rules of the
-    /// running frame; `value` is the operand a store takes.
+    /// running activation; `value` is the operand a store takes.
     fn name_step(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut, value: Option<Value>)
         -> Result<Option<Value>, JsError> {
-        let site = if operation.reads_frame_locals() { self.own_frame(site) } else { site };
-        let CallSite { frame, resume, .. } = site;
+        let owner = if operation.reads_frame_locals() { self.own_frame(site.owner) } else { site.owner };
+        let resume = site.resume;
         let value = value.unwrap_or(Value::UNDEFINED);
         match operation {
-            CallOut::LoadEnvLocal { slot } => self.load_local_binding(p, frame, usize::from(slot), None).map(Some),
+            CallOut::LoadEnvLocal { slot } => self.load_local_binding(p, owner, usize::from(slot), None).map(Some),
             CallOut::StoreEnvLocal { slot, initialize, .. } => {
-                Ok(self.store_env_local(p, frame, usize::from(slot), value, initialize)?.then_some(value))
+                Ok(self.store_env_local(p, owner, usize::from(slot), value, initialize)?.then_some(value))
             }
             CallOut::ArgumentsLength { slot } => {
-                let binding = self.load_local_binding(p, frame, usize::from(slot), None)?;
+                let binding = self.load_local_binding(p, owner, usize::from(slot), None)?;
+                let frame = self.owner_frame(owner).expect("an arguments length reads its own frame");
                 self.read_arguments_binding(p, frame, binding, None).map(Some)
             }
             CallOut::GlobalWrite { atom, site, initialize, .. } => {
-                self.at_binding_site(frame, resume, |vm| vm.store_name(p, atom, value, site, initialize))?;
+                self.at_binding_site(owner, resume, |vm| vm.store_name(p, owner, atom, value, site, initialize))?;
                 Ok(None)
             }
             CallOut::GlobalTypeof { atom, site } =>
-                self.at_binding_site(frame, resume, |vm| vm.load_name_typeof(p, atom, site)).map(Some),
+                self.at_binding_site(owner, resume, |vm| vm.load_name_typeof(p, owner, atom, site)).map(Some),
             CallOut::LoadName { atom, site } =>
-                self.at_binding_site(frame, resume, |vm| vm.load_name(p, atom, Some(site))).map(Some),
+                self.at_binding_site(owner, resume, |vm| vm.load_name(p, owner, atom, Some(site))).map(Some),
             _ => unreachable!("{operation:?} is no name step"),
         }
     }
 
-    /// The store of `value` to environment local `slot` of frame `f`: a `with` scope's binding
-    /// first, then the initialization, constant and function-name rules, a global `var`'s property,
-    /// and at last the frame's binding with its mirrors. Whether the store defines the
-    /// instruction's result: a sloppy assignment to a function's own name does not.
-    pub(super) fn store_env_local(&mut self, p: &ResidualProgram, f: usize, slot: usize, value: Value,
+    /// The store of `value` to environment local `slot` of the activation `owner` names: a `with`
+    /// scope's binding first, then the initialization, constant and function-name rules, a global
+    /// `var`'s property, and at last the activation's binding with its mirrors. Whether the store
+    /// defines the instruction's result: a sloppy assignment to a function's own name does not.
+    pub(super) fn store_env_local(&mut self, p: &ResidualProgram, owner: VarOwner, slot: usize, value: Value,
         initialize: bool) -> Result<bool, JsError> {
-        let function = p.function(self.frames[f].function as usize);
+        let view = self.owner_view(owner);
+        let (program, running) = (view.program(), view.function());
+        let function = p.function(running as usize);
         let atom = function.local_atoms.get(slot).copied();
         if let Some(atom) = atom
-            && self.store_with_binding(p, f, atom, value, function.strict)?
+            && self.store_with_binding(p, owner, atom, value, function.strict)?
         {
             return Ok(true);
         }
-        self.check_local_assignment_initialized(p, f, slot, initialize)?;
+        self.check_local_assignment_initialized(p, owner, slot, initialize)?;
         if let Some(atom) = atom
             && function.declares_global_immutable(atom)
             && !initialize
@@ -125,7 +128,7 @@ impl<H: Host> Vm<H> {
             }
             return Ok(false);
         }
-        let global_var = self.root_global_var_atom(p, self.frames[f].program, self.frames[f].function, slot);
+        let global_var = self.root_global_var_atom(p, program, running, slot);
         if let Some(atom) = global_var {
             let globals = self.realm.globals;
             let written = self.set_property_with_receiver(p, globals, atom, value, globals)?;
@@ -134,26 +137,26 @@ impl<H: Host> Vm<H> {
             }
             return Ok(true);
         }
-        self.mirror_global_lexical_binding(p, f, slot, value);
-        *self.frame_binding_mut(p, f, slot).ok_or_else(|| JsError("invalid local environment".into()))? = value;
-        self.mapped_argument_store(p, f, slot, value);
+        self.mirror_global_lexical_binding(p, owner, slot, value);
+        *self.owner_binding_mut(p, owner, slot).ok_or_else(|| JsError("invalid local environment".into()))? = value;
+        self.mapped_argument_store(p, owner, slot, value);
         Ok(true)
     }
 
-    /// `site` in the running function's own frame. A step made beside frameless activations
+    /// `owner` in the running function's own frame. A step made beside frameless activations
     /// (`lane_in_place`) has the caller's frame innermost, which holds none of the function's
     /// locals: the activations become frames first, as guest code would make them.
-    fn own_frame(&mut self, site: CallSite) -> CallSite {
-        if self.lane_deferred.is_none() { return site; }
+    fn own_frame(&mut self, owner: VarOwner) -> VarOwner {
+        if self.lane_deferred.is_none() { return owner; }
         self.materialize_deferred_lane();
-        CallSite { frame: self.frames.len() - 1, ..site }
+        VarOwner::Frame(self.frames.len() - 1)
     }
 
-    /// `action` with `resume` as the frame's binding-site PC, restored after.
-    fn at_binding_site<T>(&mut self, frame: usize, resume: usize, action: impl FnOnce(&mut Self) -> T) -> T {
-        let previous = self.frames[frame].binding_site_pc.replace(resume as u32);
+    /// `action` with `resume` as the activation's binding-site PC, restored after.
+    fn at_binding_site<T>(&mut self, owner: VarOwner, resume: usize, action: impl FnOnce(&mut Self) -> T) -> T {
+        let previous = self.replace_binding_site(owner, Some(resume as u32));
         let result = action(self);
-        self.frames[frame].binding_site_pc = previous;
+        self.replace_binding_site(owner, previous);
         result
     }
 
@@ -230,11 +233,11 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
     fn fact(&self, _register: Register) {}
 
     fn read(&mut self, _stage: &mut Concrete, register: Register) -> u64 {
-        self.vm.read(self.site.frame, register).to_bits()
+        self.vm.owner_register(self.site.owner, register).to_bits()
     }
 
     fn write(&mut self, _stage: &mut Concrete, register: Register, value: u64, _fact: ()) {
-        self.vm.write(self.site.frame, register, Value::from_bits(value));
+        self.vm.set_owner_register(self.site.owner, register, Value::from_bits(value));
     }
 
     fn this(&mut self, _stage: &mut Concrete) -> u64 { Value::DELETED.to_bits() }
@@ -258,8 +261,8 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
     }
 
     fn vm_step(&mut self, _stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, ())> {
-        let (vm, frame) = (&*self.vm, self.site.frame);
-        let operands = operation.operands().read(&self.program.method_arguments, |register| vm.read(frame, register));
+        let (vm, owner) = (&*self.vm, self.site.owner);
+        let operands = operation.operands().read(&self.program.method_arguments, |register| vm.owner_register(owner, register));
         match self.vm.call_out(self.program, self.site, operation, operands) {
             Ok(value) => Some((value.map_or(0, Value::to_bits), ())),
             Err(error) => {
