@@ -1,7 +1,7 @@
 //! Where an activation's variable environment lives: the `var`s a direct eval introduces and
-//! the binding sites its closures capture are state of one owner, a VM frame or the record of
-//! a lane activation (`FrameRecord`), and every reader and mutator of that state goes through
-//! the owner, not through a frame index.
+//! the binding sites its closures capture are state of one owner, a VM frame, the record of a
+//! lane activation (`FrameRecord`) or the window of the activation a lane runs without a frame,
+//! and every reader and mutator of that state goes through the owner, not through a frame index.
 use super::activation::FrameRecord;
 use super::caller_view::CallerView;
 use super::*;
@@ -12,6 +12,11 @@ use super::*;
 pub(in crate::vm) enum VarOwner {
     Frame(usize),
     Record(*mut FrameRecord),
+    /// The innermost activation of a lane native call's frameless activations, whose scope
+    /// `Vm::running_owner` read (`Vm::running_window`): its environment window holds its locals
+    /// and its registers its operands. Once guest code made the activations frames
+    /// (`Vm::materialize_deferred_lane`) it is the innermost frame.
+    Window,
 }
 
 /// A direct eval run from a lane activation: the activation's record, which owns the eval's
@@ -24,24 +29,67 @@ pub(in crate::vm) struct EvalCaller {
 }
 
 impl<H: Host> Vm<H> {
-    /// The view of the activation `owner` names.
-    pub(super) fn owner_view(&self, owner: VarOwner) -> &dyn CallerView {
+    /// `owner` as it stands: a window owner whose activations became frames is the innermost frame.
+    fn live_owner(&self, owner: VarOwner) -> VarOwner {
         match owner {
-            VarOwner::Frame(index) => self.frame_caller(index),
-            // SAFETY: a record's owner keeps it, unmoved, while an activation or eval runs over it.
-            VarOwner::Record(record) => unsafe { &*record },
+            VarOwner::Window if self.lane_deferred.is_none() => VarOwner::Frame(self.frames.len() - 1),
+            _ => owner,
         }
     }
 
-    /// The locals and the held dynamic bindings of `owner`'s activation.
-    fn owner_state_mut(&mut self, owner: VarOwner) -> (&mut Vec<Value>, &mut Vec<(Atom, Value)>) {
-        match owner {
-            VarOwner::Frame(index) => {
-                let frame = &mut *self.frames[index];
-                (&mut frame.locals, &mut frame.dynamic_bindings)
-            }
+    fn window(&self) -> &super::dispatch_fast::WindowScope {
+        self.running_window.as_ref().expect("a window owner names the scope running_owner read")
+    }
+
+    fn window_mut(&mut self) -> &mut super::dispatch_fast::WindowScope {
+        self.running_window.as_mut().expect("a window owner names the scope running_owner read")
+    }
+
+    /// The view of the activation `owner` names.
+    pub(super) fn owner_view(&self, owner: VarOwner) -> &dyn CallerView {
+        match self.live_owner(owner) {
+            VarOwner::Frame(index) => self.frame_caller(index),
+            // SAFETY: a record's owner keeps it, unmoved, while an activation or eval runs over it.
+            VarOwner::Record(record) => unsafe { &*record },
+            VarOwner::Window => self.window(),
+        }
+    }
+
+    /// The frame `owner` names, for the state only a frame has: its mapped `arguments`, its
+    /// capture cache, its eval root. A record's activation and a window reflect none.
+    pub(super) fn owner_frame(&self, owner: VarOwner) -> Option<usize> {
+        match self.live_owner(owner) {
+            VarOwner::Frame(index) => Some(index),
+            VarOwner::Record(_) | VarOwner::Window => None,
+        }
+    }
+
+    /// The locals of `owner`'s activation.
+    pub(super) fn owner_locals(&self, owner: VarOwner) -> &[Value] {
+        match self.live_owner(owner) {
+            VarOwner::Frame(index) => &self.frames[index].locals,
+            // SAFETY: as `owner_view`.
+            VarOwner::Record(record) => unsafe { &(*record).locals },
+            VarOwner::Window => self.window().locals(),
+        }
+    }
+
+    fn owner_locals_mut(&mut self, owner: VarOwner) -> &mut [Value] {
+        match self.live_owner(owner) {
+            VarOwner::Frame(index) => &mut self.frames[index].locals,
             // SAFETY: as `owner_view`; nothing else accesses the record during a mutation.
-            VarOwner::Record(record) => unsafe { (&mut (*record).locals, &mut (*record).dynamic_bindings) },
+            VarOwner::Record(record) => unsafe { &mut (*record).locals },
+            VarOwner::Window => self.window_mut().locals_mut(),
+        }
+    }
+
+    /// The dynamic bindings `owner`'s activation holds itself: none for a window without a record.
+    fn owner_held_bindings_mut(&mut self, owner: VarOwner) -> Option<&mut Vec<(Atom, Value)>> {
+        match self.live_owner(owner) {
+            VarOwner::Frame(index) => Some(&mut self.frames[index].dynamic_bindings),
+            // SAFETY: as `owner_locals_mut`.
+            VarOwner::Record(record) => Some(unsafe { &mut (*record).dynamic_bindings }),
+            VarOwner::Window => self.window().record_bindings(),
         }
     }
 
@@ -52,7 +100,34 @@ impl<H: Host> Vm<H> {
             let environment = view.environment();
             self.heap.environment_bindings_mut(environment)
         } else {
-            Some(self.owner_state_mut(owner).1)
+            self.owner_held_bindings_mut(owner)
+        }
+    }
+
+    /// `register` of `owner`'s register file: the interpreter frame's, or the window's.
+    pub(super) fn owner_register(&self, owner: VarOwner, register: u16) -> Value {
+        match self.live_owner(owner) {
+            VarOwner::Frame(index) => self.read(index, register),
+            VarOwner::Window => self.window().register(register),
+            VarOwner::Record(_) => unreachable!("a record's registers are not read while its activation is suspended"),
+        }
+    }
+
+    pub(super) fn set_owner_register(&mut self, owner: VarOwner, register: u16, value: Value) {
+        match self.live_owner(owner) {
+            VarOwner::Frame(index) => self.write(index, register, value),
+            VarOwner::Window => self.window().set_register(register, value),
+            VarOwner::Record(_) => unreachable!("a record's registers are not written while its activation is suspended"),
+        }
+    }
+
+    /// Makes `site` the binding site `owner`'s accesses are at, which `previous` it returns restores.
+    pub(super) fn replace_binding_site(&mut self, owner: VarOwner, site: Option<u32>) -> Option<u32> {
+        match self.live_owner(owner) {
+            VarOwner::Frame(index) => std::mem::replace(&mut self.frames[index].binding_site_pc, site),
+            // SAFETY: as `owner_locals_mut`.
+            VarOwner::Record(record) => std::mem::replace(unsafe { &mut (*record).binding_site_pc }, site),
+            VarOwner::Window => self.window_mut().replace_site(site),
         }
     }
 
@@ -69,52 +144,57 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether `slot` of `owner`'s function lives in its environment, which it has made.
-    fn owner_slot_in_environment(&self, owner: VarOwner, slot: usize) -> bool {
+    pub(super) fn slot_is_environment_owned(&self, p: &ResidualProgram, owner: VarOwner, slot: usize) -> bool {
         let view = self.owner_view(owner);
         view.owns_environment()
-            && self.programs.get(view.program()).is_none_or(|program| {
-                program
-                    .function_get(view.function() as usize)
-                    .is_none_or(|function| function.local_slot_uses_environment(slot))
-            })
+            && p.function_get(view.function() as usize).is_none_or(|function| function.local_slot_uses_environment(slot))
+    }
+
+    /// The binding `owner`'s activation holds for `slot`: its environment's slot once the slot
+    /// lives there, else its local. `None` for a slot outside both.
+    pub(super) fn owner_binding(&self, p: &ResidualProgram, owner: VarOwner, slot: usize) -> Option<Value> {
+        if self.slot_is_environment_owned(p, owner, slot) {
+            self.heap.environment_slot(self.owner_view(owner).environment(), slot)
+        } else {
+            self.owner_locals(owner).get(slot).copied()
+        }
+    }
+
+    /// `owner_binding`, to write.
+    pub(super) fn owner_binding_mut(&mut self, p: &ResidualProgram, owner: VarOwner, slot: usize) -> Option<&mut Value> {
+        if self.slot_is_environment_owned(p, owner, slot) {
+            let environment = self.owner_view(owner).environment();
+            self.heap.environment_slot_mut(environment, slot)
+        } else {
+            self.owner_locals_mut(owner).get_mut(slot)
+        }
     }
 
     /// The value of the binding `atom` of `owner`'s function that lives in its slots.
     pub(super) fn owner_binding_value(&self, owner: VarOwner, atom: Atom) -> Option<Value> {
         let view = self.owner_view(owner);
         let slot = self.activation_binding_slot(view, atom)?;
-        if self.owner_slot_in_environment(owner, slot) {
-            return self.heap.environment_slot(view.environment(), slot);
-        }
-        self.owner_local(owner, slot)
+        self.owner_binding(&self.programs.get(view.program())?, owner, slot)
     }
 
     /// The local `slot` of `owner`'s activation, whose own it is while its environment holds
     /// none of them.
     pub(super) fn owner_local(&self, owner: VarOwner, slot: usize) -> Option<Value> {
-        match owner {
-            VarOwner::Frame(index) => self.frames[index].locals.get(slot).copied(),
-            // SAFETY: as `owner_view`.
-            VarOwner::Record(record) => unsafe { &*record }.locals.get(slot).copied(),
-        }
+        self.owner_locals(owner).get(slot).copied()
     }
 
     /// `value` stored to `slot` of `owner`'s function, mirrored into a mapped `arguments` of a
-    /// frame (a record's activation reflects none: `Function::locals_ride_window`); `false`
-    /// where it has no such slot.
+    /// frame (a record's or a window's activation reflects none: `Function::locals_ride_window`);
+    /// `false` where it has no such slot.
     pub(super) fn store_owner_slot(&mut self, owner: VarOwner, slot: usize, value: Value) -> bool {
-        let environment = self.owner_slot_in_environment(owner, slot).then(|| self.owner_view(owner).environment());
-        let binding = match environment {
-            Some(environment) => self.heap.environment_slot_mut(environment, slot),
-            None => self.owner_state_mut(owner).0.get_mut(slot),
+        let Some(program) = self.programs.get(self.owner_view(owner).program()) else {
+            return false;
         };
-        let Some(binding) = binding else {
+        let Some(binding) = self.owner_binding_mut(&program, owner, slot) else {
             return false;
         };
         *binding = value;
-        if let VarOwner::Frame(frame) = owner
-            && let Some(program) = self.programs.get(self.frames[frame].program)
-        {
+        if let Some(frame) = self.owner_frame(owner) {
             self.mapped_argument_store(&program, frame, slot, value);
         }
         true
@@ -165,6 +245,7 @@ impl<H: Host> Vm<H> {
         match owner {
             VarOwner::Frame(frame) => self.promote_frame_environment(frame),
             VarOwner::Record(_) => self.owner_view(owner).environment(),
+            VarOwner::Window => unreachable!("a window's environment is made by its closures (`window_environment`)"),
         }
     }
 }

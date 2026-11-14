@@ -1957,6 +1957,10 @@ pub(crate) struct Vm<H> {
     /// (`Native::runs_beside_activations`), which the first observer of the frame stack makes
     /// frames (`materialize_deferred_lane`).
     lane_deferred: Option<dispatch_fast::DeferredLaneCall>,
+    /// The scope of the window activation that runs a name, local or capture step beside the
+    /// lane's frameless activations (`VarOwner::Window`, `Vm::running_owner`), read where
+    /// `lane_deferred` stands.
+    running_window: Option<dispatch_fast::WindowScope>,
     /// The module the host resolved each (referrer, specifier) of a static request to since
     /// the last collection (`Vm::resolve_module_request`). The graph's passes (collection,
     /// pending dependencies, instantiation, evaluation) resolve each request again, and each

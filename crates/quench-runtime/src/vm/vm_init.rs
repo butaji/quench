@@ -101,6 +101,7 @@ impl<H: Host> Vm<H> {
             lane_raised: None,
             lane_raise_site: 0,
             lane_deferred: None,
+            running_window: None,
             resolved_module_requests: Default::default(),
             resolved_module_names: Default::default(),
             lane_returned: None,
