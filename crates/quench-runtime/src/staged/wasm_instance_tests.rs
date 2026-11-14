@@ -3,7 +3,8 @@
 //! and the instance stage's scalar rules against `ConcreteWasm`.
 
 use super::ConcreteWasm;
-use super::wasm::{WasmStage, Width, integer_binary};
+use super::machine::MachineStage;
+use super::wasm::{Width, integer_binary};
 use super::wasm_instance::{Instance, Storage, WasmInstance};
 use super::wasm_machine::ConcreteInstance;
 use super::wasm_step::Step;

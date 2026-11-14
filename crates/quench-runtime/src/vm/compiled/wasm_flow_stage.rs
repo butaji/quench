@@ -6,7 +6,7 @@ use super::wasm_instance_stage::value_kind;
 use super::{Analysis, AnalysisState, Emitter, Host, Kind, Slot, eager_unreachable_admitted};
 use crate::WasmType;
 use crate::bytecode::{Function, WideInstruction};
-use crate::staged::wasm::WasmStage;
+use crate::staged::machine::MachineStage;
 use crate::staged::wasm_flow::{Flow, Leave};
 use crate::vm::dispatch_fast::decoded_instruction;
 use cranelift_codegen::ir::{self, InstBuilder, types};
@@ -45,7 +45,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let condition = self.read(condition, Kind::I32);
         let taken = self.read(instruction.b(), kind);
         let other = self.read(instruction.c(), kind);
-        let value = WasmStage::select(self, condition, taken, other);
+        let value = MachineStage::select(self, condition, taken, other);
         self.write(instruction.a(), kind, value);
     }
 

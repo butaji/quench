@@ -1,6 +1,7 @@
 //! The interpreter's Wasm stage: integers are the zero-extended `u64` words of their width.
 
-use super::wasm::{WasmStage, Width};
+use super::machine::MachineStage;
+use super::wasm::Width;
 use super::wasm_float::{Float, Truncation};
 use crate::wasm::conversion::{ScalarConversionOperator, saturate, truncation_bounds};
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
@@ -149,7 +150,7 @@ fn float_value(float: Float, word: u64) -> f64 {
     }
 }
 
-impl WasmStage for ConcreteWasm {
+impl MachineStage for ConcreteWasm {
     type Word = u64;
     type Exit = WasmTrap;
 

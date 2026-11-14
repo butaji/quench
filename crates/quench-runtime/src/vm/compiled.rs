@@ -33,7 +33,8 @@ use crate::bytecode::{Class, Traits,
 use crate::staged::wasm_call::Call as WasmCall;
 use crate::staged::wasm_flow::Flow;
 use crate::staged::wasm_step::Step;
-use crate::staged::wasm::{WasmStage, Width, integer_binary};
+use crate::staged::machine::MachineStage;
+use crate::staged::wasm::{Width, integer_binary};
 use crate::staged::wasm_operation::{Form, Operand as Right, WasmOperation};
 use crate::staged::ConcreteWasm;
 use cranelift_codegen::ir::{
@@ -94,6 +95,7 @@ mod static_loops;
 #[path = "compiled/wasm_callable.rs"]
 mod wasm_callable;
 #[path = "compiled/wasm_stage.rs"]
+mod emit_machine;
 mod wasm_stage;
 mod wasm_instance_stage;
 mod instance_context;

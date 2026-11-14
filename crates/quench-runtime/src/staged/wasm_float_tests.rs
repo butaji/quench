@@ -5,7 +5,7 @@
 use super::wasm_float::{Float, convert, float_binary, is_float_comparison};
 use super::wasm_operation::WasmOperation;
 use super::wasm_tests::Probe;
-use super::{ConcreteWasm, wasm::WasmStage};
+use super::{ConcreteWasm, machine::MachineStage};
 use crate::bytecode::Op;
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::float::{

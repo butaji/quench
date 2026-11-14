@@ -1,7 +1,8 @@
 //! The call table of `staged::wasm_call` and the rule of an indirect call's target: the order of
 //! its checks on a probe stage, and its verdicts on the interpreter's stage.
 
-use super::wasm::{WasmStage, Width};
+use super::machine::MachineStage;
+use super::wasm::Width;
 use super::wasm_call::{Call, WasmTable, indirect_target};
 use super::wasm_flow::Flow;
 use super::wasm_machine::ConcreteTable;
