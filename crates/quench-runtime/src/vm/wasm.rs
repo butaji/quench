@@ -2698,6 +2698,11 @@ mod tests {
         assert_eq!(compiled.direct_reference_entries(0), Some(0));
     }
 
+    /// Asserts that entry 1 of `instance` traps `unreachable`.
+    fn assert_unreachable_trap(vm: &mut Vm<crate::SystemHost>, instance: &crate::WasmInstance) {
+        assert_eq!(vm.invoke_wasm(instance, 1, &[]).unwrap_err().wasm_trap(), Some(crate::WasmTrap::Unreachable));
+    }
+
     #[test]
     fn compiled_wasm_hot_indirect_target_is_tiered_and_table_stays_dynamic() {
         let signature = crate::WasmSignature {
@@ -2764,10 +2769,7 @@ mod tests {
             let instance = vm.instantiate_wasm_module(&module).unwrap();
             let promotion_entries = crate::vm::compiled::tier_policy::TIERS.wasm.promotion_entries;
             for _ in 0..promotion_entries {
-                assert_eq!(
-                    vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
-                    Some(crate::WasmTrap::Unreachable)
-                );
+                assert_unreachable_trap(&mut vm, &instance);
             }
 
             let program = vm
@@ -2788,16 +2790,10 @@ mod tests {
             assert_eq!(tier.direct_reference_entries(0), Some(0));
             // The promoted target belongs to a separate artifact, so the caller's code table
             // holds no entry for it: the call stays with the VM's resolver.
-            assert_eq!(
-                vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
-                Some(crate::WasmTrap::Unreachable)
-            );
+            assert_unreachable_trap(&mut vm, &instance);
             assert_eq!(tier.native_entries(0), Some(2));
             assert_eq!(tier.direct_reference_entries(0), Some(1));
-            assert_eq!(
-                vm.invoke_wasm(&instance, 1, &[]).unwrap_err().wasm_trap(),
-                Some(crate::WasmTrap::Unreachable)
-            );
+            assert_unreachable_trap(&mut vm, &instance);
             assert_eq!(tier.native_entries(0), Some(3));
             assert_eq!(tier.direct_reference_entries(0), Some(2));
 
@@ -3242,36 +3238,74 @@ mod tests {
         ));
     }
 
+    /// A function body of the embedded type `ty` with no locals, running `operators`.
+    fn embedded_body(
+        ty: crate::WasmSignature,
+        operators: Vec<Operator<'static>>,
+    ) -> crate::WasmFunctionBody<std::vec::IntoIter<Result<Operator<'static>, wasmparser::BinaryReaderError>>> {
+        crate::WasmFunctionBody {
+            ty: crate::WasmCallableType::Embedded(ty),
+            locals: vec![],
+            operators: operators.into_iter().map(Ok).collect::<Vec<_>>().into_iter(),
+        }
+    }
+
+    /// A fixed-size `funcref` table of `size` entries, each initialized to function 0.
+    fn funcref_table(size: u64) -> crate::WasmTable {
+        crate::WasmTable {
+            ty: wasmparser::TableType {
+                element_type: wasmparser::RefType::FUNCREF,
+                table64: false,
+                initial: size,
+                maximum: Some(size),
+                shared: false,
+            },
+            initializer: crate::WasmReferenceInitializer::Function(0).into(),
+        }
+    }
+
+    /// An element segment writing `functions` into table 0 from index 0.
+    fn active_function_element(functions: &[u32]) -> crate::WasmElement {
+        crate::WasmElement {
+            mode: crate::WasmElementMode::Active {
+                table: 0,
+                offset: crate::WasmValue::I32(0).into(),
+            },
+            element_type: wasmparser::RefType::FUNCREF,
+            items: functions.iter().map(|&function| crate::WasmReferenceInitializer::Function(function)).collect::<Vec<_>>().into(),
+        }
+    }
+
+    /// The signature of a function with no parameters and one `i32` result.
+    fn i32_result_signature() -> crate::WasmSignature {
+        crate::WasmSignature {
+            params: vec![],
+            results: vec![crate::WasmType::I32],
+        }
+    }
+
+    /// A VM in compiled mode with `module` instantiated.
+    fn compiled_instance(module: &crate::WasmModule) -> (Vm<crate::SystemHost>, crate::WasmInstance) {
+        let mut vm = Vm::new(crate::SystemHost);
+        vm.programs.compile_wasm_modules_at_first_entry();
+        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        let instance = vm.instantiate_wasm_module(module).unwrap();
+        (vm, instance)
+    }
+
     #[test]
     fn compiled_wasm_indirect_call_site_calls_each_of_its_targets_through_its_row() {
         // One `call_indirect` site alternates between two table entries: each is called
         // through its own row, whatever the site called before, and the VM enters neither.
-        let target = crate::WasmSignature {
-            params: vec![],
+        let returns = |value: i32| embedded_body(i32_result_signature(), vec![Operator::I32Const { value }, Operator::End]);
+        let caller_type = crate::WasmSignature {
+            params: vec![crate::WasmType::I32],
             results: vec![crate::WasmType::I32],
         };
-        let returns = |value: i32| crate::WasmFunctionBody {
-            ty: crate::WasmCallableType::Embedded(target.clone()),
-            locals: vec![],
-            operators: vec![Operator::I32Const { value }, Operator::End].into_iter().map(Ok),
-        };
-        let caller = crate::WasmFunctionBody {
-            ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
-                params: vec![crate::WasmType::I32],
-                results: vec![crate::WasmType::I32],
-            }),
-            locals: vec![],
-            operators: vec![
-                Operator::LocalGet { local_index: 0 },
-                Operator::CallIndirect {
-                    type_index: 0,
-                    table_index: 0,
-                },
-                Operator::End,
-            ]
-            .into_iter()
-            .map(Ok),
-        };
+        let caller = embedded_body(
+            caller_type,
+            vec![Operator::LocalGet { local_index: 0 }, Operator::CallIndirect { type_index: 0, table_index: 0 }, Operator::End],
+        );
         let module = crate::Engine::lower_wasm_module_with_elements(
             "compiled-indirect-call-polymorphic-site",
             [returns(21), returns(4), caller],
@@ -3279,40 +3313,14 @@ mod tests {
             &[],
             &[],
             &[],
-            &[crate::WasmTable {
-                ty: wasmparser::TableType {
-                    element_type: wasmparser::RefType::FUNCREF,
-                    table64: false,
-                    initial: 2,
-                    maximum: Some(2),
-                    shared: false,
-                },
-                initializer: crate::WasmReferenceInitializer::Function(0).into(),
-            }],
-            &[crate::WasmElement {
-                mode: crate::WasmElementMode::Active {
-                    table: 0,
-                    offset: crate::WasmValue::I32(0).into(),
-                },
-                element_type: wasmparser::RefType::FUNCREF,
-                items: vec![
-                    crate::WasmReferenceInitializer::Function(0),
-                    crate::WasmReferenceInitializer::Function(1),
-                ]
-                .into(),
-            }],
+            &[funcref_table(2)],
+            &[active_function_element(&[0, 1])],
         )
         .unwrap();
-        let mut vm = Vm::new(crate::SystemHost);
-        vm.programs.compile_wasm_modules_at_first_entry();
-        vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        let instance = vm.instantiate_wasm_module(&module).unwrap();
+        let (mut vm, instance) = compiled_instance(&module);
         for _ in 0..3 {
             for (index, expected) in [(0, 21), (1, 4)] {
-                assert_eq!(
-                    vm.invoke_wasm(&instance, 2, &[crate::WasmValue::I32(index)]).unwrap(),
-                    Some(crate::WasmValue::I32(expected))
-                );
+                assert_eq!(vm.invoke_wasm(&instance, 2, &[crate::WasmValue::I32(index)]).unwrap(), Some(crate::WasmValue::I32(expected)));
             }
         }
         let compiled = vm
