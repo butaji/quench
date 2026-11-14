@@ -3663,6 +3663,26 @@ script_handler! {
 fn lane_read_operator<H: Host, const OP: u32, const RAW: bool>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, element: Value) -> Resumed {
     // SAFETY: the triple is three records, the third never the view's last.
     let operator = unsafe { &*following(following(ip)) };
+    // Arithmetic on two Numbers first, the register operands read in memory
+    // (`Registers::number`); bitwise operators and other values take the shared operation.
+    {
+        use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
+        if matches!(OP, ADDITION | SUBTRACTION | MULTIPLICATION | DIVISION) {
+            let numbers = if super::operations::number_result_is_commutative(OP) {
+                // SAFETY: specialization stores the other register in the fused update's unused c.
+                match element.as_number() { Some(left) => r.number(unsafe { (*ip).c }).map(|right| (left, right)), None => None }
+            } else {
+                match r.number(operator.b) { Some(left) => r.number(operator.c).map(|right| (left, right)), None => None }
+            };
+            if let Some((left, right)) = numbers
+                && let Some(number) = super::operations::number_operator::<OP>(left, right)
+            {
+                let value = if RAW { raw_results::raw_number(number) } else { Value::number(number) };
+                r.set(operator.a, value);
+                return Resumed::At(r, following(following(following(ip))), Carried::script(cx));
+            }
+        }
+    }
     // SAFETY: specialization stores the other register in the fused update's unused c.
     let (left, right) = read_number_operands::<OP>(r, operator, unsafe { (*ip).c }, element);
     let value = if RAW {
