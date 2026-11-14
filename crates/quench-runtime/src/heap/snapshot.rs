@@ -36,10 +36,7 @@ impl Heap {
         write_records(writer, &self.iterator_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.string_records, |writer, record: &JsString| Ok(record.write_snapshot(writer)))?;
         // Every small string was written out above: each is kept as its text.
-        write_records(writer, &self.small_strings, |writer, record| {
-            // SAFETY: the record is live and owns its text.
-            Ok(unsafe { self.small_strings_text_of(record) }.write_snapshot(writer))
-        })?;
+        write_records(writer, &self.small_strings, |writer, record| Ok(record.written_text().write_snapshot(writer)))?;
         self.properties.write_snapshot(writer);
         self.roots.write_snapshot(writer);
         let sparse = self.sparse_arrays.as_deref();
@@ -95,8 +92,7 @@ impl Heap {
         read_records(reader, &mut heap.promise_records, PromiseCell::read_snapshot)?;
         read_records(reader, &mut heap.iterator_records, IteratorRecord::read_snapshot)?;
         read_records(reader, &mut heap.string_records, JsString::read_snapshot)?;
-        let texts = &mut heap.small_texts;
-        read_records(reader, &mut heap.small_strings, |reader| Ok(small_strings::SmallParts::written(texts, JsString::read_snapshot(reader)?)))?;
+        read_records(reader, &mut heap.small_strings, |reader| Ok(small_strings::SmallParts::written(JsString::read_snapshot(reader)?)))?;
         heap.properties = crate::value_vec::ValueArena::read_snapshot(reader)?;
         heap.roots = root::RootTable::read_snapshot(reader)?;
         let sparse = read_list(reader, |reader| {
@@ -152,8 +148,7 @@ impl Heap {
         self.for_each_cell(|cell| payload += cell.payload_bytes());
         self.array_records.for_each_live(|_, array| payload += external::array_payload_bytes(array));
         self.string_records.for_each_live(|_, string| payload += string.flat_unit_bytes());
-        // SAFETY: each live record owns its text, made before the snapshot was written.
-        self.small_strings.for_each_live(|_, record| payload += unsafe { self.small_strings_text_of(record) }.flat_unit_bytes());
+        self.small_strings.for_each_live(|_, record| payload += record.text_bytes());
         self.payload_bytes = payload;
         let legacy_live = self.slots.len() - self.free_slots;
         let live = legacy_live

@@ -9,7 +9,7 @@ use crate::vm::object_get::ordinary_chain::ChainRead;
 #[inline(always)]
 pub(super) fn string_char_code_at<H: Host>(vm: &Vm<H>, receiver: Value, index: Value) -> Option<Value> {
     let records = vm.heap.string_record_base().unwrap_or(std::ptr::null());
-    crate::staged::strings::concrete_string_char_code_at(records, receiver, index).or_else(|| crate::staged::builtins::concrete_char_code_at(vm.heap.string(receiver)?.existing_flat()?.view(), index))
+    crate::staged::strings::concrete_string_char_code_at(records, receiver, index).or_else(|| crate::staged::builtins::concrete_char_code_at(vm.heap.flat_text(receiver)?.units(), index))
 }
 
 /// `charAt` of a flat string at an integer index of an ASCII unit
@@ -20,7 +20,7 @@ pub(super) fn string_char_at_ascii<H: Host>(vm: &mut Vm<H>, receiver: Value, ind
     if let Some(character) = crate::staged::strings::concrete_string_char_at(records, table, receiver, index) {
         return Some(character);
     }
-    let byte = crate::staged::builtins::concrete_char_at_ascii(vm.heap.string(receiver)?.existing_flat()?.view(), index)?;
+    let byte = crate::staged::builtins::concrete_char_at_ascii(vm.heap.flat_text(receiver)?.units(), index)?;
     Some(vm.ascii_byte_string(byte))
 }
 

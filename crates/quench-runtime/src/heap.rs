@@ -47,7 +47,7 @@ mod string_atoms;
 mod native_layout;
 mod string_parts;
 mod small_strings;
-pub(crate) use small_strings::{SMALL_STRING_ID_BASE, SMALL_STRING_ID_MASK, SmallParts, is_small_string};
+pub(crate) use small_strings::{FlatText, SMALL_STRING_ID_BASE, SMALL_STRING_ID_MASK, SmallParts, is_small_string};
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
@@ -607,7 +607,7 @@ pub(crate) struct Heap {
     string_records: StringRecordSpace,
     /// Small strings (`small_strings`): ids of the string records' hole, and the texts read.
     small_strings: small_strings::SmallStringSpace,
-    small_texts: small_strings::SharedSmallTexts,
+    small_views: small_strings::SmallViews,
     string_atoms: string_atoms::StringAtoms,
     /// Wasm vectors: immutable leaves (`Heap::alloc_v128`), in a slot when this is full.
     v128_records: V128RecordSpace,
@@ -692,7 +692,8 @@ pub(crate) struct Heap {
     old_live: usize,
     /// The `allocated` weight at which the next collection is due: the last collection's
     /// mark plus the young budget pacing planned (`set_young_budget`).
-    collect_at: usize,
+    /// Where `allocated` makes a collection due; a shared heap may move it earlier (`request_collection`).
+    collect_at: std::cell::Cell<usize>,
     collections: u64,
     /// A process-unique id of this heap's record layout, drawn again by a snapshot restore (which resets `collections` and the record blocks): part of `native_layout_epoch`, so equal values are never another heap's or an earlier layout.
     layout_id: u64,
@@ -957,7 +958,7 @@ impl Heap {
             free_slabs: Vec::with_capacity(12),
             free_slots: 0,
             layout_id: Self::next_layout_id(),
-            collect_at: MemoryPolicy::default().pacing().minimum_young,
+            collect_at: std::cell::Cell::new(MemoryPolicy::default().pacing().minimum_young),
             max_threshold: MemoryPolicy::default().pacing().minimum_young,
             external_collection_budget: MemoryPolicy::default().pacing().minimum_external_budget,
             ..Self::default()
@@ -996,7 +997,7 @@ impl Heap {
     /// Explicit collection remains available; only threshold collection stops.
     #[cfg(test)]
     pub(crate) fn retain_allocations_for_test(&mut self) {
-        self.collect_at = usize::MAX;
+        self.collect_at.set(usize::MAX);
     }
 
     #[cfg(test)]
@@ -2048,7 +2049,7 @@ impl Heap {
         self.iterator_records = IteratorRecordSpace::default();
         self.string_records = StringRecordSpace::default();
         self.small_strings = small_strings::SmallStringSpace::default();
-        self.small_texts = small_strings::SharedSmallTexts::default();
+        self.small_views = small_strings::SmallViews::default();
         self.clear_string_atoms();
         self.v128_records = V128RecordSpace::default();
         self.marks.clear();
@@ -2116,7 +2117,7 @@ impl Heap {
         self.external_bytes += bytes;
         self.external_since_collection = self.external_since_collection.saturating_add(bytes);
         if self.external_since_collection >= self.external_collection_budget {
-            self.collect_at = self.collect_at.min(self.allocated);
+            self.request_collection();
         }
     }
     /// Charges text made on demand (`wtf16::take_materialized_text`) as payload allocation.
@@ -2141,8 +2142,12 @@ impl Heap {
         self.allocated += text.beside / payload_unit();
     }
 
+    /// Makes a collection due at the next safepoint, through a shared heap.
+    pub(super) fn request_collection(&self) {
+        self.collect_at.set(self.collect_at.get().min(self.allocated));
+    }
     #[inline] pub fn should_collect(&self) -> bool {
-        self.allocated >= self.collect_at
+        self.allocated >= self.collect_at.get()
     }
     /// The weight charged since the last collection.
     fn allocated_since_collection(&self) -> usize {
@@ -2155,7 +2160,7 @@ impl Heap {
     /// Makes the next collection due once `budget` more weight than at the last collection
     /// has been charged, and records the largest budget planned (`Heap::stats`).
     pub(super) fn set_young_budget(&mut self, budget: usize) {
-        self.collect_at = self.allocated_at_collection.saturating_add(budget);
+        self.collect_at.set(self.allocated_at_collection.saturating_add(budget));
         self.max_threshold = self.max_threshold.max(budget);
     }
     /// The host contexts of promises freed since the last call.
@@ -2206,12 +2211,12 @@ impl Heap {
     /// Make a collection due at the next safepoint.
     #[cfg(test)]
     pub(crate) fn make_collection_due_for_test(&mut self) {
-        self.collect_at = self.allocated;
+        self.collect_at.set(self.allocated);
     }
     /// Leave room until the next charged payload growth, for native recovery tests.
     #[cfg(all(test, not(quench_profiled)))]
     pub(crate) fn make_collection_due_after_growth_for_test(&mut self) {
-        self.collect_at = self.allocated.saturating_add(1);
+        self.collect_at.set(self.allocated.saturating_add(1));
         self.uncharged_payload_bytes = 0;
     }
     pub(crate) fn root(&mut self, value: Value) -> RootId {
@@ -2324,6 +2329,8 @@ impl Heap {
         let full = self.start_collection(full);
         // `QUENCH_TRACE=gc` reports the mark, sweep, and record-sweep times.
         let trace_started = crate::trace::Channel::Gc.on().then(std::time::Instant::now);
+        // No reference to a small string's view outlives the shared borrow it came from.
+        self.small_views.clear();
         let age = self.promotion_age();
         // A minor collection that leaves survivors young carries the old owners that may
         // point at them to the next one (`carried_owners`): those the barriers logged, then
@@ -2730,7 +2737,6 @@ impl Heap {
                 // nothing with them (no atom, no record) and their texts drop on this thread.
                 let small = small_strings::sweep(
                     &mut self.small_strings,
-                    &mut self.small_texts,
                     payload_bytes,
                     live_payload_bytes,
                     full,

@@ -52,7 +52,8 @@ fn charge_materialized_units(bytes: usize) {
     charge_materialized(|text| text.units = text.units.saturating_add(bytes));
 }
 
-fn charge_materialized_beside(bytes: usize) {
+/// Charges `bytes` held beside a string's units, made on demand: as allocation weight only.
+pub(crate) fn charge_materialized_beside(bytes: usize) {
     charge_materialized(|text| text.beside = text.beside.saturating_add(bytes));
 }
 
@@ -862,6 +863,17 @@ impl JsString {
             return Self::from_flat(FlatUnits::Ascii(Rc::clone(text)));
         }
         Self::from_str(text)
+    }
+
+    /// The shared storage of this flat ASCII string's text: its own, or a copy of inline text.
+    pub(crate) fn into_shared_ascii(self) -> Rc<str> {
+        if let Repr::Flat(FlatUnits::Ascii(text)) = self.repr {
+            return text;
+        }
+        match self.units() {
+            Units::Ascii(bytes) => Rc::from(std::str::from_utf8(bytes).expect("ASCII is UTF-8")),
+            Units::Wide(_) => unreachable!("an ASCII string's units are bytes"),
+        }
     }
 
     #[inline]

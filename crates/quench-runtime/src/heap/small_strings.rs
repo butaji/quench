@@ -2,14 +2,17 @@
 //! of their own space, where a string of parts (`JsString::from_parts`) takes a 24-byte string
 //! record. Their ids are string ids of the hole the string record space keeps
 //! (`records::STRING_RECORD_HOLE`), so a Value names one as it names any string and stays
-//! narrow. The text is made on first read and kept beside the record (`SmallTexts`), owned by
-//! it: the record's Values cannot be redirected, so the text is reached through it.
+//! narrow. The text is made on first read and replaces the parts in the record: its shared
+//! storage's pointer and length, the 16 bytes still. A read is answered by a view of that text
+//! (`SmallViews`), a string value held until the next collection, which no reference outlives.
 use super::*;
 use super::records::{ParallelRecordMarks, STRING_RECORD_CAPACITY, STRING_RECORD_HOLE};
 use crate::vm::wtf16::Part;
 use crate::vm::wtf16::Units;
 use std::cell::UnsafeCell;
+use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
+use std::rc::Rc;
 
 /// The small string records, by local id (a string id less `STRING_RECORD_HOLE`).
 pub(super) type SmallStringSpace = records::RecordSpace<SmallParts, STRING_RECORD_HOLE>;
@@ -28,14 +31,17 @@ const SHAPE_NUMBER_LAST: u32 = 1;
 const SHAPE_NUMBER_FIRST: u32 = 2;
 /// `head tail [extra]`, strings only; `extra` holds the third id, or `NO_TEXT`.
 const SHAPE_TEXTS: u32 = 3;
-/// `SmallParts::head` once the text has been made: `tail` names it in `SmallTexts`.
+/// `SmallParts::head`'s flag once the text has been made: the bits below it hold the text's
+/// length, `extra` the address `Rc::into_raw` gave for its storage, and `tail` the slot of its
+/// latest view (`SmallViews`), which may be stale.
 const WRITTEN: u32 = 1 << 31;
+/// No view yet.
+const NO_VIEW: u32 = u32::MAX;
 const _: () = assert!(STRING_RECORD_CAPACITY as u32 <= NO_TEXT && SHAPE_TEXTS << SHAPE_SHIFT < WRITTEN);
 
 /// The parts of a string of parts (`Parts`: two or three, at most one a Number) in 16 bytes:
 /// string ids in `head` (below its shape) and `tail`, and the Number's bits or a third id in
-/// `extra`. Once read, `head` is `WRITTEN` and `tail` names its text.
-#[derive(Clone, Copy)]
+/// `extra`. Once read, the record owns its text instead (`WRITTEN`).
 #[repr(C)]
 pub(crate) struct SmallParts {
     head: u32,
@@ -67,15 +73,37 @@ impl SmallParts {
         Some(Self { head: shape << SHAPE_SHIFT | head, tail, extra: number.to_bits() })
     }
 
-    /// A record whose text, `text`, is made: as a snapshot restores it.
-    pub(super) fn written(texts: &mut SharedSmallTexts, text: JsString) -> Self {
-        Self { head: WRITTEN, tail: texts.get_mut().insert(text), extra: 0 }
+    /// A record that owns `text`, already made (`WRITTEN`).
+    pub(super) fn written(text: JsString) -> Self {
+        let text = text.into_shared_ascii();
+        let length = u32::try_from(text.len()).ok().filter(|length| length & WRITTEN == 0).expect("a short text");
+        Self { head: WRITTEN | length, tail: NO_VIEW, extra: Rc::into_raw(text).cast::<u8>() as u64 }
     }
 
-    /// Where its text is kept, once made.
+    /// Whether its text has been made.
     #[inline(always)]
-    fn text_slot(&self) -> Option<u32> {
-        (self.head == WRITTEN).then_some(self.tail)
+    fn is_written(&self) -> bool {
+        self.head & WRITTEN != 0
+    }
+
+    /// Its text's storage, once made, still owned by the record.
+    #[inline(always)]
+    fn text(&self) -> Option<ManuallyDrop<Rc<str>>> {
+        self.is_written().then(|| {
+            let bytes = std::ptr::slice_from_raw_parts(self.extra as *const u8, (self.head & !WRITTEN) as usize);
+            // SAFETY: `written` kept this storage's `Rc::into_raw`, and the record still owns it.
+            ManuallyDrop::new(unsafe { Rc::from_raw(bytes as *const str) })
+        })
+    }
+
+    /// A string of its text, which it has; for a snapshot.
+    pub(super) fn written_text(&self) -> JsString {
+        JsString::from_shared_text(&self.text().expect("the small string was written out"))
+    }
+
+    /// Bytes of its text, once made: what the payload ledger counts.
+    pub(super) fn text_bytes(&self) -> usize {
+        if self.is_written() { (self.head & !WRITTEN) as usize } else { 0 }
     }
 
     /// Its parts in order, each a string id (`NO_TEXT` for none) or a Number; none once written.
@@ -97,7 +125,7 @@ impl SmallParts {
     /// ids in `head` and `tail`, and only `SHAPE_TEXTS` a third in `extra`.
     #[inline(always)]
     fn for_each_text(&self, mut visit: impl FnMut(u32)) {
-        if self.head == WRITTEN {
+        if self.is_written() {
             return;
         }
         let head = self.head & ID_MASK;
@@ -109,6 +137,31 @@ impl SmallParts {
         }
         if self.head >> SHAPE_SHIFT == SHAPE_TEXTS && self.extra as u32 != NO_TEXT {
             visit(self.extra as u32);
+        }
+    }
+}
+
+/// A string's existing flat units (`Heap::flat_text`): borrowed from its record, or a small
+/// string's shared text.
+pub(crate) enum FlatText<'a> {
+    Record(Units<'a>),
+    Small(Rc<str>),
+}
+
+impl FlatText<'_> {
+    #[inline(always)]
+    pub(crate) fn units(&self) -> Units<'_> {
+        match self {
+            Self::Record(units) => *units,
+            Self::Small(text) => Units::Ascii(text.as_bytes()),
+        }
+    }
+}
+
+impl Drop for SmallParts {
+    fn drop(&mut self) {
+        if let Some(text) = self.text() {
+            drop(ManuallyDrop::into_inner(text));
         }
     }
 }
@@ -139,91 +192,105 @@ pub(super) fn small_string_value(local: RecordId) -> Value {
     Value::direct_string(local + STRING_RECORD_HOLE as u32)
 }
 
-/// Texts per chunk of `SmallTexts`.
-const TEXT_CHUNK: usize = 1024;
-type TextChunk = [Option<JsString>; TEXT_CHUNK];
+/// Views per chunk of `SmallViews`.
+const VIEW_CHUNK: usize = 1024;
+/// A view and the local id of the small string it shows.
+type ViewChunk = [(u32, Option<JsString>); VIEW_CHUNK];
+/// Views made since the last collection past which the next safepoint collects, which drops
+/// them: about 2 MiB of views at most.
+const VIEW_COLLECTION_LIMIT: u32 = 1 << 16;
+/// Chunks a collection keeps for the views after it.
+const KEPT_VIEW_CHUNKS: usize = 1;
 
-/// The texts of the small strings read so far, each owned by its record: made by a read
-/// (through a shared heap), dropped by the sweep that frees the record. Chunks never move, so a
-/// text read stays where it is while its record lives.
+/// The strings that answer reads of written small strings since the last collection, each a
+/// view sharing its record's text storage. A reference to one lives no longer than the shared
+/// borrow of the heap it came from, and every collection takes the heap mutably first, so a
+/// collection drops them all (`clear`); a record names its latest by slot, checked by owner.
+/// Chunks never move while views are handed out.
 #[derive(Default)]
-pub(super) struct SmallTexts {
-    chunks: Vec<NonNull<TextChunk>>,
-    free: Vec<u32>,
-    next: u32,
+pub(super) struct SmallViewChunks {
+    chunks: Vec<NonNull<ViewChunk>>,
+    len: u32,
 }
 
-impl SmallTexts {
-    fn slot(&self, slot: u32) -> *mut Option<JsString> {
-        let chunk = self.chunks[slot as usize / TEXT_CHUNK];
+impl SmallViewChunks {
+    fn entry(&self, slot: u32) -> *mut (u32, Option<JsString>) {
+        let chunk = self.chunks[slot as usize / VIEW_CHUNK];
         // SAFETY: the chunk is live and the index is within it.
-        unsafe { chunk.as_ptr().cast::<Option<JsString>>().add(slot as usize % TEXT_CHUNK) }
+        unsafe { chunk.as_ptr().cast::<(u32, Option<JsString>)>().add(slot as usize % VIEW_CHUNK) }
     }
 
-    fn insert(&mut self, text: JsString) -> u32 {
-        let slot = self.free.pop().unwrap_or_else(|| {
-            let slot = self.next;
-            if slot as usize == self.chunks.len() * TEXT_CHUNK {
-                let chunk: Box<TextChunk> = Box::new([const { None }; TEXT_CHUNK]);
-                self.chunks.push(NonNull::from(Box::leak(chunk)));
-            }
-            self.next += 1;
-            slot
-        });
-        // SAFETY: a free or fresh slot holds `None`, and nothing refers to it.
-        unsafe { *self.slot(slot) = Some(text) };
+    /// The view at `slot` when it shows the small string `owner`.
+    fn get(&self, slot: u32, owner: u32) -> Option<&JsString> {
+        if slot >= self.len {
+            return None;
+        }
+        // SAFETY: slots below `len` hold views, none of which is being written.
+        let (shown, view) = unsafe { &*self.entry(slot) };
+        (*shown == owner).then(|| view.as_ref().expect("a slot below the length holds a view"))
+    }
+
+    fn push(&mut self, owner: u32, view: JsString) -> u32 {
+        let slot = self.len;
+        if slot as usize == self.chunks.len() * VIEW_CHUNK {
+            let chunk: Box<ViewChunk> = Box::new([const { (0, None) }; VIEW_CHUNK]);
+            self.chunks.push(NonNull::from(Box::leak(chunk)));
+        }
+        // SAFETY: the slot at `len` holds no view, and nothing refers to it.
+        unsafe { *self.entry(slot) = (owner, Some(view)) };
+        self.len += 1;
         slot
     }
 
-    /// The text at `slot`.
-    ///
-    /// # Safety
-    /// `slot` names a text a live record owns.
-    unsafe fn get(&self, slot: u32) -> &JsString {
-        // SAFETY: the caller's contract.
-        unsafe { (*self.slot(slot)).as_ref().expect("a small string's text is kept") }
+    /// Drops every view; keeps `KEPT_VIEW_CHUNKS` chunks for the next.
+    fn clear(&mut self) {
+        for slot in 0..self.len {
+            // SAFETY: the caller holds the heap mutably, so no view is referred to.
+            unsafe { (*self.entry(slot)).1 = None };
+        }
+        self.len = 0;
+        for chunk in self.chunks.drain(KEPT_VIEW_CHUNKS.min(self.chunks.len())..) {
+            // SAFETY: each chunk came from `Box::leak`, holds no view now, and is freed once.
+            drop(unsafe { Box::from_raw(chunk.as_ptr()) });
+        }
     }
 
-    fn remove(&mut self, slot: u32) -> JsString {
-        self.free.push(slot);
-        // SAFETY: the slot's record was just freed, so nothing refers to its text.
-        unsafe { (*self.slot(slot)).take().expect("a small string's text is kept") }
-    }
-
-    /// Bytes its chunks and free list take.
+    /// Bytes its chunks take.
     pub(super) fn allocated_bytes(&self) -> usize {
-        self.chunks.len() * size_of::<TextChunk>() + self.free.capacity() * size_of::<u32>()
+        self.chunks.len() * size_of::<ViewChunk>()
     }
 }
 
-impl Drop for SmallTexts {
+impl Drop for SmallViewChunks {
     fn drop(&mut self) {
+        self.clear();
         for chunk in self.chunks.drain(..) {
-            // SAFETY: each chunk came from `Box::leak` and is dropped once.
+            // SAFETY: as in `clear`.
             drop(unsafe { Box::from_raw(chunk.as_ptr()) });
         }
     }
 }
 
-/// `SmallTexts` behind a shared heap: a read makes a text through `&Heap`.
+/// `SmallViewChunks` behind a shared heap: a read makes a view through `&Heap`.
 #[derive(Default)]
-pub(super) struct SharedSmallTexts(UnsafeCell<SmallTexts>);
+pub(super) struct SmallViews(UnsafeCell<SmallViewChunks>);
 
-impl SharedSmallTexts {
-    pub(super) fn get_mut(&mut self) -> &mut SmallTexts {
-        self.0.get_mut()
+impl SmallViews {
+    /// Drops every view: at a collection, which holds the heap mutably.
+    pub(super) fn clear(&mut self) {
+        self.0.get_mut().clear();
     }
 
-    fn get(&self) -> &SmallTexts {
-        // SAFETY: the texts change only through `insert_shared`, which forms no lasting reference.
+    fn get(&self) -> &SmallViewChunks {
+        // SAFETY: the views change only through `push_shared`, which forms no lasting reference.
         unsafe { &*self.0.get() }
     }
 
-    /// Keeps `text`, through a shared heap.
-    fn insert_shared(&self, text: JsString) -> u32 {
-        // SAFETY: the heap is single-threaded and no `&mut SmallTexts` is live while it is
-        // shared; texts already handed out sit in chunks this does not move or write.
-        unsafe { (*self.0.get()).insert(text) }
+    /// Keeps `view` of the small string `owner`, through a shared heap.
+    fn push_shared(&self, owner: u32, view: JsString) -> u32 {
+        // SAFETY: the heap is single-threaded and no `&mut SmallViewChunks` is live while it is
+        // shared; views already handed out sit in chunks this does not move or write.
+        unsafe { (*self.0.get()).push(owner, view) }
     }
 }
 
@@ -274,9 +341,9 @@ pub(super) fn mark_leaf_small_if_new(
 }
 
 impl Heap {
-    /// Bytes the small strings' records and texts take, past the texts' own storage.
+    /// Bytes the small strings' records and views take, past their texts' own storage.
     pub(super) fn small_string_bytes(&self) -> usize {
-        self.small_strings.allocated_bytes() + self.small_texts.get().allocated_bytes()
+        self.small_strings.allocated_bytes() + self.small_views.get().allocated_bytes()
     }
 
     /// A small string of `parts`; `None` when the space is full.
@@ -294,30 +361,96 @@ impl Heap {
     #[inline(always)]
     pub(super) unsafe fn small_string_text(&self, local: RecordId) -> &JsString {
         // SAFETY: the caller's contract.
-        let parts = *unsafe { self.small_strings.get_live(local) };
-        if let Some(slot) = parts.text_slot() {
-            // SAFETY: the live record owns its text.
-            return unsafe { self.small_texts.get().get(slot) };
+        let record = unsafe { self.small_strings.get_live(local) };
+        if record.is_written()
+            && let Some(view) = self.small_views.get().get(record.tail, local)
+        {
+            return view;
         }
         // SAFETY: as above.
-        unsafe { self.write_out_small_string(local, parts) }
+        unsafe { self.view_small_string(local) }
     }
 
-    /// The text of the small string record `parts`, which has one.
+    /// Writes out the small string `local` if it is parts: its text replaces them.
     ///
     /// # Safety
-    /// `parts` is a live record of this heap.
-    pub(super) unsafe fn small_strings_text_of(&self, parts: &SmallParts) -> &JsString {
-        let slot = parts.text_slot().expect("the small string was written out");
-        // SAFETY: the caller's contract: a live record owns its text.
-        unsafe { self.small_texts.get().get(slot) }
+    /// As `small_string_text`.
+    #[inline(always)]
+    unsafe fn write_out_small_string(&self, local: RecordId) -> &SmallParts {
+        // SAFETY: the caller's contract.
+        let record = unsafe { self.small_strings.get_live(local) };
+        if !record.is_written() {
+            // SAFETY: as above.
+            unsafe { self.replace_parts_with_text(local) };
+        }
+        // SAFETY: as above.
+        unsafe { self.small_strings.get_live(local) }
     }
 
     #[cold]
     #[inline(never)]
-    unsafe fn write_out_small_string(&self, local: RecordId, parts: SmallParts) -> &JsString {
+    unsafe fn replace_parts_with_text(&self, local: RecordId) {
+        // SAFETY: the caller's contract.
+        let text = self.small_parts_text(unsafe { self.small_strings.get_live(local) });
+        let written = ManuallyDrop::new(SmallParts::written(text));
+        let base = self.small_strings.base_ptr().expect("a live record has a space").cast_mut();
+        // SAFETY: the record is live; its parts own nothing, so overwriting drops nothing, and
+        // no reference to it is held across this (callers read it again after). The collector
+        // does not run now. Its text holds no edge, so an old record needs no barrier; the
+        // parts it no longer names are not traced through it from now on.
+        unsafe { std::ptr::copy_nonoverlapping(&*written as *const SmallParts, base.add(local as usize), 1) };
+    }
+
+    /// Writes out the small string `local` if it is parts, and makes a view of its text.
+    #[cold]
+    #[inline(never)]
+    unsafe fn view_small_string(&self, local: RecordId) -> &JsString {
+        // SAFETY: the caller's contract.
+        let record = unsafe { self.write_out_small_string(local) };
+        let view = JsString::from_shared_text(&record.text().expect("written above"));
+        crate::vm::wtf16::charge_materialized_beside(size_of::<(u32, Option<JsString>)>());
+        let slot = self.small_views.push_shared(local, view);
+        if slot + 1 >= VIEW_COLLECTION_LIMIT {
+            // A collection drops the views; a loop reading many strings once would keep them all.
+            self.request_collection();
+        }
+        let base = self.small_strings.base_ptr().expect("a live record has a space").cast_mut();
+        // SAFETY: as above; `tail` of a written record is only a hint, read by copy.
+        unsafe { (*base.add(local as usize)).tail = slot };
+        self.small_views.get().get(slot, local).expect("the view just made")
+    }
+
+    /// `string(value)?.existing_flat()?.ascii_len()` with no view made of a small string.
+    #[inline(always)]
+    pub(crate) fn existing_ascii_len(&self, value: Value) -> Option<usize> {
+        let record_id = value.direct_string_index()?;
+        if let Some(local) = small_string_local(record_id) {
+            // SAFETY: string Values come only from allocation and stay live while reachable.
+            return Some(unsafe { self.write_out_small_string(local) }.text_bytes());
+        }
+        // SAFETY: as above.
+        unsafe { self.string_record_by_id(record_id) }.existing_flat()?.ascii_len()
+    }
+
+    /// The existing flat units of the string `value`, as `string(value)?.existing_flat()?.view()`
+    /// reads them, but with no view made of a small string: what a reader that only copies or
+    /// measures the units takes.
+    #[inline(always)]
+    pub(crate) fn flat_text(&self, value: Value) -> Option<FlatText<'_>> {
+        let record_id = value.direct_string_index()?;
+        if let Some(local) = small_string_local(record_id) {
+            // SAFETY: string Values come only from allocation and stay live while reachable.
+            let record = unsafe { self.write_out_small_string(local) };
+            return Some(FlatText::Small(Rc::clone(&record.text().expect("written above"))));
+        }
+        // SAFETY: as above.
+        Some(FlatText::Record(unsafe { self.string_record_by_id(record_id) }.existing_flat()?.view()))
+    }
+
+    /// The text of the parts of `record`, each part written out first.
+    fn small_parts_text(&self, record: &SmallParts) -> JsString {
         let mut number = crate::number_to_string::Short::new();
-        let pieces = parts.each().map(|part| match part {
+        let pieces = record.each().map(|part| match part {
             None => &[][..],
             // SAFETY: a part is a string its small string keeps alive.
             Some(Part::Text(id)) => match unsafe { self.written_out_string(id) }.units() {
@@ -330,46 +463,24 @@ impl Heap {
             }
         });
         let length = pieces.iter().map(|piece| piece.len()).sum::<usize>() + number.len();
-        let at = parts.each().iter().position(|part| matches!(part, Some(Part::Number(_))));
-        let joined = JsString::from_ascii_parts(length, pieces.iter().enumerate().map(|(position, piece)| {
+        let at = record.each().iter().position(|part| matches!(part, Some(Part::Number(_))));
+        JsString::from_ascii_parts(length, pieces.iter().enumerate().map(|(position, piece)| {
             if Some(position) == at { number.as_slice() } else { piece }
-        }));
-        let slot = self.small_texts.insert_shared(joined);
-        let record = self.small_strings.base_ptr().expect("a live record has a space").cast_mut();
-        // SAFETY: the record is live and initialized, and no reference to it outlives a read
-        // (each copies it); the collector does not run now. The text it now names is owned and
-        // holds no edge, so an old record needs no barrier.
-        unsafe {
-            let record = record.add(local as usize);
-            (*record).head = WRITTEN;
-            (*record).tail = slot;
-            self.small_texts.get().get(slot)
-        }
+        }))
     }
 }
 
-/// Sweeps the small strings as the string records are swept: a dead one's text is dropped and
-/// released from the payload ledger; a full sweep counts each live text's.
+/// Sweeps the small strings as the string records are swept: a dead one's text is dropped with
+/// it and released from the payload ledger; a full sweep counts each live text's.
 pub(super) fn sweep(
     small: &mut SmallStringSpace,
-    texts: &mut SharedSmallTexts,
     payload_bytes: &mut usize,
     live_payload_bytes: &mut usize,
     full: bool,
     age: PromotionAge,
 ) -> (usize, usize) {
-    let texts = texts.get_mut();
     small.sweep(full, age, full, |record| match record {
-        RecordSweep::Keep(_, parts) => {
-            if let Some(slot) = parts.text_slot() {
-                // SAFETY: a kept record owns its text.
-                *live_payload_bytes += unsafe { texts.get(slot) }.flat_unit_bytes();
-            }
-        }
-        RecordSweep::Dead(_, parts) => {
-            if let Some(slot) = parts.text_slot() {
-                *payload_bytes = payload_bytes.saturating_sub(texts.remove(slot).flat_unit_bytes());
-            }
-        }
+        RecordSweep::Keep(_, parts) => *live_payload_bytes += parts.text_bytes(),
+        RecordSweep::Dead(_, parts) => *payload_bytes = payload_bytes.saturating_sub(parts.text_bytes()),
     })
 }

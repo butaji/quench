@@ -15,6 +15,10 @@ impl<H: Host> Vm<H> {
     pub(super) fn short_ascii_concat(&mut self, left: Value, right: Value) -> Option<Value> {
         let mut bytes = crate::number_to_string::Short::new();
         for operand in [left, right] {
+            // A small string's text never fits (`string_of_parts`): no view is made of it.
+            if operand.direct_string_index().is_some_and(crate::heap::is_small_string) {
+                return None;
+            }
             match self.heap.string(operand) {
                 Some(text) => match text.existing_flat()?.view() {
                     super::wtf16::Units::Ascii(text) => bytes.try_extend(text)?,
@@ -110,7 +114,7 @@ impl<H: Host> Vm<H> {
             let value = part(self, index);
             match value.direct_string_index() {
                 Some(record_id) => {
-                    known += self.heap.string(value)?.existing_flat()?.ascii_len()?;
+                    known += self.heap.existing_ascii_len(value)?;
                     ids[texts] = record_id;
                     texts += 1;
                 }
@@ -170,6 +174,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn ascii_string_concat(&self, count: usize, part: impl Fn(&Self, usize) -> Value) -> Option<JsString> {
         enum Piece<'text> {
             Text(&'text [u8]),
+            Small(std::rc::Rc<str>),
             Number(crate::number_to_string::Short),
         }
         let mut pieces = smallvec::SmallVec::<[Piece<'_>; STRING_CONCAT_INLINE_PARTS]>::new();
@@ -182,13 +187,15 @@ impl<H: Host> Vm<H> {
                     crate::number_to_string::write(number, &mut text);
                     Piece::Number(text)
                 }
-                None => match self.heap.string(value)?.existing_flat()?.view() {
-                    super::wtf16::Units::Ascii(bytes) => Piece::Text(bytes),
-                    super::wtf16::Units::Wide(_) => return None,
+                None => match self.heap.flat_text(value)? {
+                    crate::heap::FlatText::Record(super::wtf16::Units::Ascii(bytes)) => Piece::Text(bytes),
+                    crate::heap::FlatText::Record(super::wtf16::Units::Wide(_)) => return None,
+                    crate::heap::FlatText::Small(text) => Piece::Small(text),
                 },
             };
             length += match &piece {
                 Piece::Text(bytes) => bytes.len(),
+                Piece::Small(text) => text.len(),
                 Piece::Number(text) => text.len(),
             };
             pieces.push(piece);
@@ -196,6 +203,7 @@ impl<H: Host> Vm<H> {
         JsString::copies_whole(length).then(|| {
             JsString::from_ascii_parts(length, pieces.iter().map(|piece| match piece {
                 Piece::Text(bytes) => *bytes,
+                Piece::Small(text) => text.as_bytes(),
                 Piece::Number(text) => text.as_slice(),
             }))
         })

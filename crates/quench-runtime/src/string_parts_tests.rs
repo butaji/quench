@@ -76,3 +76,30 @@ fn small_strings_read_as_flat_text_across_collections() {
     ];
     assert_eq!(output(source), expected);
 }
+
+/// More small strings read once than the views kept between collections (`SmallViews`): each
+/// read answers its own text, through the in-place readers and through views alike.
+#[test]
+fn many_small_strings_read_once_answer_their_own_text() {
+    let source = r#"
+      var a = [];
+      for (var i = 0; i < 100000; i++) a.push('String for key ' + i + ' in leaf node');
+      var bad = 0, total = 0;
+      for (var i = 0; i < a.length; i++) {
+        var s = a[i];
+        if (s.indexOf(' ' + i + ' ') !== 14) bad++;
+        if (s.slice(15, 15 + String(i).length) !== String(i)) bad++;
+        total += s.length + s.charCodeAt(15);
+      }
+      var joined = a.join(',');
+      print(bad); print(total); print(joined.length); print(a[99999].toUpperCase());
+    "#;
+    let (mut total, mut joined) = (0, 0);
+    for i in 0..100000 {
+        let text = format!("String for key {i} in leaf node");
+        total += text.len() + usize::from(text.as_bytes()[15]);
+        joined += text.len() + 1;
+    }
+    let expected = ["0".to_string(), total.to_string(), (joined - 1).to_string(), "STRING FOR KEY 99999 IN LEAF NODE".into()];
+    assert_eq!(output(source), expected);
+}

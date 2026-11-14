@@ -171,8 +171,17 @@ impl<H: Host> Vm<H> {
         if value.is_null() || value.is_undefined() {
             return true;
         }
-        if let Some(string) = self.heap.string(value) {
-            return match string.flat().view() {
+        if self.heap.is_string(value) {
+            // Text read in place, a small string's included (no view made); a rope is flattened.
+            let existing = self.heap.flat_text(value);
+            let units = match &existing {
+                Some(text) => text.units(),
+                None => match self.heap.string(value) {
+                    Some(string) => string.flat().view(),
+                    None => return false,
+                },
+            };
+            return match units {
                 Units::Ascii(bytes) => {
                     text.extend_from_slice(bytes);
                     true
