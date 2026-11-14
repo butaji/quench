@@ -4391,6 +4391,26 @@ script_handler! {
 }
 
 script_handler! {
+    /// `lane_relation_value` whose next record branches on the boolean it writes
+    /// (`lane_jump_false`, or `lane_jump_true` where `WHEN`; `specialize_relation_jumps`), a
+    /// comparison kept as a value and also tested, as `return (s & HELD) != 0 || ...`: the
+    /// comparison, its value and the branch as one record. Any other pair takes the value's
+    /// own path, which continues at the jump record.
+    fn lane_relation_value_jump<CONSTANT: bool, BACKWARD: bool, WHEN: bool>(cx, r, ip, i, view) {
+        let (operator, left, right) = lane_relation_operands::<CONSTANT>(r, i);
+        let Some(holds) = super::operations::integer_relation(operator, left, right) else {
+            sibling!(lane_relation_value_other::<H, CONSTANT>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
+        let jump_ip = following(ip);
+        if holds == WHEN {
+            resume!(cx, lane_jump::<H>(r, jump_ip, BACKWARD, Carried::script_in(cx, view), None));
+        }
+        next!(cx, r, following(jump_ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
     /// `lane_relation_value` of operands other than two integers: the relations the lane
     /// decides without guest code (`lane_relation`); any other takes the general path. Out
     /// of line, so the integer case keeps few values live.
@@ -20174,6 +20194,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_script_calls::<H>(&mut records);
         specialize_proved_arrays::<H>(&decoded, &mut records, &raw_results::raw_result_triples(&decoded, &function.handlers, || live().map(|masks| &**masks)));
         specialize_moved_index_reads::<H>(&mut records);
+        specialize_relation_jumps::<H>(&mut records);
         specialize_array_literals::<H>(&mut records);
     }
     let min_run = if closes_loop(&decoded, &exits) {
@@ -21004,6 +21025,33 @@ fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut 
         });
         if !shared {
             records[pc].handler = proved as *const ();
+        }
+    }
+}
+
+/// Gives each integer comparison kept as a value (`lane_relation_value`) whose next record
+/// branches on that value (`lane_jump_false`, `lane_jump_true`) the fused comparison and branch
+/// (`lane_relation_value_jump`). The jump record stays, for jumps that enter it and for the
+/// comparisons the fused record leaves to the value's own path.
+fn specialize_relation_jumps<H: Host>(records: &mut [LaneInstruction]) {
+    for pc in 0..records.len().saturating_sub(1) {
+        let (value, jump) = (&records[pc], &records[pc + 1]);
+        let Some(constant) = [false, true].into_iter().find(|&constant| {
+            value.handler == if constant { lane_relation_value::<H, true> as Handler } else { lane_relation_value::<H, false> as Handler } as *const ()
+        }) else {
+            continue;
+        };
+        if jump.a != value.a {
+            continue;
+        }
+        let tests: [(*const (), Handler); 4] = [
+            (lane_jump_false::<H, false> as Handler as *const (), if constant { lane_relation_value_jump::<H, true, false, false> } else { lane_relation_value_jump::<H, false, false, false> }),
+            (lane_jump_false::<H, true> as Handler as *const (), if constant { lane_relation_value_jump::<H, true, true, false> } else { lane_relation_value_jump::<H, false, true, false> }),
+            (lane_jump_true::<H, false> as Handler as *const (), if constant { lane_relation_value_jump::<H, true, false, true> } else { lane_relation_value_jump::<H, false, false, true> }),
+            (lane_jump_true::<H, true> as Handler as *const (), if constant { lane_relation_value_jump::<H, true, true, true> } else { lane_relation_value_jump::<H, false, true, true> }),
+        ];
+        if let Some(&(_, fused)) = tests.iter().find(|(handler, _)| *handler == jump.handler) {
+            records[pc].handler = fused as *const ();
         }
     }
 }
