@@ -7772,9 +7772,10 @@ script_handler! {
     /// BigInts, take `lane_jump_strict_equal_cells`.
     fn lane_jump_strict_equal_false<BACKWARD: bool, NEGATED: bool>(cx, r, ip, i, view) {
         let (left, right) = (r.get(i.b), r.get(i.c));
-        let equal = match (left.as_number(), right.as_number()) {
+        // Equal words are strictly equal but for NaN, tested first: about half of a symbol-
+        // comparing program's compares (V8-v7 Boyer) are of one value with itself.
+        let equal = if left == right { left.as_number().is_none_or(|number| !number.is_nan()) } else { match (left.as_number(), right.as_number()) {
             (Some(left), Some(right)) => left == right,
-            _ if left == right => true,
             // Two distinct heap values are equal only as strings or BigInts, which their
             // handles' families name; a slot cell that is no BigInt (a Symbol) is not.
             _ if left.is_heap() && right.is_heap() => match left.distinct_heap_pair(right) {
@@ -7790,7 +7791,7 @@ script_handler! {
                 }
             },
             _ => false,
-        };
+        } };
         if equal == NEGATED {
             resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
         }
