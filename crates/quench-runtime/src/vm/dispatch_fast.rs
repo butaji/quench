@@ -3623,21 +3623,24 @@ script_handler! {
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         };
         r.set(read.a, element);
-        resume!(cx, lane_read_operator::<H, OP>(cx, r, ip, element));
+        resume!(cx, lane_read_operator::<H, OP, false>(cx, r, ip, element));
     }
 }
 
 /// The operation of `lane_update_get_index_operator`'s triple at `ip`, whose read the triple
 /// made: the Number operation, else the operator's own record.
 #[inline(always)]
-fn lane_read_operator<H: Host, const OP: u32>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, element: Value) -> Resumed {
+fn lane_read_operator<H: Host, const OP: u32, const RAW: bool>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, element: Value) -> Resumed {
     // SAFETY: the triple is three records, the third never the view's last.
     let operator = unsafe { &*following(following(ip)) };
     // SAFETY: specialization stores the other register in the fused update's unused c.
     let (left, right) = read_number_operands::<OP>(r, operator, unsafe { (*ip).c }, element);
-    let Some(value) =
+    let value = if RAW {
+        raw_results::raw_number_value_operator::<OP>(left, right)
+    } else {
         super::operations::number_value_operator::<OP>(left, right)
-    else {
+    };
+    let Some(value) = value else {
         return Resumed::At(r, following(following(ip)), Carried::script(cx));
     };
     r.set(operator.a, value);
@@ -3810,12 +3813,14 @@ script_handler! {
     /// `lane_update_get_index_operator` of a base its loop does not redefine: an integer
     /// update, the proved read of its element (`proved_updated_read`) and the operation;
     /// any other update takes `lane_update_get_index_operator`.
-    fn lane_update_get_index_operator_proved<DECREMENT: bool, OP: u32>(cx, r, ip, i, view) {
+    ///
+    /// With `RAW` the operation's result keeps its double form (`raw_results`).
+    fn lane_update_get_index_operator_proved<DECREMENT: bool, OP: u32, RAW: bool>(cx, r, ip, i, view) {
         let Some(index) = integer_increment::<DECREMENT>(r.get(i.b)) else {
             sibling!(lane_update_get_index_operator::<H, DECREMENT, OP>, r, ip, Carried::script_in(cx, view))
         };
         let element = proved_updated_read!(cx, r, ip, i, index);
-        resume!(cx, lane_read_operator::<H, OP>(cx, r, ip, element));
+        resume!(cx, lane_read_operator::<H, OP, RAW>(cx, r, ip, element));
     }
 }
 
@@ -20053,7 +20058,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_capture_updates::<H>(&mut records);
         specialize_constant_returns::<H>(&mut records);
         specialize_script_calls::<H>(&mut records);
-        specialize_proved_arrays::<H>(&decoded, &mut records);
+        specialize_proved_arrays::<H>(&decoded, &mut records, &raw_results::raw_result_triples(&decoded, &function.handlers, || live().map(|masks| &**masks)));
         specialize_moved_index_reads::<H>(&mut records);
         specialize_array_literals::<H>(&mut records);
     }
@@ -20608,6 +20613,7 @@ macro_rules! fused_arithmetic {
         $apply!(ADDITION, SUBTRACTION, MULTIPLICATION, DIVISION)
     };
 }
+mod raw_results;
 
 /// The operator of a record running an arithmetic operator on two registers (`lane_operator`
 /// or `lane_operator_numbers`) that the lane fuses (`fused_arithmetic`); `None` for any other
@@ -20790,15 +20796,18 @@ fn fused_width<H: Host>(handler: *const ()) -> usize {
 /// The proved records (`specialize_proved_arrays`), each with the generic record it proves
 /// the array of and the offset from the record to the one whose `b` names the base (the
 /// read's, after a fused update): the one table both directions read (`proved_handler`,
+/// The proved records (`specialize_proved_arrays`), each with the generic record it proves
+/// the array of and the offset from the record to the one whose `b` names the base (the
+/// read's, after a fused update): the one table both directions read (`proved_handler`,
 /// `generic_handler`).
 fn proved_records<H: Host>() -> impl Iterator<Item = (Handler, Handler, usize)> {
     use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
     macro_rules! updated_operators {
         ($($operator:ident),*) => {
             [$((lane_update_get_index_operator::<H, false, $operator> as Handler,
-                lane_update_get_index_operator_proved::<H, false, $operator> as Handler, 1),
+                lane_update_get_index_operator_proved::<H, false, $operator, false> as Handler, 1),
                (lane_update_get_index_operator::<H, true, $operator> as Handler,
-                lane_update_get_index_operator_proved::<H, true, $operator> as Handler, 1)),*]
+                lane_update_get_index_operator_proved::<H, true, $operator, false> as Handler, 1)),*]
         };
     }
     [
@@ -20812,16 +20821,23 @@ fn proved_records<H: Host>() -> impl Iterator<Item = (Handler, Handler, usize)> 
     .chain(fused_arithmetic!(updated_operators))
 }
 
-/// The proved record of generic `handler`, with its base offset (`proved_records`).
-fn proved_handler<H: Host>(handler: *const ()) -> Option<(Handler, usize)> {
-    proved_records::<H>()
+/// The proved record of generic `handler`, with its base offset (`proved_records`): its raw
+/// form (`raw_results::raw_proved_records`) where `raw` and it has one.
+fn proved_handler<H: Host>(handler: *const (), raw: bool) -> Option<(Handler, usize)> {
+    raw.then(raw_results::raw_proved_records::<H>)
+        .into_iter()
+        .flatten()
+        .chain(proved_records::<H>())
         .find(|&(generic, _, _)| generic as *const () == handler)
         .map(|(_, proved, access)| (proved, access))
 }
 
-/// The generic record of proved `handler` (`proved_records`).
+/// The generic record of proved `handler`, canonical or raw (`proved_records`).
 fn generic_handler<H: Host>(handler: *const ()) -> Option<Handler> {
-    proved_records::<H>().find(|&(_, proved, _)| proved as *const () == handler).map(|(generic, _, _)| generic)
+    proved_records::<H>()
+        .chain(raw_results::raw_proved_records::<H>())
+        .find(|&(_, proved, _)| proved as *const () == handler)
+        .map(|(generic, _, _)| generic)
 }
 
 /// Gives each element read and store whose register base its innermost loop does not
@@ -20839,7 +20855,7 @@ fn generic_handler<H: Host>(handler: *const ()) -> Option<Handler> {
 /// redefines through a definition `defined_register` does not report only misses its
 /// proof, and its record takes the generic one. Aggregate profiles count each generic
 /// store, so they keep the generic records.
-fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
+fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction], raw: &crate::bitset::BitSet) {
     if cfg!(feature = "profile-aggregate") {
         return;
     }
@@ -20854,7 +20870,7 @@ fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut 
     // Each candidate: its record, proved handler, base register and innermost loop.
     let candidates: Vec<(usize, Handler, u16, usize)> = (0..records.len())
         .filter_map(|pc| {
-            let (proved, access) = proved_handler::<H>(records[pc].handler)?;
+            let (proved, access) = proved_handler::<H>(records[pc].handler, raw.contains(pc))?;
             let base = records.get(pc + access)?.b;
             let (index, _) = loops
                 .iter()
