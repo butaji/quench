@@ -136,8 +136,13 @@ fn osr_transitions_between_tiers_keep_the_output() {
     }
     let keys = ["native_region_runs", "tier_ups", "body_runs"];
     let [regions, published, ran] = fixture_osr_counts("--", "osr_transitions.js", keys);
-    assert!(regions > 0, "the default mode: the hot loop runs a region");
+    // The default mode runs the loop in its body: a region is entered only where a trial
+    // beats the lane's loop rate (`LoopTier`), so the loop's native tier here is the body.
+    assert!(regions + ran > 0, "the default mode: the hot loop runs a native tier");
     assert!(published > 0 && ran > 0, "the default mode: a loop body publishes ({published}) and runs ({ran})");
-    let [regions, published, _] = fixture_osr_counts("--b-jit", "osr_transitions.js", keys);
-    assert!(regions > 0 && published == 0, "--b-jit: stencil regions only ({regions} runs, {published} bodies)");
+    // The stencil strip emits x86-64's frame shapes; another host's `--b-jit` runs the lanes.
+    if cfg!(target_arch = "x86_64") {
+        let [regions, published, _] = fixture_osr_counts("--b-jit", "osr_transitions.js", keys);
+        assert!(regions > 0 && published == 0, "--b-jit: stencil regions only ({regions} runs, {published} bodies)");
+    }
 }

@@ -243,7 +243,7 @@ fn native_stores_that_widen_keep_prefix_and_suffix_effects() {
     let source = "var before=0,after=0; var receiver={value:0,a:1,b:2};\
         function write(x){before++;receiver.value=x;after++;}\
         for(let i=0;i<200;i++)write(i); write(0.5);\
-        print(before, after, receiver.value);";
+        print(before + \" \" + after + \" \" + receiver.value);";
     assert_agrees(source, "untyped-native-write", RETURNED);
     let program = Engine::specialize(source, "untyped-native-write").unwrap();
     assert_eq!(show(&program, ExecutionMode::NativeOnly, true).lines, ["201 201 0.5"]);
