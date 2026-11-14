@@ -159,6 +159,26 @@ impl LoopTier {
     }
 }
 
+/// Counts a compilation of `site`'s region, in the tier and, with diagnostics, at the site.
+fn count_compilation(tier: &mut LoopTier, site: &LoopSite) {
+    tier.compilations += 1;
+    super::super::compiled::base_region::count(super::super::compiled::base_region::Event::Compiled);
+    if site.diagnostics {
+        site.compile_attempts.set(site.compile_attempts.get().saturating_add(1));
+    }
+}
+
+/// The region's entry registers holding Ints and those holding other Numbers, in the running
+/// activation's registers `r`.
+fn entry_number_registers(region: &super::super::compiled::LoopRegion, r: Registers) -> (Vec<crate::bytecode::Register>, Vec<crate::bytecode::Register>) {
+    let ints = region.registers_where(|register| r.get(register).as_int().is_some());
+    let doubles = region.registers_where(|register| {
+        let value = r.get(register);
+        value.as_number().is_some() && value.as_int().is_none()
+    });
+    (ints, doubles)
+}
+
 /// Starts compiling `site`'s region over the tier's element views from the running activation,
 /// and looks for its code at once: a code generator without its own thread has it ready.
 pub(super) fn lane_loop_compile<H: Host>(
@@ -172,11 +192,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     typed_captures: &[u16],
     int_captures: &[u16],
 ) {
-    tier.compilations += 1;
-    super::super::compiled::base_region::count(super::super::compiled::base_region::Event::Compiled);
-    if site.diagnostics {
-        site.compile_attempts.set(site.compile_attempts.get().saturating_add(1));
-    }
+    count_compilation(tier, site);
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
     let program = machine.programs.get(machine.active_program);
@@ -184,11 +200,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
     let native_field_loads = native_field_loads(machine, region);
-    let ints = region.registers_where(|register| r.get(register).as_int().is_some());
-    let doubles = region.registers_where(|register| {
-        let value = r.get(register);
-        value.as_number().is_some() && value.as_int().is_none()
-    });
+    let (ints, doubles) = entry_number_registers(region, r);
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
         int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds };

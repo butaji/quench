@@ -1,8 +1,8 @@
-use crate::bytecode::private_identity_label;
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::*;
 
 pub(crate) mod eval_source;
+mod private_names;
 
 /// Whether source contains only ECMAScript whitespace and comments. This is a
 /// useful fast path for eval's common comment-only inputs: parsing an empty
@@ -971,6 +971,12 @@ impl<H: Host> Vm<H> {
         let Some(binding_site_pc) = site else {
             return Ok(environment);
         };
+        let scope = self.binding_site_environment_cell(environment, binding_site_pc)?;
+        Ok(self.heap.alloc(scope))
+    }
+
+    /// The environment cell `site_environment` allocates for a site at `binding_site_pc`.
+    fn binding_site_environment_cell(&mut self, environment: Value, binding_site_pc: u32) -> Result<Cell, JsError> {
         let slots = self
             .heap
             .clone_environment_slots(environment, &[], crate::bytecode::Resets::listed(&[]))
@@ -1000,7 +1006,7 @@ impl<H: Host> Vm<H> {
                 with_objects: scope.with_objects().into(),
             }),
         };
-        Ok(self.heap.alloc(scope))
+        Ok(scope)
     }
 
     fn validate_eval_arguments_context(
@@ -1094,49 +1100,6 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn private_home_binding_atom(&mut self, private: Atom) -> Atom {
         self.intern_atom(&format!("\0quench:private-home:{private}"))
-    }
-
-    fn direct_eval_private_names(&mut self, p: &ResidualProgram) -> Option<(Value, Vec<(String, String)>)> {
-        let frame = self.frames.len().checked_sub(1)?;
-        let caller = self.frame_caller(frame);
-        let mut atoms = Vec::new();
-        let metadata = p.function_get(caller.function() as usize)?;
-        if let Some(pc) = caller.binding_site()
-            && let Ok(index) = metadata.binding_sites.binary_search_by_key(&pc, |site| site.resume_pc)
-        {
-            atoms.extend(metadata.binding_sites[index].bindings.iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));
-        }
-        atoms.extend(metadata.name_bindings.resolved().into_iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));
-        let mut environment = self.captured_parent_environment(caller);
-        while let Some(Cell::Environment { parent, function, scope, .. }) = self.heap.get(environment) {
-            if let Some(owner) = scope.program().and_then(|program| self.programs.get(ProgramId::from_raw(program)))
-                && let Some(metadata) = owner.function_get(*function as usize)
-            {
-                atoms.extend(metadata.name_bindings.resolved().into_iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));
-            }
-            environment = *parent;
-        }
-        atoms.sort_unstable();atoms.dedup();
-        let mut bindings = atoms.into_iter().filter_map(|atom| self.name_binding(caller, atom)).filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).collect::<Vec<_>>();
-        bindings.sort_by_key(|binding| match binding.location { crate::bytecode::EvalBindingLocation::Local(_) => 0, crate::bytecode::EvalBindingLocation::Capture { depth, .. } => u32::from(depth)+1 });
-        let mut names = Vec::new();
-        let mut first_home = None;
-        for binding in bindings {
-            let identity = self.atom_name(binding.atom).to_owned();
-            let Some(label) = private_identity_label(&identity).map(str::to_owned) else { continue; };
-            if names.iter().any(|(name, _)| name == &label) { continue; }
-            if let Ok(home) = self.load_name_binding(p, frame, binding) {
-                first_home.get_or_insert(home);
-                names.push((label, identity));
-            }
-        }
-        if !names.is_empty() { return Some((first_home?, names)); }
-        let home = self.eval_home_binding(p)?;
-        let names = self.object_data(home).into_iter().flat_map(|object| object.private_declarations()).filter_map(|(name, _)| {
-            let identity = self.atom_name(name).to_owned();
-            private_identity_label(&identity).map(str::to_owned).map(|label| (label, identity))
-        }).fold(Vec::new(), |mut names, binding| { if !names.iter().any(|(label, _)| label == &binding.0) { names.push(binding); } names });
-        (!names.is_empty()).then_some((home, names))
     }
 
     fn direct_eval_context(&self, p: &ResidualProgram) -> Option<crate::compile::EvalContext> {
