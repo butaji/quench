@@ -2884,6 +2884,12 @@ impl Heap {
                         // SAFETY: the cell's only owned memory was released above.
                         unsafe { std::ptr::write(&mut slot.cell, None) };
                     }
+                    // An environment owns only its slot storage and scope, which its drop
+                    // releases: no payload or external bytes, no properties, no sparse entry.
+                    #[cfg(not(feature = "profile-memory"))]
+                    Some(Cell::Environment { .. }) => {
+                        drop(slot.cell.take());
+                    }
                     Some(_) => {
                         let cell = slot.cell.take().unwrap();
                         #[cfg(feature = "profile-memory")]
