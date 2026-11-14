@@ -50,6 +50,9 @@ impl<H: Host> LaneContext<H> {
     }
 }
 
+/// The words of an innermost activation's state that a parked lane keeps: its receiver and its environment.
+const INNERMOST_STATE_LEN: usize = 2;
+
 /// Everything a lane run's context starts from (`Vm::lane_context`).
 pub(super) struct LaneStart<'a> {
     pub(super) code: &'a ResidualProgram,
@@ -124,10 +127,10 @@ impl<H: Host> Vm<H> {
     /// context holds: the context of the native call it runs beside (`lane_deferred`) or of the
     /// native whose callbacks it runs (`lane_native`). Both `undefined` where no native
     /// does, a direct eval's record then holding them (`lane_eval`).
-    pub(in crate::vm) fn innermost_lane_state(&self) -> [Value; 2] {
+    pub(in crate::vm) fn innermost_lane_state(&self) -> [Value; INNERMOST_STATE_LEN] {
         let cx = self.lane_deferred.map(|call| call.cx).or(self.lane_native.map(|call| call.cx));
         // SAFETY: a native call's lane runs, so its context lives.
-        cx.map_or([Value::UNDEFINED; 2], |cx| unsafe {
+        cx.map_or([Value::UNDEFINED; INNERMOST_STATE_LEN], |cx| unsafe {
             let cx = cx.cast::<LaneContext<H>>();
             [(*cx).this, (*cx).env]
         })
