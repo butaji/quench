@@ -84,12 +84,21 @@ impl Parts {
     }
 
     /// The string parts' record ids, in order: what a collector traces.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn for_each_text(&self, mut visit: impl FnMut(u32)) {
-        self.each().for_each(|part| if let Part::Text(id) = part { visit(id) });
+        // A plain loop: the iterator's fold stayed out of line, a call per string marked.
+        let (count, at) = (usize::from(self.shape & COUNT_MASK), usize::from(self.shape >> NUMBER_SHIFT));
+        for position in 0..count {
+            if position != at {
+                let mut id = [0; ID_BYTES];
+                id.copy_from_slice(&self.ids[ID_BYTES * position..ID_BYTES * (position + 1)]);
+                visit(u32::from_le_bytes(id));
+            }
+        }
     }
 
     /// The parts, in order.
+    #[inline(always)]
     pub(crate) fn each(&self) -> impl Iterator<Item = Part> + '_ {
         let (count, at) = (usize::from(self.shape & COUNT_MASK), self.shape >> NUMBER_SHIFT);
         (0..count).map(move |position| {
