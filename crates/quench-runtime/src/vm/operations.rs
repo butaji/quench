@@ -800,8 +800,21 @@ pub(super) fn number_operator<const OP: u32>(left: f64, right: f64) -> Option<f6
 #[inline(always)]
 fn bitwise_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
     let operation = NumberBitwise::from_binary_operator(numeric_binary_operator(OP)?)?;
-    let int32 = |value: Value| value.as_int().or_else(|| value.as_number().map(|number| number_to_u32(number) as i32));
-    Some(number_bitwise_result(operation, int32(left)?, int32(right)?))
+    Some(number_bitwise_result(operation, value_to_int32(left)?, value_to_int32(right)?))
+}
+
+/// ToInt32 of a Number from its own representation: an integer as it is, a double by
+/// `number_to_u32`. Branches, not `Option::or_else`: the closure's `Some` stayed a flag
+/// register tested after the conversion (V8-v7 NavierStokes `x | 0`).
+#[inline(always)]
+fn value_to_int32(value: Value) -> Option<i32> {
+    if let Some(integer) = value.as_int() {
+        return Some(integer);
+    }
+    match value.as_number() {
+        Some(number) => Some(number_to_u32(number) as i32),
+        None => None,
+    }
 }
 
 /// Integer operator `OP` (`numeric_integer_result`) when both operands are integers;

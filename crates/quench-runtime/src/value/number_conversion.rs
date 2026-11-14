@@ -27,10 +27,26 @@ pub(crate) const EXACT_I64_TRUNCATION_LIMIT: f64 = 9_223_372_036_854_775_808.0;
 /// ToUint32 (ToInt32 is its bits reinterpreted as `i32`).
 #[inline]
 pub fn number_to_u32(value: f64) -> u32 {
+    // A truncation that fits `i32` is ToInt32 itself: one `cvttsd2si` and a compare. Only
+    // `i32::MIN` (out of range, NaN, or exactly -2^31) takes the wide conversion.
+    #[cfg(target_arch = "x86_64")]
+    {
+        let truncated = truncate_to_i32(value);
+        if truncated != i32::MIN {
+            return truncated as u32;
+        }
+    }
     if value.abs() < EXACT_I64_TRUNCATION_LIMIT {
         // NaN fails the comparison; -0 and small fractions truncate to 0.
         return value as i64 as u32;
     }
+    number_to_u32_wide(value)
+}
+
+/// `number_to_u32` at or past 2^63 and of non-finite values, out of line.
+#[cold]
+#[inline(never)]
+fn number_to_u32_wide(value: f64) -> u32 {
     if !value.is_finite() {
         return 0;
     }
