@@ -4201,13 +4201,23 @@ script_handler! {
     /// registers; the first other operand switches the record to `lane_operator_numbers`.
     fn lane_operator<OP: u32>(cx, r, ip, i, view) {
         let Some(value) = super::operations::integer_operator::<OP>(r.get(i.b), r.get(i.c)) else {
-            // SAFETY: the record is an arithmetic record of the running view.
-            unsafe { note_first_miss(cx, ip, r.get(i.b), r.get(i.c)) };
-            requicken::<H>(ip, lane_operator_numbers::<H, OP>);
-            sibling!(lane_operator_numbers::<H, OP>, r, ip, Carried::script(cx))
+            sibling!(lane_operator_first_miss::<H, OP>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_operator`'s first operands other than two integers, out of line: the feedback
+    /// note is a call, and a call on a path that rejoins none left the integer handler a frame
+    /// on its hit path (shrink-wrapping places the save in the entry block).
+    #[inline(never)]
+    fn lane_operator_first_miss<OP: u32>(cx, r, ip, i, view) {
+        // SAFETY: the record is an arithmetic record of the running view.
+        unsafe { note_first_miss(cx, ip, r.get(i.b), r.get(i.c)) };
+        requicken::<H>(ip, lane_operator_numbers::<H, OP>);
+        sibling!(lane_operator_numbers::<H, OP>, r, ip, Carried::script(cx))
     }
 }
 
@@ -4349,13 +4359,22 @@ script_handler! {
     fn lane_operator_constant<OP: u32>(cx, r, ip, i, view) {
         let Some(value) = super::operations::integer_operator::<OP>(r.get(i.b), i.constant())
         else {
-            // SAFETY: the record is an arithmetic record of the running view.
-            unsafe { note_first_miss(cx, ip, r.get(i.b), i.constant()) };
-            requicken::<H>(ip, lane_operator_constant_numbers::<H, OP>);
-            sibling!(lane_operator_constant_numbers::<H, OP>, r, ip, Carried::script(cx))
+            sibling!(lane_operator_constant_first_miss::<H, OP>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_operator_constant`'s first operand other than an integer, out of line, as
+    /// `lane_operator_first_miss`.
+    #[inline(never)]
+    fn lane_operator_constant_first_miss<OP: u32>(cx, r, ip, i, view) {
+        // SAFETY: the record is an arithmetic record of the running view.
+        unsafe { note_first_miss(cx, ip, r.get(i.b), i.constant()) };
+        requicken::<H>(ip, lane_operator_constant_numbers::<H, OP>);
+        sibling!(lane_operator_constant_numbers::<H, OP>, r, ip, Carried::script(cx))
     }
 }
 
@@ -4366,13 +4385,22 @@ script_handler! {
     fn lane_operator_integer_constant<OP: u32>(cx, r, ip, i, view) {
         let Some(value) = super::operations::integer_constant_operator::<OP>(r.get(i.b), i.imm() as i32)
         else {
-            // SAFETY: the record is an arithmetic record of the running view.
-            unsafe { note_first_miss(cx, ip, r.get(i.b), Value::integer(i.imm() as i32)) };
-            requicken::<H>(ip, lane_operator_integer_constant_numbers::<H, OP>);
-            sibling!(lane_operator_integer_constant_numbers::<H, OP>, r, ip, Carried::script(cx))
+            sibling!(lane_operator_integer_constant_first_miss::<H, OP>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_operator_integer_constant`'s first operand other than an integer, out of line,
+    /// as `lane_operator_first_miss`.
+    #[inline(never)]
+    fn lane_operator_integer_constant_first_miss<OP: u32>(cx, r, ip, i, view) {
+        // SAFETY: the record is an arithmetic record of the running view.
+        unsafe { note_first_miss(cx, ip, r.get(i.b), Value::integer(i.imm() as i32)) };
+        requicken::<H>(ip, lane_operator_integer_constant_numbers::<H, OP>);
+        sibling!(lane_operator_integer_constant_numbers::<H, OP>, r, ip, Carried::script(cx))
     }
 }
 
