@@ -207,15 +207,11 @@ fn overflow_exits(function: &ir::Function, body: &[ir::Inst]) -> usize {
 }
 
 #[test]
-fn matmul_indices_check_no_overflow_and_no_span_in_the_loop() {
+fn matmul_indices_have_no_int32_overflow_exit_in_the_loop() {
     use crate::heap::TypedArrayKind as Kind;
     let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
     let body = loop_body(&function);
     assert_eq!(overflow_exits(&function, &body), 0, "the counter stays below its int32 bound and the indices are words: {function}");
-    // The entry proved the inputs of the index arithmetic within `INDEX_INPUT_BITS`: a product of two
-    // and a sum with a third lie within what a Number holds exactly, so no per-iteration test of it.
-    let span = (IntRange::EXACT.max - IntRange::EXACT.min) as u64;
-    assert_eq!(compares_with(&function, &body, span), 0, "{function}");
 }
 
 /// The unsigned `index < length` tests of element accesses among `instructions`.
@@ -256,4 +252,13 @@ fn a_loop_nest_proves_the_views_of_its_arrays_once_where_their_bases_are_invaria
     assert!(compares_with(&function, &everything, kind) >= 3, "each of `a`, `b` and `c` is proved: {function}");
     assert_eq!(compares_with(&function, &loop_body(&function), kind), 0,
         "no loop of the nest proves a view again per iteration of the one around it: {function}");
+}
+
+#[test]
+fn an_index_that_adds_an_invariant_base_to_a_counter_compares_base_and_bound_once() {
+    use crate::heap::TypedArrayKind as Kind;
+    let source = "function row(a, r, n) { var s = 0; for (var k = 0; k < n; k++) s += a[r + k]; return s; }";
+    let function = entered_region(source, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
+    let body = loop_body(&function);
+    assert_eq!(bounds_compares(&function, &body), 0, "{function}");
 }

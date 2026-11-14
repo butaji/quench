@@ -17,8 +17,9 @@ pub(super) struct IntRanges {
     overflow_free: CompoundBitSet,
     in_bounds: CompoundBitSet,
     /// The accesses whose index is below a bound its loop's entry compares with the array's
-    /// length once (`Lowering::version_bounds`), by PC (ascending), with the bound's register.
-    versioned: Vec<(usize, Register)>,
+    /// length once (`Lowering::version_bounds`), by PC (ascending), with the bound's register and, for an
+    /// index `base + iv` below `base + bound`, the base's.
+    versioned: Vec<(usize, Register, Option<Register>)>,
     /// The arithmetic whose result leaves int32 within `IntRange::WORD`, by PC (ascending), with its range.
     index_ranges: Vec<(usize, IntRange)>,
     /// The products no consumer reads the sign of a zero of, by PC (ascending).
@@ -52,12 +53,12 @@ impl IntRanges {
     /// Whether the index of the element access at `pc` lies in `0..length` of its array: proved
     /// at the access, or by its loop's entry (`versioned`).
     pub(super) fn in_bounds(&self, pc: usize) -> bool {
-        self.in_bounds.contains(pc) || self.versioned.binary_search_by_key(&pc, |(at, _)| *at).is_ok()
+        self.in_bounds.contains(pc) || self.versioned.binary_search_by_key(&pc, |(at, ..)| *at).is_ok()
     }
 
     /// The accesses whose bound their loop's entry compares with the array's length, by PC, with
     /// the bound's register.
-    pub(super) fn versioned(&self) -> &[(usize, Register)] { &self.versioned }
+    pub(super) fn versioned(&self) -> &[(usize, Register, Option<Register>)] { &self.versioned }
 }
 
 impl Lowering<'_, '_> {
@@ -100,13 +101,13 @@ impl Lowering<'_, '_> {
         let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
             native_calls: self.native_calls };
         let mut proved = IntRanges::new(instructions.len());
-        let mut bounded = Vec::new();
+        let mut bounded: Vec<(usize, Register, (Register, Option<Register>))> = Vec::new();
         facts::analyze_text(&text, initial, seeds).replay(&text, seeds, |pc, point| {
             if point.overflow_free(&self.program.constants, instructions[pc]) { proved.overflow_free.insert(pc); }
             match point.index_proof(&model, pc, instructions[pc]) {
                 facts::IndexProof::Proven => { proved.in_bounds.insert(pc); }
-                facts::IndexProof::Versioned { array, bound } => bounded.push((pc, array, bound)),
-                facts::IndexProof::Check => {}
+                facts::IndexProof::Versioned { array, bound } => bounded.push((pc, array, (bound, None))),
+                facts::IndexProof::Check => bounded.extend(self.affine_bound(instructions, pc, point)),
             }
             let signless = signless.binary_search(&pc).is_ok();
             if let Some(range) = point.index_range(&self.program.constants, instructions[pc], signless) { proved.index_ranges.push((pc, range)); }

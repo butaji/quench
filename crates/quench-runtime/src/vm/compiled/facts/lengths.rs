@@ -129,6 +129,16 @@ pub(in crate::vm::compiled) enum IndexProof {
 }
 
 impl Point {
+    /// The register `register` is known below the value of, if any.
+    pub(in crate::vm::compiled) fn under_of(&self, register: Register) -> Option<Register> {
+        self.relations.under.get(usize::from(register)).copied().flatten()
+    }
+
+    /// Whether `register` holds a non-negative integer here.
+    pub(in crate::vm::compiled) fn non_negative(&self, register: Register) -> bool {
+        self.types.get(usize::from(register)).copied().and_then(Type::int_range).is_some_and(|range| range.min >= 0)
+    }
+
     /// What proves the index of the element access at `pc` within `0..length` of its array: the
     /// access reads or writes a hoisted view and its index is non-negative, and below the array's
     /// length (`Proven`) or below another register's value (`Versioned`).

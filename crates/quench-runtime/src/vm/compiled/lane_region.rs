@@ -1754,7 +1754,7 @@ pub(super) fn lower(
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && instructions[at].op().is_load_capture())),
         lowering.views, typed_captures, |pc| coverage.lowered(pc));
-    lowering.entering = lowering.entering_ranges(entry_pc, &loops);
+    lowering.entering = lowering.entering_ranges(entry_pc);
     lowering.ranges = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape);
     lowering.arrays_fixed = lowering.arrays_stay_put(&leaders, &writes);
     lowering.loop_fields = loop_fields(program, unit, &loops);

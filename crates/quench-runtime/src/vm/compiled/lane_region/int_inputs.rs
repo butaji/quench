@@ -1,14 +1,10 @@
 //! Loop inputs an entry observed to be int32s: the invariants of an OSR loop that its index
-//! arithmetic reads, which the entry proves once.
-//!
-//! An index is the sum, difference or product of such inputs. Proved int32 at the entry, they
-//! make the arithmetic integer words (`index_math`); proved within `INDEX_INPUT_BITS` too, a
-//! product of two and a sum with a third lie within what a Number holds exactly, which is
-//! all the arithmetic leaves for (`IntRange::EXACT`), so it checks nothing per iteration.
+//! arithmetic reads, which the entry proves int32 once, so the arithmetic is integer words
+//! (`index_math`). No magnitude is assumed of them: the words leave only where a result really
+//! passes what a Number holds exactly (`IntRange::EXACT`).
 
 use super::*;
 use super::super::operations::NumberArithmetic;
-use super::super::tier_policy::INDEX_INPUT_BITS;
 
 impl Lowering<'_, '_> {
     /// The registers the loop entered at the region's header reads as operands of index
@@ -48,17 +44,10 @@ impl Lowering<'_, '_> {
 
     /// The observed int32 entries live at `entry` (a dead register's value is stale, and nothing
     /// conforms it) whose range is narrower than int32 and whose entry fact is int32: what the
-    /// entry guards once (`guard_entering_ranges`) and the ranges pass assumes. An input of the
-    /// loop's index arithmetic is within `INDEX_INPUT_BITS` as well, where no earlier body left
-    /// at the entry (`generic`): an entry that left for it recompiles without the assumption.
-    pub(super) fn entering_ranges(&self, entry: usize, loops: &[(usize, usize)]) -> Vec<(Register, IntRange)> {
+    /// entry guards once (`guard_entering_ranges`) and the ranges pass assumes.
+    pub(super) fn entering_ranges(&self, entry: usize) -> Vec<(Register, IntRange)> {
         let types = self.facts.at(entry);
-        let inputs = if self.generic.contains(&entry) { Vec::new() } else { self.index_inputs(loops) };
-        let span = IntRange { min: -(1 << INDEX_INPUT_BITS), max: 1 << INDEX_INPUT_BITS };
-        self.int_entries.iter().copied().map(|(register, range)| {
-            let bounded = inputs.contains(&register).then(|| range.intersect(span)).flatten();
-            (register, bounded.unwrap_or(range))
-        }).filter(|&(register, range)| range != IntRange::FULL && self.is_live(entry, register)
+        self.int_entries.iter().copied().filter(|&(register, range)| range != IntRange::FULL && self.is_live(entry, register)
             && types.and_then(|types| types.get(usize::from(register))).is_some_and(|ty| ty.is_subtype(Type::INT32))).collect()
     }
 

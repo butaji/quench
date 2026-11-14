@@ -437,7 +437,7 @@ pub(super) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Co
 pub(in crate::vm) use immediates::{constant_number, constant_type, immediate, is_int32};
 pub(in crate::vm) use binary::{generic_operator, heap_primitive_binary};
 pub(super) use lengths::IndexProof;
-pub(super) use run::{analyze, analyze_text, Model, Seeds, Text};
+pub(super) use run::{analyze, analyze_text, Model, Point, Seeds, Text};
 
 #[cfg(test)]
 #[path = "facts/decode_ratchet.rs"] mod decode_ratchet;
