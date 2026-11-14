@@ -227,14 +227,14 @@ impl<H: Host> Vm<H> {
             return;
         };
         let instruction = body.instructions().nth(pc);
-        super::lane_exits::record_detail(format!(
+        super::lane_exits::record_detail_args(format_args!(
             "exit in activation {:?} {} {:?} {} @{:?} pc={pc}",
             instruction,
             self.programs.source_name(unsafe { (*cx).program }).unwrap_or_default(),
             instruction
                 .filter(|instruction| instruction.op().is_get_field())
                 .and_then(|instruction| code.atoms.get(instruction.imm() as usize)),
-            body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
+            body.name.map_or("", |atom| &code.atoms[atom as usize]),
             body.source_span.map(|span| span.start),
         ));
     }

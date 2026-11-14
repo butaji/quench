@@ -64,7 +64,7 @@ fn promote_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, parame
         window_environment(vm, code, entries, scope.function, env, scope.program, this, held);
         (*record).pull_window(entries, usize::from(body.locals));
         (*record).binding_site_pc = scope.site;
-        (*record).with_objects = scope.chain;
+        (*record).with_objects = scope.chain.into_vec();
     }
     Some(EvalWindow { record, entries })
 }

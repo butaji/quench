@@ -5,6 +5,10 @@
 //! the frame (`FrameRecord::with_objects`), and a materialized activation's frame takes it.
 use super::*;
 
+/// The objects of one activation's `with` chain, kept inline up to the nesting a function usually has.
+pub(super) type WithChain = SmallVec<[Value; WITH_CHAIN_INLINE_OBJECTS]>;
+const WITH_CHAIN_INLINE_OBJECTS: usize = 2;
+
 impl LaneStack {
     /// The objects of a resumed frame's chain, now the activation at `depth`'s, moved off its
     /// record.
@@ -14,9 +18,9 @@ impl LaneStack {
 
     /// The chain of the activation at `depth`, the innermost, taken off the stack: what a
     /// suspended frame keeps (`FrameRecord::suspend_at`).
-    pub(in crate::vm) fn drain_with_objects(&mut self, depth: usize) -> Vec<Value> {
+    pub(in crate::vm) fn drain_with_objects(&mut self, depth: usize) -> WithChain {
         let first = self.with_objects.partition_point(|(owner, _)| *owner < depth);
-        self.with_objects.drain(first..).map(|(_, object)| object).collect()
+        WithChain::from_iter(self.with_objects.drain(first..).map(|(_, object)| object))
     }
 
     /// The chain of the activation at `depth`, outermost first.
