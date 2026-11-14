@@ -4321,8 +4321,8 @@ script_handler! {
 /// `integer_operator`, any other Numbers through their double values.
 #[inline(always)]
 fn lane_number_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
-    super::operations::integer_operator::<OP>(left, right)
-        .or_else(|| super::operations::number_value_operator::<OP>(left, right))
+    let integers = super::operations::integer_operator::<OP>(left, right);
+    if integers.is_some() { integers } else { super::operations::number_value_operator::<OP>(left, right) }
 }
 
 script_handler! {
