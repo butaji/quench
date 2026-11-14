@@ -206,6 +206,9 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY> 
     satb_frontier: RecordId,
     /// The children the barrier snapshotted, for the cycle to mark.
     satb_values: Vec<Value>,
+    /// The first id of each occupancy word whose free ids the cycle's allocation pre-marked
+    /// (`satb_blacken_free_word`), which `end_satb` unmarks where no claim took them.
+    satb_reused_words: Vec<RecordId>,
 }
 
 impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
@@ -232,6 +235,7 @@ impl<T, const CAPACITY: usize> Default for RecordSpace<T, CAPACITY> {
             satb: false,
             satb_frontier: 0,
             satb_values: Vec::new(),
+            satb_reused_words: Vec::new(),
         }
     }
 }
@@ -558,6 +562,23 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         self.free_word_base = id - bit as RecordId;
         self.free_cursor = self.free_word_base;
         self.young_words.push(self.free_word_base);
+        if self.satb {
+            self.satb_blacken_free_word();
+        }
+    }
+
+    /// Allocation is black while a cycle marks: the free ids of the loaded word are marked
+    /// before any is claimed, as newer than the snapshot (their snapshotted bits too, so the
+    /// barrier skips them), and the claims then need no work of their own. Ids from the
+    /// frontier up are marked at the cycle's end instead (`end_satb`).
+    #[cold]
+    #[inline(never)]
+    fn satb_blacken_free_word(&mut self) {
+        let (block_index, word_index) = Self::word_position(self.free_word_base);
+        let block = &mut self.blocks[block_index];
+        block.marked[word_index] |= self.free_word;
+        block.aged[word_index] |= self.free_word;
+        self.satb_reused_words.push(self.free_word_base);
     }
 
 
@@ -668,16 +689,41 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         debug_assert!(self.aged_words.is_empty() && self.remembered.is_empty());
         self.satb = true;
         self.satb_frontier = self.next_id;
+        // The word allocation already holds is black from now on, as the next one loaded.
+        if self.free_word != 0 {
+            self.satb_blacken_free_word();
+        }
     }
 
-    /// Ends the snapshot barrier: the snapshotted bits are forgotten, and the generational
-    /// barrier logs writes again.
+    /// Ends the snapshot barrier, as the cycle's remark does before its sweep: every record
+    /// claimed from a fresh id is marked, a pre-marked id no claim took is unmarked again (a
+    /// sweep keeps only occupied, marked ids), the snapshotted bits are forgotten, and the
+    /// generational barrier logs writes again.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn end_satb(&mut self) {
+        for base in std::mem::take(&mut self.satb_reused_words) {
+            let (block_index, word_index) = Self::word_position(base);
+            let block = &mut self.blocks[block_index];
+            block.marked[word_index] &= block.occupied[word_index];
+        }
+        let mut id = self.satb_frontier;
+        while id < self.next_id {
+            let (block_index, record_index) = Self::split_id(id);
+            let (word_index, bit) = (record_index / OCCUPANCY_WORD_BITS, record_index % OCCUPANCY_WORD_BITS);
+            let block = &mut self.blocks[block_index];
+            block.marked[word_index] |= block.occupied[word_index] & (u64::MAX << bit);
+            id += (OCCUPANCY_WORD_BITS - bit) as RecordId;
+        }
         self.satb = false;
         for block in &mut self.blocks {
             block.aged = [0; BLOCK_WORDS];
         }
+    }
+
+    /// Whether every mark bit names an occupied id, as a sweep requires (`sweep_word`).
+    #[cfg(test)]
+    pub(super) fn marks_within_occupancy(&self) -> bool {
+        self.blocks.iter().all(|block| (0..BLOCK_WORDS).all(|word| block.marked[word] & !block.occupied[word] == 0))
     }
 
     /// The children the snapshot barrier copied since the last call.

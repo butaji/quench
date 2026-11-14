@@ -1703,6 +1703,9 @@ impl Heap {
             self.young_weak.push(index);
             self.weak_cells_made = true;
         }
+        if self.satb_active {
+            self.blacken_slot(index as usize);
+        }
         #[cfg(feature = "profile-memory")]
         self.profile_allocation(Value::heap(index));
         Value::heap(index)
@@ -1746,6 +1749,9 @@ impl Heap {
         if weak {
             self.young_weak.push(index as u32);
             self.weak_cells_made = true;
+        }
+        if self.satb_active {
+            self.blacken_slot(index);
         }
         Value::heap(index as u32)
     }

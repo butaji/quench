@@ -155,6 +155,15 @@ impl Heap {
         }
     }
 
+    /// Allocation is black while a cycle marks: a cell made now is marked at once, newer than
+    /// the snapshot, so the cycle neither traces nor frees it.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn blacken_slot(&mut self, index: usize) {
+        let (word, bit) = slot_bit(index);
+        *self.marks[word].get_mut() |= bit;
+    }
+
     /// The children the snapshot barrier copied in every family since the last call.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn take_satb_values(&mut self) -> Vec<Value> {

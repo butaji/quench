@@ -1817,3 +1817,33 @@ fn the_snapshot_barrier_copies_an_old_record_once_before_its_first_write() {
     assert_eq!(sorted(heap.take_satb_values()), sorted(vec![a, c]));
     heap.set_satb(false);
 }
+
+#[test]
+fn allocation_is_black_while_the_snapshot_barrier_is_on() {
+    let mut heap = Heap::new();
+    heap.register_property_shape(1, 2, None);
+    let objects: Vec<Value> = (0..300).map(|_| heap.alloc_object(plain_object())).collect();
+    // Every third object dies, leaving reusable ids below the high water.
+    let kept: Vec<Value> = objects.iter().copied().step_by(3).collect();
+    heap.collect(kept.iter().copied());
+    let reusable = heap.object_records.reusable_ids();
+    assert!(reusable > 0);
+    heap.set_satb(true);
+    // More records than the holes: some reuse ids below the frontier, the rest are fresh.
+    let during: Vec<Value> = (0..reusable + 100).map(|_| heap.alloc_object_pair(Value::NULL, 1, Value::NULL, Value::NULL)).collect();
+    let cell = heap.alloc(Cell::Error("made during the cycle".into()));
+    // A record made during the cycle is newer than its snapshot: writing it copies nothing.
+    heap.property_set(during[0], 0, kept[0]);
+    heap.property_set(*during.last().unwrap(), 0, kept[0]);
+    assert!(heap.take_satb_values().is_empty());
+    let cell_index = cell.legacy_heap_index().unwrap() as usize;
+    assert!(Heap::marked(&heap.marks, cell_index), "a cell made during a cycle is marked at once");
+    heap.set_satb(false);
+    // Everything made during the cycle is marked, and no mark names a free id.
+    assert!(during.iter().all(|value| heap.object_records.is_marked(value.direct_object_index().unwrap())));
+    assert!(heap.object_records.marks_within_occupancy());
+    // The next collection frees them as usual.
+    heap.collect(kept.iter().copied());
+    assert!(during.iter().all(|&value| !heap.is_live(value)) && !heap.is_live(cell));
+    assert!(kept.iter().all(|&value| heap.is_live(value)));
+}
