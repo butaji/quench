@@ -843,8 +843,19 @@ impl ValueArena {
     }
 
     /// The heap references among a vector's values: the edges a collector traces. Numbers,
-    /// other immediates and deleted slots are not references.
+    /// other immediates and deleted slots are not references. An empty vector without a range,
+    /// as every array without named properties has, is answered inline: a mark visit makes
+    /// this call per array (V8-v7 Splay: 2.75M calls a run, ~31 Ir each).
+    #[inline(always)]
     pub(crate) fn append_heap_references(&self, vector: ValueVec, output: &mut Vec<Value>) {
+        if !vector.is_dictionary() && vector.start() == EMPTY_START as usize {
+            return;
+        }
+        self.append_held_heap_references(vector, output);
+    }
+
+    #[inline(never)]
+    fn append_held_heap_references(&self, vector: ValueVec, output: &mut Vec<Value>) {
         let len = self.len(vector);
         if vector.is_dictionary() {
             let values = &self.dictionaries[&vector.dictionary_id()];

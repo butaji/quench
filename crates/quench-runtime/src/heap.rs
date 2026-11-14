@@ -3933,6 +3933,25 @@ impl Heap {
         trace_kind: GcTraceKind,
         last_proto: &mut PushedProtos,
     ) {
+        Self::object_children_marking(owner, object, properties, |_| false, work, object_roots, trace_kind, last_proto);
+    }
+
+    /// `object_children`, marking each inline string value through `mark_string` where the
+    /// trace finds it (`Heap::mark_leaf`), as an array's string elements are: a string's only
+    /// edges are its parts, which `mark_string` marks too, so it never enters the work list
+    /// (V8-v7 Splay: a string per leaf object, a sixth of a full collection's pops).
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    fn object_children_marking(
+        owner: Value,
+        object: &Object,
+        properties: &ValueArena,
+        mut mark_string: impl FnMut(RecordId) -> bool,
+        work: &mut Vec<Value>,
+        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+        trace_kind: GcTraceKind,
+        last_proto: &mut PushedProtos,
+    ) {
         let proto = object.proto();
         if proto.is_heap() && last_proto.first_push(proto) {
             work.push(proto);
@@ -3941,7 +3960,7 @@ impl Heap {
         object.visit_extras_roots(|value| work.push(value));
         if let Some(values) = object.inline_properties() {
             for value in values {
-                if value.is_heap() && !value.is_deleted() {
+                if value.is_heap() && !value.is_deleted() && !Self::mark_leaf(&mut mark_string, value) {
                     work.push(value);
                 }
             }

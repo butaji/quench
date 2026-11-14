@@ -239,7 +239,17 @@ impl<'heap> ParallelMarkView<'heap> {
                 }
                 // SAFETY: this view just marked the occupied record.
                 let object = unsafe { self.objects.get(id) };
-                Heap::object_children(value, object, properties, work, &mut object_roots, trace_kind, last_proto);
+                let strings = self.strings;
+                Heap::object_children_marking(
+                    value,
+                    object,
+                    properties,
+                    |string| super::string_parts::mark_leaf_string_if_new(&strings, string),
+                    work,
+                    &mut object_roots,
+                    trace_kind,
+                    last_proto,
+                );
                 self.note_marked_key(value, batch);
                 CellKind::Object
             }
