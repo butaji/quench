@@ -79,8 +79,8 @@ pub(in crate::vm) struct Priors {
     /// stitched code (a few dozen machine instructions), where a u-jit body's native entry crosses ABIs.
     pub(in crate::vm) base_body_share: u64,
     pub(in crate::vm) base_entry_ns: u64,
-    /// The divisor of the entries so far that gives the credible lower bound of the entries to
-    /// come, where the decision (a compile) is irreversible.
+    /// The divisor of the entries and the interpreter time so far that gives the credible lower
+    /// bound of those to come, where the decision (a compile) is irreversible.
     pub(in crate::vm) remaining_divisor: u64,
     /// The forgetting factor of the compile-cost running ratio, per mille per compile, and the
     /// weight of its prior in IR instructions (eight compiles of a hundred).
