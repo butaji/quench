@@ -5056,6 +5056,48 @@ script_handler! {
     }
 }
 
+/// `lane_load_outer_capture`'s first read: up the links from the closure environment's
+/// storage (`EnvironmentSlots::link`) to the capture `imm` names, in an activation; `None`
+/// leaves the read to that handler's other ways.
+#[inline(always)]
+fn linked_outer_capture<H: Host>(cx: *mut LaneContext<H>, imm: u32) -> Option<Value> {
+    if unsafe { (*cx).env }.is_deleted() {
+        return None;
+    }
+    let capture = capture_reads(unsafe { (*cx).capture });
+    if capture.is_null() {
+        return None;
+    }
+    let epoch = unsafe { vm(cx) }.heap.collection_epoch();
+    let mut storage = capture;
+    // SAFETY: as `lane_load_outer_capture`'s walk.
+    for _ in 0..ImmediateLayout::capture_depth(imm) {
+        storage = unsafe { crate::heap::EnvironmentSlots::linked_parent(storage, epoch) }?;
+    }
+    unsafe { crate::heap::EnvironmentSlots::read_storage(storage, ImmediateLayout::capture_slot(imm)) }
+}
+
+script_handler! {
+    /// Two outer capture reads in a row (`specialize_captures`), as Earley-Boyer's nested
+    /// closures read their free variables: both through the closure's storage links
+    /// (`linked_outer_capture`) as one record. A first read the links miss runs the first
+    /// record's own handler, a second the second record's.
+    fn lane_load_outer_capture_pair<>(cx, r, ip, i, view) {
+        let Some(value) = linked_outer_capture(cx, i.imm()) else {
+            sibling!(lane_load_outer_capture::<H>, r, ip, view)
+        };
+        r.set(i.a, value);
+        let second_ip = following(ip);
+        // SAFETY: the pair is two records, the second never the view's last.
+        let second = unsafe { &*second_ip };
+        let Some(value) = linked_outer_capture(cx, second.imm()) else {
+            next!(cx, r, second_ip, view)
+        };
+        r.set(second.a, value);
+        next!(cx, r, following(second_ip), view)
+    }
+}
+
 script_handler! {
     /// `lane_load_capture` of a capture past the running function's own scope
     /// (`specialize_captures`). An activation's read through the walk it read last
@@ -21007,6 +21049,14 @@ fn specialize_captures<H: Host>(records: &mut [LaneInstruction]) {
             continue;
         };
         records[pc].handler = handler as *const ();
+    }
+    // Two outer reads in a row run as one record; the second keeps its own handler for a
+    // jump that enters it and for the pair's misses.
+    let outer = lane_load_outer_capture::<H> as Handler as *const ();
+    for pc in 0..records.len().saturating_sub(1) {
+        if records[pc].handler == outer && records[pc + 1].handler == outer {
+            records[pc].handler = lane_load_outer_capture_pair::<H> as Handler as *const ();
+        }
     }
 }
 
