@@ -4358,13 +4358,23 @@ script_handler! {
         else {
             sibling!(lane_operator_numbers::<H, FIRST>, r, ip, Carried::script_in(cx, view))
         };
-        // One operand at a time, each declining on its own: a zip of the two options kept
-        // the first result's constant `Some` as flag registers tested after both reads.
-        let operand = |register: u16| if register == i.a { Some(first) } else { r.get(register).as_number() };
-        let (Some(second_left), Some(second_right)) = (operand(second.b), operand(second.c)) else {
-            r.set(i.a, Value::number(first));
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
-        };
+        // One operand at a time, each declining on its own branch: an `Option` of the
+        // first result (a zip, then a closure) stayed a constant flag register tested after
+        // both reads (`mov bl,1 .. test bl,bl`, V8-v7 NavierStokes).
+        macro_rules! second_operand {
+            ($register:expr) => {
+                if $register == i.a {
+                    first
+                } else if let Some(number) = r.get($register).as_number() {
+                    number
+                } else {
+                    r.set(i.a, Value::number(first));
+                    next!(cx, r, following(ip), Carried::script_in(cx, view))
+                }
+            };
+        }
+        let second_left = second_operand!(second.b);
+        let second_right = second_operand!(second.c);
         let Some(value) = number_operator::<SECOND>(second_left, second_right) else {
             r.set(i.a, Value::number(first));
             next!(cx, r, following(ip), Carried::script_in(cx, view))
