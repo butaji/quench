@@ -57,3 +57,20 @@ fn entries_of_one_lane_run_rewrite_no_word_of_the_run() {
     assert!(entries > 1000, "the hot callee runs as a body, entered {entries} times");
     assert!(binds * 200 < entries, "{binds} runs bound for {entries} entries");
 }
+
+/// A recursive numeric function calls itself through its scalar entry (`lane_region::scalar`):
+/// its results, an overflow that restarts the call generically, and a redefinition of its binding,
+/// which retires the entry, agree with the interpreter.
+#[test]
+fn a_recursive_numeric_function_agrees_with_the_interpreter_through_its_scalar_entry() {
+    let fib = "function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); }";
+    let wide = "function wide(n) { return n < 2 ? 1073741824 : wide(n - 1) + wide(n - 2); }";
+    let redefined = "var before = 0; for (var r = 0; r < 30; r++) before += fib(12); fib = function (n) { return 7; }; globalThis.answer = before + fib(20);";
+    for source in [
+        format!("{fib} globalThis.answer = fib(25);"),
+        format!("{wide} globalThis.answer = wide(6) + wide(12);"),
+        format!("{fib} {redefined}"),
+    ] {
+        assert_tier_agrees(&source, Tier::UJit, Expect::ENGAGED);
+    }
+}

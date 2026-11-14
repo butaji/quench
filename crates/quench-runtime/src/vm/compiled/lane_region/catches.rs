@@ -163,7 +163,7 @@ impl Lowering<'_, '_> {
         let admitted = match (self.completion, self.coverage) {
             (Completion::Body, Coverage::Loop { .. }) => true,
             (Completion::Body, _) => function.handler_at(record).is_none() && unwinds_natively(function),
-            (Completion::Number, _) => false,
+            (Completion::Number | Completion::Scalar(_), _) => false,
         };
         admitted.then_some(record)
     }

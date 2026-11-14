@@ -12,8 +12,8 @@ pub(in crate::vm) const LANE_BODY_NOT_ENTERED: u32 = RETURN_STATUS_BASE - 2;
 /// once, per function, at a stable address (`LaneView::entry_cell`).
 ///
 /// One 64-byte line whose every offset is the designed cell's (`staged::call::ENTRY_CELL`, asserted
-/// below): `entry` 0, `body` 8, `facts` 16, `validity` 24, `recovery` 32, `counters` 40.
-/// Writers: `entry`, `recovery` and `body` by `publish`/`withdraw`; `facts` once per function
+/// below): `entry` 0, `body` 8, `facts` 16, `validity` 24, `recovery` 32, `counters` 40, `scalar` 48.
+/// Writers: `entry`, `scalar`, `recovery` and `body` by `publish`/`withdraw`; `facts` once per function
 /// (`set_facts`); `counters` only on cold paths (completion evidence).
 #[repr(C, align(64))]
 pub(in crate::vm) struct EntryCell {
@@ -33,6 +33,10 @@ pub(in crate::vm) struct EntryCell {
     /// specialized (`EVIDENCE`): the one home of its run statistics, written only on paths that
     /// already do work (a handler's run end, a leave's materialization), never by a call or a return.
     pub(in crate::vm) counters: std::cell::Cell<u64>,
+    /// The address of the published body's scalar entry (`LaneMethod::scalar_address`), which a native
+    /// caller whose arguments are proved numbers calls instead of `entry`: it takes the numbers in
+    /// registers and pushes no frame. The stub where the body has none or retired.
+    pub(in crate::vm) scalar: std::cell::Cell<usize>,
 }
 
 const _: () = {
@@ -44,6 +48,7 @@ const _: () = {
     assert!(std::mem::offset_of!(EntryCell, validity) as i32 == ENTRY_CELL.validity_offset);
     assert!(std::mem::offset_of!(EntryCell, recovery) as i32 == ENTRY_CELL.recovery_offset);
     assert!(std::mem::offset_of!(EntryCell, counters) as i32 == ENTRY_CELL.counters_offset);
+    assert!(std::mem::offset_of!(EntryCell, scalar) as i32 == ENTRY_CELL.scalar_offset);
 };
 
 /// The halves of a cell's counters word.
@@ -63,6 +68,14 @@ unsafe extern "C" fn lane_entry_stub(_: *mut CallContext, _: u64, _: u64, _: *co
     BodyReturn { status: LANE_BODY_NOT_ENTERED, value: 0 }
 }
 
+/// A scalar entry: (context, numbers...) -> (status, result word), the status zero for a result.
+pub(in crate::vm) type ScalarEntry = unsafe extern "C" fn(*mut CallContext) -> BodyReturn;
+
+/// The scalar entry no body backs: it enters nothing, so its caller restarts the call.
+unsafe extern "C" fn scalar_entry_stub(_: *mut CallContext) -> BodyReturn {
+    BodyReturn { status: LANE_BODY_NOT_ENTERED, value: 0 }
+}
+
 /// The recovery space the stub's cell names: no body, nothing to recover.
 static NO_RECOVERY: LaneRecoverySpace = LaneRecoverySpace { values: 0, activations: 0 };
 
@@ -77,8 +90,10 @@ impl EntryCell {
 
     pub(in crate::vm) fn stub() -> usize { lane_entry_stub as BodyEntry as usize }
 
+    pub(in crate::vm) fn scalar_stub() -> usize { scalar_entry_stub as ScalarEntry as usize }
+
     pub(in crate::vm) fn new() -> Self {
-        Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default() }
+        Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default(), scalar: std::cell::Cell::new(Self::scalar_stub()) }
     }
 
     /// Publishes `method`'s entry and recovery space; it takes the cell back when it retires.
@@ -88,6 +103,11 @@ impl EntryCell {
         self.body.set(Rc::as_ptr(&body).addr());
         self.entry.set(body.entry_address());
         method.on_retire(&self.entry, body.entry_address(), Self::stub());
+        self.scalar.set(Self::scalar_stub());
+        if let Some(scalar) = body.scalar_address() {
+            self.scalar.set(scalar);
+            method.on_retire(&self.scalar, scalar, Self::scalar_stub());
+        }
     }
 
     /// Records the function's facts, which its native callers admit a call by.
@@ -119,6 +139,7 @@ impl EntryCell {
 
     pub(in crate::vm) fn withdraw(&self) {
         self.entry.set(Self::stub());
+        self.scalar.set(Self::scalar_stub());
         self.recovery.set(std::ptr::addr_of!(NO_RECOVERY).addr());
         self.body.set(0);
     }
