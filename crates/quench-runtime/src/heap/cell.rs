@@ -3456,6 +3456,25 @@ impl EnvironmentSlots {
         unsafe { super::thin_slice::ThinBoxSlice::<EnvironmentSlot>::lay_out_in_place(words.cast(), len).cast() }
     }
 
+    /// `len` slots, each `DELETED` but slot `k` of each bit `k` of `captured`, which holds
+    /// `values[k]`: one fill of the storage, then one write per captured slot.
+    ///
+    /// # Safety
+    /// `values` holds a readable value at every index `captured` names, each below `len`,
+    /// and none of them shares a slot (`Value::shared_environment_owner`).
+    pub(crate) unsafe fn from_captured(len: usize, captured: u64, values: *const Value) -> Self {
+        let mut slots = super::thin_slice::ThinBoxSlice::filled(len, EnvironmentSlot(Value::DELETED));
+        let mut remaining = captured;
+        while remaining != 0 {
+            let slot = remaining.trailing_zeros() as usize;
+            debug_assert!(slot < len);
+            // SAFETY: as the caller guarantees.
+            slots[slot] = EnvironmentSlot::owned(unsafe { *values.add(slot) });
+            remaining &= remaining - 1;
+        }
+        Self(slots)
+    }
+
     pub(crate) fn from_values(values: impl ExactSizeIterator<Item = Value>) -> Self {
         Self(super::thin_slice::ThinBoxSlice::from_exact_iter(
             values.map(EnvironmentSlot::owned),

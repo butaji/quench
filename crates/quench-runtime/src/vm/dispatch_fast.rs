@@ -571,12 +571,6 @@ const WINDOW_CAPTURED: u16 = 2;
 const WINDOW_STORAGE: u16 = 3;
 pub(super) const WINDOW_LOCALS: u16 = WINDOW_STORAGE + crate::heap::IN_PLACE_SLOTS_WORDS as u16;
 
-impl EnvironmentWindow {
-    #[inline] fn captured(self, slot: usize) -> bool {
-        self.captured & 1 << slot != 0
-    }
-}
-
 /// What a function's body fixes about a frameless call target of it
 /// (`Vm::frameless_call_target`): its entry apart from a kept `arguments`, and whether `new`
 /// may activate it or run it as its stores alone.
@@ -16109,9 +16103,8 @@ unsafe fn window_environment<H: Host>(
             as *const crate::heap::EnvironmentSlots);
         let locals = entries.add(usize::from(WINDOW_LOCALS));
         let window = EnvironmentWindow { locals: in_place.len() as u16, captured };
-        let slots = crate::heap::EnvironmentSlots::from_values((0..in_place.len()).map(|slot| {
-            if window.captured(slot) { *locals.add(slot) } else { Value::DELETED }
-        }));
+        // SAFETY: the mask names locals of the window, which hold owned values.
+        let slots = crate::heap::EnvironmentSlots::from_captured(in_place.len(), window.captured, locals);
         // Each captured local, one per bit of the mask, which names no slot past the locals.
         debug_assert_eq!(captured.checked_shr(u32::from(window.locals)).unwrap_or(0), 0);
         let mut remaining = captured;

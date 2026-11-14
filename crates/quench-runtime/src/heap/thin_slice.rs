@@ -283,6 +283,31 @@ impl<T> From<Box<[T]>> for ThinBoxSlice<T> {
 }
 
 impl<T: Copy> ThinBoxSlice<T> {
+    /// A slice of `len` copies of `value`, written by one fill of its one allocation.
+    pub(crate) fn filled(len: usize, value: T) -> Self {
+        if len == 0 {
+            return Self::empty();
+        }
+        let (layout, offset) = Self::layout(len);
+        // SAFETY: the layout is non-zero sized, as it always holds the header.
+        let raw = unsafe { alloc(layout) };
+        let Some(header) = NonNull::new(raw.cast::<usize>()) else {
+            handle_alloc_error(layout)
+        };
+        // SAFETY: the allocation fits the header and `len` elements from `offset`.
+        unsafe {
+            header.as_ptr().write(len);
+            let elements = raw.add(offset).cast::<T>();
+            for index in 0..len {
+                elements.add(index).write(value);
+            }
+        }
+        Self {
+            header,
+            marker: std::marker::PhantomData,
+        }
+    }
+
     /// A slice of copies of `values`, made with one allocation and one copy.
     pub(crate) fn from_slice(values: &[T]) -> Self {
         // SAFETY: the elements are initialized, and copying `Copy` values leaves them valid.
