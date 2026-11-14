@@ -17,7 +17,12 @@ impl<H: Host> Vm<H> {
                 kind: FunctionKind::Native(native),
                 ..
             }) => Ok(CallTarget::Native(*native)),
-            None => self.non_callable_target(callee, self.heap.get(callee)),
+            // A call-only closure enters its function of the running program, whose code alone
+            // names its binding (`Value::known_closure`).
+            None => match callee.as_known_closure() {
+                Some((id, env)) => Ok(CallTarget::User(self.active_program, id, env)),
+                None => self.non_callable_target(callee, self.heap.get(callee)),
+            },
         }
     }
 
@@ -35,7 +40,9 @@ impl<H: Host> Vm<H> {
                 realm,
                 ..
             }) if *realm == self.realm.globals => Some((*program, *id, *env)),
-            _ => None,
+            Some(_) => None,
+            // A call-only closure of the running program (`Value::known_closure`).
+            None => callee.as_known_closure().map(|(id, env)| (self.active_program, id, env)),
         }
     }
 

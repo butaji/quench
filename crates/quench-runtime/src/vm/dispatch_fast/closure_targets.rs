@@ -48,6 +48,44 @@ impl<H: Host> Vm<H> {
         self.script_call_index(callee)
     }
 
+    /// `relink_closure` for a call-only closure (`Value::known_closure`): its function id and
+    /// environment are in the value, and every environment it names is an activation of its
+    /// function's enclosing one in the running program, so the site's entry for that function
+    /// turns to it with only its environment's storage read.
+    #[inline(never)]
+    pub(super) fn relink_known_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
+        let (function, env) = callee.as_known_closure()?;
+        let entry = self.lane_stack.script_targets.entries.get(linked)?;
+        if entry.generation != self.lane_stack.generation
+            || entry.program != self.active_program
+            || entry.function != function
+            || !entry.this_binding.binds_receiver()
+        {
+            return None;
+        }
+        let capture = if entry.view.is_null() {
+            entry.capture
+        } else {
+            if entry.capture.is_null() {
+                return None;
+            }
+            let stores = entry.capture.addr() & CAPTURE_STORES;
+            let Some(Cell::Environment { slots, .. }) = self.heap.get(env) else {
+                return None;
+            };
+            let storage = slots.dense_storage()?;
+            if stores != 0 {
+                self.heap.remember_cell(env);
+            }
+            storage.map_addr(|address| address | stores)
+        };
+        let entry = &mut self.lane_stack.script_targets.entries[linked];
+        entry.callee = callee;
+        entry.env = env;
+        entry.capture = capture;
+        Some(linked)
+    }
+
     /// `entry`'s target for `callee`, another closure of its function, read from the entry
     /// alone where the closures' environments are activations of one function in one
     /// program: their capture facts then match (`target_capture`), and a receiver-binding

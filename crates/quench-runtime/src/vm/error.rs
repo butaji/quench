@@ -585,7 +585,8 @@ impl<H: Host> Vm<H> {
         } else {
             residual.source_position(frame.function, pc)?
         };
-        let name = frame.context.callable().map_or_else(
+        // A call-only closure (`Value::known_closure`) has no function object to name it.
+        let name = frame.context.callable().filter(|callee| callee.as_known_closure().is_none()).map_or_else(
             || {
                 function.name.map_or(CallSiteName::Anonymous, |name| {
                     CallSiteName::Static(self.atom_value(name))
@@ -627,7 +628,8 @@ impl<H: Host> Vm<H> {
             let Some(function) = program.function_get(frame.function as usize) else { return Ok(fallback()); };
             let primary_constructor = self.programs.is_function_constructor_body(frame.program, frame.function);
             let name = function.name.or_else(|| (!primary_constructor)
-                .then(|| frame.context.callable().and_then(|callee| self.original_function_name(callee)))
+                .then(|| frame.context.callable().filter(|callee| callee.as_known_closure().is_none())
+                    .and_then(|callee| self.original_function_name(callee)))
                 .flatten()).map(|name| self.atom_value(name));
             (record, module, name.filter(|name| !name.units().is_empty()))
         };

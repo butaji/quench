@@ -73,6 +73,11 @@ pub(crate) const HEAP_FAMILY_BITS: u64 = DIRECT_FUNCTION_HANDLE_BITS | DIRECT_PR
 const DIRECT_V128_HANDLE_BIT: u64 = 1 << 44;
 /// The payload bits that code a heap value's reference family (`Value::heap_reference`).
 const HEAP_REFERENCE_BITS: u64 = HEAP_FAMILY_BITS | DIRECT_V128_HANDLE_BIT;
+/// Where a `Value::known_closure` keeps its function id: the payload bits above the 32-bit
+/// slot index and below `HEAP_REFERENCE_BITS`.
+const KNOWN_CLOSURE_FUNCTION_SHIFT: u32 = u32::BITS;
+const KNOWN_CLOSURE_FUNCTION_MASK: u64 = (1 << (DIRECT_V128_HANDLE_BIT.trailing_zeros() - KNOWN_CLOSURE_FUNCTION_SHIFT)) - 1;
+const KNOWN_CLOSURE_FUNCTION_BITS: u64 = KNOWN_CLOSURE_FUNCTION_MASK << KNOWN_CLOSURE_FUNCTION_SHIFT;
 /// The bits that name a heap value's reference family.
 const HEAP_FAMILY_MASK: u64 = TAG_MASK | HEAP_REFERENCE_BITS;
 
@@ -344,6 +349,27 @@ impl Value {
     #[inline(always)] pub(crate) fn as_environment_index(self) -> Option<u32> {
         (self.0 & (TAG_MASK | ENVIRONMENT_INDEX_BIT) == TAG_DELETED | ENVIRONMENT_INDEX_BIT)
             .then_some(self.0 as u32)
+    }
+
+    /// A call-only closure of `function` over `environment`, made without a function object
+    /// (`Function::prototype_unobservable` names the functions whose closure value only ever
+    /// reaches a binding read as a callee): the environment's legacy slot reference with the
+    /// function id in the payload bits between the slot index and the reference family, which
+    /// no other heap value sets. The collector reads it as the environment it names; a call
+    /// enters `function` of the running program over that environment, and any other consumer
+    /// first makes the real closure (`Vm::known_closure_function`). `None` when the
+    /// environment is not a legacy slot or the id does not fit.
+    #[inline(always)] pub(crate) fn known_closure(function: u32, environment: Self) -> Option<Self> {
+        let fits = function != 0 && u64::from(function) <= KNOWN_CLOSURE_FUNCTION_MASK;
+        (fits && environment.0 & (TAG_MASK | HEAP_REFERENCE_BITS | KNOWN_CLOSURE_FUNCTION_BITS) == TAG_HEAP)
+            .then(|| Self(environment.0 | (u64::from(function) << KNOWN_CLOSURE_FUNCTION_SHIFT)))
+    }
+
+    /// The function id and environment of a `known_closure`.
+    #[inline(always)] pub(crate) fn as_known_closure(self) -> Option<(u32, Self)> {
+        let function = (self.0 >> KNOWN_CLOSURE_FUNCTION_SHIFT) & KNOWN_CLOSURE_FUNCTION_MASK;
+        (self.0 & (TAG_MASK | HEAP_REFERENCE_BITS) == TAG_HEAP && function != 0)
+            .then(|| (function as u32, Self(self.0 & !KNOWN_CLOSURE_FUNCTION_BITS)))
     }
 
     /// The owner environment of a `shared_environment_slot`.

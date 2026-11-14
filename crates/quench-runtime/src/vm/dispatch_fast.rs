@@ -2973,7 +2973,7 @@ fn lane_window_closure_value<H: Host>(
         window_environment(vm, &*(*cx).code, r.0.add(usize::from(registers)), owner, (*cx).env, (*cx).program, (*cx).this)
     });
     // SAFETY: the context's program outlives the lane run.
-    let value = environment.and_then(|environment| vm.closure(unsafe { &*(*cx).code }, function, environment).ok());
+    let value = environment.and_then(|environment| lane_closure(vm, unsafe { &*(*cx).code }, function, environment));
     note_allocation(vm);
     value
 }
@@ -5482,9 +5482,24 @@ fn lane_closure_value_of<H: Host>(cx: *mut LaneContext<H>, id: u32) -> Option<Va
     // Promotion moves the frame's captured locals into the environment, so a capture
     // slot pointer found before it is not reused.
     unsafe { (*cx).capture = std::ptr::null() };
-    let value = vm.closure(code, id, env).ok();
+    let value = lane_closure(vm, code, id, env);
     note_allocation(vm);
     value
+}
+
+/// The closure of `function` over `env` that a lane `MakeClosure` makes: a call-only one
+/// (`Function::prototype_unobservable`) as a `Value::known_closure`, with no function object,
+/// while no `with` was ever entered (a `with` object could take the binding's store);
+/// any other through `Vm::closure`.
+#[inline(always)]
+fn lane_closure<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, function: u32, env: Value) -> Option<Value> {
+    if !vm.with_scope_entered
+        && code.function_get(function as usize).is_some_and(|body| body.prototype_unobservable)
+        && let Some(known) = Value::known_closure(function, env)
+    {
+        return Some(known);
+    }
+    vm.closure(code, function, env).ok()
 }
 
 /// The object a `CreateRegExpLiteral` record makes in the lane: its site belongs to the
@@ -11580,7 +11595,10 @@ impl<H: Host> Vm<H> {
         let index = if self.script_call_holds(linked, callee) {
             linked
         } else {
-            let index = self.script_call_index(callee).or_else(|| self.relink_closure(callee, linked))?;
+            let index = self
+                .script_call_index(callee)
+                .or_else(|| self.relink_known_closure(callee, linked))
+                .or_else(|| self.relink_closure(callee, linked))?;
             // The callee in hand joins the site's record (`LaneStack::call_sites`): the entry it
             // linked may hold another site's callee since, so only the record names its own.
             let current = &self.lane_stack.script_targets.entries[index];

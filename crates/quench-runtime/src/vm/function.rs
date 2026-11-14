@@ -83,7 +83,10 @@ impl<H: Host> Vm<H> {
     pub(super) fn function_caller_value(&mut self, function: Value) -> Result<Value, JsError> {
         // Legacy reflection reads the frame stack (`Vm::materialize_deferred_lane`).
         self.materialize_deferred_lane();
-        let caller = self.function_caller(function);
+        let mut caller = self.function_caller(function);
+        if caller.as_known_closure().is_some() {
+            caller = self.known_closure_function(caller)?;
+        }
         let Some(&FunctionRecord { kind: FunctionKind::User(program, id), realm, .. }) = self.heap.function(caller) else {
             return Ok(caller);
         };
@@ -98,6 +101,28 @@ impl<H: Host> Vm<H> {
             self.define_instance_prototype(caller, atom, prototype, false, false)?;
         }
         Ok(caller)
+    }
+
+    /// The function object a call-only closure (`Value::known_closure`) stands for, made when
+    /// legacy reflection hands it out: each frame running it names the object from then on,
+    /// so further reads in those calls return the same one. A closure of another program than
+    /// the running one is not handed out.
+    fn known_closure_function(&mut self, known: Value) -> Result<Value, JsError> {
+        let Some((id, env)) = known.as_known_closure() else {
+            return Ok(known);
+        };
+        let program = self.active_program;
+        let Some(code) = self.programs.get(program) else {
+            return Ok(Value::NULL);
+        };
+        if !self.frames.iter().any(|frame| frame.context.callable() == Some(known) && frame.program == program) {
+            return Ok(Value::NULL);
+        }
+        let function = self.closure(&code, id, env)?;
+        for frame in self.frames.iter_mut().filter(|frame| frame.context.callable() == Some(known)) {
+            frame.context = CallContext::Function(function);
+        }
+        Ok(function)
     }
 
     fn function_caller(&self, function: Value) -> Value {
@@ -123,6 +148,14 @@ impl<H: Host> Vm<H> {
                 CallContext::DirectEval(_) => continue,
                 CallContext::Internal | CallContext::IndirectEval(_) => return Value::NULL,
                 CallContext::Function(caller) | CallContext::Constructor(caller) => {
+                    // A call-only closure's function is a plain sloppy one of its frame's program
+                    // (`Function::prototype_unobservable`).
+                    if let Some((id, _)) = caller.as_known_closure() {
+                        let visible = self.programs.get(self.frames[index].program).is_some_and(|program| {
+                            program.function_get(id as usize).is_some_and(|metadata| !metadata.strict)
+                        });
+                        return if visible { caller } else { Value::NULL };
+                    }
                     let Some(FunctionRecord {
                         kind:
                             FunctionKind::User(program_id, id),
