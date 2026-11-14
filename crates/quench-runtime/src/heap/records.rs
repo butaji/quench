@@ -239,7 +239,8 @@ pub(super) const NATIVE_RECORD_MARK_OFFSET: usize = std::mem::offset_of!(RecordB
 const _: () = assert!(NATIVE_RECORD_MARK_OFFSET + size_of::<[u64; BLOCK_WORDS]>() <= NATIVE_RECORD_BLOCK_SIZE);
 
 impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
-    /// The blocks stay valid until a heap callout can allocate or collect.
+    /// The blocks never move once the range is reserved (`ensure_reserved`); the count grows
+    /// as allocation makes blocks.
     pub(super) fn native_mark_blocks(&self) -> (*const u8, usize) {
         (self.blocks.as_ptr().cast(), self.blocks.len())
     }
@@ -1073,8 +1074,8 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
     }
 
     pub(super) fn allocated_bytes(&self) -> usize {
-        self.blocks.len() * RECORDS_PER_BLOCK * size_of::<T>()
-            + self.blocks.capacity() * size_of::<RecordBlock>()
+        // The blocks' capacity is reserved address space; only the blocks made are touched.
+        self.blocks.len() * (RECORDS_PER_BLOCK * size_of::<T>() + size_of::<RecordBlock>())
     }
 
     /// Keeps the freed `id` from reuse until `release_withheld`, so a Value naming the

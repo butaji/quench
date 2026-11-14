@@ -40,6 +40,10 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         };
         self.base = base;
         self.reservation = Reservation::Reserved;
+        // The block metadata never moves either: room for every block the range can hold
+        // is taken now, as address space only, and a block's pages are touched when it is
+        // made. A pointer into it (`native_mark_blocks`) stays valid for the space's life.
+        self.blocks.reserve_exact(CAPACITY / RECORDS_PER_BLOCK);
         true
     }
 }

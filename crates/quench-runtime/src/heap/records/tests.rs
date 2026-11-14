@@ -138,3 +138,19 @@ fn bitmap_reuse_preserves_descending_free_id_order_across_sweeps() {
     assert_eq!(arena.try_insert(13).unwrap(), ids[0]);
     assert_eq!(arena.try_insert(14).unwrap(), 6);
 }
+
+#[test]
+fn record_block_metadata_never_moves_once_reserved() {
+    let mut arena: RecordSpace<u64> = RecordSpace::default();
+    arena.try_insert(0).unwrap();
+    let (blocks, count) = arena.native_mark_blocks();
+    assert_eq!(count, 1);
+    for value in 1..(8 * RECORDS_PER_BLOCK) as u64 {
+        arena.try_insert(value).unwrap();
+    }
+    let (moved, count) = arena.native_mark_blocks();
+    assert_eq!((moved, count), (blocks, 8));
+    assert_eq!(arena.blocks.capacity(), RECORD_SPACE_CAPACITY / RECORDS_PER_BLOCK);
+    // Reserved block capacity is no allocation the memory ledger counts.
+    assert_eq!(arena.allocated_bytes(), 8 * (RECORDS_PER_BLOCK * size_of::<u64>() + size_of::<super::RecordBlock>()));
+}
