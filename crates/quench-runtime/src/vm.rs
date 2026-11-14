@@ -1,6 +1,6 @@
 #[cfg(feature = "native-execution")]
 mod native_operands;
-mod shape_lookup; mod string_wrapper; mod accessor_cache;
+mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use holder_hints::{HintAnswer, HolderHint};
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
 #[cfg(feature = "aot")]
@@ -880,21 +880,6 @@ const EMPTY_CACHE: FieldCache = FieldCache {
     holder: NO_FIELD_HOLDER,
     slot: 0,
 };
-/// A `GetField` record's read of `atom` that a receiver's immediate prototype answered
-/// (`Vm::holder_hint_hit`, `Vm::string_hint_hit`): a receiver of exact shape `receiver`, which
-/// lacks the name (`NO_FIELD_RECEIVER` for a string primitive, whose own names a site that
-/// reads `String.prototype` does not read), whose prototype is `holder`, read `value` under
-/// `watch`, which a change to the holder's slot values or any prototype's layout retires.
-/// `prototype` is `holder` as an object's header links it, which an object receiver's test compares.
-#[derive(Clone)]
-struct HolderHint {
-    receiver: u32,
-    atom: Atom,
-    prototype: crate::heap::ProtoLink,
-    holder: Value,
-    value: Value,
-    watch: crate::heap::PrototypeValueWatch,
-}
 /// Stored as `[receiver, holder, slot]` complemented against `EMPTY_CACHE`, which stores
 /// as zero words.
 impl site_table::SiteEntry for FieldCache {

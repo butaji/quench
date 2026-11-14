@@ -599,7 +599,6 @@ const ACTIVATION_FILL_BLOCK: usize = 8;
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 
 mod closure_targets;
-mod getters;
 mod lane_stack_growth;
 use super::lane_values::LaneValues;
 mod this_binding;
@@ -608,7 +607,7 @@ mod loop_fields; use loop_fields::lane_loop_field_stores;
 mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters; mod proxy_traps; mod completions; use completions::*;
 use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_initialize_stores, lane_add_stores, lane_return_constructed, lane_planned_construction, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_body_receiver, lane_context_constructs};
-use getters::{lane_getter_read, lane_read_getter};
+use getters::{lane_get_field_getter_hinted, lane_getter_read, lane_read_getter};
 mod list_calls;
 mod loop_runs;
 mod unary_values;
@@ -2609,12 +2608,12 @@ macro_rules! lane_handler {
 /// `lane_handler!` for a handler only JavaScript views dispatch: the run's context comes
 /// from the carried view (`MemoryView::script`) rather than the thread-local load.
 macro_rules! script_handler {
-    ($(#[$meta:meta])* fn $name:ident<$($param:ident: $ty:ty),*>($cx:ident, $r:ident, $ip:ident, $i:ident, $view:ident) $body:block) => {
+    ($(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($cx:ident, $r:ident, $ip:ident, $i:ident, $view:ident) $body:block) => {
         lane_handler!(@define bytes [{
             let cx: *mut LaneContext<H> = bytes.cast();
             debug_assert_eq!(cx, lane_context::<H>(), "a JavaScript view carries its context");
             cx
-        }] $(#[$meta])* fn $name<$($param: $ty),*>($cx, $r, $ip, $i, $view) $body);
+        }] $(#[$meta])* $vis fn $name<$($param: $ty),*>($cx, $r, $ip, $i, $view) $body);
     };
 }
 
@@ -6238,7 +6237,7 @@ script_handler! {
             _ if string_base => Some(lane_get_field::<H>),
             FieldSiteTier::Nested => Some(lane_get_field_nested::<H>),
             FieldSiteTier::General => Some(lane_get_field::<H>),
-            FieldSiteTier::Getter => Some(lane_get_field_getter::<H>),
+            FieldSiteTier::Getter => Some(lane_get_field_getter_hinted::<H>),
             FieldSiteTier::Polymorphic => Some(single_base_handler(
                 i.b,
                 lane_get_field_polymorphic::<H, true, true>,
@@ -13217,7 +13216,7 @@ use wasm_calls::{known_call_handler, reference_call_handler, wasm_return_handler
 use denoted::{denoted_handler, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
-mod native_calls; mod generator_yields; use generator_yields::yield_handler;
+mod native_calls; mod getters; mod generator_yields; use generator_yields::yield_handler;
 mod array_steps;
 mod for_in_steps;
 mod name_probe; use name_probe::probe_handler; pub(super) use name_probe::settle_name_record;

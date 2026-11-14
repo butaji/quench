@@ -9,6 +9,14 @@ impl<H: Host> Vm<H> {
         self.cached_field_accessor(object, atom, site)?.0
     }
 
+    /// Whether the accessor the site's recorded entry answers for `object` lives on its
+    /// immediate prototype, whose values a hint's watch covers (`hold_getter_hint`).
+    pub(super) fn cached_accessor_on_prototype(&self, object: Value, atom: Atom, site: usize) -> bool {
+        self.shape_property_lookup(object, atom)
+            .and_then(|receiver| Some((self.accessor_entry(receiver, site)?, receiver.proto())))
+            .is_some_and(|(cache, prototype)| cache.holder != OWN_ACCESSOR && cache.holder == prototype)
+    }
+
     /// The accessor functions the site's recorded entry answers for `object` (a store's
     /// setter, a read's getter): its getter, and its setter where it has one.
     pub(super) fn cached_field_accessor(&self, object: Value, atom: Atom, site: usize) -> Option<ShapeAccessors> {
