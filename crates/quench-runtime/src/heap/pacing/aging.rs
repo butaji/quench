@@ -47,6 +47,12 @@ impl Aging {
         }
     }
 
+    /// Whether aging turned off for its aged survivors' fates and no full collection has
+    /// run since (`cooldown` still the whole `interval`).
+    pub(super) fn off_since_no_full(self, interval: u32) -> bool {
+        matches!(self, Self::Off { cooldown, .. } if interval > 0 && cooldown == interval)
+    }
+
     /// A full collection, which found promotions dying old or not. While on, aging is
     /// measured by its aged survivors' fates (`after_minor`).
     pub(super) fn after_full(&mut self, promoted_garbage: bool) {

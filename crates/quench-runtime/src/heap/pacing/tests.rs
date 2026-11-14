@@ -267,3 +267,31 @@ fn high_young_survival_switches_to_full_collections_and_probes_back_under(pacing
     pacing.plan(&mut state, minor(live, live, live / 2));
     assert_eq!(state.regime(&pacing), Regime::Generational);
 }
+
+#[test]
+fn aging_turning_off_resets_the_full_collection_back_off() {
+    let pacing = MemoryPolicy::Throughput.table();
+    let live = 1 << 14;
+    let mut state = PacingState::default();
+    pacing.plan(&mut state, minor(live, live, 1 << 14));
+    let freed = AgedFates { died: 9, promoted: 1 };
+    pacing.plan(&mut state, CollectionOutcome { aged: freed, ..minor(live, live, 1 << 14) });
+    assert_eq!(state.promotion_age(&pacing), PromotionAge::OLDEST);
+    // Fulls finding nothing the minors had not freed back the cap off.
+    for _ in 0..pacing.maximum_cap_backoff {
+        pacing.plan(&mut state, full_after_promoting(live, 0, 0));
+    }
+    assert_eq!(state.cap_backoff, pacing.maximum_cap_backoff);
+    // Aged survivors outliving their second minor turn aging off and drop the back-off, and
+    // the full right after, which finds those promotions living, does not raise it again.
+    let outliving = AgedFates { died: 1, promoted: 9 };
+    for _ in 0..2 {
+        pacing.plan(&mut state, CollectionOutcome { aged: outliving, ..minor(live, live, 1 << 14) });
+    }
+    assert_eq!(state.promotion_age(&pacing), pacing.promotion_age);
+    assert_eq!(state.cap_backoff, 0);
+    pacing.plan(&mut state, full_after_promoting(live, 1 << 14, 1 << 14));
+    assert_eq!(state.cap_backoff, 0);
+    pacing.plan(&mut state, full_after_promoting(live, 1 << 14, 1 << 14));
+    assert_eq!(state.cap_backoff, 1);
+}

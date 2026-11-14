@@ -346,6 +346,9 @@ impl GenerationalPacing {
             let promoted_garbage = self.promoted_garbage_aging.numerator > 0
                 && state.promoted_since_full > 0
                 && reclaimed >= self.promoted_garbage_aging.of(state.promoted_since_full);
+            // A full in the interval after aging turned off measured the young survivors
+            // aging had just stopped freeing, not old garbage: it leaves the back-off reset.
+            let aging_just_off = state.aging.off_since_no_full(self.aging_interval);
             state.aging.after_full(promoted_garbage);
             state.promoted_since_full = 0;
             state.steady = state.live_after_last_full != 0
@@ -354,6 +357,7 @@ impl GenerationalPacing {
             state.live_after_last_full = outcome.live;
             state.cap_backoff = if state.regime(self) == Regime::FullOnly
                 || reclaimed >= self.productive_full.of(expected)
+                || aging_just_off
             {
                 0
             } else {
@@ -363,7 +367,16 @@ impl GenerationalPacing {
         if !outcome.full && outcome.allocated > 0 {
             let promoted = outcome.live_weight.saturating_sub(outcome.previous_live_weight);
             state.promoted_since_full = state.promoted_since_full.saturating_add(promoted);
+            let was_aging = matches!(state.aging, Aging::On { .. });
             state.aging.after_minor(outcome.aged, self.aging_interval);
+            if was_aging && !matches!(state.aging, Aging::On { .. }) {
+                // The back-off measured fulls that found little old garbage because aging
+                // freed it young. Survivors now outlive their second minor and are promoted,
+                // so the next full is due at the cap the last full's live set sets: Earley-Boyer
+                // turning to Boyer's growing term rewrite promoted 37% of each young
+                // generation to 280K live weight against the 13K the last full kept.
+                state.cap_backoff = 0;
+            }
             let survival = (promoted.min(outcome.allocated) as u64 * u64::from(SURVIVAL_SCALE)
                 / outcome.allocated as u64) as u32;
             state.survival = (state.survival + survival) / 2;
