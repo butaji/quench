@@ -8,7 +8,7 @@ impl Lowering<'_, '_> {
         let target = instruction.jump_target() as usize;
         if target <= pc {
             self.backedge |= target == self.coverage.entry();
-            if target == self.coverage.entry() { self.count_backedge(); }
+            if target == self.coverage.entry() { self.count_trip(); }
             if self.shared_backedge(state, target) { return false; }
             self.interrupt_check(state, pc as u32);
             if let Some(header) = self.unit.instructions.get(target).copied()

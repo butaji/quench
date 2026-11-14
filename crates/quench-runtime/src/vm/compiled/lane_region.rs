@@ -43,6 +43,7 @@ mod global_reads;
 mod stable;
 #[path = "lane_region/polls.rs"]
 mod polls;
+#[path = "lane_region/trips.rs"] mod trips;
 #[path = "lane_region/function_names.rs"] mod function_names;
 #[path = "lane_region/literals.rs"] mod literals;
 #[path = "lane_region/allocations.rs"] mod allocations;
@@ -462,6 +463,8 @@ struct Lowering<'a, 'f> {
     /// An entry-bound poll page, or the ordinary atomic termination flag.
     interrupt: ir::Value,
     fault_poll: bool,
+    /// A loop region's completed iterations, flushed to its entry record where it leaves (`trips.rs`).
+    trips: Option<Variable>,
     /// Callback completion edges can retire the native entry's interrupt ownership proof.
     reentries: smallvec::SmallVec<[ir::Block; INLINE_EFFECT_EDGES]>,
     polls: smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
@@ -1587,6 +1590,7 @@ pub(super) fn lower(
         int_captures,
         interrupt,
         fault_poll,
+        trips: None,
         reentries: smallvec::SmallVec::new(),
         polls: smallvec::SmallVec::new(),
         poll_latches: super::SecondaryMap::new(),
@@ -1776,6 +1780,7 @@ pub(super) fn lower(
         let block = lowering.builder.create_block();
         lowering.goto(block, &[]);
         lowering.builder.switch_to_block(block);
+        lowering.begin_trips();
         if !matches!(lowering.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))) {
             return None;
         }
@@ -1887,6 +1892,7 @@ pub(super) fn lower(
     lowering.leave_with(status, Some(word));
     lowering.builder.switch_to_block(leave);
     let results = lowering.builder.block_params(leave).to_vec();
+    lowering.flush_trips();
     lowering.leave(&results);
     // A lane body is a whole function body and must complete; so must an inlined unit, whose
     // callees rejoin it. A loop or range over the function's own code completes by its exits
@@ -3097,26 +3103,6 @@ impl Lowering<'_, '_> {
         self.leave_site().with(&mut self.builder, status, word);
     }
 
-    /// Count a taken execution of the region's backward edge in the loop entry record
-    /// (`LoopEntry::backedge_count`), which the loop tier's pricing reads.
-    /// A lane body (`Coverage::Prefix`) counts nothing.
-    fn count_backedge(&mut self) {
-        if !matches!(self.coverage, Coverage::Loop { .. }) { return; }
-        let offset = i32::try_from(std::mem::offset_of!(super::JsStepDispatch, loop_entry))
-            .expect("dispatch offset fits i32");
-        let payload = self.payload;
-        let entry = self.raw_load(Lane::I64, regions::dispatch(), payload, offset);
-        let zero = self.raw_compare_imm(Relation::Equal, entry, 0);
-        let (skip, count) = (self.builder.create_block(), self.builder.create_block());
-        self.branch_if(zero, (skip, &[]), (count, &[]));
-        self.builder.switch_to_block(count);
-        let word = self.raw_load(Lane::I64, regions::miss_counter(), entry, 0);
-        let next = self.raw_binary_imm(Binary::Add, word, 1);
-        self.store_word(regions::miss_counter(), next, entry, 0);
-        self.goto(skip, &[]);
-        self.builder.switch_to_block(skip);
-    }
-
     fn interrupt_check(&mut self, state: &mut State, pc: u32) {
         if self.fault_poll {
             let interrupt = self.interrupt;
@@ -3168,9 +3154,9 @@ impl Lowering<'_, '_> {
         taken_block: ir::Block, fall_block: ir::Block) {
         let back = target <= pc && target == self.coverage.entry();
         self.backedge |= back;
-        if back { self.count_backedge(); }
         let refinements = std::mem::take(&mut state.refinements);
         self.switch_to(taken_block, true);
+        if back { self.count_trip(); }
         let mut taken_state = state.clone();
         taken_state.narrow(crate::staged::Edge::Target, &refinements);
         self.continue_at(&mut taken_state, target);
