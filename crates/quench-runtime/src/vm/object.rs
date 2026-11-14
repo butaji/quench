@@ -2259,8 +2259,13 @@ impl<H: Host> Vm<H> {
     /// layout nor values since. `None` for any other receiver, name or epoch, or no such hint.
     #[inline(always)]
     pub(super) fn holder_hint_hit(&self, index: u16, atom: Atom, object: Value) -> Option<Value> {
+        self.holder_hint_hit_in(index, atom, self.hinted_receiver(object)?)
+    }
+
+    /// `holder_hint_hit` of the object part `receiver` (`hinted_receiver`).
+    #[inline(always)]
+    pub(super) fn holder_hint_hit_in(&self, index: u16, atom: Atom, receiver: &crate::heap::Object) -> Option<Value> {
         let hint = self.holder_hints.get(usize::from(index))?;
-        let receiver = self.hinted_receiver(object)?;
         // SAFETY: the hint's watch is live as long as the hint.
         (hint.atom == atom).then(|| unsafe {
             crate::staged::holder::concrete_holder_read(receiver, hint.receiver, hint.prototype.bits(), std::rc::Rc::as_ptr(&hint.watch), hint.value)

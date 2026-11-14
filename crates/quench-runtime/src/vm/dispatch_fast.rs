@@ -6262,6 +6262,26 @@ script_handler! {
     /// carries from the read that made the hint. Any other read takes
     /// `lane_get_field_holder_refresh` out of line.
     fn lane_get_field_holder<THIS: bool>(cx, r, ip, i, view) {
+        // A receiver of another family takes its own record: a call out of line from here
+        // made every read save a register around it.
+        let Some(record) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) }).and_then(Value::direct_object_index) else {
+            sibling!(lane_get_field_holder_other::<H, THIS>, r, ip, Carried::script_in(cx, view))
+        };
+        let vm = unsafe { vm(cx) };
+        let Some(value) = vm.holder_hint_hit_in(i.call_link.get(), i.imm(), vm.heap.object_record_by_id(record)) else {
+            sibling!(lane_get_field_holder_refresh::<H, THIS>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `lane_get_field_holder` of a receiver other than a direct object: an array, function or
+    /// ordinary builtin (`Vm::holder_hint_hit`); any other read takes
+    /// `lane_get_field_holder_refresh`.
+    #[inline(never)]
+    fn lane_get_field_holder_other<THIS: bool>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).holder_hint_hit(i.call_link.get(), i.imm(), object))
         else {
