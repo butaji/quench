@@ -5,7 +5,8 @@
 use super::compiled::CodeMemory;
 use super::jit_backend::{compile_function, run_in_background, target_isa, NativeCompileRejection};
 use std::task::Poll;
-use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
+use crate::staged::machine::{Binary, Extend, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
+use cranelift_codegen::ir::{self, types, MemFlagsData};
 use cranelift_codegen::isa::TargetIsa;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use quench_regexp::backtrack::CAPTURE_REGISTERS;
@@ -118,37 +119,37 @@ fn emit(plan: &NativePlan, isa: &dyn TargetIsa) -> ir::Function {
     let mut context = FunctionBuilderContext::new();
     let mut emit = Emit::start(plan, FunctionBuilder::new(&mut function, &mut context));
     for (pc, inst) in plan.insts.iter().enumerate() {
-        emit.b.switch_to_block(emit.instructions[pc]);
+        emit.b.enter_open(emit.instructions[pc]);
         emit.instruction(pc as u32, inst);
     }
     emit.finish();
-    emit.b.seal_all_blocks();
+    emit.b.seal_all();
     emit.b.finalize(isa.frontend_config());
     function
 }
 
 impl<'a, 'f> Emit<'a, 'f> {
     fn start(plan: &'a NativePlan, mut b: FunctionBuilder<'f>) -> Self {
-        let entry = b.create_block();
+        let entry = b.new_block();
         b.append_block_params_for_function_params(entry);
-        b.switch_to_block(entry);
+        b.enter_open(entry);
         let parameters = b.block_params(entry).to_vec();
         let [bytes, length, position_in, registers, stack, stack_end] = parameters[..] else { unreachable!("`PARAMETERS` parameters") };
         let (position, top) = (b.declare_var(types::I64), b.declare_var(types::I64));
-        let instructions: Vec<_> = plan.insts.iter().map(|_| b.create_block()).collect();
-        let (backtrack, overflow) = (b.create_block(), b.create_block());
+        let instructions: Vec<_> = plan.insts.iter().map(|_| b.new_block()).collect();
+        let (backtrack, overflow) = (b.new_block(), b.new_block());
         b.def_var(position, position_in);
         b.def_var(top, stack);
         let mut emit = Self { b, plan, bytes, length, registers, stack_end, position, top, instructions, backtrack, overflow, resumes: Vec::new() };
         let barrier = emit.constant(BARRIER);
         let zero = emit.constant(0);
         emit.push_frame(barrier, zero, zero);
-        emit.b.ins().jump(emit.instructions[plan.entry as usize], &[]);
+        emit.b.goto(emit.instructions[plan.entry as usize], &[]);
         emit
     }
 
     fn constant(&mut self, value: i64) -> ir::Value {
-        self.b.ins().iconst(types::I64, value)
+        self.b.raw_const(Lane::I64, value)
     }
 
     fn position(&mut self) -> ir::Value {
@@ -164,84 +165,84 @@ impl<'a, 'f> Emit<'a, 'f> {
     }
 
     fn next(&mut self, pc: u32) {
-        self.b.ins().jump(self.instructions[pc as usize + 1], &[]);
+        self.b.goto(self.instructions[pc as usize + 1], &[]);
     }
 
     fn goto(&mut self, pc: u32) {
-        self.b.ins().jump(self.instructions[pc as usize], &[]);
+        self.b.goto(self.instructions[pc as usize], &[]);
     }
 
     fn fail(&mut self) {
-        self.b.ins().jump(self.backtrack, &[]);
+        self.b.goto(self.backtrack, &[]);
     }
 
     /// Branches to `then` when `condition` holds, else `otherwise`.
     fn branch(&mut self, condition: ir::Value, then: ir::Block, otherwise: ir::Block) {
-        self.b.ins().brif(condition, then, &[], otherwise, &[]);
+        self.b.branch_if(condition, (then, &[]), (otherwise, &[]));
     }
 
     /// Continues in a new block where `condition` holds, failing where it does not.
     fn require(&mut self, condition: ir::Value) {
-        let held = self.b.create_block();
+        let held = self.b.new_block();
         self.branch(condition, held, self.backtrack);
-        self.b.switch_to_block(held);
+        self.b.enter_open(held);
     }
 
-    fn compare(&mut self, condition: IntCC, left: ir::Value, right: ir::Value) -> ir::Value {
-        self.b.ins().icmp(condition, left, right)
+    fn compare(&mut self, relation: Relation, left: ir::Value, right: ir::Value) -> ir::Value {
+        self.b.raw_compare(relation, left, right)
     }
 
-    fn compare_constant(&mut self, condition: IntCC, value: ir::Value, constant: i64) -> ir::Value {
-        self.b.ins().icmp_imm_u(condition, value, constant)
+    fn compare_constant(&mut self, relation: Relation, value: ir::Value, constant: i64) -> ir::Value {
+        self.b.raw_compare_imm(relation, value, constant)
     }
 
     fn byte_at(&mut self, index: ir::Value) -> ir::Value {
-        let address = self.b.ins().iadd(self.bytes, index);
-        self.b.ins().uload8(types::I64, MemFlagsData::trusted(), address, 0)
+        let address = self.b.raw_binary(Binary::Add, self.bytes, index);
+        self.b.raw_load_extended(Lane::I8, Extend::Zero, Lane::I64, MemFlagsData::trusted(), address, 0)
     }
 
     fn register(&mut self, index: u32) -> ir::Value {
-        self.b.ins().load(types::I64, MemFlagsData::trusted(), self.registers, index as i32 * WORD)
+        self.b.raw_load(Lane::I64, MemFlagsData::trusted(), self.registers, index as i32 * WORD)
     }
 
     fn store_register(&mut self, index: u32, value: ir::Value) {
-        self.b.ins().store(MemFlagsData::trusted(), value, self.registers, index as i32 * WORD);
+        self.b.raw_store(Lane::I64, MemFlagsData::trusted(), (value, false), self.registers, index as i32 * WORD);
     }
 
     /// Whether the unit `byte` passes `test`.
     fn passes(&mut self, test: NativeTest, byte: ir::Value) -> ir::Value {
         match test {
-            NativeTest::Never => self.b.ins().iconst(types::I8, 0),
-            NativeTest::Exact(unit) => self.compare_constant(IntCC::Equal, byte, i64::from(unit)),
+            NativeTest::Never => self.b.raw_const(Lane::I8, 0),
+            NativeTest::Exact(unit) => self.compare_constant(Relation::Equal, byte, i64::from(unit)),
             NativeTest::Mask(mask) => self.in_mask(mask, byte),
         }
     }
 
     /// Bit `byte` of the 128-bit `mask`.
     fn in_mask(&mut self, mask: [u64; 2], byte: ir::Value) -> ir::Value {
-        let low = self.b.ins().iconst(types::I64, mask[0] as i64);
-        let high = self.b.ins().iconst(types::I64, mask[1] as i64);
-        let below = self.compare_constant(IntCC::UnsignedLessThan, byte, WORD_BITS);
-        let word = self.b.ins().select(below, low, high);
-        let shift = self.b.ins().band_imm_u(byte, WORD_SHIFT_MASK);
-        let bit = self.b.ins().ushr(word, shift);
-        let bit = self.b.ins().band_imm_u(bit, 1);
-        self.compare_constant(IntCC::NotEqual, bit, 0)
+        let low = self.constant(mask[0] as i64);
+        let high = self.constant(mask[1] as i64);
+        let below = self.compare_constant(Relation::UnsignedLess, byte, WORD_BITS);
+        let word = self.b.raw_select(below, low, high);
+        let shift = self.b.raw_binary_imm(Binary::And, byte, WORD_SHIFT_MASK);
+        let bit = self.b.raw_binary(Binary::ShiftRightUnsigned, word, shift);
+        let bit = self.b.raw_binary_imm(Binary::And, bit, 1);
+        self.compare_constant(Relation::NotEqual, bit, 0)
     }
 
     /// Pushes a frame `(id, first, second)`, returning from the search at once where the
     /// stack is full.
     fn push_frame(&mut self, id: ir::Value, first: ir::Value, second: ir::Value) {
         let top = self.top();
-        let after = self.b.ins().iadd_imm_s(top, FRAME_BYTES);
-        let fits = self.compare(IntCC::UnsignedLessThanOrEqual, after, self.stack_end);
-        let stored = self.b.create_block();
+        let after = self.b.raw_binary_imm(Binary::Add, top, FRAME_BYTES);
+        let fits = self.compare(Relation::UnsignedLessEqual, after, self.stack_end);
+        let stored = self.b.new_block();
         self.branch(fits, stored, self.overflow);
-        self.b.switch_to_block(stored);
+        self.b.enter_open(stored);
         let flags = MemFlagsData::trusted();
-        self.b.ins().store(flags, id, top, 0);
-        self.b.ins().store(flags, first, top, FIRST_OPERAND);
-        self.b.ins().store(flags, second, top, SECOND_OPERAND);
+        self.b.raw_store(Lane::I64, flags, (id, false), top, 0);
+        self.b.raw_store(Lane::I64, flags, (first, false), top, FIRST_OPERAND);
+        self.b.raw_store(Lane::I64, flags, (second, false), top, SECOND_OPERAND);
         self.b.def_var(self.top, after);
     }
 
@@ -254,7 +255,7 @@ impl<'a, 'f> Emit<'a, 'f> {
     /// The id of a resume, with its block, made once.
     fn resume_id(&mut self, resume: Resume) -> i64 {
         let index = self.resumes.iter().position(|(known, _)| *known == resume).unwrap_or_else(|| {
-            let block = self.b.create_block();
+            let block = self.b.new_block();
             self.resumes.push((resume, block));
             self.resumes.len() - 1
         });
@@ -290,7 +291,7 @@ impl<'a, 'f> Emit<'a, 'f> {
             NativeInst::Jump(target) => self.goto(*target),
             NativeInst::Match => {
                 let position = self.position();
-                self.b.ins().return_(&[position]);
+                self.b.leave(&[position]);
             }
             other => self.registers_instruction(pc, other),
         }
@@ -298,38 +299,38 @@ impl<'a, 'f> Emit<'a, 'f> {
 
     fn unit(&mut self, pc: u32, test: NativeTest) {
         let position = self.position();
-        let inside = self.compare(IntCC::UnsignedLessThan, position, self.length);
+        let inside = self.compare(Relation::UnsignedLess, position, self.length);
         self.require(inside);
         let byte = self.byte_at(position);
         let passes = self.passes(test, byte);
         self.require(passes);
-        let after = self.b.ins().iadd_imm_s(position, 1);
+        let after = self.b.raw_binary_imm(Binary::Add, position, 1);
         self.set_position(after);
         self.next(pc);
     }
 
     fn guarded_split(&mut self, pc: u32, alternative: u32, guard: NativeGuard) {
-        let (admit, refuse) = (self.b.create_block(), self.b.create_block());
+        let (admit, refuse) = (self.b.new_block(), self.b.new_block());
         let position = self.position();
         if guard.at_start {
-            let probe = self.b.create_block();
-            let at_start = self.compare_constant(IntCC::Equal, position, 0);
+            let probe = self.b.new_block();
+            let at_start = self.compare_constant(Relation::Equal, position, 0);
             self.branch(at_start, admit, probe);
-            self.b.switch_to_block(probe);
+            self.b.enter_open(probe);
         }
-        let (load, edge) = (self.b.create_block(), self.b.create_block());
-        let inside = self.compare(IntCC::UnsignedLessThan, position, self.length);
+        let (load, edge) = (self.b.new_block(), self.b.new_block());
+        let inside = self.compare(Relation::UnsignedLess, position, self.length);
         self.branch(inside, load, edge);
-        self.b.switch_to_block(load);
+        self.b.enter_open(load);
         let byte = self.byte_at(position);
         let starts = self.in_mask(guard.mask, byte);
         self.branch(starts, admit, refuse);
-        self.b.switch_to_block(edge);
-        self.b.ins().jump(if guard.at_end { admit } else { refuse }, &[]);
-        self.b.switch_to_block(admit);
+        self.b.enter_open(edge);
+        self.b.goto(if guard.at_end { admit } else { refuse }, &[]);
+        self.b.enter_open(admit);
         self.push_resume(Resume::Choice(alternative), position, position);
         self.next(pc);
-        self.b.switch_to_block(refuse);
+        self.b.enter_open(refuse);
         self.goto(alternative);
     }
 
@@ -360,13 +361,13 @@ impl<'a, 'f> Emit<'a, 'f> {
         let unset = self.constant(self.plan.unset as i64);
         for capture in captures {
             let current = self.register(CAPTURE_REGISTERS * capture);
-            let is_set = self.compare(IntCC::NotEqual, current, unset);
-            let (reset, skip) = (self.b.create_block(), self.b.create_block());
+            let is_set = self.compare(Relation::NotEqual, current, unset);
+            let (reset, skip) = (self.b.new_block(), self.b.new_block());
             self.branch(is_set, reset, skip);
-            self.b.switch_to_block(reset);
+            self.b.enter_open(reset);
             self.set_capture(*capture, unset, unset);
-            self.b.ins().jump(skip, &[]);
-            self.b.switch_to_block(skip);
+            self.b.goto(skip, &[]);
+            self.b.enter_open(skip);
         }
         self.next(pc);
     }
@@ -374,27 +375,27 @@ impl<'a, 'f> Emit<'a, 'f> {
     /// The backtrack block: pops a frame and goes where its id says; then each resume block.
     fn finish(&mut self) {
         let overflow = self.overflow;
-        self.b.switch_to_block(overflow);
+        self.b.enter_open(overflow);
         let overflowed = self.constant(NATIVE_OVERFLOW as i64);
-        self.b.ins().return_(&[overflowed]);
-        let (restore, barrier) = (self.b.create_block(), self.b.create_block());
-        self.b.switch_to_block(self.backtrack);
+        self.b.leave(&[overflowed]);
+        let (restore, barrier) = (self.b.new_block(), self.b.new_block());
+        self.b.enter_open(self.backtrack);
         let top = self.top();
-        let top = self.b.ins().iadd_imm_s(top, -FRAME_BYTES);
+        let top = self.b.raw_binary_imm(Binary::Add, top, -FRAME_BYTES);
         self.b.def_var(self.top, top);
-        let id = self.b.ins().load(types::I64, MemFlagsData::trusted(), top, 0);
+        let id = self.b.raw_load(Lane::I64, MemFlagsData::trusted(), top, 0);
         self.dispatch(id, restore, barrier);
-        self.b.switch_to_block(restore);
+        self.b.enter_open(restore);
         self.restore_frame(top);
-        self.b.switch_to_block(barrier);
+        self.b.enter_open(barrier);
         let failed = self.constant(NATIVE_FAIL as i64);
-        self.b.ins().return_(&[failed]);
+        self.b.leave(&[failed]);
         // The resume blocks stay listed: a resume pushes frames of its own kind, which name
         // their ids from the list (`resume_id`), so it never grows here.
         let listed = self.resumes.len();
         for index in 0..listed {
             let (resume, block) = self.resumes[index];
-            self.b.switch_to_block(block);
+            self.b.enter_open(block);
             self.resume(resume);
         }
         debug_assert_eq!(self.resumes.len(), listed, "no resume made another");
@@ -404,22 +405,20 @@ impl<'a, 'f> Emit<'a, 'f> {
     fn dispatch(&mut self, id: ir::Value, restore: ir::Block, barrier: ir::Block) {
         let mut targets = vec![restore, barrier];
         targets.extend(self.resumes.iter().map(|(_, block)| *block));
-        let cases: Vec<_> = targets.iter().map(|target| self.b.func.dfg.block_call(*target, &[])).collect();
         // No frame has another id; the search is given back to the interpreter if one did.
-        let default = self.b.func.dfg.block_call(self.overflow, &[]);
-        let table = self.b.create_jump_table(ir::JumpTableData::new(default, &cases));
-        let selector = self.b.ins().ireduce(types::I32, id);
-        self.b.ins().br_table(selector, table);
+        let table = self.b.jump_table(&targets, (self.overflow, &[]));
+        let selector = self.b.raw_unary(Unary::Narrow(Lane::I32), id);
+        self.b.dispatch(selector, table);
     }
 
     /// A restore frame: its register gets its old value back, and the backtrack goes on.
     fn restore_frame(&mut self, frame: ir::Value) {
         let flags = MemFlagsData::trusted();
-        let register = self.b.ins().load(types::I64, flags, frame, FIRST_OPERAND);
-        let value = self.b.ins().load(types::I64, flags, frame, SECOND_OPERAND);
-        let offset = self.b.ins().ishl_imm_u(register, REGISTER_SHIFT);
-        let address = self.b.ins().iadd(self.registers, offset);
-        self.b.ins().store(flags, value, address, 0);
+        let register = self.b.raw_load(Lane::I64, flags, frame, FIRST_OPERAND);
+        let value = self.b.raw_load(Lane::I64, flags, frame, SECOND_OPERAND);
+        let offset = self.b.raw_binary_imm(Binary::ShiftLeft, register, REGISTER_SHIFT);
+        let address = self.b.raw_binary(Binary::Add, self.registers, offset);
+        self.b.raw_store(Lane::I64, flags, (value, false), address, 0);
         self.fail();
     }
 }

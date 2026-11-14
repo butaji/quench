@@ -65,7 +65,7 @@ mod stable_fact_tests;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
 #[path = "compiled/emit_machine.rs"]
-mod emit_machine;
+pub(super) mod emit_machine;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
 #[cfg(all(test, feature = "aot"))]

@@ -109,7 +109,7 @@ const JS_JIT_OPT_LEVEL: &str = "speed";
 /// Declares the symbol `(namespace, key)` in `function`, a relocation the loader patches: the
 /// one form every position-independent constant takes (stencil holes, `lane_region::relocs`).
 #[cfg(any(feature = "jit", feature = "aot"))]
-fn declare_symbol(function: &mut cranelift_codegen::ir::Function, namespace: u32, key: u32) -> cranelift_codegen::ir::GlobalValue {
+pub(super) fn declare_symbol(function: &mut cranelift_codegen::ir::Function, namespace: u32, key: u32) -> cranelift_codegen::ir::GlobalValue {
     use cranelift_codegen::ir;
     let name = function.declare_imported_user_function(ir::UserExternalName::new(namespace, key));
     function.create_global_value(ir::GlobalValueData::Symbol {
@@ -120,12 +120,12 @@ fn declare_symbol(function: &mut cranelift_codegen::ir::Function, namespace: u32
     })
 }
 
-/// The address of symbol `(namespace, key)`, as a value of type `ty` built at `builder`.
+/// The address of symbol `(namespace, key)`, as a 64-bit value built at `builder`.
 #[cfg(any(feature = "jit", feature = "aot"))]
-pub(super) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'_>, ty: cranelift_codegen::ir::Type, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
-    use cranelift_codegen::ir::InstBuilder;
+pub(super) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'_>, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
+    use crate::staged::machine::MachineAccess;
     let symbol = declare_symbol(builder.func, namespace, key);
-    builder.ins().symbol_value(ty, symbol)
+    builder.symbol_address(symbol)
 }
 
 /// The address of symbol `(namespace, key)` as a 64-bit value built at `cursor`.
