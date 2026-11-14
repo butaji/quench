@@ -21,6 +21,8 @@ mod concrete;
 pub(crate) mod numeric;
 pub(crate) mod flow;
 pub(crate) mod machine;
+#[cfg_attr(not(feature = "jit"), allow(dead_code))] // a specializer's composition
+pub(crate) mod barrier;
 #[cfg_attr(not(feature = "jit"), allow(dead_code))] // a specializer's operations; the interpreter has native Numbers
 pub(crate) mod number_machine;
 mod heap;

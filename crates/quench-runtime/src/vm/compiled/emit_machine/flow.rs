@@ -13,6 +13,16 @@ impl<'b, B: Builds<'b>> MachineFlow for B {
     type Block = ir::Block;
     type Table = ir::JumpTable;
 
+    fn new_block(&mut self) -> ir::Block {
+        self.function_builder().create_block()
+    }
+
+    fn enter(&mut self, block: ir::Block) {
+        let builder = self.function_builder();
+        builder.switch_to_block(block);
+        builder.seal_block(block);
+    }
+
     fn goto(&mut self, block: ir::Block, arguments: &[ir::Value]) {
         self.function_builder().ins().jump(block, &block_args(arguments));
     }

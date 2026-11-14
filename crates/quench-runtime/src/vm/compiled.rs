@@ -365,64 +365,11 @@ fn emit_js_guard(
     builder.seal_block(passed);
 }
 
-/// The record of the direct array `base`, tagged; any other value leaves through `fallback`.
-fn emit_array_record(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value, fallback: ir::Block) -> ir::Value {
-
-    let is_array = crate::staged::value::is_direct_array(&mut object_slots::emit(builder), base);
-    emit_js_guard(builder, is_array, fallback);
-
-    // A direct array's index names a live record of the reservation.
-    let record_id = builder.ins().ireduce(types::I32, base);
-    let record_id = builder.ins().uextend(types::I64, record_id);
-
-    let record_base_address = builder.ins().iadd_imm_s(
-        payload,
-        i64::try_from(std::mem::offset_of!(JsStepDispatch, array_record_base))
-            .expect("JS dispatch offset fits i64"),
-    );
-    let record_base = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        record_base_address,
-        0,
-    );
-    let base_is_present = builder
-        .ins()
-        .icmp_imm_u(IntCC::NotEqual, record_base, 0);
-    emit_js_guard(builder, base_is_present, fallback);
-    emit_array_record_address(builder, record_base, record_id)
-}
-
-/// Where record `record_id` (an `i64`) of the array reservation at `record_base` lives.
-fn emit_array_record_address(builder: &mut FunctionBuilder<'_>, record_base: ir::Value, record_id: ir::Value) -> ir::Value {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    let record_size = i64::try_from(ARRAY.record_size).expect("array record size fits i64");
-    let record_offset = builder.ins().imul_imm_u(record_id, record_size);
-    builder.ins().iadd(record_base, record_offset)
-}
-
-/// Whether the array record's object part holds extras: indexed descriptors, an arguments
-/// map, sparse elements or a prototype watch, any of which an element access must consult.
-fn emit_array_extras(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir::Value {
-    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
-    let object_payload = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        record,
-        i32::try_from(ARRAY.object_offset + OBJECT.payload_offset).expect("array payload offset fits i32"),
-    );
-    crate::staged::object::has_extras(&mut object_slots::emit(builder), object_payload)
-}
-
-/// The backing header of an array record.
-fn emit_array_header(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir::Value {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        record,
-        i32::try_from(ARRAY.elements_offset + ARRAY.elements_header_offset).expect("array header offset fits i32"),
-    )
+/// The array record reservation's base in the dispatch payload: fixed until the arrays change.
+fn emit_array_record_base(stage: &mut object_slots::Emit<'_, '_>, payload: ir::Value) -> ir::Value {
+    use crate::staged::machine::Lane;
+    stage.raw_load(Lane::I64, MemFlagsData::trusted(), payload,
+        std::mem::offset_of!(JsStepDispatch, array_record_base) as i32)
 }
 
 /// The `length` of the direct array `base`, tagged, as an int32: its dense elements' count,
@@ -435,22 +382,12 @@ pub(super) fn emit_array_length_read(
     base: ir::Value,
     fallback: ir::Block,
 ) -> ir::Value {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-
-    let record = emit_array_record(builder, payload, base, fallback);
-    let extras = emit_array_extras(builder, record);
-    let ordinary = builder.ins().icmp_imm_u(IntCC::Equal, extras, 0);
-    emit_js_guard(builder, ordinary, fallback);
-    let header = emit_array_header(builder, record);
-    let length = builder.ins().load(
-        types::I32,
-        MemFlagsData::trusted(),
-        header,
-        i32::try_from(ARRAY.header_length_offset).expect("array length offset fits i32"),
-    );
-    let int32 = builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, length, 0);
-    emit_js_guard(builder, int32, fallback);
-    length
+    use crate::staged::machine::{Lane, Unary};
+    let mut stage = object_slots::emit(builder);
+    let record_base = emit_array_record_base(&mut stage, payload);
+    let length = crate::staged::elements::array_length(&mut stage, record_base, base, fallback)
+        .expect("the emit stage continues past its guards");
+    stage.raw_unary(Unary::Narrow(Lane::I32), length)
 }
 
 /// A dense own array's elements as one access proved them: the backing's first value and
@@ -489,9 +426,9 @@ pub(super) fn emit_dense_array_view(
     writable: bool,
     fallback: ir::Block,
 ) -> DenseArrayView {
-    let record_base = builder.ins().load(types::I64, MemFlagsData::trusted(), payload,
-        std::mem::offset_of!(JsStepDispatch, array_record_base) as i32);
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
+    use crate::staged::machine::{Lane, Unary};
+    let mut stage = object_slots::emit(builder);
+    let record_base = emit_array_record_base(&mut stage, payload);
     let backing = crate::staged::elements::array_backing(&mut stage, record_base, base, fallback)
         .expect("the emit stage continues past its guards");
     let crate::staged::elements::Backing { values, length, .. } = backing;
@@ -500,7 +437,7 @@ pub(super) fn emit_dense_array_view(
             .expect("the emit stage continues past its guards");
     }
     // The view's length is an `i32`, the width an int32 index has.
-    let length = builder.ins().ireduce(types::I32, length);
+    let length = stage.raw_unary(Unary::Narrow(Lane::I32), length);
     DenseArrayView { values, length, writable, uncounted: false }
 }
 
@@ -508,15 +445,12 @@ pub(super) fn emit_dense_array_view(
 /// proved, after a helper that may have grown its backing: the array, its record and its
 /// writability stay what the view proved, so only the backing is read again.
 pub(super) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    let record_id = builder.ins().ireduce(types::I32, base);
-    let record_id = builder.ins().uextend(types::I64, record_id);
-    let record_base = builder.ins().load(types::I64, MemFlagsData::trusted(), payload,
-        std::mem::offset_of!(JsStepDispatch, array_record_base) as i32);
-    let record = emit_array_record_address(builder, record_base, record_id);
-    let header = emit_array_header(builder, record);
-    let length = builder.ins().load(types::I32, MemFlagsData::trusted(), header, ARRAY.header_length_offset as i32);
-    (builder.ins().iadd_imm_s(header, ARRAY.header_values_offset as i64), length)
+    use crate::staged::machine::{Lane, Unary};
+    let mut stage = object_slots::emit(builder);
+    let record_base = emit_array_record_base(&mut stage, payload);
+    let record = crate::staged::elements::array_record(&mut stage, record_base, base);
+    let crate::staged::elements::Backing { values, length, .. } = crate::staged::elements::record_backing(&mut stage, record);
+    (values, stage.raw_unary(Unary::Narrow(Lane::I32), length))
 }
 
 /// The address of `view`'s present element `index` (an int32) and its value; an index past
@@ -564,8 +498,7 @@ pub(super) fn emit_dense_element_replace(
 /// counts the values again.
 pub(super) fn emit_dense_array_uncounted(builder: &mut FunctionBuilder<'_>, view: DenseArrayView) {
     debug_assert!(view.writable, "only a writable view's backing is this array's own");
-    let unknown = builder.ins().iconst(types::I32, i64::from(crate::heap::OTHERS_UNKNOWN));
-    builder.ins().store(MemFlagsData::trusted(), unknown, view.values, crate::heap::OTHERS_FROM_VALUES);
+    crate::staged::elements::uncount_backing(&mut object_slots::emit(builder), view.values);
 }
 
 /// Flat field input bound once for a no-GC, layout-preserving region. Values
@@ -814,34 +747,33 @@ fn emit_js_cached_field_slot(
 
 /// A word of the running dispatch's payload (`JsStepDispatch`).
 fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
+    use crate::staged::region::Region;
     let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
-    builder.ins().load(types::I64, regions::dispatch(), payload, offset)
+    object_slots::emit(builder).load_u64(Region::Dispatch.mutable(), payload, offset)
 }
 
 /// A record reservation's base in the dispatch payload (`JsStepDispatch::object_record_base`,
 /// `function_record_base`): fixed for a whole native run, so the load merges and hoists.
 fn emit_js_record_base(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
+    use crate::staged::region::Region;
     let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
-    builder.ins().load(types::I64, regions::record_base(), payload, offset)
+    object_slots::emit(builder).load_u64(Region::RecordBases.readonly(), payload, offset)
 }
 
 fn emit_js_property_values(builder: &mut FunctionBuilder<'_>, payload: ir::Value) -> (ir::Value, ir::Value) {
-    let header = builder.ins().load(types::I64, invariant(), payload,
+    use crate::staged::{machine::Lane, region::Region};
+    let mut stage = object_slots::emit(builder);
+    let header = stage.raw_load(Lane::I64, invariant(), payload,
         std::mem::offset_of!(JsStepDispatch, property_buffer) as i32);
     let layout = crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT;
-    let values = builder.ins().load(types::I64, regions::heap_meta(), header, layout.base as i32);
-    let length = builder.ins().load(types::I64, regions::heap_meta(), header, layout.length as i32);
+    let values = stage.load_u64(Region::HeapMeta.mutable(), header, layout.base as i32);
+    let length = stage.load_u64(Region::HeapMeta.mutable(), header, layout.length as i32);
     (values, length)
 }
 
 /// Call a lane helper (`LaneHelpers`) with the payload's VM and residual first.
 fn emit_lane_call(builder: &mut FunctionBuilder<'_>, helper: ir::Value, arguments: &[ir::Value]) -> ir::Value {
-    let mut signature = Signature::new(builder.func.signature.call_conv);
-    signature.params.extend(arguments.iter().map(|_| AbiParam::new(types::I64)));
-    signature.returns.push(AbiParam::new(types::I64));
-    let signature = builder.import_signature(signature);
-    let call = builder.ins().call_indirect(signature, helper, arguments);
-    builder.inst_results(call)[0]
+    object_slots::emit(builder).call_words(helper, arguments)
 }
 
 fn emit_lane_helper_call(
@@ -859,69 +791,27 @@ fn emit_lane_helper_call(
 }
 
 /// The shared RecordSpace::store_logs test: an immediate or unmarked owner
-/// needs no barrier. Verified Numbers are immediate and discharge the test at
+/// needs no barrier log. Verified Numbers are immediate and discharge the test at
 /// compilation. Otherwise the caller must perform the logged store.
 fn emit_unlogged_property_store_guard(
     builder: &mut FunctionBuilder<'_>, space: crate::staged::RecordSpace, payload: ir::Value, record_id: ir::Value,
     value: ir::Value, fallback: ir::Block,
 ) {
-    use crate::value::ValueLayout;
-    let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
-    let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
+    use crate::staged::barrier::{unlogged_store, MarkList};
     // A marked owner would be logged by RecordSpace::store_logs; otherwise the
     // barrier is a no-op. Marks and block bases are refreshed after each callout.
-    let heap_value = builder.create_block();
-    let write = builder.create_block();
-    builder.ins().brif(immediate, write, &[], heap_value, &[]);
-    builder.switch_to_block(heap_value);
-    use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-    let (blocks_at, count_at) = match space {
-        crate::staged::RecordSpace::Object => (
-            std::mem::offset_of!(JsStepDispatch, object_mark_blocks),
-            std::mem::offset_of!(JsStepDispatch, object_mark_block_count),
-        ),
-        crate::staged::RecordSpace::Function => (
-            std::mem::offset_of!(JsStepDispatch, function_mark_blocks),
-            std::mem::offset_of!(JsStepDispatch, function_mark_block_count),
-        ),
+    let list = match space {
+        crate::staged::RecordSpace::Object => MarkList {
+            blocks: std::mem::offset_of!(JsStepDispatch, object_mark_blocks),
+            count: std::mem::offset_of!(JsStepDispatch, object_mark_block_count),
+        },
+        crate::staged::RecordSpace::Function => MarkList {
+            blocks: std::mem::offset_of!(JsStepDispatch, function_mark_blocks),
+            count: std::mem::offset_of!(JsStepDispatch, function_mark_block_count),
+        },
     };
-    let blocks = emit_js_payload_word(builder, payload, blocks_at);
-    let count = emit_js_payload_word(builder, payload, count_at);
-    let block = builder.ins().ushr_imm_u(
-        record_id, i64::from(OBJECT.mark_records_per_block.trailing_zeros()),
-    );
-    let block_live = builder.ins().icmp(IntCC::UnsignedLessThan, block, count);
-    emit_js_guard(builder, block_live, fallback);
-    let block_offset = builder.ins().imul_imm_u(
-        block, i64::try_from(OBJECT.mark_block_size).expect("mark block size fits i64"),
-    );
-    let block_address = builder.ins().iadd(blocks, block_offset);
-    let within = builder.ins().band_imm_u(
-        record_id, i64::try_from(OBJECT.mark_records_per_block - 1).expect("block mask fits i64"),
-    );
-    let word_index = builder.ins().ushr_imm_u(
-        within, i64::from(OBJECT.mark_word_bits.trailing_zeros()),
-    );
-    let word_offset = builder.ins().imul_imm_u(
-        word_index, i64::try_from(std::mem::size_of::<u64>()).expect("word size fits i64"),
-    );
-    let word_address = builder.ins().iadd(block_address, word_offset);
-    let marks = builder.ins().load(
-        types::I64, MemFlagsData::trusted(), word_address,
-        i32::try_from(OBJECT.mark_offset).expect("mark offset fits i32"),
-    );
-    let bit_index = builder.ins().band_imm_u(
-        within, i64::try_from(OBJECT.mark_word_bits - 1).expect("word mask fits i64"),
-    );
-    let one = builder.ins().iconst(types::I64, 1);
-    let mask = builder.ins().ishl(one, bit_index);
-    let marked = builder.ins().band(marks, mask);
-    let unmarked = builder.ins().icmp_imm_u(IntCC::Equal, marked, 0);
-    emit_js_guard(builder, unmarked, fallback);
-    builder.ins().jump(write, &[]);
-    builder.seal_block(heap_value);
-    builder.seal_block(write);
-    builder.switch_to_block(write);
+    unlogged_store(&mut object_slots::emit(builder), (regions::dispatch(), MemFlagsData::trusted()), payload, list,
+        (record_id, value), |stage, condition| emit_js_guard(stage.builder, condition, fallback));
 }
 
 /// What a lane body knows of its receiver from entry on: the record, exact shape and
