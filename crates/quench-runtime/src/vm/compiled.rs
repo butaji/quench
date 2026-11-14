@@ -33,7 +33,8 @@ use crate::bytecode::{Class, Traits,
 use crate::staged::wasm_call::Call as WasmCall;
 use crate::staged::wasm_flow::Flow;
 use crate::staged::wasm_step::Step;
-use crate::staged::machine::MachineStage;
+use crate::staged::machine::{MachineAccess as _, MachineFlow as _, MachineScalar as _, MachineStage};
+use crate::staged::Stage as _;
 use crate::staged::wasm::{Width, integer_binary};
 use crate::staged::wasm_operation::{Form, Operand as Right, WasmOperation};
 use crate::staged::ConcreteWasm;
@@ -233,20 +234,23 @@ const _: () = assert!(RETURN_STATUS_BASE > TERMINATED_STATUS as u32);
 /// Compute ToBoolean for values whose truthiness is encoded without a heap
 /// lookup. Strings, BigInts, and objects take the VM path at the same PC.
 fn emit_js_tagged_truthiness(builder: &mut FunctionBuilder<'_>, bits: ir::Value, fallback: ir::Block) -> ir::Value {
-    let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut object_slots::emit(builder), bits);
-    let decided = builder.ins().icmp_imm_u(IntCC::Equal, undecided, 0);
-    emit_js_guard(builder, decided, fallback);
+    use crate::staged::machine::Relation;
+    let mut stage = object_slots::emit(builder);
+    let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut stage, bits);
+    let decided = stage.raw_compare_imm(Relation::Equal, undecided, 0);
+    stage.guard(decided, fallback);
     truthy
 }
 
 /// Decode an already-proved Number without repeating its semantic type check.
 fn emit_known_number(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::Value {
-    let tag = builder.ins().band_imm_u(bits, crate::value::ValueLayout::TAG_MASK as i64);
-    let integer = builder.ins().icmp_imm_u(IntCC::Equal, tag, crate::value::ValueLayout::INT_TAG as i64);
-    let payload = builder.ins().ireduce(types::I32, bits);
-    let int = builder.ins().fcvt_from_sint(types::F64, payload);
-    let double = builder.ins().bitcast(types::F64, MemFlagsData::new(), bits);
-    builder.ins().select(integer, int, double)
+    use crate::staged::machine::{Lane, Unary};
+    let mut stage = object_slots::emit(builder);
+    let integer = crate::staged::value::is_int(&mut stage, bits);
+    let payload = stage.raw_unary(Unary::Narrow(Lane::I32), bits);
+    let int = stage.raw_unary(Unary::FromSigned(Lane::F64), payload);
+    let double = stage.raw_unary(Unary::Bitcast(Lane::F64), bits);
+    stage.raw_select(integer, int, double)
 }
 
 /// Unbox a tagged JavaScript Number, branching to the current instruction's
@@ -257,60 +261,29 @@ fn emit_js_tagged_number(
     bits: ir::Value,
     fallback: ir::Block,
 ) -> ir::Value {
-    let number = builder
-        .ins()
-        .bitcast(types::F64, ir::MemFlagsData::new(), bits);
-    let unordered = builder.ins().fcmp(FloatCC::Unordered, number, number);
+    use crate::staged::machine::{Lane, Relation, Unary};
     let nan = builder.create_block();
     let tagged = builder.create_block();
     let integer_block = builder.create_block();
     let join = builder.create_block();
     builder.append_block_param(join, types::F64);
-    builder.ins().brif(
-        unordered,
-        nan,
-        &[],
-        join,
-        &[ir::BlockArg::Value(number)],
-    );
+    let mut stage = object_slots::emit(builder);
+    let number = stage.raw_unary(Unary::Bitcast(Lane::F64), bits);
+    let unordered = stage.raw_compare(Relation::FloatUnordered, number, number);
+    stage.branch_if(unordered, (nan, &[]), (join, &[number]));
 
-    builder.switch_to_block(nan);
-    let field = builder
-        .ins()
-        .ushr_imm_u(bits, i64::from(crate::value::ValueLayout::TAG_SHIFT));
-    let offset = builder.ins().iadd_imm_s(
-        field,
-        -(crate::value::ValueLayout::FIRST_TAG_FIELD as i64),
-    );
-    let is_tagged = builder.ins().icmp_imm_u(
-        IntCC::UnsignedLessThanOrEqual,
-        offset,
-        crate::value::ValueLayout::TAG_FIELD_SPAN as i64,
-    );
-    builder.ins().brif(
-        is_tagged,
-        tagged,
-        &[],
-        join,
-        &[ir::BlockArg::Value(number)],
-    );
+    stage.builder.switch_to_block(nan);
+    let double = crate::staged::value::is_double(&mut stage, bits);
+    stage.branch_if(double, (join, &[number]), (tagged, &[]));
 
-    builder.switch_to_block(tagged);
-    let int_field = (crate::value::ValueLayout::INT_TAG
-        >> crate::value::ValueLayout::TAG_SHIFT) as i64;
-    let is_integer_tag = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, field, int_field);
-    builder
-        .ins()
-        .brif(is_integer_tag, integer_block, &[], fallback, &[]);
+    stage.builder.switch_to_block(tagged);
+    let integer = crate::staged::value::is_int(&mut stage, bits);
+    stage.branch_if(integer, (integer_block, &[]), (fallback, &[]));
 
-    builder.switch_to_block(integer_block);
-    let integer = builder.ins().ireduce(types::I32, bits);
-    let integer = builder.ins().fcvt_from_sint(types::F64, integer);
-    builder
-        .ins()
-        .jump(join, &[ir::BlockArg::Value(integer)]);
+    stage.builder.switch_to_block(integer_block);
+    let low = stage.raw_unary(Unary::Narrow(Lane::I32), bits);
+    let int = stage.raw_unary(Unary::FromSigned(Lane::F64), low);
+    stage.goto(join, &[int]);
     builder.seal_block(nan);
     builder.seal_block(tagged);
     builder.seal_block(integer_block);
@@ -322,11 +295,13 @@ fn emit_js_tagged_number(
 /// An exact int32 projection of a Number, including its zero sign. The predicate
 /// rejects fractions, nonfinite values, saturation and -0 before the view is used.
 fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> (ir::Value, ir::Value) {
-    let integer = builder.ins().fcvt_to_sint_sat(types::I32, number);
-    let round_trip = builder.ins().fcvt_from_sint(types::F64, integer);
-    let bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
-    let round_trip_bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), round_trip);
-    let exact = builder.ins().icmp(IntCC::Equal, bits, round_trip_bits);
+    use crate::staged::machine::{Lane, Relation, Unary};
+    let mut stage = object_slots::emit(builder);
+    let integer = stage.raw_unary(Unary::ToSignedSaturating(Lane::I32), number);
+    let round_trip = stage.raw_unary(Unary::FromSigned(Lane::F64), integer);
+    let bits = stage.raw_unary(Unary::Bitcast(Lane::I64), number);
+    let round_trip_bits = stage.raw_unary(Unary::Bitcast(Lane::I64), round_trip);
+    let exact = stage.raw_compare(Relation::Equal, bits, round_trip_bits);
     (integer, exact)
 }
 
@@ -334,46 +309,46 @@ fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> 
 /// representations. A double with a fraction is its own bits, after one compare
 /// with its truncation; a whole, signed-zero or NaN result takes the cold encoding.
 pub(super) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+    use crate::staged::machine::{Binary, Lane, Relation, Unary};
     let (cold, join) = (builder.create_block(), builder.create_block());
     builder.set_cold_block(cold);
     let result = builder.append_block_param(join, types::I64);
-    let bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
-    let truncated = builder.ins().trunc(number);
-    let whole_or_nan = builder.ins().fcmp(FloatCC::UnorderedOrEqual, truncated, number);
-    builder.ins().brif(whole_or_nan, cold, &[], join, &[ir::BlockArg::Value(bits)]);
-    builder.switch_to_block(cold);
-    builder.seal_block(cold);
-    let (integer, is_integer) = emit_js_exact_int32(builder, number);
-    let integer_bits = builder.ins().uextend(types::I64, integer);
-    let integer_bits = builder
-        .ins()
-        .bor_imm_u(integer_bits, crate::value::ValueLayout::INT_TAG as i64);
-    let encoded = builder.ins().select(is_integer, integer_bits, bits);
-    let is_nan = builder.ins().fcmp(FloatCC::Unordered, number, number);
-    let canonical_nan = builder.ins().iconst(
-        types::I64,
-        crate::value::ValueLayout::CANONICAL_NAN as i64,
-    );
-    let encoded = builder.ins().select(is_nan, canonical_nan, encoded);
-    builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
+    let mut stage = object_slots::emit(builder);
+    let bits = stage.raw_unary(Unary::Bitcast(Lane::I64), number);
+    let truncated = stage.raw_unary(Unary::Truncate, number);
+    let whole_or_nan = stage.raw_compare(Relation::FloatUnorderedEqual, truncated, number);
+    stage.branch_if(whole_or_nan, (cold, &[]), (join, &[bits]));
+    stage.builder.switch_to_block(cold);
+    stage.builder.seal_block(cold);
+    let (integer, is_integer) = emit_js_exact_int32(stage.builder, number);
+    let integer_bits = stage.raw_unary(Unary::ZeroExtend(Lane::I64), integer);
+    let int_tag = stage.raw_const(Lane::I64, crate::value::ValueLayout::INT_TAG as i64);
+    let integer_bits = stage.raw_binary(Binary::Or, integer_bits, int_tag);
+    let encoded = stage.raw_select(is_integer, integer_bits, bits);
+    let is_nan = stage.raw_compare(Relation::FloatUnordered, number, number);
+    let canonical_nan = stage.raw_const(Lane::I64, crate::value::ValueLayout::CANONICAL_NAN as i64);
+    let encoded = stage.raw_select(is_nan, canonical_nan, encoded);
+    stage.goto(join, &[encoded]);
     builder.switch_to_block(join);
     builder.seal_block(join);
     result
 }
 
-/// Continue native code only when one guard holds. All failures share the exact-PC
-/// VM fallback emitted after the direct path.
 /// The ToInt32 of `number`, natively below 2^63 in magnitude; beyond, infinities and NaN
 /// leave through `exit` (`EXACT_I64_TRUNCATION_LIMIT`).
 pub(super) fn emit_number_to_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value, exit: ir::Block) -> ir::Value {
-    let magnitude = builder.ins().fabs(number);
-    let bound = builder.ins().f64const(crate::value::EXACT_I64_TRUNCATION_LIMIT);
-    let exact = builder.ins().fcmp(FloatCC::LessThan, magnitude, bound);
-    emit_js_guard(builder, exact, exit);
-    let wide = builder.ins().fcvt_to_sint_sat(types::I64, number);
-    builder.ins().ireduce(types::I32, wide)
+    use crate::staged::machine::{Lane, Relation, Unary};
+    let mut stage = object_slots::emit(builder);
+    let magnitude = stage.raw_unary(Unary::FloatAbsolute, number);
+    let bound = stage.raw_const(Lane::F64, crate::value::EXACT_I64_TRUNCATION_LIMIT.to_bits() as i64);
+    let exact = stage.raw_compare(Relation::FloatLess, magnitude, bound);
+    stage.guard(exact, exit);
+    let wide = stage.raw_unary(Unary::ToSignedSaturating(Lane::I64), number);
+    stage.raw_unary(Unary::Narrow(Lane::I32), wide)
 }
 
+/// Continue native code only when one guard holds. All failures share the exact-PC
+/// VM fallback emitted after the direct path.
 fn emit_js_guard(
     builder: &mut FunctionBuilder<'_>,
     condition: ir::Value,
@@ -385,7 +360,7 @@ fn emit_js_guard(
     let taken = if forced_miss::next() { fallback } else { passed };
     #[cfg(not(test))]
     let taken = passed;
-    builder.ins().brif(condition, taken, &[], fallback, &[]);
+    object_slots::emit(builder).branch_if(condition, (taken, &[]), (fallback, &[]));
     builder.switch_to_block(passed);
     builder.seal_block(passed);
 }
