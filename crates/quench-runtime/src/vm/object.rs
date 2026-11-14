@@ -1421,10 +1421,10 @@ impl<H: Host> Vm<H> {
     /// into an accessor or hide, so reading it needs no lookup.
     #[inline(always)]
     pub(super) fn array_length_field(&self, object: Value, atom: Atom) -> Option<Value> {
-        (atom == self.length_atom)
-            .then(|| self.own_array_length(object))
-            .flatten()
-            .map(Value::length)
+        if atom != self.length_atom {
+            return None;
+        }
+        self.own_array_length(object).map(Value::length)
     }
 
     /// `cached_field_hit` for compiled code's probe (`compiled::lane_field_get`), which also
