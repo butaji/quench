@@ -3681,6 +3681,27 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// A register `Move` whose next record is a proved element read (`lane_get_index_proved`,
+    /// `specialize_moved_index_reads`), the key copy `x[t = i]` keeps for a store whose value
+    /// then updates `i` (V8-v7 NavierStokes' `x[currentRow] = ... x[++currentRow] ...`): the
+    /// copy and the read as one record. A read the proofs decline continues at the read's
+    /// own record, which proves its base as before.
+    fn lane_move_get_index_proved<>(cx, r, ip, i, view) {
+        let moved = r.get(i.b);
+        r.set(i.a, moved);
+        // SAFETY: the pair is two records, the second never the view's last.
+        let read = unsafe { &*following(ip) };
+        let Some(value) = r.get(read.c).as_int()
+            .and_then(|index| unsafe { (*cx).proofs.element(read.b, r.get(read.b), proof_int_index(index)) })
+        else {
+            next!(cx, r, following(ip), Carried { acc: Slot::of(moved), ..view })
+        };
+        r.set(read.a, value);
+        next!(cx, r, following(following(ip)), Carried::script_in(cx, view))
+    }
+}
+
 /// The proved read (`lane_get_index_proved`) of `lane_update_get_index`'s pair at `ip`, of
 /// the integer update `index` of record `update`, which it writes first; a read the proofs
 /// decline takes `lane_updated_proof_miss`, as the pair's own fast path leaves it.
@@ -19893,6 +19914,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_constant_returns::<H>(&mut records);
         specialize_script_calls::<H>(&mut records);
         specialize_proved_arrays::<H>(&decoded, &mut records);
+        specialize_moved_index_reads::<H>(&mut records);
         specialize_array_literals::<H>(&mut records);
     }
     let min_run = if closes_loop(&decoded, &exits) {
@@ -20712,6 +20734,19 @@ fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut 
         });
         if !shared {
             records[pc].handler = proved as *const ();
+        }
+    }
+}
+
+/// Gives each register `Move` that a proved element read follows (`specialize_proved_arrays`)
+/// the fused copy and read (`lane_move_get_index_proved`). The read record stays, for a jump
+/// that enters it and for the pair's declined proofs.
+fn specialize_moved_index_reads<H: Host>(records: &mut [LaneInstruction]) {
+    let copy = lane_move::<H, ACC_NONE> as Handler as *const ();
+    let read = lane_get_index_proved::<H> as Handler as *const ();
+    for pc in 0..records.len().saturating_sub(1) {
+        if records[pc].handler == copy && records[pc + 1].handler == read {
+            records[pc].handler = lane_move_get_index_proved::<H> as Handler as *const ();
         }
     }
 }
