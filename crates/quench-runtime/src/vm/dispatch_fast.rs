@@ -3677,6 +3677,15 @@ fn proof_int_index(key: i32) -> usize {
     key as u32 as usize
 }
 
+/// The index a proved element record reads or replaces at for a key in a register, without
+/// unboxing it first (`Value::int_key_offset`): an int32 key's index, and an index at or
+/// above 2^31 for any other key, which every proof's bound declines as `proof_int_index`'s
+/// negative keys. The key's tag test, its zero extension and the bounds test are one compare.
+#[inline(always)]
+fn proof_key(key: Value) -> usize {
+    key.int_key_offset()
+}
+
 /// The integer `IncDec` of `value`, the update `dispatch::number_increment` makes of an
 /// integer that does not overflow; `None` for any other value.
 #[inline(always)]
@@ -3748,9 +3757,7 @@ script_handler! {
     /// storage (`ArrayStorageProofs`), with no decoding of the array; any other read takes
     /// `lane_proof_miss`.
     fn lane_get_index_proved<>(cx, r, ip, i, view) {
-        let Some(value) = r.get(i.c).as_int()
-            .and_then(|index| unsafe { (*cx).proofs.element(i.b, r.get(i.b), proof_int_index(index)) })
-        else {
+        let Some(value) = (unsafe { (*cx).proofs.element(i.b, r.get(i.b), proof_key(r.get(i.c))) }) else {
             sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, value);
@@ -3769,9 +3776,7 @@ script_handler! {
         r.set(i.a, moved);
         // SAFETY: the pair is two records, the second never the view's last.
         let read = unsafe { &*following(ip) };
-        let Some(value) = r.get(read.c).as_int()
-            .and_then(|index| unsafe { (*cx).proofs.element(read.b, r.get(read.b), proof_int_index(index)) })
-        else {
+        let Some(value) = (unsafe { (*cx).proofs.element(read.b, r.get(read.b), proof_key(r.get(read.c))) }) else {
             next!(cx, r, following(ip), Carried { acc: Slot::of(moved), ..view })
         };
         r.set(read.a, value);
@@ -4914,7 +4919,7 @@ script_handler! {
 #[inline(always)]
 fn lane_proved_store<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Option<Value> {
     let value = r.get(i.a);
-    let index = proof_int_index(r.get(i.c).as_int()?);
+    let index = proof_key(r.get(i.c));
     unsafe { (*cx).proofs.replace(i.b, r.get(i.b), index, value) }.then_some(value)
 }
 

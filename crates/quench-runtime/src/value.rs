@@ -482,6 +482,15 @@ impl Value {
         self.0 as u32
     }
 
+    /// The word's distance above the int32 tag, as an index: an int32 `k >= 0` gives `k`; a
+    /// negative int32 gives at least 2^31; any other value gives at least 2^32 or wraps past
+    /// 2^48, since no double's bits fall in the int32 tag's range (NaN is canonical). So one
+    /// unsigned compare against a bound below 2^31 is the tag test, the sign test and the
+    /// bounds test together.
+    #[inline(always)] pub(crate) fn int_key_offset(self) -> usize {
+        self.0.wrapping_sub(TAG_INT) as usize
+    }
+
     #[inline(always)] pub(crate) fn int_pair(left: Self, right: Self) -> Option<(i32, i32)> {
         let tags = (left.0 ^ TAG_INT) | (right.0 ^ TAG_INT);
         (tags & TAG_MASK == 0).then_some((left.0 as u32 as i32, right.0 as u32 as i32))
