@@ -106,11 +106,13 @@ impl Operands {
 }
 
 impl CallOut {
-    /// Whether the step reads or writes the locals of the running function's own frame, or resolves a
-    /// name through its bindings (`Vm::load_name` searches the innermost frame's scope).
-    pub(crate) fn reads_frame_locals(self) -> bool {
-        matches!(self, Self::LoadEnvLocal { .. } | Self::StoreEnvLocal { .. } | Self::ArgumentsLength { .. }
-            | Self::LoadName { .. } | Self::GlobalTypeof { .. } | Self::GlobalWrite { .. })
+    /// Whether the step reads or writes the locals of the running activation, or resolves a name
+    /// through its bindings (`Vm::load_name` searches its scope): its owner is the activation's
+    /// (`Vm::running_owner`), not the innermost frame's, which beside the lane's frameless
+    /// activations is their caller's.
+    pub(crate) fn names_activation(self) -> bool {
+        matches!(self, Self::LoadEnvLocal { .. } | Self::StoreEnvLocal { .. } | Self::LoadName { .. }
+            | Self::GlobalTypeof { .. } | Self::GlobalWrite { .. })
     }
 
     /// The registers the VM reads, in the order its operation takes them: the first operand

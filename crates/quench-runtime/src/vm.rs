@@ -152,7 +152,7 @@ mod private_slots;
 mod inspection;
 mod caller_view;
 mod environment;
-mod var_owner;
+mod owner_step; mod var_owner;
 mod root_bindings;
 mod handler_entry;
 mod equality;
@@ -1957,6 +1957,8 @@ pub(crate) struct Vm<H> {
     /// (`Native::runs_beside_activations`), which the first observer of the frame stack makes
     /// frames (`materialize_deferred_lane`).
     lane_deferred: Option<dispatch_fast::DeferredLaneCall>,
+    /// The scope `VarOwner::Window` names, read by `Vm::running_owner` while `lane_deferred` stands.
+    running_window: Option<dispatch_fast::WindowScope>,
     /// The module the host resolved each (referrer, specifier) of a static request to since
     /// the last collection (`Vm::resolve_module_request`). The graph's passes (collection,
     /// pending dependencies, instantiation, evaluation) resolve each request again, and each
@@ -2499,14 +2501,11 @@ impl<H: Host> Vm<H> {
     pub(super) fn mirror_global_lexical_binding(
         &mut self,
         program: &ResidualProgram,
-        frame: usize,
+        owner: VarOwner,
         slot: usize,
         value: Value,
     ) {
-        let Some(current) = self.frames.get(frame) else {
-            return;
-        };
-        if let Some(atom) = self.root_global_lexical_atom(program, current.function, slot)
+        if let Some(atom) = self.root_global_lexical_atom(program, self.owner_view(owner).function(), slot)
             && self.realm.global_lexical_bindings.contains_key(&atom)
         {
             self.bind_global_lexical(atom, value);

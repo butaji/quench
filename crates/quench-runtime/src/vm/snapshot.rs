@@ -201,7 +201,7 @@ impl<H: Host> Vm<H> {
             random_state: _,
             // Each process keeps its own budget.
             dynamic_functions_to_keep: _,
-            lane_deferred: _,
+            lane_deferred: _, running_window: _,
             // A snapshot is taken between runs, with no lane activation's eval running.
             eval_callers: _,
             // Resolutions are the process's (its files), not the snapshot's.

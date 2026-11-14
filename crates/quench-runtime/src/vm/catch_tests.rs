@@ -128,7 +128,7 @@ fn an_uncaught_throw_in_a_hot_loop_reaches_the_outer_handler() {
 /// The runs of a function's lane body: those a Rust entry ended and those it left to the lane
 /// (`LaneBodyStats::runs`), and those a native caller saw end by an exception
 /// (`EntryCell::raised_runs`), which only direct calls make.
-type BodyRuns = (u32, u32, u32);
+pub(super) type BodyRuns = (u32, u32, u32);
 
 /// Runs `source` compiled and returns its printed lines and the `BodyRuns` of each function of
 /// `names`: a throw that crossed native frames made no frame, so no run left.
@@ -157,7 +157,7 @@ fn body_runs(source: &str, names: &[&str]) -> (Vec<String>, Vec<BodyRuns>) {
 }
 
 /// The compiled run's lines, which must equal the interpreter's, and the body runs of `names`.
-fn bodies_match_interpreter(source: &str, names: &[&str]) -> Vec<BodyRuns> {
+pub(super) fn bodies_match_interpreter(source: &str, names: &[&str]) -> Vec<BodyRuns> {
     let wrapped = format!("(function(){{{source}}})();");
     let (expected, _) = run_in(crate::ExecutionMode::Interpreted, &wrapped, names[0]);
     let (actual, runs) = body_runs(&wrapped, names);

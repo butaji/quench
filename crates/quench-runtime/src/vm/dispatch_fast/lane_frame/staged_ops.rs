@@ -188,7 +188,7 @@ pub(in crate::vm::dispatch_fast) fn staged_load_capture<H: Host>(cx: *mut LaneCo
 }
 
 /// `LoadLocal` and `LoadEnvLocal` of `slot` into `destination` by `staged::read_initialized_local`, over the binding
-/// the frame owns (`Vm::frame_binding_mut`: its environment's slot once the environment is captured, else its local)
+/// the frame owns (`Vm::owner_binding_mut`: its environment's slot once the environment is captured, else its local)
 /// as a one-slot window; false, writing nothing, for a root body's frame, a slot outside the frame or a binding in
 /// its temporal dead zone, which the general path raises. A slot a mapped `arguments` aliases reads the argument.
 #[inline(always)]
@@ -200,12 +200,12 @@ pub(in crate::vm::dispatch_fast) fn staged_load_local_checked<H: Host, const ACC
     if vm.frames[frame].function == super::super::ROOT_FUNCTION_ID {
         return false;
     }
-    let Some(binding) = vm.frame_binding_mut(code, frame, slot).map(std::ptr::from_mut) else { return false };
+    let Some(binding) = vm.owner_binding_mut(code, VarOwner::Frame(frame), slot).map(std::ptr::from_mut) else { return false };
     let mut stage = Concrete::new(std::ptr::null());
     let mut window = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, binding, 1);
     let Some(word) = read_initialized_local(&mut stage, &mut window, destination, 0, ()) else { return false };
     if crate::vm::arguments::mapped_arguments_slot(function, slot).is_some() {
-        r.set(destination, vm.mapped_argument_load(code, frame, slot, Value::from_bits(word)));
+        r.set(destination, vm.mapped_argument_load(code, VarOwner::Frame(frame), slot, Value::from_bits(word)));
     }
     true
 }
@@ -223,12 +223,12 @@ pub(in crate::vm::dispatch_fast) fn staged_store_local_checked<H: Host, const AC
     if vm.frames[frame].function == super::super::ROOT_FUNCTION_ID || function.is_self_binding_slot(slot) {
         return false;
     }
-    let Some(binding) = vm.frame_binding_mut(code, frame, slot).map(std::ptr::from_mut) else { return false };
+    let Some(binding) = vm.owner_binding_mut(code, VarOwner::Frame(frame), slot).map(std::ptr::from_mut) else { return false };
     let mut stage = Concrete::new(std::ptr::null());
     let mut window = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, binding, 1);
     let stored = if initializing { write_local(&mut stage, &mut window, source, 0, Some(())) } else { write_initialized_local(&mut stage, &mut window, source, 0, ()) };
     let Some(word) = stored else { return false };
-    vm.mapped_argument_store(code, frame, slot, Value::from_bits(word));
+    vm.mapped_argument_store(code, VarOwner::Frame(frame), slot, Value::from_bits(word));
     true
 }
 

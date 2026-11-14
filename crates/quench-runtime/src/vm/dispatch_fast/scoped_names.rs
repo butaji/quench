@@ -6,32 +6,8 @@
 //! the shapes of the objects alone do not decide, or that no `with` object or dynamic binding of
 //! the activation answers, leaves the instruction to the general path before any effect.
 use super::*;
-use super::with_scopes::WithChain;
-use super::super::activation::FrameRecord;
-use super::super::caller_view::CallerView;
+use super::window_owner::WindowScope;
 use crate::bytecode::Atom;
-
-/// What a name lookup reads of the window activation making it, which it reads as it reads a
-/// frame (`CallerView`).
-pub(super) struct WindowScope {
-    pub(super) function: u32,
-    pub(super) program: ProgramId,
-    /// The activation's receiver as the lane holds it.
-    this: Value,
-    /// The activation's environment: its own once a closure made one (`captured`), else the
-    /// closure's.
-    env: Value,
-    captured: bool,
-    /// The activation's record, null for an ordinary function's: it holds no dynamic bindings,
-    /// which only a frame's direct eval makes.
-    pub(super) record: *mut FrameRecord,
-    /// The resume pc of the binding site the access is at (`Frame::binding_site_pc`), if it is
-    /// at one.
-    pub(super) site: Option<u32>,
-    /// The `with` objects of the activation's scope chain (`LaneStack::with_chain`), outermost
-    /// first, which no `with` statement has entered while none is (`Vm::with_scope_entered`).
-    pub(super) chain: WithChain,
-}
 
 /// The scope of the innermost activation, when it is an environment window: registers `r` and
 /// the record at `ip` of its function are the access's. `at_site` where the access is an
@@ -44,7 +20,10 @@ pub(super) fn window_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the running
     // function's view.
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
-    let own = r.get(code.function(activation.function as usize).registers + WINDOW_ENVIRONMENT);
+    let body = code.function(activation.function as usize);
+    // SAFETY: the activation's window follows its registers (`lane_activate_environment`).
+    let entries = unsafe { r.0.add(usize::from(body.registers)) };
+    let own = r.get(body.registers + WINDOW_ENVIRONMENT);
     let captured = !own.is_deleted();
     Some(WindowScope {
         function: activation.function,
@@ -55,50 +34,10 @@ pub(super) fn window_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
         record: script.record,
         site: at_site.then_some(pc as u32 + 1),
         chain: if vm.with_scope_entered { WithChain::from_iter(vm.lane_stack.with_chain(depth)) } else { WithChain::new() },
+        registers: r,
+        locals: unsafe { entries.add(usize::from(WINDOW_LOCALS)) },
+        local_count: usize::from(body.locals),
     })
-}
-
-impl WindowScope {
-    /// The dynamic bindings the activation's record holds, until a closure's environment takes
-    /// them over (`captured`); none for an activation without a record.
-    fn record_bindings(&self) -> Option<&mut Vec<(Atom, Value)>> {
-        // SAFETY: the record is the running activation's own, which nothing else accesses.
-        (!self.captured && !self.record.is_null()).then(|| unsafe { &mut (*self.record).dynamic_bindings })
-    }
-}
-
-impl CallerView for WindowScope {
-    fn program(&self) -> ProgramId {
-        self.program
-    }
-
-    fn function(&self) -> u32 {
-        self.function
-    }
-
-    fn this(&self) -> Value {
-        self.this
-    }
-
-    fn environment(&self) -> Value {
-        self.env
-    }
-
-    fn owns_environment(&self) -> bool {
-        self.captured
-    }
-
-    fn binding_site(&self) -> Option<u32> {
-        self.site
-    }
-
-    fn held_bindings(&self) -> &[(Atom, Value)] {
-        self.record_bindings().map_or(&[], |bindings| bindings.as_slice())
-    }
-
-    fn scope_chain<'a>(&'a self, _entered: &'a [Value]) -> &'a [Value] {
-        &self.chain
-    }
 }
 
 impl<H: Host> Vm<H> {
@@ -257,7 +196,7 @@ fn lane_scoped_closure_value<H: Host>(
     // SAFETY: the running window activation's entries start at `registers`, and its
     // environment's parent is the context's.
     let environment = unsafe {
-        window_environment(vm, code, r.0.add(usize::from(registers)), scope.function, (*cx).env, scope.program, (*cx).this, Some(bindings))
+        window_environment(vm, code, r.0.add(usize::from(registers)), scope.function, (*cx).env, scope.program, (*cx).this, bindings)
     };
     let site = scope.site.filter(|pc| vm.site_has_bindings(scope.program, scope.function, *pc));
     let value = vm

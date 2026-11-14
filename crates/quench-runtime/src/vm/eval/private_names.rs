@@ -33,7 +33,7 @@ impl<H: Host> Vm<H> {
             let identity = self.atom_name(binding.atom).to_owned();
             let Some(label) = private_identity_label(&identity).map(str::to_owned) else { continue; };
             if names.iter().any(|(name, _)| name == &label) { continue; }
-            if let Ok(home) = self.load_name_binding(p, frame, binding) {
+            if let Ok(home) = self.load_name_binding(p, VarOwner::Frame(frame), binding) {
                 first_home.get_or_insert(home);
                 names.push((label, identity));
             }

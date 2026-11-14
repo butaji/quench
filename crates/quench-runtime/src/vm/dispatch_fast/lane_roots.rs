@@ -148,9 +148,9 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn nested_lane_run<T>(&mut self, innermost: [Value; 2], run: impl FnOnce(&mut Self) -> T) -> T {
         let stack = std::mem::take(&mut self.lane_stack);
         self.lane_roots.push(ParkedLane { stack, innermost });
-        let (deferred, native) = (self.lane_deferred.take(), self.lane_native.take());
+        let (deferred, native, window) = (self.lane_deferred.take(), self.lane_native.take(), self.running_window.take());
         let result = run(self);
-        (self.lane_deferred, self.lane_native) = (deferred, native);
+        (self.lane_deferred, self.lane_native, self.running_window) = (deferred, native, window);
         self.lane_stack = self.lane_roots.pop().expect("the lane stack this run parked").stack;
         self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
         result

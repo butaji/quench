@@ -5,10 +5,10 @@ pub(super) use increment::{integer_increment, number_increment};
 
 // Publish the current resume PC only while a binding-site consumer runs.
 macro_rules! with_binding_site_pc {
-    ($vm:expr, $frame:expr, $resume_pc:expr, $action:expr) => {{
-        let previous = $vm.frames[$frame].binding_site_pc.replace($resume_pc as u32);
+    ($vm:expr, $owner:expr, $resume_pc:expr, $action:expr) => {{
+        let previous = $vm.replace_binding_site($owner, Some($resume_pc as u32));
         let result = $action;
-        $vm.frames[$frame].binding_site_pc = previous;
+        $vm.replace_binding_site($owner, previous);
         result
     }};
 }
@@ -562,53 +562,9 @@ impl<H: Host> Vm<H> {
                 let value = unsafe { self.read_validated_local(f, i.local_slot()) };
                 self.write(f, i.result_register(), value);
             }
-            Op::LoadLocal | Op::LoadEnvLocal => {
-                let value = self.load_local_binding(p, f, i.local_slot(), None)?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::StoreVarBinding => {
-                self.store_var_binding(p, f, i.local_slot(), self.read(f, i.register_a()))?;
-            }
-            Op::StoreLocal => {
-                let value = self.read(f, i.register_a());
-                let slot = i.local_slot();
-                let function = &p.function(self.frames[f].function as usize);
-                if function.is_self_binding_slot(slot) {
-                    if function.strict {
-                        return Err(
-                            self.type_error(p, "assignment to function name binding".into())
-                        );
-                    }
-                    if let Some(register) = i.optional_register_b() {
-                        self.write(f, register, value);
-                    }
-                    return Ok(StepResult::Continue);
-                }
-                self.check_local_assignment_initialized(
-                    p,
-                    f,
-                    slot,
-                    i.boolean_field(crate::bytecode::InstructionField::C)
-                        .unwrap_or(false),
-                )?;
-                if self.frames[f].function == 0
-                    && function
-                        .local_atoms
-                        .get(slot)
-                        .is_some_and(|atom| function.declares_global_immutable(*atom))
-                        && i.boolean_field(crate::bytecode::InstructionField::C) == Some(false)
-                    {
-                        return Err(self.type_error(p, "assignment to constant binding".into()));
-                    }
-                *self
-                    .frame_binding_mut(p, f, slot)
-                    .ok_or_else(|| JsError("invalid local slot".into()))? = value;
-                self.mirror_global_lexical_binding(p, f, slot, value);
-                self.mapped_argument_store(p, f, slot, value);
-                if let Some(register) = i.optional_register_b() {
-                    self.write(f, register, value);
-                }
-            }
+            Op::LoadLocal | Op::LoadEnvLocal | Op::StoreVarBinding | Op::StoreLocal | Op::StoreEnvLocal
+            | Op::LoadCapture | Op::StoreCapture | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
+            | Op::StoreName => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
             Op::StoreLocalPlain => {
                 let value = self.read(f, i.register_a());
                 // SAFETY: validated bytecode bounds the slot by Function.locals,
@@ -617,64 +573,6 @@ impl<H: Host> Vm<H> {
                 if let Some(register) = i.optional_register_b() {
                     self.write(f, register, value);
                 }
-            }
-            Op::StoreEnvLocal => {
-                let value = self.read(f, i.register_a());
-                let initialize = i.boolean_field(crate::bytecode::InstructionField::C).unwrap_or(false);
-                if self.store_env_local(p, f, i.local_slot(), value, initialize)?
-                    && let Some(register) = i.optional_register_b()
-                {
-                    self.write(f, register, value);
-                }
-            }
-            Op::LoadCapture => {
-                let v = self.capture(p, f, i.capture_depth(), i.capture_slot())?;
-                self.write(f, i.result_register(), v);
-            }
-            Op::StoreCapture => self.store_capture(
-                p,
-                f,
-                i.capture_depth(),
-                i.capture_slot(),
-                self.read(f, i.register_a()),
-            )?,
-            Op::LoadName => {
-                self.staged_load_name(p, super::call_out::CallSite { frame: f, function: self.frames[f].function, resume: *pc }, i)?;
-            }
-            Op::LoadNameCall => {
-                let (callee, this) = with_binding_site_pc!(
-                    self,
-                    f,
-                    *pc,
-                    self.load_name_call(p, i.atom_index(), Some(i.cache_site_index()), false)
-                )?;
-                self.write(f, i.result_register(), callee);
-                self.write(f, i.register_b(), this);
-            }
-            Op::LoadNameTypeof => {
-                let v = with_binding_site_pc!(
-                    self,
-                    f,
-                    *pc,
-                    self.load_name_typeof(p, i.atom_index(), i.cache_site_index())
-                )?;
-                self.write(f, i.result_register(), v);
-            }
-            Op::StoreName => {
-                let value = self.read(f, i.register_a());
-                with_binding_site_pc!(
-                    self,
-                    f,
-                    *pc,
-                    self.store_name(
-                        p,
-                        i.atom_index(),
-                        value,
-                        i.cache_site_index(),
-                        i.boolean_field(crate::bytecode::InstructionField::B)
-                            .expect("validated initialization flag"),
-                    )
-                )?;
             }
             Op::LoadThis => {
                 let this = self.checked_this_binding(p, f)?;
@@ -759,7 +657,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::MakeClosure => {
-                let env = with_binding_site_pc!(self, f, *pc, self.capture_binding_environment(VarOwner::Frame(f)))?;
+                let env = with_binding_site_pc!(self, VarOwner::Frame(f), *pc, self.capture_binding_environment(VarOwner::Frame(f)))?;
                 let module_root = p.is_module()
                     && self.frames[f].function == super::ROOT_FUNCTION_ID
                     && self.programs.module_environment(self.frames[f].program) == Some(env);
@@ -937,7 +835,7 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| JsError::validation("invalid resolve-name flag".into()))?;
                 let value = with_binding_site_pc!(
                     self,
-                    f,
+                    VarOwner::Frame(f),
                     *pc,
                     self.resolve_name(p, i.atom_index(), strict)
                 )?;
@@ -960,7 +858,7 @@ impl<H: Host> Vm<H> {
             }
             Op::DeleteName => {
                 let value =
-                    with_binding_site_pc!(self, f, *pc, self.delete_name(p, i.atom_index()))?;
+                    with_binding_site_pc!(self, VarOwner::Frame(f), *pc, self.delete_name(p, i.atom_index()))?;
                 self.write(f, i.result_register(), value);
             }
             Op::StoreResolvedName => {
@@ -982,7 +880,7 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_c()),
             )?,
             Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart | Op::Delete => {
-                self.staged_value_step(p, super::call_out::CallSite { frame: f, function: self.frames[f].function, resume: *pc }, i)?;
+                self.staged_value_step(p, super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc }, i)?;
             }
             Op::RequireObjectCoercible => {
                 self.require_object_coercible(p, self.read(f, i.register_b()))?;
@@ -1003,7 +901,7 @@ impl<H: Host> Vm<H> {
                 self.set_function_debug_name(self.read(f, i.register_a()), i.atom_index());
             }
             Op::ArgumentsLength | Op::ArgumentGet => {
-                let binding = self.load_local_binding(p, f, i.local_slot(), None)?;
+                let binding = self.load_local_binding(p, VarOwner::Frame(f), i.local_slot(), None)?;
                 let key = (i.op() == Op::ArgumentGet).then(|| self.read(f, i.register_b()));
                 let value = self.read_arguments_binding(p, f, binding, key)?;
                 self.write(f, i.result_register(), value);
@@ -1021,7 +919,7 @@ impl<H: Host> Vm<H> {
             Op::InitializeTdz => {
                 let slot = i.local_slot();
                 *self
-                    .frame_binding_mut(p, f, slot)
+                    .owner_binding_mut(p, VarOwner::Frame(f), slot)
                     .ok_or_else(|| JsError("invalid local slot".into()))? = Value::DELETED;
             }
             Op::GetAsyncIterator => {
@@ -1549,7 +1447,7 @@ impl<H: Host> Vm<H> {
                 }
                 let arguments = CallArguments::from_slice(self.register_window(f, window));
                 let args = arguments.as_slice();
-                let parent = self.capture_env(f, 0).unwrap_or(self.frames[f].env);
+                let parent = self.owner_capture_env(VarOwner::Frame(f), 0).unwrap_or(self.frames[f].env);
                 self.profile.call_target(1, usize::from(window.count));
                 self.frames[f].pc = *pc;
                 self.frames[f].pc_is_resume = true;
@@ -1691,7 +1589,7 @@ impl<H: Host> Vm<H> {
                 if p.function(self.frames[frame].function as usize).plain_local(p, slot) {
                     return Ok(self.frames[frame].locals[slot]);
                 }
-                self.load_local_binding(p, frame, slot, None)
+                self.load_local_binding(p, VarOwner::Frame(frame), slot, None)
             }
             None => unreachable!("two-bit operand tag"),
         }
