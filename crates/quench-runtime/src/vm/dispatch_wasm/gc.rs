@@ -120,9 +120,7 @@ impl<H: Host> Vm<H> {
         read: impl Fn(&Self, u16) -> Value,
     ) -> Result<Value, JsError> {
         if i.op() == Op::WasmIndirectTarget {
-            let table = read(self, i.register_b());
-            let index = self.wasm_table_index(table, read(self, i.register_c()))?;
-            return self.wasm_indirect_target(program, table, index, i.imm());
+            return self.wasm_indirect_target_of_operand(program, read(self, i.register_b()), read(self, i.register_c()), i.imm());
         }
         let residual = self.programs.get(program).ok_or_else(|| JsError::validation("missing Wasm program".into()))?;
         self.wasm_function_reference(&residual, i.imm(), env)

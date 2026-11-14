@@ -13209,6 +13209,8 @@ fn lane_native_value<H: Host>(
 mod named_keys;
 mod denoted;
 mod wasm_calls;
+mod i64_operators;
+use i64_operators::i64_operator_handler;
 mod capture_update_calls;
 use capture_update_calls::capture_update_call_handler;
 use wasm_calls::{known_call_handler, reference_call_handler, wasm_return_handler};
@@ -18581,10 +18583,7 @@ fn derive_lane_view<'live, H: Host>(
                 && F64UnaryOperator::from_tag(instruction.imm())
                     == Some(F64UnaryOperator::SquareRoot)
             {
-                tables[usize::from(backward_jump)][usize::from(acc)]
-                    .get(op as usize)
-                    .copied()
-                    .flatten()
+                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
                     .and_then(|_| {
                         LaneHandler::producer(match acc {
                             ACC_NONE => lane_f64_sqrt::<H, ACC_NONE> as Handler,
@@ -18594,13 +18593,12 @@ fn derive_lane_view<'live, H: Host>(
                             _ => lane_f64_sqrt::<H, ACC_PAIR> as Handler,
                         })
                     })
-            } else if let Some(arith) = float_arithmetic(op, instruction.imm()) {
-                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten().and_then(|_| {
-                    LaneHandler::producer(
-                        FloatArithmetic::<H>::HANDLERS[usize::from(op.is_wasm_f64_binary())]
-                            [usize::from(arith)][usize::from(acc)],
-                    )
-                })
+            } else if let Some(handler) = float_arithmetic(op, instruction.imm())
+                .map(|arith| FloatArithmetic::<H>::HANDLERS[usize::from(op.is_wasm_f64_binary())][usize::from(arith)][usize::from(acc)])
+                .or_else(|| i64_operator_handler::<H>(op, instruction.imm(), acc))
+            {
+                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
+                    .and_then(|_| LaneHandler::producer(handler))
             } else if matches!(op.class(), Class::LoadLocal | Class::LoadLocalPlain | Class::ArgumentsLength | Class::ArgumentGet)
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
                 && let Some(kept) = *kept_arguments.get_or_init(|| function.kept_arguments())

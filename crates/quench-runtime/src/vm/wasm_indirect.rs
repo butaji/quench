@@ -12,6 +12,33 @@ impl<H: Host> Vm<H> {
         expected_index: u32,
     ) -> Result<Value, JsError> {
         let elements = self.wasm_table_elements(table)?;
+        self.wasm_indirect_element(caller, elements, index, expected_index)
+    }
+
+    /// `wasm_indirect_target` of the index operand a register holds, in the table's index
+    /// type, which one read of the table's cell answers with its elements.
+    pub(super) fn wasm_indirect_target_of_operand(
+        &self,
+        caller: ProgramId,
+        table: Value,
+        operand: Value,
+        expected_index: u32,
+    ) -> Result<Value, JsError> {
+        let Some(Cell::WasmTable { elements, table64, .. }) = self.heap.get(table) else {
+            return Err(JsError::validation("invalid Wasm table binding".into()));
+        };
+        let index = self.wasm_index_operand(operand, if *table64 { crate::WasmType::I64 } else { crate::WasmType::I32 })?;
+        self.wasm_indirect_element(caller, elements, index, expected_index)
+    }
+
+    #[inline(always)]
+    fn wasm_indirect_element(
+        &self,
+        caller: ProgramId,
+        elements: &[Value],
+        index: u64,
+        expected_index: u32,
+    ) -> Result<Value, JsError> {
         let reference = usize::try_from(index)
             .ok()
             .and_then(|index| elements.get(index))
