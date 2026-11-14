@@ -51,6 +51,13 @@ impl LaneMethod {
     }
 }
 
+/// The facts of a program's sites that its code folds (`Vm::site_facts`).
+struct SiteFacts {
+    constructors: Vec<Option<Value>>,
+    presences: Vec<Option<crate::vm::in_presence::InPresence>>,
+    globals: Option<crate::vm::global_facts::GlobalReads>,
+}
+
 impl<H: Host> Vm<H> {
     /// The body of `function`, which a call site recorded `callee` running, where a body may inline it:
     /// its realm is the active one, so its rows run under the globals the caller's do (the fold is
@@ -74,6 +81,27 @@ impl<H: Host> Vm<H> {
         RealmProof { offset: u64::from(Self::realm_globals_offset().unsigned_abs()), global: self.realm.globals.to_bits() }
     }
 
+    /// The facts of the program's sites the code folds, where it `folds`: the constructors its
+    /// `instanceof` rows name, its membership tests, and its global names' accesses, which read the
+    /// global object's slots under its layout.
+    fn site_facts(&mut self, folds: bool, program: &ResidualProgram, function: u32, (code, parameters): (&[WideInstruction], &[Value]), body: &crate::bytecode::Function) -> SiteFacts {
+        if !folds { return SiteFacts { constructors: Vec::new(), presences: Vec::new(), globals: None }; }
+        SiteFacts {
+            constructors: self.instanceof_constructors(program, code, parameters),
+            presences: self.membership_facts(code),
+            globals: Some(self.global_table(program, function, &super::osr_compile::loop_unit(body), GlobalTable::Base)),
+        }
+    }
+
+    /// Publishes the built body of `function` once its entry pays, binding the callees it names to `caller`.
+    fn publish_base_body(&mut self, built: Body, (function, registers): (u32, u16), callees: Callees, (code, invalidation): (&[WideInstruction], Invalidation), caller: &super::super::dispatch_fast::LaneView) -> LaneBodyOutcome {
+        let closed = callees.closed(code);
+        let Some(method) = LaneMethod::of_base_body(built, function, registers, callees.owned, closed, invalidation) else { return LaneBodyOutcome::Declined };
+        if !method.amortizes_entry() { return LaneBodyOutcome::Short }
+        bind_callees(&method.direct, caller);
+        self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()).map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)
+    }
+
     /// `function`'s body for lane activations under `--b-jit`: what `parameters` (the entry's)
     /// showed and the places a predecessor left at (`generic`) specialize its rows, and `direct`
     /// (the callees each call site reached) its calls. Declined where the function has no row to
@@ -87,15 +115,11 @@ impl<H: Host> Vm<H> {
         let Some(region) = LoopRegion::of_function(code.clone(), self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let (ints, doubles) = observed(parameters);
         let callees = self.stitch_callees(program, function, &code, &direct(self));
-        let helpers = super::process_lane_helpers::<H>();
         let invalidation = Invalidation::default();
         // Where the VM and the program run specialized, the code holds Stable facts: its stores run in
         // place for the atoms no method cache names, and its prototype-held reads fold to their values.
         let folds = self.specialized && program.specialized;
-        let constructors = if folds { self.instanceof_constructors(program, &code, parameters) } else { Vec::new() };
-        let presences = if folds { self.membership_facts(&code) } else { Vec::new() };
-        // ...and its global names' accesses read the global object's slots under its layout.
-        let globals = folds.then(|| self.global_table(program, function, &super::osr_compile::loop_unit(body), GlobalTable::Base));
+        let SiteFacts { constructors, presences, globals } = self.site_facts(folds, program, function, (&code, parameters), body);
         let reads = |site: u16| self.native_field_read_descriptors(site);
         let instanceofs = |pc: usize| constructors.get(pc).copied().flatten().and_then(|constructor| self.instanceof_fact(constructor).map(|fact| (constructor, fact)));
         let adds = |site: u16, atom, chained| self.native_field_add(site, atom, chained);
@@ -115,12 +139,8 @@ impl<H: Host> Vm<H> {
         let speculated = widened(generic);
         let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: [&ints, &doubles], kinds: &[] };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
-        let Ok(built) = (unsafe { build_body(&region, &spec, &callees, helpers) }) else { return LaneBodyOutcome::Declined };
-        let closed = callees.closed(&code);
-        let Some(method) = LaneMethod::of_base_body(built, function, body.registers, callees.owned, closed, invalidation) else { return LaneBodyOutcome::Declined };
-        if !method.amortizes_entry() { return LaneBodyOutcome::Short }
-        bind_callees(&method.direct, caller);
-        self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()).map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)
+        let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers::<H>()) }) else { return LaneBodyOutcome::Declined };
+        self.publish_base_body(built, (function, body.registers), callees, (&code, invalidation), caller)
     }
 }
 

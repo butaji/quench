@@ -37,8 +37,12 @@ impl Bits {
         self.0[member / WORD] |= 1 << (member % WORD);
     }
 
-    fn contains(&self, member: usize) -> bool {
+    pub(super) fn contains(&self, member: usize) -> bool {
         self.0.get(member / WORD).is_some_and(|word| word >> (member % WORD) & 1 != 0)
+    }
+
+    pub(super) fn count(&self) -> usize {
+        self.0.iter().map(|word| word.count_ones() as usize).sum()
     }
 }
 
@@ -295,6 +299,17 @@ fn joined(span: &Span, decoded: &[Decoded], merged: &Bits, defs: &Defs, flow: &F
             }
         }
     }
+    join_leaves(&mut sets, span, defs, flow, &whole);
+    for column in (0..defs.columns()).filter(|column| whole(defs.named[*column])) {
+        for node in defs.nodes[column] + 1..defs.nodes[column + 1] {
+            sets.union(defs.nodes[column], node);
+        }
+    }
+    sets
+}
+
+/// Joins each leaf's definitions with the registers live at the leaf or left whole.
+fn join_leaves(sets: &mut Sets, span: &Span, defs: &Defs, flow: &Flow, whole: &impl Fn(Register) -> bool) {
     for (leaf, pc) in flow.leaf_pcs.iter().enumerate() {
         for (column, register) in defs.named.iter().enumerate() {
             if span.is_live(*pc, *register) || whole(*register) {
@@ -302,12 +317,6 @@ fn joined(span: &Span, decoded: &[Decoded], merged: &Bits, defs: &Defs, flow: &F
             }
         }
     }
-    for column in (0..defs.columns()).filter(|column| whole(defs.named[*column])) {
-        for node in defs.nodes[column] + 1..defs.nodes[column + 1] {
-            sets.union(defs.nodes[column], node);
-        }
-    }
-    sets
 }
 
 /// Numbers the webs in the order rows first name them.

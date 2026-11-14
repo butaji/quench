@@ -96,6 +96,8 @@ use polls::retain_closed_polls;
 pub(crate) use stable::StableFacts;
 use crate::typed_ir::IntRange;
 
+/// The call context, step dispatch and result words a lane body or trampoline reads and writes.
+pub(super) const DISPATCH: crate::staged::Access = crate::staged::Region::Dispatch.mutable();
 pub(super) const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
 /// Inline scratch capacity for the small field-site sets typical of native units;
 /// larger units spill normally, without a semantic or compilation limit.
@@ -1071,21 +1073,46 @@ fn int32_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideI
         && shapes.iter().all(|field| field.ty == Type::INT32))
 }
 
+/// The register whose value `register` copies at the comparison at `pc`: following the moves and
+/// nops back to `header` within one block, so copies share the comparison's SSA value.
+fn move_root(instructions: &[WideInstruction], leaders: &CompoundBitSet, (header, pc): (usize, usize), mut register: Register) -> Register {
+    for at in (header..pc).rev() {
+        if at + 1 < pc && leaders.contains(at + 1) { break; }
+        let instruction = instructions[at];
+        match instruction.op() {
+            opcode if opcode.is_move() && instruction.result_flags() == 0 => {
+                if instruction.register_a() == register { register = instruction.register_b(); }
+            }
+            opcode if opcode.is_nop() => {},
+            _ => break,
+        }
+    }
+    register
+}
+
 /// Whether `instruction` can change no heap value natively: anything else it would do (a
 /// non-Number operand, a missed cache) leaves the body first.
 fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> bool {
-    match instruction.op() {
-        _ if instruction.op().traits().has(Traits::FRAME_ONLY) => true,
-        opcode if opcode.is_load_const() => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
-        opcode if opcode.is_inc_dec() => instruction.numeric_local_target().is_none(),
-        opcode if opcode.is_load_capture() => instruction.result_flags() == 0 && instruction.capture_depth() == 0,
-        opcode if opcode.is_get_field() => !instruction.writes_current_this() && !instruction.returns_from_frame(),
+    reads_slot(constants, instruction).unwrap_or_else(|| match instruction.op() {
         // ToNumeric of a Number is the Number; any other operand leaves (`Lowering::instruction`). A
         // dense element is read natively, any other leaving (`emit_dense_element_read`); a null or
         // undefined operand leaves before any effect (`staged::require_object_coercible`).
         opcode if opcode.is_to_numeric() || opcode.is_get_index() || opcode.is_require_object_coercible() => !instruction.returns_from_frame(),
         _ => instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
-    }
+    })
+}
+
+/// Whether `instruction` reads only a frame slot, a constant, a capture or a field, where it is
+/// one; `None` for the other instructions.
+fn reads_slot(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> Option<bool> {
+    Some(match instruction.op() {
+        _ if instruction.op().traits().has(Traits::FRAME_ONLY) => true,
+        opcode if opcode.is_load_const() => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
+        opcode if opcode.is_inc_dec() => instruction.numeric_local_target().is_none(),
+        opcode if opcode.is_load_capture() => instruction.result_flags() == 0 && instruction.capture_depth() == 0,
+        opcode if opcode.is_get_field() => !instruction.writes_current_this() && !instruction.returns_from_frame(),
+        _ => return None,
+    })
 }
 
 /// Whether `instruction` is a store natively: of its atom, into a slot the object already
@@ -2074,36 +2101,8 @@ impl Lowering<'_, '_> {
         let receiver = if accesses_fields { emit_lane_receiver(&mut self.builder, self.payload, this_bits) } else { self.absent_receiver() };
         let this = self.builder.declare_var(types::I64);
         self.builder.def_var(this, this_bits);
-        let mut receiver_shapes = BTreeMap::new();
-        for field in self.fields.iter().flatten().flatten() {
-            if receiver_shapes.contains_key(&field.shape) {
-                continue;
-            }
-            let shape = self.builder.use_var(receiver.shape);
-            let same = self.builder.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
-            let variable = self.builder.declare_var(types::I8);
-            self.builder.def_var(variable, same);
-            receiver_shapes.insert(field.shape, variable);
-        }
-        // A direct store of an atom needs a specialized run and no method cache naming it; a
-        // run that makes no call changes neither (`emit_js_own_field_set`, `Lowering::site_store`).
-        let mut store_atoms = BTreeMap::new();
-        let stored = instructions.iter().filter_map(|instruction| match instruction.op() {
-            _ if instruction.op().is_field_store() => Some(instruction.atom_index()),
-            opcode if opcode.is_get_field() && instruction.writes_current_this() => match instruction.field_lookup() {
-                Some(FieldLookup::Site(index)) => self.program.field_sites.get(index).and_then(|site| site.sink).map(|(atom, _)| atom),
-                _ => None,
-            },
-            _ => None,
-        }).collect::<Vec<_>>();
-        for atom in stored {
-            if let std::collections::btree_map::Entry::Vacant(slot) = store_atoms.entry(atom) {
-                let admitted = self.emit_store_atom_admitted(atom);
-                let variable = self.builder.declare_var(types::I8);
-                self.builder.def_var(variable, admitted);
-                slot.insert(variable);
-            }
-        }
+        let receiver_shapes = self.entry_receiver_shapes(&receiver);
+        let store_atoms = self.entry_store_atoms(instructions);
         // The running activation's dense capture slots (`EnvironmentSlots::native_dense_view`),
         // fixed for the run; each read loads its slot where it runs, after any call that may
         // have stored to it.
@@ -2262,6 +2261,46 @@ impl Lowering<'_, '_> {
         Entry { receiver, object_table, records, receiver_shapes, store_atoms, capture_values, capture_len, environment, this, fields, calls, call_receivers }
     }
 
+    /// Per receiver shape a field site folds, whether the receiver has it.
+    fn entry_receiver_shapes(&mut self, receiver: &LaneReceiver) -> BTreeMap<u32, Variable> {
+        let mut receiver_shapes = BTreeMap::new();
+        for field in self.fields.iter().flatten().flatten() {
+            if receiver_shapes.contains_key(&field.shape) {
+                continue;
+            }
+            let shape = self.builder.use_var(receiver.shape);
+            let same = self.builder.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(field.shape));
+            let variable = self.builder.declare_var(types::I8);
+            self.builder.def_var(variable, same);
+            receiver_shapes.insert(field.shape, variable);
+        }
+        receiver_shapes
+    }
+
+    /// Per atom the unit stores, whether the run admits direct stores of it. A direct store of an
+    /// atom needs a specialized run and no method cache naming it; a run that makes no call
+    /// changes neither (`emit_js_own_field_set`, `Lowering::site_store`).
+    fn entry_store_atoms(&mut self, instructions: &[WideInstruction]) -> BTreeMap<Atom, Variable> {
+        let mut store_atoms = BTreeMap::new();
+        let stored = instructions.iter().filter_map(|instruction| match instruction.op() {
+            _ if instruction.op().is_field_store() => Some(instruction.atom_index()),
+            opcode if opcode.is_get_field() && instruction.writes_current_this() => match instruction.field_lookup() {
+                Some(FieldLookup::Site(index)) => self.program.field_sites.get(index).and_then(|site| site.sink).map(|(atom, _)| atom),
+                _ => None,
+            },
+            _ => None,
+        }).collect::<Vec<_>>();
+        for atom in stored {
+            if let std::collections::btree_map::Entry::Vacant(slot) = store_atoms.entry(atom) {
+                let admitted = self.emit_store_atom_admitted(atom);
+                let variable = self.builder.declare_var(types::I8);
+                self.builder.def_var(variable, admitted);
+                slot.insert(variable);
+            }
+        }
+        store_atoms
+    }
+
     /// Whether the entry edge admits the inlined call at `pc`, a call a run may skip
     /// (`packet != null`) and so not one every run may be refused for: a body that left at
     /// its entry once admits them at their markers instead (`Lowering::inline_call`).
@@ -2278,6 +2317,25 @@ impl Lowering<'_, '_> {
         self.invariant_field_records(instructions, receiver, object_table, miss)
     }
 
+    /// The register (or `unit.registers` for `this`) whose object the field access at `pc` reads or
+    /// writes, where `instruction` is one.
+    fn field_owner(&self, pc: usize, instruction: WideInstruction) -> Option<usize> {
+        let count = usize::from(self.unit.registers);
+        match instruction.op() {
+            opcode if opcode.is_get_field() && !super::reads_length(self.program, instruction) => {
+                let base = self.field_base(pc, instruction);
+                base.and_then(|base| if base == crate::bytecode::FieldBase::THIS { Some(count) }
+                    else { base.register_index().map(usize::from) }).filter(|_| self.reads_own_field(instruction))
+            }
+            _ if instruction.op().is_field_store() => Some(match (instruction.field_store_register(), self.unit.origins[pc]) {
+                (Some(register), _) => usize::from(register),
+                (None, super::lane_unit::Origin::Inlined { frame, .. }) => usize::from(self.unit.frames[frame].receiver),
+                (None, _) => count,
+            }),
+            _ => None,
+        }
+    }
+
     /// Bind physical receiver facts once. The expanded unit's write set owns
     /// invariance, including renamed callee registers and synthesized returns.
     fn invariant_field_records(&mut self, instructions: &[WideInstruction], receiver: &LaneReceiver,
@@ -2288,19 +2346,7 @@ impl Lowering<'_, '_> {
         for (pc, instruction) in instructions.iter().enumerate() {
             if self.blocks[pc].is_some() { reachable = self.facts.at(pc).is_some(); }
             if !reachable { continue; }
-            let owner = match instruction.op() {
-                opcode if opcode.is_get_field() && !super::reads_length(self.program, *instruction) => {
-                    let base = self.field_base(pc, *instruction);
-                    base.and_then(|base| if base == crate::bytecode::FieldBase::THIS { Some(count) }
-                        else { base.register_index().map(usize::from) }).filter(|_| self.reads_own_field(*instruction))
-                }
-                _ if instruction.op().is_field_store() => Some(match (instruction.field_store_register(), self.unit.origins[pc]) {
-                    (Some(register), _) => usize::from(register),
-                    (None, super::lane_unit::Origin::Inlined { frame, .. }) => usize::from(self.unit.frames[frame].receiver),
-                    (None, _) => count,
-                }),
-                _ => None,
-            };
+            let owner = self.field_owner(pc, *instruction);
             if let Some(owner) = owner.filter(|owner| *owner == count
                 || (*owner < usize::from(self.unit.caller_registers) && !self.written.contains(*owner))) {
                 owners.insert(owner);
@@ -3185,21 +3231,7 @@ impl Lowering<'_, '_> {
             let Some(comparison) = nullish_comparison(&self.program.constants, instructions[pc], |_| Type::ANY)
                 .filter(|comparison| !comparison.strict && comparison.negated
                     && instructions[pc].jump_target() as usize > back) else { continue };
-            // Copies before the comparison share its SSA value as well.
-            let root = |mut register| {
-                for at in (header..pc).rev() {
-                    if at + 1 < pc && leaders.contains(at + 1) { break; }
-                    let instruction = instructions[at];
-                    match instruction.op() {
-                        opcode if opcode.is_move() && instruction.result_flags() == 0 => {
-                            if instruction.register_a() == register { register = instruction.register_b(); }
-                        }
-                        opcode if opcode.is_nop() => {},
-                        _ => break,
-                    }
-                }
-                register
-            };
+            let root = |register| move_root(instructions, leaders, (header, pc), register);
             if root(required) != root(comparison.source) { continue; }
             if !inputs.iter().any(|&(leader, _)| leader == pc + 1) { inputs.push((pc + 1, required)); }
             if !inputs.iter().all(|&(pc, register)| self.facts.at(pc)

@@ -16,17 +16,7 @@ impl<H: Host> Vm<H> {
         let slots = self.lane_global_slots(program, function, unit);
         let stored: Vec<(crate::bytecode::Atom, GlobalRead)> = slots.iter().filter(|(_, store, _)| *store)
             .map(|(pc, _, slot)| (unit.instructions[*pc].atom_index(), *slot)).collect();
-        let reads: Vec<(usize, GlobalRead)> = unit.instructions.iter().enumerate()
-            .filter(|(_, instruction)| instruction.op().is_throwing_name_load())
-            .filter(|(pc, instruction)| {
-                let function = match unit.origins[*pc] {
-                    lane_unit::Origin::Caller(_) => function,
-                    lane_unit::Origin::Inlined { frame, .. } => unit.frames[frame].target.function,
-                };
-                self.reads_global_scope(program, function, instruction.atom_index())
-            })
-            .map(|(pc, instruction)| (pc, instruction.atom_index(), instruction.cache_site_index()))
-            .collect::<Vec<_>>()
+        let reads: Vec<(usize, GlobalRead)> = self.global_name_loads(program, function, unit)
             .into_iter()
             .map(|(pc, atom, site)| {
                 let name = self.atom_name(atom);
@@ -45,6 +35,22 @@ impl<H: Host> Vm<H> {
         let methods: Vec<(usize, GlobalRead)> = unit.instructions.iter().enumerate()
             .filter_map(|(pc, instruction)| Some((pc, self.method_native(instruction)?))).collect();
         reads.into_iter().chain(members).chain(methods).chain(slots.into_iter().map(|(pc, _, read)| (pc, read))).collect()
+    }
+
+    /// The loads of `unit` that read a global by name, as (PC, atom, cache site): those whose name
+    /// resolves in the global scope of the function that holds them.
+    fn global_name_loads(&self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> Vec<(usize, crate::bytecode::Atom, u16)> {
+        unit.instructions.iter().enumerate()
+            .filter(|(_, instruction)| instruction.op().is_throwing_name_load())
+            .filter(|(pc, instruction)| {
+                let function = match unit.origins[*pc] {
+                    lane_unit::Origin::Caller(_) => function,
+                    lane_unit::Origin::Inlined { frame, .. } => unit.frames[frame].target.function,
+                };
+                self.reads_global_scope(program, function, instruction.atom_index())
+            })
+            .map(|(pc, instruction)| (pc, instruction.atom_index(), instruction.cache_site_index()))
+            .collect()
     }
 
     /// The by-name global accesses of `unit` as `table`'s tier takes them: the lane's own
@@ -165,8 +171,8 @@ impl<H: Host> Vm<H> {
 }
 
 /// The PCs a jump or a branch table enters: where control may arrive other than by falling through.
-fn branch_targets(code: &[crate::bytecode::WideInstruction]) -> std::collections::BTreeSet<usize> {
-    let mut entered = std::collections::BTreeSet::new();
+fn branch_targets(code: &[crate::bytecode::WideInstruction]) -> cranelift_codegen::bitset::CompoundBitSet {
+    let mut entered = cranelift_codegen::bitset::CompoundBitSet::with_capacity(code.len());
     for (pc, instruction) in code.iter().enumerate() {
         crate::bytecode::for_each_instruction_successor(pc, *instruction, |successor| {
             if successor != pc + 1 {
@@ -180,8 +186,8 @@ fn branch_targets(code: &[crate::bytecode::WideInstruction]) -> std::collections
 /// The PC of the instruction defining the callee register of the call at `call`, if it is the only
 /// one reaching it: the nearest before the call that writes the register, with no jump landing
 /// between the two.
-fn straight_definition(code: &[crate::bytecode::WideInstruction], entered: &std::collections::BTreeSet<usize>, call: usize) -> Option<usize> {
+fn straight_definition(code: &[crate::bytecode::WideInstruction], entered: &cranelift_codegen::bitset::CompoundBitSet, call: usize) -> Option<usize> {
     let callee = code[call].register_b();
     let defined = (0..call).rev().find(|pc| code[*pc].written_registers().any(|register| register == callee))?;
-    entered.range(defined + 1..=call).next().is_none().then_some(defined)
+    (defined + 1..=call).all(|pc| !entered.contains(pc)).then_some(defined)
 }

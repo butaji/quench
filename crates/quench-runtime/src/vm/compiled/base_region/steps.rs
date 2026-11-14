@@ -113,9 +113,9 @@ impl Step {
 /// begin `Wasm`). A Wasm function has its own compiler (`dispatch_wasm`, the Wasm tiers), which
 /// owns the linear memory, tables and typed registers these opcodes read, so a function holding
 /// one is not a b-jit body (`covers`), and a loop region holding one leaves at it.
-const EXCLUDED: [bool; Op::COUNT] = {
+const EXCLUDED: [u64; Op::COUNT.div_ceil(WORD)] = {
     const PREFIX: &[u8] = b"Wasm";
-    let mut table = [false; Op::COUNT];
+    let mut table = [0; Op::COUNT.div_ceil(WORD)];
     let mut index = 0;
     while index < Op::COUNT {
         let name = Op::NAMES[index].as_bytes();
@@ -125,7 +125,7 @@ const EXCLUDED: [bool; Op::COUNT] = {
             named = name[at] == PREFIX[at];
             at += 1;
         }
-        table[index] = named;
+        table[index / WORD] |= (named as u64) << (index % WORD);
         index += 1;
     }
     table
@@ -133,7 +133,7 @@ const EXCLUDED: [bool; Op::COUNT] = {
 
 /// Whether the b-jit compiles a function of these instructions: none is an excluded opcode.
 pub(in crate::vm::compiled) fn covers(code: &[WideInstruction]) -> bool {
-    code.iter().all(|instruction| !EXCLUDED[instruction.op() as usize])
+    code.iter().all(|instruction| EXCLUDED[instruction.op() as usize / WORD] >> (instruction.op() as usize % WORD) & 1 == 0)
 }
 
 /// The most registers a step the helper makes writes: its result, and the `this` a name call
@@ -311,17 +311,23 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
         Step::CallOut => plan_helper(layout, pc, decoded, (LaneHelper::VmStep, helpers)),
         Step::Throw => plan_throw(layout, pc, helpers),
         Step::Catch => plan_catch(decoded, layout, pc, helpers),
-        Step::Fast(Heap::Add { .. }) => adds::plan(decoded, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?)),
-        Step::Guard(Heap::Add { .. }) => adds::plan(decoded, layout, pc, None),
-        Step::Fast(Heap::Name { .. }) => names::plan(decoded, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?)),
-        Step::Guard(Heap::Name { .. }) => names::plan(decoded, layout, pc, None),
-        Step::Fast(fast) => plan_fast(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?), helpers),
-        Step::Guard(fast) => plan_fast(decoded, fast, layout, pc, None, helpers),
+        Step::Fast(fast) => plan_guarded(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?), helpers),
+        Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, None, helpers),
         Step::Return => {
             let slot = operand(&layout.homes, decoded.a).1;
             Ok(Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) })
         }
         Step::Call(shape) => plan_call(layout, shape, pc, helpers),
+    }
+}
+
+/// The plan of a fast arm or guard of `fast`: an add or a name call has its own planner, the rest
+/// share `plan_fast`; `chain` is the helper chain a fast arm falls back to.
+fn plan_guarded(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, chain: Option<Planned>, helpers: LaneHelpers) -> Result<Planned, String> {
+    match fast {
+        Heap::Add { .. } => adds::plan(decoded, layout, pc, chain),
+        Heap::Name { .. } => names::plan(decoded, layout, pc, chain),
+        _ => plan_fast(decoded, fast, layout, pc, chain, helpers),
     }
 }
 
@@ -419,7 +425,7 @@ fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, slow: Opti
     if written != Place::Mem {
         return slow.map_or_else(|| leave(pc), Ok);
     }
-    if let Some(word) = number_typeof(fast, decoded.hole).filter(|_| matches!(read, Place::Pin(_) | Place::PinF(_) | Place::MemInt)) {
+    if let Some(word) = number_typeof(fast, decoded.hole).filter(|_| holds_number(read)) {
         return plan(&Decoded::number(Kind::Move, decoded.dst, Some(Source::Value(word)), None, None), layout, pc, (true, Variant::Generic), helpers);
     }
     if (read != Place::Mem || second != Place::Mem) && fast.reads_frame_word() {
@@ -454,30 +460,6 @@ pub(super) fn behind(mut fast: Planned, mut slow: Planned) -> Planned {
     fast
 }
 
-/// The jump to `pc`, a part of a run whose NEXT is not where the run goes on.
-fn jump_to(pc: u32) -> Result<Planned, String> {
-    Ok(Planned::single(control(Kind::Jump)?, [0; HOLES], Some(pc), None))
-}
-
-/// The reloads of the pinned registers live at `pc`, then the jump to `pc`: the branch of a run
-/// that restores the registers its destination expects.
-fn landing(layout: &Layout, pc: u32) -> Result<Vec<Planned>, String> {
-    let reloads = layout.spills(pc).into_iter().map(|(place, register)| call_plan::reload_part(place, register).map(Planned::of_part));
-    reloads.chain(std::iter::once(jump_to(pc))).collect()
-}
-
-/// A helper step's run made to branch: its fall-through (the reloads of the next instruction's
-/// registers) jumps to the next instruction, and the TAKEN exit of the helper row (a step that took
-/// its jump, `LANE_CALL_BRANCHED`) lands at `target` after the fall-through, as a part's NEXT is the
-/// part laid out after it.
-fn branching(mut row: Planned, layout: &Layout, (pc, target): (u32, u32)) -> Result<Planned, String> {
-    row.post.push(jump_to(pc + 1)?);
-    let taken = row.pre.len() + 1 + row.post.len();
-    row.post.extend(landing(layout, target)?);
-    row.branch = Some(Branch::Part(taken));
-    Ok(row)
-}
-
 /// The chain of the call `shape` names at row `pc`: spills, the direct row where the site's target
 /// is stable, the helper row, reloads. The direct row's record is the row's `owned`. A plain call's
 /// helper is the ending's (`Ending::call_helper`), another form's its own (`CallForm::helper`).
@@ -490,6 +472,10 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     chained(parts, spills.len(), record)
 }
+
+#[path = "steps/branches.rs"]
+mod branches;
+use branches::{branching, jump_to};
 
 #[cfg(test)]
 mod tests;

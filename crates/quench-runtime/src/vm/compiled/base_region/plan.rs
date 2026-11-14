@@ -167,24 +167,38 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
 /// The hole values of a heap row of `decoded`, given its holes of destination, first and second operand.
 pub(super) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bool, holes @ [dst_hole, a_hole, b_hole]: [u64; 3]) -> [u64; HOLES] {
     let base = if entry { decoded.hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
-    site_holes(decoded, heap, base, holes).or_else(|| global_holes(decoded, heap, holes)).unwrap_or_else(|| padded_holes(match heap {
+    site_holes(decoded, heap, base, holes).or_else(|| global_holes(decoded, heap, holes)).or_else(|| slot_holes(heap, dst_hole, a_hole)).or_else(|| test_holes(decoded, heap, dst_hole, a_hole)).unwrap_or_else(|| padded_holes(match heap {
         Heap::Store => [base, a_hole, b_hole],
         Heap::This => [dst_hole, 0, 0],
         Heap::Index if entry => [dst_hole, decoded.hole, b_hole],
         Heap::Field => [dst_hole, decoded.hole, 0],
-        Heap::Capture(slot) | Heap::EnvLocal(slot) => [dst_hole, u64::from(slot), u64::from(slot) * SLOT],
-        Heap::LoadLocal(slot) | Heap::LoadChecked(slot) => [dst_hole, u64::from(slot), 0],
-        Heap::StoreLocal(slot) | Heap::StoreChecked(slot) => [0, a_hole, u64::from(slot)],
-        Heap::TypeofIs { index, .. } => [dst_hole, a_hole, u64::from(index)],
-        Heap::Identity => [0, a_hole, decoded.hole],
-        Heap::TypeofString => [dst_hole, a_hole, decoded.hole],
         Heap::Instanceof => {
             let link = decoded.instanceof.map_or(0, |(_, fact)| u64::from(fact.link));
             [dst_hole | a_hole << numeric::library::SITE_OBJECT_AT, b_hole | link << numeric::library::HELD_LINK_AT, decoded.hole]
         }
-        Heap::CaptureSet(slot) | Heap::EnvStore(slot) | Heap::EnvDefine(slot) => [a_hole, u64::from(slot), u64::from(slot) * SLOT],
-        Heap::Live => [0, decoded.hole, 0],
         _ => [dst_hole, a_hole, b_hole],
+    }))
+}
+
+/// The holes of a heap row that tests a value: its type, identity or liveness.
+fn test_holes(decoded: &Decoded, heap: Heap, dst_hole: u64, a_hole: u64) -> Option<[u64; HOLES]> {
+    Some(padded_holes(match heap {
+        Heap::TypeofIs { index, .. } => [dst_hole, a_hole, u64::from(index)],
+        Heap::Identity => [0, a_hole, decoded.hole],
+        Heap::TypeofString => [dst_hole, a_hole, decoded.hole],
+        Heap::Live => [0, decoded.hole, 0],
+        _ => return None,
+    }))
+}
+
+/// The holes of a heap row addressed by a frame or environment slot.
+fn slot_holes(heap: Heap, dst_hole: u64, a_hole: u64) -> Option<[u64; HOLES]> {
+    Some(padded_holes(match heap {
+        Heap::Capture(slot) | Heap::EnvLocal(slot) => [dst_hole, u64::from(slot), u64::from(slot) * SLOT],
+        Heap::LoadLocal(slot) | Heap::LoadChecked(slot) => [dst_hole, u64::from(slot), 0],
+        Heap::StoreLocal(slot) | Heap::StoreChecked(slot) => [0, a_hole, u64::from(slot)],
+        Heap::CaptureSet(slot) | Heap::EnvStore(slot) | Heap::EnvDefine(slot) => [a_hole, u64::from(slot), u64::from(slot) * SLOT],
+        _ => return None,
     }))
 }
 
@@ -243,15 +257,25 @@ pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, varian
         }
         return heap_plan(decoded, homes, heap, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)]);
     }
+    number_plan(decoded, layout, pc, (general, variant), [(dst, dst_hole), (a, a_hole), (b, b_hole)])
+}
+
+/// The plan of a number row: a jump that polls the interrupt on a backward edge, or the chosen arithmetic row.
+fn number_plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): (bool, Variant), [(dst, dst_hole), (a, a_hole), (b, b_hole)]: [(Place, u64); 3]) -> Result<Planned, String> {
     let polls = decoded.target.is_some_and(|target| target <= pc) && decoded.kind == Kind::Jump;
     let kind = if polls { layout.ending.poll() } else { decoded.kind };
     let (row, stencil) = chosen_row(kind, [dst, a, b], variant, general)?;
     let interrupt = std::mem::offset_of!(super::super::CallContext, interrupt) as u64;
-    let exits = polls || !matches!(kind, Kind::Jump | Kind::Move) || matches!(dst, Place::Pin(_) | Place::PinF(_) | Place::MemInt);
+    let exits = polls || !matches!(kind, Kind::Jump | Kind::Move) || holds_number(dst);
     // A poll row also names where the run's backward-edge counter lives (`jump_row`).
     let counter = [std::mem::offset_of!(super::super::CallContext, adapter_payload) as u64, std::mem::offset_of!(super::super::JsStepDispatch, loop_entry) as u64];
     let holes = padded_holes(if polls { [interrupt, counter[0], counter[1]] } else { [dst_hole, a_hole, b_hole] });
     Ok(Planned { node: Some(Node::Number(numeric::library::canonical(row.code()))), ..Planned::single(stencil, holes, decoded.target, exits.then_some(pc)) })
+}
+
+/// Whether `place` holds a number the row reads or writes in a register or as an int32 in memory, not a tagged word.
+pub(super) fn holds_number(place: Place) -> bool {
+    matches!(place, Place::Pin(_) | Place::PinF(_) | Place::MemInt)
 }
 
 /// A leave row: the stub that tags the pinned registers back and returns `word`.

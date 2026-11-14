@@ -6,7 +6,6 @@
 
 use super::*;
 use crate::vm::in_presence::InPresence;
-use std::collections::BTreeSet;
 
 /// Whether `instruction` is `left instanceof right`, which writes a boolean to a register.
 fn is_instanceof(instruction: WideInstruction) -> bool {
@@ -29,18 +28,22 @@ enum Origin {
 }
 
 /// The PCs some jump of `code` goes to.
-fn joins(code: &[WideInstruction]) -> BTreeSet<usize> {
-    code.iter().filter(|instruction| instruction.op().control_flow_layout().jumps()).map(|instruction| instruction.jump_target() as usize).collect()
+fn joins(code: &[WideInstruction]) -> Bits {
+    let mut joins = Bits::default();
+    for instruction in code.iter().filter(|instruction| instruction.op().control_flow_layout().jumps()) {
+        joins.insert(instruction.jump_target() as usize);
+    }
+    joins
 }
 
 /// The origin of `register` at `pc` of `code`, whose jump targets are `joins`.
-fn origin(code: &[WideInstruction], joins: &BTreeSet<usize>, pc: usize, register: Register) -> Origin {
+fn origin(code: &[WideInstruction], joins: &Bits, pc: usize, register: Register) -> Origin {
     for at in (0..pc).rev() {
         let instruction = code[at];
         if instruction.written_registers().any(|written| written == register) {
             return Origin::Written(instruction);
         }
-        if instruction.op().control_flow_layout().jumps() || joins.contains(&at) {
+        if instruction.op().control_flow_layout().jumps() || joins.contains(at) {
             return Origin::Merged;
         }
     }

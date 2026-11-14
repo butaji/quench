@@ -533,71 +533,7 @@ fn tagged_registers_with_failure(
         // its values' webs instead (`representations`), as its register may hold Numbers too.
         .chain(instructions.iter().filter_map(|instruction| array_read(*instruction))
             .filter(|register| !dynamic_arrays.contains(register)))
-        .chain(instructions.iter().enumerate().flat_map(|(offset, instruction)| {
-            if !instruction.op().is_ordinary_call() {
-                return Vec::new();
-            }
-            // Keep field-resolved calls under the existing inliner's representation and
-            // ownership rules. Dynamic/direct calls leave at this exact PC, so their input
-            // window must remain boxed through preceding Moves.
-            if instructions[..offset]
-                .iter()
-                .rev()
-                .find(|candidate| candidate.defined_register() == Some(instruction.register_b()))
-                .is_some_and(|definition| definition.op().is_get_field())
-            {
-                return Vec::new();
-            }
-            let base = ImmediateLayout::call_window_base(instruction.imm());
-            let count = if instruction.op().is_call_array() {
-                1
-            } else {
-                usize::from(ImmediateLayout::argument_count(instruction.imm()))
-            };
-            let mut registers = vec![instruction.register_b()];
-            for argument in (0..count).filter_map(|offset| {
-                usize::from(base).checked_add(offset).and_then(|register| u16::try_from(register).ok())
-            }) {
-                let mut value = argument;
-                let mut moved_argument = false;
-                let mut numeric_use = false;
-                let mut moved_chain = std::collections::BTreeSet::new();
-                loop {
-                    if !moved_chain.insert(value) {
-                        break;
-                    }
-                    if numeric_uses.contains(&value) {
-                        numeric_use = true;
-                        break;
-                    }
-                    let numeric_move_alias = instructions.iter().any(|candidate| {
-                        candidate.op().is_move()
-                            && candidate.register_b() == value
-                            && numeric_uses.contains(&candidate.result_register())
-                    });
-                    if numeric_move_alias {
-                        numeric_use = true;
-                        break;
-                    }
-                    let Some(definition) = instructions[..offset]
-                        .iter()
-                        .rev()
-                        .find(|candidate| candidate.defined_register() == Some(value))
-                    else {
-                        break;
-                    };
-                    if !definition.op().is_move() {
-                        break;
-                    }
-                    moved_argument = true;
-                    value = definition.register_b();
-                }
-                if moved_argument && !numeric_use {
-                    registers.push(argument);
-                }
-            }
-            registers
-        }))
+        .chain(instructions.iter().enumerate().flat_map(|(offset, instruction)| call_window_tagged(instructions, &numeric_uses, offset, instruction)))
         .chain(instructions.iter().filter_map(|instruction| {
             if !instruction.op().is_load_const() {
                 return None;
@@ -632,52 +568,144 @@ fn tagged_registers_with_failure(
             field_reads_alone_define(instructions, value).then_some(value)
         }))
         .collect();
+    propagate_tagged(instructions, constants, header, &mut tagged)?;
+    Ok(tagged)
+}
+
+/// Extends `tagged` along moves and type tests to the fixed point where every number definition
+/// of a tagged register is one that may carry a boxed value; the offset of one that cannot.
+fn propagate_tagged(instructions: &[WideInstruction], constants: &[Value], header: u32, tagged: &mut std::collections::BTreeSet<Register>) -> Result<(), usize> {
     let boxed = boxed(instructions);
     loop {
         let before = tagged.len();
         for (offset, instruction) in instructions.iter().copied().enumerate().rev() {
-            let Some(result) = number_definition(instruction) else {
-                continue;
-            };
-            if instruction.op().is_move() {
-                let source = instruction.register_b();
-                if tagged.contains(&result) || tagged.contains(&source) {
-                    tagged.insert(result);
-                    tagged.insert(source);
-                }
-                continue;
-            }
-            // A register an allocation also defines is held boxed throughout (`boxed`).
-            if !tagged.contains(&result) || boxed.contains(&result) {
-                continue;
-            }
-            match instruction.op() {
-                opcode if opcode.is_load_const() => {
-                    if constants.get(instruction.constant_index()).is_none() {
-                        trace_tagged_reject(header, offset, result, "missing_constant");
-                        return Err(offset);
-                    }
-                }
-                // Entry captures, cached fields, global bindings and fresh allocations can
-                // carry arbitrary boxed values.
-                opcode if opcode.is_load_capture() || opcode.is_get_field() || opcode.is_get_index() || opcode.is_load_name() => {}
-                _ if instruction.op().allocates() => {}
-                opcode if opcode.is_binary() && number_comparison(instruction).is_some() => {}
-                // A type test reads its operand's tag, and the VM's cell of a heap value
-                // (the type-name index exits for one instead).
-                opcode if opcode.is_unary() && reads_type(instruction) => {
-                    tagged.insert(instruction.register_b());
-                }
-                _ => {
-                    trace_tagged_reject(header, offset, result, &format!("unsupported_tagged_definition op={:?}", instruction.op()));
-                    return Err(offset);
-                }
-            }
+            tag_definition(instruction, offset, (constants, header, &boxed), tagged)?;
         }
         if tagged.len() == before {
-            return Ok(tagged);
+            return Ok(());
         }
     }
+}
+
+/// What one number definition adds to `tagged`, or the offset where it cannot be admitted.
+fn tag_definition(instruction: WideInstruction, offset: usize, (constants, header, boxed): (&[Value], u32, &std::collections::BTreeSet<Register>), tagged: &mut std::collections::BTreeSet<Register>) -> Result<(), usize> {
+    let Some(result) = number_definition(instruction) else {
+        return Ok(());
+    };
+    if instruction.op().is_move() {
+        let source = instruction.register_b();
+        if tagged.contains(&result) || tagged.contains(&source) {
+            tagged.insert(result);
+            tagged.insert(source);
+        }
+        return Ok(());
+    }
+    // A register an allocation also defines is held boxed throughout (`boxed`).
+    if !tagged.contains(&result) || boxed.contains(&result) {
+        return Ok(());
+    }
+    match tagged_operand(instruction, constants) {
+        Ok(operand) => tagged.extend(operand),
+        Err(reason) => {
+            trace_tagged_reject(header, offset, result, &reason);
+            return Err(offset);
+        }
+    }
+    Ok(())
+}
+
+/// The register a tagged number definition `instruction` tags in turn (a type test's operand), or the
+/// reason it cannot be admitted: only a definition that may carry a boxed value can be tagged.
+fn tagged_operand(instruction: WideInstruction, constants: &[Value]) -> Result<Option<Register>, String> {
+    let op = instruction.op();
+    if op.is_load_const() {
+        return constants.get(instruction.constant_index()).map(|_| None).ok_or_else(|| "missing_constant".to_owned());
+    }
+    if carries_boxed(instruction) {
+        return Ok(None);
+    }
+    // A type test reads its operand's tag, and the VM's cell of a heap value
+    // (the type-name index exits for one instead).
+    if op.is_unary() && reads_type(instruction) {
+        return Ok(Some(instruction.register_b()));
+    }
+    Err(format!("unsupported_tagged_definition op={op:?}"))
+}
+
+/// Whether `instruction` defines a register that may carry an arbitrary boxed value: an entry
+/// capture, a cached field, a global binding, an element, a fresh allocation or a comparison.
+fn carries_boxed(instruction: WideInstruction) -> bool {
+    let op = instruction.op();
+    op.is_load_capture() || op.is_get_field() || op.is_get_index() || op.is_load_name() || op.allocates()
+        || (op.is_binary() && number_comparison(instruction).is_some())
+}
+
+/// The registers of an ordinary call at `offset` that stay boxed: its callee and the arguments
+/// moved into its window from registers no number use reads. A call whose callee a field read
+/// defined stays under the existing inliner's representation and ownership rules; dynamic and
+/// direct calls leave at this exact PC, so their input window must remain boxed through
+/// preceding Moves.
+fn call_window_tagged(instructions: &[WideInstruction], numeric_uses: &std::collections::BTreeSet<Register>, offset: usize, instruction: &WideInstruction) -> Vec<Register> {
+    if !instruction.op().is_ordinary_call() || callee_read_by_field(instructions, offset, instruction) {
+        return Vec::new();
+    }
+    let base = ImmediateLayout::call_window_base(instruction.imm());
+    let count = if instruction.op().is_call_array() {
+        1
+    } else {
+        usize::from(ImmediateLayout::argument_count(instruction.imm()))
+    };
+    let mut registers = vec![instruction.register_b()];
+    registers.extend((0..count)
+        .filter_map(|offset| usize::from(base).checked_add(offset).and_then(|register| u16::try_from(register).ok()))
+        .filter(|argument| moved_without_numeric_use(instructions, numeric_uses, offset, *argument)));
+    registers
+}
+
+/// Whether the call at `offset` reads its callee from a register a field read defined.
+fn callee_read_by_field(instructions: &[WideInstruction], offset: usize, call: &WideInstruction) -> bool {
+    instructions[..offset]
+        .iter()
+        .rev()
+        .find(|candidate| candidate.defined_register() == Some(call.register_b()))
+        .is_some_and(|definition| definition.op().is_get_field())
+}
+
+/// Whether `argument` of the call at `offset` is the end of a chain of moves none of whose registers a
+/// number use reads, or an alias of one a number use reads.
+fn moved_without_numeric_use(instructions: &[WideInstruction], numeric_uses: &std::collections::BTreeSet<Register>, offset: usize, argument: Register) -> bool {
+    let mut value = argument;
+    let mut moved_argument = false;
+    let mut moved_chain = std::collections::BTreeSet::new();
+    loop {
+        if !moved_chain.insert(value) {
+            break;
+        }
+        if numeric_uses.contains(&value) {
+            return false;
+        }
+        let numeric_move_alias = instructions.iter().any(|candidate| {
+            candidate.op().is_move()
+                && candidate.register_b() == value
+                && numeric_uses.contains(&candidate.result_register())
+        });
+        if numeric_move_alias {
+            return false;
+        }
+        let Some(definition) = instructions[..offset]
+            .iter()
+            .rev()
+            .find(|candidate| candidate.defined_register() == Some(value))
+        else {
+            break;
+        };
+        if !definition.op().is_move() {
+            break;
+        }
+        moved_argument = true;
+        value = definition.register_b();
+    }
+    moved_argument
 }
 
 /// A call an inlining region runs in place (`inline_region`): the callee's instructions in
@@ -912,6 +940,30 @@ fn mentions(instruction: WideInstruction, register: Register, sites: &[FieldSite
     renamed(instruction, &rename, register, &|target| Some(target)).is_none() || named.get()
 }
 
+/// The registers of an inlining region that hold objects: each call's receiver and, where its callee's read is
+/// checked, the callee's register, which holds the function its read gives.
+fn object_registers(calls: &std::collections::BTreeMap<u32, inlining::Site<'_>>, checked_reads: &std::collections::BTreeMap<u32, u32>, caller: &[WideInstruction], header: u32) -> std::collections::BTreeSet<Register> {
+    calls
+        .iter()
+        .flat_map(|(pc, site)| {
+            let callee = checked_reads.contains_key(pc).then(|| caller[(*pc - header) as usize].register_b());
+            std::iter::once(site.frame.receiver).chain(callee)
+        })
+        .collect()
+}
+
+/// Whether the setup `run` before the call at `pc` can resume at `resume`: it only computes, no jump
+/// lands inside it, and it defines no register live at the resume.
+fn setup_resumes(run: &[WideInstruction], (resume, pc): (u32, u32), at_resume: RegisterSet, targets: &std::collections::BTreeSet<u32>) -> bool {
+    run.iter().all(|instruction| pure_setup(instruction.op()))
+        && (resume + 1..=pc).all(|pc| !targets.contains(&pc))
+        && run.iter().all(|instruction| {
+            instruction
+                .defined_register()
+                .is_none_or(|register| !crate::compile::liveness::register_in(at_resume, usize::from(register)))
+        })
+}
+
 /// The ops a call's argument setup may run between reading its callee and the call: none
 /// has an effect a second run could repeat, so leaving among them resumes at the read.
 fn pure_setup(op: Op) -> bool {
@@ -1022,14 +1074,7 @@ pub(super) fn inline_region<'a>(
         let resume = header + resume_offset as u32;
         let at_resume = mask(resume)?;
         let run = &caller[resume_offset + 1..offset];
-        (run.iter().all(|instruction| pure_setup(instruction.op()))
-            && (resume + 1..=pc).all(|pc| !targets.contains(&pc))
-            && run.iter().all(|instruction| {
-                instruction
-                    .defined_register()
-                    .is_none_or(|register| !crate::compile::liveness::register_in(at_resume, usize::from(register)))
-            }))
-        .then_some(())?;
+        setup_resumes(run, (resume, pc), at_resume, &targets).then_some(())?;
         let (callee, reached) = inlining::admitted_callee(resolve, callee_path.as_ref(), capture, argc, sites)?;
         let first = read + 1;
         let bound = inlining::bound_parameters(&caller[read_offset + 1..offset], first, window, &callee, &reached, &defines, &mut dropped)?;
@@ -1085,14 +1130,7 @@ pub(super) fn inline_region<'a>(
     });
     emission.run()?;
     let inlining::Emission { instructions, origins, masks, callee_captures, .. } = emission;
-    // A checked callee's register holds the function its read gives, an object.
-    let receivers = calls
-        .iter()
-        .flat_map(|(pc, site)| {
-            let callee = checked_reads.contains_key(pc).then(|| caller[(*pc - header) as usize].register_b());
-            std::iter::once(site.frame.receiver).chain(callee)
-        })
-        .collect();
+    let receivers = object_registers(&calls, &checked_reads, caller, header);
     let header_live = masks.first().copied();
     let mut region = admit_region(
         instructions,
