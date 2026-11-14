@@ -2319,21 +2319,50 @@ pub(super) fn capture_stores(capture: *const usize) -> Option<*const usize> {
 /// Richards within spread).
 type Handler = extern "rust-preserve-none" fn(Registers, Ip, *mut u8, Slot<isize>, crate::value::IntegerEncoding, Slot<Value>) -> Ip;
 
-thread_local! {
-    /// The context of this thread's running lane. A lane run never calls
-    /// out, so runs nest only through the general path, and each run
-    /// restores the outer context when it returns.
-    static LANE_CONTEXT: std::cell::Cell<*mut ()> =
-        const { std::cell::Cell::new(std::ptr::null_mut()) };
+/// A plain `#[thread_local]` cell. `thread_local!` in this position-independent rlib reads
+/// through a `__tls_get_addr` call that only the linker relaxes, so LLVM gave every handler
+/// that reads the lane context a frame and spills; the executable's local-exec read below
+/// is one load.
+struct TlsCell<T: Copy>(std::cell::Cell<T>);
+impl<T: Copy> TlsCell<T> {
+    #[inline(always)]
+    fn with<R>(&self, f: impl FnOnce(&std::cell::Cell<T>) -> R) -> R { f(&self.0) }
 }
+/// The context of this thread's running lane. A lane run never calls out, so runs nest
+/// only through the general path, and each run restores the outer context when it returns.
+#[thread_local]
+static LANE_CONTEXT: TlsCell<*mut ()> = TlsCell(std::cell::Cell::new(std::ptr::null_mut()));
+/// The running lane's stack floor (`ExecutionInterrupt::lane_floor` of its VM): a taken
+/// safepoint jump below it returns to the lane loop. The maximum address marks a due
+/// collection or a termination request.
+#[thread_local]
+static LANE_FLOOR: TlsCell<*const std::sync::atomic::AtomicUsize> = TlsCell(std::cell::Cell::new(std::ptr::null()));
 
-thread_local! {
-    /// The running lane's stack floor (`ExecutionInterrupt::lane_floor` of its VM): a taken
-    /// safepoint jump below it returns to the lane loop. The maximum address marks a due
-    /// collection or a termination request. A safepoint only reads it, so loops carry no
-    /// dependence through it.
-    static LANE_FLOOR: std::cell::Cell<*const std::sync::atomic::AtomicUsize> =
-        const { std::cell::Cell::new(std::ptr::null()) };
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+#[inline(always)]
+fn tls_lane_context() -> *mut () {
+    let value: *mut ();
+    // SAFETY: the executable's own TLS block; local-exec offset fixed at link time.
+    unsafe { std::arch::asm!("mov {}, qword ptr fs:[{}@TPOFF]", out(reg) value, sym LANE_CONTEXT, options(pure, nostack, readonly, preserves_flags)) };
+    value
+}
+#[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+#[inline(always)]
+fn tls_lane_context() -> *mut () {
+    LANE_CONTEXT.0.get()
+}
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+#[inline(always)]
+fn tls_lane_floor() -> *const std::sync::atomic::AtomicUsize {
+    let value: *const std::sync::atomic::AtomicUsize;
+    // SAFETY: as `tls_lane_context`.
+    unsafe { std::arch::asm!("mov {}, qword ptr fs:[{}@TPOFF]", out(reg) value, sym LANE_FLOOR, options(pure, nostack, readonly, preserves_flags)) };
+    value
+}
+#[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+#[inline(always)]
+fn tls_lane_floor() -> *const std::sync::atomic::AtomicUsize {
+    LANE_FLOOR.0.get()
 }
 
 /// A lane run's raised floor (`Vm::enter_lane_floor`): the VM's floor cell, and the cell and
@@ -2349,7 +2378,7 @@ struct LaneFloor {
 fn lane_floor() -> &'static std::sync::atomic::AtomicUsize {
     // SAFETY: set for the whole of a lane run to its VM's interrupt state, which the VM
     // holds; only read while a lane runs.
-    unsafe { &*LANE_FLOOR.with(std::cell::Cell::get) }
+    unsafe { &*tls_lane_floor() }
 }
 
 /// Stack a lane run may use below its entry before a safepoint jump returns
@@ -2405,7 +2434,7 @@ fn script_below_floor<H: Host>(cx: *mut LaneContext<H>) -> bool {
 #[inline(always)]
 pub(super) fn note_allocation<H: Host>(vm: &Vm<H>) {
     if vm.heap.should_collect() {
-        let floor = LANE_FLOOR.with(std::cell::Cell::get);
+        let floor = tls_lane_floor();
         // SAFETY: as `lane_floor`, while a lane runs; null otherwise.
         if let Some(floor) = unsafe { floor.as_ref() } {
             floor.store(COLLECTION_DUE_FLOOR, std::sync::atomic::Ordering::Relaxed);
@@ -2431,7 +2460,7 @@ unsafe fn lane_this<H: Host>(cx: *mut LaneContext<H>) -> Option<Value> {
 /// The running lane's context.
 #[inline(always)]
 fn lane_context<H: Host>() -> *mut LaneContext<H> {
-    LANE_CONTEXT.with(std::cell::Cell::get).cast()
+    tls_lane_context().cast()
 }
 
 /// Records are word aligned, so the low address bit is free to mark a lane
