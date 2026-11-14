@@ -153,7 +153,7 @@ pub use vm::{
 };
 
 #[cfg(feature = "aot")]
-pub use compile::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation};
+pub use compile::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, SourceDemands};
 pub use compile::{DynamicFunctionKind, HostScriptOptions, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL, GLOBAL_SCRIPT_GOAL, GLOBAL_SCRIPT_SOURCE_NAME};
 
 /// Ordinary builds and producers support dynamic compilation and execution.
