@@ -2189,6 +2189,8 @@ impl<H: Host> Vm<H> {
         if let Some(record_id) = object.direct_object_index() {
             return Some(self.heap.object_record_by_id(record_id));
         }
+        // Objects dominate: the other families' tests follow the object's.
+        std::hint::cold_path();
         if let Some(array) = self.heap.record_array(object) { return Some(array); }
         let function = object.direct_function_index().and_then(|_| self.heap.function(object));
         function.map(|function| &function.object).or_else(|| self.heap.ordinary_builtin_object(object))
