@@ -1783,10 +1783,11 @@ impl<H: Host> Vm<H> {
     /// The new array of the `count` constants from `start` of `program` (a `MakeConstArray`
     /// record's immediate and element count); `None` for a range outside the program's
     /// constants.
+    #[inline]
     pub(super) fn const_array_value(&mut self, program: ProgramId, start: usize, count: usize) -> Option<Value> {
         let elements = self.programs.const_array(program, start, count)?;
         let prototype = self.array_prototype_for_realm(self.realm.globals);
-        Some(self.heap.alloc(Cell::Array { object: crate::heap::ArrayObject::fresh(prototype, elements) }))
+        Some(self.heap.alloc_fresh_array(prototype, elements))
     }
 }
 

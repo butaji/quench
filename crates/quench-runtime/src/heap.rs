@@ -1166,6 +1166,17 @@ impl Heap {
         }
     }
 
+    /// `alloc(Cell::Array { object })` of a fresh array (`ArrayObject::fresh`) of `prototype`
+    /// and `elements`, with the prototype as given rather than decoded back from the header.
+    #[inline(always)]
+    pub(crate) fn alloc_fresh_array(&mut self, prototype: Value, elements: ArrayElements) -> Value {
+        let object = ArrayObject::fresh(prototype, elements);
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc(Cell::Array { object });
+        }
+        self.alloc_array_of(object, prototype)
+    }
+
     /// `alloc(Cell::Array { object })`: an array record while one is free, charged as any
     /// allocation (`charge_allocation`) for its element storage.
     fn alloc_array(&mut self, object: ArrayObject) -> Value {
