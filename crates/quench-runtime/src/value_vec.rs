@@ -174,6 +174,11 @@ impl ValueVec {
         self.auxiliary = (self.auxiliary & !SHAPE_MASK) | value;
     }
 
+    /// Whether the vector holds no values at all: an empty compact range.
+    #[inline(always)] pub(crate) fn holds_no_values(self) -> bool {
+        !self.is_dictionary() && self.start() == EMPTY_START as usize
+    }
+
     #[inline] pub(crate) fn is_dictionary(self) -> bool {
         self.auxiliary & DICTIONARY_STORAGE != 0
     }
@@ -849,7 +854,7 @@ impl ValueArena {
     /// this call per array (V8-v7 Splay: 2.75M calls a run, ~31 Ir each).
     #[inline(always)]
     pub(crate) fn append_heap_references(&self, vector: ValueVec, output: &mut Vec<Value>) {
-        if !vector.is_dictionary() && vector.start() == EMPTY_START as usize {
+        if vector.holds_no_values() {
             return;
         }
         self.append_held_heap_references(vector, output);

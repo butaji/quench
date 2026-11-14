@@ -209,6 +209,44 @@ impl<'heap> ParallelMarkView<'heap> {
         }
     }
 
+    /// Visits the array `id` (`value`) where an object's property finds it, when its visit
+    /// pushes nothing but its prototype: no named properties or extras, int32 elements only,
+    /// a shape whose roots are already traced, no sparse part and no weak map waiting on it.
+    /// Answers whether that was its whole visit; any other array goes to the work list.
+    #[inline(always)]
+    fn mark_leaf_array_if_new(
+        &self,
+        value: Value,
+        id: RecordId,
+        roots: Option<&ParallelObjectRootTrace<'_>>,
+        trace_kind: GcTraceKind,
+        last_proto: &mut PushedProtos,
+        work: &mut Vec<Value>,
+    ) -> bool {
+        if cfg!(feature = "profile-aggregate") || self.sparse_arrays.is_some() {
+            return false;
+        }
+        let Some(roots) = roots else { return false };
+        // SAFETY: an object holds live arrays, and no record is written while marking.
+        let array = unsafe { self.arrays.get(id) };
+        if array.has_extras()
+            || !array.properties().holds_no_values()
+            || !array.elements().holds_only_int32()
+            || array.was_used_as_prototype()
+            || !roots.adds_nothing(trace_kind, array.shape())
+            || self.ephemerons.awaits_key(value)
+        {
+            return false;
+        }
+        if self.arrays.mark_if_new(id) {
+            let proto = array.proto();
+            if proto.is_heap() && last_proto.first_push(proto) {
+                work.push(proto);
+            }
+        }
+        true
+    }
+
     /// `Heap::mark_value` on a worker: marks `value` if new and pushes what it keeps alive,
     /// leaving to `batch` what the collector must apply (see the module documentation).
     #[inline(always)]
@@ -244,7 +282,13 @@ impl<'heap> ParallelMarkView<'heap> {
                     value,
                     object,
                     properties,
-                    |string, work| super::string_parts::mark_leaf_string_if_new(&strings, string, work),
+                    |child, work, last_proto| match child.heap_reference() {
+                        Some(HeapReference::StringRecord(string)) => super::string_parts::mark_leaf_string_if_new(&strings, string, work),
+                        Some(HeapReference::ArrayRecord(array)) => {
+                            self.mark_leaf_array_if_new(child, array, parallel_object_roots, trace_kind, last_proto, work)
+                        }
+                        _ => false,
+                    },
                     work,
                     &mut object_roots,
                     trace_kind,

@@ -331,14 +331,18 @@ impl ParallelObjectRootTrace<'_> {
     /// Calls the trace unless `shape`'s roots are already added and the holder is no prototype.
     #[inline(always)]
     pub(crate) fn append(&self, kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>) {
-        if !prototype
-            && kind != GcTraceKind::VerifyFull
-            && self.seen_shapes.get(shape as usize / u64::BITS as usize)
-                .is_some_and(|word| word.load(Ordering::Relaxed) & (1_u64 << (shape % u64::BITS)) != 0)
-        {
+        if !prototype && self.adds_nothing(kind, shape) {
             return;
         }
         (self.trace)(kind, owner, shape, prototype, roots);
+    }
+
+    /// Whether the trace would add nothing for a holder of `shape` that is no prototype.
+    #[inline(always)]
+    pub(crate) fn adds_nothing(&self, kind: GcTraceKind, shape: u32) -> bool {
+        kind != GcTraceKind::VerifyFull
+            && self.seen_shapes.get(shape as usize / u64::BITS as usize)
+                .is_some_and(|word| word.load(Ordering::Relaxed) & (1_u64 << (shape % u64::BITS)) != 0)
     }
 }
 
@@ -3955,7 +3959,7 @@ impl Heap {
         trace_kind: GcTraceKind,
         last_proto: &mut PushedProtos,
     ) {
-        Self::object_children_marking(owner, object, properties, |_, _| false, work, object_roots, trace_kind, last_proto);
+        Self::object_children_marking(owner, object, properties, |_, _, _| false, work, object_roots, trace_kind, last_proto);
     }
 
     /// `object_children`, marking each inline string value through `mark_string` where the
@@ -3968,7 +3972,7 @@ impl Heap {
         owner: Value,
         object: &Object,
         properties: &ValueArena,
-        mut mark_string: impl FnMut(RecordId, &mut Vec<Value>) -> bool,
+        mut mark_leaf: impl FnMut(Value, &mut Vec<Value>, &mut PushedProtos) -> bool,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
@@ -3982,10 +3986,7 @@ impl Heap {
         object.visit_extras_roots(|value| work.push(value));
         if let Some(values) = object.inline_properties() {
             for value in values {
-                if value.is_heap()
-                    && !value.is_deleted()
-                    && !value.direct_string_index().is_some_and(|string| mark_string(string, work))
-                {
+                if value.is_heap() && !value.is_deleted() && !mark_leaf(value, work, last_proto) {
                     work.push(value);
                 }
             }
