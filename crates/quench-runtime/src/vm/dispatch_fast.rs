@@ -4182,13 +4182,25 @@ script_handler! {
     /// registers; the first other operand switches the record to `lane_operator_numbers`.
     fn lane_operator<OP: u32>(cx, r, ip, i, view) {
         let Some(value) = super::operations::integer_operator::<OP>(r.get(i.b), r.get(i.c)) else {
-            // SAFETY: the record is an arithmetic record of the running view.
-            unsafe { note_first_miss(cx, ip, r.get(i.b), r.get(i.c)) };
-            requicken::<H>(ip, lane_operator_numbers::<H, OP>);
-            sibling!(lane_operator_numbers::<H, OP>, r, ip, Carried::script(cx))
+            sibling!(lane_operator_first_miss::<H, OP, false>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// The first operands `lane_operator` (`CONSTANT` false) or `lane_operator_constant`
+    /// (`CONSTANT` true) declines: their kinds noted, the record quickened to its Number form.
+    /// Out of line, so the integer handlers make no call and push no frame.
+    #[inline(never)]
+    fn lane_operator_first_miss<OP: u32, CONSTANT: bool>(cx, r, ip, i, view) {
+        let right = if CONSTANT { i.constant() } else { r.get(i.c) };
+        // SAFETY: the record is an arithmetic record of the running view.
+        unsafe { note_first_miss(cx, ip, r.get(i.b), right) };
+        let numbers = if CONSTANT { lane_operator_constant_numbers::<H, OP> } else { lane_operator_numbers::<H, OP> };
+        requicken::<H>(ip, numbers);
+        sibling!(numbers, r, ip, Carried::script(cx))
     }
 }
 
@@ -4330,10 +4342,7 @@ script_handler! {
     fn lane_operator_constant<OP: u32>(cx, r, ip, i, view) {
         let Some(value) = super::operations::integer_operator::<OP>(r.get(i.b), i.constant())
         else {
-            // SAFETY: the record is an arithmetic record of the running view.
-            unsafe { note_first_miss(cx, ip, r.get(i.b), i.constant()) };
-            requicken::<H>(ip, lane_operator_constant_numbers::<H, OP>);
-            sibling!(lane_operator_constant_numbers::<H, OP>, r, ip, Carried::script(cx))
+            sibling!(lane_operator_first_miss::<H, OP, true>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
@@ -4347,13 +4356,23 @@ script_handler! {
     fn lane_operator_integer_constant<OP: u32>(cx, r, ip, i, view) {
         let Some(value) = super::operations::integer_constant_operator::<OP>(r.get(i.b), i.imm() as i32)
         else {
-            // SAFETY: the record is an arithmetic record of the running view.
-            unsafe { note_first_miss(cx, ip, r.get(i.b), Value::integer(i.imm() as i32)) };
-            requicken::<H>(ip, lane_operator_integer_constant_numbers::<H, OP>);
-            sibling!(lane_operator_integer_constant_numbers::<H, OP>, r, ip, Carried::script(cx))
+            sibling!(lane_operator_integer_constant_first_miss::<H, OP>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// The first operand `lane_operator_integer_constant` declines: its kind noted, the
+    /// record quickened to `lane_operator_integer_constant_numbers`. Out of line, so the
+    /// integer handler makes no call and pushes no frame.
+    #[inline(never)]
+    fn lane_operator_integer_constant_first_miss<OP: u32>(cx, r, ip, i, view) {
+        // SAFETY: the record is an arithmetic record of the running view.
+        unsafe { note_first_miss(cx, ip, r.get(i.b), Value::integer(i.imm() as i32)) };
+        requicken::<H>(ip, lane_operator_integer_constant_numbers::<H, OP>);
+        sibling!(lane_operator_integer_constant_numbers::<H, OP>, r, ip, Carried::script(cx))
     }
 }
 
