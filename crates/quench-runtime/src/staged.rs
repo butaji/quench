@@ -20,6 +20,7 @@ use crate::typed_ir::Type;
 mod concrete;
 pub(crate) mod numeric;
 pub(crate) mod flow;
+pub(crate) mod machine;
 mod heap;
 mod global;
 #[cfg_attr(not(test), allow(dead_code))] // the division is data the specializers will ask; today only its tests do
@@ -110,6 +111,7 @@ pub(crate) use ic::{concrete_held_receiver, concrete_own_field_hit, concrete_sit
 pub(crate) use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
 
 mod stage;
+pub(crate) use machine::MachineStage;
 pub(crate) use stage::{fill_by_rows, Passed, RecordSpace, Stage, Table, word_bytes, word_offset};
 
 mod register_frame;

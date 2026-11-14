@@ -3,6 +3,8 @@
 //! reads fold against it. The lowering and the frame's property rows share these.
 
 use super::*;
+use super::super::object_slots::emit;
+use crate::staged::machine::{Lane, MachineStage, Relation};
 
 /// `owner`'s value: a register's, or the fixed `this`.
 pub(super) fn owner_bits(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, state: &mut State, entry: &Entry,
@@ -86,7 +88,7 @@ pub(super) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
 /// then holds the shape as that constant, which folds every later test of it.
 pub(super) fn prove_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut State, owner: Option<Register>,
     shape: ir::Value, expected: u32, exit: ir::Block) {
-    let same = builder.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(expected));
+    let same = emit(builder).raw_compare_imm(Relation::Equal, shape, i64::from(expected));
     emit_js_guard(builder, same, exit);
     note_header_shape(builder, state, owner, expected);
 }
@@ -95,7 +97,7 @@ pub(super) fn prove_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut 
 pub(super) fn note_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut State, owner: Option<Register>, expected: u32) {
     let index = state.header_index(owner);
     if let Some(proof) = &mut state.proofs.headers[index] {
-        proof.shape = builder.ins().iconst(types::I32, i64::from(expected));
+        proof.shape = emit(builder).raw_const(Lane::I32, i64::from(expected));
     }
 }
 

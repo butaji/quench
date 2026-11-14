@@ -148,6 +148,15 @@ pub(crate) trait Stage {
     /// ToUint8Clamp of an `f64` word, as an int32 word: NaN is zero, the rest clamps to 0..=255
     /// and rounds half to even.
     fn clamp_u8(&mut self, a: Self::Word) -> Self::Word;
+    /// `store_u32` of a word no other thread observes (a loop's verified-integer slot write): a
+    /// specializer may defer it to an exit. The interpreter has nothing to defer.
+    fn store_private_u32(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word) {
+        self.store_u32(at, base, offset, value);
+    }
+    /// `store_u64` of a word no other thread observes (`store_private_u32`).
+    fn store_private_u64(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word) {
+        self.store_u64(at, base, offset, value);
+    }
     /// Whether a store of `value` into object record `record_id` may proceed unobserved and
     /// without a barrier log: no slot representation observes the write, and the record is not
     /// one the barrier logs for this value. The one place the store barrier's layout is read;
@@ -168,6 +177,12 @@ pub(crate) trait Stage {
     fn any(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
     /// `then` where `cond` holds, else `otherwise`.
     fn pick(&mut self, cond: Self::Cond, then: Self::Cond, otherwise: Self::Cond) -> Self::Cond;
+    /// Whether both `a` and `b` hold.
+    fn all(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond {
+        let (neither_a, neither_b) = (self.not(a), self.not(b));
+        let either = self.any(neither_a, neither_b);
+        self.not(either)
+    }
     /// ToBoolean of the Number whose IEEE double bits are `bits` (`number_is_truthy`).
     fn number_truthy(&mut self, bits: Self::Word) -> Self::Cond;
     /// Whether the shape word `shape` is one of `shapes`, sorted.

@@ -1,5 +1,8 @@
 //! A staged operand's value: a register's proved one, or a constant's, statically.
 use super::*;
+use super::super::super::object_slots::emit;
+use crate::staged::flow::FlowStage;
+use crate::staged::machine::{Lane, MachineStage, Unary};
 use crate::staged::{NumericStage, Stage};
 
 /// An operand's int32 value, statically where it is a constant int32.
@@ -78,14 +81,14 @@ fn tagged_to_int32(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     let integer = is_int_tagged(builder, bits);
     let (int_block, number_block, join) = (builder.create_block(), builder.create_block(), builder.create_block());
     let int32 = builder.append_block_param(join, types::I32);
-    builder.ins().brif(integer, int_block, &[], number_block, &[]);
+    emit(builder).branch(integer, (int_block, &[]), (number_block, &[]));
     builder.switch_to_block(int_block);
-    let int = builder.ins().ireduce(types::I32, bits);
-    builder.ins().jump(join, &[ir::BlockArg::Value(int)]);
+    let int = emit(builder).raw_unary(Unary::Narrow(Lane::I32), bits);
+    emit(builder).jump(join, &[int]);
     builder.switch_to_block(number_block);
     let number = emit_js_tagged_number(builder, bits, exit);
     let truncated = crate::vm::compiled::emit_number_to_int32(builder, number, exit);
-    builder.ins().jump(join, &[ir::BlockArg::Value(truncated)]);
+    emit(builder).jump(join, &[truncated]);
     builder.switch_to_block(join);
     state.proofs.int32_projections.push((bits, int32));
     int32

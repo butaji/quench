@@ -2,7 +2,9 @@
 //! invalidation points where it learns that one changed.
 
 use super::*;
-use crate::vm::compiled::regions;
+use super::super::object_slots::emit;
+use crate::staged::machine::{Lane, MachineStage, Relation};
+use crate::staged::{Region, Stage};
 
 /// The Stable facts a region's code folded (`typed_ir::BindingTime::Stable`), each the subject
 /// of a code dependency its publication takes (`ProgramStore::publish_lane_method`).
@@ -84,9 +86,9 @@ fn invalidation_word(builder: &mut FunctionBuilder<'_>, helpers: LaneHelpers, on
     let address = if helpers.links() {
         crate::vm::jit_backend::symbol_address(builder, types::I64, RelocKind::Invalidation as u32, 0)
     } else {
-        builder.ins().iconst(types::I64, online.invalidation as i64)
+        emit(builder).raw_const(Lane::I64, online.invalidation as i64)
     };
-    builder.ins().load(types::I64, regions::invalidation(), address, 0)
+    emit(builder).load_u64(Region::Invalidation.mutable(), address, 0)
 }
 
 /// The invalidation point: the word read once, leaving through `exit` where a change retired
@@ -94,7 +96,7 @@ fn invalidation_word(builder: &mut FunctionBuilder<'_>, helpers: LaneHelpers, on
 fn read_invalidation_word(builder: &mut FunctionBuilder<'_>, helpers: LaneHelpers, online: OnlineFacts<'_>,
     state: &mut State, exit: ir::Block) {
     let invalidated = invalidation_word(builder, helpers, online);
-    let held = builder.ins().icmp_imm_u(IntCC::Equal, invalidated, 0);
+    let held = emit(builder).raw_compare_imm(Relation::Equal, invalidated, 0);
     emit_js_guard(builder, held, exit);
     state.proofs.stable = true;
 }
@@ -192,7 +194,7 @@ impl Lowering<'_, '_> {
     /// The realm test of `prove_realm`, made here.
     pub(super) fn test_realm(&mut self, state: &mut State, exit: ir::Block, (global, realm_offset): (Value, i32)) {
         let vm = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, vm));
-        let active = self.ins().load(types::I64, regions::dispatch(), vm, realm_offset);
+        let active = emit(&mut self.builder).load_u64(Region::Dispatch.mutable(), vm, realm_offset);
         let same = self.word_cmp_imm(IntCC::Equal, active, global.to_bits() as i64);
         emit_js_guard(&mut self.builder, same, exit);
         state.proofs.realm = true;
@@ -206,7 +208,7 @@ impl Lowering<'_, '_> {
         self.stable.atoms.insert(atom);
         let invalidated = invalidation_word(&mut self.builder, self.helpers, online);
         let held = self.word_cmp_imm(IntCC::Equal, invalidated, 0);
-        Some(self.builder.ins().band(specialized, held))
+        Some(emit(&mut self.builder).all(specialized, held))
     }
 
     /// Whether a run enters loop `header..=end` only at its header, by edges that each make the
