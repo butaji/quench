@@ -1844,6 +1844,10 @@ pub(super) struct LaneStack {
 /// A generation no lane runs under: an empty target entry never matches.
 const NO_SCRIPT_GENERATION: ScriptGeneration = 0;
 
+/// The key of a generation no collection epoch names: entering it retires the targets of the
+/// generation before (`LaneStack::retire_targets`).
+const RETIRED_GENERATION_KEY: (u64, Value) = (u64::MAX, Value::UNDEFINED);
+
 impl Default for LaneStack {
     fn default() -> Self {
         Self {
@@ -1885,6 +1889,13 @@ impl LaneStack {
     /// `remember_script_target` of another program's callee (`cross_targets`).
     fn remember_cross_target(&mut self, target: ScriptCallTarget, policy: crate::MemoryPolicy) {
         self.cross_targets.remember(target, script_call_targets(policy));
+    }
+
+    /// Retire every target resolved so far, which no lane run's generation key names again
+    /// (`enter_generation`): the dependency of a fact every cached call relied on, as `with`
+    /// being absent (`Vm::note_with_scope_entered`).
+    fn retire_targets(&mut self) {
+        self.enter_generation(RETIRED_GENERATION_KEY);
     }
 
     /// Forget resolved call targets, as the general loop's call target cache is reset.
@@ -11412,6 +11423,14 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Enter a `with` scope's first mark (`Vm::with_scope_entered`), the end of every cached
+    /// target's proof that none was.
+    pub(super) fn note_with_scope_entered(&mut self) {
+        if !std::mem::replace(&mut self.with_scope_entered, true) {
+            self.lane_stack.retire_targets();
+        }
+    }
+
     /// Whether `LaneStack::script_targets` entry `index` holds `callee`'s target for this
     /// generation and the running program.
     #[inline(always)]
@@ -11433,6 +11452,10 @@ impl<H: Host> Vm<H> {
         let index = if self.script_call_holds(linked, callee) {
             linked
         } else {
+            // No target resolves under a `with` scope (`note_with_scope_entered`).
+            if self.with_scope_entered {
+                return None;
+            }
             let index = self.script_call_index(callee).or_else(|| self.relink_closure(callee, linked))?;
             // The callee in hand joins the site's record (`LaneStack::call_sites`): the entry it
             // linked may hold another site's callee since, so only the record names its own.
@@ -11510,6 +11533,9 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     fn resolve_script_call_target(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
         callee.heap_index()?;
+        if self.with_scope_entered {
+            return None;
+        }
         let (program, function, env) = self.same_realm_user_target(callee)?;
         // Only plain closures' functions are known (`remember_target`): a hit needs no class or admission.
         if program == self.active_program && let Some(known) = self.lane_stack.function_target(program, function, false) {
@@ -11895,7 +11921,7 @@ macro_rules! lane_plain_activation {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-        if (returns && !lane_returning_call_admitted(cx)) || vm.with_scope_entered {
+        if returns && !lane_returning_call_admitted(cx) {
             return exit(ip);
         }
         // SAFETY: the record's window of `r` holds its values.
@@ -12115,7 +12141,6 @@ script_handler! {
             if (argc > target.params && !target.drops_extra_arguments())
                 || !lane_activation_room(vm, target)
                 || (returns && !lane_returning_call_admitted(cx))
-                || vm.with_scope_entered
             {
                 sibling!(lane_script_call_general::<H>, r, ip, Carried::script(cx))
             }
@@ -12220,7 +12245,6 @@ script_handler! {
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
         if ImmediateLayout::argument_count(i.imm()) > target.params
             || (returns && !lane_returning_call_admitted(cx))
-            || vm.with_scope_entered
             || vm.host.observes_promise_lifecycle()
         {
             return exit(ip);
@@ -12411,6 +12435,10 @@ script_handler! {
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
+        // Under a `with` scope every call takes the general path.
+        if vm.with_scope_entered {
+            return exit(ip);
+        }
         if vm.cross_call_entry(callee).is_some() {
             requicken::<H>(ip, lane_script_call_cross::<H>);
             sibling!(lane_script_call_cross::<H>, r, ip, Carried::script(cx))
@@ -14623,9 +14651,6 @@ fn lane_activate<H: Host>(
     if returns && !lane_returning_call_admitted(cx) {
         return Err(exit(ip));
     }
-    if vm.with_scope_entered {
-        return Err(exit(ip));
-    }
     // Values past the parameters stay observable (legacy `f.arguments`, a frame made of the
     // activation): the keeping activation holds them after the registers. A callee no legacy
     // reflection observes is passed its parameters alone, as its frame would keep them.
@@ -15984,7 +16009,7 @@ fn lane_activate_environment<H: Host>(
     // a frame does where legacy reflection (`f.arguments`) can read them; elsewhere nothing
     // observes them, and the window keeps only those its parameters bind.
     let extra = argc > target.params && !(rest || plan.reads_passed_arguments);
-    if extra && plan.legacy_reflection || vm.with_scope_entered {
+    if extra && plan.legacy_reflection {
         return Err(exit(ip));
     }
     let (passed, argc) = if extra { (&passed[..usize::from(target.params)], target.params) } else { (passed, argc) };
@@ -16268,9 +16293,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     if returns && !lane_returning_call_admitted(cx) {
         return Err(exit(ip));
     }
-    if argc > usize::from(u16::MAX)
-        || vm.with_scope_entered
-    {
+    if argc > usize::from(u16::MAX) {
         return Err(exit(ip));
     }
     // Capacity, the guest-call budget and a due collection (`LaneStack::activation_limit`).
@@ -21930,6 +21953,8 @@ fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
 mod instruction_set_tests;
 #[cfg(test)]
 mod call_site_history_tests;
+#[cfg(test)]
+mod call_dependency_tests;
 mod on_demand_metadata;
 use on_demand_metadata::{lane_completes_return, lane_note_late_call};
 
