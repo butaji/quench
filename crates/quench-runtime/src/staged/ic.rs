@@ -5,7 +5,8 @@
 
 use super::Stage;
 use super::region::Region;
-use super::object::{Form, PackedAccess, arena_run, extras_pointer, has_extras, inline_storage, object_record_at, own_layout,
+use super::object::{Form, PackedAccess, arena_run, extras_pointer, formed_own_layout, has_extras, inline_storage, object_record_at, own_layout,
+    recorded_shape,
     proto_link, proto_object_record_id, read_slot};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
@@ -86,7 +87,7 @@ fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, slot: u16,
 
 /// The reached record's exact shape word: the caller's where it holds one, else loaded.
 fn shape_word<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>) -> S::Word {
-    at.shape.unwrap_or_else(|| stage.load_u32(Region::ShapeWord.mutable(), at.record, OBJECT.auxiliary_offset as i32))
+    at.shape.unwrap_or_else(|| super::object::exact_shape(stage, at.record))
 }
 
 /// `IcOp::PrototypeConstants`: the value `values` pair with the link of `record`'s prototype.
@@ -134,9 +135,31 @@ pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, proper
     shape: u32, slot: u16) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
     let record = object as *const crate::heap::Object as u64;
-    let at = Reached { record, shape: None, inline: None };
+    // The word proves the shape and, by its storage-form bits, where the values live.
+    let word = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
+    let at = Reached { record, shape: Some(recorded_shape(&mut stage, word)), inline: None };
     guard_shape(&mut stage, &at, shape, ())?;
-    load_slot(&mut stage, &at, slot, Form::Either, usize::from(slot) + 1, ()).map(crate::Value::from_bits)
+    let layout = formed_own_layout(&mut stage, record, word, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, ())?;
+    Some(crate::Value::from_bits(read_slot(&mut stage, layout, slot)))
+}
+
+/// `concrete_own_field_hit` through a lane record's own-field hint, whose `hint` is a whole
+/// auxiliary word (`Object::hint_shape`): one compare proves the exact shape and the storage
+/// form, which the hint's form bits, equal to the record's, then tell.
+///
+/// # Safety
+/// As for `concrete_own_field_hit`.
+#[inline(always)]
+pub(crate) unsafe fn concrete_hinted_own_field_hit(object: &crate::heap::Object, property_values: *const crate::Value,
+    hint: u32, slot: u16) -> Option<crate::Value> {
+    let mut stage = super::Concrete::new(property_values);
+    let record = object as *const crate::heap::Object as u64;
+    let word = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
+    let hint = stage.site(u64::from(hint));
+    let same = stage.eq_imm(word, hint);
+    stage.guard(same, ())?;
+    let layout = formed_own_layout(&mut stage, record, hint, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, ())?;
+    Some(crate::Value::from_bits(read_slot(&mut stage, layout, slot)))
 }
 
 #[cfg(test)]

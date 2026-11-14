@@ -4644,7 +4644,6 @@ impl Lowering<'_, '_> {
     /// The receiver's shape and storage kind again, and the entry's tests of its shape, after
     /// a store that may have changed them (`emit_lane_receiver`, `Lowering::entry_facts`).
     fn reload_receiver(&mut self) {
-        use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
         let entry = self.entry.as_ref().expect("entry facts");
         let (object_var, shape_var, inline_var) = (entry.receiver.object, entry.receiver.shape, entry.receiver.inline);
         let tests: Vec<(u32, Variable)> = entry.receiver_shapes.iter().map(|(shape, variable)| (*shape, *variable)).collect();
@@ -4653,7 +4652,7 @@ impl Lowering<'_, '_> {
         let present = self.ins().icmp_imm_u(IntCC::NotEqual, object, 0);
         self.ins().brif(present, found, &[], done, &[]);
         self.builder.switch_to_block(found);
-        let shape = self.ins().load(types::I32, regions::shape_word(), object, OBJECT.auxiliary_offset as i32);
+        let shape = super::object_slots::exact_shape(&mut self.builder, regions::shape_word(), object);
         let inline = super::object_slots::inline_storage(&mut self.builder, object);
         self.builder.def_var(shape_var, shape);
         self.builder.def_var(inline_var, inline);

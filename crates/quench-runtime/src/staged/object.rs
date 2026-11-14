@@ -94,6 +94,30 @@ pub(crate) fn extras_pointer<S: Stage>(stage: &mut S, payload: S::Word) -> S::Wo
     stage.and_imm(payload, !OBJECT.extras_tag_mask)
 }
 
+/// The record's exact shape as every cache records it (`Object::exact_shape`): its auxiliary
+/// word without the storage-form bits (`storage_form`).
+#[inline(always)]
+pub(crate) fn exact_shape<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
+    let word = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
+    recorded_shape(stage, word)
+}
+
+/// `exact_shape` of an auxiliary word already loaded.
+#[inline(always)]
+pub(crate) fn recorded_shape<S: Stage>(stage: &mut S, word: S::Word) -> S::Word {
+    stage.and_imm(word, u64::from(!(OBJECT.inline_form | OBJECT.extras_form)))
+}
+
+/// Whether the storage-form bit `bit` (`OBJECT.inline_form`, `OBJECT.extras_form`) is set in
+/// the auxiliary word `word` loaded from a record. Every writer of the header's inline flag or
+/// the payload's extras tag keeps these bits current (`Object::storage_form`), so a record's
+/// word answers `inline_storage` and `has_extras` without loading the header or the payload.
+#[inline(always)]
+pub(crate) fn storage_form<S: Stage>(stage: &mut S, word: S::Word, bit: u32) -> S::Cond {
+    let set = stage.and_imm(word, u64::from(bit));
+    stage.ne_imm(set, 0u32)
+}
+
 /// The record's encoded prototype link (`Object::proto_link`).
 #[inline(always)]
 pub(crate) fn proto_link<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
@@ -157,6 +181,34 @@ pub(crate) fn own_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Co
     storage_len: usize, access: PackedAccess, miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let extras = has_extras(stage, payload);
+    layout_of(stage, record, payload, inline, extras, form, storage_len, access, miss)
+}
+
+/// `own_layout` of the record at `record` whose auxiliary word `word` the caller loaded to prove
+/// its exact shape: the word's storage-form bits (`storage_form`) stand for the header's inline
+/// flag and the payload's extras tag, so neither is loaded to be tested.
+#[inline(always)]
+pub(crate) fn formed_own_layout<S: Stage>(stage: &mut S, record: S::Word, word: S::Word, form: Form,
+    storage_len: usize, access: PackedAccess, miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
+    // A stage that decides the form takes the arena run, the common form, on one test.
+    let bits = stage.and_imm(word, u64::from(OBJECT.inline_form | OBJECT.extras_form));
+    let arena = stage.eq_imm(bits, 0u32);
+    if stage.known(arena) == Some(true) && form != Form::Packed {
+        let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+        return Some(Layout { slots: Slots::Flat(arena_run(stage, payload)), storage_len });
+    }
+    let extras = storage_form(stage, word, OBJECT.extras_form);
+    let inline = storage_form(stage, word, OBJECT.inline_form);
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+    layout_of(stage, record, payload, inline, extras, form, storage_len, access, miss)
+}
+
+/// `own_layout` past its loads: `payload` is the record's payload word, `inline` and `extras`
+/// its inline flag and extras tag.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn layout_of<S: Stage>(stage: &mut S, record: S::Word, payload: S::Word, inline: S::Cond, extras: S::Cond, form: Form,
+    storage_len: usize, access: PackedAccess, miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
     if stage.known(extras) == Some(true) {
         return Some(Layout { slots: extras_slots(stage, payload, inline), storage_len });
     }
@@ -292,8 +344,8 @@ pub(crate) fn decode_narrow_through<S: Stage>(stage: &mut S, narrow: S::Word, up
 pub(crate) unsafe fn concrete_own_read(object: &crate::heap::Object, property_values: *const crate::Value, slot: usize) -> crate::Value {
     let mut stage = Concrete::new(property_values);
     let record = object as *const crate::heap::Object as u64;
-    let inline = inline_storage(&mut stage, record);
-    let layout = own_layout(&mut stage, record, inline, Form::Either, slot + 1, PackedAccess::Reload, ())
+    let word = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
+    let layout = formed_own_layout(&mut stage, record, word, Form::Either, slot + 1, PackedAccess::Reload, ())
         .expect("the interpreter knows every storage form");
     crate::Value::from_bits(read_slot(&mut stage, layout, slot as u16))
 }

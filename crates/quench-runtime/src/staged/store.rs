@@ -2,7 +2,6 @@
 //! a value at a slot, whichever of the two plain storage forms it keeps its values in. The
 //! interpreter runs it on `Concrete`; a specializer emits it from the same rows.
 
-use super::object::inline_storage;
 use super::slot_store::{admitted_payload, store_flat};
 use super::Stage;
 use super::region::Region;
@@ -76,10 +75,9 @@ fn reference_form<S: Stage>(stage: &mut S, value: S::Word, upper: S::Word) -> S:
 /// no extras), a packed slot can hold the value's narrow form and the store gate admits the
 /// write; `None` (leaving at `miss`) otherwise, changing nothing.
 #[inline(always)]
-pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, shape: u32, slot: u16,
+pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, shape: u32, hinted: bool, slot: u16,
     value: S::Word, miss: S::Miss) -> Option<()> {
-    let payload = admitted_payload(stage, record, record_id, shape, value, miss)?;
-    let inline = inline_storage(stage, record);
+    let (payload, inline) = admitted_payload(stage, record, record_id, shape, hinted, value, miss)?;
     // A packed slot needs the value's narrow form; a flat one takes any value.
     let narrow = stage.choose(inline, |stage| narrow_form(stage, value), |stage| stage.constant(0));
     let storable = stage.ne_imm(narrow, NOT_NARROW);
@@ -97,12 +95,13 @@ pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::
 }
 
 /// The interpreter's reading of `own_store`: `value` stored at `slot` of object record
-/// `record_id` of `heap` where its exact shape is `shape`; false changes nothing.
+/// `record_id` of `heap` where its exact shape is `shape` (a lane record's hint, the whole
+/// auxiliary word, where `hinted`: `admitted_payload`); false changes nothing.
 ///
 /// # Safety
 /// `record_id` names a live object record of `heap`, whose shape's slot the hint covers.
 #[inline(always)]
-pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id: u32, shape: u32, slot: u16,
+pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id: u32, shape: u32, hinted: bool, slot: u16,
     value: crate::Value) -> bool {
     // SAFETY: the caller's contract; the gate reads the heap before any write.
     let record = unsafe { heap.unlogged_object_record(record_id) };
@@ -121,7 +120,7 @@ pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id:
     }
     let record = record as u64;
     let mut stage = super::Concrete::storing(heap);
-    own_store(&mut stage, record, u64::from(record_id), shape, slot, value.to_bits(), ()).is_some()
+    own_store(&mut stage, record, u64::from(record_id), shape, hinted, slot, value.to_bits(), ()).is_some()
 }
 
 #[cfg(test)]
@@ -151,7 +150,7 @@ mod tests {
     fn store(heap: &mut Heap, object: Value, shape: u32, slot: u16, value: Value) -> bool {
         let id = object.direct_object_index().unwrap();
         // SAFETY: a live record of the shape, whose slot it holds.
-        unsafe { concrete_own_store(heap, id, shape, slot, value) }
+        unsafe { concrete_own_store(heap, id, shape, false, slot, value) }
     }
 
     #[test]
@@ -190,7 +189,7 @@ mod tests {
         let run = |shape: u32, slot: u16| {
             let mut stage = crate::staged::trace::Trace::default();
             let (record, id, value) = (stage.constant(0), stage.constant(1), stage.constant(2));
-            own_store(&mut stage, record, id, shape, slot, value, ());
+            own_store(&mut stage, record, id, shape, false, slot, value, ());
             (stage.ops, stage.holes)
         };
         let (first, holes) = run(3, 1);

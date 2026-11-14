@@ -5812,7 +5812,7 @@ script_handler! {
             #[cfg(not(all(target_arch = "aarch64", target_pointer_width = "64")))]
             let (base, machine) = unsafe { ((*cx).binding.object_base, (*cx).vm.cast_const()) };
             let receiver = unsafe { &*base.add(record as usize) };
-            unsafe { &*machine }.own_field_entry_hit(i.field_hint(), receiver)
+            unsafe { &*machine }.own_field_hint_hit(i.field_hint(), receiver)
         });
         let Some(value) = value else {
             sibling!(lane_get_field_own_refresh::<H, THIS, true>, r, ip, Carried::script_in(cx, view))
@@ -5830,8 +5830,8 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
-        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| vm.primary_own_field_hit(code, object, i.c))
+        let Some((object, value)) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
+            .and_then(|object| vm.primary_own_field_hit(code, object, i.c).map(|value| (object, value)))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
@@ -5841,7 +5841,7 @@ script_handler! {
             requicken::<H>(ip, lane_get_field_own_bound::<H, THIS>);
         }
         // The hit proved the entry an own one of the receiver's shape.
-        set_field_hint(ip, vm.field_cache_entry(i.c));
+        set_field_hint(ip, vm.form_hint(vm.field_cache_entry(i.c), object));
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -5918,7 +5918,7 @@ fn polymorphic_read<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, ip: Ip, obj
     let i = unsafe { &*ip };
     let (value, hit) = vm.hinted_polymorphic_field_hit(code, object, i.c, i.field_hint())?;
     if let PolymorphicHit::Own(entry) = hit {
-        set_field_hint(ip, entry);
+        set_field_hint(ip, vm.form_hint(entry, object));
     }
     Some((value, matches!(hit, PolymorphicHit::Holder)))
 }
@@ -7374,7 +7374,8 @@ script_handler! {
             let vm = unsafe { vm(cx) };
             let stored = vm.primary_own_field_store_hit::<true>(code, object, i.imm(), r.get(i.a), i.c, crate::heap::PropertyStoreLayout::MayWiden);
             if stored {
-                set_field_hint(ip, vm.field_cache_entry(i.c));
+                // The store may move the values (`MayWiden`): the hint takes the form after it.
+                set_field_hint(ip, vm.form_hint(vm.field_cache_entry(i.c), object));
             }
             stored
         });
@@ -17211,6 +17212,24 @@ impl MemoLeaf {
         })
     }
 
+    /// This memo with its steps as `Vm::formed_entry` makes them of the objects a call passing
+    /// `arguments` on `this` reads, which its steps just answered: each step then proves its
+    /// shapes and storage forms by whole-word compares (`Vm::record_field_formed_hit`).
+    fn formed<H: Host>(self, vm: &Vm<H>, arguments: ReadArguments, this: Value) -> Self {
+        let base_of = |base: u16| lane_read_base(crate::bytecode::FieldBase(base), arguments, this);
+        let formed = |field: super::FieldCache, base: u16| base_of(base).map_or(field, |object| vm.formed_entry(field, object));
+        match self {
+            Self::Field { base, field } => Self::Field { base, field: formed(field, base) },
+            Self::Element { base, field, index } => Self::Element { base, field: formed(field, base), index },
+            Self::Length { base, field } => Self::Length { base, field: formed(field, base) },
+            Self::Nested { base, field, second } => {
+                let object = base_of(base).and_then(|object| vm.record_field_entry_hit(field, object));
+                let second = object.map_or(second, |object| vm.formed_entry(second, object));
+                Self::Nested { base, field: formed(field, base), second }
+            }
+        }
+    }
+
     /// `LeafRead::run` of the read this memo records, of the step `shape` names (a constant
     /// where it inlines); `None` for a memo of another step.
     #[inline(always)]
@@ -17218,23 +17237,23 @@ impl MemoLeaf {
         let base = |base: u16| lane_read_base(crate::bytecode::FieldBase(base), arguments, this);
         match *self {
             Self::Field { base: field_base, field } if shape == MEMO_FIELD => {
-                vm.record_field_entry_hit(field, base(field_base)?)
+                vm.record_field_formed_hit(field, base(field_base)?)
             }
             Self::Element { base: field_base, field, index } if shape == MEMO_ELEMENT => {
-                let array = vm.record_field_entry_hit(field, base(field_base)?)?;
+                let array = vm.record_field_formed_hit(field, base(field_base)?)?;
                 vm.direct_dense_element(array, arguments.get(index)?)
             }
             Self::Length { base: field_base, field } if shape == MEMO_LENGTH => {
-                let array = vm.record_field_entry_hit(field, base(field_base)?)?;
+                let array = vm.record_field_formed_hit(field, base(field_base)?)?;
                 vm.array_length_field(array, vm.length_atom)
             }
             Self::Nested { base: field_base, field, second } if shape == MEMO_NESTED => {
                 #[cfg(feature = "profile-field-primitives")]
                 vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::MemoPairAttempt);
-                let object = vm.record_field_entry_hit(field, base(field_base)?)?;
+                let object = vm.record_field_formed_hit(field, base(field_base)?)?;
                 #[cfg(feature = "profile-field-primitives")]
                 vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::MemoPairFirstHit);
-                let value = vm.record_field_entry_hit(second, object);
+                let value = vm.record_field_formed_hit(second, object);
                 #[cfg(feature = "profile-field-primitives")]
                 if value.is_some() { vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::MemoPairHit); }
                 value
@@ -17385,17 +17404,25 @@ fn lane_memoize_read<H: Host>(
         let entry = |hit: FieldHit| match hit {
             FieldHit::Own(cache) | FieldHit::Holder(cache) => vm.field_cache_entry(cache),
         };
+        let Some(leaf) = MemoLeaf::of(vm, code, read) else {
+            return;
+        };
+        // The steps as whole-word compares of the objects this call read (`MemoLeaf::formed`).
+        let (field, method_field) = (entry(forward.field), entry(forward.method));
+        let base = lane_read_base(crate::bytecode::FieldBase(forward.base), arguments, this);
+        let receiver = base.and_then(|base| vm.record_field_entry_hit(field, base));
+        let read = match receiver.and_then(|receiver| lane_receiver_this(vm, inner.this_binding, receiver)) {
+            Some(method_this) => leaf.formed(vm, arguments.within(target.params), method_this),
+            None => leaf,
+        };
         MemoRead::Forward {
             base: forward.base,
-            field: entry(forward.field),
-            method_field: entry(forward.method),
+            field: base.map_or(field, |base| vm.formed_entry(field, base)),
+            method_field: receiver.map_or(method_field, |receiver| vm.formed_entry(method_field, receiver)),
             params: target.params,
             method,
             method_this: inner.this_binding,
-            read: match MemoLeaf::of(vm, code, read) {
-                Some(read) => read,
-                None => return,
-            },
+            read,
         }
     } else {
         // SAFETY: as for `LeafRead::of`.
@@ -17403,7 +17430,7 @@ fn lane_memoize_read<H: Host>(
             return;
         };
         match MemoLeaf::of(vm, code, read) {
-            Some(read) => MemoRead::Leaf(read),
+            Some(read) => MemoRead::Leaf(read.formed(vm, arguments, this)),
             None => return,
         }
     };
@@ -17468,8 +17495,8 @@ unsafe fn lane_memo_read<H: Host, const SHAPE: u8>(
             if SHAPE & MEMO_FORWARD != 0 =>
         {
             let base = lane_read_base(crate::bytecode::FieldBase(*base), arguments, this)?;
-            let receiver = vm.record_field_entry_hit(*field, base)?;
-            if vm.record_field_entry_hit(*method_field, receiver)? != *method {
+            let receiver = vm.record_field_formed_hit(*field, base)?;
+            if vm.record_field_formed_hit(*method_field, receiver)? != *method {
                 return None;
             }
             let method_this = lane_receiver_this(vm, *method_this, receiver)?;

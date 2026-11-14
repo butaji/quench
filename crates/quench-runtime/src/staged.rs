@@ -60,7 +60,7 @@ pub(crate) mod trace;
 pub(crate) use effects::{CallTarget, Effects, Region, RegionSet};
 #[allow(unused_imports)]
 pub(crate) use region::Access;
-pub(crate) use ic::concrete_own_field_hit;
+pub(crate) use ic::{concrete_hinted_own_field_hit, concrete_own_field_hit};
 pub(crate) use object::{Form, Layout, PackedAccess, Slots, concrete_own_read,
     arena_extras_layout, own_layout, read_slot};
 

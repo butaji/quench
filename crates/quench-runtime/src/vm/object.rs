@@ -1531,6 +1531,64 @@ impl<H: Host> Vm<H> {
         unsafe { self.heap.own_field_hit(receiver, cache.receiver, cache.slot) }
     }
 
+    /// `own_field_entry_hit` through a lane record's own-field hint (`form_hint`), whose
+    /// receiver is a whole auxiliary word: one compare proves the shape and storage form.
+    #[inline(always)]
+    pub(super) fn own_field_hint_hit(&self, hint: FieldCache, receiver: &Object) -> Option<Value> {
+        // SAFETY: as for `own_field_entry_hit`; the hint's shape is an own entry's.
+        unsafe { self.heap.own_field_hint_hit(receiver, hint.receiver, hint.slot) }
+    }
+
+    /// `entry`, an own entry `object` just answered, as a lane record's own-field hint: its
+    /// shape with `object`'s storage form (`Object::hint_shape`), which the hinted hits compare
+    /// whole (`own_field_hint_hit`, `hinted_primary_field_store_hit`,
+    /// `hinted_polymorphic_field_hit`). An entry the object does not match stays as recorded.
+    #[inline(always)]
+    pub(super) fn form_hint(&self, entry: FieldCache, object: Value) -> FieldCache {
+        match self.heap.record_object_value(object) {
+            Some(receiver) if entry.holder == NO_FIELD_HOLDER && receiver.exact_shape() == entry.receiver =>
+                FieldCache { receiver: receiver.hint_shape(), ..entry },
+            _ => entry,
+        }
+    }
+
+    /// `entry`, which just answered a read of the direct object `object`, as a call memo's step
+    /// (`record_field_formed_hit`): its receiver shape, and its holder's where it names one,
+    /// as whole auxiliary words (`Object::hint_shape`), so each compare also proves the storage
+    /// form. An entry the objects do not match stays as recorded.
+    pub(super) fn formed_entry(&self, entry: FieldCache, object: Value) -> FieldCache {
+        let Some(receiver) = object.direct_object_index().map(|id| self.heap.object_record_by_id(id)) else {
+            return entry;
+        };
+        if receiver.exact_shape() != entry.receiver {
+            return entry;
+        }
+        if entry.holder == NO_FIELD_HOLDER {
+            return FieldCache { receiver: receiver.hint_shape(), ..entry };
+        }
+        match receiver.proto_link().object_record_id().map(|id| self.heap.object_record_by_id(id)) {
+            Some(holder) if cached_holder_matches(holder, entry.holder) =>
+                FieldCache { receiver: receiver.hint_shape(), holder: holder.hint_shape(), ..entry },
+            _ => entry,
+        }
+    }
+
+    /// `record_field_entry_hit` of a call memo's step (`formed_entry`), whose shapes are whole
+    /// auxiliary words: `None` where either differs, storage form included.
+    #[inline(always)]
+    pub(super) fn record_field_formed_hit(&self, cache: FieldCache, object: Value) -> Option<Value> {
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        if cache.holder == NO_FIELD_HOLDER {
+            return self.own_field_hint_hit(cache, receiver);
+        }
+        let holder = self.heap.object_record_by_id(receiver.proto_link().object_record_id()?);
+        if cache.receiver != receiver.hint_shape() || holder.hint_shape() != cache.holder {
+            return None;
+        }
+        // SAFETY: as for `record_field_entry_hit`: the holder's exact shape holds the slot.
+        Some(unsafe { self.heap.holder_property_get_flat(holder, usize::from(cache.slot)) })
+    }
+
     /// The own-field hint (`FieldCache::own`) of `object`'s own data property `atom`: its exact
     /// shape and slot, which `record_field_entry_hit` reads while the shape, dictionary or not,
     /// holds. `None` for any other object, dictionary storage, a shape edited in place
@@ -1797,10 +1855,10 @@ impl<H: Host> Vm<H> {
         // SAFETY: a direct object Value names a live record; the hint's slot is one its shape covers.
         let stored = unsafe {
             if TRACKED {
-                hint.receiver == self.heap.object_record_by_id(record_id).exact_shape()
+                hint.receiver == self.heap.object_record_by_id(record_id).hint_shape()
                     && self.heap.record_property_set_flat::<false>(record_id, usize::from(hint.slot), value, crate::heap::PropertyStoreLayout::Preserve)
             } else {
-                crate::staged::store::concrete_own_store(&mut self.heap, record_id, hint.receiver, hint.slot, value)
+                crate::staged::store::concrete_own_store(&mut self.heap, record_id, hint.receiver, true, hint.slot, value)
             }
         };
         if !stored {
@@ -2247,7 +2305,8 @@ impl<H: Host> Vm<H> {
     /// another receiver.
     pub(super) fn hold_holder_hint(&mut self, owned: Option<u16>, atom: Atom, object: Value, value: Value, limit: u16) -> Option<u16> {
         let receiver = self.hinted_receiver(object)?;
-        let (shape, prototype) = (receiver.exact_shape(), receiver.proto());
+        // The whole word, storage form included, which `holder_read` compares.
+        let (shape, prototype) = (receiver.hint_shape(), receiver.proto());
         self.hold_prototype_hint(owned, atom, shape, prototype, value, limit)
     }
 
@@ -2331,13 +2390,14 @@ impl<H: Host> Vm<H> {
         let receiver = self.heap.record_object_value(object)?;
         // Exact shapes: a match proves a layout outside dictionary storage, so each hit
         // reads its slot flat (`Object::exact_shape`).
-        let shape = receiver.exact_shape();
-        if hint.receiver == shape {
+        // The hint is a whole auxiliary word (`form_hint`); the entries record exact shapes.
+        if hint.receiver == receiver.hint_shape() {
             // SAFETY: as for `cached_field_hit`; the hint is one of the site's own entries.
             let value = unsafe { self.heap.property_get_flat(receiver, usize::from(hint.slot)) };
             self.profile.field_cache_hit(2, 0);
             return Some((value, PolymorphicHit::Hint));
         }
+        let shape = receiver.exact_shape();
         let index = self.field_cache_index(site);
         // SAFETY: compiler-produced sites index exactly-sized cache vectors;
         // every non-sentinel index was installed together with its table.

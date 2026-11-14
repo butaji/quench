@@ -1031,10 +1031,7 @@ fn emit_js_cached_field_slot(
         let link = crate::staged::object::proto_link(&mut stage, object);
         let id = crate::staged::object::proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
         let prototype = crate::staged::object::object_record_at(&mut stage, records, id);
-        let proto_shape = builder.ins().load(
-            types::I32, MemFlagsData::trusted(), prototype,
-            i32::try_from(OBJECT.auxiliary_offset).expect("auxiliary offset fits i32"),
-        );
+        let proto_shape = object_slots::exact_shape(builder, MemFlagsData::trusted(), prototype);
         let same_holder = builder.ins().icmp(IntCC::Equal, proto_shape, holder);
         emit_js_guard(builder, same_holder, fallback);
         let inline = object_slots::inline_storage(builder, prototype);
@@ -1315,7 +1312,7 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     let offset = builder.ins().imul_imm_u(record_id, layout.record_size as i64);
     let address = builder.ins().iadd(records, offset);
     // The exact shape carries the dictionary bit, so a dictionary never matches.
-    let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.auxiliary_offset as i32);
+    let shape = object_slots::exact_shape(builder, MemFlagsData::trusted(), address);
     let inline = object_slots::inline_storage(builder, address);
     builder.def_var(receiver.object, address);
     builder.def_var(receiver.shape, shape);

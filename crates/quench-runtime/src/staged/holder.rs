@@ -5,16 +5,16 @@
 
 use super::object::proto_link;
 use super::Stage;
-use super::region::Region;
-use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
 /// The value the hint `(shape, link, watch, value)` records for the object part at `record`:
-/// `None` (leaving at `miss`) where the record's exact shape or prototype link differ, or
-/// the watch no longer holds.
+/// `None` (leaving at `miss`) where the record's whole auxiliary word (`Object::hint_shape`,
+/// its exact shape with its storage form) or prototype link differ, or the watch no longer
+/// holds.
 #[inline(always)]
 pub(crate) fn holder_read<S: Stage>(stage: &mut S, record: S::Word, shape: u32, link: u32, watch: u64, value: u64,
     miss: S::Miss) -> Option<S::Word> {
-    let exact = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
+    let exact = stage.load_u32(super::region::Region::ShapeWord.mutable(), record,
+        crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset as i32);
     let shape = stage.site(u64::from(shape));
     let same = stage.eq_imm(exact, shape);
     stage.guard(same, miss)?;
@@ -77,7 +77,7 @@ mod tests {
         let object = heap.alloc(Cell::Object(Object::new(prototype)));
         heap.property_add(object, Value::integer(1), 1);
         let record = heap.object(object).unwrap();
-        let (shape, link) = (record.exact_shape(), ProtoLink::of(prototype).bits());
+        let (shape, link) = (record.hint_shape(), ProtoLink::of(prototype).bits());
         let watch = Rc::new(PublishedCode::new(()));
         let hint = Value::integer(42);
         let read = |shape, link, watch: &Rc<PublishedCode<()>>| unsafe { concrete_holder_read(record, shape, link, Rc::as_ptr(watch), hint) };

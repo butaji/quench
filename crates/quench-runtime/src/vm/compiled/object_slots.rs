@@ -97,11 +97,10 @@ impl ObjectRecord {
     }
 
     pub(super) fn header(self, builder: &mut FunctionBuilder<'_>, known: Option<typed_ir::VerifiedFact>) -> ObjectHeader {
-        let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
         let address = self.address(builder);
         let shape = match known.and_then(|fact| fact.ty.object_shape()) {
             Some(shape) => builder.ins().iconst(types::I32, i64::from(shape)),
-            None => builder.ins().load(types::I32, regions::shape_word(), address, layout.auxiliary_offset as i32),
+            None => exact_shape(builder, regions::shape_word(), address),
         };
         ObjectHeader { record: self, shape, inline: inline_storage(builder, address), address }
     }
@@ -142,7 +141,7 @@ impl ObjectHeader {
         let function_object = builder.ins().iadd_imm_u(function_record, function.object_offset as i64);
         builder.ins().jump(join, &[ir::BlockArg::Value(function_object)]);
         builder.switch_to_block(join);
-        let shape = builder.ins().load(types::I32, regions::shape_word(), record, layout.auxiliary_offset as i32);
+        let shape = exact_shape(builder, regions::shape_word(), record);
         Self { record: ObjectRecord::Address(record), shape, inline: inline_storage(builder, record), address: record }
     }
 }
@@ -150,6 +149,14 @@ impl ObjectHeader {
 /// The stage whose residual `staged` operations that address no arena emit into `builder`.
 pub(super) fn emit<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> Emit<'a, 'b> {
     Emit { builder, property_values: None }
+}
+
+/// The exact shape (`Object::exact_shape`) of the record at `address`, as an `I32`: its
+/// auxiliary word without the storage-form bits, which no recorded shape carries.
+pub(super) fn exact_shape(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, address: ir::Value) -> ir::Value {
+    let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+    let word = builder.ins().load(types::I32, flags, address, layout.auxiliary_offset as i32);
+    builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form)))
 }
 
 /// `staged::object::inline_storage`'s residual for the record at `record`.

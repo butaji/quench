@@ -880,8 +880,8 @@ const EMPTY_CACHE: FieldCache = FieldCache {
     slot: 0,
 };
 /// A `GetField` record's read of `atom` that a receiver's immediate prototype answered
-/// (`Vm::holder_hint_hit`, `Vm::string_hint_hit`): a receiver of exact shape `receiver`, which
-/// lacks the name (`NO_FIELD_RECEIVER` for a string primitive, whose own names a site that
+/// (`Vm::holder_hint_hit`, `Vm::string_hint_hit`): a receiver whose whole auxiliary word, exact
+/// shape and storage form, is `receiver` (`Object::hint_shape`), which lacks the name (`NO_FIELD_RECEIVER` for a string primitive, whose own names a site that
 /// reads `String.prototype` does not read), whose prototype is `holder`, read `value` under
 /// `watch`, which a change to the holder's slot values or any prototype's layout retires.
 /// `prototype` is `holder` as an object's header links it, which an object receiver's test compares.

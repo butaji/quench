@@ -16,7 +16,18 @@ pub(crate) const DICTIONARY_STORAGE: u32 = 1 << 31;
 /// the object's exact auxiliary (`exact_auxiliary`) from every shape a cache records, so a
 /// shape match proves the object ordinary with no further test.
 pub(crate) const EXOTIC_ACCESS: u32 = 1 << 30;
-const SHAPE_MASK: u32 = !(DICTIONARY_STORAGE | EXOTIC_ACCESS);
+/// An object record's storage form, kept in its auxiliary word beside the shape, so the word a
+/// field hit loads to prove the shape also tells where the values live, with no load of the
+/// header or test of the payload (`staged::object::storage_form`): its values are inline
+/// (`Object::meta`'s inline flag) ...
+pub(crate) const INLINE_FORM: u32 = 1 << 29;
+/// ... or behind extras (`Object::payload`'s extras tag). Every writer of either keeps these
+/// current (`Object::storage_form`); no shape a cache records carries them (`exact_auxiliary`
+/// and `auxiliary` mask them off).
+pub(crate) const EXTRAS_FORM: u32 = 1 << 28;
+pub(crate) const STORAGE_FORM: u32 = INLINE_FORM | EXTRAS_FORM;
+const SHAPE_MASK: u32 = !(DICTIONARY_STORAGE | EXOTIC_ACCESS | STORAGE_FORM);
+const _: () = assert!(STORAGE_FORM & (DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0 && INLINE_FORM & EXTRAS_FORM == 0);
 const EMPTY_START: u32 = START_MASK;
 const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
 const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
@@ -150,11 +161,11 @@ impl ValueVec {
         self.auxiliary & SHAPE_MASK
     }
 
-    /// The auxiliary word with its dictionary and exotic bits: equal to `auxiliary` exactly
-    /// when the vector is neither in dictionary storage nor an exotic object's, so one
-    /// comparison with a recorded shape proves all three.
+    /// The auxiliary word with its dictionary and exotic bits, without its storage form: equal
+    /// to `auxiliary` exactly when the vector is neither in dictionary storage nor an exotic
+    /// object's, so one comparison with a recorded shape proves all three.
     #[inline(always)] pub(crate) const fn exact_auxiliary(self) -> u32 {
-        self.auxiliary
+        self.auxiliary & !STORAGE_FORM
     }
 
     #[inline] pub(crate) fn has_inline_property_storage(self) -> bool {

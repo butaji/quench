@@ -1490,6 +1490,9 @@ const _: () = assert!(
     PROTO_INDEX_BITS & (OBJECT_ARRAY | OBJECT_INLINE_STORAGE | VALUE_VEC_INTEGRITY_BITS) == 0
         && (OBJECT_ARRAY | OBJECT_INLINE_STORAGE) & VALUE_VEC_INTEGRITY_BITS == 0
 );
+// The auxiliary word's inline form bit is the header's inline flag at the same position, so
+// `Object::storage_form` moves it without a shift.
+const _: () = assert!(OBJECT_INLINE_STORAGE == crate::value_vec::INLINE_FORM);
 /// Inline property values held by `ObjectExtras`; undefined until an object moves its own in.
 #[derive(Clone, Copy, Debug)]
 struct DisplacedInline([Value; INLINE_PROPERTY_COUNT]);
@@ -1527,6 +1530,8 @@ pub(super) const NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET: usize =
 pub(super) const NATIVE_OBJECT_EXTRAS_INLINE_VALUES_OFFSET: usize =
     std::mem::offset_of!(ObjectExtras, inline_properties) + std::mem::offset_of!(DisplacedInline, 0);
 pub(super) const NATIVE_OBJECT_INLINE_STORAGE_MASK: u32 = OBJECT_INLINE_STORAGE;
+pub(super) const NATIVE_OBJECT_INLINE_FORM: u32 = crate::value_vec::INLINE_FORM;
+pub(super) const NATIVE_OBJECT_EXTRAS_FORM: u32 = crate::value_vec::EXTRAS_FORM;
 pub(super) const NATIVE_OBJECT_ARRAY_MASK: u32 = OBJECT_ARRAY;
 pub(super) const NATIVE_OBJECT_EXTRAS_TAG: u64 = EXTRAS_TAG;
 pub(super) const NATIVE_OBJECT_EXTRAS_TAG_MASK: u64 = EXTRAS_TAG_MASK;
@@ -2114,7 +2119,29 @@ impl Object {
             self.meta = flags | (start & VALUE_VEC_INTEGRITY_BITS);
             self.set_storage_position(position);
         }
+        self.auxiliary = (self.auxiliary & !crate::value_vec::STORAGE_FORM) | self.storage_form();
     }
+
+    /// The whole auxiliary word, its storage form (`storage_form`) included: what a lane
+    /// record's own-field hint holds (`Vm::form_hint`), so that one compare proves the exact
+    /// shape, no dictionary, no exotic access and where the values live. Every cache records
+    /// `exact_shape`, which leaves the form out.
+    #[inline(always)]
+    pub(crate) fn hint_shape(&self) -> u32 {
+        debug_assert_eq!(self.auxiliary & crate::value_vec::STORAGE_FORM, self.storage_form());
+        self.auxiliary
+    }
+
+    /// The storage-form bits of the auxiliary word (`value_vec::STORAGE_FORM`) the header's
+    /// inline flag and the payload's extras tag decide. The word keeps them current: every
+    /// change of either (`initialize_properties`, `extras_mut`) rewrites them, and the
+    /// constructors that write the header words directly derive them the same way.
+    #[inline(always)]
+    fn storage_form(&self) -> u32 {
+        let extras = if self.extras_pointer().is_some() { crate::value_vec::EXTRAS_FORM } else { 0 };
+        (self.meta & OBJECT_INLINE_STORAGE) | extras
+    }
+
 
     /// The storage start of an object whose values live in the arena and that has no
     /// extras: its payload word is then that start alone (`set_properties`), and its upper
@@ -2277,6 +2304,8 @@ impl Object {
                     elements,
                     ..ObjectExtras::default()
                 }));
+                // Extras are never dropped while the object lives, so the bit only sets.
+                self.auxiliary |= crate::value_vec::EXTRAS_FORM;
                 self.extras_pointer().expect("extras just installed")
             }
         };
@@ -2317,6 +2346,8 @@ impl Object {
         // word alone, written out: the object has no exotic access to keep.
         let (start, auxiliary) = ValueVec::inline_property_storage(shape).into_parts();
         let meta = Self::encode_proto(proto) | (start & VALUE_VEC_INTEGRITY_BITS) | OBJECT_INLINE_STORAGE;
+        // Inline and no extras: its storage form (`storage_form`).
+        let auxiliary = auxiliary | crate::value_vec::INLINE_FORM;
         Some(Self { meta, auxiliary, payload })
     }
 
@@ -2518,11 +2549,14 @@ impl Object {
     /// payload word once (`ExactStorage`).
     #[inline(always)]
     pub(crate) fn exact_storage(&self) -> ExactStorage {
-        let inline = self.meta & OBJECT_INLINE_STORAGE != 0;
-        match (self.extras_pointer(), inline) {
-            (Some(_), _) => ExactStorage::Extended { inline },
-            (None, true) => ExactStorage::PackedInline,
-            (None, false) => ExactStorage::Plain(self.payload_position() as usize),
+        // The auxiliary word's form bits, which the shape compare already loaded, stand for
+        // the header's inline flag and the payload's extras tag (`storage_form`).
+        let form = self.auxiliary & crate::value_vec::STORAGE_FORM;
+        debug_assert_eq!(form, self.storage_form());
+        match form {
+            0 => ExactStorage::Plain(self.payload_position() as usize),
+            crate::value_vec::INLINE_FORM => ExactStorage::PackedInline,
+            _ => ExactStorage::Extended { inline: form & crate::value_vec::INLINE_FORM != 0 },
         }
     }
 
@@ -2693,7 +2727,7 @@ impl Object {
     /// storage (`ValueVec::EXOTIC_ACCESS`).
     #[inline(always)]
     pub(crate) fn ordinary_shape(&self) -> u32 {
-        self.auxiliary & !crate::value_vec::DICTIONARY_STORAGE
+        self.auxiliary & !(crate::value_vec::DICTIONARY_STORAGE | crate::value_vec::STORAGE_FORM)
     }
     #[inline(always)]
     pub(crate) fn set_shape(&mut self, shape: u32, arena: &mut ValueArena) {

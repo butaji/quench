@@ -156,6 +156,10 @@ pub(crate) struct NativeObjectLayout {
     pub(crate) array_mask: u32,
     pub(crate) storage_start_mask: u32,
     pub(crate) dictionary_mask: u32,
+    /// The auxiliary word's storage-form bits (`value_vec::INLINE_FORM`, `EXTRAS_FORM`), which
+    /// a recorded shape leaves out: a guard of a recorded shape masks them off the word.
+    pub(crate) inline_form: u32,
+    pub(crate) extras_form: u32,
     pub(crate) inline_property_count: usize,
     pub(crate) extras_tag: u64,
     pub(crate) extras_tag_mask: u64,
@@ -184,6 +188,8 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     array_mask: cell::NATIVE_OBJECT_ARRAY_MASK,
     storage_start_mask: crate::value_vec::START_MASK,
     dictionary_mask: crate::value_vec::DICTIONARY_STORAGE,
+    inline_form: cell::NATIVE_OBJECT_INLINE_FORM,
+    extras_form: cell::NATIVE_OBJECT_EXTRAS_FORM,
     inline_property_count: INLINE_PROPERTY_COUNT,
     extras_tag: cell::NATIVE_OBJECT_EXTRAS_TAG,
     extras_tag_mask: cell::NATIVE_OBJECT_EXTRAS_TAG_MASK,
@@ -3639,6 +3645,14 @@ impl Heap {
             return Some(value);
         }
         unsafe { crate::staged::concrete_own_field_hit(object, self.properties.values_base(), shape, slot) }
+    }
+    /// `own_field_hit` through a lane record's own-field hint (`Object::hint_shape`): `None`
+    /// on another exact shape or storage form.
+    /// # Safety
+    /// As for `own_field_hit`.
+    #[inline(always)]
+    pub(crate) unsafe fn own_field_hint_hit(&self, object: &Object, hint: u32, slot: u16) -> Option<Value> {
+        unsafe { crate::staged::concrete_hinted_own_field_hit(object, self.properties.values_base(), hint, slot) }
     }
     /// `property_get_flat` of a prototype holder, whose values usually live behind extras
     /// (`Object::extras_storage_start`), read without first testing the forms a holder
