@@ -50,7 +50,7 @@ pub(super) struct HeldRead {
 /// The Stable facts a lowering takes, and where it takes them.
 pub(super) struct StableHold<'a> {
     /// Exact shapes of the prototypes whose values the code holds (`StableUses::holders`).
-    pub(super) holders: &'a mut BTreeSet<u32>,
+    pub(super) holders: &'a mut crate::bitset::BitSet,
     /// The loops that hold every Stable fact (`StableUses::stable_loops`).
     pub(super) loops: &'a [(usize, usize)],
     /// The facts of the VM the code depends on; none for code shared across VMs.

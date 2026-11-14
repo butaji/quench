@@ -5,6 +5,9 @@ use super::*;
 use super::super::compiled::{LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
 use crate::bytecode::ValueStep;
 
+/// A value step's operands: left and right (a unary step's is its operand twice).
+const OPERANDS: usize = 2;
+
 /// What the value step made: the value it writes to its result register, and whether it takes its jump.
 struct Made {
     value: Option<Value>,
@@ -13,9 +16,9 @@ struct Made {
 
 /// The operand values of the value step `instruction`, read from the registers `r` and the program's constants; `None`
 /// for an operand of another kind (a local, which only a frame holds).
-fn operand_values<H: Host>(cx: *mut LaneContext<H>, r: Registers, step: ValueStep, instruction: WideInstruction) -> Option<[Value; 2]> {
+fn operand_values<H: Host>(cx: *mut LaneContext<H>, r: Registers, step: ValueStep, instruction: WideInstruction) -> Option<[Value; OPERANDS]> {
     match step {
-        ValueStep::Unary => Some([r.get(instruction.register_b()); 2]),
+        ValueStep::Unary => Some([r.get(instruction.register_b()); OPERANDS]),
         ValueStep::Binary | ValueStep::CompareJump => {
             Some([lane_operand_value(cx, r, instruction.operand_b().0)?, lane_operand_value(cx, r, instruction.operand_c().0)?])
         }

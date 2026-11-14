@@ -18,6 +18,8 @@ type Context<'a> = NativeContext<'a, NodeHost>;
 pub(crate) type NodeId = usize;
 
 /// The tree's root (`<root>`), created with the harness.
+/// `test(name, options, body)`: the position of the body.
+const BODY_ARGUMENT: usize = 2;
 const ROOT: NodeId = 0;
 /// The internal slot naming the node a TestContext or SuiteContext belongs to.
 const NODE_SLOT: &str = "\0quench:test:node";
@@ -391,7 +393,7 @@ fn create(c: &mut Context<'_>, parent: NodeId, kind: Kind, forced: Override, arg
         column: frame.column_number,
     });
     let argument = |index: usize| args.get(index).copied();
-    let (name, options, body) = match (argument(0), argument(1), argument(2)) {
+    let (name, options, body) = match (argument(0), argument(1), argument(BODY_ARGUMENT)) {
         (Some(name), _, _) if c.is_callable_rooted(name)? => (None, None, Some(name)),
         (Some(options), body, _) if c.is_object_rooted(options)? => (None, Some(options), body),
         (name, Some(body), _) if c.is_callable_rooted(body)? => (name, None, Some(body)),

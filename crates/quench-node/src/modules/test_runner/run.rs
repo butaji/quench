@@ -6,6 +6,8 @@ use super::{context, function, get, put, with_state, Context, HookKind, Kind, No
 use quench_runtime::{RootId, RootedError};
 use std::time::Instant;
 
+/// A body declaring `(context, done)` is callback style (Node: `fn.length >= 2`).
+const DONE_CALLBACK_ARITY: f64 = 2.0;
 const CANCELLED_BY_PARENT: &str = "test did not finish before its parent and was cancelled";
 const CANCELLED_AT_EXIT: &str = "Promise resolution is still pending but the event loop has already resolved";
 const CALLBACK_AND_PROMISE: &str = "passed a callback but also returned a Promise";
@@ -305,7 +307,7 @@ fn drive(c: &mut Context<'_>, id: NodeId) -> Result<(), RootedError> {
                 start_timeout(c, id)?;
                 let receiver = context(c, id)?;
                 let length = get(c, body, "length")?;
-                let callback = c.rooted_value(length).and_then(|value| value.as_number()).is_some_and(|length| length >= 2.0);
+                let callback = c.rooted_value(length).and_then(|value| value.as_number()).is_some_and(|length| length >= DONE_CALLBACK_ARITY);
                 if !callback {
                     let completion = invoke(c, id, body, receiver, &[receiver])?;
                     return proceed(c, id, completion);

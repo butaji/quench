@@ -554,7 +554,7 @@ struct Lowering<'a, 'f> {
     /// status, made at the first and filled at the region's end (`call_outs`).
     call_out_stop: Option<ir::Block>,
     /// The throws native code catches itself, by unit PC (`catches::catch_edges`).
-    catches: BTreeMap<usize, catches::Catch>,
+    catches: catches::Catches,
 }
 
 enum Liveness<'a> {
@@ -1564,7 +1564,7 @@ pub(super) fn lower(
     }
     // A handler's block is entered by the throws it catches, edges no jump names.
     let catches = catches::catch_edges(program, function, unit, coverage, completion);
-    for catch in catches.values() { leaders.insert(catch.target); }
+    for catch in catches.iter().flatten() { leaders.insert(catch.target); }
     let blocks: Vec<_> = (0..unit.instructions.len()).map(|pc| leaders.contains(pc).then(|| builder.create_block())).collect();
     let (leave, stop) = (builder.create_block(), builder.create_block());
     builder.append_block_param(leave, types::I32);
@@ -1765,7 +1765,7 @@ pub(super) fn lower(
     (lowering.forward, lowering.sealable) = edges::leader_edges(&instructions, &leaders, entry_pc);
     // No forward edge of the bytecode's enters a handler's block: its proofs are none, and it
     // seals once the region ends.
-    for catch in lowering.catches.values() {
+    for catch in lowering.catches.iter().flatten() {
         lowering.forward[catch.target] = None;
         lowering.sealable.remove(catch.target);
     }

@@ -10,6 +10,8 @@ use crate::staged::machine::Unary;
 const NATIVE_JS_REGION_EXIT: u32 = NATIVE_JS_INVALID_PC + 1;
 // The shared entry ABI's memory-base word is unused by JavaScript bodies.
 const REGION_START_PC_PARAMETER: usize = 1;
+/// The entry ABI's result-word parameter (context, pc, operands, unused, result).
+const RESULT_PARAMETER: usize = 4;
 
 /// The blocks every dispatch loop shares: a PC arrives at `resume`, `select` jumps by the index
 /// the PC names, and `invalid` leaves with a PC that names no block.
@@ -99,7 +101,7 @@ fn build_body<F: FnMut(&mut FunctionBuilder<'_>, &InstructionSite, ir::Value, ir
     builder: &mut FunctionBuilder<'_>, plan: &BodyPlan<'_>, operation: &mut F,
 ) {
     let parameters = enter_native_entry(builder);
-    let (context, result) = (parameters[0], parameters[4]);
+    let (context, result) = (parameters[0], parameters[RESULT_PARAMETER]);
     let start_pc = if plan.is_region { parameters[REGION_START_PC_PARAMETER] } else { native_js_start_pc(builder, context) };
     let dispatch = DispatchLoop::new(builder);
     let stopped = builder.new_block();
@@ -171,7 +173,7 @@ fn build_region_dispatch<F: FnMut(&mut FunctionBuilder<'_>, usize, ir::Value, ir
     builder: &mut FunctionBuilder<'_>, plan: &RegionPlan, call: &mut F,
 ) {
     let parameters = enter_native_entry(builder);
-    let (context, result) = (parameters[0], parameters[4]);
+    let (context, result) = (parameters[0], parameters[RESULT_PARAMETER]);
     let start = native_js_start_pc(builder, context);
     let dispatch = DispatchLoop::new(builder);
     let stopped = builder.new_block();

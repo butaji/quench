@@ -152,7 +152,7 @@ fn end_or_final_newline<S: MatchStage>(stage: &mut S, position: S::Pos) -> S::Fl
         let last = stage.equal(one, length);
         let single = stage.guarded(last, |stage| terminator_at(stage, position));
         stage.or_else(single, |stage| {
-            let two = stage.offset(position, 2);
+            let two = stage.offset(position, CRLF_LENGTH);
             let before_last = stage.equal(two, length);
             stage.guarded(before_last, |stage| {
                 let (first, second) = (stage.unit_at(position), stage.unit_at(one));
@@ -164,6 +164,8 @@ fn end_or_final_newline<S: MatchStage>(stage: &mut S, position: S::Pos) -> S::Fl
     })
 }
 
+/// The length of a CR LF line terminator.
+const CRLF_LENGTH: isize = 2;
 const CARRIAGE_RETURN: (u32, u32) = (0x000D, 0x000D);
 const LINE_FEED: (u32, u32) = (0x000A, 0x000A);
 

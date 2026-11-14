@@ -120,19 +120,23 @@ impl Admission<'_> {
     }
 }
 
+/// The catch of each unit PC, none where its exception is not caught natively; no entries at all
+/// where nothing is.
+pub(super) type Catches = Vec<Option<Catch>>;
+
 /// The throws and calls of `unit`'s function whose exceptions native code catches itself, by
 /// unit PC. One whose handler is not admitted (`Admission::bind`), lies outside the lowered
 /// range, or is not before its handler is not caught natively: a throw leaves at itself, which
 /// the interpreter raises exactly, and a call is made by the lane (`Lowering::raises_from`).
-pub(super) fn catch_edges(program: &ResidualProgram, function: &Function, unit: &Unit, coverage: Coverage, completion: Completion) -> BTreeMap<usize, Catch> {
-    let mut catches = BTreeMap::new();
+pub(super) fn catch_edges(program: &ResidualProgram, function: &Function, unit: &Unit, coverage: Coverage, completion: Completion) -> Catches {
     if !completion.status_and_pc() || !unit.frames.is_empty() || function.handlers.is_empty() {
-        return catches;
+        return Vec::new();
     }
+    let mut catches = vec![None; unit.instructions.len()];
     let admission = Admission { program, function, unit, region: matches!(coverage, Coverage::Loop { .. }), scoped: !function.own_names_resolve_statically(program) };
     for (pc, instruction) in unit.instructions.iter().enumerate() {
         if raising_instruction(*instruction, unit.registers) && let Some(catch) = catch_at(&admission, unit, coverage, pc) {
-            catches.insert(pc, catch);
+            catches[pc] = Some(catch);
         }
     }
     catches
@@ -164,11 +168,16 @@ impl Lowering<'_, '_> {
         admitted.then_some(record)
     }
 
+    /// The native catch of the exception raised at unit PC `pc`.
+    fn catch_of(&self, pc: usize) -> Option<Catch> {
+        self.catches.get(pc).copied().flatten()
+    }
+
     /// Whether native code routes an exception raised at `pc`: a handler of its own catches it
     /// or the function raises it out (`LANE_BODY_THREW`). A call native code cannot route a
     /// callee's exception from is not made natively.
     pub(super) fn raises_from(&self, pc: usize) -> bool {
-        self.catches.contains_key(&pc) || self.leaves_at(pc).is_some()
+        self.catch_of(pc).is_some() || self.leaves_at(pc).is_some()
     }
 
     /// The `throw` at `pc`: a jump to its handler's block with the thrown value boxed once and
@@ -178,7 +187,7 @@ impl Lowering<'_, '_> {
     /// it leaves at the throw for the interpreter to raise.
     pub(super) fn throw(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         if !raising_instruction(instruction, self.unit.registers) { return None; }
-        if let Some(Catch { target, bind }) = self.catches.get(&pc).copied() {
+        if let Some(Catch { target, bind }) = self.catch_of(pc) {
             let value = self.tagged(state, instruction.register_a());
             self.bind_caught(state, pc, bind, value);
             self.continue_at(state, target);
@@ -200,7 +209,7 @@ impl Lowering<'_, '_> {
     /// the function raises it on (`LANE_BODY_THREW`).
     pub(super) fn raised_call(&mut self, state: &State, pc: usize, call_pc: u32, raised: ir::Block) {
         self.builder.switch_to_block(raised);
-        let Some(Catch { target, bind }) = self.catches.get(&pc).copied() else {
+        let Some(Catch { target, bind }) = self.catch_of(pc) else {
             self.stop_with(LANE_BODY_THREW, call_pc, None);
             return;
         };

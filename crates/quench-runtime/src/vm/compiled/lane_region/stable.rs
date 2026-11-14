@@ -31,7 +31,7 @@ pub(crate) struct StableFacts {
 #[derive(Default)]
 pub(super) struct StableUses {
     /// Holder shapes whose prototypes' values the code took as constants.
-    pub(super) holders: BTreeSet<u32>,
+    pub(super) holders: crate::bitset::BitSet,
     /// Atoms it stores directly because no method cache named them.
     atoms: BTreeSet<Atom>,
     /// Global cells whose values the code took as constants.
@@ -57,7 +57,7 @@ pub(super) struct StableUses {
 
 impl StableUses {
     pub(super) fn take(&mut self) -> StableFacts {
-        StableFacts { holders: std::mem::take(&mut self.holders).into_iter().collect(),
+        StableFacts { holders: std::mem::take(&mut self.holders).iter().map(|holder| holder as u32).collect(),
             atoms: std::mem::take(&mut self.atoms).into_iter().collect(),
             globals: std::mem::take(&mut self.globals).into_iter().collect(), roots: std::mem::take(&mut self.roots),
             layouts: std::mem::take(&mut self.layouts).into_iter().collect(),
@@ -75,7 +75,7 @@ impl StableHold<'_> {
         let online = self.online?;
         let held = state.proofs.stable || self.loops.iter().any(|(header, end)| (*header..=*end).contains(&self.at));
         if !held { read_invalidation_word(builder, helpers, online, state, exit); }
-        self.holders.insert(holder);
+        self.holders.insert_growing(holder as usize);
         Some(())
     }
 }
