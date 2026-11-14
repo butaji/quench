@@ -47,6 +47,7 @@ impl<'b, B: Builds<'b>> MachineAccess for B {
     type Function = ir::FuncRef;
     type Signature = ir::SigRef;
     type Slot = ir::StackSlot;
+    type Symbol = ir::GlobalValue;
 
     fn raw_load(&mut self, lane: Lane, flags: MemFlagsData, base: ir::Value, offset: i32) -> ir::Value {
         self.function_builder().ins().load(machine_type(lane), flags, base, offset)
@@ -102,6 +103,10 @@ impl<'b, B: Builds<'b>> MachineAccess for B {
         let builder = self.function_builder();
         let call = builder.ins().call(target, arguments);
         builder.inst_results(call).to_vec()
+    }
+
+    fn symbol_address(&mut self, symbol: ir::GlobalValue) -> ir::Value {
+        self.function_builder().ins().symbol_value(types::I64, symbol)
     }
 
     fn slot_address(&mut self, slot: ir::StackSlot, offset: i32) -> ir::Value {

@@ -31,18 +31,31 @@ pub(crate) fn narrow_form<S: Stage>(stage: &mut S, value: S::Word, fact: Type) -
     stage.choose(is_int, |stage| integer_form(stage, value), |stage| reference_form(stage, value, upper))
 }
 
-/// `narrow_form` of an integer: its code where its biased low word is below the span.
+/// Whether the int32 `value`'s biased low word is below the narrow integer span: it has a narrow form.
 #[inline(always)]
-fn integer_form<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
+pub(crate) fn integer_fits<S: Stage>(stage: &mut S, value: S::Word) -> S::Cond {
     let lower = stage.and_imm(value, LOWER_WORD);
     let span = 1_u64 << NarrowLayout::INTEGER_BITS;
     let biased = stage.add_imm(lower, span >> 1);
     let biased = stage.and_imm(biased, LOWER_WORD);
     let over = stage.ugt_imm(biased, span - 1);
-    let fits = stage.not(over);
+    stage.not(over)
+}
+
+/// The narrow word of the int32 `value` that `integer_fits` holds for: its code under the integer flag.
+#[inline(always)]
+pub(crate) fn integer_code<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
+    let lower = stage.and_imm(value, LOWER_WORD);
     let shifted = stage.mul_imm(lower, 1_u64 << NarrowLayout::CODE_SHIFT);
     let shifted = stage.and_imm(shifted, LOWER_WORD);
-    let integer = stage.or_imm(shifted, u64::from(NarrowLayout::INTEGER_FLAG));
+    stage.or_imm(shifted, u64::from(NarrowLayout::INTEGER_FLAG))
+}
+
+/// `narrow_form` of an integer: its code where `integer_fits`.
+#[inline(always)]
+fn integer_form<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
+    let fits = integer_fits(stage, value);
+    let integer = integer_code(stage, value);
     let refused = stage.constant(NOT_NARROW);
     stage.select(fits, integer, refused)
 }

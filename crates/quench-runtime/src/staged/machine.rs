@@ -138,6 +138,10 @@ pub(crate) trait MachineAccess: MachineScalar {
     fn call_function(&mut self, target: Self::Function, arguments: &[Self::Word]) -> Vec<Self::Word>;
     /// What a call's signature is: its parameter and result machine types.
     type Signature: Copy;
+    /// A linked symbol whose address a caller reads.
+    type Symbol: Copy;
+    /// The address of `symbol`.
+    fn symbol_address(&mut self, symbol: Self::Symbol) -> Self::Word;
     /// A stack slot a caller spills words into.
     type Slot: Copy;
     /// The address `offset` bytes into `slot`.

@@ -530,30 +530,23 @@ impl FieldArena {
     #[cfg(feature = "aot")]
     fn bind(self, builder: &mut FunctionBuilder<'_>, slot: ir::Value) -> Self {
         let Self::Unbound { values, length } = self else { return self; };
-        let fits = builder.ins().icmp(IntCC::UnsignedLessThan, slot, length);
-        let difference = builder.ins().isub(length, slot);
-        let zero = builder.ins().iconst(types::I64, 0);
-        let remaining = builder.ins().select(fits, difference, zero);
-        let offset = builder.ins().imul_imm_u(slot, crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64);
-        let base = builder.ins().iadd(values, offset);
+        let (base, remaining) = crate::staged::object::bind_arena_slot(&mut object_slots::emit(builder), values, length, slot);
         Self::BoundSlot { base, remaining }
     }
 
     fn address(self, builder: &mut FunctionBuilder<'_>, storage: ir::Value,
         slot: FieldSlot, fallback: ir::Block) -> ir::Value
     {
-        let (base, position, length) = match self {
+        let (values, length, position) = match self {
             Self::Unbound { values, length } => {
                 let slot = slot.read(builder);
-                (values, builder.ins().iadd(storage, slot), length)
+                (values, length, object_slots::emit(builder).add(storage, slot))
             }
             #[cfg(feature = "aot")]
-            Self::BoundSlot { base, remaining } => (base, storage, remaining),
+            Self::BoundSlot { base, remaining } => (base, remaining, storage),
         };
-        let in_arena = builder.ins().icmp(IntCC::UnsignedLessThan, position, length);
-        emit_js_guard(builder, in_arena, fallback);
-        let offset = builder.ins().imul_imm_u(position, crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64);
-        builder.ins().iadd(base, offset)
+        crate::staged::object::arena_slot_address(&mut object_slots::emit(builder), values, length, position, fallback)
+            .expect("the emit stage continues past its guards")
     }
 }
 
@@ -571,13 +564,7 @@ impl FieldSlot {
         match self {
             #[cfg(feature = "aot")]
             Self::Bound(value) => value,
-            Self::Row(row) => {
-                use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
-                let stored = builder.ins().load(types::I32, MemFlagsData::trusted(), row, CACHE.slot_offset as i32);
-                let slot = builder.ins().bxor_imm_u(stored, i64::from(CACHE.slot_complement));
-                let slot = builder.ins().band_imm_u(slot, i64::from(u16::MAX));
-                builder.ins().uextend(types::I64, slot)
-            }
+            Self::Row(row) => crate::staged::entry::entry_slot(&mut object_slots::emit(builder), row),
         }
     }
 }
@@ -585,24 +572,26 @@ impl FieldSlot {
 fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
     site: u16, miss: ir::Block, table: Option<object_slots::CheckedObjectTable>) -> FieldSlotBinding
 {
+    use crate::staged::machine::{Binary, Lane, Relation};
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
     let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_entries));
     let records = table.map(|table| table.base()).unwrap_or_else(||
         emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base)));
     let (values, length) = emit_js_property_values(builder, payload);
+    let mut stage = object_slots::emit(builder);
     // ObjectHeader owns record-base admission, including reused region proofs.
     for base in [entries, values] {
-        let present = builder.ins().icmp_imm_u(IntCC::NotEqual, base, 0);
-        emit_js_guard(builder, present, miss);
+        let present = stage.raw_compare_imm(Relation::NotEqual, base, 0);
+        stage.guard(present, miss);
     }
-    let entry = builder.ins().iadd_imm_s(entries,
-        i64::try_from(usize::from(site) * CACHE.entry_size).expect("field entry offset"));
-    let word = |builder: &mut FunctionBuilder<'_>, offset: usize, complement: u32| {
-        let stored = builder.ins().load(types::I32, MemFlagsData::trusted(), entry, offset as i32);
-        builder.ins().bxor_imm_u(stored, i64::from(complement))
+    let entry = stage.add_imm(entries, (usize::from(site) * CACHE.entry_size) as u64);
+    let mut word = |offset: usize, complement: u32| {
+        let stored = stage.raw_load(Lane::I32, MemFlagsData::trusted(), entry, offset as i32);
+        let complement = stage.raw_const(Lane::I32, i64::from(complement));
+        stage.raw_binary(Binary::Xor, stored, complement)
     };
-    let receiver = word(builder, CACHE.receiver_offset, CACHE.receiver_complement);
-    let holder = word(builder, CACHE.holder_offset, CACHE.holder_complement);
+    let receiver = word(CACHE.receiver_offset, CACHE.receiver_complement);
+    let holder = word(CACHE.holder_offset, CACHE.holder_complement);
     FieldSlotBinding { receiver, holder, slot: FieldSlot::Row(entry), records,
         arena: FieldArena::Unbound { values, length }, writes: None, admitted: None }
 }
@@ -622,15 +611,17 @@ fn emit_js_cached_field_slot(
     packed_slot: Option<ir::Block>,
 ) -> (ir::Value, ir::Value) {
     use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+    use crate::staged::machine::{Binary, Lane, Relation};
+    use crate::staged::object::{extras_pointer, has_extras, inline_storage, object_record_at, plain_payload, proto_link, proto_object_record_id};
+    use crate::staged::region::Region;
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 
     let base = receiver;
-    let record_id = builder.ins().ireduce(types::I32, base);
-    let record_id = builder.ins().uextend(types::I64, record_id);
+    let record_id = crate::staged::value::direct_object_id(&mut object_slots::emit(builder), base);
 
     let binding = binding.unwrap_or_else(|| emit_js_field_binding(builder, payload, site, fallback, None));
     let FieldSlotBinding { holder, receiver: receiver_shape, slot, records, arena, .. } = binding;
-    let own = builder.ins().icmp_imm_u(IntCC::Equal, holder, i64::from(CACHE.own_holder));
+    let own = object_slots::emit(builder).raw_compare_imm(Relation::Equal, holder, i64::from(CACHE.own_holder));
     if !allow_holder {
         emit_js_guard(builder, own, fallback);
     }
@@ -638,7 +629,7 @@ fn emit_js_cached_field_slot(
     let object_slots::ObjectHeader { record, shape, inline, address: object } = header
         .unwrap_or_else(|| object_slots::ObjectHeader::prove(builder, base, records, None, fallback));
     // The exact shape includes dictionary storage, which cannot match an own-data row.
-    let same_shape = builder.ins().icmp(IntCC::Equal, shape, receiver_shape);
+    let same_shape = object_slots::emit(builder).raw_compare(Relation::Equal, shape, receiver_shape);
     emit_js_guard(builder, same_shape, fallback);
     // A holder read uses only the receiver's shape and prototype link. Its own
     // property representation is unrelated to the holder's slot address.
@@ -646,38 +637,36 @@ fn emit_js_cached_field_slot(
         if let Some(packed_slot) = packed_slot {
             let packed = builder.create_block();
             let arena = builder.create_block();
-            builder.ins().brif(inline, packed, &[], arena, &[]);
+            object_slots::emit(builder).branch_if(inline, (packed, &[]), (arena, &[]));
             builder.switch_to_block(packed);
-            let storage = builder.ins().load(types::I64, MemFlagsData::trusted(), object,
-                OBJECT.payload_offset as i32);
-            let plain = crate::staged::object::plain_payload(&mut object_slots::emit(builder), storage);
-            emit_js_guard(builder, plain, fallback);
-            let slot = slot.read(builder);
-            let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, slot,
-                OBJECT.inline_property_count as i64);
-            emit_js_guard(builder, fits, fallback);
-            let offset = builder.ins().imul_imm_u(slot, std::mem::size_of::<u32>() as i64);
-            let address = record.offset_address(builder, offset);
-            let address = builder.ins().iadd_imm_s(address, OBJECT.payload_offset as i64);
-            builder.ins().jump(packed_slot, &[ir::BlockArg::Value(address)]);
+            let mut stage = object_slots::emit(builder);
+            let storage = stage.raw_load(Lane::I64, MemFlagsData::trusted(), object, OBJECT.payload_offset as i32);
+            let plain = plain_payload(&mut stage, storage);
+            stage.guard(plain, fallback);
+            let slot = slot.read(stage.builder);
+            let fits = stage.raw_compare_imm(Relation::UnsignedLess, slot, OBJECT.inline_property_count as i64);
+            stage.guard(fits, fallback);
+            let stride = stage.raw_const(Lane::I64, size_of::<u32>() as i64);
+            let offset = stage.raw_binary(Binary::Mul, slot, stride);
+            let address = record.offset_address(stage.builder, offset);
+            let payload_offset = stage.raw_const(Lane::I64, OBJECT.payload_offset as i64);
+            let address = stage.raw_binary(Binary::Add, address, payload_offset);
+            stage.goto(packed_slot, &[address]);
             builder.seal_block(packed);
             builder.seal_block(arena);
             builder.switch_to_block(arena);
         }
+        let mut stage = object_slots::emit(builder);
         if packed_slot.is_none() {
-            let arena_storage = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-            emit_js_guard(builder, arena_storage, fallback);
+            let arena_storage = stage.raw_compare_imm(Relation::Equal, inline, 0);
+            stage.guard(arena_storage, fallback);
         }
         // Plain storage has the arena start alone in the payload's lower half.
-        let storage = builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            object,
-            i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
-        );
-        let upper = builder.ins().ushr_imm_u(storage, i64::from(u32::BITS));
-        let plain = builder.ins().icmp_imm_u(IntCC::Equal, upper, 0);
-        emit_js_guard(builder, plain, fallback);
+        let storage = stage.raw_load(Lane::I64, MemFlagsData::trusted(), object, OBJECT.payload_offset as i32);
+        let half = stage.raw_const(Lane::I64, i64::from(u32::BITS));
+        let upper = stage.raw_binary(Binary::ShiftRightUnsigned, storage, half);
+        let plain = stage.raw_compare_imm(Relation::Equal, upper, 0);
+        stage.guard(plain, fallback);
         storage
     };
     let address = if allow_holder {
@@ -685,54 +674,46 @@ fn emit_js_cached_field_slot(
         let holder_block = builder.create_block();
         let join = builder.create_block();
         builder.append_block_param(join, types::I64);
-        builder.ins().brif(own, own_block, &[], holder_block, &[]);
+        object_slots::emit(builder).branch_if(own, (own_block, &[]), (holder_block, &[]));
         builder.switch_to_block(own_block);
         let storage = own_storage(builder);
         let address = arena.address(builder, storage, slot, fallback);
-        builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
+        object_slots::emit(builder).goto(join, &[address]);
 
         builder.switch_to_block(holder_block);
         let mut stage = object_slots::emit(builder);
-        let link = crate::staged::object::proto_link(&mut stage, object);
-        let id = crate::staged::object::proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
-        let prototype = crate::staged::object::object_record_at(&mut stage, records, id);
-        let proto_shape = builder.ins().load(
-            types::I32, MemFlagsData::trusted(), prototype,
-            i32::try_from(OBJECT.auxiliary_offset).expect("auxiliary offset fits i32"),
-        );
-        let same_holder = builder.ins().icmp(IntCC::Equal, proto_shape, holder);
-        emit_js_guard(builder, same_holder, fallback);
-        let inline = object_slots::inline_storage(builder, prototype);
-        let proto_storage = builder.ins().load(
-            types::I64, MemFlagsData::trusted(), prototype,
-            i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
-        );
-        let extras = crate::staged::object::has_extras(&mut object_slots::emit(builder), proto_storage);
-        emit_js_guard(builder, extras, fallback);
-        let extras_pointer = crate::staged::object::extras_pointer(&mut object_slots::emit(builder), proto_storage);
-        let present = builder.ins().icmp_imm_u(IntCC::NotEqual, extras_pointer, 0);
-        emit_js_guard(builder, present, fallback);
-        let displaced = builder.create_block();
-        let in_arena = builder.create_block();
-        builder.ins().brif(inline, displaced, &[], in_arena, &[]);
-        builder.switch_to_block(displaced);
-        let index = slot.read(builder);
-        let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, index, OBJECT.inline_property_count as i64);
-        emit_js_guard(builder, fits, fallback);
+        let link = proto_link(&mut stage, object);
+        let id = proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
+        let prototype = object_record_at(&mut stage, records, id);
+        let proto_shape = stage.raw_load(Lane::I32, MemFlagsData::trusted(), prototype, OBJECT.auxiliary_offset as i32);
+        let same_holder = stage.raw_compare(Relation::Equal, proto_shape, holder);
+        stage.guard(same_holder, fallback);
+        let inline = inline_storage(&mut stage, prototype);
+        let proto_storage = stage.raw_load(Lane::I64, MemFlagsData::trusted(), prototype, OBJECT.payload_offset as i32);
+        let extras = has_extras(&mut stage, proto_storage);
+        stage.guard(extras, fallback);
+        let extras_pointer = extras_pointer(&mut stage, proto_storage);
+        let present = stage.raw_compare_imm(Relation::NotEqual, extras_pointer, 0);
+        stage.guard(present, fallback);
+        let displaced = stage.builder.create_block();
+        let in_arena = stage.builder.create_block();
+        stage.branch_if(inline, (displaced, &[]), (in_arena, &[]));
+        stage.builder.switch_to_block(displaced);
+        let index = slot.read(stage.builder);
+        let fits = stage.raw_compare_imm(Relation::UnsignedLess, index, OBJECT.inline_property_count as i64);
+        stage.guard(fits, fallback);
         // Exact holder shape admits the data slot. Extras hold full Values;
         // keep this projection inside the same no-GC access as the live prototype.
-        let offset = builder.ins().imul_imm_u(index, OBJECT.property_value_size as i64);
-        let address = builder.ins().iadd(extras_pointer, offset);
-        let address = builder.ins().iadd_imm_s(address, OBJECT.extras_inline_values_offset as i64);
-        builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
-        builder.switch_to_block(in_arena);
-        let start = builder.ins().load(
-            types::I32, MemFlagsData::trusted(), extras_pointer,
-            i32::try_from(OBJECT.extras_arena_start_offset).expect("extras offset fits i32"),
-        );
-        let start = builder.ins().uextend(types::I64, start);
-        let address = arena.address(builder, start, slot, fallback);
-        builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
+        let stride = stage.raw_const(Lane::I64, OBJECT.property_value_size as i64);
+        let offset = stage.raw_binary(Binary::Mul, index, stride);
+        let address = stage.raw_binary(Binary::Add, extras_pointer, offset);
+        let values_at = stage.raw_const(Lane::I64, OBJECT.extras_inline_values_offset as i64);
+        let address = stage.raw_binary(Binary::Add, address, values_at);
+        stage.goto(join, &[address]);
+        stage.builder.switch_to_block(in_arena);
+        let start = stage.load_u32(Region::Payload.mutable(), extras_pointer, OBJECT.extras_arena_start_offset as i32);
+        let address = arena.address(stage.builder, start, slot, fallback);
+        stage.goto(join, &[address]);
         builder.seal_block(own_block);
         builder.seal_block(holder_block);
         builder.seal_block(join);
@@ -829,18 +810,15 @@ struct LaneReceiver {
 /// Encode a proved tagged int32; widening remains the shared store's responsibility.
 fn emit_narrow_integer_write(builder: &mut FunctionBuilder<'_>, value: ir::Value,
     fallback: ir::Block, range: Option<typed_ir::IntRange>) -> ir::Value {
-    use crate::value::NarrowLayout as NARROW;
-    let int = builder.ins().ireduce(types::I32, value);
+    use crate::staged::store::{integer_code, integer_fits};
+    let mut stage = object_slots::emit(builder);
     if range.is_some_and(|range| typed_ir::IntRange::packed().contains(range)) {
         #[cfg(test)] PACKED_RANGE_PROOFS.with(|count| count.set(count.get() + 1));
     } else {
-        let half_range = 1_i64 << (NARROW::INTEGER_BITS - 1);
-        let biased = builder.ins().iadd_imm_s(int, half_range);
-        let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, biased, half_range << 1);
-        emit_js_guard(builder, fits, fallback);
+        let fits = integer_fits(&mut stage, value);
+        stage.guard(fits, fallback);
     }
-    let shifted = builder.ins().ishl_imm_u(int, i64::from(NARROW::CODE_SHIFT));
-    builder.ins().bor_imm_u(shifted, i64::from(NARROW::INTEGER_FLAG))
+    integer_code(&mut stage, value)
 }
 
 /// Binding time changes the table address, never the packed-value semantics.
@@ -851,33 +829,41 @@ enum NarrowTable {
     Linked(u32),
 }
 
+/// The linked data symbol `symbol` as a global value of `builder`'s function.
+#[cfg(feature = "aot")]
+fn linked_data_symbol(builder: &mut FunctionBuilder<'_>, symbol: u32) -> ir::GlobalValue {
+    let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
+        super::native_object::NATIVE_DATA_NAMESPACE, symbol));
+    builder.create_global_value(ir::GlobalValueData::Symbol {
+        name: ir::ExternalName::user(name), offset: 0.into(), colocated: false, tls: false,
+    })
+}
+
 /// `staged::object::decode_narrow_through`'s residual for the 32-bit narrow word `narrow`,
 /// passed to `join`.
 fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
     table: NarrowTable, join: ir::Block)
 {
+    use crate::staged::machine::{Lane, Unary};
     let table = match table {
-        NarrowTable::Process => builder.ins().iconst(types::I64, crate::value::NarrowLayout::upper_words() as i64),
+        NarrowTable::Process => object_slots::emit(builder).constant(crate::value::NarrowLayout::upper_words() as u64),
         #[cfg(feature = "aot")]
         NarrowTable::Linked(symbol) => {
-            let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
-                super::native_object::NATIVE_DATA_NAMESPACE, symbol));
-            let global = builder.create_global_value(ir::GlobalValueData::Symbol {
-                name: ir::ExternalName::user(name), offset: 0.into(), colocated: false, tls: false,
-            });
-            builder.ins().symbol_value(types::I64, global)
+            let global = linked_data_symbol(builder, symbol);
+            object_slots::emit(builder).symbol_address(global)
         }
     };
-    let narrow = builder.ins().uextend(types::I64, narrow);
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
+    let mut stage = object_slots::emit(builder);
+    let narrow = stage.raw_unary(Unary::ZeroExtend(Lane::I64), narrow);
     let encoded = crate::staged::object::decode_narrow_through(&mut stage, narrow, table);
-    builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
+    stage.goto(join, &[encoded]);
 }
 
 /// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape
 /// where the receiver is no direct object or the heap bases are absent, which no folded
 /// field matches.
 fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, this: ir::Value) -> LaneReceiver {
+    use crate::staged::machine::{Binary, Lane, Relation, Unary};
     let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
     let receiver = LaneReceiver {
         object: builder.declare_var(types::I64),
@@ -888,34 +874,33 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
     let (properties, _) = emit_js_property_values(builder, payload);
     builder.def_var(receiver.properties, properties);
-    let none = builder.ins().iconst(types::I32, i64::from(super::NO_FIELD_RECEIVER));
-    let null = builder.ins().iconst(types::I64, 0);
-    builder.def_var(receiver.shape, none);
-    let outside = builder.ins().iconst(types::I8, 0);
-    builder.def_var(receiver.inline, outside);
-    builder.def_var(receiver.object, null);
-    let found = builder.create_block();
-    let done = builder.create_block();
-    let object = crate::staged::value::is_direct_object(&mut object_slots::emit(builder), this);
-    let record_id = builder.ins().ireduce(types::I32, this);
-    let in_range = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, record_id, layout.record_capacity as i64);
-    let has_records = builder.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
-    let has_properties = builder.ins().icmp_imm_u(IntCC::NotEqual, properties, 0);
-    let ok = builder.ins().band(object, in_range);
-    let ok = builder.ins().band(ok, has_records);
-    let ok = builder.ins().band(ok, has_properties);
-    builder.ins().brif(ok, found, &[], done, &[]);
-    builder.switch_to_block(found);
-    let record_id = builder.ins().uextend(types::I64, record_id);
-    let offset = builder.ins().imul_imm_u(record_id, layout.record_size as i64);
-    let address = builder.ins().iadd(records, offset);
+    let (found, done) = (builder.create_block(), builder.create_block());
+    let mut stage = object_slots::emit(builder);
+    let none = stage.raw_const(Lane::I32, i64::from(super::NO_FIELD_RECEIVER));
+    let null = stage.raw_const(Lane::I64, 0);
+    let outside = stage.raw_const(Lane::I8, 0);
+    stage.builder.def_var(receiver.shape, none);
+    stage.builder.def_var(receiver.inline, outside);
+    stage.builder.def_var(receiver.object, null);
+    let object = crate::staged::value::is_direct_object(&mut stage, this);
+    let record_id = stage.raw_unary(Unary::Narrow(Lane::I32), this);
+    let in_range = stage.raw_compare_imm(Relation::UnsignedLess, record_id, layout.record_capacity as i64);
+    let has_records = stage.raw_compare_imm(Relation::NotEqual, records, 0);
+    let has_properties = stage.raw_compare_imm(Relation::NotEqual, properties, 0);
+    let ok = stage.raw_binary(Binary::And, object, in_range);
+    let ok = stage.raw_binary(Binary::And, ok, has_records);
+    let ok = stage.raw_binary(Binary::And, ok, has_properties);
+    stage.branch_if(ok, (found, &[]), (done, &[]));
+    stage.builder.switch_to_block(found);
+    let record_id = stage.raw_unary(Unary::ZeroExtend(Lane::I64), record_id);
+    let address = crate::staged::object::object_record_at(&mut stage, records, record_id);
     // The exact shape carries the dictionary bit, so a dictionary never matches.
-    let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.auxiliary_offset as i32);
-    let inline = object_slots::inline_storage(builder, address);
-    builder.def_var(receiver.object, address);
-    builder.def_var(receiver.shape, shape);
-    builder.def_var(receiver.inline, inline);
-    builder.ins().jump(done, &[]);
+    let shape = stage.raw_load(Lane::I32, MemFlagsData::trusted(), address, layout.auxiliary_offset as i32);
+    let inline = crate::staged::object::inline_storage(&mut stage, address);
+    stage.builder.def_var(receiver.object, address);
+    stage.builder.def_var(receiver.shape, shape);
+    stage.builder.def_var(receiver.inline, inline);
+    stage.goto(done, &[]);
     builder.switch_to_block(done);
     receiver
 }
@@ -1119,17 +1104,16 @@ impl LaneHelpers {
     /// symbols after its narrow table) the loader's namespace check proves to hold the id.
     pub(super) fn atom_word(self, builder: &mut FunctionBuilder<'_>, atom: u32) -> ir::Value {
         match self {
-            Self::Process(_) => builder.ins().iconst(types::I64, i64::from(atom)),
+            Self::Process(_) => object_slots::emit(builder).constant(u64::from(atom)),
             Self::Numeric | Self::Ahead => lane_region::atom_symbol(builder, atom),
             #[cfg(feature = "aot")]
             Self::Linked(_, narrow) | Self::Bound(_, narrow) => {
-                let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
-                    super::native_object::NATIVE_DATA_NAMESPACE, narrow + NATIVE_ATOM_TABLE_OFFSET));
-                let table = builder.create_global_value(ir::GlobalValueData::Symbol {
-                    name: ir::ExternalName::user(name), offset: 0.into(), colocated: false, tls: false });
-                let base = builder.ins().symbol_value(types::I64, table);
-                let word = builder.ins().load(types::I32, invariant(), base, (atom as usize * std::mem::size_of::<u32>()) as i32);
-                builder.ins().uextend(types::I64, word)
+                use crate::staged::machine::{Lane, Unary};
+                let table = linked_data_symbol(builder, narrow + NATIVE_ATOM_TABLE_OFFSET);
+                let mut stage = object_slots::emit(builder);
+                let base = stage.symbol_address(table);
+                let word = stage.raw_load(Lane::I32, invariant(), base, (atom as usize * std::mem::size_of::<u32>()) as i32);
+                stage.raw_unary(Unary::ZeroExtend(Lane::I64), word)
             }
         }
     }
