@@ -11,10 +11,22 @@ impl LoopRegion {
         constants: &[Value],
         live: Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
     ) -> Option<Self> {
-        let backedge = u32::try_from(instructions.len().checked_sub(1)?).ok()?;
+        Self::span(instructions, constants, live, 0)
+    }
+
+    /// The role-free span of `instructions` (the code from `header` to a backedge, or a whole
+    /// function at 0): what a tier that proves its operands row by row stitches, with no
+    /// Cranelift role analysis.
+    pub(in crate::vm) fn span(
+        instructions: Vec<WideInstruction>,
+        constants: &[Value],
+        live: Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+        header: u32,
+    ) -> Option<Self> {
+        let backedge = header.checked_add(u32::try_from(instructions.len().checked_sub(1)?).ok()?)?;
         let live = live?.clone();
         (instructions.len() <= MAX_REGION_INSTRUCTIONS).then(|| Self {
-            header: 0,
+            header,
             backedge,
             numbers: Vec::<Register>::new(),
             tagged: Vec::new(),

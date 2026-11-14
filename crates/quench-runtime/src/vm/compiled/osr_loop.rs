@@ -1526,7 +1526,7 @@ pub(super) fn region(
         });
     }
     let header_live = live.and_then(|live| live.get(start));
-    admit_region(
+    let admitted = admit_region(
         decoded[start..=end].to_vec(),
         usize::from(function.registers),
         constants,
@@ -1536,7 +1536,13 @@ pub(super) fn region(
         header,
         &std::collections::BTreeSet::new(),
         method_calls,
-    )
+    );
+    // The BaseJIT tier proves each operand where its row reads it and needs no roles: its plan
+    // lowers every instruction, so a loop the role analysis rejects is still its span.
+    match admitted {
+        Err(_) if crate::jit_mode::base_only() => LoopRegion::span(decoded[start..=end].to_vec(), constants, live, header).ok_or(RegionAnalysisFailure { reason: RegionRejection::RegionTooLarge, pc: backedge }),
+        admitted => admitted,
+    }
 }
 
 /// The region of `instructions`, at PCs from `header`, of a function with `registers`
