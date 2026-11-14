@@ -222,6 +222,16 @@ impl BufferBytes {
     pub(crate) fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// The bytes of a store this heap owns, read in place with no lock: the typed array
+    /// element hit path (`Vm::typed_element_quick`). `None` for a shared, atomic or Wasm
+    /// store, which the general read serves.
+    #[inline(always)]
+    pub(crate) fn owned(&self) -> Option<&[u8]> {
+        match &*self.0 {
+            BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes) => Some(bytes),
+            _ => None,
+        }
+    }
     pub(crate) fn to_vec(&self) -> Vec<u8> {
         self.read().to_vec()
     }

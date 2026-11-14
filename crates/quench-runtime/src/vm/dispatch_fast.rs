@@ -4979,6 +4979,19 @@ script_handler! {
     /// array's element at an integer index, or `undefined` past its end, is the whole read;
     /// any other read takes the generic order (`lane_get_index_registers`).
     fn lane_get_index_typed<>(cx, r, ip, i, view) {
+        let Some(value) = (unsafe { vm(cx) }).typed_element_quick(r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_get_index_typed_full::<H>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `lane_get_index_typed` past its quick read (`Vm::typed_element_quick`): any typed
+    /// array read that allocates nothing (`Vm::plain_typed_element`), or the generic order.
+    #[inline(never)]
+    fn lane_get_index_typed_full<>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { vm(cx) }).plain_typed_element(r.get(i.b), r.get(i.c)) else {
             sibling!(lane_get_index_registers::<H>, r, ip, view)
         };
@@ -5212,6 +5225,18 @@ script_handler! {
     /// index of one is the whole store, as the generic order reaches it once every array and
     /// symbol path declines a typed array; any other store takes the generic order.
     fn lane_set_index_typed<>(cx, r, ip, i, view) {
+        if !(unsafe { vm(cx) }).typed_set_quick(r.get(i.b), r.get(i.c), r.get(i.a)) {
+            sibling!(lane_set_index_typed_full::<H>, r, ip, view)
+        }
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `lane_set_index_typed` past its quick store (`Vm::typed_set_quick`): any Number stored
+    /// at an index of a typed array (`Vm::typed_array_set_number`), or the generic order.
+    #[inline(never)]
+    fn lane_set_index_typed_full<>(cx, r, ip, i, view) {
         let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
         let vm = unsafe { vm(cx) };
         let stored = vm

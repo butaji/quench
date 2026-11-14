@@ -288,6 +288,107 @@ impl<H: Host> Vm<H> {
         self.embedding_with_buffer_bytes_mut(output, |to| f(from, to))
     }
 
+    /// `plain_typed_element`'s common case, inline: a canonical integer key inside a fixed
+    /// length typed array of Number elements over an owned buffer. `None` leaves the read to
+    /// `plain_typed_element`, which answers every other case (`undefined` past the end, a
+    /// tracking or detached view, Float16, a double key).
+    #[inline(always)]
+    pub(super) fn typed_element_quick(&self, object: Value, key: Value) -> Option<Value> {
+        let Some(Cell::TypedArray { kind, object: view, buffer, length }) = self.heap.get(object) else {
+            return None;
+        };
+        let length = length.get()?;
+        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(*buffer) else {
+            return None;
+        };
+        let store = bytes.owned()?;
+        let width = kind.width();
+        // The view lies inside the buffer (`ViewLength::within`) and the key is an int32 inside
+        // the view: one unsigned compare of the key's offset (`Value::int_key_offset`) against
+        // a bound below 2^31 tests tag, sign and bound.
+        let index = key.int_key_offset();
+        if index >= length.min(i32::MAX as usize) || view.offset + length * width > store.len() {
+            return None;
+        }
+        let start = view.offset + index * width;
+        macro_rules! element {
+            ($type:ty) => {
+                <$type>::from_ne_bytes(store.get(start..start + size_of::<$type>())?.try_into().ok()?)
+            };
+        }
+        Some(match kind {
+            TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => Value::integer(i32::from(element!(u8))),
+            TypedArrayKind::Int8 => Value::integer(i32::from(element!(i8))),
+            TypedArrayKind::Uint16 => Value::integer(i32::from(element!(u16))),
+            TypedArrayKind::Int16 => Value::integer(i32::from(element!(i16))),
+            TypedArrayKind::Int32 => Value::integer(element!(i32)),
+            TypedArrayKind::Uint32 => {
+                let element = element!(u32);
+                match i32::try_from(element) {
+                    Ok(integer) => Value::integer(integer),
+                    Err(_) => Value::number(f64::from(element)),
+                }
+            }
+            TypedArrayKind::Float32 => Value::number(f64::from(element!(f32))),
+            TypedArrayKind::Float64 => Value::number(element!(f64)),
+            _ => return None,
+        })
+    }
+
+    /// `typed_array_set_number`'s common case, inline: a Number stored at a canonical integer
+    /// key inside a fixed length typed array whose buffer the view owns alone
+    /// (`BufferBytes::lane_mut`), of an integer into an integer kind or of any Number into a
+    /// Float32 or Float64 kind. False leaves the store to `typed_array_set_number`, which
+    /// stores nothing before it decides.
+    #[inline(always)]
+    pub(super) fn typed_set_quick(&mut self, object: Value, key: Value, value: Value) -> bool {
+        let Some(Cell::TypedArray { kind, object: view, buffer, length }) = self.heap.get(object) else {
+            return false;
+        };
+        let (kind, offset, buffer) = (*kind, view.offset, *buffer);
+        let Some(length) = length.get() else {
+            return false;
+        };
+        let Some(Cell::ArrayBuffer { bytes, detached: false, immutable: false, .. }) = self.heap.buffer_bytes_mut(buffer) else {
+            return false;
+        };
+        let Some(store) = bytes.lane_mut() else {
+            return false;
+        };
+        let width = kind.width();
+        // As `typed_element_quick`: one compare tests the key's tag, sign and bound.
+        let index = key.int_key_offset();
+        if index >= length.min(i32::MAX as usize) || offset + length * width > store.len() {
+            return false;
+        }
+        let start = offset + index * width;
+        macro_rules! store {
+            ($element:expr) => {{
+                let encoded = $element.to_ne_bytes();
+                match store.get_mut(start..start + encoded.len()) {
+                    Some(target) => target.copy_from_slice(&encoded),
+                    None => return false,
+                }
+            }};
+        }
+        match (kind, value.as_int()) {
+            (TypedArrayKind::Uint8 | TypedArrayKind::Int8, Some(integer)) => store!(integer as u8),
+            (TypedArrayKind::Uint8Clamped, Some(integer)) => store!(integer.clamp(0, i32::from(u8::MAX)) as u8),
+            (TypedArrayKind::Uint16 | TypedArrayKind::Int16, Some(integer)) => store!(integer as u16),
+            (TypedArrayKind::Uint32 | TypedArrayKind::Int32, Some(integer)) => store!(integer as u32),
+            (TypedArrayKind::Float32, _) => match value.as_number() {
+                Some(number) => store!(number as f32),
+                None => return false,
+            },
+            (TypedArrayKind::Float64, _) => match value.as_number() {
+                Some(number) => store!(number),
+                None => return false,
+            },
+            _ => return false,
+        }
+        true
+    }
+
     /// `typed_array_get` of a non-BigInt typed array, which allocates nothing: the element,
     /// or `undefined` past the end or of a detached buffer. One read of the view's cell, and
     /// an integer element's value made as an integer, so an index loop over a `Uint8Array`
