@@ -64,8 +64,7 @@ impl<H: Host> Vm<H> {
                     return Err(vm.type_error(p, "cannot access a revoked proxy".into()));
                 }
                 return vm.with_call_roots([target, handler], |vm| {
-                    let trap_name = "deleteProperty";
-                    let trap_atom = vm.intern_atom(trap_name);
+                    let trap_atom = vm.trap_atom(ProxyTrap::DeleteProperty);
                     let trap = vm.get_property(p, handler, trap_atom)?;
                     if trap.is_null() || trap.is_undefined() {
                         return vm.delete_property_key(p, target, key);
@@ -79,7 +78,7 @@ impl<H: Host> Vm<H> {
                     if !vm.truthy(result) {
                         return Ok(Value::FALSE);
                     }
-                    vm.validate_proxy_property_absence(p, target, key, trap_name)?;
+                    vm.validate_proxy_property_absence(p, target, key, ProxyTrap::DeleteProperty.name())?;
                     Ok(Value::TRUE)
                 });
             }
@@ -217,7 +216,7 @@ impl<H: Host> Vm<H> {
             let handler = self.heap.root(handler);
             let mut result_root = None;
             let outcome = (|| {
-                let atom = self.intern_atom("getPrototypeOf");
+                let atom = self.trap_atom(ProxyTrap::GetPrototypeOf);
                 let trap = self.get_property(p, self.heap.root_value(handler).unwrap(), atom)?;
                 if trap.is_null() || trap.is_undefined() {
                     return self.object_get_prototype_of(p, self.heap.root_value(target).unwrap());
@@ -315,7 +314,7 @@ impl<H: Host> Vm<H> {
             let handler = self.heap.root(handler);
             let proto = self.heap.root(proto);
             let outcome = (|| {
-                let atom = self.intern_atom("setPrototypeOf");
+                let atom = self.trap_atom(ProxyTrap::SetPrototypeOf);
                 let trap = self.get_property(p, self.heap.root_value(handler).unwrap(), atom)?;
                 if trap.is_null() || trap.is_undefined() {
                     return self.set_prototype_of(
@@ -491,7 +490,7 @@ impl<H: Host> Vm<H> {
             let target = self.heap.root(target);
             let handler = self.heap.root(handler);
             let outcome = (|| {
-                let atom = self.intern_atom("preventExtensions");
+                let atom = self.trap_atom(ProxyTrap::PreventExtensions);
                 let trap = self.get_property(p, self.heap.root_value(handler).unwrap(), atom)?;
                 if trap.is_null() || trap.is_undefined() {
                     return self.prevent_extensions(p, self.heap.root_value(target).unwrap());
@@ -554,7 +553,7 @@ impl<H: Host> Vm<H> {
             let target = self.heap.root(target);
             let handler = self.heap.root(handler);
             let outcome = (|| {
-                let atom = self.intern_atom("isExtensible");
+                let atom = self.trap_atom(ProxyTrap::IsExtensible);
                 let trap = self.get_property(p, self.heap.root_value(handler).unwrap(), atom)?;
                 if trap.is_null() || trap.is_undefined() {
                     return self.object_is_extensible(p, &[self.heap.root_value(target).unwrap()]);

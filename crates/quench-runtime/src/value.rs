@@ -13,6 +13,8 @@ const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
 #[cfg(all(test, feature = "bench-primitives"))]
 #[path = "value/encoding_bench.rs"]
 mod encoding_bench;
+mod distinct_heap;
+pub(crate) use distinct_heap::DistinctHeapPair;
 mod number_conversion;
 pub use number_conversion::number_to_u32;
 pub(crate) use number_conversion::EXACT_I64_TRUNCATION_LIMIT;
@@ -586,16 +588,6 @@ impl Value {
 
     #[inline] pub fn is_null(self) -> bool {
         self.0 == TAG_NULL
-    }
-
-    /// Whether the value names an object or array record, which holds only an ordinary
-    /// object or an array: never a string, a BigInt or a function.
-    #[inline(always)] pub(crate) fn is_record(self) -> bool {
-        self.is_heap()
-            && matches!(
-                self.0 & HEAP_FAMILY_BITS,
-                DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT
-            )
     }
 
     /// ToNumber where the value alone decides it: a Number, a Boolean, `null` or `undefined`

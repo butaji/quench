@@ -70,4 +70,19 @@ impl<H: Host> Vm<H> {
         }
         Some(self.iterator_item_value(item))
     }
+
+    /// `step_collection_value` where an iterator with nothing left is done, as the native's
+    /// step leaves it: `Some(None)`. `None` for an iterator that was already done.
+    pub(in crate::vm) fn step_collection(&mut self, iterator: Value) -> Option<Option<Value>> {
+        if let Some(value) = self.step_collection_value(iterator) {
+            return Some(Some(value));
+        }
+        match self.heap.iterator_mut(iterator)? {
+            IteratorRecord { done, .. } if !*done => {
+                *done = true;
+                Some(None)
+            }
+            _ => None,
+        }
+    }
 }

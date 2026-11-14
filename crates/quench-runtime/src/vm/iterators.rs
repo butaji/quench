@@ -2,6 +2,7 @@ use super::object_descriptors::PropertyDescriptorRecord;
 use super::promise::PromiseState;
 use super::property_key::PropertyKey;
 use super::*;
+use crate::code_dependencies::IntactFuse;
 use crate::heap::{HelperPhase, IteratorZipMode};
 
 /// Registered iterators of one Map or Set before registration first prunes the finished and
@@ -31,6 +32,15 @@ pub(super) const ITERATOR_RESULT_DONE_SLOT: usize = 1;
 
 #[path = "collection_steps.rs"]
 mod collection_steps;
+
+/// The stores `Vm::intact_iteration_kind` proves iterate by their own contents.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum IterationSource {
+    Array,
+    Set,
+    Map,
+    String,
+}
 
 /// What an iteration step's call is (`Vm::iteration_step`): one the lane makes in place, of
 /// an array iterator or a generator, or any other call.
@@ -86,56 +96,77 @@ impl<H: Host> Vm<H> {
         self.rooted_iterator_values(p, iterator)
     }
 
-    /// The values iterating `source` yields where no step can run guest code: iterating it
-    /// runs the intrinsics (`array_iteration_intact`) over present own data elements
-    /// (`present_dense_elements`), so every Get the protocol makes reads a data property, and
-    /// copying the elements is observably the same and creates no iterator or result object.
-    fn array_iteration_values(&mut self, source: Value) -> Option<Vec<Value>> {
-        if !self.array_iteration_intact(source) {
-            return None;
-        }
-        let length = self.heap.array(source)?.elements().len();
-        self.present_dense_elements(source, 0..length).map(<[Value]>::to_vec)
-    }
-
-    /// The values iterating `source` yields where no step can run guest code, so copying them
-    /// creates no iterator or result object and is observably the same: an intact array
-    /// (`array_iteration_values`) or Set (`set_iteration_values`).
+    /// The values iterating `source` yields where no step can run guest code
+    /// (`intact_iteration_kind`), so copying them creates no iterator or result object and is
+    /// observably the same: an array's present own data elements (`present_dense_elements`),
+    /// a Set's live values, a Map's entries as new `[key, value]` arrays, a string's code points.
     pub(super) fn intact_iteration_values(&mut self, source: Value) -> Option<Vec<Value>> {
-        self.array_iteration_values(source).or_else(|| self.set_iteration_values(source))
+        let kind = self.intact_iteration_kind(source)?;
+        self.iteration_source_values(kind, source)
     }
 
-    /// The live values of a Set whose iteration runs the intrinsics: no own `@@iterator`,
-    /// the realm's `Set.prototype` holding `Set.prototype.values` as its `@@iterator` data
-    /// property, and `%SetIteratorPrototype%` holding the intrinsic `next`, so the protocol
-    /// reads each value in insertion order. Copying them first holds only while no step runs
-    /// guest code that could change the Set.
-    fn set_iteration_values(&mut self, source: Value) -> Option<Vec<Value>> {
-        let Some(Cell::Set { object, entries }) = self.heap.get(source) else {
-            return None;
+    /// `intact_iteration_values` of a `source` already proved to be `kind`.
+    pub(super) fn iteration_source_values(&mut self, kind: IterationSource, source: Value) -> Option<Vec<Value>> {
+        match kind {
+            IterationSource::Array => {
+                let length = self.heap.array(source)?.elements().len();
+                self.present_dense_elements(source, 0..length).map(<[Value]>::to_vec)
+            }
+            IterationSource::Set => match self.heap.get(source)? {
+                Cell::Set { entries, .. } => Some(entries.to_vec()),
+                _ => None,
+            },
+            IterationSource::Map => {
+                let pairs = self.intact_map_pairs(source)?;
+                Some(pairs.into_iter().map(|pair| self.iterator_item_value((pair[0], Some(pair[1])))).collect())
+            }
+            IterationSource::String => {
+                let mut values = Vec::new();
+                let mut position = 0;
+                while let Some(((value, _), after)) = self.collection_iterator_item(IteratorKind::String, source, position) {
+                    values.push(value);
+                    position = after;
+                }
+                Some(values)
+            }
+        }
+    }
+
+    /// The live entries of a Map that iterates intact (`IterationSource::Map`).
+    pub(super) fn intact_map_pairs(&self, source: Value) -> Option<Vec<[Value; 2]>> {
+        match self.heap.get(source)? {
+            Cell::Map { entries, .. } => Some(entries.iter().map(|(key, value)| [key, value]).collect()),
+            _ => None,
+        }
+    }
+
+    /// What iterating `source` is where every step runs an intrinsic over a store no step's
+    /// code can change: its `@@iterator` is the realm's intrinsic and so is the `next` of the
+    /// iterator it makes (the realm's fuses, `IntactFuse`), reading data properties only. An
+    /// ordinary Array (`array_iteration_intact`), Set or Map with no own `@@iterator` under
+    /// its realm's prototype, or a primitive string.
+    pub(super) fn intact_iteration_kind(&mut self, source: Value) -> Option<IterationSource> {
+        if self.array_iteration_intact(source) {
+            return Some(IterationSource::Array);
+        }
+        if self.heap.is_string(source) {
+            return (self.fuse_intact(IntactFuse::StringIterator) && self.fuse_intact(IntactFuse::StringIteratorNext))
+                .then_some(IterationSource::String);
+        }
+        let (kind, iterator, next) = match self.heap.get(source)? {
+            Cell::Set { object, .. } if object.proto() == self.set_proto && !object.has_side_descriptors() => {
+                (IterationSource::Set, IntactFuse::SetIterator, IntactFuse::SetIteratorNext)
+            }
+            Cell::Map { object, .. } if object.proto() == self.map_proto && !object.has_side_descriptors() => {
+                (IterationSource::Map, IntactFuse::MapIterator, IntactFuse::MapIteratorNext)
+            }
+            _ => return None,
         };
-        if object.proto() != self.set_proto || object.has_side_descriptors() {
+        let symbol = self.iterator_symbol_key()?;
+        if self.property_shape_slot(self.object_data(source)?.shape(), symbol).is_some() {
             return None;
         }
-        let method = PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::Iterator)?);
-        if self.property_shape_slot(object.shape(), method).is_some() {
-            return None;
-        }
-        let intrinsic = |vm: &Self, holder: Value, key: PropertyKey, native: Native| {
-            let Some(data) = vm.object_data(holder) else {
-                return false;
-            };
-            let Some(slot) = vm.property_shape_slot(data.shape(), key) else {
-                return false;
-            };
-            vm.slot_attributes(data, slot).is_some_and(|attributes| !attributes.accessor)
-                && vm.heap.property_get(data, slot).is_some_and(|value| vm.is_current_realm_native(value, native))
-        };
-        let next = PropertyKey::string(self.runtime_atoms.next);
-        let values = entries.to_vec();
-        (intrinsic(self, self.set_proto, method, Native::SetValues)
-            && intrinsic(self, self.set_iterator_proto, next, Native::IteratorNext))
-        .then_some(values)
+        (self.fuse_intact(iterator) && self.fuse_intact(next)).then_some(kind)
     }
 
     /// Whether neither `iterator` nor any prototype in its chain has `key`, which the shapes
@@ -165,6 +196,18 @@ impl<H: Host> Vm<H> {
             let step = vm.iterator_next(p, iterator)?;
             vm.iterator_result_value(p, step)
         })
+    }
+
+    /// `iterator_close` of an iterator whose `return` is absent along its chain, which ends
+    /// the close with `undefined` before any call (the shapes decide it, as in
+    /// `iterator_close`); `None` for any other, which may call guest code or throw.
+    pub(in crate::vm) fn iterator_close_in_place(&self, iterator: Value) -> Option<Value> {
+        let mut current = iterator;
+        while let Some(IteratorRecord { source, kind: IteratorKind::Protocol | IteratorKind::AsyncFromSync, .. }) = self.heap.iterator(current) {
+            current = *source;
+        }
+        let key = PropertyKey::string(self.runtime_atoms.iterator_return);
+        self.iterator_lacks_property(current, key).then_some(Value::UNDEFINED)
     }
 
     pub(super) fn iterator_close(

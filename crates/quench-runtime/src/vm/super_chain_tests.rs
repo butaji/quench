@@ -12,7 +12,7 @@ function rep(f, n = 3000) { let r; for (let i = 0; i < n; i++) r = f(i); return 
 "#;
 
 /// What `source`, after the prelude, prints.
-fn printed(source: &str, file: &str) -> Vec<String> {
+pub(in crate::vm) fn printed(source: &str, file: &str) -> Vec<String> {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     let program = Engine::specialize(&format!("{PRELUDE}{source}"), file).unwrap();
@@ -176,4 +176,70 @@ for (let i = 0; i < 1000; i++) s += tail(i).o;
 a(5).then(x => print([s, x.o, x instanceof E, [...g()].map(e => e.o).join()].join(" ")));
 "#;
     assert_eq!(printed(source, "chain-returns.js"), ["5000949000 5 true 0,1,2"]);
+}
+
+/// A class extending `Array` constructs its array in the lane with its own `prototype`, a
+/// length that is no array length raises a RangeError, and another `new.target` names the
+/// prototype.
+#[test]
+fn array_subclass_constructions_keep_prototype_and_new_target() {
+    let source = r#"
+class M extends Array { constructor(n) { super(n); } }
+M.prototype.klass = "m";
+log(rep((i) => new M(3)).length, rep((i) => new M(2)).klass, new M(1, 2, 3).length, new M("a")[0], Array.isArray(new M(2)) && new M(2) instanceof M);
+try { rep((i) => new M(-1)); } catch (e) { log(e.name); }
+function F() {} F.prototype = Object.create(Array.prototype); F.prototype.tag = "F";
+log(Reflect.construct(M, [3], F).tag, Reflect.construct(M, [3], F) instanceof M);
+print(out.join(" | "));
+"#;
+    assert_eq!(printed(source, "array-subclass.js"), ["3 m 1 a true | RangeError | F false"]);
+}
+
+/// A constructor that spreads its rest list into `super(...)` and stores constants builds the
+/// chain's object (arguments passed on whole, the missing ones `undefined`); one that stores
+/// the list's own value, another `new.target` and a reparented parent keep their results.
+#[test]
+fn rest_forwarding_constructors_with_stores_join_the_chain() {
+    let source = r#"
+class P1 { constructor(a, b) { this.a = a; this.b = b; } }
+class RF extends P1 { constructor(...args) { super(...args); this.y = 1; } }
+class RF2 extends RF { constructor(...args) { super(...args); this.z = "k"; this.u = null; } }
+class RF3 extends P1 { constructor(...args) { super(...args); this.y = args.length; } }
+log(rep((i) => new RF(i, 2)), rep((i) => new RF2(i)), rep((i) => new RF3(i, 2, 3)), rep(() => new RF2()));
+function NT() {} NT.prototype = { mark: "nt" };
+log(Reflect.construct(RF2, [1, 2], NT).mark, Reflect.construct(RF2, [1, 2], NT) instanceof RF2);
+class Z9 { constructor(v) { this.z9 = v; } }
+Object.setPrototypeOf(RF, Z9);
+log(rep((i) => new RF2(i)));
+print(out.join(" | "));
+"#;
+    assert_eq!(
+        printed(source, "rest-forwarding.js"),
+        [r#"{"a":2999,"b":2,"y":1}:RF:a,b,y {"a":2999,"y":1,"z":"k","u":null}:RF2:a,b,y,z,u {"a":2999,"b":2,"y":3}:RF3:a,b,y {"y":1,"z":"k","u":null}:RF2:a,b,y,z,u | nt false | {"z9":2999,"y":1,"z":"k","u":null}:RF2:z9,y,z,u"#]
+    );
+}
+
+/// A chain whose classes belong to other programs than the one constructing builds the same
+/// objects, before and after a class in it is reparented.
+#[test]
+fn chain_constructions_cross_programs() {
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let sources = [
+        "globalThis.P = class P { constructor(x) { this.x = x; } }; globalThis.Q = class Q extends P { constructor(x, y) { super(x); this.y = y; } };",
+        "globalThis.R = class R { constructor(a) { this.a = a; this.b = a + 1; } };",
+        "function go() { let s = 0; for (let i = 0; i < 3000; i++) s += new Q(i, 2).y + new R(i).b + new P(i).x; return s + JSON.stringify(new Q(1, 2)) + Object.keys(new Q(1, 2)); } print(go()); Object.setPrototypeOf(Q, R); print(go());",
+        "globalThis.B1 = class B1 { constructor(n) { this.n = n; } };",
+        "globalThis.D1 = class D1 extends B1 { constructor() { super('passed-literal'); } };",
+        "let t = ''; for (let i = 0; i < 3000; i++) t = new D1().n; print(t);",
+    ];
+    let first = Engine::specialize(sources[0], "cross-0.js").unwrap();
+    vm.execute(&first).unwrap();
+    for (index, source) in sources.iter().enumerate().skip(1) {
+        vm.eval_script_source(&first, source, &format!("cross-{index}.js")).unwrap();
+    }
+    assert_eq!(
+        output.take(),
+        ["9006000{\"x\":1,\"y\":2}x,y", "9006000{\"a\":1,\"b\":2,\"y\":2}a,b,y", "passed-literal"].map(String::from)
+    );
 }

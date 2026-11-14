@@ -19,7 +19,7 @@ mod shape_id;
 mod snapshot;
 mod typed_array_kind;
 mod wasm_fields;
-pub(crate) use await_state::{AwaitKind, AwaitRole, AwaitState};
+pub(crate) use await_state::{AwaitKind, AwaitRole, AwaitState, ResumedAwait};
 pub(crate) use wasm_fields::{WasmGcFields, WasmTableElements};
 pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
@@ -840,6 +840,23 @@ impl Native {
             )
     }
 
+    /// The `Reflect` functions that run an internal method of their target (`Reflect.apply`,
+    /// `construct` and the like call functions, and take frames).
+    fn is_reflect_operation(self) -> bool {
+        matches!(
+            self,
+            Self::ReflectGetPrototypeOf
+                | Self::ReflectSetPrototypeOf
+                | Self::ReflectGet
+                | Self::ReflectSet
+                | Self::ReflectHas
+                | Self::ReflectDefineProperty
+                | Self::ReflectGetOwnPropertyDescriptor
+                | Self::ReflectDeleteProperty
+                | Self::ReflectOwnKeys
+        )
+    }
+
     /// `Array.prototype.forEach` and the other array methods that call a callback per index
     /// (`Vm::array_callback_native`), the reducers (`Native::is_array_reducer`) among them.
     pub(crate) fn is_array_callback(self) -> bool {
@@ -873,7 +890,7 @@ impl Native {
     /// general path raises it (JetStream richards-wasm calls an export 2.1 million times an
     /// iteration from a frameless activation).
     pub(crate) fn runs_beside_activations(self) -> bool {
-        matches!(
+        self.is_reflect_operation() || matches!(
             self,
             Self::ObjectLiteralPrototype
                 | Self::ObjectLiteralCreate
@@ -888,8 +905,6 @@ impl Native {
                 | Self::ObjectGetOwnPropertyDescriptor
                 | Self::ObjectPrototypeHasOwnProperty
                 | Self::ObjectPrototypeToString
-                | Self::ReflectGetPrototypeOf
-                | Self::ReflectSetPrototypeOf
                 | Self::ArrayJoin
                 | Self::ArraySplice
                 | Self::StringSplit
@@ -2106,6 +2121,12 @@ impl Object {
         }
         arena.release(self.properties());
         true
+    }
+
+    /// Whether the object owns extras (`ObjectExtras`): the data a plain object lacks.
+    #[inline(always)]
+    pub(crate) fn has_extras(&self) -> bool {
+        self.extras_pointer().is_some()
     }
 
     #[inline] fn extras(&self) -> Option<&ObjectExtras> {

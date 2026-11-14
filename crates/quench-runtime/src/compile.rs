@@ -58,6 +58,7 @@ mod class;
 mod early;
 mod frame_registers;
 mod lazy_bodies;
+mod semantic_stats;
 pub(crate) use lazy_bodies::release_warm_arena;
 #[cfg(feature = "verify-replay")]
 mod free_names;
@@ -76,6 +77,7 @@ pub(crate) mod program_profile;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
 pub(crate) mod replay;
+mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIELD_SITE_WINDOW, SUPERINSTRUCTION_WINDOW, settle_deferred_rewrite};
 mod rewrite;
 mod sequence;
 pub(crate) mod stack;
@@ -1245,7 +1247,7 @@ impl Engine {
         // Parsing is done; the semantic analysis starts here.
         compile_phase_boundary(CompilePhase::Analysis);
         let inherited_directive = add_use_strict(&mut parsed.program, &allocator, inherited_strict);
-        let semantic = checked_semantic(&parsed.program, name)?;
+        let semantic = semantic_stats::checked_semantic(&parsed.program, name)?;
         let mut private_name_ids = private_name_ids(&semantic.semantic);
         let mut private_name_labels = private_name_labels(&semantic.semantic);
         let mut prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program);
@@ -1393,16 +1395,6 @@ impl Engine {
         replay::verify(&program);
         Ok(program)
     }
-}
-
-/// OXC's semantic analysis of `program`, its early errors as diagnostics of `name`.
-fn checked_semantic<'a>(program: &'a Program<'a>, name: &str) -> Result<oxc_semantic::SemanticBuilderReturn<'a>, Vec<Diagnostic>> {
-    let semantic = oxc_semantic::SemanticBuilder::new().with_check_syntax_error(true).build(program);
-    if semantic.diagnostics.is_empty() {
-        return Ok(semantic);
-    }
-    let syntax = |error| Diagnostic { kind: DiagnosticKind::Syntax, source: name.into(), message: format!("SyntaxError: {error}"), span: Span::default() };
-    Err(semantic.diagnostics.into_iter().map(syntax).collect())
 }
 
 /// Gives `program`, when it `inherits` strictness (eval code in strict code), a leading
@@ -1907,9 +1899,9 @@ struct Compiler<'a> {
         ),
     >,
     /// The tables' cursors once each function, its nested ones included, is compiled.
-    function_exits: Vec<replay::TableCursors>,
+    function_exits: replay::FunctionRecords<replay::TableCursors>,
     /// What the program-wide layout analyses read of each compiled function.
-    function_facts: Vec<capture_layout::FunctionFacts>,
+    function_facts: replay::FunctionRecords<capture_layout::FunctionFacts>,
     /// Functions being compiled whose bodies may give nested functions binding sites
     /// (`early::body_may_bind_dynamically`). While any is open, a function finished inside
     /// it may still resolve names dynamically, so none is released early.
@@ -1933,6 +1925,11 @@ struct Compiler<'a> {
     /// The compile-cache records of the functions released during the load, when its
     /// program will be encoded (`ReleasedRecords::Encoded`).
     load_encoding: Option<crate::bytecode::LoadEncoding>,
+    /// The instructions of the functions whose rewrites the load left to their first compile
+    /// (`Compiler::defers_rewrites`), which bound the sites those add.
+    deferred_rewrite_code: usize,
+    /// Some kept record's rewrites wait for its first read.
+    kept_rewrites_pending: bool,
 }
 
 /// Whether a compilation may parse a data script's literal as an empty one
@@ -2163,6 +2160,7 @@ impl<'a> From<&'a Constant> for ConstantKey<'a> {
 
 /// Whether a load lowers every record it keeps instead of leaving it to the record's first
 /// read: under `verify-replay`, and in tests that compare the two (`LOWER_AT_LOAD`).
+
 fn lowers_at_load() -> bool {
     #[cfg(test)]
     if LOWER_AT_LOAD.with(std::cell::Cell::get) {
@@ -2426,7 +2424,7 @@ impl<'a> Compiler<'a> {
             private_name_overrides: FxHashMap::default(),
             constants: SiteTable::default(),
             constant_index: replay::ConstantIndex::default(),
-            functions: replay::FunctionTable::default(),
+            functions: replay::FunctionTable::default(), deferred_rewrite_code: 0, kept_rewrites_pending: false,
             errors: vec![],
             cache_sites: 0,
             name_shared_sites: NameSharedSites::default(),
@@ -2440,8 +2438,8 @@ impl<'a> Compiler<'a> {
             superinstructions: SiteTable::default(),
             deferred_name_bindings: FxHashMap::default(),
             captured_name_scopes: FxHashMap::default(),
-            function_exits: Vec::new(),
-            function_facts: Vec::new(),
+            function_exits: Default::default(),
+            function_facts: Default::default(),
             dynamic_binding_scopes: 0,
             early_replays: FxHashMap::default(),
             invoked_functions: FxHashSet::default(),
@@ -2505,13 +2503,9 @@ impl<'a> Compiler<'a> {
             .get(id)
             .map(|function| capture_layout::FunctionFacts::of(function, &self.atoms))
             .expect("a function's record exists once it is compiled");
-        let id = id as usize;
-        if self.function_exits.len() <= id {
-            self.function_exits.resize(id + 1, replay::TableCursors::default());
-            self.function_facts.resize(id + 1, capture_layout::FunctionFacts::default());
-        }
-        self.function_exits[id] = self.cursors();
-        self.function_facts[id] = facts;
+        let cursors = self.cursors();
+        self.function_exits.set(id, cursors);
+        self.function_facts.set(id, facts);
     }
 
     /// Notes a function expression called where it is made: `(function () {})()`, an arrow
@@ -2554,13 +2548,14 @@ impl<'a> Compiler<'a> {
             .is_some_and(|span| self.invoked_functions.remove(&span.start));
         if self.replay_target.is_none()
             && self.replayable_source
-            && !invoked && !self.encloses_nested_stub(id, self.function_exits[id as usize].functions)
+            && !invoked && !self.encloses_nested_stub(id, self.function_exits.at(id).functions)
             && private_names == (self.private_name_references, self.private_name_ids.len())
         {
             self.replay_calls.insert(id, (entry, call));
             self.finish_early(id);
         }
     }
+
 
     /// Finishes replayable function `id` as soon as it is compiled and releases its record,
     /// so a program's records never all exist beside its tree. Only a function that, with
@@ -2575,9 +2570,8 @@ impl<'a> Compiler<'a> {
         if !self.replayable_source || self.dynamic_binding_scopes != 0 {
             return;
         }
-        let exit = self.function_exits[id as usize].functions as usize;
-        let subtree = id as usize..exit;
-        if self.function_facts[subtree]
+        let exit = self.function_exits.at(id).functions as usize;
+        if self.function_facts.range(id, exit as u32)
             .iter()
             .any(|facts| facts.dynamic_access || facts.contains_with || facts.binding_sites)
         {
@@ -2592,7 +2586,7 @@ impl<'a> Compiler<'a> {
             .expect("an early-finished function has a replay call");
         let captured = capture_layout::captured_by(
             id as usize,
-            &self.function_facts,
+            self.function_facts.as_slice(),
             id as usize + 1..exit,
         );
         let layout = capture_layout::LayoutInputs {
@@ -2605,27 +2599,8 @@ impl<'a> Compiler<'a> {
         };
         let arguments_slot = function.arguments_slot;
         capture_layout::apply_function(&mut function, id as usize, &layout, &self.atoms);
-        let rewrite_cursors = (
-            self.field_sites.len() as u32,
-            self.superinstructions.len() as u32,
-        );
-        self.rewrite_function(&mut function);
-        let undefined_constant = self.constant(Constant::Undefined);
-        // The record is released below and only its header stays, so a load that drops it
-        // settles just the dispatch class the header keeps. One that encodes it finishes it as
-        // a replay would, against tables whose entries for it are final (`lower_settled`);
-        // `verify-replay` keeps the whole record to compare each replay with.
-        if cfg!(feature = "verify-replay") || self.load_encoding.is_some() {
-            self.lower_function(&mut function, undefined_constant);
-            liveness::mark_register_roots(
-                std::iter::once(&mut function),
-                self.method_arguments(),
-                self.field_sites.as_slice(),
-                self.superinstructions.as_slice(),
-            );
-        } else {
-            self.settle_dispatch(&mut function);
-        }
+        let rewrite = self.start_rewrite(&mut function);
+        self.settle_early(&rewrite, &mut function);
         if let Some(encoding) = &mut self.load_encoding {
             let tables = LoadTables {
                 atoms: &self.atoms,
@@ -2641,7 +2616,7 @@ impl<'a> Compiler<'a> {
                 call,
                 layout,
                 arguments_slot,
-                rewrite_cursors,
+                rewrite,
             },
         );
         // Name bindings are resolved only for functions a dynamic lookup reaches.
@@ -2649,7 +2624,7 @@ impl<'a> Compiler<'a> {
         self.functions.release(id, function);
         // Its rewrites and the `undefined` constant may have added sites: a replay of the
         // function making it skips past them too.
-        self.function_exits[id as usize] = self.cursors();
+        *self.function_exits.at_mut(id) = self.cursors();
     }
 
     /// A function declaration or expression, compiled from its syntax and `context`, which
@@ -2800,11 +2775,11 @@ impl<'a> Compiler<'a> {
         predicted.sort_unstable();
         predicted.dedup();
         let id = id as usize;
-        let exit = self.function_exits[id].functions as usize;
+        let exit = self.function_exits.at(id as u32).functions as usize;
         let depth_below = |mut function: usize| {
             let mut depth = 0u32;
             while function != id {
-                function = self.function_facts[function].parent.expect("a descendant has a parent") as usize;
+                function = self.function_facts.at(function as u32).parent.expect("a descendant has a parent") as usize;
                 depth += 1;
             }
             depth
@@ -2812,7 +2787,7 @@ impl<'a> Compiler<'a> {
         let mut actual: Vec<(u32, u16)> = (id..exit)
             .flat_map(|function| {
                 let depth = depth_below(function);
-                self.function_facts[function]
+                self.function_facts.at(function as u32)
                     .captures
                     .iter()
                     .filter(move |(distance, _)| *distance > depth)
@@ -3283,7 +3258,7 @@ impl<'a> Compiler<'a> {
                 replay::FunctionEntry::Reserved => unreachable!("function {id} was never compiled"),
             })
             .collect();
-        let facts = std::mem::take(&mut self.function_facts);
+        let facts = std::mem::take(&mut self.function_facts).into_vec();
         let dynamic = capture_layout::dynamic_name_resolution(&facts);
         let reachable = capture_layout::dynamic_name_scopes(&facts, &dynamic);
         // A replay compiles one function and records no facts; it keeps no program. A class
@@ -3338,7 +3313,7 @@ impl<'a> Compiler<'a> {
                         call,
                         layout: layout_inputs[id as usize].clone(),
                         arguments_slot: function.arguments_slot,
-                        rewrite_cursors: (0, 0),
+                        rewrite: replay::Rewrite::Loaded(replay::RewriteStart { field_sites: 0, superinstructions: 0 }),
                     },
                 );
             }
@@ -3348,17 +3323,11 @@ impl<'a> Compiler<'a> {
                 capture_layout::apply_function(function, id, &layout_inputs[id], &self.atoms);
             }
         }
-        for (id, function) in functions.iter_mut().enumerate() {
-            let Some(function) = function else { continue };
-            if let Some(replay) = replays.get_mut(&(id as u32))
-                && !released.contains_key(&id)
-            {
-                replay.rewrite_cursors = (
-                    self.field_sites.len() as u32,
-                    self.superinstructions.len() as u32,
-                );
+        for (id, slot) in functions.iter_mut().enumerate() {
+            let replay = replays.get_mut(&(id as u32)).filter(|_| !released.contains_key(&id));
+            if let Some(function) = self.rewrite_replayable(id, slot, replay) {
+                released.insert(id, function);
             }
-            self.rewrite_function(function);
         }
         #[cfg(feature = "profile-memory")]
         if crate::trace::Channel::Memory.on() && released.is_empty() {
@@ -3419,6 +3388,10 @@ impl<'a> Compiler<'a> {
                 self.superinstructions.as_slice(),
             );
         }
+        let room = std::mem::take(&mut self.first_call.room);
+        let rewrites_pend = self.rewrites_pend(&room);
+        let code = self.deferred_rewrite_code + room.code();
+        let cache_capacity = room.cache_capacity(self.cache_sites);
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites.into_vec());
         let atoms = self.atoms.table();
@@ -3428,8 +3401,7 @@ impl<'a> Compiler<'a> {
         constants.shrink_to_fit();
         method_sites.shrink_to_fit();
         method_arguments.shrink_to_fit();
-        let mut field_sites = self.field_sites.into_vec();
-        field_sites.shrink_to_fit();
+        let field_sites = self.field_sites.into_vec();
         let program = ResidualProgram {
             specialized: self.mode == SpecializationMode::Enabled,
             // Eval code is code compiled for an eval; a host script that only captures its
@@ -3455,7 +3427,7 @@ impl<'a> Compiler<'a> {
                 call_sites: Default::default(),
             })),
             atoms,
-            constants,
+            constants: crate::bytecode::append_vec::AppendVec::with_headroom(constants, room.constants()),
             // Collected into a table of its own size: an in-place collect would keep the
             // records' larger allocation.
             functions: {
@@ -3467,16 +3439,17 @@ impl<'a> Compiler<'a> {
                         None => FunctionSlot::released(released[&id].header),
                     }
                 }));
-                slots
+                crate::bytecode::append_vec::AppendVec::with_headroom(slots, room.functions())
             },
-            cache_sites: self.cache_sites,
-            method_sites,
-            method_arguments,
-            field_sites,
-            object_sites: self.object_sites.into_vec(),
-            regexp_literal_sites: self.regexp_literal_sites.into_vec(),
-            literal_templates: self.literal_templates.into_vec(),
-            superinstructions: self.superinstructions.into_vec(),
+            cache_sites: crate::bytecode::SiteCount::with_capacity(self.cache_sites, cache_capacity),
+            method_sites: crate::bytecode::append_vec::AppendVec::with_headroom(method_sites, room.method_sites()),
+            method_arguments: crate::bytecode::append_vec::AppendVec::with_headroom(method_arguments, room.method_arguments()),
+            field_sites: crate::bytecode::append_vec::AppendVec::with_headroom(field_sites, code / FIELD_SITE_WINDOW + room.field_sites() + 1),
+            object_sites: crate::bytecode::append_vec::AppendVec::with_headroom(self.object_sites.into_vec(), room.object_sites()),
+            regexp_literal_sites: crate::bytecode::append_vec::AppendVec::with_headroom(self.regexp_literal_sites.into_vec(), room.regexp_literal_sites()),
+            literal_templates: crate::bytecode::append_vec::AppendVec::with_headroom(self.literal_templates.into_vec(), room.literal_templates()),
+            superinstructions: crate::bytecode::append_vec::AppendVec::with_headroom(self.superinstructions.into_vec(), code / SUPERINSTRUCTION_WINDOW + 1),
+            rewrite_ranges: replay::RewriteRanges { kept_pending: rewrites_pend, ..Default::default() },
             replay: replay_atoms.map(|atoms| {
                 std::rc::Rc::new(replay::ProgramReplay {
                     source_type: self.source_type,
@@ -3490,7 +3463,7 @@ impl<'a> Compiler<'a> {
                     specialized: self.mode == SpecializationMode::Enabled,
                     template_sites: self.template_sites,
                     atoms,
-                    exits: std::mem::take(&mut self.function_exits).into_boxed_slice(),
+                    exits: std::mem::take(&mut self.function_exits).into_vec().into_boxed_slice(),
                     name_shared_sites: match &mut self.name_shared_sites {
                         NameSharedSites::Load { sites, .. } => std::mem::take(sites),
                         NameSharedSites::Replay(sites) => (*sites).clone(),
@@ -4277,7 +4250,7 @@ impl<'a> Compiler<'a> {
     fn arrows_reach_arguments(&self, owner: u32, slot: u16) -> bool {
         let facts = &self.function_facts;
         // Ids are reserved in pre-order, so only later ids nest in `owner`; uncompiled ones name no arrow.
-        facts.get(owner as usize + 1..).unwrap_or_default().iter().any(|function| {
+        facts.after(owner + 1).iter().any(|function| {
             // The function levels between `function` and `owner`, along arrows alone.
             let mut distance = 0;
             let mut current = function;
@@ -4288,7 +4261,7 @@ impl<'a> Compiler<'a> {
                 distance += 1;
                 match current.parent {
                     Some(parent) if parent == owner => break,
-                    Some(parent) => match facts.get(parent as usize) {
+                    Some(parent) => match facts.get(parent) {
                         Some(parent) => current = parent,
                         None => return false,
                     },
@@ -4320,6 +4293,7 @@ impl<'a> Compiler<'a> {
             None => &self.method_sites,
         }
     }
+
 
     /// The specializing rewrites of one function, the only finishing pass that adds sites.
     fn rewrite_function(&mut self, function: &mut BcFunction) {

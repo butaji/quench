@@ -130,11 +130,11 @@ impl FunctionCompiler<'_, '_> {
             Statement::VariableDeclaration(item) => self.variables(item),
             Statement::ReturnStatement(item) => self.return_statement(item),
             Statement::IfStatement(item) => self.if_statement(item),
-            Statement::WhileStatement(item) => self.while_statement(item),
-            Statement::DoWhileStatement(item) => self.do_while_statement(item),
-            Statement::ForStatement(item) => self.for_statement(item),
-            Statement::ForInStatement(item) => self.for_in_statement(item),
-            Statement::ForOfStatement(item) => self.for_of_statement(item),
+            Statement::WhileStatement(item) => self.looping(|this| this.while_statement(item)),
+            Statement::DoWhileStatement(item) => self.looping(|this| this.do_while_statement(item)),
+            Statement::ForStatement(item) => self.looping(|this| this.for_statement(item)),
+            Statement::ForInStatement(item) => self.looping(|this| this.for_in_statement(item)),
+            Statement::ForOfStatement(item) => self.looping(|this| this.for_of_statement(item)),
             Statement::SwitchStatement(item) => self.switch_statement(item),
             Statement::BreakStatement(item) => self.break_statement(item),
             Statement::ContinueStatement(item) => self.continue_statement(item),
@@ -782,23 +782,23 @@ impl FunctionCompiler<'_, '_> {
         let label = self.owner.atom(item.label.name.as_str());
         match &item.body {
             Statement::WhileStatement(body) => {
-                self.while_statement_labeled(body, Some(label));
+                self.looping(|this| this.while_statement_labeled(body, Some(label)));
                 return;
             }
             Statement::DoWhileStatement(body) => {
-                self.do_while_statement_labeled(body, Some(label));
+                self.looping(|this| this.do_while_statement_labeled(body, Some(label)));
                 return;
             }
             Statement::ForStatement(body) => {
-                self.for_statement_labeled(body, Some(label));
+                self.looping(|this| this.for_statement_labeled(body, Some(label)));
                 return;
             }
             Statement::ForInStatement(body) => {
-                self.for_in_statement_labeled(body, Some(label));
+                self.looping(|this| this.for_in_statement_labeled(body, Some(label)));
                 return;
             }
             Statement::ForOfStatement(body) => {
-                self.for_of_statement_labeled(body, Some(label));
+                self.looping(|this| this.for_of_statement_labeled(body, Some(label)));
                 return;
             }
             _ => {}

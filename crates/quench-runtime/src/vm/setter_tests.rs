@@ -53,3 +53,21 @@ Object.defineProperty(Number.prototype, "ns", { set(v) { "use strict"; log.push(
 fn setter_stores_match_node() {
     assert_eq!(printed(SOURCE, "setters.js"), ["4999|135|4999|1000|232|237|237|237|238|238|300|44|big4991:4990|done|1|TypeError|2999:own:false|1501:2999|1:49|5998:1:2999|0,1,2|2999|number|207"]);
 }
+
+/// A setter activation that a native call out of the lane made a frame returns the stored
+/// value read from the caller's register file, not the setter's: the loop counter survives
+/// a getter running `Set.add` and a setter running `Set.forEach` (Node prints 8).
+#[test]
+fn setter_made_a_frame_by_a_native_reads_the_callers_register() {
+    let source = r#"
+let cnt = 0;
+class OV { constructor() { this.obs = new Set(); }
+  get() { if (++cnt > 10000) throw new Error("spin"); this.obs.add(1); return 1; }
+  set(v) { this.obs.forEach(x => {}); } }
+const A = new OV(), C = new OV();
+const o = { get a() { return A.get(); }, set c(v) { C.set(v); } };
+function run(n) { let s = 0; for (let i = 0; i < n; i++) { s += o.a; o.c = i; } return s; }
+print(run(8) + ":" + cnt);
+"#;
+    assert_eq!(printed(source, "setter_frame.js"), ["8:8"]);
+}

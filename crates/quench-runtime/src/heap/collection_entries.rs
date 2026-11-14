@@ -165,6 +165,16 @@ impl<T: CollectionEntry> CollectionEntries<T> {
         collection
     }
 
+    /// The live entries as a new collection, slots and hashes copied as they are: no key is
+    /// looked up or hashed again, and no iterator is registered with the copy.
+    pub(crate) fn duplicate(&self) -> Self {
+        let live = (self.head..self.slots.len()).filter(|&slot| self.slots[slot].key() != HOLE);
+        let slots: Vec<T> = live.clone().map(|slot| self.slots[slot]).collect();
+        let hashes: SmallVec<[u32; LINEAR_SCAN_ENTRIES]> = live.map(|slot| self.hashes[slot]).collect();
+        let index = (slots.len() > LINEAR_SCAN_ENTRIES).then(|| index::KeyIndex::of(&hashes));
+        Self { live: slots.len(), slots, hashes, head: 0, index, iterators: Vec::new(), walks: 0 }
+    }
+
     /// The number of live entries.
     pub(crate) fn len(&self) -> usize {
         self.live
@@ -321,5 +331,41 @@ impl CollectionEntries<(Value, Value)> {
     pub(crate) fn set_value(&mut self, slot: usize, value: Value) {
         debug_assert!(self.slots[slot].0 != HOLE);
         self.slots[slot].1 = value;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn filled(count: i32) -> CollectionEntries<Value> {
+        let mut entries = CollectionEntries::default();
+        for key in 0..count {
+            entries.push(Value::integer(key), number_key_hash(f64::from(key)));
+        }
+        entries
+    }
+
+    #[test]
+    fn a_duplicate_keeps_the_live_entries_and_their_lookups_and_drops_iterators() {
+        for count in [3, 40] {
+            let mut original = filled(count);
+            original.register_iterator(Value::integer(7));
+            for key in (0..count).step_by(2) {
+                let hash = number_key_hash(f64::from(key));
+                let slot = original.position(Value::integer(key), hash, |_| false).expect("the key is present");
+                original.remove(slot);
+            }
+            let mut copy = original.duplicate();
+            assert_eq!(copy.to_vec(), original.to_vec());
+            assert_eq!(copy.len(), original.len());
+            for key in 0..count {
+                let found = copy.position(Value::integer(key), number_key_hash(f64::from(key)), |_| false);
+                assert_eq!(found.is_some(), key % 2 == 1, "key {key} of {count}");
+            }
+            assert!(copy.take_iterators().is_empty(), "a copy registers no iterator of the original");
+            copy.push(Value::integer(count), number_key_hash(f64::from(count)));
+            assert_eq!(copy.len(), original.len() + 1);
+        }
     }
 }

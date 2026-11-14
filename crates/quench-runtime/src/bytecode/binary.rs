@@ -337,7 +337,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         };
         static_names.push(names_static);
     }
-    out.u16(program.cache_sites);
+    out.u16(program.cache_sites.get());
     out.u32(program.method_sites.len() as u32);
     for site in &program.method_sites {
         out.atom(site.atom);
@@ -740,16 +740,16 @@ fn decode_program(
         source_name,
         source,
         atoms,
-        constants,
-        functions,
-        cache_sites,
-        method_sites,
-        method_arguments,
-        field_sites,
-        object_sites,
-        regexp_literal_sites,
-        literal_templates,
-        superinstructions,
+        constants: constants.into(),
+        functions: functions.into(),
+        cache_sites: cache_sites.into(),
+        method_sites: method_sites.into(),
+        method_arguments: method_arguments.into(),
+        field_sites: field_sites.into(),
+        object_sites: object_sites.into(),
+        regexp_literal_sites: regexp_literal_sites.into(),
+        literal_templates: literal_templates.into(),
+        superinstructions: superinstructions.into(), rewrite_ranges: Default::default(),
         replay: None, first_call_scopes,
         encoded_records,
         validated: Default::default(),

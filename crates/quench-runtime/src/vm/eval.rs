@@ -231,7 +231,7 @@ impl<H: Host> Vm<H> {
             _ if let Some(value) = self.heap.string(source)  => value.clone(),
             _ => return Ok(source),
         };
-        let cache_source = (!self.direct_eval).then(|| eval_source::EvalSource::of(&self.heap, source, &source_text));
+        let cache_source = Some(eval_source::EvalSource::of(&self.heap, source, &source_text));
         let host_text = source_text.host_string();
         let text = if self.host.allows_natives_syntax() {
             strip_v8_optimization_intrinsics(host_text)
@@ -303,31 +303,18 @@ impl<H: Host> Vm<H> {
             let Some(id) = self.store_prepared_script(&prepared)? else {
                 return Err(self.type_error(p, "dynamic program store is full".into()));
             };
-            return self.run_global_eval_instance(p, id, cache_source);
+            return self.run_global_eval_instance(p, id, cache_source, None);
         }
         self.require_source_compilation(p)?;
-        if let Some(program) = cache_source.as_ref().and_then(|source| self.programs.cached_global_eval(source)) {
+        let mut facts = self.eval_caller_facts(p, source, strict, cache_source.as_ref())?;
+        let cached = match &facts.key {
+            Some(key) => self.programs.cached_direct_eval(key),
+            None => cache_source.as_ref().and_then(|source| self.programs.cached_global_eval(source)),
+        };
+        if let Some(program) = cached {
             return self.run_global_eval_program(p, program);
         }
-        let context = self.direct_eval_context(p).unwrap_or_default();
-        let private_names = if self.direct_eval {
-            self.direct_eval_private_names(p)
-                .map_or_else(Vec::new, |(_, names)| names)
-        } else {
-            Vec::new()
-        };
-        let caller_has_global_variables = self.frames.is_empty() || self.running_global_code();
-        let annex_b_forbidden_names = self.annex_b_forbidden_names(caller_has_global_variables);
-        // A host script compiles from its text alone: it is no direct eval, so it has no
-        // caller context, private names or Annex B restrictions.
-        let kept = host_script
-            .then(|| self.host.kept_compiled_program(source_name, &[mode, source]))
-            .flatten()
-            .and_then(|bytes| {
-                let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(source));
-                let specialized = self.specialized;
-                self.decode_cached_program(bytes, text, 0, source_name, specialized).ok()
-            });
+        let kept = host_script.then(|| self.kept_host_script(source_name, mode, source)).flatten();
         let compiled = kept.is_none();
         let mut residual = match kept {
             Some(residual) => Ok(residual),
@@ -336,9 +323,9 @@ impl<H: Host> Vm<H> {
             source_name,
             &*self,
             strict,
-            context,
-            &private_names,
-            &annex_b_forbidden_names,
+            facts.context,
+            &facts.private_names,
+            &facts.annex_b_forbidden_names,
         ),
         }
         .map_err(|diagnostics| {
@@ -355,10 +342,10 @@ impl<H: Host> Vm<H> {
                 .expect_err("dynamic eval syntax errors must throw")
         })?;
         eval_source::keep_shared_text(&mut residual, shared_text);
-        let cache_source = cache_source.filter(|_| {
-            residual.functions.first().is_some_and(|root| !root.strict)
-                && residual.replay.as_ref().map_or_else(|| !crate::Engine::eval_has_tagged_template(source), |replay| replay.template_sites == 0)
-        });
+        let cacheable = eval_source::is_cacheable(&residual, source);
+        let cache_source = cache_source.filter(|_| cacheable && facts.key.is_none());
+        let direct_key = facts.key.take().filter(|_| cacheable);
+        let caller = direct_key.as_ref().map(|key| key.caller.clone());
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
         };
@@ -368,19 +355,25 @@ impl<H: Host> Vm<H> {
         {
             self.host.keep_compiled_program(source_name, &[mode, source], &bytes);
         }
-        self.run_global_eval_instance(p, program_id, cache_source)
+        if let Some(key) = direct_key {
+            self.programs.cache_direct_eval(key, program_id);
+        }
+        self.run_global_eval_instance(p, program_id, cache_source, caller)
     }
 
     /// Install the caller/source identity once for either a compiled or native
     /// eval instance, then enter the same global declaration/evaluation path.
     fn run_global_eval_instance(
         &mut self, p: &ResidualProgram, program_id: ProgramId, cache_source: Option<eval_source::EvalSource>,
+        caller: Option<eval_source::EvalCaller>,
     ) -> Result<Value, JsError> {
-        let origin = self.capture_eval_origin(p)?;
-        self.programs.set_origin(program_id, super::program_store::CompilationOrigin::Eval { caller: Some(origin) });
+        let caller = match caller {
+            Some(caller) => caller,
+            None => self.eval_caller(p)?,
+        };
+        self.programs.set_origin(program_id, super::program_store::CompilationOrigin::Eval { caller: Some(caller.origin) });
         // Eval code belongs to its caller's Script or Module (PerformEval).
-        let script_or_module = self.active_script_or_module(p);
-        self.programs.set_script_or_module(program_id, script_or_module);
+        self.programs.set_script_or_module(program_id, caller.script_or_module);
         if let Some(source) = cache_source { self.programs.cache_global_eval(source, program_id); }
         self.run_global_eval_program(p, program_id)
     }
@@ -692,7 +685,7 @@ impl<H: Host> Vm<H> {
                 id
             }
         };
-        self.run_global_eval_program(&context, id)
+        self.declare_compiled_script_globals(&context, id).and_then(|()| self.run_global_eval_program(&context, id))
     }
 
     pub(crate) fn prepared_script_is_current(&self, prepared: &crate::PreparedScript) -> bool {
@@ -1194,6 +1187,9 @@ impl<H: Host> Vm<H> {
             })
             .map(|atom| (atom, Value::UNDEFINED))
             .collect::<Vec<_>>();
+        for &(atom, _) in &additions {
+            self.note_dynamic_scope_name(atom);
+        }
         if let Some(bindings) = self.own_dynamic_bindings_mut(frame_index) {
             bindings.append(&mut additions);
         }

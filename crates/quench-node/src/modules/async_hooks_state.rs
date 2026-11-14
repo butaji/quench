@@ -203,6 +203,12 @@ impl SharedAsyncHooksState {
         self.registry.tracks_promises() || self.observes_promise_hooks()
     }
 
+    /// Whether an AsyncLocalStorage store is visible in the current context: what Node's
+    /// `AsyncContextFrame.current()` finds, which a captured job or microtask must carry.
+    pub(crate) fn has_visible_store(&self) -> bool {
+        !self.local_stores.is_empty() && self.local_stores.contains_key(&self.identity.store_context())
+    }
+
     /// Whether a Promise job boundary has work: Promise resources to prune or hooks that
     /// track Promises.
     pub(crate) fn observes_job_boundaries(&self) -> bool {

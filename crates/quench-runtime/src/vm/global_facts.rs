@@ -182,4 +182,14 @@ impl<H: Host> Vm<H> {
     fn active_global_values(&self) -> Option<u32> {
         self.heap.object(self.realm.globals).and_then(crate::heap::Object::global_values)
     }
+
+    /// A compiled Script's global declaration instantiation: its lexical names may not
+    /// redeclare the realm's, which later scripts and the name hints then see.
+    pub(super) fn declare_compiled_script_globals(&mut self, context: &crate::ResidualProgram, id: super::ProgramId) -> Result<(), crate::JsError> {
+        let residual = self.programs.get(id).ok_or_else(|| self.type_error(context, "dynamic program is unavailable".into()))?;
+        let eval_script_context = std::mem::replace(&mut self.eval_script_context, true);
+        let result = self.instantiate_global_declarations(&residual);
+        self.eval_script_context = eval_script_context;
+        result
+    }
 }

@@ -68,7 +68,7 @@ static EMPTY: Header = Header {
 
 /// The `Header::capacity` flag of a backing whose header moved past dropped front values.
 /// Native code never reads the capacity word, so the flag changes no native layout.
-const BIASED: u32 = 1 << 31;
+pub(super) const BIASED: u32 = 1 << 31;
 
 /// The shortest backing whose front removal moves its header instead of its values: V8
 /// moves the values of short arrays too, where the copy costs less than the bookkeeping.

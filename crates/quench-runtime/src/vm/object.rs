@@ -1952,10 +1952,10 @@ impl<H: Host> Vm<H> {
             return false;
         };
         let receiver = self.heap.object_record_by_id(record_id);
+        // Boxed primitive, stack and error data live in the extras, which most receivers lack.
         if !receiver.admits_cached_add()
-            || receiver.boxed_primitive().is_some()
-            || receiver.stack_data().is_some()
-            || receiver.has_error_data()
+            || (receiver.has_extras()
+                && (receiver.boxed_primitive().is_some() || receiver.stack_data().is_some() || receiver.has_error_data()))
         {
             return false;
         }
@@ -2620,6 +2620,20 @@ impl<H: Host> Vm<H> {
                 _ => None,
             }
         })
+    }
+
+    /// A number, boolean, symbol or bigint primitive's `GetField` where no lookup can run guest
+    /// code: the data its primitive prototype's chain holds under `atom`, or `undefined` for a
+    /// name the chain lacks (an absent feature test such as `value.isColor`), as
+    /// `get_property` finds it. An accessor, an exotic link and a name `primitive_read_holder`
+    /// answers with a builtin where the prototype holds none are left to the general read.
+    pub(super) fn cached_primitive_field_hit(&self, object: Value, atom: Atom) -> Option<Value> {
+        let prototype = self.primitive_prototype(object).filter(|_| !self.heap.is_string(object))?;
+        match self.plain_property_lookup(prototype, PropertyKey::string(atom))? {
+            Some(value) => Some(value),
+            None if matches!(self.atom_name(atom), "toString" | "valueOf" | "toFixed" | "toPrecision") => None,
+            None => Some(Value::UNDEFINED),
+        }
     }
 
     /// Whether a string primitive's read of `atom` in `p` can take the `String.prototype`
@@ -3528,7 +3542,7 @@ impl<H: Host> Vm<H> {
             }
         }
 
-        if let Some((owner, attributes)) = found {
+        if let Some((_, attributes)) = found {
             if attributes.accessor {
                 let Some(setter) = attributes.setter else {
                     return Ok(false);
@@ -3539,9 +3553,9 @@ impl<H: Host> Vm<H> {
             if !attributes.writable {
                 return Ok(false);
             }
-            let _ = owner;
         }
 
+        let receiver = self.descriptor_forwarding_target(receiver);
         if self
             .object_data(receiver)
             .is_some_and(Object::is_module_namespace)

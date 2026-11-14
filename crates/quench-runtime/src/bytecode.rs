@@ -8,7 +8,7 @@ pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
 pub type Atom = u32;
 pub type Register = u16;
 
-mod source_text_snapshot;
+mod source_text_snapshot; pub(crate) mod append_vec;
 mod atoms;
 mod control_flow;
 pub(crate) mod initialization;
@@ -23,7 +23,7 @@ pub(crate) use field_store::{FieldStore, StoreReceiver, field_store_op};
 mod instruction;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
-mod numeric_ops; mod op_classes; mod unary_operators;
+mod numeric_ops; mod op_classes; mod op_scan; mod unary_operators;
 pub(crate) use unary_operators::*;
 mod source_positions;
 pub(crate) use source_positions::SourcePositions;
@@ -1947,7 +1947,7 @@ impl Function {
         }
         let plain = crate::bitset::BitSet::from_fn(locals, |slot| self.plain_local_slot_is_safe(slot));
         let mut dead_zone = crate::bitset::BitSet::new(locals);
-        for instruction in self.instructions().filter(|instruction| instruction.op() == Op::InitializeTdz) {
+        for instruction in self.instructions_of(|op| op == Op::InitializeTdz) {
             if plain.contains(instruction.local_slot()) {
                 dead_zone.insert(instruction.local_slot());
             }
@@ -2070,18 +2070,9 @@ impl Function {
             || self.instance_initializer.is_some()
             || self.inherited_with_scope
             || !self.binding_sites.is_empty()
-            || self.instructions().any(|instruction| {
+            || self.instructions_of(name_bindings::may_read_binding).any(|instruction| {
                 name_bindings::reads_hidden_name(instruction, tables)
-                    || matches!(
-                        instruction.op(),
-                        Op::ResolveName
-                            | Op::LoadResolvedName
-                            | Op::DeleteName
-                            | Op::StoreResolvedName
-                            | Op::StoreVarBinding
-                            | Op::InitializeThis
-                            | Op::SuperCallCheck
-                    )
+                    || name_bindings::reads_binding_op(instruction.op())
                     || (instruction.op().is_call_with_eval_flags()
                         && (instruction.direct_eval() || instruction.parameter_eval()))
             })
@@ -2106,12 +2097,10 @@ impl Function {
             Some(captured) => {
                 u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
             }
-            None => self.instructions().any(|instruction| {
-                matches!(
-                    instruction.op(),
-                    Op::MakeClosure | Op::LoadEnvLocal | Op::StoreEnvLocal
-                )
-            }),
+            None => self
+                .instructions_of(|op| matches!(op, Op::MakeClosure | Op::LoadEnvLocal | Op::StoreEnvLocal))
+                .next()
+                .is_some(),
         }
     }
 
@@ -3679,16 +3668,17 @@ pub struct ResidualProgram {
     pub(crate) source_name: String,
     pub(crate) source: Option<ProgramSource>,
     pub(crate) atoms: AtomTable,
-    pub(crate) constants: Vec<Constant>,
-    pub(crate) functions: Vec<FunctionSlot>,
-    pub(crate) cache_sites: u16,
-    pub(crate) method_sites: Vec<MethodSite>,
-    pub(crate) method_arguments: Vec<Register>,
-    pub(crate) field_sites: Vec<FieldSite>,
-    pub(crate) object_sites: Vec<ObjectSite>,
-    pub(crate) regexp_literal_sites: Vec<RegExpLiteralSite>,
-    pub(crate) literal_templates: Vec<Box<[LiteralStep]>>,
-    pub(crate) superinstructions: Vec<Superinstruction>,
+    pub(crate) constants: append_vec::AppendVec<Constant>,
+    pub(crate) functions: append_vec::AppendVec<FunctionSlot>,
+    pub(crate) cache_sites: chunk_append::SiteCount,
+    pub(crate) method_sites: append_vec::AppendVec<MethodSite>,
+    pub(crate) method_arguments: append_vec::AppendVec<Register>,
+    pub(crate) field_sites: append_vec::AppendVec<FieldSite>,
+    pub(crate) object_sites: append_vec::AppendVec<ObjectSite>,
+    pub(crate) regexp_literal_sites: append_vec::AppendVec<RegExpLiteralSite>,
+    pub(crate) literal_templates: append_vec::AppendVec<Box<[LiteralStep]>>,
+    pub(crate) superinstructions: append_vec::AppendVec<Superinstruction>,
+    pub(crate) rewrite_ranges: crate::compile::replay::RewriteRanges,
     /// How its functions can be compiled again from source, when they can.
     pub(crate) replay: Option<std::rc::Rc<crate::compile::replay::ProgramReplay>>,
     /// Each nested first-call stub's scopes, by stub id, which an encoding keeps with the stubs.
@@ -3839,7 +3829,7 @@ impl ResidualProgram {
             if !crate::DYNAMIC_EXECUTION_ENABLED {
                 panic!("native function {index} of {} was not lowered before linking", self.source_name);
             }
-            let function = self.lower_unlowered(unlowered);
+            let function = self.lower_unlowered(index, unlowered);
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
         }
@@ -3868,8 +3858,9 @@ impl ResidualProgram {
     /// would have lowered it (`compile::lower_settled`), with its register roots.
     #[cold]
     #[inline(never)]
-    fn lower_unlowered(&self, unlowered: std::rc::Rc<Function>) -> Function {
+    fn lower_unlowered(&self, index: usize, unlowered: std::rc::Rc<Function>) -> Function {
         let mut function = std::rc::Rc::unwrap_or_clone(unlowered);
+        if self.rewrite_ranges.kept_pending { crate::compile::settle_deferred_rewrite(self, index as u32, &mut function); }
         let undefined_constant = *self.undefined_constant.get_or_init(|| {
             let index = self.constants.iter().position(|constant| matches!(constant, Constant::Undefined))
                 .expect("a program with an unlowered record holds the `undefined` constant");
@@ -4058,12 +4049,13 @@ impl ResidualProgram {
 
     /// `encode_snapshot`'s bytes, sharing `atoms` (the restored VM's) and with `text` as the
     /// source; valid as the compiler output it was when written.
-    /// The sizes of the program's inline-cache site tables, which a VM lays out per program.
+    /// The sizes the program's inline-cache site tables may reach, which a VM lays out per
+    /// program: the room a program that appends chunks reserved is laid out with it.
     pub(crate) fn cache_site_counts(&self) -> CacheSiteCounts {
         CacheSiteCounts {
-            fields: self.cache_sites,
-            methods: self.method_sites.len(),
-            objects: self.object_sites.len(),
+            fields: self.cache_sites.capacity(),
+            methods: self.method_sites.capacity(),
+            objects: self.object_sites.capacity(),
         }
     }
 
@@ -4109,6 +4101,8 @@ mod binary;
 mod native_metadata;
 #[cfg(feature = "native-execution")]
 pub use native_metadata::NativeProgramNamespace;
+mod chunk_append;
+pub(crate) use chunk_append::{SiteCount, ChunkDelta, TableLengths};
 mod closure_reads;
 pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts};
 pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis, LoadEncoding, LoadRecords};

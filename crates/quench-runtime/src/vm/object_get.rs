@@ -2,8 +2,11 @@ use super::property_key::PropertyKey;
 use std::ops::ControlFlow;
 use super::*;
 use crate::heap::PrivateBrand;
+pub(super) mod ordinary_chain;
+mod function_reflection;
 mod plain_key_set;
 mod proxy_get;
+mod proxy_set;
 
 /// Where constructors of one shape hold their own `@@species` getter
 /// (`Vm::has_intrinsic_species_getter`) under one `prototype_layout_epoch`: the shape names
@@ -193,6 +196,9 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<bool, JsError> {
+        if self.handler_lacks_trap(handler, ProxyTrap::Set) && !matches!(property, PropertyKey::Private(_)) {
+            return self.proxy_set_target(p, target, receiver, property, value, strict);
+        }
         let key = self.proxy_key_value(p, property)?;
         if handler.is_null() {
             return Err(self.type_error(p, "cannot access a revoked proxy".into()));
@@ -203,43 +209,14 @@ impl<H: Host> Vm<H> {
         let key = self.heap.root(key);
         let value = self.heap.root(value);
         let outcome = (|| {
-            let trap = self.proxy_trap(p, self.heap.root_value(handler).unwrap(), self.runtime_atoms.set)?;
+            let trap = self.proxy_trap(p, self.heap.root_value(handler).unwrap(), self.trap_atom(ProxyTrap::Set))?;
             if trap.is_null() || trap.is_undefined() {
-                let delegate_target = self.heap.root_value(target).unwrap();
-                let receiver = self.heap.root_value(receiver).unwrap();
-                let value = self.heap.root_value(value).unwrap();
-                if let Some((inner, handler)) = self.proxy_parts(delegate_target) {
-                    return self
-                        .proxy_set_mode(p, inner, handler, receiver, property, value, strict);
-                }
-                return match property {
-                    PropertyKey::String(atom) => {
-                        let written = self.set_property_with_receiver(
-                            p,
-                            delegate_target,
-                            atom,
-                            value,
-                            receiver,
-                        )?;
-                        if !written && strict {
-                            return Err(self.rejected_assignment_error(
-                                p,
-                                self.heap.root_value(target).unwrap(),
-                                atom,
-                                true,
-                            ));
-                        }
-                        Ok(written)
-                    }
-                    PropertyKey::Symbol(_) => self.set_symbol_property_with_receiver(
-                        p,
-                        delegate_target,
-                        self.heap.root_value(key).unwrap(),
-                        value,
-                        receiver,
-                    ),
-                    PropertyKey::Private(_) => unreachable!("private keys cannot reach Proxy Set"),
-                };
+                let (delegate_target, receiver, value) = (
+                    self.heap.root_value(target).unwrap(),
+                    self.heap.root_value(receiver).unwrap(),
+                    self.heap.root_value(value).unwrap(),
+                );
+                return self.proxy_set_target(p, delegate_target, receiver, property, value, strict);
             }
             if !self.is_function(trap) {
                 return Err(self.type_error(p, "proxy set trap is not callable".into()));
@@ -255,42 +232,10 @@ impl<H: Host> Vm<H> {
                     self.heap.root_value(receiver).unwrap(),
                 ],
             )?;
-            if !self.truthy(result) {
-                if strict {
-                    let property = self.detail_string(self.heap.root_value(key).unwrap());
-                    return Err(self.type_error(
-                        p,
-                        format!("'set' on proxy: trap returned falsish for property '{property}'"),
-                    ));
-                }
-                return Ok(false);
-            }
-            let descriptor = self.own_property_descriptor_record(
-                p,
-                self.heap.root_value(target).unwrap(),
-                self.heap.root_value(key).unwrap(),
-            )?;
-            if let Some(descriptor) = descriptor
-                && descriptor.configurable != Some(true)
-            {
-                let is_data = descriptor.has_data_fields();
-                if is_data
-                    && descriptor.writable != Some(true)
-                    && descriptor.value.is_some_and(|target_value| {
-                        !self.same_value(self.heap.root_value(value).unwrap(), target_value)
-                    })
-                {
-                    return Err(self
-                        .type_error(p, "proxy set trap changed a frozen target property".into()));
-                }
-                if !is_data && descriptor.setter.is_none_or(Value::is_undefined) {
-                    return Err(self.type_error(
-                        p,
-                        "proxy set trap accepted a property without a setter".into(),
-                    ));
-                }
-            }
-            Ok(true)
+            let (target, key, value) = (self.heap.root_value(target).unwrap(), self.heap.root_value(key).unwrap(), self.heap.root_value(value).unwrap());
+            let accepted = self.truthy(result);
+            self.validate_proxy_store(p, target, key, value, strict, result)?;
+            Ok(accepted)
         })();
         for root in [target, handler, receiver, key, value] {
             self.heap.release_root(root);
@@ -629,11 +574,8 @@ impl<H: Host> Vm<H> {
                 }
                 let value = self.heap.property_get(link, slot)?;
                 let slot = u32::try_from(slot).ok()?;
-                // An own slot's kind must follow from the shape the proof names; a holder's
-                // follows from the holder, which the proof names.
-                if depth == 0 && accessors {
-                    return Some(value);
-                }
+                // A non-dictionary shape fixes each slot's kind, so an own data slot is
+                // provable for the shape even where the shape has accessors elsewhere.
                 let answer = if depth == 0 {
                     SymbolLoadAnswer::Own(slot)
                 } else {
@@ -773,30 +715,14 @@ impl<H: Host> Vm<H> {
             let property = self.atom_name(atom).to_owned();
             return Err(self.nullish_property_error(p, object, Some(&property)));
         }
-        if !private_name
-            && self
-                .atom_class(atom)
-                .contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY)
-            && self.heap.is_function_value(object)
-            && self.own_property(object, atom).is_none()
-            && !self.function_caller_is_restricted(object)
-        {
-            return match self.atom_name(atom) {
-                "caller" => self.function_caller_value(object),
-                "arguments" => self.function_arguments(object),
-                _ => unreachable!("legacy function reflection property"),
-            };
+        if !private_name && let Some(read) = self.restricted_function_read(object, atom) {
+            return read;
         }
         let private_target = object;
         let mut object = match self.primitive_read_holder(object, atom) {
             ControlFlow::Break(builtin) => return Ok(builtin),
             ControlFlow::Continue(holder) => holder,
         };
-        self.evaluate_deferred_namespace_for_key(
-            p,
-            object,
-            Some(super::property_key::PropertyKey::string(atom)),
-        )?;
         if private_name {
             self.check_private_brand_for_read(p, private_target, atom)?;
             if let Some(value) = self.private_field_value(p, private_target, atom) {
@@ -804,6 +730,10 @@ impl<H: Host> Vm<H> {
             }
         }
         loop {
+            match self.ordinary_chain_step(p, object, atom, receiver, private_name) {
+                ControlFlow::Break(read) => return read,
+                ControlFlow::Continue(link) => object = link,
+            }
             self.evaluate_deferred_namespace_for_key(
                 p,
                 object,

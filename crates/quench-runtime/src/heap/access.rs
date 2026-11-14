@@ -333,18 +333,6 @@ impl Heap {
         value.direct_string_index().is_some()
     }
 
-    /// An await state (`AwaitState`), in its record or in a slot.
-    pub(crate) fn await_state(&self, value: Value) -> Option<&AwaitState> {
-        if let Some(record_id) = value.direct_await_index() {
-            // SAFETY: a direct-await Value names an initialized await record.
-            return Some(unsafe { self.await_records.get_live(record_id) });
-        }
-        match self.get(value)? {
-            Cell::AwaitState(state) => Some(state),
-            _ => None,
-        }
-    }
-
     /// `await_state`, mutably, past the write barrier.
     pub(crate) fn await_state_mut(&mut self, value: Value) -> Option<&mut AwaitState> {
         if let Some(record_id) = value.direct_await_index() {

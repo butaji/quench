@@ -701,7 +701,7 @@ function.plain_local_slots(&self.superinstructions)
                 environment_clones: function.environment_clones.len(),
                 atoms: self.atoms.len(),
                 field_sites: self.field_sites.len(),
-                cache_sites: self.cache_sites,
+                cache_sites: self.cache_sites.get(),
                 method_sites: self.method_sites.len(),
                 object_sites: self.object_sites.len(),
                 regexp_literal_sites: self.regexp_literal_sites.len(),
@@ -876,13 +876,13 @@ function.plain_local_slots(&self.superinstructions)
         self.validate_selective_capture_owners()?;
         for site in &self.method_sites {
             if !atom_in_bounds(site.atom, self.atoms.len())
-                || !cache_in_bounds(site.cache, self.cache_sites)
+                || !cache_in_bounds(site.cache, self.cache_sites.get())
                 || (site.argument_start as usize)
                     .checked_add(site.argument_count as usize)
                     .is_none_or(|end| end > self.method_arguments.len())
                 || site.receiver_path.is_some_and(|(atom, cache)| {
                     !atom_in_bounds(atom, self.atoms.len())
-                        || !cache_in_bounds(cache, self.cache_sites)
+                        || !cache_in_bounds(cache, self.cache_sites.get())
                 })
             {
                 return Err("invalid method site".into());
@@ -892,14 +892,14 @@ function.plain_local_slots(&self.superinstructions)
             if site.sources.iter().flatten().any(|(line, column)| *line == 0 || *column == 0)
                 || !field_base_in_bounds(site.base.0, REGISTER_MASK, 0)
                 || !atom_in_bounds(site.first.0, self.atoms.len())
-                || !cache_in_bounds(site.first.1, self.cache_sites)
+                || !cache_in_bounds(site.first.1, self.cache_sites.get())
                 || site.second.is_some_and(|(atom, cache)| {
                     !atom_in_bounds(atom, self.atoms.len())
-                        || !cache_in_bounds(cache, self.cache_sites)
+                        || !cache_in_bounds(cache, self.cache_sites.get())
                 })
                 || site.sink.is_some_and(|(atom, cache)| {
                     !atom_in_bounds(atom, self.atoms.len())
-                        || !cache_in_bounds(cache, self.cache_sites)
+                        || !cache_in_bounds(cache, self.cache_sites.get())
                 })
             {
                 return Err("invalid field site".into());
@@ -1338,16 +1338,16 @@ mod tests {
             source_name: String::new(),
             source: None,
             atoms: AtomTable::default(),
-            constants: vec![],
-            functions: vec![function.into()],
-            cache_sites: 0,
-            method_sites: vec![],
-            method_arguments: vec![],
-            field_sites: vec![],
-            object_sites: vec![],
-            regexp_literal_sites: vec![],
-            literal_templates: Vec::new(),
-            superinstructions: vec![],
+            constants: vec![].into(),
+            functions: vec![function.into()].into(),
+            cache_sites: Default::default(),
+            method_sites: vec![].into(),
+            method_arguments: vec![].into(),
+            field_sites: vec![].into(),
+            object_sites: vec![].into(),
+            regexp_literal_sites: vec![].into(),
+            literal_templates: Vec::new().into(),
+            superinstructions: vec![].into(), rewrite_ranges: Default::default(),
             replay: None, first_call_scopes: Default::default(),
             encoded_records: None,
             validated: Default::default(),

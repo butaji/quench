@@ -8,10 +8,10 @@ use crate::vm::activation::Continuation;
 /// none.
 #[derive(Clone, Debug)]
 pub(crate) enum AwaitKind {
-    AsyncFunction(Box<Continuation>),
+    AsyncFunction(Continuation),
     AsyncGeneratorAwait {
         generator: Value,
-        continuation: Box<Continuation>,
+        continuation: Continuation,
     },
     /// The await of an async generator's `yield`, which settles the request with the value.
     AsyncGeneratorYield { generator: Value },
@@ -19,9 +19,9 @@ pub(crate) enum AwaitKind {
 
 /// One `await`'s suspended activation. The cell is both handlers of the await's promise
 /// reaction, so the continuation is traced while the reaction can still run, and the run
-/// takes it (`AwaitState::resume`). The continuation is boxed apart so taking it frees its
-/// storage at once: the spent state waits for a sweep, or for the activation's next await
-/// (`AwaitState::arm`).
+/// takes it (`AwaitState::resume`). The continuation is a few words
+/// around its boxed frame, held in place: an await allocates nothing, and the spent state
+/// waits for a sweep, or for the activation's next await (`AwaitState::arm`).
 #[derive(Clone, Debug)]
 pub(crate) enum AwaitState {
     Pending {
@@ -42,18 +42,21 @@ impl AwaitState {
 
     /// Takes the pending await for its reaction run, leaving the state spent; `None` when
     /// it is spent already (a reaction cannot run twice).
-    pub(crate) fn resume(&mut self) -> Option<(AwaitKind, Value, Value)> {
+    pub(crate) fn resume(&mut self) -> Option<ResumedAwait> {
         match std::mem::replace(self, Self::Spent) {
-            Self::Pending { kind, realm, promise } => Some((kind, realm, promise)),
+            Self::Pending { kind, realm, promise } => {
+                let (role, continuation) = kind.into_role();
+                Some(ResumedAwait { role, continuation, realm, promise })
+            }
             Self::Spent => None,
         }
     }
 
     /// Takes an async function's continuation off a pending state (tests).
     #[cfg(test)]
-    pub(crate) fn take_function_continuation(&mut self) -> Option<Box<Continuation>> {
+    pub(crate) fn take_function_continuation(&mut self) -> Option<Continuation> {
         match self.resume() {
-            Some((AwaitKind::AsyncFunction(continuation), ..)) => Some(continuation),
+            Some(ResumedAwait { role: AwaitRole::AsyncFunction, continuation, .. }) => continuation,
             _ => None,
         }
     }
@@ -98,6 +101,16 @@ impl AwaitState {
     }
 }
 
+/// What an await's reaction run takes from its state (`AwaitState::resume`).
+pub(crate) struct ResumedAwait {
+    pub(crate) role: AwaitRole,
+    /// The suspended activation; none for an async generator's `yield` await.
+    pub(crate) continuation: Option<Continuation>,
+    /// The realm global that awaited, which the continuation resumes in.
+    pub(crate) realm: Value,
+    pub(crate) promise: Value,
+}
+
 /// Which activation an await reaction resumes, as `AwaitKind` says without its frame.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum AwaitRole {
@@ -120,20 +133,20 @@ impl AwaitRole {
 impl AwaitKind {
     /// An async function activation awaiting.
     pub(crate) fn function(continuation: Continuation) -> Self {
-        Self::AsyncFunction(Box::new(continuation))
+        Self::AsyncFunction(continuation)
     }
 
     /// An async generator activation awaiting inside its body.
     pub(crate) fn generator_await(generator: Value, continuation: Continuation) -> Self {
-        Self::AsyncGeneratorAwait { generator, continuation: Box::new(continuation) }
+        Self::AsyncGeneratorAwait { generator, continuation }
     }
 
     /// The role and the frame it holds, if any, for a reaction run.
     pub(crate) fn into_role(self) -> (AwaitRole, Option<Continuation>) {
         match self {
-            Self::AsyncFunction(continuation) => (AwaitRole::AsyncFunction, Some(*continuation)),
+            Self::AsyncFunction(continuation) => (AwaitRole::AsyncFunction, Some(continuation)),
             Self::AsyncGeneratorAwait { generator, continuation } => {
-                (AwaitRole::AsyncGeneratorAwait(generator), Some(*continuation))
+                (AwaitRole::AsyncGeneratorAwait(generator), Some(continuation))
             }
             Self::AsyncGeneratorYield { generator } => (AwaitRole::AsyncGeneratorYield(generator), None),
         }

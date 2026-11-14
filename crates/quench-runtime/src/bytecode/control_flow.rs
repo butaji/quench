@@ -119,6 +119,9 @@ impl super::Handler {
         pcs: impl IntoIterator<Item = usize>,
         mut visit: impl FnMut(usize, &[usize]),
     ) {
+        if handlers.is_empty() {
+            return pcs.into_iter().for_each(|pc| visit(pc, &[]));
+        }
         let mut order = (0..handlers.len()).collect::<Vec<_>>();
         order.sort_by_key(|&index| handlers[index].start);
         let mut pending = order.into_iter().peekable();

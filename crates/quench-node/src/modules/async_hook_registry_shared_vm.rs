@@ -322,11 +322,8 @@ pub(super) fn has_hooks(context: &mut NativeContext<'_, NodeHost>, kind: HookKin
         != 0
 }
 
-pub(crate) fn enabled(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
+/// Node's `enabledHooksExist()`: whether any async hook is enabled.
+pub(crate) fn hooks_exist(context: &mut NativeContext<'_, NodeHost>) -> Result<bool, RootedError> {
     let (api, snapshot) = {
         let state = context.host_mut().shared_state();
         let state = state.borrow();
@@ -347,7 +344,16 @@ pub(crate) fn enabled(
         };
         hooks.len() as u32
     };
-    Ok(context.boolean(count != 0))
+    Ok(count != 0)
+}
+
+pub(crate) fn enabled(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let exist = hooks_exist(context)?;
+    Ok(context.boolean(exist))
 }
 
 pub(super) fn emit(

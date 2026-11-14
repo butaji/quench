@@ -13,9 +13,12 @@ use super::*;
 use program_shape::ParsedProgramShape;
 use oxc_ast_visit::Visit;
 use replay::{ReplayViews, ShiftSpans};
-mod nested;
+mod append;
+mod room;
+pub(crate) mod nested;
 pub(crate) use nested::{FirstCallScopes, FirstCallStubs};
 pub(in crate::compile) use nested::{FreeNameCheck, FreeNames, free_names};
+pub(in crate::compile) use room::ChunkRoom;
 
 impl ReplayViews {
     /// The line starts and UTF-16 excess table of `text`, the program's source, which a
@@ -99,8 +102,29 @@ impl<'a> ChunkWindow<'a> {
     }
 }
 
+/// A stub's function text as its chunk compiles it, with where the function starts in the
+/// program's text. An anonymous function expression is no statement: it compiles
+/// parenthesized, one character before its place, so the function itself starts where it did.
+pub(super) struct ChunkText<'a> {
+    pub(super) text: std::borrow::Cow<'a, str>,
+    pub(super) start: u32,
+}
+
+impl<'a> ChunkText<'a> {
+    pub(super) fn of(source: &'a crate::bytecode::ProgramSource, span: crate::bytecode::SourceSpan) -> Option<Self> {
+        let snippet = source.text.get(span.start as usize..span.end as usize)?;
+        let anonymous = !snippet["function".len().min(snippet.len())..].trim_start().starts_with(|c: char| c == '_' || c == '$' || c.is_alphanumeric() || !c.is_ascii());
+        Some(if anonymous && span.start > 0 {
+            Self { text: std::borrow::Cow::Owned(format!("({snippet})")), start: span.start - 1 }
+        } else {
+            Self { text: std::borrow::Cow::Borrowed(snippet), start: span.start }
+        })
+    }
+}
+
 impl Engine {
-    /// The chunk of stub `function` of `program`, at `span` (`Vm::call_first_chunk`).
+    /// The chunk of stub `function` of `program`, at `span`, as a program of its own
+    /// (`Vm::call_first_chunk`).
     pub(crate) fn specialize_first_call_chunk(
         program: &ResidualProgram,
         function: u32,
@@ -109,19 +133,15 @@ impl Engine {
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let name = program.source_name.as_str();
         let source = program.source.as_ref().filter(|source| source.base == 0);
-        let Some((source, snippet)) = source.and_then(|source| Some((source, source.text.get(span.start as usize..span.end as usize)?))) else {
+        let Some((source, chunk)) = source.and_then(|source| Some((source, ChunkText::of(source, span)?))) else {
             return Err(vec![Diagnostic::unsupported(name, "a first-call stub keeps no source")]);
         };
         let views = ReplayViews::default();
         let (line_starts, utf16_excess) = program.replay.as_deref().map_or(&views, |replay| &replay.views).layout(&source.text);
-        // An anonymous function expression is no statement: it compiles parenthesized, one
-        // character before its place, so the function itself starts where it did.
-        let anonymous = !snippet["function".len().min(snippet.len())..].trim_start().starts_with(|c: char| c == '_' || c == '$' || c.is_alphanumeric() || !c.is_ascii());
-        let (snippet, start) = if anonymous && span.start > 0 { (std::borrow::Cow::Owned(format!("({snippet})")), span.start - 1) } else { (std::borrow::Cow::Borrowed(snippet), span.start) };
         let stubs = &program.first_call_scopes;
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
-        let window = ChunkWindow { source, start, outer, line_starts, utf16_excess };
-        Self::specialize_script_shaped(&snippet, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script())
+        let window = ChunkWindow { source, start: chunk.start, outer, line_starts, utf16_excess };
+        Self::specialize_script_shaped(&chunk.text, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script())
     }
 }
 
@@ -205,6 +225,8 @@ pub(super) struct Stubs<'a> {
     levels: FxHashMap<usize, (std::rc::Rc<capture_scope::CaptureScope>, nested::ScopeLevel)>,
     /// In a chunk, its stub's function start and the scopes it compiles against.
     pub(super) outer: Option<(u32, std::rc::Rc<FirstCallScopes>)>,
+    /// The room the stubs' chunks may append to the program in.
+    pub(super) room: ChunkRoom,
 }
 
 impl Stubs<'_> {
@@ -253,6 +275,7 @@ impl Compiler<'_> {
     /// `function` compiled as its first-call stub: a function of its name, length,
     /// strictness and source that forwards its first call to its chunk.
     fn compile_first_call_stub(&mut self, function: &oxc_ast::ast::Function<'_>, context: replay::PlainFunctionContext) -> u32 {
+        self.first_call.room.add_stub(function.span.end - function.span.start);
         let strict = context.inherited_strict || function
             .body
             .as_ref()

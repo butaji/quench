@@ -57,6 +57,29 @@ pub(crate) enum CallCompletion {
     /// A store's setter the lane activated: the assignment yields the value stored, which
     /// the caller's register still holds, whatever the setter returns.
     Assigned,
+    /// A proxy `get` or `set` trap the lane activated, whose result the access still owes the
+    /// target's invariants (`Vm::trap_result_error`): a read yields what the trap returned, a
+    /// store the value stored.
+    Trapped(TrapCheck),
+}
+
+/// How a proxy trap's result is checked against its target: a read, a store, or a strict
+/// store, which a falsish result also rejects with a `TypeError`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrapAccess {
+    Read,
+    Store,
+    StrictStore,
+}
+
+/// What a proxy trap the lane activated owes its access once it returns (ECMA-262 10.5.8,
+/// 10.5.9): the target and key the trap was called with, whose shape the lane's pre-check
+/// found leaving the key unconstrained, which the trap's own effects may have changed.
+#[derive(Clone, Copy)]
+pub(crate) struct TrapCheck {
+    pub(super) target: Value,
+    pub(super) atom: crate::bytecode::Atom,
+    pub(super) access: TrapAccess,
 }
 
 impl CallCompletion {
@@ -70,7 +93,7 @@ impl CallCompletion {
     /// Whether the call's value is made on the general path from what the callee returns:
     /// an async callee's promise settles there, an array step's iteration finishes there.
     #[inline(always)]
-    pub(super) fn completes_on_general_path(&self) -> bool { matches!(self, Self::Promise(_) | Self::ArrayStep(_)) }
+    pub(super) fn completes_on_general_path(&self) -> bool { matches!(self, Self::Promise(_) | Self::ArrayStep(_) | Self::Trapped(_)) }
 
     #[inline(always)]
     pub(super) fn take_array_step(&mut self) -> Option<Box<super::array_indexed::ArrayStepCall>> {
@@ -149,10 +172,11 @@ pub(crate) struct Continuation {
     pub completion: Completion,
     pub resume_register: Option<u16>,
     pub promise: Value,
-    /// The registers live at the suspension, when liveness covers the function and every
-    /// other register was cleared there (`Vm::suspend_activation`): only these can name a
-    /// cell, so the GC traces them alone. `None` traces every register.
-    pub(super) live_registers: Option<crate::compile::liveness::RegisterSet>,
+    /// The registers live at the suspension, when liveness covers the function, every other
+    /// register was cleared there (`Vm::suspend_activation`) and the live ones are the first
+    /// `u64::BITS`: only these can name a cell, so the GC traces them alone. `None` traces
+    /// every register.
+    pub(super) live_registers: Option<u64>,
 }
 
 impl std::fmt::Debug for Continuation {

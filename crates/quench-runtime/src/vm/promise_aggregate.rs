@@ -54,6 +54,49 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    /// `Call(promiseResolve, constructor, « value »)`: the intrinsic `Promise.resolve`, which
+    /// the combinator read from its constructor once, is `PromiseResolve` itself, so it runs
+    /// without a native call's dispatch.
+    pub(super) fn aggregate_element_resolve(
+        &mut self,
+        p: &ResidualProgram,
+        resolve: Value,
+        constructor: Value,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        let intrinsic = self.heap.function(resolve).is_some_and(|function| {
+            matches!(function.kind, FunctionKind::Native(Native::PromiseResolve))
+                && function.env.is_null()
+                && function.realm == self.realm.globals
+        });
+        if intrinsic {
+            return self.promise_resolve_for_constructor(p, constructor, value);
+        }
+        self.call_value(p, resolve, constructor, &[value])
+    }
+
+    /// `Invoke(input, "then", « fulfilled, rejected »)`. The intrinsic `then` of a promise whose
+    /// species it reads without guest code only registers the reaction: its derived promise,
+    /// which no code can reach and no host observes, settles nothing.
+    fn aggregate_then(
+        &mut self,
+        p: &ResidualProgram,
+        input: Value,
+        then: Value,
+        fulfilled: Value,
+        rejected: Value,
+    ) -> Result<(), JsError> {
+        if self.is_intrinsic_promise_then(then)
+            && self.is_promise(input)
+            && !self.host.observes_promise_lifecycle()
+            && self.promise_species_intrinsic(input)
+        {
+            self.perform_promise_then(p, input, fulfilled, rejected, Value::UNDEFINED);
+            return Ok(());
+        }
+        self.call_value(p, then, input, &[fulfilled, rejected]).map(drop)
+    }
+
     pub(super) fn enqueue_aggregate_input(
         &mut self,
         p: &ResidualProgram,
@@ -99,8 +142,7 @@ impl<H: Host> Vm<H> {
             };
             let then = self.heap.root_value(then_root.unwrap()).unwrap();
             let input = self.heap.root_value(input_root).unwrap();
-            self.call_value(p, then, input, &[fulfilled, rejected])?;
-            Ok(())
+            self.aggregate_then(p, input, then, fulfilled, rejected)
         })();
         self.heap.release_root(input_root);
         self.heap.release_root(aggregate_root);

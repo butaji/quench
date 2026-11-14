@@ -23,6 +23,25 @@ fn async_functions_wrap_return_and_throw_in_promises() {
     assert_eq!(view.lines().as_slice(), ["7", "8"]);
 }
 
+/// `await` of a native promise takes its own reaction while the promise's `constructor` reads as
+/// `%Promise%` (`Vm::promise_constructor_is_intrinsic`, proved once) and wraps it in a fresh
+/// promise once the read answers something else: the order the lines print in is Node's.
+#[test]
+fn await_of_native_promise_follows_its_constructor_read() {
+    let host = TestHost::default();
+    let view = host.clone();
+    let mut runtime = Runtime::new(host);
+    let program = Engine::compile(ExecutionRequest::script(
+        "class Sub extends Promise {} const p = Promise.resolve(1);
+         (async () => { await p; await p; print('a'); Object.defineProperty(p, 'constructor', { value: Sub }); await p; print('b'); })();
+         Promise.resolve().then(() => print('1')).then(() => print('2')).then(() => print('3')).then(() => print('4')).then(() => print('5'));",
+        "await-constructor.js",
+    ))
+    .unwrap();
+    runtime.execute(&program).unwrap();
+    assert_eq!(view.lines().as_slice(), ["1", "a", "2", "3", "4", "b", "5"]);
+}
+
 /// A host that gives every promise a context and records which are still held.
 #[derive(Clone, Default)]
 struct PromiseContexts {

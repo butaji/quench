@@ -317,7 +317,7 @@ impl BodyFacts {
             self.failed = true;
             return;
         }
-        let built = oxc_semantic::SemanticBuilder::new().with_check_syntax_error(true).build(program);
+        let built = super::semantic_stats::builder(program).with_check_syntax_error(true).build(program);
         if !built.diagnostics.is_empty() {
             self.failed = true;
             return;

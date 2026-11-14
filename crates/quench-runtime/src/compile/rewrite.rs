@@ -353,7 +353,7 @@ impl CodeLiveness {
             None => liveness::transfers(function, methods, field_sites, superinstructions)?,
         };
         let successors = crate::bytecode::Successors::of_code(function);
-        let live = liveness::analyze_successors(function, &transfers, &successors);
+        let live = liveness::analyze_wide(function, &transfers, &successors);
         Some(Self { transfers, live, successors })
     }
 
@@ -726,7 +726,7 @@ struct SuperRule {
     fuse: fn(&[Instr], &mut SiteTable<'_, Superinstruction>) -> Option<Instr>,
 }
 
-const CONST_ARRAY_OBJECT2: [Op; 4] = [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2];
+pub(super) const CONST_ARRAY_OBJECT2: [Op; 4] = [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2];
 
 const SUPER_RULES: &[SuperRule] = &[SuperRule {
     pattern: &[Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2],

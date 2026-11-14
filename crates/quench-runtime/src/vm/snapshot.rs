@@ -121,7 +121,7 @@ crate::snapshot::snap_struct!(RuntimeAtoms {
     lexical_this, new_target, regexp_exec, regexp_flags, last_index, regexp_flag_accessors, then,
     constructor, next, name, empty, value, done, iterator_return, writable, enumerable, configurable,
     get, set,
-    bound_target, bound_this, bound_args,
+    bound_target, bound_this, bound_args, proxy_traps,
 });
 crate::snapshot::snap_struct!(RealmIntrinsics {
     arguments_objects, iterator_prototypes, builtin_prototypes, function_constructors,
@@ -309,7 +309,7 @@ impl<H: Host> Vm<H> {
             active_call_roots,
             with_stack,
             startup_intrinsics,
-            with_scope_entered,
+            with_scope_entered, scope_names: _,
             test262_agent,
             shared_async_waiters,
             programs,

@@ -208,6 +208,18 @@ pub(crate) enum IntactFuse {
     ArrayIterator,
     /// `%ArrayIteratorPrototype%.next` is the realm's intrinsic `next`.
     ArrayIteratorNext,
+    /// `Set.prototype[@@iterator]` is the realm's `Set.prototype.values`.
+    SetIterator,
+    /// `%SetIteratorPrototype%.next` is the realm's intrinsic `next`.
+    SetIteratorNext,
+    /// `Map.prototype[@@iterator]` is the realm's `Map.prototype.entries`.
+    MapIterator,
+    /// `%MapIteratorPrototype%.next` is the realm's intrinsic `next`.
+    MapIteratorNext,
+    /// `String.prototype[@@iterator]` is the realm's intrinsic.
+    StringIterator,
+    /// `%StringIteratorPrototype%.next` is the realm's intrinsic `next`.
+    StringIteratorNext,
     StringCharCodeAt,
     StringIncludes,
     RegExpTest,
@@ -215,7 +227,7 @@ pub(crate) enum IntactFuse {
 }
 
 impl IntactFuse {
-    const COUNT: usize = 6;
+    pub(crate) const COUNT: usize = 12;
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]

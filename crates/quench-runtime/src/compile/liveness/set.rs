@@ -66,18 +66,7 @@ impl RegisterSet {
         self.0.iter().map(|word| word.count_ones()).sum()
     }
 
-    /// The lowest set bit, or the width when the set is empty.
-    #[inline(always)]
-    pub(crate) fn trailing_zeros(self) -> u32 {
-        for (index, word) in self.0.iter().enumerate() {
-            if *word != 0 {
-                return index as u32 * u64::BITS + word.trailing_zeros();
-            }
-        }
-        Self::BITS
-    }
-
-    /// Word `index` of the set, the unit a register run is cleared a machine word at a time.
+    /// Word `index` of the set, the unit dead registers are found a machine word at a time.
     #[inline(always)]
     pub(crate) fn word(self, index: usize) -> u64 {
         self.0.get(index).copied().unwrap_or(0)

@@ -300,6 +300,7 @@ pub(super) fn native_length(kind: Native) -> Option<f64> {
 
 #[path = "native_lengths.rs"]
 mod native_lengths;
+mod constructor_read;
 
 pub(super) const fn native_length_definition(kind: Native) -> Option<f64> {
     let callbacks = super::typed_array_install::TYPED_ARRAY_CALLBACK_METHODS;
@@ -892,6 +893,13 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         constructor: Value,
     ) -> Result<(Value, Value, Value), JsError> {
+        // The realm's %Promise% runs no guest code (its `prototype` is fixed, its executor
+        // internal): the capability is a fresh promise and its resolving functions.
+        if constructor == self.intrinsic_promise_constructor() {
+            let promise = self.promise_object()?;
+            let (resolve, reject) = self.promise_resolving_functions(promise);
+            return Ok((promise, resolve, reject));
+        }
         if !self.is_constructable(constructor) {
             return Err(self.type_error(
                 p,
@@ -4906,9 +4914,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         if self.is_promise(value) {
-            let constructor_atom = self.runtime_atoms.constructor;
-            let observed = self.plain_named_load(value, constructor_atom)?;
-            return (observed == receiver).then_some(value);
+            return self.promise_constructor_is_intrinsic(value, receiver).then_some(value);
         }
         let then = self.plain_resolution_then(value)?;
         let promise = self.promise_object_with_parent(None).ok()?;
@@ -4959,7 +4965,7 @@ impl<H: Host> Vm<H> {
     /// constructor's own `@@species` is still an intrinsic accessor, whose getter returns
     /// its receiver (`has_intrinsic_species_getter`). Both reads observe nothing, so a
     /// failed proof only leaves the observable steps to the general path.
-    fn promise_species_intrinsic(&mut self, promise: Value) -> bool {
+    pub(super) fn promise_species_intrinsic(&mut self, promise: Value) -> bool {
         if self.promise_species_proved(promise) {
             return true;
         }

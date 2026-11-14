@@ -122,7 +122,7 @@ pub(super) fn new_only(c: &mut Context<'_>, name: &str) -> Result<(), RootedErro
     let error = c.type_error_rooted(&format!("Class constructor {name} cannot be invoked without 'new'"))?;
     Err(c.throw(error))
 }
-fn validate_function(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(), RootedError> {
+pub(crate) fn validate_function(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(), RootedError> {
     if c.is_callable_rooted(value)? {
         return Ok(());
     }
@@ -131,6 +131,12 @@ fn validate_function(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(
         super::node_errors_shared_vm::hide_type_error(c, exception, "ERR_INVALID_ARG_TYPE")?;
     }
     Err(error)
+}
+/// Whether a microtask queued now must carry async context: Node's
+/// `AsyncContextFrame.current() || enabledHooksExist()`, which `queueMicrotask` tests.
+pub(crate) fn microtask_carries_context(c: &mut Context<'_>) -> Result<bool, RootedError> {
+    let store = c.host_mut().shared_state().borrow().async_hooks.has_visible_store();
+    Ok(store || super::async_hook_registry_shared_vm::hooks_exist(c)?)
 }
 fn method(c: &mut Context<'_>, holder: RootId, name: &str, op: &str, data: RootId) -> Result<(), RootedError> {
     let value = c.host_function_named_with_data(crate::host::shared_vm::operation(op), name, data)?;

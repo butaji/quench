@@ -1,4 +1,5 @@
 use super::*;
+use super::array_view::{Match, Search};
 
 /// Where `Vm::array_species_is_array_create` found `Array.prototype.constructor` for an array
 /// of `shape`, which has no own `constructor`, under `epoch`. A change to the prototype's layout
@@ -470,6 +471,16 @@ impl<H: Host> Vm<H> {
         Ok(object)
     }
 
+    /// Whether every Set on `array` is the plain element store (see `fill_plain_array_elements`).
+    fn has_plain_elements(&self, array: Value) -> bool {
+        self.object_data(array).is_some_and(|object| {
+            object.is_extensible()
+                && !object.is_frozen()
+                && !object.has_indexed_descriptors()
+                && !object.is_arguments_object()
+        }) && self.prototypes_hold_no_index(array)
+    }
+
     /// Stores `value` at every index of `indices`, all below the array's length, where each
     /// Set is the plain element store: an extensible, unfrozen array whose elements carry
     /// default attributes and whose prototypes hold no index (`prototypes_hold_no_index`), so
@@ -484,13 +495,7 @@ impl<H: Host> Vm<H> {
         let Some(dense) = self.heap.array(array).map(|array| array.elements().len()) else {
             return false;
         };
-        let plain = self.object_data(array).is_some_and(|object| {
-            object.is_extensible()
-                && !object.is_frozen()
-                && !object.has_indexed_descriptors()
-                && !object.is_arguments_object()
-        }) && self.prototypes_hold_no_index(array);
-        if !plain {
+        if !self.has_plain_elements(array) {
             return false;
         }
         let in_dense = indices.start..indices.end.min(dense);
@@ -499,6 +504,10 @@ impl<H: Host> Vm<H> {
                 unreachable!("matched an array above");
             };
             super::index::mutable_array_elements(array_object.elements_mut()).fill(in_dense, value);
+        }
+        if self.heap.fills_sparse_tail(array, &indices) {
+            self.heap.fill_array_tail(array, value);
+            return true;
         }
         for index in dense.max(indices.start)..indices.end {
             self.store_validated_array_element(array, index, value);
@@ -617,14 +626,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         range: std::ops::Range<usize>,
     ) -> Option<&[Value]> {
-        let object = self.heap.array(this)?;
-        if object.has_indexed_descriptors()
-            || object.is_arguments_object()
-            || self.heap.sparse_length(this).is_some()
-        {
-            return None;
-        }
-        let elements = object.elements().get(range)?;
+        let elements = self.array_read_view(this)?.get(range)?;
         elements.iter().all(|value| !value.is_deleted()).then_some(elements)
     }
 
@@ -1134,7 +1136,12 @@ impl<H: Host> Vm<H> {
             .map(|value| self.to_number(p, value))
             .transpose()?
             .unwrap_or(0.0);
-        let start = crate::units::relative_index(from, length);
+        let mut start = crate::units::relative_index(from, length);
+        match self.search_dense(object, start..length, false, search, Match::SameValueZero) {
+            Search::Found(_) => return Ok(Value::TRUE),
+            Search::Missing => return Ok(Value::FALSE),
+            Search::Resume(index) => start = index,
+        }
         for index in start..length {
             let value = self.get_index(p, object, Value::number(index as f64))?;
             if self.same_value_zero(value, search) {
@@ -1159,7 +1166,7 @@ impl<H: Host> Vm<H> {
                     Some(value) => vm.coerce_js_string(p, value)?,
                 };
                 let mut output = super::wtf16::JsStringBuilder::default();
-                for index in 0..length {
+                for index in vm.join_dense_prefix(object, length, &separator, &mut output)..length {
                     if index != 0 {
                         output.append(&separator);
                     }

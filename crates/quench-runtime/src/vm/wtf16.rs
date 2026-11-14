@@ -17,6 +17,8 @@ pub(super) use concat_all::JsStringBuilder;
 pub(crate) mod split;
 mod text_hash;
 mod conversions;
+mod host_text;
+use host_text::utf16_lossy;
 pub(crate) use text_hash::{str_text_hash, table_hash, TextHash};
 use append_buffer::{AppendBuffer, APPEND_BUFFER_MIN_UNITS};
 
@@ -403,7 +405,7 @@ impl<'a> Units<'a> {
     pub(crate) fn to_utf8(self) -> Vec<u8> {
         match self {
             Self::Ascii(bytes) => bytes.to_vec(),
-            Self::Wide(units) => String::from_utf16_lossy(units).into_bytes(),
+            Self::Wide(units) => utf16_lossy(units).into_bytes(),
         }
     }
 
@@ -972,7 +974,7 @@ impl JsString {
                 inner.cached_host().map_or_else(
                     || {
                         let Units::Wide(units) = wide.view() else { unreachable!("wide units") };
-                        String::from_utf16_lossy(units)
+                        utf16_lossy(units)
                     },
                     str::to_owned,
                 )
@@ -996,7 +998,7 @@ impl JsString {
             wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..)) => match &self.repr {
                 Repr::Shared(inner) => inner.host(|| {
                     let Units::Wide(units) = wide.view() else { unreachable!("wide units") };
-                    Rc::<str>::from(String::from_utf16_lossy(units))
+                    Rc::<str>::from(utf16_lossy(units))
                 }),
                 Repr::Flat(_) => unreachable!("a flat string held by value is ASCII"),
             },

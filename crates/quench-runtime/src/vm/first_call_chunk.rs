@@ -57,6 +57,9 @@ impl<H: Host> Vm<H> {
     }
 
     fn compile_first_chunk_anew(&mut self, p: &ResidualProgram, (program, function): (ProgramId, u32)) -> Result<FunctionKind, JsError> {
+        if let Some(appended) = self.append_first_chunk(p, (program, function)) {
+            return Ok(appended);
+        }
         let span = p.functions[function as usize].header().source_span
             .ok_or_else(|| JsError::validation("a first-call stub keeps no source".into()))?;
         let residual = crate::Engine::specialize_first_call_chunk(p, function, span, &*self)

@@ -1,6 +1,6 @@
 use super::*;
 
-mod spelling_tests;
+mod spelling_tests; mod short_room_tests;
 
 #[test]
 fn regression_global_var_lowering_checks_instruction_roles_before_slots() {
@@ -239,7 +239,7 @@ fn constant_computed_property_uses_field_cache_site() {
             .any(|instruction| instruction.op() == Op::GetField)
     );
     assert!(program.field_sites.is_empty());
-    assert!(program.cache_sites > 0);
+    assert!(program.cache_sites.get() > 0);
 }
 
 #[test]

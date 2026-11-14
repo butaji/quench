@@ -2109,6 +2109,29 @@ impl<H: Host> Vm<H> {
             .and_then(Value::as_number)
             .ok_or_else(|| JsError("missing RegExp legacy property selector".into()))?
             as Atom;
+        match self.regexp_legacy_text(selector) {
+            Some(value) => Ok(self.heap.alloc_string(value)),
+            None => Err(self.type_error(p, "RegExp legacy match state is unavailable".into())),
+        }
+    }
+
+    /// A legacy static getter of the intrinsic `RegExp` (`RegExp.$1`, `lastMatch`) called as
+    /// `callee` with `receiver`, which runs no guest code: its text, where the receiver is the
+    /// realm's constructor and the match state is available; `None` leaves any throw to the
+    /// native.
+    pub(in crate::vm) fn regexp_legacy_getter_in_place(&mut self, callee: Value, receiver: Value) -> Option<Value> {
+        let FunctionRecord { env, realm, .. } = self.heap.function(callee)?;
+        if *realm != self.realm.globals || !self.same_value(receiver, self.regexp_intrinsic_constructor()) {
+            return None;
+        }
+        let selector = env.as_number()? as Atom;
+        let text = self.regexp_legacy_text(selector)?;
+        Some(self.heap.alloc_string(text))
+    }
+
+    /// The text the legacy static `selector` names, from the last match the realm made;
+    /// `None` where the state is unavailable.
+    fn regexp_legacy_text(&mut self, selector: Atom) -> Option<JsString> {
         self.resolve_regexp_legacy_match();
         let name = self.atom_name(selector);
         let state = self
@@ -2117,7 +2140,7 @@ impl<H: Host> Vm<H> {
             .regexp_intrinsics
             .get(&self.realm.globals)
             .expect("active realm has RegExp intrinsics");
-        let value = if matches!(name, "input" | "$_") {
+        if matches!(name, "input" | "$_") {
             state.legacy.input()
         } else {
             match &state.legacy.last {
@@ -2144,10 +2167,6 @@ impl<H: Host> Vm<H> {
                     ))
                 }
             }
-        };
-        match value {
-            Some(value) => Ok(self.heap.alloc_string(value)),
-            None => Err(self.type_error(p, "RegExp legacy match state is unavailable".into())),
         }
     }
 

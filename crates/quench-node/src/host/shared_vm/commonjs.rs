@@ -1974,20 +1974,19 @@ pub(crate) fn lazy_global_set(context: &mut Context<'_>, _: RootId, args: &[Root
     Ok(context.undefined())
 }
 
-/// `queueMicrotask(callback)`: the callback runs in a `Microtask` AsyncResource's scope,
-/// which is destroyed after it, so async context follows it; async_hooks loads on the first
-/// queued callback. Other values reach the host operation, which validates them.
+/// `queueMicrotask(callback)`: with no context to carry the callback is the microtask itself, else it
+/// runs in a `Microtask` AsyncResource's scope, destroyed after it; async_hooks loads on the first
+/// such callback. A non-function throws `ERR_INVALID_ARG_TYPE`, as Node's `validateFunction` does.
 pub(crate) fn queue_microtask(context: &mut Context<'_>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let state = context.host_function_data()?;
-    let enqueue = get(context, state, "enqueue")?;
-    let callback = match args.first() {
-        Some(callback) => *callback,
-        None => context.undefined(),
-    };
     let undefined = context.undefined();
-    if !context.is_callable_rooted(callback)? {
-        return context.call_rooted(enqueue, undefined, &[callback]);
+    let callback = args.first().copied().unwrap_or(undefined);
+    crate::modules::async_hooks_public::validate_function(context, callback, "callback")?;
+    // Node's fast path (`internal/process/task_queues`): the callback itself is the microtask.
+    if !crate::modules::async_hooks_public::microtask_carries_context(context)? {
+        return context.queue_microtask_rooted(callback, &[]).map(|()| undefined);
     }
+    let enqueue = get(context, state, "enqueue")?;
     let mut resource_class = get(context, state, "AsyncResource")?;
     if context.rooted_value(resource_class).is_some_and(|value| value.is_undefined()) {
         let require = get(context, state, "require")?;

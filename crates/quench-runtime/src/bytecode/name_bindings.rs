@@ -6,8 +6,9 @@
 //! declarations rather than a copy of every outer name.
 
 use super::{Atom, EvalBinding, EvalBindingLocation, Function};
-#[cfg(all(test, feature = "aot"))]
-use super::{Op, WideInstruction};
+use super::Op;
+#[cfg(feature = "aot")]
+use super::WideInstruction;
 use std::rc::Rc;
 
 #[derive(Clone, Debug, Default)]
@@ -155,4 +156,24 @@ impl Function {
 pub(super) fn reads_hidden_name(instruction: super::WideInstruction, tables: &impl super::FactTables) -> bool {
     (instruction.op().loads_name() || instruction.op().stores_name()) && usize::try_from(instruction.atom_index())
         .is_ok_and(|atom| tables.atom_name(atom).is_none_or(|name| name.starts_with('\0') && !super::is_intrinsic_name(name)))
+}
+
+/// The ops that read the implicit bindings an environment holds, by their form.
+pub(super) fn reads_binding_op(op: Op) -> bool {
+    matches!(
+        op,
+        Op::ResolveName
+            | Op::LoadResolvedName
+            | Op::DeleteName
+            | Op::StoreResolvedName
+            | Op::StoreVarBinding
+            | Op::InitializeThis
+            | Op::SuperCallCheck
+    )
+}
+
+/// The ops `body_binding_reads_beside_clones` examines: those that name a binding, read one by
+/// form (`reads_binding_op`) or run a direct eval.
+pub(super) fn may_read_binding(op: Op) -> bool {
+    op.loads_name() || op.stores_name() || op.is_call_with_eval_flags() || reads_binding_op(op)
 }

@@ -22,6 +22,18 @@ pub(super) enum SiteTable<'a, T> {
         next: usize,
         written: FxHashMap<usize, T>,
     },
+    /// The first replay of a function whose load deferred its rewrites: its entries go
+    /// straight into the program's table, in the room the load reserved.
+    Grow(&'a crate::bytecode::append_vec::AppendVec<T>),
+    /// A first-call chunk's: the program's `below` entries, which it reads, then the entries
+    /// it adds, at the indices that follow `base`, the program's length when the chunk began
+    /// (`below` is empty for a table the program keeps in another form). The program takes
+    /// the added entries once they are all made (`ChunkDelta`).
+    Delta {
+        below: &'a [T],
+        base: usize,
+        added: Vec<T>,
+    },
 }
 
 impl<T> Default for SiteTable<'_, T> {
@@ -39,17 +51,30 @@ impl<'a, T: Clone> SiteTable<'a, T> {
         }
     }
 
+    pub(super) fn grow(table: &'a crate::bytecode::append_vec::AppendVec<T>) -> Self {
+        Self::Grow(table)
+    }
+
+    /// A chunk's table after the program's `base` entries, of which `below` are at hand.
+    pub(super) fn delta(below: &'a [T], base: usize) -> Self {
+        Self::Delta { below, base, added: Vec::new() }
+    }
+
     /// The index the next entry takes.
     pub(super) fn len(&self) -> usize {
         match self {
             Self::Owned(entries) => entries.len(),
+            Self::Grow(table) => table.len(),
             Self::Replay { next, .. } => *next,
+            Self::Delta { base, added, .. } => base + added.len(),
         }
     }
 
     pub(super) fn push(&mut self, value: T) {
         match self {
             Self::Owned(entries) => entries.push(value),
+            Self::Grow(table) => table.append(std::iter::once(value)),
+            Self::Delta { added, .. } => added.push(value),
             Self::Replay { next, written, .. } => {
                 written.insert(*next, value);
                 *next += 1;
@@ -68,16 +93,23 @@ impl<'a, T: Clone> SiteTable<'a, T> {
     pub(super) fn as_slice(&self) -> &[T] {
         match self {
             Self::Owned(entries) => entries,
+            Self::Grow(table) => table,
             Self::Replay { entries, .. } => entries,
+            Self::Delta { .. } => unreachable!("a chunk's passes never read a table whole"),
         }
     }
 
     pub(super) fn get(&self, index: usize) -> Option<&T> {
         match self {
             Self::Owned(entries) => entries.get(index),
+            Self::Grow(table) => table.get(index),
             Self::Replay { entries, written, .. } => {
                 written.get(&index).or_else(|| entries.get(index))
             }
+            Self::Delta { below, base, added } => match index.checked_sub(*base) {
+                Some(at) => added.get(at),
+                None => below.get(index),
+            },
         }
     }
 
@@ -90,7 +122,8 @@ impl<'a, T: Clone> SiteTable<'a, T> {
     pub(super) fn into_vec(self) -> Vec<T> {
         match self {
             Self::Owned(entries) => entries,
-            Self::Replay { .. } => Vec::new(),
+            Self::Replay { .. } | Self::Grow(_) => Vec::new(),
+            Self::Delta { added, .. } => added,
         }
     }
 
@@ -98,7 +131,7 @@ impl<'a, T: Clone> SiteTable<'a, T> {
     #[cfg(feature = "verify-replay")]
     pub(super) fn written(&self) -> impl Iterator<Item = (usize, &T)> {
         match self {
-            Self::Owned(_) => None,
+            Self::Owned(_) | Self::Grow(_) | Self::Delta { .. } => None,
             Self::Replay { written, .. } => Some(written.iter().map(|(index, value)| (*index, value))),
         }
         .into_iter()
@@ -118,6 +151,8 @@ impl<T: Clone> IndexMut<usize> for SiteTable<'_, T> {
     fn index_mut(&mut self, index: usize) -> &mut T {
         match self {
             Self::Owned(entries) => &mut entries[index],
+            Self::Grow(table) => table.entry_mut(index),
+            Self::Delta { base, added, .. } => &mut added[index - *base],
             Self::Replay { entries, written, .. } => written
                 .entry(index)
                 .or_insert_with(|| entries[index].clone()),
@@ -186,19 +221,28 @@ impl ProgramAtomIndex {
 /// key's hash, then compared with the constants themselves, which are the one record of
 /// each value. At load the compiler's own constants back it; a replay finds every constant
 /// of the finished program.
+/// The indices of the constants of each key hash, in index order.
+type Candidates = FxHashMap<u64, smallvec::SmallVec<[u32; 1]>>;
+
 pub(super) enum ConstantIndex<'a> {
-    /// Each key hash's constant indices, in index order.
-    Owned(FxHashMap<u64, smallvec::SmallVec<[u32; 1]>>),
+    Owned(Candidates),
     Replay {
         /// Each constant's key hash with its index, in hash then index order.
         hashes: &'a [(u64, u32)],
         constants: &'a [crate::bytecode::Constant],
     },
+    /// A first-call chunk's: the program's constants as a replay finds them, then the chunk's
+    /// own as the load keeps them.
+    Delta {
+        hashes: &'a [(u64, u32)],
+        constants: &'a [crate::bytecode::Constant],
+        added: Candidates,
+    },
 }
 
 impl Default for ConstantIndex<'_> {
     fn default() -> Self {
-        Self::Owned(FxHashMap::default())
+        Self::Owned(Candidates::default())
     }
 }
 
@@ -207,7 +251,28 @@ fn constant_key_hash(key: super::ConstantKey<'_>) -> u64 {
     rustc_hash::FxBuildHasher.hash_one(key)
 }
 
-impl ConstantIndex<'_> {
+/// The first index in `hashes` of a constant of `hash` that `matches`.
+fn find_hashed(
+    hashes: &[(u64, u32)],
+    constants: &[crate::bytecode::Constant],
+    hash: u64,
+    matches: impl Fn(&crate::bytecode::Constant) -> bool,
+) -> Option<u32> {
+    let start = hashes.partition_point(|(candidate, _)| *candidate < hash);
+    hashes[start..]
+        .iter()
+        .take_while(|(candidate, _)| *candidate == hash)
+        .map(|(_, index)| *index)
+        .find(|index| matches(&constants[*index as usize]))
+}
+
+impl<'a> ConstantIndex<'a> {
+    /// The index of a chunk's constants over `constants` of its program, whose key hashes are
+    /// `hashes`.
+    pub(super) fn delta(hashes: &'a [(u64, u32)], constants: &'a [crate::bytecode::Constant]) -> Self {
+        Self::Delta { hashes, constants, added: Candidates::default() }
+    }
+
     /// The first index of a constant whose key is `key`; `added` holds the constants the
     /// compiler added, which an owned index names.
     pub(super) fn get(
@@ -217,25 +282,20 @@ impl ConstantIndex<'_> {
     ) -> Option<u32> {
         let hash = constant_key_hash(key);
         let matches = |constant: &crate::bytecode::Constant| super::ConstantKey::from(constant) == key;
+        let own = |index: &Candidates| {
+            index.get(&hash)?.iter().copied().find(|index| matches(&added[*index as usize]))
+        };
         match self {
-            Self::Owned(index) => {
-                index.get(&hash)?.iter().copied().find(|index| matches(&added[*index as usize]))
-            }
-            Self::Replay { hashes, constants } => {
-                let start = hashes.partition_point(|(candidate, _)| *candidate < hash);
-                hashes[start..]
-                    .iter()
-                    .take_while(|(candidate, _)| *candidate == hash)
-                    .map(|(_, index)| *index)
-                    .find(|index| matches(&constants[*index as usize]))
-            }
+            Self::Owned(index) => own(index),
+            Self::Replay { hashes, constants } => find_hashed(hashes, constants, hash, matches),
+            Self::Delta { hashes, constants, added } => find_hashed(hashes, constants, hash, matches).or_else(|| own(added)),
         }
     }
 
     /// Records the first index of `key`. A replay adds no constant.
     pub(super) fn insert(&mut self, key: super::ConstantKey<'_>, index: u32) {
         match self {
-            Self::Owned(entries) => entries.entry(constant_key_hash(key)).or_default().push(index),
+            Self::Owned(entries) | Self::Delta { added: entries, .. } => entries.entry(constant_key_hash(key)).or_default().push(index),
             Self::Replay { .. } => {
                 debug_assert!(false, "a replay adds no constant");
             }
@@ -244,7 +304,7 @@ impl ConstantIndex<'_> {
 }
 
 /// `ConstantIndex::Replay`'s hashes of `constants`.
-fn constant_hashes(constants: &[crate::bytecode::Constant]) -> Vec<(u64, u32)> {
+pub(super) fn constant_hashes(constants: &[crate::bytecode::Constant]) -> Vec<(u64, u32)> {
     let mut hashes: Vec<(u64, u32)> = constants
         .iter()
         .enumerate()
@@ -254,195 +314,7 @@ fn constant_hashes(constants: &[crate::bytecode::Constant]) -> Vec<(u64, u32)> {
     hashes
 }
 
-/// One function of a compilation at load: reserved while it compiles, then compiled, or
-/// finished and released when a replay can make its record again.
-/// An entry is boxed when it holds anything: a large program's compilation keeps an entry
-/// per function while most of them are released, and an inline record (408 bytes) left
-/// each released entry that large (typescript.js: 21.7K entries, 8.9 MB at its compile's
-/// peak).
-pub(super) enum FunctionEntry {
-    Reserved,
-    Compiled(Box<crate::bytecode::Function>),
-    Released(Box<ReleasedFunction>),
-}
-
-/// A function finished during its program's load and released: its header, which the
-/// function making it may still name, and in verifying builds the record a replay must
-/// equal.
-pub(super) struct ReleasedFunction {
-    pub(super) header: crate::bytecode::FunctionHeader,
-    #[cfg(feature = "verify-replay")]
-    pub(super) record: crate::bytecode::Function,
-}
-
-/// The functions a compilation makes, by id. At load the compiler owns every entry. A replay
-/// makes one record, the replayed function's; the functions nested in it keep the ids and
-/// records the load gave them, and the replay reads their headers from the program.
-pub(super) enum FunctionTable<'a> {
-    Owned(Vec<FunctionEntry>),
-    Replay {
-        program: &'a [crate::bytecode::FunctionSlot],
-        target: u32,
-        next: u32,
-        record: Option<Box<crate::bytecode::Function>>,
-    },
-}
-
-impl Default for FunctionTable<'_> {
-    fn default() -> Self {
-        Self::Owned(Vec::new())
-    }
-}
-
-impl<'a> FunctionTable<'a> {
-    /// The id the next function takes.
-    pub(super) fn len(&self) -> usize {
-        match self {
-            Self::Owned(entries) => entries.len(),
-            Self::Replay { next, .. } => *next as usize,
-        }
-    }
-
-    pub(super) fn reserve_exact(&mut self, additional: usize) {
-        if let Self::Owned(entries) = self {
-            entries.reserve_exact(additional);
-        }
-    }
-
-    /// Moves a replay past the ids of functions the load compiled.
-    pub(super) fn seek(&mut self, id: u32) {
-        if let Self::Replay { next, .. } = self {
-            *next = id;
-        }
-    }
-
-    /// Takes the next id for a function whose record follows.
-    pub(super) fn reserve(&mut self) -> u32 {
-        let id = self.len() as u32;
-        match self {
-            Self::Owned(entries) => entries.push(FunctionEntry::Reserved),
-            Self::Replay { next, .. } => *next += 1,
-        }
-        id
-    }
-
-    pub(super) fn set(&mut self, id: u32, function: crate::bytecode::Function) {
-        match self {
-            Self::Owned(entries) => entries[id as usize] = FunctionEntry::Compiled(Box::new(function)),
-            Self::Replay { target, record, .. } => {
-                assert_eq!(id, *target, "a replay makes only its target's record");
-                *record = Some(Box::new(function));
-            }
-        }
-    }
-
-    /// A record this compilation made and still holds.
-    pub(super) fn get(&self, id: u32) -> Option<&crate::bytecode::Function> {
-        match self {
-            Self::Owned(entries) => match entries.get(id as usize)? {
-                FunctionEntry::Compiled(function) => Some(function),
-                _ => None,
-            },
-            Self::Replay { target, record, .. } => (id == *target).then_some(record.as_deref()?),
-        }
-    }
-
-    pub(super) fn get_mut(&mut self, id: u32) -> Option<&mut crate::bytecode::Function> {
-        match self {
-            Self::Owned(entries) => match entries.get_mut(id as usize)? {
-                FunctionEntry::Compiled(function) => Some(function),
-                _ => None,
-            },
-            Self::Replay { target, record, .. } => {
-                if id == *target { record.as_deref_mut() } else { None }
-            }
-        }
-    }
-
-    /// The header of a function whose record this compilation does not hold: one a replay
-    /// skipped, which the load made, or one the load released.
-    pub(super) fn header_without_record(&self, id: u32) -> Option<&crate::bytecode::FunctionHeader> {
-        match self {
-            Self::Owned(entries) => match entries.get(id as usize)? {
-                FunctionEntry::Released(released) => Some(&released.header),
-                _ => None,
-            },
-            Self::Replay { program, .. } => Some(program.get(id as usize)?.header()),
-        }
-    }
-
-    /// Whether function `id` is an arrow, from its record or its released header.
-    pub(super) fn is_arrow(&self, id: u32) -> Option<bool> {
-        self.get(id)
-            .map(|function| function.is_arrow)
-            .or_else(|| self.header_without_record(id).map(|header| header.is_arrow))
-    }
-
-    /// Names a released function made from an anonymous definition.
-    pub(super) fn name_released(&mut self, id: u32, name: Atom) {
-        if let Self::Owned(entries) = self
-            && let Some(FunctionEntry::Released(released)) = entries.get_mut(id as usize)
-        {
-            released.header.inferred_name = Some(name);
-            #[cfg(feature = "verify-replay")]
-            {
-                released.record.inferred_name = Some(name);
-            }
-        }
-    }
-
-    /// Takes the record of a compiled function to finish it.
-    pub(super) fn take(&mut self, id: u32) -> Option<crate::bytecode::Function> {
-        let Self::Owned(entries) = self else {
-            return None;
-        };
-        let entry = entries.get_mut(id as usize)?;
-        match std::mem::replace(entry, FunctionEntry::Reserved) {
-            FunctionEntry::Compiled(function) => Some(*function),
-            other => {
-                *entry = other;
-                None
-            }
-        }
-    }
-
-    /// Releases a finished function, keeping its header.
-    pub(super) fn release(&mut self, id: u32, function: crate::bytecode::Function) {
-        if let Self::Owned(entries) = self {
-            entries[id as usize] = FunctionEntry::Released(Box::new(ReleasedFunction {
-                header: crate::bytecode::FunctionHeader::of(&function),
-                #[cfg(feature = "verify-replay")]
-                record: function,
-            }));
-        }
-    }
-
-    pub(super) fn first_mut(&mut self) -> Option<&mut crate::bytecode::Function> {
-        match self {
-            Self::Owned(entries) => match entries.first_mut()? {
-                FunctionEntry::Compiled(function) => Some(function),
-                _ => None,
-            },
-            Self::Replay { .. } => None,
-        }
-    }
-
-    /// Every entry, in id order, once all are made.
-    pub(super) fn into_entries(self) -> Vec<FunctionEntry> {
-        match self {
-            Self::Owned(entries) => entries,
-            Self::Replay { record, .. } => record.into_iter().map(FunctionEntry::Compiled).collect(),
-        }
-    }
-
-    /// A replay's record.
-    pub(super) fn into_replayed(self) -> Option<crate::bytecode::Function> {
-        match self {
-            Self::Owned(_) => None,
-            Self::Replay { record, .. } => record.map(|record| *record),
-        }
-    }
-}
+pub(super) use super::function_table::{FunctionEntry, FunctionRecords, FunctionTable, ReleasedFunction};
 
 /// Where a function declaration or expression is made: everything its compilation reads
 /// beyond its own syntax.
@@ -529,8 +401,36 @@ pub(crate) struct FunctionReplay {
     /// The `arguments` slot `Compiler::compile_function` decided, before layout: it depends on
     /// the code of the arrows nested in the function, which a replay does not compile.
     pub(super) arguments_slot: Option<u16>,
-    /// The field-site and superinstruction cursors the function's rewrites started from.
-    pub(super) rewrite_cursors: (u32, u32),
+    pub(super) rewrite: Rewrite,
+}
+
+/// Where the sites a function's rewrites make start in the field-site and superinstruction tables.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RewriteStart {
+    pub(super) field_sites: u32,
+    pub(super) superinstructions: u32,
+}
+
+/// When a function's rewrites ran. A released function's record is made again by its replay,
+/// so its load need only run them for the sites they add to the program's tables.
+#[derive(Clone, Copy)]
+pub(crate) enum Rewrite {
+    /// The load ran them, starting at these cursors.
+    Loaded(RewriteStart),
+    /// The first replay runs them, and appends their sites to the program's tables
+    /// (`ResidualProgram::rewrite_ranges`), in the room the load reserved for them.
+    Deferred,
+}
+
+/// The rewrites a program's load left to its functions' first reads.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RewriteRanges {
+    /// Every record the load kept unlowered still awaits its rewrites, which its first read runs
+    /// (`compile::settle_deferred_rewrite`): a program that keeps its records but compiled few.
+    pub(crate) kept_pending: bool,
+    /// Per function id: where a replay or first read put its rewrites' sites (`Some(Some)`), or
+    /// that they stayed unrun (`Some(None)`); `None` before either.
+    pub(crate) settled: std::cell::RefCell<Vec<Option<Option<crate::compile::replay::RewriteStart>>>>,
 }
 
 /// Lazily derived views of a finished program that its replays share.
@@ -668,7 +568,7 @@ fn single_expression<'s, 'a>(
 }
 
 /// The function `replay_wrapper` placed a plain function's source as.
-fn wrapped_function<'s, 'a>(
+pub(super) fn wrapped_function<'s, 'a>(
     program: &'s oxc_ast::ast::Program<'a>,
 ) -> Option<&'s oxc_ast::ast::Function<'a>> {
     match program.body.as_slice() {
@@ -899,13 +799,7 @@ pub(crate) fn recompile(
         .ok_or("the replay made no record")?;
     function.arguments_slot = function_replay.arguments_slot;
     capture_layout::apply_function(&mut function, id as usize, &function_replay.layout, &compiler.atoms);
-    compiler
-        .field_sites
-        .skip_to(function_replay.rewrite_cursors.0 as usize);
-    compiler
-        .superinstructions
-        .skip_to(function_replay.rewrite_cursors.1 as usize);
-    compiler.rewrite_function(&mut function);
+    compiler.rewrite_replayed(program, id, function_replay.rewrite, &mut function);
     let undefined_constant = compiler.constant(Constant::Undefined);
     compiler.lower_function(&mut function, undefined_constant);
     liveness::mark_register_roots(

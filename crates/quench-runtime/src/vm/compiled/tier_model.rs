@@ -5,6 +5,7 @@
 //! own compiles.
 
 use super::tier_policy::{Priors, PER_MILLE, TIERS};
+#[cfg(not(test))]
 use std::sync::Mutex;
 
 /// What the model knows of one function at a decision point.
@@ -40,7 +41,20 @@ pub(super) fn compile_wall_permille() -> u64 {
 /// with the intercept prior at zero), with the prior as `compile_prior_ir` pseudo-instructions.
 pub(super) struct CompileCost { ns: f64, ir: f64 }
 
+#[cfg(not(test))]
 static COMPILES: Mutex<CompileCost> = Mutex::new(CompileCost { ns: 0.0, ir: 0.0 });
+
+#[cfg(not(test))]
+fn with_compiles<R>(use_cost: impl FnOnce(&mut CompileCost) -> R) -> R {
+    use_cost(&mut COMPILES.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+}
+
+/// Tests decide from the prior alone: learning from wall time would make what a test compiles
+/// depend on the load of the machine running it.
+#[cfg(test)]
+fn with_compiles<R>(use_cost: impl FnOnce(&mut CompileCost) -> R) -> R {
+    use_cost(&mut CompileCost { ns: 0.0, ir: 0.0 })
+}
 
 impl CompileCost {
     /// Folds one compile's census pair in, the older ones weighted down by the forgetting factor.
@@ -59,7 +73,7 @@ impl CompileCost {
 
 /// Records a finished compile of `ir` instructions that took `took`.
 pub(super) fn note_compile(took: std::time::Duration, ir: usize) {
-    COMPILES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).record(&TIERS.priors, took.as_nanos() as u64, ir);
+    with_compiles(|cost| cost.record(&TIERS.priors, took.as_nanos() as u64, ir));
 }
 
 /// Clears what the model learned, so a test's tiers are decided by that test's compiles: the
@@ -71,7 +85,7 @@ pub(super) fn reset_for_tests() {
 }
 
 pub(super) fn learned_ns_per_ir() -> u64 {
-    COMPILES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).ns_per_ir(&TIERS.priors)
+    with_compiles(|cost| cost.ns_per_ir(&TIERS.priors))
 }
 
 /// The net gain in ns of compiling `observed` into code that takes `share` per mille of the

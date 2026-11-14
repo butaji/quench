@@ -1,5 +1,6 @@
 use super::promise::{AggregateMode, AggregateRecord, PromiseJob, PromiseReaction, PromiseState};
 use super::*;
+use crate::heap::AwaitState;
 use crate::HostExecutionContext;
 
 // The initial remaining element represents iteration still in progress.
@@ -209,12 +210,8 @@ impl<H: Host> Vm<H> {
                     record.remaining += 1;
                     index
                 };
-                let resolved = match self.call_value(
-                    p,
-                    self.heap.root_value(promise_resolve_root).unwrap(),
-                    self.heap.root_value(constructor_root).unwrap(),
-                    &[value],
-                ) {
+                let (resolve, constructor) = (self.heap.root_value(promise_resolve_root).unwrap(), self.heap.root_value(constructor_root).unwrap());
+                let resolved = match self.aggregate_element_resolve(p, resolve, constructor, value) {
                     Ok(value) => value,
                     Err(error) => {
                         self.reject_aggregate_input_completion(
@@ -503,13 +500,15 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let value = reaction.value;
         self.run_promise_job(reaction.realm, reaction.execution_context, |vm| {
-            let await_reaction = vm.heap.await_state(reaction.handler).is_some();
+            // An await's state is both handlers: taking its continuation is the one lookup.
+            let awaited = vm.heap.await_state_mut(reaction.handler).map(AwaitState::resume);
+            let await_reaction = awaited.is_some();
             if !await_reaction && !vm.is_function(reaction.handler) {
                 let state = if reaction.rejected { PromiseState::Rejected } else { PromiseState::Fulfilled };
                 return vm.settle_reaction(p, reaction.next, state, value);
             }
             let called = if await_reaction {
-                vm.resume_await(p, reaction.handler, reaction.rejected, value)
+                vm.resume_await(p, reaction.handler, awaited.flatten(), reaction.rejected, value)
             } else {
                 // The job's call roots hold the handler and its argument (`Vm::run_pending_job`).
                 vm.call_value_from_frame(p, reaction.handler, Value::UNDEFINED, &[value])
@@ -566,7 +565,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether `then` is this realm's own %Promise.prototype.then%.
-    fn is_intrinsic_promise_then(&self, then: Value) -> bool {
+    pub(super) fn is_intrinsic_promise_then(&self, then: Value) -> bool {
         matches!(
             self.heap.function(then),
             Some(FunctionRecord {

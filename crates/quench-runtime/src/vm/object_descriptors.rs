@@ -660,7 +660,7 @@ impl<H: Host> Vm<H> {
         let mut result_root = None;
         let mut target_descriptor_root = None;
         let outcome = (|| {
-            let atom = self.intern_atom("getOwnPropertyDescriptor");
+            let atom = self.trap_atom(ProxyTrap::GetOwnPropertyDescriptor);
             let trap = self.get_property(p, self.heap.root_value(handler).unwrap(), atom)?;
             if trap.is_null() || trap.is_undefined() {
                 return self.object_get_own_property_descriptor(

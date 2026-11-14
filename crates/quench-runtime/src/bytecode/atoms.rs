@@ -1,4 +1,4 @@
-use std::cell::UnsafeCell;
+use std::cell::{Cell, UnsafeCell};
 use std::fmt;
 use std::ops::Index;
 use std::rc::Rc;
@@ -18,7 +18,9 @@ enum AtomNames {
     /// The first `len` names of a VM's atom sequence, whose ids the program shares.
     Shared {
         sequence: Rc<AtomSequence>,
-        len: usize,
+        /// A program that appends first-call chunks takes the names they add as they come
+        /// (`AtomTable::extend_shared`).
+        len: Cell<usize>,
     },
     /// A host's prefix followed by the names one compilation added after it.
     Extended(Rc<(AtomTable, AtomTable)>),
@@ -61,8 +63,23 @@ impl AtomTable {
             "a shared atom prefix lies within its sequence"
         );
         Self {
-            names: AtomNames::Shared { sequence, len },
+            names: AtomNames::Shared { sequence, len: Cell::new(len) },
         }
+    }
+
+    /// Takes the names of the shared sequence up to `len` into the table: the names a chunk
+    /// appended to the program added to the sequence. The names already taken keep their ids.
+    pub(crate) fn extend_shared(&self, len: usize) {
+        let AtomNames::Shared { sequence, len: taken } = &self.names else {
+            panic!("only a shared atom prefix extends")
+        };
+        assert!(taken.get() <= len && len <= sequence.len(), "a shared atom prefix extends within its sequence");
+        taken.set(len);
+    }
+
+    /// Whether the table is a prefix of a VM's sequence, which it can extend.
+    pub(crate) fn is_shared(&self) -> bool {
+        matches!(self.names, AtomNames::Shared { .. })
     }
 
     /// Shared names identify one runtime state; resetting a runtime replaces it.
@@ -86,7 +103,7 @@ impl AtomTable {
     pub(crate) fn len(&self) -> usize {
         match &self.names {
             AtomNames::Packed { ends, .. } => ends.len(),
-            AtomNames::Shared { len, .. } => *len,
+            AtomNames::Shared { len, .. } => len.get(),
             AtomNames::Extended(parts) => parts.0.len() + parts.1.len(),
         }
     }
@@ -115,7 +132,7 @@ impl Index<usize> for AtomTable {
             }
             AtomNames::Shared { sequence, len } => {
                 assert!(
-                    index < *len,
+                    index < len.get(),
                     "atom {index} lies outside the program's prefix"
                 );
                 sequence.name(index)
@@ -165,7 +182,7 @@ impl AtomSequence {
         let AtomNames::Packed { text, ends } = &self.base.names else { return false; };
         let (candidate_text, candidate_ends) = match &atoms.names {
             AtomNames::Packed { text, ends } => (text, ends),
-            AtomNames::Shared { sequence, len } if *len <= ends.len() => {
+            AtomNames::Shared { sequence, len } if len.get() <= ends.len() => {
                 let AtomNames::Packed { text, ends } = &sequence.base.names else { return false; };
                 (text, ends)
             },

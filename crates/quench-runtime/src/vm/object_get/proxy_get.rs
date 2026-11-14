@@ -6,6 +6,7 @@
 use super::super::object::AtomClass;
 use super::super::*;
 use super::PropertyKey;
+use crate::vm::proxy::ProxyTrap;
 
 impl<H: Host> Vm<H> {
     /// GetMethod's read of the trap `atom` from `handler`.
@@ -42,7 +43,35 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         property: PropertyKey,
     ) -> Result<Value, JsError> {
+        if !matches!(property, PropertyKey::Private(_)) && self.handler_lacks_trap(handler, ProxyTrap::Get) {
+            return self.proxy_get_target(p, target, receiver, Some(property), Value::UNDEFINED);
+        }
         let key = self.proxy_key_value(p, property)?;
+        self.proxy_get_keyed(p, target, handler, receiver, key, Some(property))
+    }
+
+    /// `proxy_get` of a key that is already a string or symbol value, as a computed read
+    /// makes it: its atom, which only a handler without a `get` trap needs, is found then.
+    pub(in crate::vm) fn proxy_get_key_value(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        handler: Value,
+        receiver: Value,
+        key: Value,
+    ) -> Result<Value, JsError> {
+        self.proxy_get_keyed(p, target, handler, receiver, key, None)
+    }
+
+    fn proxy_get_keyed(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        handler: Value,
+        receiver: Value,
+        key: Value,
+        property: Option<PropertyKey>,
+    ) -> Result<Value, JsError> {
         if handler.is_null() {
             return Err(self.type_error(p, "cannot access a revoked proxy".into()));
         }
@@ -60,23 +89,39 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// The atom of the string key `key`.
+    pub(in crate::vm) fn key_atom(&mut self, p: &ResidualProgram, key: Value) -> Result<Atom, JsError> {
+        match self.string_key_atom(key) {
+            Some(atom) => Ok(atom),
+            None => {
+                let name = self.coerce_js_string(p, key)?;
+                Ok(self.intern_js_atom(&name))
+            }
+        }
+    }
+
     /// `[[Get]]` of the target, for a handler without a `get` trap.
     fn proxy_get_target(
         &mut self,
         p: &ResidualProgram,
         target: Value,
         receiver: Value,
-        property: PropertyKey,
+        property: Option<PropertyKey>,
         key: Value,
     ) -> Result<Value, JsError> {
+        let property = match property {
+            Some(property) => property,
+            None if matches!(self.heap.get(key), Some(Cell::Symbol(_))) => PropertyKey::symbol(key),
+            None => PropertyKey::string(self.key_atom(p, key)?),
+        };
         match property {
             PropertyKey::String(atom) => self.get_property_with_receiver(p, target, atom, receiver),
-            PropertyKey::Symbol(_) => self.get_symbol_property_with_receiver(p, target, key, receiver),
+            PropertyKey::Symbol(symbol) => self.get_symbol_property_with_receiver(p, target, symbol, receiver),
             PropertyKey::Private(_) => unreachable!("private keys cannot reach Proxy Get"),
         }
     }
 
-    fn validate_proxy_get(
+    pub(in crate::vm) fn validate_proxy_get(
         &mut self,
         p: &ResidualProgram,
         target: Value,
@@ -113,17 +158,44 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    /// Whether an ordinary `target`'s shape shows that it holds no own property `key`, or holds
-    /// it configurable: then the target constrains no trap result for it, which a descriptor
-    /// would show at more cost. `false` where the shape does not answer (an index key, an
-    /// arguments object, an exotic or dictionary object, a symbol key).
+    /// Whether `target`'s shape shows that it holds no own property `key`, or holds it
+    /// configurable: then the target constrains no trap result for it, which a descriptor
+    /// would show at more cost. `false` where the shape does not answer (a symbol key, see
+    /// `shape_leaves_atom_unconstrained`).
     pub(in crate::vm) fn shape_leaves_key_unconstrained(&mut self, target: Value, key: Value) -> bool {
-        let Some(atom) = self.string_key_atom(key) else {
-            return false;
-        };
-        if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
-            || self.heap.ordinary_object(target).is_none_or(|data| data.is_arguments_object())
-        {
+        if self.array_leaves_index_unconstrained(target, key) {
+            return true;
+        }
+        match self.string_key_atom(key) {
+            Some(atom) => self.shape_leaves_atom_unconstrained(target, atom),
+            None => false,
+        }
+    }
+
+    /// Whether `key` is a string naming an index of an array whose elements all have default
+    /// attributes: an extensible array no descriptor was recorded an index for.
+    fn array_leaves_index_unconstrained(&self, target: Value, key: Value) -> bool {
+        self.heap.array(target).is_some()
+            && self.object_data(target).is_some_and(|data| data.is_extensible() && !data.has_indexed_descriptors())
+            && self.heap.string(key).is_some_and(|text| super::super::object_static::array_index(text.host_string()).is_some())
+    }
+
+    /// `shape_leaves_key_unconstrained` of the string key `atom`, for a target whose shape
+    /// holds every own name: an ordinary object, an array (whose elements and `length` the
+    /// shape lookup excludes) or a collection. `false` for an index key, an arguments
+    /// object, a dictionary-shaped target or any other exotic one.
+    pub(in crate::vm) fn shape_leaves_atom_unconstrained(&self, target: Value, atom: Atom) -> bool {
+        if let Some(array) = self.heap.array(target).and_then(|_| self.object_data(target)).filter(|array| !array.is_arguments_object()) {
+            // An array's `length` is non-configurable and writable unless a descriptor says
+            // otherwise; its elements are configurable unless a descriptor was recorded.
+            if atom == self.length_atom {
+                return !array.has_length_descriptor();
+            }
+            if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) {
+                return array.is_extensible() && !array.has_indexed_descriptors();
+            }
+        }
+        if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) || !self.shape_names_own_keys(target) {
             return false;
         }
         let Some(data) = self.shape_property_lookup(target, atom) else {
@@ -133,6 +205,21 @@ impl<H: Host> Vm<H> {
         match self.shape_slot(shape, atom) {
             None => true,
             Some(slot) => self.shape_slot_attributes(shape, slot).is_some_and(|attributes| attributes.configurable),
+        }
+    }
+
+    /// Whether `target`'s shape holds each own name it has beyond the virtual ones
+    /// `shape_property_lookup` excludes and the indices it leaves to the caller.
+    fn shape_names_own_keys(&self, target: Value) -> bool {
+        match self.heap.ordinary_object(target) {
+            Some(data) => !data.is_arguments_object(),
+            None => {
+                self.heap.array(target).is_some()
+                    || matches!(
+                        self.heap.get(target),
+                        Some(Cell::Map { .. } | Cell::Set { .. } | Cell::WeakMap { .. } | Cell::WeakSet { .. })
+                    )
+            }
         }
     }
 }

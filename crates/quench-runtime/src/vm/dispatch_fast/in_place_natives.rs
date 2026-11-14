@@ -2,6 +2,7 @@
 //! error. The lane and the interpreter both read it (`Vm::in_place_native_value`); a case
 //! may allocate, and each caller notes that its own way.
 use super::*;
+use crate::vm::object_get::ordinary_chain::ChainRead;
 
 impl<H: Host> Vm<H> {
     /// A native call's value where its common case completes in place: the steady cases
@@ -15,6 +16,7 @@ impl<H: Host> Vm<H> {
             .or_else(|| object_value(self, code, native, receiver, args))
             .or_else(|| collection_value(self, code, native, receiver, args))
             .or_else(|| array_value(self, code, native, callee, receiver, args))
+            .or_else(|| internal_slot_value(self, native, callee, receiver))
             .or_else(|| primitive_value(self, native, receiver, args))
     }
 }
@@ -51,20 +53,35 @@ fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native,
         Native::ObjectHasOwn => vm.plain_own_property_query(code, Native::ObjectPrototypeHasOwnProperty, *args.first()?, *args.get(1)?),
         // Pure of any arguments: SameValue.
         Native::ObjectIs => vm.call_object_native(code, Native::ObjectIs, args).ok(),
-        Native::ReflectGet => {
-            let target = *args.first()?;
-            vm.heap.ordinary_object(target)?;
-            vm.plain_keyed_get(target, *args.get(1)?)
-        }
+        Native::ReflectGet | Native::ReflectHas => reflect_value(vm, native, args),
         // An object's own enumerable properties, where its shape lists them.
         _ if let Some(kind) = super::super::object_keys::EnumerableOwnPropertyKind::of(native) =>
             vm.plain_enumerable_own_properties(argument, kind),
         Native::ReflectGetPrototypeOf => Some(vm.heap.ordinary_object(*args.first()?)?.proto()),
+
         Native::ObjectPrototypeToString => object_to_string_in_place(vm, code, receiver),
         // The registry lookup of a string key, which ToString leaves as it is.
         Native::SymbolFor if args.first().is_some_and(|key| vm.heap.is_string(*key)) =>
             vm.call_symbol_native(code, Native::SymbolFor, args).ok(),
         _ => None,
+    }
+}
+
+/// `Reflect.get` and `Reflect.has` of a target whose chain shapes decide the answer
+/// (`Vm::reflect_chain_read`); a symbol or index key of an ordinary target reads as a plain
+/// keyed read. An accessor is a present property, whose getter only `get` calls.
+fn reflect_value<H: Host>(vm: &mut Vm<H>, native: Native, args: &[Value]) -> Option<Value> {
+    let (target, key) = (*args.first()?, *args.get(1)?);
+    if native == Native::ReflectGet && !vm.heap.is_string(key) {
+        vm.heap.ordinary_object(target)?;
+        return vm.plain_keyed_get(target, key);
+    }
+    match (native, vm.reflect_chain_read(target, key)?) {
+        (_, ChainRead::Exotic(_)) | (Native::ReflectGet, ChainRead::Getter(_)) => None,
+        (Native::ReflectGet, ChainRead::Value(value)) => Some(value),
+        (Native::ReflectGet, _) => Some(Value::UNDEFINED),
+        (_, ChainRead::Absent) => Some(Value::FALSE),
+        _ => Some(Value::TRUE),
     }
 }
 
@@ -100,12 +117,32 @@ fn collection_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Nat
     }
 }
 
-/// A dense array's `indexOf`, `splice`, `unshift` and `shift`, and an array iterator's step
+/// Natives that read the receiver's own record or the realm's state: a string's or function's text
+/// (`String.prototype.toString`, `Function.prototype.toString`), a Map's iterators
+/// (`Vm::collection_iterator` of a Map, which allocates the iterator), an iterator's close where
+/// it has no `return` (`Vm::iterator_close_in_place`), and a legacy `RegExp` static getter
+/// (`Vm::regexp_legacy_getter_in_place`). Any other receiver leaves the native to throw.
+fn internal_slot_value<H: Host>(vm: &mut Vm<H>, native: Native, callee: Value, receiver: Value) -> Option<Value> {
+    use crate::heap::IteratorKind;
+    let kind = match native {
+        Native::MapKeys => IteratorKind::MapKeys,
+        Native::MapValues => IteratorKind::MapValues,
+        Native::MapEntries => IteratorKind::MapEntries,
+        Native::IteratorClose => return vm.iterator_close_in_place(receiver),
+        Native::StringToString | Native::StringValueOf => return vm.heap.is_string(receiver).then_some(receiver),
+        Native::FunctionToString => return vm.is_function(receiver).then(|| vm.function_source_value(receiver)).flatten(),
+        Native::RegExpLegacyGetter => return vm.regexp_legacy_getter_in_place(callee, receiver),
+        _ => return None,
+    };
+    matches!(vm.heap.get(receiver), Some(Cell::Map { .. })).then(|| vm.collection_iterator(receiver, kind).ok()).flatten()
+}
+
+/// A dense array's `indexOf`, `includes`, `splice`, `unshift` and `shift`, and an array iterator's step
 /// over a plain array.
 fn array_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, callee: Value, receiver: Value,
     args: &[Value]) -> Option<Value> {
     match native {
-        Native::ArrayIndexOf => vm.dense_index_of(receiver, args),
+        Native::ArrayIndexOf | Native::ArrayIncludes => vm.dense_search_call(native, receiver, args),
         Native::ArraySplice => vm.plain_array_splice(code, callee, receiver, args),
         Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
         Native::ArrayShift => vm.plain_array_shift(receiver),
@@ -153,3 +190,7 @@ fn default_locale_compare<H: Host>(vm: &Vm<H>, receiver: Value, args: &[Value]) 
 
 /// The radix `Number.prototype.toString` writes in place.
 const DECIMAL: f64 = 10.0;
+
+#[cfg(test)]
+#[path = "../lane_exit_tests.rs"]
+mod tests;

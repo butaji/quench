@@ -12,6 +12,10 @@ fn bytes<T>(values: &Vec<T>) -> usize {
     values.capacity() * size_of::<T>()
 }
 
+fn table_bytes<T>(values: &crate::bytecode::append_vec::AppendVec<T>) -> usize {
+    values.capacity() * size_of::<T>()
+}
+
 /// A thin slice's elements, which it holds at exactly their length.
 fn slice_bytes<T>(values: &[T]) -> usize {
     size_of_val(values)
@@ -86,18 +90,18 @@ impl ProgramFootprint {
             handlers: sum(|function| slice_bytes::<Handler>(&function.handlers)),
             atom_lists: sum(atom_bytes),
             layout: sum(layout_bytes),
-            constants: bytes::<Constant>(&program.constants),
-            sites: bytes::<MethodSite>(&program.method_sites)
-                + bytes::<Register>(&program.method_arguments)
-                + bytes::<FieldSite>(&program.field_sites)
-                + bytes::<ObjectSite>(&program.object_sites)
-                + bytes::<RegExpLiteralSite>(&program.regexp_literal_sites)
+            constants: table_bytes::<Constant>(&program.constants),
+            sites: table_bytes::<MethodSite>(&program.method_sites)
+                + table_bytes::<Register>(&program.method_arguments)
+                + slice_bytes::<FieldSite>(&program.field_sites)
+                + table_bytes::<ObjectSite>(&program.object_sites)
+                + table_bytes::<RegExpLiteralSite>(&program.regexp_literal_sites)
                 + program
                     .literal_templates
                     .iter()
                     .map(|steps| slice_bytes::<crate::bytecode::LiteralStep>(steps))
                     .sum::<usize>()
-                + bytes::<Superinstruction>(&program.superinstructions),
+                + slice_bytes::<Superinstruction>(&program.superinstructions),
             register_roots: sum(|function| function.register_roots.capacity_bytes()),
         }
     }

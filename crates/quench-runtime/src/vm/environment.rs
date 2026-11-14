@@ -1,3 +1,4 @@
+use super::name_scope::NameSource;
 use super::property_key::PropertyKey;
 use super::*;
 
@@ -134,7 +135,7 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    fn active_global_lexical_value(&self, atom: Atom) -> Option<Value> {
+    pub(super) fn active_global_lexical_value(&self, atom: Atom) -> Option<Value> {
         let (index, slot) = self.active_global_lexical_binding(atom)?;
         let frame = &self.frames[index];
         if frame.captured {
@@ -150,7 +151,7 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    fn root_local_var_binding(&self, p: &ResidualProgram, function: u32, atom: Atom) -> bool {
+    pub(super) fn root_local_var_binding(&self, p: &ResidualProgram, function: u32, atom: Atom) -> bool {
         p.root_variables_are_local()
             && function == super::ROOT_FUNCTION_ID
             && p.function(super::ROOT_FUNCTION_ID as usize)
@@ -270,7 +271,7 @@ impl<H: Host> Vm<H> {
             })
     }
 
-    fn function_environment_binding(&self, p: &ResidualProgram, function: u32, atom: Atom) -> bool {
+    pub(super) fn function_environment_binding(&self, p: &ResidualProgram, function: u32, atom: Atom) -> bool {
         p.function_get(function as usize)
             .is_some_and(|metadata| metadata.declares_environment_atom(atom))
     }
@@ -1026,16 +1027,13 @@ impl<H: Host> Vm<H> {
             );
         }
         if let Some(dynamic_bindings) = self.heap.environment_bindings_mut(object) {
-            if let Some((_, binding)) = dynamic_bindings
-                .iter_mut()
-                .rev()
-                .find(|(candidate, _)| *candidate == atom)
-            {
+            if let Some((_, binding)) = dynamic_bindings.iter_mut().rev().find(|(candidate, _)| *candidate == atom) {
                 *binding = value;
                 return Ok(());
             }
             if !strict {
                 dynamic_bindings.push((atom, value));
+                self.note_dynamic_scope_name(atom);
                 return Ok(());
             }
             return Err(self.name_not_defined(p, atom));
@@ -1217,7 +1215,7 @@ impl<H: Host> Vm<H> {
         self.dynamic_binding_in(&NameLookup::new(frame, atom))
     }
 
-    fn dynamic_binding_in(&self, lookup: &NameLookup) -> Option<Value> {
+    pub(super) fn dynamic_binding_in(&self, lookup: &NameLookup) -> Option<Value> {
         let (frame, atom) = (lookup.frame, lookup.atom);
         if let Some(value) = self.own_dynamic_bindings(frame).and_then(|bindings| {
             bindings
@@ -2223,64 +2221,17 @@ impl<H: Host> Vm<H> {
         cache: Option<u16>,
         allow_unresolvable: bool,
     ) -> Result<Value, JsError> {
-        let internal = self.atom_class(atom).contains(AtomClass::INTERNAL);
-        if internal
+        if self.atom_class(atom).contains(AtomClass::INTERNAL)
             && let Some(value) = self.intrinsic_name_value(atom) {
                 return Ok(value);
             }
-        if !internal && self.names_resolve_to_global_object(p, atom) {
-            return self.load_global_object_name(p, atom, cache, allow_unresolvable);
-        }
-        // Where names resolve statically, no layer searched before the realm's global lexical
-        // bindings can hold the name, so a binding there is the one the search finds.
-        if !internal
-            && self.global_scope_names_resolve_statically(p)
-            && let Some(value) = self.realm.global_lexical_bindings.get(&atom).copied()
-        {
-            return self.checked_binding_read(p, atom, value);
-        }
-        // One lookup consults the frame's static binding and the outer static owner from
-        // more than one rule; each is found once.
-        let lookup = NameLookup::new(self.frames.len().saturating_sub(1), atom);
-        if let Some(value) = self.dynamic_binding_in(&lookup) {
-            return self.checked_binding_read(p, atom, value);
-        }
-        if !self.frames.is_empty()
-            && let Some(binding) = lookup.named(self)
-        {
-            return self.load_name_binding(p, lookup.frame, binding);
-        }
-        if !internal {
-            if let Some(frame) = self.frames.last()
-                && (self.function_environment_binding(p, frame.function, atom)
-                    || p.function(frame.function as usize)
-                        .global_lexical_atoms()
-                        .contains(&atom)
-                    || self.root_local_var_binding(p, frame.function, atom))
-                && let Some(slot) = self.local_binding_slot(p, frame.function, atom)
-            {
-                let value = if frame.captured {
-                    self.heap
-                        .environment_slot(frame.env, slot)
-                        .unwrap_or(Value::UNDEFINED)
-                } else {
-                    frame.locals[slot]
-                };
-                return self.checked_binding_read(p, atom, value);
+        match self.resolve_name_source(p, atom) {
+            NameSource::Value(value) => self.checked_binding_read(p, atom, value),
+            NameSource::Binding(binding) => {
+                self.load_name_binding(p, self.frames.len().saturating_sub(1), binding)
             }
-            if let Some(value) = self.realm.global_lexical_bindings.get(&atom).copied() {
-                return self.checked_binding_read(p, atom, value);
-            }
-            if let Some((env, slot)) = lookup.static_owner(self)
-                && let Some(value) = self.heap.environment_slot(env, slot)
-            {
-                return self.checked_binding_read(p, atom, value);
-            }
-            if let Some(value) = self.active_global_lexical_value(atom) {
-                return self.checked_binding_read(p, atom, value);
-            }
+            NameSource::GlobalObject => self.load_global_object_name(p, atom, cache, allow_unresolvable),
         }
-        self.load_global_object_name(p, atom, cache, allow_unresolvable)
     }
 
     /// Whether `atom` loaded by name in the executing activation can only denote a global
@@ -2291,7 +2242,7 @@ impl<H: Host> Vm<H> {
     /// records before it runs. None of the dynamic layers `load_name_without_with` searches
     /// can then hold the name.
     #[inline(always)]
-    fn names_resolve_to_global_object(&self, p: &ResidualProgram, atom: Atom) -> bool {
+    pub(super) fn names_resolve_to_global_object(&self, p: &ResidualProgram, atom: Atom) -> bool {
         !self.realm.global_lexical_declarations.contains(&atom)
             && self.global_scope_names_resolve_statically(p)
     }
@@ -2301,7 +2252,7 @@ impl<H: Host> Vm<H> {
     /// (`ProgramStore::names_are_global`): a by-name load there can only denote a
     /// global binding.
     #[inline(always)]
-    fn global_scope_names_resolve_statically(&self, p: &ResidualProgram) -> bool {
+    pub(super) fn global_scope_names_resolve_statically(&self, p: &ResidualProgram) -> bool {
         self.frames.last().is_some_and(|frame| {
             self.programs.names_are_global(frame.program)
                 && p.function_get(frame.function as usize)
@@ -2343,6 +2294,9 @@ impl<H: Host> Vm<H> {
         cache: Option<u16>,
         allow_unresolvable: bool,
     ) -> Result<(Value, Value), JsError> {
+        if self.scope_names.probe.is_some() {
+            self.settle_name_probe(p, atom);
+        }
         if let Some(frame) = self.frames.len().checked_sub(1)
             && let Some((object, key)) = self.find_with_binding(p, frame, atom)?
         {
@@ -2525,6 +2479,7 @@ impl<H: Host> Vm<H> {
                 self.own_dynamic_bindings_mut(caller)
                     .ok_or_else(|| JsError("invalid eval variable environment".into()))?
                     .push((atom, value));
+                self.note_dynamic_scope_name(atom);
             }
             return Ok(());
         }
@@ -2645,7 +2600,7 @@ impl<H: Host> Vm<H> {
 /// that statically declares it (`Vm::outer_environment_binding` from the frame's captured
 /// parent). Each is found on first use and stays valid for the lookup, which runs no guest
 /// code between consulting them.
-struct NameLookup {
+pub(super) struct NameLookup {
     frame: usize,
     atom: Atom,
     named: std::cell::OnceCell<Option<crate::bytecode::EvalBinding>>,
@@ -2653,7 +2608,7 @@ struct NameLookup {
 }
 
 impl NameLookup {
-    fn new(frame: usize, atom: Atom) -> Self {
+    pub(super) fn new(frame: usize, atom: Atom) -> Self {
         Self {
             frame,
             atom,
@@ -2662,11 +2617,11 @@ impl NameLookup {
         }
     }
 
-    fn named<H: Host>(&self, vm: &Vm<H>) -> Option<crate::bytecode::EvalBinding> {
+    pub(super) fn named<H: Host>(&self, vm: &Vm<H>) -> Option<crate::bytecode::EvalBinding> {
         *self.named.get_or_init(|| vm.name_binding(self.frame, self.atom))
     }
 
-    fn static_owner<H: Host>(&self, vm: &Vm<H>) -> Option<(Value, usize)> {
+    pub(super) fn static_owner<H: Host>(&self, vm: &Vm<H>) -> Option<(Value, usize)> {
         *self.static_owner.get_or_init(|| {
             vm.frames.get(self.frame)?;
             vm.outer_environment_binding(vm.captured_parent_environment(self.frame), self.atom)

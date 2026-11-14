@@ -47,7 +47,7 @@ use crate::heap::{
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::{CallSource, Profile, TerminalCall};
 use crate::value::number_to_u32;
-use activation::{CallCompletion, CallContext, ConstructionTarget};
+use activation::{CallCompletion, CallContext, ConstructionTarget, TrapAccess, TrapCheck};
 use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
@@ -97,27 +97,27 @@ struct RuntimeAtoms {
     iterator_return: Atom,
     /// A property descriptor object's other keys (`value` above), which
     /// `Object.getOwnPropertyDescriptor` writes on every call.
-    writable: Atom,
-    enumerable: Atom,
-    configurable: Atom,
-    get: Atom,
-    set: Atom,
+    writable: Atom, enumerable: Atom, configurable: Atom,
+    get: Atom, set: Atom,
     /// The internal keys a bound function's environment holds its parts under
     /// (`Vm::bound_function_parts`).
     bound_target: Atom,
     bound_this: Atom,
     bound_args: Atom,
+    /// The names of a Proxy handler's traps (`proxy::ProxyTrap`).
+    proxy_traps: [Atom; proxy::PROXY_TRAP_COUNT],
 }
 pub(crate) mod activation;
 mod agent;
 mod arguments;
 mod array;
-mod array_buffer;
+pub(crate) mod array_buffer;
 mod array_builtins;
 mod array_copy;
 mod array_flatten;
 mod array_group;
 mod array_indexed;
+mod array_view;
 mod array_modern;
 mod atom_keys;
 mod atomics;
@@ -129,6 +129,7 @@ mod call_printer;
 pub(crate) use call_printer::{freeze_call_sites, freeze_source_call_sites};
 mod call_out;
 mod coercion;
+mod collection_intake;
 mod collections;
 mod construction;
 mod data_view;
@@ -143,15 +144,13 @@ mod lane_exits;
 mod embedding;
 mod provenance;
 mod inspection;
-mod environment;
-mod equality;
-mod error;
-mod eval;
+mod environment; mod name_scope;
+mod equality; mod error; mod eval;
 mod fdlibm_math;
 mod field_cache;
 mod site_table;
 mod finalization;
-mod first_call_chunk;
+mod first_call_append; mod first_call_chunk;
 mod function;
 mod function_cache;
 mod gc;
@@ -227,7 +226,7 @@ mod promise_aggregate;
 mod promise_async;
 mod promise_jobs;
 mod promise_state;
-mod proxy;
+mod proxy; use proxy::ProxyTrap;
 mod reflect;
 mod regexp; mod regexp_native;
 mod shadow_realm;
@@ -271,10 +270,9 @@ pub use value_serializer::{
 };
 pub(crate) use value_serializer::{ReadHooks, WriteHooks};
 use wtf16::JsString;
-#[cfg(test)]
-mod tests;
-#[cfg(test)]
-mod closure_retention_tests;
+#[cfg(test)] mod tests; #[cfg(test)] mod lane_semantics_tests;
+#[cfg(test)] mod closure_retention_tests;
+#[cfg(test)] mod storage_tests; #[cfg(test)] mod name_scope_tests;
 
 /// A native's callback prepared for a loop of calls (`Vm::with_prepared_callback`): the
 /// callee and receiver every call passes, and how its calls run (`CallbackProof`).
@@ -1904,6 +1902,8 @@ pub(crate) struct Vm<H> {
     /// the only source of with objects, so until it runs no environment
     /// carries any.
     with_scope_entered: bool,
+    /// What lane reads of names past an eval's scope rely on (`name_scope`).
+    scope_names: name_scope::ScopeNames,
     test262_agent: Test262AgentState,
     shared_async_waiters:Vec<atomics::SharedAsyncWaiter>,
     programs: ProgramStore,
@@ -3058,34 +3058,34 @@ impl<H: Host> Vm<H> {
             writable: self.intern_atom("writable"),
             enumerable: self.intern_atom("enumerable"),
             configurable: self.intern_atom("configurable"),
-            get: self.intern_atom("get"),
-            set: self.intern_atom("set"),
+            get: self.intern_atom("get"), set: self.intern_atom("set"),
             bound_target: self.intern_atom(BOUND_TARGET_KEY),
             bound_this: self.intern_atom(BOUND_THIS_KEY),
             bound_args: self.intern_atom(BOUND_ARGS_KEY),
+            proxy_traps: proxy::PROXY_TRAP_NAMES.map(|name| self.intern_atom(name)),
         };
-        self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.field_caches_moved();
         self.field_cache_writes = Some(Vec::new());
         program.prime_loop_decoding();
         self.heap.dependencies_mut().clear_inherited();
-        self.inherited_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
-        self.accessor_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.inherited_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
+        self.accessor_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.accessor_fields.clear();
-        self.field_add_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.field_add_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
-        self.megamorphic_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
+        self.megamorphic_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.megamorphic_fields.clear();
         self.holder_hints.clear();
         self.length_atom = self.intern_atom("length");
         self.prototype_atom = self.intern_atom("prototype");
         self.to_fixed_atom = self.intern_atom("toFixed");
         self.to_precision_atom = self.intern_atom("toPrecision");
-        self.method_caches = vec![[EMPTY_METHOD_CACHE; method_cache::METHOD_CACHE_WAYS]; program.method_sites.len()];
+        self.method_caches = vec![[EMPTY_METHOD_CACHE; method_cache::METHOD_CACHE_WAYS]; program.method_sites.capacity()];
         self.megamorphic_methods.clear();
         self.method_cache_atoms.clear();
-        self.object_shapes = site_table::SiteTable::with_empty(program.object_sites.len());
+        self.object_shapes = site_table::SiteTable::with_empty(program.object_sites.capacity());
         self.descriptors.clear();
         self.function_values.clear();
         self.wasm_exported_functions.clear();
@@ -3109,7 +3109,7 @@ impl<H: Host> Vm<H> {
         self.program_cache_layouts.clear();
         self.free_cache_layouts.clear();
         self.program_cache_layouts.push(ProgramCacheLayout {
-            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program.cache_sites),
+            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program.cache_sites.capacity()),
             ..ProgramCacheLayout::default()
         });
         self.set_active_program(ProgramId::MAIN);
@@ -3165,7 +3165,7 @@ impl<H: Host> Vm<H> {
         }
     }
     fn materialize_program_constants(&mut self, id: ProgramId, program: &ResidualProgram) {
-        let mut constants = Vec::with_capacity(program.constants.len());
+        let mut constants = Vec::with_capacity(program.constants.capacity());
         // Equal string constants share one cell, as engines intern literals: a string is an
         // immutable primitive, so which cell holds it is unobservable, and `===` between
         // literals from different sites then decides by identity before comparing text.

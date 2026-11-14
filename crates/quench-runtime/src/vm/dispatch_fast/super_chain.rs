@@ -7,8 +7,9 @@ use crate::bytecode::{InitializerConstant, InitializerStore, InitializerValue, S
 /// through its bodies.
 const SUPER_CHAIN_CLASSES: usize = 8;
 
-/// The stores of a chain, the root's first, in the constructed class's parameters.
-type ChainStores = SmallVec<[InitializerStore; CONSTRUCT_PLAN_FIELDS]>;
+/// The stores of a chain, the root's first, in the constructed class's parameters, each with
+/// the program of its class, whose field caches its site indexes.
+type ChainStores = SmallVec<[(ProgramId, InitializerStore); CONSTRUCT_PLAN_FIELDS]>;
 
 /// What a class's parameters take: `None` for the constructed class, whose parameters are
 /// the construction's arguments, else the values the class below passes to `super(...)`, in
@@ -17,33 +18,37 @@ type Passed<'a> = Option<&'a SuperArguments<'a>>;
 
 struct SuperArguments<'a> {
     values: &'a [InitializerValue],
+    /// The program of the class whose `super(...)` passes them, which their string constants index.
+    program: ProgramId,
     below: Passed<'a>,
 }
 
 /// What parameter `parameter` of a class passed `passed` takes, in the constructed class's
-/// parameters: `undefined` past the values.
-fn passed_value(passed: Passed<'_>, parameter: u16) -> InitializerValue {
+/// parameters: `undefined` past the values. `None` for a string literal of another program than
+/// `home`, the store's, whose constant index would name another string there.
+fn passed_value(passed: Passed<'_>, parameter: u16, home: ProgramId) -> Option<InitializerValue> {
     let Some(arguments) = passed else {
-        return InitializerValue::Parameter { parameter, fallback: None };
+        return Some(InitializerValue::Parameter { parameter, fallback: None });
     };
     match arguments.values.get(usize::from(parameter)) {
-        None => InitializerValue::Constant(InitializerConstant::Undefined),
-        Some(InitializerValue::Parameter { parameter, .. }) => passed_value(arguments.below, *parameter),
-        Some(value) => *value,
+        None => Some(InitializerValue::Constant(InitializerConstant::Undefined)),
+        Some(InitializerValue::Parameter { parameter, .. }) => passed_value(arguments.below, *parameter, home),
+        Some(InitializerValue::Constant(InitializerConstant::String(_))) if arguments.program != home => None,
+        Some(value) => Some(*value),
     }
 }
 
 /// `value` of a class passed `passed`, in the constructed class's parameters; `None` for a
 /// default or a computation of anything but a parameter passed on as it is, which the
-/// bodies make.
-fn rebased(value: InitializerValue, passed: Passed<'_>) -> Option<InitializerValue> {
-    let source = |parameter| match passed_value(passed, parameter) {
+/// bodies make, and for a string literal of another program than `home`, the store's.
+fn rebased(value: InitializerValue, passed: Passed<'_>, home: ProgramId) -> Option<InitializerValue> {
+    let source = |parameter| match passed_value(passed, parameter, home)? {
         InitializerValue::Parameter { parameter, fallback: None } => Some(parameter),
         _ => None,
     };
     Some(match value {
         InitializerValue::Constant(_) | InitializerValue::Construct(_) => value,
-        InitializerValue::Parameter { parameter, fallback: None } => passed_value(passed, parameter),
+        InitializerValue::Parameter { parameter, fallback: None } => passed_value(passed, parameter, home)?,
         InitializerValue::Parameter { parameter, fallback } => InitializerValue::Parameter { parameter: source(parameter)?, fallback },
         InitializerValue::Numeric { parameter, operator, constant } => {
             InitializerValue::Numeric { parameter: source(parameter)?, operator, constant }
@@ -52,24 +57,22 @@ fn rebased(value: InitializerValue, passed: Passed<'_>) -> Option<InitializerVal
 }
 
 /// Appends `own`, the stores of a class passed `passed`, rebased.
-fn append(stores: &mut ChainStores, own: &[InitializerStore], passed: Passed<'_>) -> Option<()> {
+fn append(stores: &mut ChainStores, program: ProgramId, own: &[InitializerStore], passed: Passed<'_>) -> Option<()> {
     for store in own {
-        stores.push(InitializerStore { value: rebased(store.value, passed)?, ..*store });
+        stores.push((program, InitializerStore { value: rebased(store.value, passed, program)?, ..*store }));
     }
     Some(())
 }
 
 /// The stores [[Construct]] of `class`, passed `passed`, makes to the receiver, appended to
 /// `stores` after its parent's, and the root constructor that allocates that receiver. Every
-/// class of the chain is a function of the running program and realm: the root an in-place
+/// class of the chain is a function of the running realm, of any program: the root an in-place
 /// constructor that only initializes `this` or does nothing, each other a derived
 /// constructor that only passes its arguments on (`Function::super_forwarding`) or
 /// constructs its parent and initializes `this` (`Function::super_initializer`), its parent
 /// its own [[Prototype]] as `super(...)` reads it. `None` for any other chain.
 fn chain_stores<H: Host>(
     vm: &Vm<H>,
-    code: &ResidualProgram,
-    running: ProgramId,
     class: Value,
     passed: Passed<'_>,
     stores: &mut ChainStores,
@@ -78,25 +81,66 @@ fn chain_stores<H: Host>(
     let FunctionRecord { kind: FunctionKind::User(program, function), realm, .. } = vm.heap.function(class)? else {
         return None;
     };
-    if *program != running || *realm != vm.realm.globals || classes == SUPER_CHAIN_CLASSES {
+    if *realm != vm.realm.globals || classes == SUPER_CHAIN_CLASSES {
         return None;
     }
-    let body = code.function_get(*function as usize)?;
+    // A class of another program than the running one builds a receiver other than the general
+    // path's in WSL (each class file its own program; JetStream's WSL reads an undefined type
+    // argument from the objects those constructions made), so its chain is left to the general
+    // path until that divergence is found.
+    let (program, code) = (*program, vm.programs.residual(*program).filter(|_| *program == vm.active_program)?);
+    let body = code.function_get(*function as usize).filter(|_| code.kind != crate::bytecode::ProgramKind::Wasm)?;
     if !body.derived_constructor {
-        if !Vm::<H>::inline_constructible(body) {
-            return None;
-        }
-        let own = body.initializer_stores(&code.constants).or_else(|| body.only_returns_undefined(&code.constants).then_some(&[]))?;
-        return append(stores, own, passed).map(|()| class);
+        let own = body.initializer_stores(&code.constants).or_else(|| body.only_returns_undefined(&code.constants).then_some(&[]));
+        return append(stores, program, own.filter(|_| Vm::<H>::inline_constructible(body))?, passed).map(|()| class);
     }
     let parent = vm.object_data(class)?.proto();
     if body.super_forwarding(&code.atoms, &code.constants) == Some(SuperForwarded::Passed) {
-        return chain_stores(vm, code, running, parent, passed, stores, classes + 1);
+        return chain_stores(vm, parent, passed, stores, classes + 1);
     }
     let initializer = body.super_initializer(&code.atoms, &code.constants)?;
-    let arguments = SuperArguments { values: &initializer.arguments, below: passed };
-    let root = chain_stores(vm, code, running, parent, Some(&arguments), stores, classes + 1)?;
-    append(stores, &initializer.stores, passed).map(|()| root)
+    let arguments = SuperArguments { values: &initializer.arguments, program, below: passed };
+    let below = if initializer.forwards { passed } else { Some(&arguments) };
+    let root = chain_stores(vm, parent, below, stores, classes + 1)?;
+    append(stores, program, &initializer.stores, passed).map(|()| root)
+}
+
+/// `stores` made to `this` as cached adds (`lane_add_stores`), each under its class's program,
+/// whose field caches its site indexes; the program running before is active again after.
+fn add_chain_stores<H: Host>(
+    vm: &mut Vm<H>,
+    this: Value,
+    stores: &[(ProgramId, InitializerStore)],
+    argument: &impl Fn(u16) -> Value,
+    each: &mut dyn FnMut(&InitializerStore, Value),
+) -> bool {
+    let running = vm.active_program;
+    let mut added = true;
+    for (program, store) in stores {
+        if *program != vm.active_program {
+            enter_program(vm, *program);
+        }
+        let Some(code) = vm.programs.residual(*program).map(std::ptr::from_ref) else {
+            added = false;
+            break;
+        };
+        // SAFETY: the program store keeps a residual for as long as the VM runs it.
+        let code = unsafe { &*code };
+        added = lane_add_stores(vm, code, this, std::slice::from_ref(store), argument, |_, _| None, &mut *each);
+        if !added {
+            break;
+        }
+    }
+    if vm.active_program != running {
+        enter_program(vm, running);
+    }
+    added
+}
+
+/// Makes `program` the VM's active one, with its constants.
+fn enter_program<H: Host>(vm: &mut Vm<H>, program: ProgramId) {
+    let constants = std::ptr::from_ref(vm.programs.constants(program));
+    vm.activate_program(program, constants);
 }
 
 /// Notes on `callee`'s plan, when the construction left one, the parent it holds with.
@@ -138,11 +182,10 @@ pub(super) fn lane_super_construction<H: Host>(
     {
         return Some(this);
     }
-    // SAFETY: the context's program outlives the lane run.
-    let code = unsafe { &*(*cx).code };
     let mut stores = ChainStores::new();
-    let root = chain_stores(vm, code, unsafe { (*cx).program }, callee, None, &mut stores, 0).filter(|root| *root != callee)?;
-    let (this, added) = lane_initialize_stores(vm, code, callee, root, &stores, lane_construct_argument(r, i))?;
+    let root = chain_stores(vm, callee, None, &mut stores, 0).filter(|root| *root != callee)?;
+    let argument = lane_construct_argument(r, i);
+    let (this, added) = lane_initialize_stores(vm, callee, root, |vm, this, each| add_chain_stores(vm, this, &stores, &argument, each))?;
     added.then(|| {
         plan_super_parent(vm, callee);
         this
@@ -151,4 +194,4 @@ pub(super) fn lane_super_construction<H: Host>(
 
 #[cfg(test)]
 #[path = "../super_chain_tests.rs"]
-mod tests;
+pub(in crate::vm) mod tests;

@@ -92,8 +92,7 @@ impl<H: Host> Vm<H> {
                     return Err(vm.type_error(p, "cannot access a revoked proxy".into()));
                 }
                 return vm.with_call_roots([target, handler], |vm| {
-                    let trap_name = "has";
-                    let trap_atom = vm.intern_atom(trap_name);
+                    let trap_atom = vm.trap_atom(ProxyTrap::Has);
                     let trap = vm.get_property(p, handler, trap_atom)?;
                     if trap.is_null() || trap.is_undefined() {
                         return vm.has_property_key(p, target, key);
@@ -105,7 +104,7 @@ impl<H: Host> Vm<H> {
                     if vm.truthy(result) {
                         return Ok(true);
                     }
-                    vm.validate_proxy_property_absence(p, target, key, trap_name)?;
+                    vm.validate_proxy_property_absence(p, target, key, ProxyTrap::Has.name())?;
                     Ok(false)
                 });
             }

@@ -4,6 +4,8 @@ use oxc_ast::ast::UnaryOperator;
 
 #[path = "switch_selection.rs"]
 mod switch_selection;
+#[path = "strict_equality.rs"]
+mod strict_equality;
 
 /// V8's TypeError for ToNumber of a BigInt, unary plus included.
 const BIGINT_TO_NUMBER: &str = "Cannot convert a BigInt value to a number";
@@ -402,20 +404,6 @@ impl<H: Host> Vm<H> {
             return left == right;
         }
         a == b || self.heap_values_strictly_equal(a, b)
-    }
-
-    /// `strict_equal` of two values that are no Numbers and not identical: equal strings or
-    /// BigInts, of equal contents.
-    #[inline(always)]
-    pub(super) fn heap_values_strictly_equal(&self, a: Value, b: Value) -> bool {
-        // `a`'s cell alone decides most pairs: an object or symbol equals nothing it is not.
-        if let Some(a) = self.heap.string(a) {
-            return self.heap.string(b).is_some_and(|b| a == b);
-        }
-        match self.heap.get(a) {
-            Some(Cell::BigInt(a)) => matches!(self.heap.get(b), Some(Cell::BigInt(b)) if a == b),
-            _ => false,
-        }
     }
 
     #[inline(always)]
