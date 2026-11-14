@@ -14,7 +14,7 @@ pub(super) use reparse::{Nesting, reparse};
 use oxc_allocator::Allocator;
 mod parse_arena;
 pub(super) use parse_arena::{arena, release_after, sized_arena};
-pub(crate) use parse_arena::release_warm_arena;
+pub(crate) use parse_arena::{expire_warm_arena, release_warm_arena};
 use oxc_ast::ast::{
     Argument, CallExpression, Expression, ExpressionStatement, Function, FunctionBody,
     IdentifierReference, Program, Statement,

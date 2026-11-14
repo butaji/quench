@@ -955,7 +955,7 @@ impl<H: Host> Vm<H> {
         H::after_collection(&mut crate::CollectionContext::new(&mut self.host, &mut self.heap));
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);
-        self.collection_boundary();
+        self.collection_boundary(full);
         #[cfg(feature = "profile-memory")]
         if crate::trace::Channel::MemoryPeak.on() {
             let phase = format!("gc_{}_after", self.heap.collection_count());

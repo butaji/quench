@@ -61,7 +61,7 @@ mod lazy_bodies;
 mod eval_reach;
 mod literal_singletons;
 mod semantic_stats;
-pub(crate) use lazy_bodies::release_warm_arena;
+pub(crate) use lazy_bodies::{expire_warm_arena, release_warm_arena};
 #[cfg(feature = "verify-replay")]
 mod free_names;
 mod syntax_message;

@@ -26,6 +26,9 @@ thread_local! {
     /// minor faults (JetStream first-inspector-code-load, x86_64, 2026-11-08: 52K -> 27K,
     /// max RSS 45 -> 47 MB). Memory-first returns it at collections (`release_warm_arena`).
     static WARM: std::cell::Cell<Option<Allocator>> = const { std::cell::Cell::new(None) };
+    /// Whether a whole-program parse took an arena since the last full collection
+    /// (`expire_warm_arena`).
+    static WARM_USED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// A whole program's parse arena (`sized_arena`): the warm one when it is large enough,
@@ -64,6 +67,7 @@ impl Drop for ParseArena {
 /// much as `arena(text)` reserves.
 pub(crate) fn sized_arena(text: &str) -> ParseArena {
     let reserved = text.len().saturating_mul(ARENA_BYTES_PER_SOURCE_BYTE);
+    WARM_USED.set(true);
     let warm = WARM.take();
     let allocator = match warm {
         Some(warm) if warm.capacity() >= reserved => warm,
@@ -78,6 +82,17 @@ pub(crate) fn sized_arena(text: &str) -> ParseArena {
 /// Returns the warm arena's pages to the system (`WARM`).
 pub(crate) fn release_warm_arena() {
     drop(WARM.take());
+}
+
+/// A full collection's end: the warm arena is a cache for parses that come again, so it
+/// expires once a whole interval between full collections has passed with no parse. A program
+/// parsed once, at start-up, kept its tree's pages for its whole run (no-JIT V8-v7
+/// EarleyBoyer without a compile cache: 2 MB of its 14.4 MB peak); a code-load loop parses
+/// within every interval and keeps its pages warm.
+pub(crate) fn expire_warm_arena() {
+    if !WARM_USED.replace(false) {
+        release_warm_arena();
+    }
 }
 
 /// Returns the pages of `allocator`'s free space to the system: a lazily parsed body's tree
