@@ -8290,6 +8290,37 @@ fn lane_count_backedge<H: Host>(cx: *mut LaneContext<H>) {
     unsafe { (*cx).backedges_left = Some(TIERS.wasm.backedges_per_entry) };
 }
 
+script_handler! {
+    /// A loop's backward jump whose target is its head's forward `null`/`undefined` test
+    /// (`lane_jump_nullish_false`, `specialize_nullish_back_edges`), the `while (p != null)`
+    /// of a list walk: the safepoint and the test as one dispatch. A heap value other than a
+    /// record runs the test's own record.
+    fn lane_jump_back_nullish<NEGATED: bool, NULLISH: u16>(cx, r, ip, i, view) {
+        if script_below_floor(cx) {
+            resume!(cx, lane_jump::<H>(r, ip, true, Carried::script_in(cx, view), None))
+        }
+        // SAFETY: the view records the distance to a validated jump target, the test record
+        // `specialize_nullish_back_edges` matched.
+        let test_ip = unsafe { ip.byte_offset(i.jump()) };
+        let value = r.get(unsafe { (*test_ip).b });
+        let equal = match NULLISH {
+            NULLISH_NULL => value == Value::NULL,
+            NULLISH_UNDEFINED => value == Value::UNDEFINED,
+            _ if value.is_heap() => {
+                if !value.is_record() {
+                    next!(cx, r, test_ip, Carried::script_in(cx, view))
+                }
+                false
+            }
+            _ => value.is_null() || value.is_undefined(),
+        };
+        if equal == NEGATED {
+            resume!(cx, lane_jump::<H>(r, test_ip, false, Carried::script_in(cx, view), None));
+        }
+        next!(cx, r, following(test_ip), Carried::script_in(cx, view))
+    }
+}
+
 lane_handler! {
     fn lane_jump_always<BACKWARD: bool>(cx, r, ip, i, view) {
         match staged_jump(r, view) {
@@ -20057,6 +20088,7 @@ fn derive_lane_view<'live, H: Host>(
     if !wasm {
         specialize_load_branch_pairs::<H>(&mut records);
         specialize_update_jumps::<H>(&decoded, &mut records);
+        specialize_nullish_back_edges::<H>(&decoded, &mut records);
         specialize_store_moves::<H>(&mut records);
         specialize_operator_pairs::<H>(&mut records, live().map(|masks| &**masks));
         specialize_int32_truncations::<H>(&mut records, live().map(|masks| &**masks));
@@ -20931,6 +20963,36 @@ fn specialize_array_literals<H: Host>(records: &mut [LaneInstruction]) {
         });
         if defines {
             records[pc].handler = lane_make_array_elements::<H> as Handler as *const ();
+        }
+    }
+}
+
+/// Gives each backward unconditional jump whose target is a forward nullish test
+/// (`lane_jump_nullish_false`) the fused back edge and test (`lane_jump_back_nullish`). The
+/// test record stays, for the loop's entry and for the values it leaves to that record.
+fn specialize_nullish_back_edges<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
+    let back = lane_jump_always::<H, true> as Handler as *const ();
+    for pc in 0..records.len() {
+        if records[pc].handler != back {
+            continue;
+        }
+        let Some(test) = records.get(decoded[pc].imm() as usize) else {
+            continue;
+        };
+        macro_rules! fused {
+            ($nullish:expr) => {
+                [false, true].into_iter().find_map(|negated| {
+                    (test.handler == equality_test_handler!(lane_jump_nullish_false::<H, { $nullish }>, false, negated) as *const ())
+                        .then(|| if negated {
+                            lane_jump_back_nullish::<H, true, { $nullish }> as Handler
+                        } else {
+                            lane_jump_back_nullish::<H, false, { $nullish }> as Handler
+                        })
+                })
+            };
+        }
+        if let Some(handler) = fused!(NULLISH_NULL).or_else(|| fused!(NULLISH_UNDEFINED)).or_else(|| fused!(NULLISH_LOOSE)) {
+            records[pc].handler = handler as *const ();
         }
     }
 }
