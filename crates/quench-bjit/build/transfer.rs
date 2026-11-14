@@ -2,6 +2,7 @@
 //! through a successor relocation, return only from the routines that return, and fill a value
 //! hole only through the instruction the patcher rewrites.
 
+use crate::checks::CALL_ROW_PREFIX;
 use crate::class::{ABS64, BRANCH14, BRANCH19, BRANCH26, MOVW};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -72,9 +73,6 @@ pub fn check_transfer(arch: Arch, row: &str, code: &[u8], at: usize, class: u8) 
     };
     assert!(ok, "stencil {row}: relocation at {at} is not a jump or conditional branch (a call?): preceding bytes {:02x?}", &code[at.saturating_sub(3)..at]);
 }
-
-/// The rows that may make a call through a register (`stencils/call_rows.rs`).
-const CALL_ROW_PREFIX: &str = "call_";
 
 /// A `call_*` row calls indirectly (`call r64`, `call [r64]`, `blr`) and no other way; any other row
 /// has no call, which a relocation against a non-hole symbol would already have failed.

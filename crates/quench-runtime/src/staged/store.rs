@@ -2,7 +2,8 @@
 //! a value at a slot, whichever of the two plain storage forms it keeps its values in. The
 //! interpreter runs it on `Concrete`; a specializer emits it from the same rows.
 
-use super::object::inline_storage;
+use super::narrow::{NOT_NARROW, UPPER_WORD};
+use super::object::{inline_storage, HALF_BYTES};
 use super::slot_store::{admitted_payload, gate_open, gated_payload, store_flat};
 use super::Stage;
 use super::region::Region;
@@ -17,13 +18,6 @@ const FAMILY_SHIFT: u32 = crate::value::HEAP_FAMILY_SHIFT;
 /// The upper words of the narrow constants, their codes following the families' codes.
 const CONSTANT_UPPER_WORDS: [u64; 4] = [crate::value::TAG_UNDEFINED, crate::value::TAG_NULL, crate::value::TAG_BOOL, crate::value::TAG_DELETED];
 const FIRST_CONSTANT_CODE: u64 = crate::value::NARROW_HEAP_FAMILIES as u64;
-/// A bit mask's complement in the low word: the upper word of a value.
-const UPPER_WORD: u64 = !(u32::MAX as u64);
-/// Bytes in one half of a packed payload word.
-const HALF_BYTES: u64 = std::mem::size_of::<u32>() as u64;
-
-/// The word a value that has no narrow form (a Number, a wide reference) yields.
-const NOT_NARROW: u64 = u64::MAX;
 
 /// The narrow form of `value` (`Value::to_narrow`) where it has one: an integer in range, a
 /// reference whose index fits, or a constant; `NOT_NARROW` for any other value, which the

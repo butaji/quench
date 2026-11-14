@@ -714,10 +714,7 @@ impl Cell {
             Self::WasmTag { object, declarations, ty } if crate::vm::js_tag_type() == (declarations.clone(), *ty) => {
                 writer.u8(tag::JS_TAG); write_object(writer, object)?;
             }
-            Self::WasmBits64(_)
-            | Self::WasmInstance(_)
-            | Self::WasmV128(_)
-            | Self::WasmExtern(_)
+            Self::WasmBits64(_) | Self::WasmInstance(_) | Self::WasmV128(_) | Self::WasmExtern(_)
             | Self::WasmException { .. }
             | Self::WasmTag { .. }
             | Self::WasmGc { .. }

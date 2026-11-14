@@ -72,16 +72,11 @@ fn same_word<S: Stage>(stage: &mut S, held: S::Word, expected: S::Word, miss: S:
     stage.guard(same, miss)
 }
 
-/// The next key of the for-in `state` (a direct array among the array records at `arrays`) where its
-/// memo proves the object, a direct plain object among the object records at `objects`, still has the
-/// snapshot's keys: the state is a writable dense array of its own, the memo's epoch is `epoch` and its
-/// shape the object's exact shape, and the cursor, an int word, names a key. The key is the answer and
-/// the cursor moves past it (an int in place, `elements::replace_element`); `None` (leaving at `miss`,
-/// before any write) otherwise, where the full step decides: any other object, a deleted or
-/// non-enumerable key, and an exhausted snapshot, which jumps.
+/// The state `state` of a `for-in` whose snapshot is whole and current: its collection epoch is
+/// `epoch` and the object it lists still has the shape it listed, as a plain record.
 #[inline(always)]
-pub(crate) fn for_in_next<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S::Word), state: S::Word, epoch: S::Word,
-    miss: S::Miss) -> Option<S::Word> {
+fn current_state<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S::Word), state: S::Word, epoch: S::Word,
+    miss: S::Miss) -> Option<elements::Backing<S::Word>> {
     let backing = elements::array_backing(stage, arrays, state, miss)?;
     elements::writable_backing(stage, backing, miss)?;
     let length = stage.constant(FOR_IN_STATE_LEN as u64);
@@ -100,6 +95,20 @@ pub(crate) fn for_in_next<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, 
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let plain = super::object::plain_payload(stage, payload);
     stage.guard(plain, miss)?;
+    Some(backing)
+}
+
+/// The next key of the for-in `state` (a direct array among the array records at `arrays`) where its
+/// memo proves the object, a direct plain object among the object records at `objects`, still has the
+/// snapshot's keys: the state is a writable dense array of its own, the memo's epoch is `epoch` and its
+/// shape the object's exact shape, and the cursor, an int word, names a key. The key is the answer and
+/// the cursor moves past it (an int in place, `elements::replace_element`); `None` (leaving at `miss`,
+/// before any write) otherwise, where the full step decides: any other object, a deleted or
+/// non-enumerable key, and an exhausted snapshot, which jumps.
+#[inline(always)]
+pub(crate) fn for_in_next<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S::Word), state: S::Word, epoch: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    let backing = current_state(stage, (arrays, objects), state, epoch, miss)?;
     let cursor = state_word(stage, backing.values, FOR_IN_CURSOR);
     let int_tag = stage.constant(crate::value::ValueLayout::INT_TAG);
     let index = stage.sub(cursor, int_tag);

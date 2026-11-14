@@ -16,6 +16,7 @@ mod wast_json;
 pub use wast_json::wast_to_json;
 mod wast_protocol;
 mod wast_script;
+mod wast_values;
 pub use wast_script::{run_wast, DirectiveResult, WastReport};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

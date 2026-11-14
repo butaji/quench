@@ -54,6 +54,7 @@ pub(crate) mod entry;
 pub(crate) mod environment;
 pub(crate) mod ic;
 pub(crate) mod object;
+mod narrow;
 pub(crate) mod store;
 pub(crate) mod slot_store;
 pub(crate) mod strings;
@@ -255,28 +256,35 @@ impl<W, P> Operation<W, P> {
     /// its own exact path. The heap operations are the frame's (`Frame::field_read`); a tier
     /// decodes those itself.
     pub(crate) fn decode(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
+        match instruction.op() {
+            Op::Move | Op::LoadConst | Op::Jump | Op::JumpFalse | Op::JumpTrue | Op::Return => Self::decode_flow(instruction, context),
+            Op::LoadLocalPlain | Op::StoreLocalPlain => Self::decode_local(instruction),
+            Op::Binary | Op::ToPropertyKey | Op::JumpBinaryFalse => Self::decode_generic(instruction),
+            Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::IncDec
+                | Op::LoadCapture | Op::StoreCapture => Self::decode_value(instruction),
+            Op::GetField | Op::Delete => Self::decode_property(instruction),
+            op if op.is_field_store() => Self::decode_property(instruction),
+            Op::GetIndex | Op::SetIndex => Self::decode_element(instruction),
+            Op::Call | Op::CallForwardingArguments | Op::Construct | Op::CallKnown | Op::CallMethod | Op::CallThisMethod =>
+                Self::decode_call(instruction, context),
+            _ => names::decode(instruction),
+        }
+    }
+
+    /// The register moves and control transfers of `decode`.
+    fn decode_flow(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         Some(match instruction.op() {
             Op::Move => Self::Move {
                 destination: instruction.result_register(), source: instruction.register_b() },
             Op::LoadConst => Self::LoadConst {
                 destination: instruction.result_register(),
                 constant: context.constant(instruction.constant_index())? },
-            Op::LoadLocalPlain | Op::StoreLocalPlain => return Self::decode_local(instruction),
             Op::Jump => Self::Jump,
             Op::JumpFalse => Self::JumpIf {
                 register: instruction.register_a(), taken: false },
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
-            Op::Binary | Op::ToPropertyKey | Op::JumpBinaryFalse => return Self::decode_generic(instruction),
-            Op::LoadThis | Op::RequireObjectCoercible | Op::ToNumeric | Op::Unary | Op::IncDec
-                | Op::LoadCapture | Op::StoreCapture => return Self::decode_value(instruction),
-            Op::GetField | Op::Delete => return Self::decode_property(instruction),
-            op if op.is_field_store() => return Self::decode_property(instruction),
-            Op::GetIndex | Op::SetIndex => return Self::decode_element(instruction),
-            Op::Call | Op::CallForwardingArguments | Op::Construct | Op::CallKnown | Op::CallMethod | Op::CallThisMethod =>
-                return Self::decode_call(instruction, context),
-            Op::Return => Self::Return { source: instruction.register_a() },
-            _ => return names::decode(instruction),
+            _ => Self::Return { source: instruction.register_a() },
         })
     }
 
@@ -376,7 +384,11 @@ pub(crate) enum Edge {
 }
 
 #[cfg(test)]
+mod test_words;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod layout_tests;
 #[cfg(test)]
 mod property_tests;
 #[cfg(test)]

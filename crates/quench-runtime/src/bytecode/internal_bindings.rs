@@ -15,31 +15,34 @@ pub(crate) const INTERNAL_GLOBAL_BINDINGS: [&str; 3] = [
     WITH_EXIT_BINDING,
 ];
 
+/// The natives the engine-internal intrinsic names stand for: what the compiler's own throws, class setup,
+/// `using` declarations and dynamic `import` call, which a binding of the same name in scope does not replace,
+/// and the iteration helpers each realm also installs on its global object.
+const INTRINSIC_NATIVES: [(&str, crate::heap::Native); 14] = {
+    use crate::heap::Native;
+    [
+        ("\0quench:dynamic-import", Native::DynamicImport),
+        ("\0quench:intrinsic-promise", Native::Promise),
+        ("\0quench:super-get", Native::ReflectGet),
+        ("\0quench:super-set", Native::SuperSet),
+        (SUPER_BASE_BINDING, Native::ReflectGetPrototypeOf),
+        ("\0quench:object-literal-prototype", Native::ObjectLiteralPrototype),
+        ("\0quench:object-literal-create", Native::ObjectLiteralCreate),
+        ("\0quench:object-define-property", Native::ObjectDefineProperty),
+        ("\0quench:object-freeze", Native::ObjectFreeze),
+        (INTRINSIC_TYPE_ERROR_BINDING, Native::TypeError),
+        (INTRINSIC_REFERENCE_ERROR_BINDING, Native::ReferenceError),
+        (INTRINSIC_SET_PROTOTYPE_OF_BINDING, Native::ObjectSetPrototypeOf),
+        (INTRINSIC_DISPOSABLE_STACK_BINDING, Native::DisposableStack),
+        (ITERATOR_CLOSE_BINDING, Native::IteratorClose),
+    ]
+};
+
 /// The native an engine-internal intrinsic name stands for: a by-name read of it resolves to
 /// that native before consulting any binding (`Vm::intrinsic_name_value`), and no source
 /// identifier can spell it, so the read observes no scope.
 pub(crate) fn intrinsic_name_native(name: &str) -> Option<crate::heap::Native> {
-    use crate::heap::Native;
-    Some(match name {
-        "\0quench:dynamic-import" => Native::DynamicImport,
-        "\0quench:intrinsic-promise" => Native::Promise,
-        "\0quench:super-get" => Native::ReflectGet,
-        "\0quench:super-set" => Native::SuperSet,
-        SUPER_BASE_BINDING => Native::ReflectGetPrototypeOf,
-        "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
-        "\0quench:object-literal-create" => Native::ObjectLiteralCreate,
-        "\0quench:object-define-property" => Native::ObjectDefineProperty,
-        "\0quench:object-freeze" => Native::ObjectFreeze,
-        // What the compiler's own throws, class setup and `using` declarations call: the
-        // realm's intrinsics, which a binding of the same name in scope does not replace.
-        INTRINSIC_TYPE_ERROR_BINDING => Native::TypeError,
-        INTRINSIC_REFERENCE_ERROR_BINDING => Native::ReferenceError,
-        INTRINSIC_SET_PROTOTYPE_OF_BINDING => Native::ObjectSetPrototypeOf,
-        INTRINSIC_DISPOSABLE_STACK_BINDING => Native::DisposableStack,
-        // The iteration helpers each realm also installs on its global object.
-        ITERATOR_CLOSE_BINDING => Native::IteratorClose,
-        _ => return None,
-    })
+    INTRINSIC_NATIVES.iter().find(|(intrinsic, _)| *intrinsic == name).map(|&(_, native)| native)
 }
 
 /// Whether a by-name read of `name` is an intrinsic's (`intrinsic_name_native` or the RegExp

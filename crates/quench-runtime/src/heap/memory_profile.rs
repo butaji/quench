@@ -708,10 +708,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             }
             Cell::BigInt(value) => value.spilled_bytes(),
             Cell::Error(value) => value.capacity(),
-            Cell::Promise(promise) => {
-                size_of::<super::PromiseCell>()
-                    + promise.record.reaction_heap_bytes()
-            }
+            Cell::Promise(promise) => size_of::<super::PromiseCell>() + promise.record.reaction_heap_bytes(),
             Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             Cell::Date { .. } => 0,
             Cell::RegExp { meta, .. } => meta.source.capacity(),

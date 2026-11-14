@@ -61,21 +61,29 @@ impl Allocation {
                 Some(elements) => Self::ArrayOf { elements },
                 None => Self::Array { length: u32::try_from(instruction.array_length()).ok()? },
             },
-            Op::CreateRegExpLiteral => Self::RegExp {
-                site: u32::try_from(instruction.regexp_literal_site_index()).ok()? },
-            Op::MakeConstArray => Self::ConstArray {
-                constant: u32::try_from(instruction.constant_index()).ok()?, count: instruction.element_count() },
             Op::MakeObject2 => Self::ObjectPair { site: u32::try_from(instruction.object_site_index()).ok()?,
                 first: instruction.register_b(), second: instruction.register_c() },
             Op::MakeObjectLiteral => Self::ObjectLiteral {
                 site: u32::try_from(instruction.object_site_index()).ok()?, window: instruction.register_window() },
             Op::MakeClosure => Self::Closure { function: instruction.closure_function_index() },
-            Op::MakeLiteralTemplate => Self::Template {
-                template: u32::try_from(instruction.literal_template_index()).ok()? },
             Op::StringConcat => Self::Concat { window: instruction.register_window() },
-            _ => return None,
+            _ => Self::decode_site_backed(instruction)?,
         };
         Some((instruction.result_register(), allocation))
+    }
+
+    /// The allocations whose value a table the function carries describes: a regular expression
+    /// literal, a constant array and a literal template.
+    fn decode_site_backed(instruction: WideInstruction) -> Option<Self> {
+        Some(match instruction.op() {
+            Op::CreateRegExpLiteral => Self::RegExp {
+                site: u32::try_from(instruction.regexp_literal_site_index()).ok()? },
+            Op::MakeConstArray => Self::ConstArray {
+                constant: u32::try_from(instruction.constant_index()).ok()?, count: instruction.element_count() },
+            Op::MakeLiteralTemplate => Self::Template {
+                template: u32::try_from(instruction.literal_template_index()).ok()? },
+            _ => return None,
+        })
     }
 }
 

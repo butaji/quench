@@ -14,6 +14,16 @@
 #![allow(incomplete_features, non_upper_case_globals, dead_code, unused_imports)]
 extern crate core as std;
 
+/// The row's staged work's word, or the row leaves through exit 0 with nothing written.
+macro_rules! need {
+    ($s:expr, $e:expr) => {
+        match $e {
+            Some(v) => v,
+            None => return Out::Exit($s),
+        }
+    };
+}
+
 #[cfg(all(fixed_rows, target_arch = "x86_64"))]
 mod call_rows;
 mod codes;
@@ -25,6 +35,10 @@ mod entry;
 mod facade;
 mod heap_rows;
 mod ic_rows;
+mod environment_rows;
+mod key_rows;
+mod name_rows;
+mod site_rows;
 mod layout;
 mod numeric;
 mod places;

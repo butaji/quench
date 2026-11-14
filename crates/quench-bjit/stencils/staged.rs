@@ -25,6 +25,7 @@ pub(crate) use global::GlobalFrame;
 pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
 #[path = "../../quench-runtime/src/staged/value.rs"] pub(crate) mod value;
 #[path = "../../quench-runtime/src/staged/object.rs"] pub(crate) mod object;
+#[path = "../../quench-runtime/src/staged/narrow.rs"] mod narrow;
 #[path = "../../quench-runtime/src/staged/elements.rs"] pub(crate) mod elements;
 #[path = "../../quench-runtime/src/staged/environment.rs"] pub(crate) mod environment;
 #[path = "../../quench-runtime/src/staged/string_length.rs"] pub(crate) mod string_length;

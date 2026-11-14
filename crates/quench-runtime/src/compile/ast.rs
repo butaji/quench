@@ -650,9 +650,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             Expression::FunctionExpression(function) => function.id.is_none(),
             Expression::ArrowFunctionExpression(_) => true,
             Expression::ClassExpression(class) => class.id.is_none(),
-            Expression::ParenthesizedExpression(expression) => {
-                Self::anonymous_function_definition(&expression.expression)
-            }
+            Expression::ParenthesizedExpression(expression) => Self::anonymous_function_definition(&expression.expression),
             _ => false,
         }
     }
