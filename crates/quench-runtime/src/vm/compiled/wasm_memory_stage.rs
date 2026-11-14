@@ -166,7 +166,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// Lowers a linear-memory step. An access's address is a 32-bit index plus an offset plus
     /// its width, which stays inside the guarded reservation.
     pub(super) fn memory(&mut self, instruction: WideInstruction, step: Memory) {
-        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
+        let (a, c) = (instruction.a(), instruction.c());
         match step {
             Memory::Load(access) => {
                 let address = self.read(c, Kind::I32);
@@ -189,21 +189,27 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let before = self.memory_grow(pages);
                 self.write(a, Kind::I32, before);
             }
-            Memory::Fill => {
-                let (destination, _) = instruction.register_pair();
-                let destination = self.read(destination, Kind::I32);
-                let byte = self.read(b, Kind::I32);
-                let length = self.read(c, Kind::I32);
-                infallible(fill(self, destination, byte, length));
-            }
-            Memory::Copy => {
-                let (destination, source) = instruction.register_pair();
-                let destination = self.read(destination, Kind::I32);
-                let source = self.read(source, Kind::I32);
-                let length = self.read(c, Kind::I32);
-                infallible(copy(self, destination, source, length));
-            }
+            Memory::Fill => self.memory_fill_step(instruction),
+            Memory::Copy => self.memory_copy_step(instruction),
         }
+    }
+
+    /// A fill of the linear memory: destination, byte and length registers.
+    fn memory_fill_step(&mut self, instruction: WideInstruction) {
+        let (destination, _) = instruction.register_pair();
+        let destination = self.read(destination, Kind::I32);
+        let byte = self.read(instruction.b(), Kind::I32);
+        let length = self.read(instruction.c(), Kind::I32);
+        infallible(fill(self, destination, byte, length));
+    }
+
+    /// A copy within the linear memory: destination, source and length registers.
+    fn memory_copy_step(&mut self, instruction: WideInstruction) {
+        let (destination, source) = instruction.register_pair();
+        let destination = self.read(destination, Kind::I32);
+        let source = self.read(source, Kind::I32);
+        let length = self.read(instruction.c(), Kind::I32);
+        infallible(copy(self, destination, source, length));
     }
 }
 
