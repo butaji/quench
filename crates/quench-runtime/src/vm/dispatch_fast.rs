@@ -4318,10 +4318,29 @@ script_handler! {
     /// With `FIRST_DEAD` the first result's register is dead after the pair (liveness, or the
     /// second overwrites it), so it is stored only when the second record runs on its own.
     fn lane_operator_pair<FIRST: u32, SECOND: u32, FIRST_DEAD: bool>(cx, r, ip, i, view) {
-        use super::operations::{integer_operator, number_operator};
+        use super::operations::{int32_operator, integer_operator, number_operator};
         let (left, right) = (r.get(i.b), r.get(i.c));
         // SAFETY: the pair is two records, the second never the view's last.
         let second = unsafe { &*following(ip) };
+        // Two int32 results in a row stay raw i32: the first never gets re-tested as an
+        // operand of the second (V8-v7 Crypto am3, `a*b + c` on 14-bit digits).
+        // One operand at a time, as `integer_operator`: a combined pair probe cost the
+        // int-left double-right pairs (V8-v7 NavierStokes) a second tag test.
+        if let Some(l) = left.as_int()
+            && let Some(rr) = right.as_int()
+            && let Some(first) = int32_operator::<FIRST>(l, rr)
+        {
+            let operand = |register: u16| if register == i.a { Some(first) } else { r.get(register).as_int() };
+            if let (Some(second_left), Some(second_right)) = (operand(second.b), operand(second.c))
+                && let Some(value) = int32_operator::<SECOND>(second_left, second_right)
+            {
+                if !FIRST_DEAD {
+                    r.set(i.a, Value::integer(first));
+                }
+                r.set(second.a, Value::integer(value));
+                next!(cx, r, following(following(ip)), Carried::script(cx))
+            }
+        }
         if let Some(value) = integer_operator::<FIRST>(left, right) {
             let operand = |register: u16| if register == i.a { value } else { r.get(register) };
             let Some(result) = lane_number_operator::<SECOND>(operand(second.b), operand(second.c)) else {

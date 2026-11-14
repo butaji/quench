@@ -717,6 +717,11 @@ mod integer_arithmetic_tests {
             let expected =
                 Value::number(number_operator::<OP>(f64::from(left), f64::from(right)).unwrap());
             assert_eq!(actual, expected, "operator={OP} left={left} right={right}");
+            if let Some(raw) = int32_operator::<OP>(left, right) {
+                assert_eq!(Value::integer(raw), actual, "int32 operator={OP} left={left} right={right}");
+            } else {
+                assert!(actual.as_int().is_none(), "int32 declined operator={OP} left={left} right={right}");
+            }
         }
         fn pair(left: i32, right: i32) {
             check::<ADDITION>(left, right);
@@ -807,6 +812,27 @@ pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Opti
     // lane's integer handlers free of saved registers.
     let (left, right) = (left.as_int()?, right.as_int()?);
     numeric_integer_result(numeric_binary_operator(OP)?, left, right)
+}
+
+/// `OP` on two int32 operands when its Number result is again an int32 (no overflow, no
+/// -0, no `>>>` past 2^31): the raw i32, so a fused second operator reads it without a tag
+/// test. `None` leaves the case to `integer_operator`.
+#[inline(always)]
+pub(super) fn int32_operator<const OP: u32>(left: i32, right: i32) -> Option<i32> {
+    match numeric_binary_operator(OP)? {
+        BinaryOperator::Addition => left.checked_add(right),
+        BinaryOperator::Subtraction => left.checked_sub(right),
+        BinaryOperator::Multiplication => {
+            let product = left.checked_mul(right)?;
+            // 0 from a negative factor is -0, not an int32.
+            (product != 0 || (left | right) >= 0).then_some(product)
+        }
+        operator => {
+            let operation = NumberBitwise::from_binary_operator(operator)?;
+            let bits = operation.apply(&mut I32BitwiseStage, left, right);
+            (operation != NumberBitwise::ShiftRightUnsigned || bits >= 0).then_some(bits)
+        }
+    }
 }
 
 /// `integer_operator` of a right operand the caller proved an integer: only the left's tag
