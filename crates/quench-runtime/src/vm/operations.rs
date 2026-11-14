@@ -531,6 +531,15 @@ pub(super) fn integer_binary(op: u32, left: i32, right: i32) -> Option<Value> {
 /// `number_relation` of two integers alone: `None` for any other pair. Few values stay live,
 /// so a lane handler inlining it saves no registers.
 #[inline(always)]
+pub(super) fn integer_relation_i32(op: u32, left: i32, right: i32) -> Option<bool> {
+    if op > LAST_COMPARISON_OPERATOR {
+        return None;
+    }
+    Some(number_comparison(op, left, right))
+}
+
+/// A comparison operator on two int32 Values; `None` for any other operator or value.
+#[inline(always)]
 pub(super) fn integer_relation(op: u32, left: Value, right: Value) -> Option<bool> {
     if op > LAST_COMPARISON_OPERATOR {
         return None;
@@ -848,11 +857,10 @@ pub(super) fn int32_operator<const OP: u32>(left: i32, right: i32) -> Option<i32
     }
 }
 
-/// `integer_operator` of a right operand the caller proved an integer: only the left's tag
-/// is tested.
+/// `integer_operator` of two operands the caller already read as int32s.
 #[inline(always)]
-pub(super) fn integer_constant_operator<const OP: u32>(left: Value, right: i32) -> Option<Value> {
-    numeric_integer_result(numeric_binary_operator(OP)?, left.as_int()?, right)
+pub(super) fn integer_pair_operator<const OP: u32>(left: i32, right: i32) -> Option<Value> {
+    numeric_integer_result(numeric_binary_operator(OP)?, left, right)
 }
 
 #[inline(always)]

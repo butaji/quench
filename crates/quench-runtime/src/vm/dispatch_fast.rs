@@ -1155,6 +1155,19 @@ impl Registers {
         unsafe { *self.0.add(usize::from(register)) = value }
     }
 
+    /// The register's int32, read as two dwords: the tag half compared in memory
+    /// (`cmp dword [..+4], imm; jne`) and the value half loaded as it is, where a whole-word
+    /// read pays a copy, a shift and a compare for the tag (V8-v7 Crypto's integer records).
+    #[inline(always)]
+    fn int(self, register: u16) -> Option<i32> {
+        // SAFETY: as for `get`; a Value is two dwords, the tag in the high one (little endian).
+        let halves = unsafe { self.0.add(usize::from(register)) }.cast::<u32>();
+        if unsafe { halves.add(1).read() } != crate::value::INT_TAG_HIGH {
+            return None;
+        }
+        Some(unsafe { halves.read() } as i32)
+    }
+
     #[inline(always)]
     fn i32(self, register: u16) -> i32 {
         self.get(register).wasm_bits32() as i32
@@ -4353,7 +4366,10 @@ script_handler! {
     /// operand registers themselves. Integers take the fast path here, which saves no
     /// registers; the first other operand switches the record to `lane_operator_numbers`.
     fn lane_operator<OP: u32>(cx, r, ip, i, view) {
-        let Some(value) = super::operations::integer_operator::<OP>(r.get(i.b), r.get(i.c)) else {
+        let (Some(left), Some(right)) = (r.int(i.b), r.int(i.c)) else {
+            sibling!(lane_operator_first_miss::<H, OP>, r, ip, Carried::script_in(cx, view))
+        };
+        let Some(value) = super::operations::integer_pair_operator::<OP>(left, right) else {
             sibling!(lane_operator_first_miss::<H, OP>, r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, value);
@@ -4593,7 +4609,7 @@ script_handler! {
     /// the handler (`constant_operator_handler`) and carries as the record's immediate: only
     /// the register operand's tag is tested.
     fn lane_operator_integer_constant<OP: u32>(cx, r, ip, i, view) {
-        let Some(value) = super::operations::integer_constant_operator::<OP>(r.get(i.b), i.imm() as i32)
+        let Some(value) = r.int(i.b).and_then(|left| super::operations::integer_pair_operator::<OP>(left, i.imm() as i32))
         else {
             sibling!(lane_operator_integer_constant_first_miss::<H, OP>, r, ip, Carried::script_in(cx, view))
         };
@@ -4729,8 +4745,8 @@ script_handler! {
     /// writes to the truncation's register. Other operands run the operator's own record
     /// (`lane_operator`, `lane_operator_integer_constant`), then the truncation's.
     fn lane_operator_int32<OP: u32, CONSTANT: bool>(cx, r, ip, i, view) {
-        let right = if CONSTANT { Some(i.imm() as i32) } else { r.get(i.c).as_int() };
-        let (Some(left), Some(right)) = (r.get(i.b).as_int(), right) else {
+        let right = if CONSTANT { Some(i.imm() as i32) } else { r.int(i.c) };
+        let (Some(left), Some(right)) = (r.int(i.b), right) else {
             let own: Handler = if CONSTANT { lane_operator_integer_constant::<H, OP> } else { lane_operator::<H, OP> };
             sibling!(own, r, ip, Carried::script_in(cx, view))
         };
@@ -7922,8 +7938,10 @@ script_handler! {
     /// (`specialize_register_operands`): Number comparison of two integers
     /// (`integer_relation`); any other pair takes `lane_jump_binary_false_registers_other`.
     fn lane_jump_binary_false_registers<BACKWARD: bool, OP: u32>(cx, r, ip, i, view) {
-        let (left, right) = (r.get(i.b), r.get(i.c));
-        let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(i), left, right) else {
+        let Some(holds) = (match (r.int(i.b), r.int(i.c)) {
+            (Some(left), Some(right)) => super::operations::integer_relation_i32(relation_operator::<OP>(i), left, right),
+            _ => None,
+        }) else {
             sibling!(lane_jump_binary_false_registers_other::<H, BACKWARD, OP>, r, ip, Carried::script_in(cx, view))
         };
         if !holds {
