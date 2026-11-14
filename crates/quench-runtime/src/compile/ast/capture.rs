@@ -13,6 +13,7 @@ pub(super) struct CaptureScopeState {
     lexical_depth: usize,
     lexical_pushes: usize,
     parameter_context: bool,
+    folds: usize,
 }
 
 /// The facts capture scopes and lexical slot sets are derived from, kept between positions.
@@ -41,12 +42,7 @@ impl CaptureMemos {
 
 impl FunctionCompiler<'_, '_> {
     pub(in crate::compile) fn capture_scopes(&mut self) -> ScopeChain {
-        let state = CaptureScopeState {
-            local_count: self.local_slots.len(),
-            lexical_depth: self.lexical_scopes.len(),
-            lexical_pushes: self.lexical_scope_pushes,
-            parameter_context: self.parameter_context,
-        };
+        let state = self.capture_scope_state();
         let scope = match &self.capture_memo.scope {
             Some((memo_state, scope)) if *memo_state == state => Rc::clone(scope),
             _ => {
@@ -81,6 +77,17 @@ impl FunctionCompiler<'_, '_> {
             }));
         }
         ScopeChain::new(scopes)
+    }
+
+    /// What the capture scope at this position derives from.
+    fn capture_scope_state(&self) -> CaptureScopeState {
+        CaptureScopeState {
+            local_count: self.local_slots.len(),
+            lexical_depth: self.lexical_scopes.len(),
+            lexical_pushes: self.lexical_scope_pushes,
+            parameter_context: self.parameter_context,
+            folds: self.capture_folds.len(),
+        }
     }
 
     /// The current function's bindings any closure created inside it sees before lexical
@@ -127,6 +134,7 @@ impl FunctionCompiler<'_, '_> {
     /// base under each lexical scope's layer, built once per scope (`capture_layer`).
     fn current_capture_scope(&mut self) -> CaptureScope {
         let mut scope = CaptureScope::new(self.capture_base());
+        scope.folds = Rc::clone(&self.capture_folds);
         for index in 0..self.lexical_scopes.len() {
             let layer = match &self.lexical_scopes[index].capture_layer {
                 Some((epoch, layer)) if *epoch == self.capture_memo.unslotted_epoch => Rc::clone(layer),

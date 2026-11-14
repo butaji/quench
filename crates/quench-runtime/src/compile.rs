@@ -58,6 +58,8 @@ mod class;
 mod early;
 mod frame_registers;
 mod lazy_bodies;
+mod eval_reach;
+mod literal_singletons;
 mod semantic_stats;
 pub(crate) use lazy_bodies::release_warm_arena;
 #[cfg(feature = "verify-replay")]
@@ -3962,11 +3964,7 @@ impl<'a> Compiler<'a> {
             .copied()
             .filter(|atom| function_scope.contains(atom))
             .collect();
-        let dynamic_eval = options
-            .defaults
-            .is_some_and(early::parameters_contain_direct_eval)
-            || early::body_contains_direct_eval(body)
-            || expression_body.is_some_and(early::expression_contains_direct_eval);
+        let dynamic_eval = eval_reach::function_contains_direct_eval(options.defaults, body, expression_body);
         let simple_parameters = !options.rest_override
             && options
                 .defaults
@@ -4049,6 +4047,7 @@ impl<'a> Compiler<'a> {
             function.statement_completion = StatementCompletion::Track(completion);
         }
         function.dynamic_eval = dynamic_eval;
+        function.literal_singletons = literal_singletons::Owner { parent, binds_dynamically, options: &options }.declarations(&function.owner.atoms, &params, body);
         if arguments_slot.is_some() && parameter_arguments_slot.is_none() {
             function.arguments_alias = early::arguments_alias(options.defaults, body);
         }

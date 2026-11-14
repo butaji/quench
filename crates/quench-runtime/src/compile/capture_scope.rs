@@ -68,11 +68,27 @@ pub(super) type CaptureLayer = FxHashMap<Atom, Option<u16>>;
 pub(super) struct CaptureScope {
     base: CaptureBase,
     layers: Vec<Rc<CaptureLayer>>,
+    /// The function's literal singletons initialized before this position (`literal_singletons`):
+    /// a closure created here reads each base binding named as its constant.
+    pub(super) folds: CaptureFolds,
 }
+
+/// Base bindings a closure reads as constants (`early::literal_singleton_vars`).
+pub(super) type CaptureFolds = Rc<[(Atom, crate::bytecode::Constant)]>;
 
 impl CaptureScope {
     pub(super) fn new(base: CaptureBase) -> Self {
-        Self { base, layers: Vec::new() }
+        Self { base, layers: Vec::new(), folds: Rc::new([]) }
+    }
+
+    /// The constant a closure created here reads for `atom`: a fold of the base binding it
+    /// resolves to, which no lexical layer hides.
+    fn fold(&self, atom: Atom) -> Option<crate::bytecode::Constant> {
+        if self.folds.is_empty() || self.layers.iter().any(|layer| layer.contains_key(&atom)) {
+            return None;
+        }
+        self.base.get(atom)?;
+        self.folds.iter().find(|(name, _)| *name == atom).map(|(_, constant)| constant.clone())
     }
 
     pub(super) fn get(&self, atom: &Atom) -> Option<u16> {
@@ -125,6 +141,9 @@ impl FromIterator<(Atom, u16)> for CaptureScope {
 /// name it looked up that some scope binds, with that scope's depth and the slot.
 type ScopeMemo = FxHashMap<Atom, (u32, u16)>;
 
+/// The folds a function's compilation read (`ScopeChain::fold`), each once.
+type FoldMemo = Vec<(Atom, crate::bytecode::Constant)>;
+
 /// The scopes a function closes over, innermost first, as its compilation reads them: by
 /// the nearest binding of a name.
 #[derive(Clone)]
@@ -134,15 +153,16 @@ pub(super) enum ScopeChain {
     Scopes {
         levels: Vec<Rc<CaptureScope>>,
         memo: Option<Rc<std::cell::RefCell<ScopeMemo>>>,
+        folds: Option<Rc<std::cell::RefCell<FoldMemo>>>,
     },
-    /// The bindings a load-time compilation found, by atom. A name it looked up and found
-    /// in no scope has no entry, so a replay finds it in none.
-    Memo(Rc<[(Atom, u32, u16)]>),
+    /// The bindings a load-time compilation found, by atom, and the folds it read. A name it
+    /// looked up and found in no scope has no entry, so a replay finds it in none.
+    Memo(Rc<[(Atom, u32, u16)]>, Rc<[(Atom, crate::bytecode::Constant)]>),
 }
 
 impl ScopeChain {
     pub(super) fn new(levels: Vec<Rc<CaptureScope>>) -> Self {
-        Self::Scopes { levels, memo: None }
+        Self::Scopes { levels, memo: None, folds: None }
     }
 
     /// The same chain, recording the names its compilation looks up.
@@ -151,6 +171,7 @@ impl ScopeChain {
             Self::Scopes { levels, .. } => Self::Scopes {
                 levels,
                 memo: Some(Rc::default()),
+                folds: Some(Rc::default()),
             },
             memo => memo,
         }
@@ -160,14 +181,16 @@ impl ScopeChain {
     pub(super) fn into_memo(self) -> Self {
         match self {
             Self::Scopes {
-                memo: Some(memo), ..
+                memo: Some(memo), folds, ..
             } => {
                 let mut found: Vec<(Atom, u32, u16)> = std::mem::take(&mut *memo.borrow_mut())
                     .into_iter()
                     .map(|(atom, (depth, slot))| (atom, depth, slot))
                     .collect();
                 found.sort_unstable();
-                Self::Memo(found.into())
+                let mut read = folds.map(|folds| std::mem::take(&mut *folds.borrow_mut())).unwrap_or_default();
+                read.sort_unstable_by_key(|(atom, _)| *atom);
+                Self::Memo(found.into(), read.into())
             }
             chain => chain,
         }
@@ -176,7 +199,7 @@ impl ScopeChain {
     /// The depth and slot of the nearest scope binding `atom`.
     pub(super) fn find(&self, atom: Atom) -> Option<(usize, u16)> {
         match self {
-            Self::Scopes { levels, memo } => {
+            Self::Scopes { levels, memo, .. } => {
                 let found = levels
                     .iter()
                     .enumerate()
@@ -186,10 +209,31 @@ impl ScopeChain {
                 }
                 found
             }
-            Self::Memo(found) => found
+            Self::Memo(found, _) => found
                 .binary_search_by_key(&atom, |(atom, _, _)| *atom)
                 .ok()
                 .map(|index| (found[index].1 as usize, found[index].2)),
+        }
+    }
+
+    /// The constant the nearest scope binding `atom` holds at every read a closure compiled
+    /// against this chain makes (`CaptureScope::fold`), if that scope folds it.
+    pub(super) fn fold(&self, atom: Atom) -> Option<crate::bytecode::Constant> {
+        match self {
+            Self::Scopes { levels, folds, .. } => {
+                let scope = levels.iter().find(|scope| scope.get(&atom).is_some())?;
+                let constant = scope.fold(atom)?;
+                if let Some(folds) = folds
+                    && folds.borrow().iter().all(|(read, _)| *read != atom)
+                {
+                    folds.borrow_mut().push((atom, constant.clone()));
+                }
+                Some(constant)
+            }
+            Self::Memo(_, read) => read
+                .binary_search_by_key(&atom, |(atom, _)| *atom)
+                .ok()
+                .map(|index| read[index].1.clone()),
         }
     }
 
@@ -199,7 +243,7 @@ impl ScopeChain {
         match self {
             Self::Scopes { memo: Some(memo), .. } => memo.borrow().keys().copied().collect(),
             Self::Scopes { memo: None, .. } => Vec::new(),
-            Self::Memo(found) => found.iter().map(|(atom, _, _)| *atom).collect(),
+            Self::Memo(found, _) => found.iter().map(|(atom, _, _)| *atom).collect(),
         }
     }
 
@@ -212,7 +256,7 @@ impl ScopeChain {
     pub(super) fn levels(&self) -> &[Rc<CaptureScope>] {
         match self {
             Self::Scopes { levels, .. } => levels,
-            Self::Memo(_) => &[],
+            Self::Memo(..) => &[],
         }
     }
 }

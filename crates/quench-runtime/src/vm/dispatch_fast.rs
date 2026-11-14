@@ -4051,6 +4051,14 @@ unsafe fn lane_returning_binary_value<H: Host>(
     {
         return Some(value);
     }
+    // A folded constant operand (`binding_time`) takes the integer path a register's
+    // value does, decoded as any operand is (`lane_operand_value`).
+    if let (Some(left), Some(right)) = (lane_operand_value(cx, r, i.b), lane_operand_value(cx, r, i.c))
+        && let Some((left, right)) = Value::int_pair(left, right)
+        && let Some(value) = super::operations::integer_binary(i.imm(), left, right)
+    {
+        return Some(value);
+    }
     unsafe { lane_binary_value(cx, r, i) }
 }
 

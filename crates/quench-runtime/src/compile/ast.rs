@@ -151,6 +151,12 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     /// a function with many blocks, loops or classes asks for the same name once per
     /// construct, and probing every earlier name's spelling made its compile quadratic.
     hidden_local_suffixes: FxHashMap<Atom, u32>,
+    /// The declarations of this function's literal singletons (`early::literal_singleton_vars`),
+    /// by their binding's source position.
+    pub(super) literal_singletons: Vec<u32>,
+    /// The literal singletons initialized so far: closures created from here on read each
+    /// as its constant (`CaptureScope::folds`).
+    capture_folds: super::capture_scope::CaptureFolds,
 }
 
 #[derive(Default)]
@@ -256,6 +262,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             capture_memo: Default::default(),
             disposal_scopes: vec![DisposalScope::default()],
             hidden_local_suffixes: FxHashMap::default(),
+            literal_singletons: Vec::new(),
+            capture_folds: std::rc::Rc::new([]),
         }
     }
 
