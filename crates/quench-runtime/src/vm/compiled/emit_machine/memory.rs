@@ -121,6 +121,10 @@ impl<'b, B: Builds<'b>> MachineAccess for B {
         self.function_builder().ins().stack_addr(types::I64, slot, offset)
     }
 
+    fn slot_store(&mut self, slot: ir::StackSlot, lane: Lane, value: ir::Value, offset: i32) {
+        self.function_builder().ins().stack_store(machine_type(lane), value, slot, offset);
+    }
+
     fn call_signature(&mut self, signature: ir::SigRef, target: ir::Value, arguments: &[ir::Value]) -> Vec<ir::Value> {
         let builder = self.function_builder();
         let call = builder.ins().call_indirect(signature, target, arguments);

@@ -22,10 +22,10 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit(state, pc as u32);
         let arguments = self.construct_arguments(state, window);
         let callee = self.tagged(state, instruction.register_b());
-        let argc = self.ins().iconst(types::I64, i64::from(window.count));
+        let argc = self.raw_const(Lane::I64, i64::from(window.count));
         let payload = self.payload;
         let this = self.helper_call(LaneHelper::Construct, &[payload, callee, arguments, argc]);
-        let built = self.ins().icmp_imm_u(IntCC::NotEqual, this, Value::DELETED.to_bits() as i64);
+        let built = self.raw_compare_imm(Relation::NotEqual, this, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, built, exit);
         self.reshaped(state);
         if let Some(record) = completes {
@@ -46,16 +46,16 @@ impl Lowering<'_, '_> {
             let base = self.registers_base;
             for register in registers {
                 let bits = self.tagged(state, register);
-                self.ins().store(regions::frame(), bits, base, register_offset(register));
+                self.store_word(regions::frame(), bits, base, register_offset(register));
             }
-            return self.ins().iadd_imm_u(base, i64::from(register_offset(window.base)));
+            return self.raw_binary_imm(Binary::Add, base, i64::from(register_offset(window.base)));
         }
         let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,
             u32::from(window.count.max(1)) * size_of::<Value>() as u32, align_of::<Value>().trailing_zeros() as u8));
         for (index, register) in registers.enumerate() {
             let bits = self.tagged(state, register);
-            self.ins().stack_store(types::I64, bits, slot, (index * size_of::<Value>()) as i32);
+            self.slot_store(slot, Lane::I64, bits, (index * size_of::<Value>()) as i32);
         }
-        self.ins().stack_addr(types::I64, slot, 0)
+        self.slot_address(slot, 0)
     }
 }

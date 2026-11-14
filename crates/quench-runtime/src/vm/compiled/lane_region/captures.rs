@@ -62,13 +62,13 @@ pub(super) fn read_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, site
             let mut stage = Emit { builder: &mut *builder, property_values: None, gate: None };
             let read = crate::staged::environment::dense_capture(&mut stage, values, len, slot, slow)
                 .expect("the emit stage continues past its guards");
-            builder.ins().jump(join, &[ir::BlockArg::Value(read)]);
+            emit(builder).goto(join, &[read]);
         }
-        None => { builder.ins().jump(slow, &[]); }
+        None => { emit(builder).goto(slow, &[]); }
     }
     builder.switch_to_block(slow);
     let read = capture_miss(builder, reach, site, (depth, slot), exit);
-    builder.ins().jump(join, &[ir::BlockArg::Value(read)]);
+    emit(builder).goto(join, &[read]);
     builder.switch_to_block(join);
     value
 }
@@ -90,17 +90,17 @@ fn capture_miss(builder: &mut FunctionBuilder<'_>, reach: Reach, site: &CaptureS
     exit: ir::Block) -> ir::Value {
     let Some(callee) = site.callee else {
         if site.walks { return capture_get(builder, reach, at, exit); }
-        builder.ins().jump(exit, &[]);
+        emit(builder).goto(exit, &[]);
         let dead = builder.create_block();
         builder.switch_to_block(dead);
-        return builder.ins().iconst(types::I64, 0);
+        return emit(builder).raw_const(Lane::I64, 0);
     };
     let (payload, helpers) = reach;
     let vm = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, vm));
-    let slot = builder.ins().iconst(types::I64, i64::from(at.1));
+    let slot = emit(builder).raw_const(Lane::I64, i64::from(at.1));
     let helper = helpers.address(builder, LaneHelper::FunctionCapture);
     let read = emit_lane_call(builder, helper, &[vm, callee, slot]);
-    let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, read, Value::DELETED.to_bits() as i64);
+    let hit = emit(builder).raw_compare_imm(Relation::NotEqual, read, Value::DELETED.to_bits() as i64);
     emit_js_guard(builder, hit, exit);
     read
 }
@@ -109,7 +109,7 @@ fn capture_miss(builder: &mut FunctionBuilder<'_>, reach: Reach, site: &CaptureS
 fn capture_get(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), exit: ir::Block) -> ir::Value {
     let (context, packed) = capture_operands(builder, reach.0, at);
     let value = call_helper(builder, reach, LaneHelper::CaptureGet, &[context, packed]);
-    let hit = builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+    let hit = emit(builder).raw_compare_imm(Relation::NotEqual, value, Value::DELETED.to_bits() as i64);
     emit_js_guard(builder, hit, exit);
     value
 }
@@ -120,7 +120,7 @@ pub(super) fn store_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, at:
     exit: ir::Block) {
     let (context, packed) = capture_operands(builder, reach.0, at);
     let stored = call_helper(builder, reach, LaneHelper::CaptureSet, &[context, packed, value]);
-    let stored = builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
+    let stored = emit(builder).raw_compare_imm(Relation::NotEqual, stored, 0);
     emit_js_guard(builder, stored, exit);
 }
 
@@ -128,7 +128,7 @@ pub(super) fn store_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, at:
 /// helper takes.
 fn capture_operands(builder: &mut FunctionBuilder<'_>, payload: ir::Value, (depth, slot): (u16, u16)) -> (ir::Value, ir::Value) {
     let context = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, lane_context));
-    let packed = builder.ins().iconst(types::I64, i64::from(u32::from(depth) << u16::BITS | u32::from(slot)));
+    let packed = emit(builder).raw_const(Lane::I64, i64::from(u32::from(depth) << u16::BITS | u32::from(slot)));
     (context, packed)
 }
 
@@ -170,7 +170,7 @@ impl Lowering<'_, '_> {
             }
             Some(frame) if self.unit.frames[frame].target.identity().is_some() => {
                 let (values, len) = self.frame_captures.get(frame).copied().unwrap_or((0, 0));
-                Dense::Held(self.ins().iconst(types::I64, values as i64), self.ins().iconst(types::I64, len as i64))
+                Dense::Held(self.raw_const(Lane::I64, values as i64), self.raw_const(Lane::I64, len as i64))
             }
             Some(_) if callee.is_some() => Dense::Admitted,
             Some(_) => Dense::Absent,

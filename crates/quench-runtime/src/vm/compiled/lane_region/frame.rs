@@ -88,7 +88,7 @@ pub(super) struct EmitFrame<'a> {
 pub(super) fn local_slot_address(builder: &mut FunctionBuilder<'_>, payload: ir::Value, slot: u16) -> ir::Value {
     let locals = super::super::emit_js_payload_word(builder, payload,
         std::mem::offset_of!(super::super::JsStepDispatch, native_locals));
-    builder.ins().iadd_imm_s(locals, i64::from(slot) * std::mem::size_of::<Value>() as i64)
+    emit(builder).raw_binary_imm(Binary::Add, locals, i64::from(slot) * std::mem::size_of::<Value>() as i64)
 }
 
 impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
@@ -152,11 +152,11 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     fn constant(&mut self, stage: &mut Emit<'_, '_>, constant: crate::staged::Constant)
         -> (ir::Value, RegisterFact) {
         let (representation, value) = if let Some(int) = constant.value.as_int() {
-            (Representation::Int32, stage.builder.ins().iconst(types::I32, i64::from(int)))
+            (Representation::Int32, stage.raw_const(Lane::I32, i64::from(int)))
         } else if let Some(number) = constant.value.as_number() {
-            (Representation::Float64, stage.builder.ins().f64const(number))
+            (Representation::Float64, stage.raw_const(Lane::F64, number.to_bits() as i64))
         } else {
-            (Representation::Tagged, stage.builder.ins().iconst(types::I64, self.roots.embed_heap_identity(constant.value) as i64))
+            (Representation::Tagged, stage.raw_const(Lane::I64, self.roots.embed_heap_identity(constant.value) as i64))
         };
         let fact = RegisterFact::admit(Fact { ty: constant.ty, representation,
             binding: BindingTime::Static, proof: Proof::Static, projection: Projection::Exact })
@@ -233,7 +233,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         let Edges::Branch { target, following, .. } = self.edges else {
             unreachable!("a branch needs both edges")
         };
-        stage.builder.ins().brif(condition, target, &[], following, &[]);
+        stage.branch_if(condition, (target, &[]), (following, &[]));
     }
 
     #[inline(always)]
@@ -244,9 +244,9 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn boolean(&mut self, stage: &mut Emit<'_, '_>, holds: ir::Value)
         -> (ir::Value, RegisterFact) {
-        let (yes, no) = (stage.builder.ins().iconst(types::I64, Value::TRUE.to_bits() as i64),
-            stage.builder.ins().iconst(types::I64, Value::FALSE.to_bits() as i64));
-        let value = stage.builder.ins().select(holds, yes, no);
+        let (yes, no) = (stage.raw_const(Lane::I64, Value::TRUE.to_bits() as i64),
+            stage.raw_const(Lane::I64, Value::FALSE.to_bits() as i64));
+        let value = stage.raw_select(holds, yes, no);
         (value, RegisterFact::definition(Type::language(crate::ValueType::Boolean),
             Representation::Tagged))
     }
@@ -269,7 +269,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     fn load_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, _miss: Option<ir::Block>)
         -> Option<(ir::Value, RegisterFact)> {
         let address = self.locals.then(|| local_slot_address(stage.builder, self.payload, slot))?;
-        let value = stage.builder.ins().load(types::I64, regions::frame(), address, 0);
+        let value = stage.raw_load(Lane::I64, regions::frame(), address, 0);
         Some((value, RegisterFact::canonical()))
     }
 
@@ -277,7 +277,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     fn store_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, value: ir::Value,
         _miss: Option<ir::Block>) -> bool {
         let Some(address) = self.locals.then(|| local_slot_address(stage.builder, self.payload, slot)) else { return false };
-        stage.builder.ins().store(regions::frame(), value, address, 0);
+        stage.store_word(regions::frame(), value, address, 0);
         true
     }
 }
@@ -391,7 +391,7 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
             OperandKind::Register => Some(register_tagged(stage.builder, self.registers, self.state, operand.register_index()?)),
             OperandKind::Constant => {
                 let value = self.constants.get(usize::from(operand.payload())).and_then(super::super::facts::immediate)?;
-                Some(stage.builder.ins().iconst(types::I64, value.to_bits() as i64))
+                Some(stage.raw_const(Lane::I64, value.to_bits() as i64))
             }
             OperandKind::Field | OperandKind::Local => None,
         }
@@ -438,7 +438,7 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
     }
 
     fn stable_prototype(&mut self, stage: &mut Emit<'_, '_>, _constructor: Register) -> Option<ir::Value> {
-        self.prototype.map(|link| stage.builder.ins().iconst(types::I64, i64::from(link)))
+        self.prototype.map(|link| stage.raw_const(Lane::I64, i64::from(link)))
     }
 
     fn int_fact(&self) -> RegisterFact {

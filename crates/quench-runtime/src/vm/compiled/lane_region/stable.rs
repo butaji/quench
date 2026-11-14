@@ -127,13 +127,13 @@ impl Lowering<'_, '_> {
     /// Whether `held` is `identity`, a heap value the code names: a callee, a native, a folded value.
     pub(super) fn is_identity(&mut self, held: ir::Value, identity: Value) -> ir::Value {
         let word = self.stable.roots.embed_heap_identity(identity);
-        self.word_cmp_imm(IntCC::Equal, held, word as i64)
+        self.raw_compare_imm(Relation::Equal, held, word as i64)
     }
 
     /// `value`, a heap value or an immediate, as a constant the code names.
     pub(super) fn identity_constant(&mut self, value: Value) -> ir::Value {
         let word = self.stable.roots.embed_heap_identity(value);
-        self.word_const(word as i64)
+        self.raw_const(Lane::I64, word as i64)
     }
 
     /// Holds every Stable fact the code folded from here to the block's next helper that may
@@ -203,7 +203,7 @@ impl Lowering<'_, '_> {
     pub(super) fn test_realm(&mut self, state: &mut State, exit: ir::Block, (global, realm_offset): (Value, i32)) {
         let vm = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, vm));
         let active = emit(&mut self.builder).load_u64(Region::Dispatch.mutable(), vm, realm_offset);
-        let same = self.word_cmp_imm(IntCC::Equal, active, global.to_bits() as i64);
+        let same = self.raw_compare_imm(Relation::Equal, active, global.to_bits() as i64);
         emit_js_guard(&mut self.builder, same, exit);
         state.proofs.realm = true;
     }
@@ -215,7 +215,7 @@ impl Lowering<'_, '_> {
         let online = self.vm.online.filter(|online| !online.names(atom))?;
         self.stable.atoms.insert(atom);
         let invalidated = invalidation_word(&mut self.builder, self.helpers, online);
-        let held = self.word_cmp_imm(IntCC::Equal, invalidated, 0);
+        let held = self.raw_compare_imm(Relation::Equal, invalidated, 0);
         Some(emit(&mut self.builder).all(specialized, held))
     }
 

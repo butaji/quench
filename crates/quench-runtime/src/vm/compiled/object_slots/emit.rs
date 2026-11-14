@@ -4,6 +4,7 @@ use super::*;
 use crate::staged::region::Mutability;
 use crate::staged::{Access, Domain, NumericStage, Stage, Table};
 use crate::staged::flow::FlowStage;
+use crate::staged::math::{FloatUnary, ROUND_HALF};
 use crate::staged::number_machine as numbers;
 use crate::staged::machine::{Binary, Extend, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
 use crate::vm::compiled::regions;
@@ -32,6 +33,23 @@ impl From<u64> for EmitImm { fn from(bits: u64) -> Self { Self::Const(bits) } }
 impl From<u32> for EmitImm { fn from(bits: u32) -> Self { Self::Const(u64::from(bits)) } }
 
 impl Emit<'_, '_> {
+    /// `Math.round` of the binary64 `value`: the floor, one more where the excess reaches a half;
+    /// a negative that rounds to zero is `-0`.
+    fn round_half_up(&mut self, value: ir::Value) -> ir::Value {
+        let floor = self.raw_unary(Unary::Floor, value);
+        let excess = self.raw_binary(Binary::FloatSub, value, floor);
+        let half = self.f64_constant(ROUND_HALF);
+        let up = self.raw_compare(Relation::FloatGreaterEqual, excess, half);
+        let (one, zero) = (self.f64_constant(1.0), self.f64_constant(0.0));
+        let step = self.raw_select(up, one, zero);
+        let rounded = self.raw_binary(Binary::FloatAdd, floor, step);
+        let is_zero = self.raw_compare(Relation::FloatEqual, rounded, zero);
+        let negative = self.raw_compare(Relation::FloatLess, value, zero);
+        let negative_zero = self.raw_binary(Binary::And, is_zero, negative);
+        let minus_zero = self.f64_constant(-0.0);
+        self.raw_select(negative_zero, minus_zero, rounded)
+    }
+
     /// `imm` as an operand: Cranelift folds a constant operand back into the instruction's immediate.
     fn word(&mut self, imm: EmitImm) -> ir::Value {
         match imm { EmitImm::Const(bits) => self.constant(bits) }
@@ -321,14 +339,25 @@ impl NumericStage for Emit<'_, '_> {
     fn int_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
         self.raw_binary(Binary::RemainderSigned, left, right)
     }
-    fn float_unary(&mut self, operation: crate::staged::math::FloatUnary, value: ir::Value) -> ir::Value {
-        crate::vm::compiled::lane_region::emit_float_unary(self.builder, operation, value)
+    fn float_unary(&mut self, operation: FloatUnary, value: ir::Value) -> ir::Value {
+        match operation {
+            FloatUnary::Floor => self.raw_unary(Unary::Floor, value),
+            FloatUnary::Ceil => self.raw_unary(Unary::Ceiling, value),
+            FloatUnary::Trunc => self.raw_unary(Unary::Truncate, value),
+            FloatUnary::Abs => self.raw_unary(Unary::FloatAbsolute, value),
+            FloatUnary::Sqrt => self.raw_unary(Unary::SquareRoot, value),
+            FloatUnary::Fround => {
+                let single = self.raw_unary(Unary::Demote, value);
+                self.raw_unary(Unary::Promote, single)
+            }
+            FloatUnary::Round => self.round_half_up(value),
+        }
     }
     fn int_multiply(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
-        crate::vm::compiled::lane_region::emit_int_multiply(self.builder, left, right)
+        self.raw_binary(Binary::Mul, left, right)
     }
     fn float_extreme(&mut self, maximum: bool, left: ir::Value, right: ir::Value) -> ir::Value {
-        crate::vm::compiled::lane_region::emit_float_extreme(self.builder, maximum, left, right)
+        self.raw_binary(if maximum { Binary::FloatMax } else { Binary::FloatMin }, left, right)
     }
     fn i32_constant(&mut self, value: i32) -> ir::Value { self.raw_const(Lane::I32, i64::from(value)) }
     fn f64_constant(&mut self, value: f64) -> ir::Value { self.raw_const(Lane::F64, value.to_bits() as i64) }

@@ -88,6 +88,12 @@ pub(crate) trait MachineScalar: Machine {
     fn raw_compare(&mut self, relation: Relation, a: Self::Word, b: Self::Word) -> Self::Word;
     /// `raw_compare` against the immediate `bits` at `a`'s own width.
     fn raw_compare_imm(&mut self, relation: Relation, a: Self::Word, bits: i64) -> Self::Word;
+    /// `raw_binary` with the immediate `bits` at `a`'s own lane.
+    fn raw_binary_imm(&mut self, operation: Binary, a: Self::Word, bits: i64) -> Self::Word {
+        let lane = self.raw_lane(a);
+        let b = self.raw_const(lane, bits);
+        self.raw_binary(operation, a, b)
+    }
     fn raw_select(&mut self, cond: Self::Word, then: Self::Word, otherwise: Self::Word) -> Self::Word;
     fn raw_unary(&mut self, operation: Unary, a: Self::Word) -> Self::Word;
 }
@@ -150,6 +156,8 @@ pub(crate) trait MachineAccess: MachineScalar {
     type Slot: Copy;
     /// The address `offset` bytes into `slot`.
     fn slot_address(&mut self, slot: Self::Slot, offset: i32) -> Self::Word;
+    /// The low `lane` bits of `value` into `slot`, `offset` bytes in.
+    fn slot_store(&mut self, slot: Self::Slot, lane: Lane, value: Self::Word, offset: i32);
     /// A call of the code at `target` under `signature`: all of its results.
     fn call_signature(&mut self, signature: Self::Signature, target: Self::Word, arguments: &[Self::Word]) -> Vec<Self::Word>;
 }
