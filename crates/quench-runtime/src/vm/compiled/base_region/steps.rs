@@ -425,7 +425,7 @@ fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, slow: Opti
     if written != Place::Mem {
         return slow.map_or_else(|| leave(pc), Ok);
     }
-    if let Some(word) = number_typeof(fast, decoded.hole).filter(|_| matches!(read, Place::Pin(_) | Place::PinF(_) | Place::MemInt)) {
+    if let Some(word) = number_typeof(fast, decoded.hole).filter(|_| holds_number(read)) {
         return plan(&Decoded::number(Kind::Move, decoded.dst, Some(Source::Value(word)), None, None), layout, pc, (true, Variant::Generic), helpers);
     }
     if (read != Place::Mem || second != Place::Mem) && fast.reads_frame_word() {
@@ -460,30 +460,6 @@ pub(super) fn behind(mut fast: Planned, mut slow: Planned) -> Planned {
     fast
 }
 
-/// The jump to `pc`, a part of a run whose NEXT is not where the run goes on.
-fn jump_to(pc: u32) -> Result<Planned, String> {
-    Ok(Planned::single(control(Kind::Jump)?, [0; HOLES], Some(pc), None))
-}
-
-/// The reloads of the pinned registers live at `pc`, then the jump to `pc`: the branch of a run
-/// that restores the registers its destination expects.
-fn landing(layout: &Layout, pc: u32) -> Result<Vec<Planned>, String> {
-    let reloads = layout.spills(pc).into_iter().map(|(place, register)| call_plan::reload_part(place, register).map(Planned::of_part));
-    reloads.chain(std::iter::once(jump_to(pc))).collect()
-}
-
-/// A helper step's run made to branch: its fall-through (the reloads of the next instruction's
-/// registers) jumps to the next instruction, and the TAKEN exit of the helper row (a step that took
-/// its jump, `LANE_CALL_BRANCHED`) lands at `target` after the fall-through, as a part's NEXT is the
-/// part laid out after it.
-fn branching(mut row: Planned, layout: &Layout, (pc, target): (u32, u32)) -> Result<Planned, String> {
-    row.post.push(jump_to(pc + 1)?);
-    let taken = row.pre.len() + 1 + row.post.len();
-    row.post.extend(landing(layout, target)?);
-    row.branch = Some(Branch::Part(taken));
-    Ok(row)
-}
-
 /// The chain of the call `shape` names at row `pc`: spills, the direct row where the site's target
 /// is stable, the helper row, reloads. The direct row's record is the row's `owned`. A plain call's
 /// helper is the ending's (`Ending::call_helper`), another form's its own (`CallForm::helper`).
@@ -496,6 +472,10 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     chained(parts, spills.len(), record)
 }
+
+#[path = "steps/branches.rs"]
+mod branches;
+use branches::{branching, jump_to};
 
 #[cfg(test)]
 mod tests;
