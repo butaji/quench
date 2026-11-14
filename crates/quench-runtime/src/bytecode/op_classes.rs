@@ -71,12 +71,22 @@ impl Op {
     /// captures and names) and the registers it addresses, so a frameless activation makes it over
     /// its window (`Vm::owner_step`) as a frame does: the local, capture and name loads and stores.
     pub(crate) const fn steps_on_owner(self) -> bool {
-        matches!(
-            self,
-            Op::LoadLocal | Op::StoreLocal | Op::LoadEnvLocal | Op::StoreEnvLocal | Op::StoreVarBinding
-                | Op::LoadCapture | Op::StoreCapture
-                | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof | Op::StoreName
-        )
+        self.owned_step().is_some()
+    }
+
+    /// An op whose step binds the frame's `this` (`super()`).
+    pub(crate) const fn binds_this(self) -> bool {
+        self.traits().has(crate::bytecode::Traits::BINDS_THIS)
+    }
+
+    /// An op an inlined callee's unit holds by its own rewrite or an exit rather than by renaming.
+    pub(crate) const fn is_unit_rewritten(self) -> bool {
+        self.traits().has(crate::bytecode::Traits::UNIT_REWRITTEN)
+    }
+
+    /// An op whose result may be an arbitrary boxed value (a capture, field, element or global name read).
+    pub(crate) const fn boxes_result(self) -> bool {
+        self.traits().has(crate::bytecode::Traits::BOXED_RESULT)
     }
 
     /// An op that always completes abruptly, raising its operand: no row follows it, and a handler

@@ -10,7 +10,6 @@
 //! which the row tests per receiver; any prototype's layout change retires the code.
 
 use super::*;
-use crate::bytecode::Op;
 use crate::staged::Form;
 use crate::staged::add_plan::AddSite;
 use quench_bjit::{padded_holes, HOLES};
@@ -49,10 +48,15 @@ impl Add {
     }
 }
 
+/// Whether the add instruction defines an own field (`DefineField`) rather than stores one.
+fn is_define(instruction: WideInstruction) -> bool {
+    instruction.op().class().eq(Class::DefineField)
+}
+
 /// The receiver register of an add instruction: a define's object, a store's named register, or
 /// none for a store to `this`.
 fn receiver(instruction: WideInstruction) -> Option<Register> {
-    if instruction.op() == Op::DefineField { Some(instruction.register_b()) } else { instruction.field_store_register() }
+    if is_define(instruction) { Some(instruction.register_b()) } else { instruction.field_store_register() }
 }
 
 /// The add `instruction` runs where its site recorded a transition that a row may hold: the atom
@@ -60,7 +64,7 @@ fn receiver(instruction: WideInstruction) -> Option<Register> {
 /// storage form can take the slot.
 pub(super) fn of(known: Known, instruction: WideInstruction) -> Option<Add> {
     let adds = known.adds?;
-    let defines = instruction.op() == Op::DefineField;
+    let defines = is_define(instruction);
     let stores = instruction.op().is_field_store() && !instruction.returns_from_frame() && !instruction.writes_current_this();
     if !(defines || stores) || instruction.result_flags() != 0 {
         return None;

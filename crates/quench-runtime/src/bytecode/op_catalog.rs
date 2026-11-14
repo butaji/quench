@@ -123,6 +123,7 @@ pub(crate) enum Class {
     StoreEnvLocal,
     StoreLocal,
     StoreName,
+    StoreVarBinding,
     StringCaseIndex,
     SuperConstArrayObject2,
     ToPropertyKey,
@@ -182,6 +183,32 @@ pub(crate) enum GenericStep {
     LaneResult,
 }
 
+/// The step of an activation's own variables an opcode makes, over the `VarOwner` that runs it
+/// (`Vm::owner_step`): a frame in the interpreter, the window of a frameless activation in a lane's body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OwnedStep {
+    LoadLocal,
+    StoreVarBinding,
+    StoreLocal,
+    StoreEnvLocal,
+    LoadCapture,
+    StoreCapture,
+    LoadName,
+    LoadNameCall,
+    LoadNameTypeof,
+    StoreName,
+}
+
+/// The step an opcode makes over operand values read from registers and constants, which an
+/// activation with no frame of its own makes as a frame does (`Vm::binary`, `Vm::unary`,
+/// `Vm::binary_truthy`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ValueStep {
+    Binary,
+    Unary,
+    CompareJump,
+}
+
 /// Orthogonal tier traits of an opcode, each declared once by the catalog.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Traits(u32);
@@ -228,6 +255,13 @@ impl Traits {
     pub(crate) const UNROLL_EXCLUDED: Self = Self(1 << 25);
     /// An op that always completes abruptly: it raises the value of its operand as an exception.
     pub(crate) const RAISES: Self = Self(1 << 26);
+    /// An op whose step binds the frame's `this` (`super()` completing a derived constructor's receiver).
+    pub(crate) const BINDS_THIS: Self = Self(1 << 27);
+    /// An op an inlined callee's unit holds by its own rewrite or an exit (`lane_unit::emit_inlined`), which
+    /// `osr_loop::renamed` is not asked about: a call, a return, `this`, a name read, a construction and a throw.
+    pub(crate) const UNIT_REWRITTEN: Self = Self(1 << 28);
+    /// An op whose result may be an arbitrary boxed value: a read of a capture, a field, an element or a global name.
+    pub(crate) const BOXED_RESULT: Self = Self(1 << 29);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
