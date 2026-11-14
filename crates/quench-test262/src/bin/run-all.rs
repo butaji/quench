@@ -279,7 +279,7 @@ fn run_case_entry() -> ExitCode {
     let root = env::var_os("TEST262_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("tests/test262"));
-    let host = match Test262RuntimeHost::new(mode).with_native_dynamic_source(dynamic_source) {
+    let host = match Test262RuntimeHost::new(mode).with_native_support(dynamic_source.then_some(quench_runtime::NativeImageSupport::DynamicSource)) {
         Ok(host) => host,
         Err(error) => return fail(error),
     };

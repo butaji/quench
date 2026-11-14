@@ -164,6 +164,9 @@ pub struct Test262RuntimeHost {
     done: Option<String>,
     /// The execution every case's runtime uses: the interpreter, or compiled (JIT) execution.
     execution_mode: ExecutionMode,
+    /// An explicit support choice; absent, the program's source demands decide.
+    native_request: Option<NativeImageSupport>,
+    /// The support of the current case.
     native_support: NativeImageSupport,
     native_compilation: crate::NativeCompilation,
     native_variant: &'static str,
@@ -184,6 +187,8 @@ pub struct NativeCasePrograms {
     pub source_requests: std::collections::BTreeMap<quench_runtime::NativeSourceKey, quench_runtime::NativeSourceCompilation>,
     pub entry: quench_runtime::ResidualProgram,
     pub entry_module: Option<ModuleSource>,
+    /// Any of the harness, entry or declared modules can reach source first known at execution.
+    pub requires_dynamic_source: bool,
 }
 
 /// Compiler-bound code and exact module inputs for one standalone test variant.
@@ -304,27 +309,14 @@ impl Host for Test262RuntimeHost {
     }
 }
 
+mod native_support;
+
 impl Test262RuntimeHost {
     pub fn new(execution_mode: ExecutionMode) -> Self {
         Self {
             execution_mode,
             ..Self::default()
         }
-    }
-
-    /// Retain the shared interpreter/JIT for source first known at execution.
-    /// Static roots, harness and declared dependencies are still precompiled.
-    pub fn with_native_dynamic_source(mut self, enabled: bool) -> Result<Self, String> {
-        if enabled && (self.execution_mode != ExecutionMode::NativeOnly || !crate::NATIVE_SUPPORT_HAS_JIT) {
-            return Err("dynamic native source requires AOT compilation and JIT support".into());
-        }
-        self.native_support = if enabled { NativeImageSupport::DynamicSource } else { NativeImageSupport::Static };
-        self.native_compilation.dynamic_source = self.native_support.allows_dynamic_source();
-        Ok(self)
-    }
-
-    fn runtime_execution_mode(&self) -> ExecutionMode {
-        if self.execution_mode == ExecutionMode::NativeOnly { self.native_support.execution_mode() } else { self.execution_mode }
     }
 
     fn execute(&mut self, source: &str, name: &str) -> Result<(), String> {
@@ -380,7 +372,9 @@ impl Test262RuntimeHost {
         let source_requests = compiler.compile_discovered_sources()
             .map_err(|error| format!("quench AOT source compilation: {error}"))?;
         let entry = compiler.finish(program).map_err(|error| format!("quench AOT namespace: {error}"))?;
-        Ok(NativeCasePrograms { harness: scripts, modules, source_requests, entry, entry_module })
+        let requires_dynamic_source = native_support::requires_dynamic_source(harness, source, kind, &modules);
+        self.resolve_native_support(requires_dynamic_source);
+        Ok(NativeCasePrograms { harness: scripts, modules, source_requests, entry, entry_module, requires_dynamic_source })
     }
 
     fn execute_after_harness(
@@ -401,7 +395,7 @@ impl Test262RuntimeHost {
         let result = (|| {
             #[cfg(feature = "aot")]
             let prepared = if execution_mode == ExecutionMode::NativeOnly {
-                Some(runtime.host_mut().prepare_native_programs(harness, source, name, kind)?)
+                Some(Self::prepare_for_runtime(&mut runtime, harness, source, name, kind)?)
             } else { None };
             let program = if execution_mode == ExecutionMode::NativeOnly {
                 #[cfg(feature = "aot")]
@@ -564,6 +558,7 @@ impl Test262Host for Test262RuntimeHost {
     fn configure(&mut self, metadata: &crate::TestMetadata) {
         self.async_test = metadata.is_async;
         self.can_block = metadata.can_block;
+        self.native_support = self.native_request.unwrap_or_default();
         self.native_compilation = crate::NativeCompilation { dynamic_source: self.native_support.allows_dynamic_source(), ..Default::default() };
         self.native_variant = if metadata.is_module { "module" } else if metadata.is_raw { "raw" } else if metadata.only_strict { "strict" } else { "sloppy" };
     }
@@ -734,7 +729,7 @@ mod tests {
         "#;
         for mode in [ExecutionMode::NativeOnly, ExecutionMode::Compiled] {
             let mut host = Test262RuntimeHost::new(ExecutionMode::NativeOnly)
-                .with_native_dynamic_source(mode == ExecutionMode::Compiled).unwrap();
+                .with_native_support(Some((mode == ExecutionMode::Compiled).into())).unwrap();
             for _ in 0..2 {
                 host.async_test = true;
                 let prepared = host.prepare_native_programs(&[], source, "linked-dynamic.js", SourceKind::Script).unwrap();
@@ -831,7 +826,7 @@ mod tests {
         for source in sources {
             for mode in [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled, super::ExecutionMode::NativeOnly] {
                 let mut host = Test262RuntimeHost::new(mode)
-                    .with_native_dynamic_source(mode == super::ExecutionMode::NativeOnly).unwrap();
+                    .with_native_support(Some((mode == super::ExecutionMode::NativeOnly).into())).unwrap();
                 host.execute(source, "dynamic-script-contract.js").unwrap_or_else(|error| panic!("{mode:?}: {error}"));
                 assert_eq!(host.native_compilation.rejections, 0);
             }
@@ -853,7 +848,7 @@ mod tests {
         "#;
         for mode in [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled, super::ExecutionMode::NativeOnly] {
             let mut host = Test262RuntimeHost::new(mode)
-                .with_native_dynamic_source(mode == super::ExecutionMode::NativeOnly).unwrap();
+                .with_native_support(Some((mode == super::ExecutionMode::NativeOnly).into())).unwrap();
             host.async_test = true;
             host.execute(source, "completed-script-root.js").unwrap_or_else(|error| panic!("{mode:?}: {error}"));
             assert_eq!(host.native_compilation.rejections, 0);
@@ -887,7 +882,7 @@ mod tests {
         "#;
         for mode in [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled, super::ExecutionMode::NativeOnly] {
             let mut host = Test262RuntimeHost::new(mode)
-                .with_native_dynamic_source(mode == super::ExecutionMode::NativeOnly).unwrap();
+                .with_native_support(Some((mode == super::ExecutionMode::NativeOnly).into())).unwrap();
             host.async_test = true;
             host.execute(source, entry.to_str().unwrap()).unwrap_or_else(|error| panic!("{mode:?}: {error}"));
             assert_eq!(host.native_compilation.rejections, 0);

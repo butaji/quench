@@ -44,7 +44,7 @@ fn run() -> ExitCode {
         return ExitCode::from(2);
     };
     let root = test262_root();
-    let host = match Test262RuntimeHost::new(mode).with_native_dynamic_source(dynamic_source) {
+    let host = match Test262RuntimeHost::new(mode).with_native_support(dynamic_source.then_some(quench_runtime::NativeImageSupport::DynamicSource)) {
         Ok(host) => host,
         Err(error) => return fail(error),
     };
