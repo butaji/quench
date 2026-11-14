@@ -26,6 +26,11 @@ pub(super) enum Heap {
     /// `array[index] = value` replacing a present element in place: the array word at hole 0, the
     /// value at hole 1, the index at hole 2.
     Store,
+    /// `TypedIndex` and `TypedStore` are `Index` and `Store` of a typed array the loop's entry viewed
+    /// (`staged::entry_views::entry_typed_view`): the array's entry words are at the record offset in hole 1 (a
+    /// read) or hole 0 (a store), whatever the element's kind, which the words name.
+    TypedIndex,
+    TypedStore,
     /// The field value the loop entry recorded: its byte offset in the record at hole 1.
     Field,
     /// The array word at hole 1 is a direct array (what `RequireObjectCoercible` of one proves).
@@ -194,6 +199,8 @@ impl Heap {
         Some(match self {
             Heap::Index => library::INDEX_ROW,
             Heap::Store => library::STORE_ROW,
+            Heap::TypedIndex => library::TYPED_INDEX_ROW,
+            Heap::TypedStore => library::TYPED_STORE_ROW,
             Heap::Field => library::FIELD_ROW,
             Heap::Site | Heap::SiteChain => library::SITE_ROW,
             Heap::ThisSite | Heap::ThisChain => library::THIS_SITE_ROW,
@@ -306,6 +313,9 @@ mod tests {
     mod stencil_layout {
         include!("../../../../quench-bjit/stencils/layout.rs");
     }
+    mod stencil_units {
+        include!("../../../../quench-bjit/stencils/units.rs");
+    }
 
 
     /// The dispatch record's fields a stencil row reads, as (name, the runtime's offset, the stencil layout's).
@@ -389,6 +399,31 @@ mod tests {
         );
     }
 
+    /// The typed-array kinds the stencils name are the runtime's, in its order, with its widths.
+    fn typed_kinds_match() {
+        use stencil_layout::TypedArrayKind as Mirror;
+        let mirrored = [Mirror::Uint8, Mirror::Uint8Clamped, Mirror::Uint16, Mirror::Uint32, Mirror::Int8, Mirror::Int16, Mirror::Int32, Mirror::BigInt64, Mirror::BigUint64, Mirror::Float16, Mirror::Float32, Mirror::Float64];
+        assert_eq!(crate::heap::TYPED_ARRAYS.len(), mirrored.len());
+        for (row, mirror) in crate::heap::TYPED_ARRAYS.iter().zip(mirrored) {
+            assert_eq!((row.kind as usize, row.width), (mirror as usize, mirror.width()), "{}", row.name);
+        }
+    }
+
+    /// The conversions the stencils make of a binary64's bits are the runtime's own of its value.
+    #[test]
+    fn stencil_units_match() {
+        let samples = [
+            0.0, -0.0, 0.5, -0.5, 1.0, 1.5, -1.5, 2.5, 254.5, 255.0, 255.5, 256.0, 0.499_999_999_999_999_94, 0.500_000_000_000_000_1,
+            2_147_483_648.0, -2_147_483_649.0, 4_294_967_295.0, 4_294_967_296.5, 1e10, -1e10, 9_007_199_254_740_993.0, 1e19, 1e300,
+            f64::MAX, f64::MIN, f64::MIN_POSITIVE, f64::INFINITY, f64::NEG_INFINITY, f64::NAN,
+        ];
+        for value in samples {
+            assert_eq!(stencil_units::to_int32(value), crate::units::to_int32(value), "ToInt32 of {value}");
+            let clamped = if value.is_nan() { 0 } else { value.clamp(f64::from(u8::MIN), f64::from(u8::MAX)).round_ties_even() as u64 };
+            assert_eq!(stencil_units::clamp_u8(value.to_bits()), clamped, "clamp of {value}");
+        }
+    }
+
     #[test]
     fn stencil_layout_matches() {
         use stencil_layout as mirror;
@@ -409,6 +444,7 @@ mod tests {
             [mirror::OTHERS_UNKNOWN as u64, mirror::LENGTH_FROM_VALUES as i64 as u64, mirror::OTHERS_FROM_VALUES as i64 as u64, mirror::INLINE_PROPERTIES as u64]
         );
         value_words_match();
+        typed_kinds_match();
         assert_eq!(super::super::NATIVE_JS_STOPPED, mirror::call_record::NATIVE_JS_STOPPED);
         for (name, runtime, copy) in payload_offsets() {
             assert_eq!(runtime, copy, "{name}: the runtime's offset is the stencil layout's");

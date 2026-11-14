@@ -86,23 +86,16 @@ pub(crate) mod value {
     }
 }
 
-/// ToInt32, as the staged Number rows name it (`units::to_int32`).
-pub(crate) mod units {
-    /// The modulus ToInt32 reduces by: 2^32.
-    const INT32_MODULUS: f64 = (1_u64 << u32::BITS) as f64;
-
-    pub(crate) fn to_int32(value: f64) -> i32 {
-        if !value.is_finite() { return 0; }
-        (core::f64::math::trunc(value) % INT32_MODULUS) as i64 as u32 as i32
-    }
-}
+/// ToInt32 and the clamp the staged rows convert by (`units.rs`).
+#[path = "units.rs"]
+pub(crate) mod units;
 
 pub(crate) mod value_vec {
     pub(crate) use crate::layout::INLINE_PROPERTIES as INLINE_PROPERTY_COUNT;
 }
 
 pub(crate) mod heap {
-    pub(crate) use crate::layout::{LENGTH_FROM_VALUES, NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, OTHERS_FROM_VALUES, OTHERS_UNKNOWN};
+    pub(crate) use crate::layout::{LENGTH_FROM_VALUES, NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, TypedArrayKind};
     #[derive(Clone, Copy)]
     pub(crate) enum PlainPropertyStorage {
         PackedInline,

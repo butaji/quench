@@ -19,7 +19,6 @@ unsafe extern "C" {
     fn UNSUPPORTED_number_operator(a: u64, b: u64, c: u64) -> u64;
     fn UNSUPPORTED_shape_in(a: u64) -> u64;
     fn UNSUPPORTED_site(a: u64) -> u64;
-    fn UNSUPPORTED_clamp_u8(a: u64) -> u64;
 }
 
 /// The stencil stage; `sites` is the number of the next value hole a `site` call names,
@@ -206,10 +205,7 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn f64_to_f32(&mut self, a: u64) -> u64 { u64::from((f64::from_bits(a) as f32).to_bits()) }
     #[inline(always)]
-    fn clamp_u8(&mut self, a: u64) -> u64 {
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_clamp_u8(a) }
-    }
+    fn clamp_u8(&mut self, a: u64) -> u64 { crate::units::clamp_u8(a) }
     #[inline(always)]
     fn store_gate(&mut self, space: RecordSpace, record_id: u64, value: u64) -> bool {
         let word = |offset: usize| {

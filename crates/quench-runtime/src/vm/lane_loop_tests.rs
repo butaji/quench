@@ -1,6 +1,7 @@
 use super::*;
 use crate::Engine;
 use crate::test_host::TestHost;
+use crate::vm::test_oracle::{assert_tier_agrees, Expect, Tier};
 use std::{cell::RefCell, rc::Rc};
 
 /// A call-free loop that allocates at every iteration runs in its loop region, which makes
@@ -365,4 +366,23 @@ fn a_loop_function_that_has_run_long_compiles_under_the_measured_model() {
     vm.programs.enable_js_lane_methods();
     crate::jit_mode::with_mode(crate::JitMode::UltraOnly, || vm.execute(&program)).unwrap();
     assert!(vm.tier_events().count(crate::vm::tier_events::Event::Published) > 0, "the step runs as a lane body: {:?}", vm.tier_events());
+}
+
+/// A loop over typed arrays of several kinds runs as a b-jit region whose element rows read the typed
+/// views its entry recorded (`staged::entry_views`), the kind being the entry's word; the stores convert
+/// as the interpreter's do (the clamp, ToInt32, the binary32 rounding). The functions that index a typed
+/// parameter have no body (it would leave at its first element), so nothing leaves.
+#[test]
+fn a_loop_over_typed_arrays_runs_as_a_base_region_that_never_leaves() {
+    let source = r#"(function () {
+      function fill(a, n) { for (let i = 0; i < n; i++) a[i] = i * 0.25 - 3; }
+      function sum(a, n) { let s = 0; for (let i = 0; i < n; i++) s = s + a[i]; return s; }
+      const kinds = [new Float64Array(2048), new Int32Array(2048), new Uint8ClampedArray(2048), new Float32Array(2048)];
+      let total = 0;
+      for (let round = 0; round < 12; round++) for (const a of kinds) { fill(a, 2000); total = total + sum(a, 2000); }
+      globalThis.answer = total;
+    })();"#;
+    let run = assert_tier_agrees(source, Tier::BJit, Expect { completed: 0, leaves: 0 });
+    assert!(run.regions() > 0, "the loops run as regions: {:?}", run.events);
+    assert!(run.outcome.answer.is_some());
 }

@@ -169,6 +169,8 @@ pub fn heap_canonical((heap, entry, dst, a, b): HeapCode) -> HeapCode {
         GLOBAL_STORE_ROW => (heap, entry, MEM, a, MEM),
         SITE_ROW | THIS_SITE_ROW | HELD_ROW => (heap, entry, dst, MEM, MEM),
         INDEX_ROW => (heap, entry, dst, MEM, b),
+        TYPED_INDEX_ROW => (heap, true, dst, MEM, b),
+        TYPED_STORE_ROW => (heap, true, MEM, a, b),
         IC_GET_ROW | IC_GET_HOLDER_ROW => (heap, entry, dst, MEM, MEM),
         IC_SET_ROW | IC_SET_INT_ROW => (heap, entry, MEM, a, MEM),
         STORE_ROW => (heap, entry, MEM, a, b),
@@ -212,6 +214,12 @@ pub fn heap_library() -> Vec<HeapCode> {
             rows.insert(heap_canonical((STORE_ROW, entry, MEM, a, b)));
         }
         rows.extend(srcs.iter().map(|&a| heap_canonical((GLOBAL_STORE_ROW, entry, MEM, a, MEM))));
+    }
+    for &dst in &dsts {
+        rows.extend(srcs.iter().map(|&b| heap_canonical((TYPED_INDEX_ROW, true, dst, MEM, b))));
+    }
+    for (&a, &b) in srcs.iter().flat_map(|a| srcs.iter().map(move |b| (a, b))) {
+        rows.insert(heap_canonical((TYPED_STORE_ROW, true, MEM, a, b)));
     }
     for &dst in &dsts {
         rows.extend([THIS_ROW, LOAD_LOCAL_ROW, LOAD_CHECKED_ROW, ENV_ROW, LEXICAL_READ_ROW].map(|heap| heap_canonical((heap, false, dst, MEM, MEM))));

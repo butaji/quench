@@ -90,7 +90,7 @@ fn int_place<const P: u8, const H: u8>(s: &S, proved: bool) -> Option<u64> {
 /// The binary64 bits of an operand, proved a Number. A constant place holds a Number the int32
 /// immediate cannot (`base_region/plan.rs` sends an int word to `IMM`): its word is the bits.
 #[inline(always)]
-fn number_place<const P: u8, const H: u8>(s: &S) -> Option<u64> {
+pub(crate) fn number_place<const P: u8, const H: u8>(s: &S) -> Option<u64> {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
         _ if P == CONST => Some(word),

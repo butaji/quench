@@ -66,7 +66,7 @@ pub(in crate::vm::compiled) struct Body {
 
 /// What a stitch decides its call sites by: the callees they recorded and the stitch's budget, the
 /// program facts its rows read, and what it stitches (`Ending`), with, for a region, whether its
-/// arrays' views are the entry record's (`Facts::Entry::dense`).
+/// arrays' views are the entry record's (`Facts::Entry::views`).
 struct Sites<'a> {
     function: &'a Function,
     /// The index of `function` in its program.
@@ -77,7 +77,7 @@ struct Sites<'a> {
     registers: u16,
     known: Known<'a>,
     ending: Ending,
-    dense: bool,
+    views: Views,
 }
 
 /// The row of `instruction` at `pc`, which carries no result flag (`cover` strips the return flag
@@ -174,7 +174,7 @@ fn decode_facts(region: &LoopRegion, sites: &Sites, calls: &[Option<Vec<What>>])
     }
     let kept = calls.iter().flatten().flatten().any(|what| matches!(what, What::Row(row) if matches!(row.step, Some(Step::Call(_)))));
     let stores = region.instructions().iter().any(|instruction| stores_field(sites.known, *instruction) || stores_name(*instruction));
-    Facts::Entry { dense: sites.dense && !kept, writes: stores || kept, calls: kept }
+    Facts::Entry { views: if kept { Views::Frame } else { sites.views }, writes: stores || kept, calls: kept }
 }
 
 /// The row of the instruction at `pc` that is no planned call: in a body, what it lowers to
@@ -268,8 +268,8 @@ fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Planned>, Str
 /// slot is not kept current.
 fn framed(homes: &Homes, row: &Decoded) -> bool {
     let through = match row.heap {
-        Some(Heap::Store | Heap::SiteStore) => row.base,
-        Some(Heap::Index | Heap::Array | Heap::Site | Heap::SiteChain | Heap::Length | Heap::Held | Heap::Identity) => row.a.and_then(register_of),
+        Some(Heap::Store | Heap::TypedStore | Heap::SiteStore) => row.base,
+        Some(Heap::Index | Heap::TypedIndex | Heap::Array | Heap::Site | Heap::SiteChain | Heap::Length | Heap::Held | Heap::Identity) => row.a.and_then(register_of),
         _ => None,
     };
     through.into_iter().all(|register| homes.place(register) == Place::Mem)
@@ -322,18 +322,18 @@ pub(in crate::vm::compiled) struct BodySpec<'a> {
 /// Each of `callees` names its function's live entry cell (`Callees::facts`).
 pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, spec: &BodySpec, callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     // SAFETY: the caller's contract.
-    unsafe { build(region, spec, (Ending::Body, false), callees, helpers) }
+    unsafe { build(region, spec, (Ending::Body, Views::Frame), callees, helpers) }
 }
 
 /// The code of the loop region `region` spans of the function `spec` names, over its entry's
-/// element views (`dense`: the entry record's) and the callees its call sites recorded: the loop's
+/// element `views` (the entry record's, unless a call row it keeps changes what the entry recorded) and the callees its call sites recorded: the loop's
 /// calls inlined or chained as a body's are, the rest of its rows its own.
 ///
 /// # Safety
 /// Each of `callees` names its function's live entry cell (`Callees::facts`).
-pub(in crate::vm::compiled) unsafe fn build_region(region: &LoopRegion, spec: &BodySpec, dense: bool, callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
+pub(in crate::vm::compiled) unsafe fn build_region(region: &LoopRegion, spec: &BodySpec, views: ElementViews, callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     // SAFETY: the caller's contract.
-    unsafe { build(region, spec, (Ending::Region, dense), callees, helpers) }
+    unsafe { build(region, spec, (Ending::Region, views.into()), callees, helpers) }
 }
 
 /// What a built stitch adds to the trace's totals: a body's rows and exits, or a region's span and
@@ -359,15 +359,15 @@ fn tally(built: &Result<Body, String>, ending: Ending, (span, nanos): (u64, u64)
     });
 }
 
-/// The stitch of `region` (`ending`: what it is, and for a region whether its views are `dense`).
+/// The stitch of `region` (`ending`: what it is, and for a region how its arrays are viewed).
 ///
 /// # Safety
 /// As `build_body`.
-unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, dense): (Ending, bool), callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
+unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, Views), callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     let started = std::time::Instant::now();
     // SAFETY: the caller's contract.
     let facts = unsafe { callees.facts() };
-    let sites = Sites { function: spec.known.program.function(spec.function as usize), id: spec.function, callees, facts: &facts, context: Context::root(spec.function, spec.registers, spec.known.stitch), registers: spec.registers, known: spec.known, ending, dense };
+    let sites = Sites { function: spec.known.program.function(spec.function as usize), id: spec.function, callees, facts: &facts, context: Context::root(spec.function, spec.registers, spec.known.stitch), registers: spec.registers, known: spec.known, ending, views };
     let built = assemble(region, spec, sites, helpers);
     tally(&built, ending, (u64::from(region.backedge - region.header) + 1, started.elapsed().as_nanos() as u64));
     built

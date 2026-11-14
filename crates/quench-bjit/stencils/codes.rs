@@ -145,6 +145,13 @@ pub const REALM_ROW: u8 = 28;
 /// continues at TAKEN, past the helper step laid out after the row (which grows the backing); a miss
 /// leaves through EXIT0 into it.
 pub const APPEND_ROW: u8 = 32;
+/// A typed array's element, read into the destination (`TYPED_INDEX_ROW`) or replaced by the Number operand
+/// (`TYPED_STORE_ROW`), through the view the loop's entry recorded (`staged::entry_views::entry_typed_view`): the record
+/// offset of the array's words is hole 1 (a read) or hole 0 (a store), the index operand hole 2 and the store's value
+/// hole 1. The kind is the record's, tried in turn (`staged::typed_elements`); an index past the count, a kind with no
+/// native element or a value no element converts leaves through EXIT0 with nothing written.
+pub const TYPED_INDEX_ROW: u8 = 51;
+pub const TYPED_STORE_ROW: u8 = 52;
 /// The property-add rows (`staged::add::site_add`): an object register's or the activation's receiver
 /// (`THIS_ADD_*`) gains the value operand (hole 1) by the transition the holes carry, one row per storage
 /// form the slot admits (`staged::object::Form`). A hit continues at TAKEN, past the helper step laid

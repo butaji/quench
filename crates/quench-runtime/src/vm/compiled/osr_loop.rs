@@ -1224,8 +1224,8 @@ pub(crate) fn field_word(region: &LoopRegion, index: usize) -> usize {
     ENTRY_CAPTURES + region.captures.len() + index
 }
 /// An array's entry words: its element pointer, its length, then its capacity (which only
-/// a written array's appends read).
-pub(super) const ARRAY_WORDS: usize = 3;
+/// a written array's appends read) or, for a typed array, its kind (`staged::entry_views::ARRAY_WORDS`).
+pub(super) use crate::staged::entry_views::ARRAY_WORDS;
 const FIELD_STORE_WORDS: usize = 1;
 /// The heap views native reads use (`LoopEntry::push_native_heap`): the object records'
 /// base, the property values' base and count, and the array records' base.
@@ -1279,14 +1279,15 @@ impl LoopEntry {
     }
 
     /// Arrays follow the fields, in the region's order. An array longer than
-    /// `MAX_INDEXED_LENGTH` declines the entry.
-    pub(crate) fn push_array<T>(&mut self, elements: *mut T, length: usize, capacity: usize) -> Option<()> {
+    /// `MAX_INDEXED_LENGTH` declines the entry. `tail` is the last word: a dense array's capacity, or
+    /// a typed array's kind.
+    pub(crate) fn push_array<T>(&mut self, elements: *mut T, length: usize, tail: usize) -> Option<()> {
         (length <= MAX_INDEXED_LENGTH).then_some(())?;
         let end = self.length + ARRAY_WORDS;
         self.words[self.length..end].copy_from_slice(&[
             std::mem::MaybeUninit::new(elements.addr() as u64),
             std::mem::MaybeUninit::new(length as u64),
-            std::mem::MaybeUninit::new(capacity.min(MAX_INDEXED_LENGTH) as u64),
+            std::mem::MaybeUninit::new(tail.min(MAX_INDEXED_LENGTH) as u64),
         ]);
         self.length = end;
         Some(())

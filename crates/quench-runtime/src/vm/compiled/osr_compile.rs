@@ -332,7 +332,7 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::b
     let registers = known.program.function(function as usize).registers;
     let spec = BodySpec { function, registers, known, realm: calls.realm, widened, seen: [observation.int_registers, observation.double_registers], kinds: observation.operand_kinds };
     // SAFETY: `calls` was made of the call sites' records this compile (`Vm::region_calls`), whose entry cells are live.
-    let built = unsafe { build_region(region, &spec, views == super::ElementViews::Dense, &calls.callees, helpers) };
+    let built = unsafe { build_region(region, &spec, views, &calls.callees, helpers) };
     let Ok(Body { code, bare, frames, records, stable, atoms, holders, layouts, slot_types, resumes, .. }) = built else { return base_only.then_some(None) };
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, region.header, &code, None, "");

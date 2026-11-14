@@ -187,31 +187,6 @@ pub(super) fn inc_dec(instruction: WideInstruction) -> Result<Decoded, String> {
     ))
 }
 
-/// Where a heap row's recorded facts come from: a loop region's entry record (its arrays read
-/// through it where the views are `dense`), or nowhere, as a whole function's rows read the heap
-/// by its tables (an array word's record, a field's cache entry).
-#[derive(Clone, Copy)]
-pub(super) enum Facts {
-    /// A loop region: `dense` where its arrays' views are the entry record's, `writes` where it
-    /// stores a field through a row, which may stale a field value the entry record holds
-    /// (`stores_field`), so its field reads are the site's, live; `calls` where it makes a call by a
-    /// row (`calls_in_place`), whose callee may change anything the entry recorded: such a region
-    /// reads its arrays through their records, its fields through the site's entry, and leaves for
-    /// the captures its entry copied (the interpreter reads them live).
-    Entry { dense: bool, writes: bool, calls: bool },
-    Site,
-}
-
-/// The entry-record byte offset of the array `register` holds through the region, which an
-/// indexing row reads the backing of from the record; 0 where the array is looked up per access.
-fn entry_array(region: &LoopRegion, facts: Facts, register: Register) -> u64 {
-    // A row's hole is a u32 patch: an offset past it is looked up per access instead.
-    match facts {
-        Facts::Entry { dense: true, .. } => region.array_entry_offset(register).filter(|offset| u32::try_from(*offset).is_ok()).unwrap_or(0),
-        Facts::Entry { dense: false, .. } | Facts::Site => 0,
-    }
-}
-
 /// The byte offset of the field cache entry of `site` in the program's table.
 fn entry_offset(site: u16) -> u64 {
     u64::from(site) * crate::vm::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64
@@ -341,22 +316,23 @@ fn capture_store_row(facts: Facts, instruction: WideInstruction) -> Option<Decod
     })
 }
 
-/// The row of a dense element read.
+/// The row of an element read.
 fn index_read_row(region: &LoopRegion, facts: Facts, instruction: WideInstruction) -> Option<Decoded> {
     if instruction.returns_from_frame() {
         return None;
     }
     let base = instruction.operand_b().register_index()?;
     let index = source(&|index| region.number_constant(index), instruction.operand_c()).ok()?;
-    let row = Decoded::heap(Heap::Index, Some(instruction.result_register()), Some(Source::Register(base)), Some(index));
-    Some(Decoded { hole: entry_array(region, facts, base), ..row })
+    let (heap, hole) = element_heap(region, facts, base, (Heap::Index, Heap::TypedIndex));
+    let row = Decoded::heap(heap, Some(instruction.result_register()), Some(Source::Register(base)), Some(index));
+    Some(Decoded { hole, ..row })
 }
 
-/// The row of a dense element store.
+/// The row of an element store.
 fn index_write_row(region: &LoopRegion, facts: Facts, instruction: WideInstruction) -> Decoded {
     let (value, key) = (Some(Source::Register(instruction.register_a())), Some(Source::Register(instruction.register_c())));
-    let row = Decoded::heap(Heap::Store, None, value, key);
-    Decoded { base: Some(instruction.register_b()), hole: entry_array(region, facts, instruction.register_b()), ..row }
+    let (heap, hole) = element_heap(region, facts, instruction.register_b(), (Heap::Store, Heap::TypedStore));
+    Decoded { base: Some(instruction.register_b()), hole, ..Decoded::heap(heap, None, value, key) }
 }
 
 /// The row of the activation's `this`, which every run reads live.
