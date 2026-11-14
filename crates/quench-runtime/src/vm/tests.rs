@@ -3975,6 +3975,32 @@ fn untaken_closure_branch_does_not_allocate_environments() {
 }
 
 #[test]
+fn method_site_serves_colliding_receiver_shapes_and_reads_a_redefined_method_live() {
+    // One call site sees four receiver shapes, more than the inline ways hold, so ways collide
+    // and the site goes megamorphic; a method redefined after the caches filled is read live.
+    // The expectations are Node's.
+    let source = r#"
+      function A() {} A.prototype.m = function () { return 1; };
+      function B() { this.x = 1; } B.prototype.m = function () { return 2; };
+      function C() { this.x = 1; this.y = 2; } C.prototype.m = function () { return 3; };
+      function D() { this.x = 1; this.y = 2; this.z = 3; } D.prototype.m = function () { return 4; };
+      var receivers = [new A(), new B(), new C(), new D()];
+      function call(o) { return o.m(); }
+      function round() { var s = 0; for (var i = 0; i < 1000; i++) for (var j = 0; j < 4; j++) s += call(receivers[j]); return s; }
+      var before = round();
+      A.prototype.m = function () { return 10; };
+      var redefined = round();
+      B.prototype.m = function () { return 20; };
+      print([before, redefined, round()].join(" "));
+    "#;
+    let program = Engine::specialize(source, "method-site-ways.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["10000 19000 37000"]);
+}
+
+#[test]
 fn third_method_receiver_promotes_site_to_megamorphic() {
     let mut vm = Vm::new(TestHost::default());
     vm.method_caches.push([super::EMPTY_METHOD_CACHE; 2]);
@@ -20207,6 +20233,65 @@ fn lane_name_loads_resolve_undefined_intrinsics_and_call_receivers() {
         vm.set_execution_mode(mode);
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["3000 3000 3000 10515 3000 6000 3000 6000"], "{mode:?}");
+    }
+}
+
+#[test]
+fn lane_generator_window_mapped_arguments_alias_parameters_through_the_owning_activation() {
+    // Elements of a sloppy generator's mapped `arguments` write through to its parameters while
+    // it runs as a lane activation (`LaneStack::window_parameter`), nested beside another
+    // generator's activation; the expectations are Node's.
+    let source = r#"
+      function* inner(b) { arguments[0] = b + 1; yield b; }
+      function* outer(a) {
+        arguments[0] = a * 2;
+        for (var v of inner(a)) yield v;
+        yield a;
+        a = 5;
+        yield arguments[0];
+      }
+      var total = 0;
+      for (var i = 0; i < 2000; i++) {
+        var got = [];
+        for (var v of outer(i)) got.push(v);
+        if (got.join() !== [i * 2 + 1, i * 2, 5].join()) throw Error(got.join());
+        total++;
+      }
+      print(String(total));
+    "#;
+    let program = Engine::specialize(source, "lane-window-arguments.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["2000"], "{mode:?}");
+    }
+}
+
+#[test]
+fn lane_intrinsic_native_reads_keep_each_name_its_own_native() {
+    // Hot reads of several intrinsic names (`{ __proto__: v }`, `super.x = v`) interleave: each
+    // atom reads the native its own first run recorded (`Vm::intrinsic_natives`, by atom).
+    let source = r#"
+      function hot(f) { var s = 0; for (var i = 0; i < 3000; i++) s = (s + f(i)) | 0; return s; }
+      class A { set x(v) { this.y = v; } }
+      class B extends A { m(v) { super.x = v; return this.y; } }
+      var b = new B();
+      var p = { tag: 1 };
+      print([hot(function (i) { return { __proto__: p, v: i }.tag; }),
+             hot(function (i) { return b.m(i & 3); }),
+             hot(function (i) { return { __proto__: null, v: i }.v & 1; })].join(" "));
+    "#;
+    let program = Engine::specialize(source, "lane-intrinsic-natives.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["3000 4500 1500"], "{mode:?}");
     }
 }
 

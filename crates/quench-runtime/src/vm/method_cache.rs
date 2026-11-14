@@ -1,11 +1,20 @@
 #![allow(dead_code)]
 use super::*;
 mod atoms;
+mod megamorphic;
 pub(super) use atoms::{AtomBits, MethodCacheAtoms};
+use megamorphic::{retain_entries, retain_other_atom, retain_unshadowed_entries};
 
-/// Entries of a call site's inline method cache, most recent first; a site that sees more
-/// moves to a megamorphic set.
+/// Entries of a call site's inline method cache, one way per shape residue (`method_way`); a site
+/// that sees a second receiver in a way moves to a megamorphic set.
 pub(super) const METHOD_CACHE_WAYS: usize = 2;
+const _: () = assert!(METHOD_CACHE_WAYS.is_power_of_two());
+
+/// The way of a site's inline cache that holds receivers of `shape`: the ways are direct-mapped
+/// by shape id, so a lookup reads one entry.
+const fn method_way(shape: u32) -> usize {
+    shape as usize & (METHOD_CACHE_WAYS - 1)
+}
 /// The shape a method lookup on a receiver without object data compares: it matches no
 /// recorded entry, the empty entry included.
 const NON_OBJECT_RECEIVER_SHAPE: u32 = u32::MAX - 1;
@@ -19,7 +28,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         self.snapshot_method_caches(_reason);
         self.method_caches.fill([EMPTY_METHOD_CACHE; _]);
-        self.megamorphic_methods.clear();
+        self.clear_megamorphic_methods();
         self.method_cache_atoms.clear();
     }
 
@@ -32,23 +41,21 @@ impl<H: Host> Vm<H> {
     pub(super) fn invalidate_method_caches_for_atom(&mut self, atom: Atom) {
         #[cfg(feature = "profile-aggregate")]
         self.snapshot_method_caches_for_atom(atom, 1);
-        for entries in &mut self.method_caches {
-            let len = entries.len();
-            retain_other_atom(entries, len, atom);
+        for ways in &mut self.method_caches {
+            clear_ways(ways, |entry| entry.atom == atom);
         }
         for set in &mut self.megamorphic_methods {
             set.len = retain_other_atom(&mut set.entries, usize::from(set.len), atom) as u8;
         }
-        self.megamorphic_methods.retain(|set| set.len != 0);
+        self.retire_empty_method_sets();
     }
 
     pub(super) fn invalidate_method_caches_for_prototype_add(&mut self, object: Value, atom: Atom) {
         #[cfg(feature = "profile-aggregate")]
         self.snapshot_shadowed_method_caches(object, atom);
         let heap = &self.heap;
-        for entries in &mut self.method_caches {
-            let len = entries.len();
-            retain_unshadowed_entries(heap, entries, len, object, atom);
+        for ways in &mut self.method_caches {
+            clear_ways(ways, |entry| method_cache_shadowed_by(heap, *entry, object, atom));
         }
         for set in &mut self.megamorphic_methods {
             set.len = retain_unshadowed_entries(
@@ -59,7 +66,7 @@ impl<H: Host> Vm<H> {
                 atom,
             ) as u8;
         }
-        self.megamorphic_methods.retain(|set| set.len != 0);
+        self.retire_empty_method_sets();
     }
 
     pub(super) fn is_function(&self, value: Value) -> bool {
@@ -154,14 +161,13 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         let before = self.method_cache_entry_count();
         let heap = &self.heap;
-        for entries in &mut self.method_caches {
-            let len = entries.len();
-            retain_entries(heap, entries, len);
+        for ways in &mut self.method_caches {
+            clear_ways(ways, |entry| !method_cache_live(heap, *entry));
         }
         for set in &mut self.megamorphic_methods {
             set.len = retain_entries(heap, &mut set.entries, usize::from(set.len)) as u8;
         }
-        self.megamorphic_methods.retain(|set| set.len != 0);
+        self.retire_empty_method_sets();
         #[cfg(feature = "profile-aggregate")]
         {
             let after = self.method_cache_entry_count();
@@ -196,37 +202,23 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn record_method_cache(&mut self, site: usize, cache: MethodCache) {
         self.method_cache_atoms.name(cache.atom);
-        if let Some(set) = self
-            .megamorphic_methods
-            .iter_mut()
-            .find(|set| set.site == site)
-        {
-            if let Some(entry) = set.entries[..usize::from(set.len)]
-                .iter_mut()
-                .find(|entry| entry.records_same(&cache))
-            {
+        if let Some(position) = self.megamorphic_set_position(site) {
+            let set = &mut self.megamorphic_methods[position];
+            let len = usize::from(set.len);
+            if let Some(entry) = set.entries[..len].iter_mut().find(|entry| entry.records_same(&cache)) {
                 *entry = cache;
-            } else if usize::from(set.len) < super::compiled::tier_policy::POLYMORPHISM {
-                set.entries[usize::from(set.len)] = cache;
+            } else if len < super::compiled::tier_policy::POLYMORPHISM {
+                set.entries[len] = cache;
                 set.len += 1;
             }
             return;
         }
-        let entries = &mut self.method_caches[site];
-        if entries.iter().any(|entry| entry.records_same(&cache)) || entries[1].target.is_none()
-        {
-            entries[1] = entries[0];
-            entries[0] = cache;
+        let way = &mut self.method_caches[site][method_way(cache.shape)];
+        if way.target.is_none() || way.records_same(&cache) {
+            *way = cache;
             return;
         }
-        let mut set = MethodCacheSet {
-            site,
-            len: (METHOD_CACHE_WAYS + 1) as u8,
-            entries: [EMPTY_METHOD_CACHE; super::compiled::tier_policy::POLYMORPHISM],
-        };
-        set.entries[..METHOD_CACHE_WAYS].copy_from_slice(entries);
-        set.entries[METHOD_CACHE_WAYS] = cache;
-        self.megamorphic_methods.push(set);
+        self.promote_method_site(site, cache);
     }
 }
 
@@ -292,36 +284,12 @@ impl<H: Host> Vm<H> {
     }
 }
 
-fn retain_other_atom(entries: &mut [MethodCache], len: usize, atom: Atom) -> usize {
-    let mut retained = 0;
-    for index in 0..len {
-        let entry = entries[index];
-        if entry.atom != atom {
-            entries[retained] = entry;
-            retained += 1;
-        }
+/// Empties the entries of `ways` that `dropped` names, each in its own way, which a lookup
+/// indexes by shape.
+fn clear_ways(ways: &mut [MethodCache], dropped: impl Fn(&MethodCache) -> bool) {
+    for entry in ways.iter_mut().filter(|entry| dropped(entry)) {
+        *entry = EMPTY_METHOD_CACHE;
     }
-    entries[retained..].fill(EMPTY_METHOD_CACHE);
-    retained
-}
-
-fn retain_unshadowed_entries(
-    heap: &crate::heap::Heap,
-    entries: &mut [MethodCache],
-    len: usize,
-    object: Value,
-    atom: Atom,
-) -> usize {
-    let mut retained = 0;
-    for index in 0..len {
-        let entry = entries[index];
-        if !method_cache_shadowed_by(heap, entry, object, atom) {
-            entries[retained] = entry;
-            retained += 1;
-        }
-    }
-    entries[retained..].fill(EMPTY_METHOD_CACHE);
-    retained
 }
 
 fn method_cache_shadowed_by(
@@ -344,19 +312,6 @@ fn method_cache_shadowed_by(
         prototype = data.proto();
     }
     false
-}
-
-fn retain_entries(heap: &crate::heap::Heap, entries: &mut [MethodCache], len: usize) -> usize {
-    let mut retained = 0;
-    for index in 0..len {
-        let entry = entries[index];
-        if method_cache_live(heap, entry) {
-            entries[retained] = entry;
-            retained += 1;
-        }
-    }
-    entries[retained..].fill(EMPTY_METHOD_CACHE);
-    retained
 }
 
 fn method_cache_live(heap: &crate::heap::Heap, entry: MethodCache) -> bool {
@@ -451,13 +406,10 @@ impl<H: Host> Vm<H> {
         -> Option<(Value, CallTarget, usize)> {
         specialized.then_some(())?;
         let serves = |entry: &MethodCache| entry.serves(shape, atom, proto, this);
-        let inline = self.method_caches[cache_site].iter().enumerate()
-            .find(|(_, entry)| serves(entry)).map(|(tier, entry)| (*entry, tier));
+        let way = method_way(shape);
+        let inline = self.method_caches[cache_site][way];
         // The megamorphic set is the tier after the inline ways.
-        let megamorphic = || self.megamorphic_methods.iter().find(|set| set.site == cache_site)
-            .and_then(|set| set.entries[..usize::from(set.len)].iter().find(|entry| serves(entry)).copied())
-            .map(|entry| (entry, METHOD_CACHE_WAYS));
-        let (entry, tier) = inline.or_else(megamorphic)?;
+        let (entry, tier) = if serves(&inline) { (inline, way) } else { (self.megamorphic_method(cache_site, serves)?, METHOD_CACHE_WAYS) };
         let owner = self.method_cache_owner(this, atom, entry.guard)?;
         let owner_data = self.object_data(owner)?;
         if owner_data.shape() != entry.guard.owner_shape {
@@ -468,7 +420,7 @@ impl<H: Host> Vm<H> {
         Some((callee, entry.target?, tier))
     }
 
-    /// The callees the inline ways of method site `site` (of the active program) serve, most recent first.
+    /// The callees the inline ways of method site `site` (of the active program) serve, by way.
     pub(super) fn method_cache_callees(&self, site: usize) -> Vec<Value> {
         self.method_caches[self.method_cache_index(site)].iter().filter(|entry| entry.target.is_some()).map(|entry| entry.callee).collect()
     }

@@ -12514,9 +12514,11 @@ fn lane_name_resolution<H: Host>(cx: *mut LaneContext<H>, atom: u32) -> NameReso
     let vm = unsafe { vm(cx) };
     let internal = vm.atom_class(atom).contains(AtomClass::INTERNAL);
     if internal && let Some(native) = crate::bytecode::intrinsic_name_native(&code.atoms[atom as usize]) {
-        if !vm.intrinsic_natives.iter().any(|&(named, _)| named == atom) {
-            vm.intrinsic_natives.push((atom, native));
+        let slot = atom as usize;
+        if vm.intrinsic_natives.len() <= slot {
+            vm.intrinsic_natives.resize(slot + 1, None);
         }
+        vm.intrinsic_natives[slot] = Some(native);
         return NameResolution::Native;
     }
     // The running function decides the name's scope: a running leaf's is its materialized

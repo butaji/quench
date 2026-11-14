@@ -121,6 +121,14 @@ impl LaneActivations {
         (!self.is_empty()).then(|| unsafe { &mut *self.top.sub(1) })
     }
 
+    /// The activation `depth` above the base, if it is below the top.
+    #[inline(always)]
+    pub(super) fn get(&self, depth: usize) -> Option<&Activation> {
+        let at = self.base.wrapping_add(depth);
+        // SAFETY: `at` is below `top`, so it is an initialized activation.
+        (at < self.top).then(|| unsafe { &*at })
+    }
+
     #[inline(always)]
     pub(super) fn get_mut(&mut self, depth: usize) -> Option<&mut Activation> {
         let at = self.base.wrapping_add(depth);

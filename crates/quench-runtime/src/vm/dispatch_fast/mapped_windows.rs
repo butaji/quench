@@ -83,6 +83,10 @@ impl ParameterHome {
 impl LaneStack {
     /// The home of parameter `slot` in the innermost window activation of `code` whose `arguments`
     /// binding holds `object`, where its parameters are.
+    ///
+    /// The object names its activation's depth (`Vm::record_window_owner`), so the lookup reads
+    /// one activation; an object whose activation ended, or whose depth another activation took,
+    /// fails the binding check.
     pub(in crate::vm) fn window_parameter(
         &self,
         heap: &crate::heap::Heap,
@@ -90,15 +94,38 @@ impl LaneStack {
         object: Value,
         slot: usize,
     ) -> Option<ParameterHome> {
-        self.activations.iter().rev().find_map(|activation| {
-            activation.script().filter(|script| script.environment)?;
-            let body = code.function_get(activation.function as usize)?;
-            // SAFETY: an environment activation's window holds its entries after its registers,
-            // and a local for each slot the function binds.
-            let entries = unsafe { activation.window_ptr().add(usize::from(body.registers)) };
-            let arguments = unsafe { ParameterHome::of(entries, body, usize::from(body.arguments_slot?)) }.read(heap);
-            (arguments == object).then(|| unsafe { ParameterHome::of(entries, body, slot) })
-        })
+        let (body, entries) = self.window_at(code, heap.object(object)?.window_depth()?)?;
+        // SAFETY: an environment activation's window holds a local for each slot the function binds.
+        let arguments = unsafe { ParameterHome::of(entries, body, usize::from(body.arguments_slot?)) }.read(heap);
+        (arguments == object).then(|| unsafe { ParameterHome::of(entries, body, slot) })
+    }
+
+    /// The function of the environment window activation at `depth` and where its entries start.
+    fn window_at<'a>(&self, code: &'a ResidualProgram, depth: usize) -> Option<(&'a Function, *mut Value)> {
+        let activation = self.activations.get(depth)?;
+        activation.script().filter(|script| script.environment)?;
+        let body = code.function_get(activation.function as usize)?;
+        // SAFETY: an environment activation's window holds its entries after its registers.
+        Some((body, unsafe { activation.window_ptr().add(usize::from(body.registers)) }))
+    }
+}
+
+impl<H: Host> Vm<H> {
+    /// Records the depth of the window activation just pushed at `depth` on the `arguments`
+    /// object its window holds, where an element's write finds its parameter
+    /// (`LaneStack::window_parameter`).
+    pub(super) fn record_window_owner(&mut self, code: &ResidualProgram, depth: usize) {
+        let Some((body, entries)) = self.lane_stack.window_at(code, depth) else {
+            return;
+        };
+        let Some(slot) = body.arguments_slot.filter(|_| body.arguments_ride_window()) else {
+            return;
+        };
+        // SAFETY: an environment activation's window holds a local for each slot the function binds.
+        let arguments = unsafe { ParameterHome::of(entries, body, usize::from(slot)) }.read(&self.heap);
+        if let Some(object) = self.heap.object_mut(arguments) {
+            object.set_window_depth(depth);
+        }
     }
 }
 

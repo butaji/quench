@@ -405,7 +405,7 @@ unsafe fn lane_name_value<H: Host>(cx: *mut (), read: NameRead, atom: u32) -> Op
     let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
     match read {
         NameRead::Native => {
-            let &(_, native) = vm.intrinsic_natives.iter().find(|&&(named, _)| named == atom)?;
+            let native = vm.intrinsic_natives.get(atom as usize).copied().flatten()?;
             Some(vm.native_value(native))
         }
         NameRead::Intrinsic => vm.intrinsic_name_value(atom),
