@@ -44,6 +44,7 @@ mod snapshot;
 mod string_alloc;
 mod string_atoms;
 mod native_layout;
+mod settled;
 mod string_parts;
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
@@ -487,6 +488,20 @@ macro_rules! mark_bits {
     };
 }
 use mark_bits;
+
+/// The serial mark's `Settled` over `$heap`'s record families, borrowing the fields a visit
+/// does not hold (`SerialSettled`).
+macro_rules! serial_settled {
+    ($heap:expr) => {
+        SerialSettled {
+            strings: &mut $heap.string_records,
+            objects: &$heap.object_records,
+            arrays: &$heap.array_records,
+            functions: &$heap.function_records,
+        }
+    };
+}
+use settled::{Settled, SerialSettled, Unsettled};
 
 /// The ASCII code units, one past the last (`Heap::ascii_unit_strings`).
 pub(crate) const ASCII_UNITS: usize = 0x80;
@@ -3167,15 +3182,7 @@ impl Heap {
             }
             // SAFETY: the direct handle is live and its mark bit was newly set.
             let object = unsafe { self.object_records.get_live(record_id) };
-            Self::object_children(
-                value,
-                object,
-                &self.properties,
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
-            );
+            Self::object_children(value, object, &self.properties, &mut serial_settled!(self), work, object_roots, trace_kind, last_proto);
             let mark_bits = mark_bits!(self);
             ephemerons.newly_marked(
                 value,
@@ -3194,17 +3201,7 @@ impl Heap {
             }
             // SAFETY: a direct Array Value names an initialized record.
             let array = unsafe { self.array_records.get_live(record_id) };
-            let string_records = &mut self.string_records;
-            Self::array_children(
-                value,
-                array,
-                &self.properties,
-                |string| string_parts::mark_flat(string_records, string),
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
-            );
+            Self::array_children(value, array, &self.properties, &mut serial_settled!(self), work, object_roots, trace_kind, last_proto);
             if let Some(arrays) = self.sparse_arrays.as_ref()
                 && let Some(elements) = arrays.get(&value)
             {
@@ -3228,15 +3225,7 @@ impl Heap {
             }
             // SAFETY: a direct function Value names an initialized record.
             let function = unsafe { self.function_records.get_live(record_id) };
-            Self::function_children(
-                value,
-                function,
-                &self.properties,
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
-            );
+            Self::function_children(value, function, &self.properties, &mut serial_settled!(self), work, object_roots, trace_kind, last_proto);
             environments.closure(function.env, &function.kind, work);
             let mark_bits = mark_bits!(self);
             ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
@@ -3251,22 +3240,14 @@ impl Heap {
             }
             // SAFETY: a direct iterator Value names an initialized record.
             let iterator = unsafe { self.iterator_records.get_live(record_id) };
-            Self::object_children(
-                value,
-                &iterator.object,
-                &self.properties,
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
-            );
+            Self::object_children(value, &iterator.object, &self.properties, &mut serial_settled!(self), work, object_roots, trace_kind, last_proto);
             Self::iterator_edges(iterator, work);
             let mark_bits = mark_bits!(self);
             ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
         } else if let Some(record_id) = value.direct_string_index() {
             // A string holds no edges but its parts': marking it and tracing them is the visit.
             if self.string_records.mark(record_id) {
-                string_parts::trace_parts(&self.string_records, record_id, work);
+                string_parts::trace_parts(&mut self.string_records, record_id, work);
                 #[cfg(feature = "profile-aggregate")]
                 {
                     self.gc_profile.marked += 1;
@@ -3304,15 +3285,7 @@ impl Heap {
             }
             // SAFETY: a direct promise Value names an initialized record.
             let promise = unsafe { self.promise_records.get_live(record_id) };
-            Self::object_children(
-                value,
-                &promise.object,
-                &self.properties,
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
-            );
+            Self::object_children(value, &promise.object, &self.properties, &mut serial_settled!(self), work, object_roots, trace_kind, last_proto);
             promise.record.append_roots(work);
             let mark_bits = mark_bits!(self);
             ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
@@ -3928,6 +3901,7 @@ impl Heap {
         owner: Value,
         object: &Object,
         properties: &ValueArena,
+        settled: &mut impl Settled,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
@@ -3936,7 +3910,7 @@ impl Heap {
         let proto = object.proto();
         if proto != *last_proto {
             *last_proto = proto;
-            if proto.is_heap() {
+            if proto.is_heap() && !settled.is_marked_prototype(proto) {
                 work.push(proto);
             }
         }
@@ -3944,12 +3918,12 @@ impl Heap {
         object.visit_extras_roots(|value| work.push(value));
         if let Some(values) = object.inline_properties() {
             for value in values {
-                if value.is_heap() && !value.is_deleted() {
+                if value.is_heap() && !value.is_deleted() && !settled.leaf(value) {
                     work.push(value);
                 }
             }
         } else {
-            properties.append_heap_references(object.properties(), work);
+            properties.append_heap_references(object.properties(), work, |value| settled.leaf(value));
         }
     }
 
@@ -3963,15 +3937,7 @@ impl Heap {
         last_proto: &mut Value,
     ) {
         let mut object = |object: &Object| {
-            Self::object_children(
-                owner,
-                object,
-                properties,
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
-            );
+            Self::object_children(owner, object, properties, &mut Unsettled, work, object_roots, trace_kind, last_proto);
         };
         if let Some((value, buffer)) = cell.typed_array_backing() {
             object(value);
@@ -4160,21 +4126,13 @@ impl Heap {
         owner: Value,
         array: &ArrayObject,
         properties: &ValueArena,
-        mut mark_string: impl FnMut(RecordId) -> bool,
+        settled: &mut impl Settled,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
         last_proto: &mut Value,
     ) {
-        Self::object_children(
-            owner,
-            array,
-            properties,
-            work,
-            object_roots,
-            trace_kind,
-            last_proto,
-        );
+        Self::object_children(owner, array, properties, settled, work, object_roots, trace_kind, last_proto);
         // The count of non-int32 values is kept per backing: none means no element to scan.
         if array.elements().holds_only_int32() { return; }
         work.extend(
@@ -4182,24 +4140,10 @@ impl Heap {
                 .elements()
                 .iter()
                 .copied()
-                .filter(|value| value.is_heap() && !Self::mark_leaf(&mut mark_string, *value)),
+                .filter(|value| value.is_heap() && !settled.leaf(*value)),
         );
     }
 
-    /// Marks `value` where the trace finds it, through `mark_string`, when it is a string, and
-    /// says whether it was one. A string holds no heap edges, so marking it is the whole visit
-    /// (`mark_value`): an array of strings adds nothing to the mark stack, which had held a
-    /// value per element at the heap's peak (V8-v7 RegExp: 141 KiB). Profiling builds leave
-    /// every value to `mark_value`, which counts each visit.
-    fn mark_leaf(mark_string: &mut impl FnMut(RecordId) -> bool, value: Value) -> bool {
-        if cfg!(feature = "profile-aggregate") {
-            return false;
-        }
-        let Some(record_id) = value.direct_string_index() else {
-            return false;
-        };
-        mark_string(record_id)
-    }
     /// An iterator's edges besides its object: its source, cached next method, helper
     /// state and suspended generator.
     fn iterator_edges(iterator: &IteratorRecord, work: &mut Vec<Value>) {
@@ -4266,20 +4210,13 @@ impl Heap {
         owner: Value,
         function: &FunctionRecord,
         properties: &ValueArena,
+        settled: &mut impl Settled,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
         last_proto: &mut Value,
     ) {
-        Self::object_children(
-            owner,
-            &function.object,
-            properties,
-            work,
-            object_roots,
-            trace_kind,
-            last_proto,
-        );
+        Self::object_children(owner, &function.object, properties, settled, work, object_roots, trace_kind, last_proto);
         // The environment edge is the caller's (`EnvironmentTrace::closure`).
         work.push(function.realm);
     }
