@@ -227,6 +227,13 @@ impl Stage for Emit<'_, '_> {
         otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
         self.choose_arms(cond, then, otherwise, false)
     }
+    fn guard_status(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
+        let passed = self.builder.create_block();
+        self.builder.ins().brif(cond, passed, &[], miss, &[]);
+        self.builder.switch_to_block(passed);
+        self.builder.seal_block(passed);
+        Some(())
+    }
     fn guard(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
         emit_js_guard(self.builder, cond, miss);
         Some(())

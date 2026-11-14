@@ -58,7 +58,7 @@ pub(crate) fn construct<S: Stage>(stage: &mut S, miss: S::Miss, allocate: impl F
     let receiver = allocate(stage);
     let Returned { status, value } = initialize(stage, receiver);
     let returned = stage.eq_imm(status, 0u32);
-    stage.guard(returned, miss)?;
+    stage.guard_status(returned, miss)?;
     construct_result(stage, value, |_| receiver, miss)
 }
 

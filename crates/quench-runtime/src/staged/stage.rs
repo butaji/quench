@@ -192,6 +192,9 @@ pub(crate) trait Stage {
     }
     /// Continues where `cond` holds; `None` where it does not, so nothing runs past it.
     fn guard(&mut self, cond: Self::Cond, miss: Self::Miss) -> Option<()>;
+    /// `guard` on a status the code already holds (a callee's end), which dispatches and
+    /// speculates nothing: a forced-deopt switch has nothing to force here.
+    fn guard_status(&mut self, cond: Self::Cond, miss: Self::Miss) -> Option<()> { self.guard(cond, miss) }
     /// `cond`'s value where this stage knows it: the interpreter always does, a specializer
     /// never does for a value read from the heap.
     fn known(&self, cond: Self::Cond) -> Option<bool>;

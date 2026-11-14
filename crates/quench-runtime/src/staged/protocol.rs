@@ -159,7 +159,7 @@ pub(crate) fn complete_call<S: Stage>(stage: &mut S, status: S::Word, value: S::
     returned: u32, miss: S::Miss) -> Option<S::Word> {
     let status = stage.uextend32(status);
     let done = stage.eq_imm(status, u64::from(returned));
-    stage.guard(done, miss)?;
+    stage.guard_status(done, miss)?;
     Some(receiver.unwrap_or(value))
 }
 
