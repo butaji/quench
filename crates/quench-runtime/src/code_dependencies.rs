@@ -33,6 +33,9 @@ pub(crate) fn new_dependency() -> Rc<PublishedCode<()>> { Rc::new(PublishedCode:
 /// No borrow of the publication survives acquiring a lease or retiring it.
 pub(crate) struct PublishedCode<T> {
     code: std::cell::RefCell<Option<Rc<T>>>,
+    /// Whether `code` still holds it: read on every cache hit, so a plain flag rather than a
+    /// borrow of `code`.
+    published: std::cell::Cell<bool>,
     /// Set when the code retires, for runs already inside it (`Invalidation`).
     invalidation: Invalidation,
     /// The entry word to put back (`stub`) if it still holds this code's `entry`.
@@ -49,7 +52,7 @@ impl<T> PublishedCode<T> {
     pub(crate) fn new(code: T) -> Self { Self::with_invalidation(code, Invalidation::default()) }
     /// Code compiled to read `invalidation` at its invalidation points.
     pub(crate) fn with_invalidation(code: T, invalidation: Invalidation) -> Self {
-        Self { code: std::cell::RefCell::new(Some(Rc::new(code))), invalidation, entry_link: std::cell::Cell::new(None), roots: Default::default() }
+        Self { code: std::cell::RefCell::new(Some(Rc::new(code))), published: std::cell::Cell::new(true), invalidation, entry_link: std::cell::Cell::new(None), roots: Default::default() }
     }
     /// Keeps `roots`, the heap identities its code embeds, alive until it retires: `heap` roots
     /// them at every collection (`Heap::extend_folded_roots`).
@@ -60,7 +63,8 @@ impl<T> PublishedCode<T> {
         heap.hold_folded_roots(&code);
     }
     pub(crate) fn lease(&self) -> Option<Rc<T>> { self.code.borrow().clone() }
-    pub(crate) fn is_published(&self) -> bool { self.code.borrow().is_some() }
+    #[inline(always)]
+    pub(crate) fn is_published(&self) -> bool { self.published.get() }
     pub(crate) fn retire(&self) {
         self.invalidation.set();
         *self.roots.borrow_mut() = FoldedRoots::default();
@@ -71,6 +75,7 @@ impl<T> PublishedCode<T> {
             if word.get() == entry { word.set(stub); }
         }
         self.code.borrow_mut().take();
+        self.published.set(false);
     }
 }
 
