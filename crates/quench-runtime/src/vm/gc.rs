@@ -369,6 +369,13 @@ impl<H: Host> Vm<H> {
             .retain(|(program, _, _), _| !reclaimed.contains(program));
     }
 
+    /// Recursion leaves one pooled frame per level it reached; a full collection keeps the few that
+    /// ordinary call depth reuses, and later deeper calls allocate their own.
+    fn trim_frame_pool(&mut self) {
+        self.frame_pool.truncate(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
+        self.frame_pool.shrink_to(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
+    }
+
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
         // Frameless activations' registers are no roots; their frames are.
         self.materialize_deferred_lane();
@@ -389,10 +396,7 @@ impl<H: Host> Vm<H> {
         // would keep a dropped subject's text alive however large, as no string holds them.
         self.regexp_subjects.clear();
         if full {
-            // Recursion leaves one pooled frame per level it reached; a full collection keeps the
-            // few that ordinary call depth reuses, and later deeper calls allocate their own.
-            self.frame_pool.truncate(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
-            self.frame_pool.shrink_to(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
+            self.trim_frame_pool();
         }
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
