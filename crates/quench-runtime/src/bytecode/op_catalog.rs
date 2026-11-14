@@ -496,19 +496,4 @@ op_predicates! {
 }
 
 #[cfg(test)]
-mod class_table_tests {
-    use super::{Class, Op, Traits};
-
-    #[test]
-    fn catalog_tables_are_compact_and_the_runtime_uses_direct_predicates() {
-        // One byte per opcode's class and four per traits: ~2 KiB for the whole catalog,
-        // read only by planning code; the per-instruction loop calls the generated
-        // `is_*` predicates, which compile to direct enum comparisons.
-        assert_eq!(core::mem::size_of::<Class>(), 1);
-        assert_eq!(core::mem::size_of::<Traits>(), 4);
-        let bytes = Op::COUNT * (core::mem::size_of::<Class>() + core::mem::size_of::<Traits>());
-        assert!(bytes <= 4096, "catalog tables take {bytes} bytes");
-        assert!(Op::Call.class().eq(Class::Call) && !Op::Return.class().eq(Class::Call));
-        assert!(Op::Return.class().eq(Class::Return) && !Op::Call.class().eq(Class::Return));
-    }
-}
+mod class_table_tests;
