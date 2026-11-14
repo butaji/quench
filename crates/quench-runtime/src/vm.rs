@@ -2133,6 +2133,9 @@ pub(crate) struct Vm<H> {
     method_caches: Vec<[MethodCache; method_cache::METHOD_CACHE_WAYS]>,
     megamorphic_methods: Vec<MethodCacheSet>,
     method_cache_atoms: method_cache::MethodCacheAtoms,
+    /// The inline method-cache sites that may hold an entry for each atom: a superset, pushed
+    /// when a site first records the atom, so invalidating an atom visits only its sites.
+    method_cache_sites: FxHashMap<Atom, Vec<u32>>,
     #[cfg(feature = "profile-aggregate")]
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
     object_shapes: site_table::SiteTable<u32>,
@@ -3091,6 +3094,7 @@ impl<H: Host> Vm<H> {
         self.method_caches = vec![[EMPTY_METHOD_CACHE; method_cache::METHOD_CACHE_WAYS]; program.method_sites.capacity()];
         self.megamorphic_methods.clear();
         self.method_cache_atoms.clear();
+        self.method_cache_sites.clear();
         self.object_shapes = site_table::SiteTable::with_empty(program.object_sites.capacity());
         self.descriptors.clear();
         self.function_values.clear();

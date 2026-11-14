@@ -402,6 +402,7 @@ impl<H: Host> Vm<H> {
             method_caches: _,
             megamorphic_methods: _,
             method_cache_atoms: _,
+            method_cache_sites: _,
             #[cfg(feature = "profile-aggregate")]
                 invalidated_methods: _,
             object_shapes: _,

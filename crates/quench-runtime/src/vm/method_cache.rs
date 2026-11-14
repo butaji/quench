@@ -21,6 +21,7 @@ impl<H: Host> Vm<H> {
         self.method_caches.fill([EMPTY_METHOD_CACHE; _]);
         self.megamorphic_methods.clear();
         self.method_cache_atoms.clear();
+        self.method_cache_sites.clear();
     }
 
     /// Whether any method cache may name `atom`; `false` proves that none does.
@@ -32,9 +33,14 @@ impl<H: Host> Vm<H> {
     pub(super) fn invalidate_method_caches_for_atom(&mut self, atom: Atom) {
         #[cfg(feature = "profile-aggregate")]
         self.snapshot_method_caches_for_atom(atom, 1);
-        for entries in &mut self.method_caches {
-            let len = entries.len();
-            retain_other_atom(entries, len, atom);
+        // Only the sites that recorded the atom can hold it: no scan of every site.
+        if let Some(sites) = self.method_cache_sites.remove(&atom) {
+            for site in sites {
+                if let Some(entries) = self.method_caches.get_mut(site as usize) {
+                    let len = entries.len();
+                    retain_other_atom(entries, len, atom);
+                }
+            }
         }
         for set in &mut self.megamorphic_methods {
             set.len = retain_other_atom(&mut set.entries, usize::from(set.len), atom) as u8;
@@ -154,9 +160,16 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         let before = self.method_cache_entry_count();
         let heap = &self.heap;
-        for entries in &mut self.method_caches {
+        // Rebuilt with the entries, so dropped entries leave no stale sites behind.
+        self.method_cache_sites.clear();
+        for (site, entries) in self.method_caches.iter_mut().enumerate() {
             let len = entries.len();
             retain_entries(heap, entries, len);
+            for (index, entry) in entries.iter().enumerate() {
+                if entry.atom != EMPTY_METHOD_CACHE.atom && !entries[..index].iter().any(|other| other.atom == entry.atom) {
+                    self.method_cache_sites.entry(entry.atom).or_default().push(site as u32);
+                }
+            }
         }
         for set in &mut self.megamorphic_methods {
             set.len = retain_entries(heap, &mut set.entries, usize::from(set.len)) as u8;
@@ -213,6 +226,9 @@ impl<H: Host> Vm<H> {
             return;
         }
         let entries = &mut self.method_caches[site];
+        if !entries.iter().any(|entry| entry.atom == cache.atom) {
+            self.method_cache_sites.entry(cache.atom).or_default().push(site as u32);
+        }
         if entries.iter().any(|entry| entry.records_same(&cache)) || entries[1].target.is_none()
         {
             entries[1] = entries[0];
