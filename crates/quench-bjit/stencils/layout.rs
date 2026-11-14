@@ -130,6 +130,9 @@ pub(crate) const NATIVE_TYPED_ARRAY_LAYOUT: NativeTypedArrayLayout = NativeTyped
     stamp_offset: 8,
 };
 
+/// Where a loop entry record keeps an array's element count, after the elements' address (`LoopEntry::push_array`).
+pub(crate) const LOOP_ENTRY_ARRAY_COUNT_AT: u64 = size_of::<u64>() as u64;
+
 /// The runtime's `TypedArrayKind`, in its order (`stencil_layout_matches` checks both).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TypedArrayKind {
@@ -147,6 +150,8 @@ pub(crate) enum TypedArrayKind {
     Float64,
 }
 impl TypedArrayKind {
+    /// Every kind, in discriminant order.
+    pub(crate) const ALL: [Self; 12] = [Self::Uint8, Self::Uint8Clamped, Self::Uint16, Self::Uint32, Self::Int8, Self::Int16, Self::Int32, Self::BigInt64, Self::BigUint64, Self::Float16, Self::Float32, Self::Float64];
     /// The element width in bytes.
     pub(crate) const fn width(self) -> usize {
         match self {

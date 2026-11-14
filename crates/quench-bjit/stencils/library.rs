@@ -169,8 +169,9 @@ pub fn heap_canonical((heap, entry, dst, a, b): HeapCode) -> HeapCode {
         GLOBAL_STORE_ROW => (heap, entry, MEM, a, MEM),
         SITE_ROW | THIS_SITE_ROW | HELD_ROW => (heap, entry, dst, MEM, MEM),
         INDEX_ROW => (heap, entry, dst, MEM, b),
-        TYPED_INDEX_ROW => (heap, true, dst, MEM, b),
-        TYPED_STORE_ROW => (heap, true, MEM, a, b),
+        TYPED_INDEX_ROW..=TYPED_INDEX_LAST => (heap, true, dst, MEM, b),
+        TYPED_STORE_ROW..=TYPED_STORE_LAST => (heap, true, MEM, a, b),
+        TYPED_LENGTH_ROW => (heap, true, dst, MEM, MEM),
         IC_GET_ROW | IC_GET_HOLDER_ROW => (heap, entry, dst, MEM, MEM),
         IC_SET_ROW | IC_SET_INT_ROW => (heap, entry, MEM, a, MEM),
         STORE_ROW => (heap, entry, MEM, a, b),
@@ -198,6 +199,21 @@ fn cache_rows(dsts: &[u8], srcs: &[u8], rows: &mut BTreeSet<HeapCode>) {
     }
 }
 
+/// The typed element rows: each native kind's read over a Number destination (the place of a Number the row
+/// reads) and its store, and the count read.
+fn typed_rows(dsts: &[u8], srcs: &[u8], rows: &mut BTreeSet<HeapCode>) {
+    let floats = Places::all().floats_dst;
+    for kind in (0..TYPED_KINDS).filter(|kind| !NON_NATIVE_KINDS.contains(kind)) {
+        for &dst in &floats {
+            rows.extend(srcs.iter().map(|&b| heap_canonical((TYPED_INDEX_ROW + kind, true, dst, MEM, b))));
+        }
+        for (&a, &b) in srcs.iter().flat_map(|a| srcs.iter().map(move |b| (a, b))) {
+            rows.insert(heap_canonical((TYPED_STORE_ROW + kind, true, MEM, a, b)));
+        }
+    }
+    rows.extend(dsts.iter().map(|&dst| heap_canonical((TYPED_LENGTH_ROW, true, dst, MEM, MEM))));
+}
+
 /// Every heap row the library holds, canonical, once.
 pub fn heap_library() -> Vec<HeapCode> {
     let places = Places::all();
@@ -215,12 +231,7 @@ pub fn heap_library() -> Vec<HeapCode> {
         }
         rows.extend(srcs.iter().map(|&a| heap_canonical((GLOBAL_STORE_ROW, entry, MEM, a, MEM))));
     }
-    for &dst in &dsts {
-        rows.extend(srcs.iter().map(|&b| heap_canonical((TYPED_INDEX_ROW, true, dst, MEM, b))));
-    }
-    for (&a, &b) in srcs.iter().flat_map(|a| srcs.iter().map(move |b| (a, b))) {
-        rows.insert(heap_canonical((TYPED_STORE_ROW, true, MEM, a, b)));
-    }
+    typed_rows(&dsts, &srcs, &mut rows);
     for &dst in &dsts {
         rows.extend([THIS_ROW, LOAD_LOCAL_ROW, LOAD_CHECKED_ROW, ENV_ROW, LEXICAL_READ_ROW].map(|heap| heap_canonical((heap, false, dst, MEM, MEM))));
     }

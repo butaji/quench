@@ -87,7 +87,7 @@ pub(super) fn result_repr(row: &Decoded, reprs: &[Repr], widened: bool, numbers:
         return Repr::Tagged;
     }
     if let Some(heap) = row.heap {
-        return if heap.yields_tagged() { Repr::Tagged } else { heap_repr(numbers, widened) };
+        return if heap.yields_tagged() { Repr::Tagged } else if heap.yields_double() { Repr::Double } else { heap_repr(numbers, widened) };
     }
     kind_repr(row.kind, operand_repr(reprs, row.a).max(operand_repr(reprs, row.b)), widened)
 }

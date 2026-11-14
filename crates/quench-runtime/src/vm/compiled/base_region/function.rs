@@ -268,8 +268,8 @@ fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Planned>, Str
 /// slot is not kept current.
 fn framed(homes: &Homes, row: &Decoded) -> bool {
     let through = match row.heap {
-        Some(Heap::Store | Heap::TypedStore | Heap::SiteStore) => row.base,
-        Some(Heap::Index | Heap::TypedIndex | Heap::Array | Heap::Site | Heap::SiteChain | Heap::Length | Heap::Held | Heap::Identity) => row.a.and_then(register_of),
+        Some(Heap::Store | Heap::TypedStore(_) | Heap::SiteStore) => row.base,
+        Some(Heap::Index | Heap::TypedIndex(_) | Heap::TypedLength | Heap::Array | Heap::Site | Heap::SiteChain | Heap::Length | Heap::Held | Heap::Identity) => row.a.and_then(register_of),
         _ => None,
     };
     through.into_iter().all(|register| homes.place(register) == Place::Mem)

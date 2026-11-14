@@ -2,6 +2,8 @@
 //! arrays are read as dense backings or as typed elements, or nowhere (`Facts`).
 
 use super::*;
+use crate::heap::TypedArrayKind;
+use crate::staged::typed_elements::NativeKind;
 
 /// How a loop region's arrays are viewed on entry: not at all (each access proves its array's word), as
 /// dense arrays' backings or as typed arrays' elements, which the entry record holds (`ElementViews`).
@@ -9,14 +11,16 @@ use super::*;
 pub(in crate::vm::compiled) enum Views {
     Frame,
     Dense,
-    Typed,
+    /// Typed arrays of this native kind, which the entry proved.
+    Typed(TypedArrayKind),
 }
 
 impl From<ElementViews> for Views {
     fn from(views: ElementViews) -> Self {
         match views {
             ElementViews::Dense => Self::Dense,
-            ElementViews::Typed(_) => Self::Typed,
+            ElementViews::Typed(Some(kind)) if NativeKind::new(kind).is_some() => Self::Typed(kind),
+            ElementViews::Typed(_) => Self::Frame,
         }
     }
 }
@@ -41,16 +45,18 @@ pub(super) enum Facts {
 fn entry_array(region: &LoopRegion, facts: Facts, register: Register) -> u64 {
     // A row's hole is a u32 patch: an offset past it is looked up per access instead.
     match facts {
-        Facts::Entry { views: Views::Dense | Views::Typed, .. } => region.array_entry_offset(register).filter(|offset| u32::try_from(*offset).is_ok()).unwrap_or(0),
+        Facts::Entry { views: Views::Dense | Views::Typed(_), .. } => region.array_entry_offset(register).filter(|offset| u32::try_from(*offset).is_ok()).unwrap_or(0),
         Facts::Entry { views: Views::Frame, .. } | Facts::Site => 0,
     }
 }
 
-/// The row of an element access of the array `register` under `facts`, over the `typed` row where the
-/// entry viewed the array as a typed one, else the dense `heap` row: the record offset of its entry words
-/// (0 where it has none).
-pub(super) fn element_heap(region: &LoopRegion, facts: Facts, register: Register, (dense, typed): (Heap, Heap)) -> (Heap, u64) {
+/// The row of an element access of the array `register` under `facts`, over the typed row of the kind the
+/// entry viewed the array as (`typed`) where it did, else the dense `heap` row: with the record offset of its
+/// entry words (0 where it has none).
+pub(super) fn element_heap(region: &LoopRegion, facts: Facts, register: Register, (dense, typed): (Heap, fn(u8) -> Heap)) -> (Heap, u64) {
     let hole = entry_array(region, facts, register);
-    let viewed = hole != 0 && matches!(facts, Facts::Entry { views: Views::Typed, .. });
-    (if viewed { typed } else { dense }, hole)
+    match facts {
+        Facts::Entry { views: Views::Typed(kind), .. } if hole != 0 => (typed(kind as u8), hole),
+        _ => (dense, hole),
+    }
 }

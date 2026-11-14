@@ -56,7 +56,6 @@ pub(crate) mod typed_view;
 mod element_frame;
 pub(crate) use element_frame::ElementFrame;
 pub(crate) mod entry;
-pub(crate) mod entry_views;
 pub(crate) mod environment;
 pub(crate) mod ic;
 pub(crate) mod object;

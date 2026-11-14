@@ -265,7 +265,7 @@ pub(super) fn lane_loop_arrays<H: Host>(vm: &mut Vm<H>, r: Registers, region: &L
             // A typed array read through a field is no loop's hoisted view.
             array.field.is_none().then_some(())?;
             let (elements, length, kind) = vm.lane_typed_array_elements(value, array.written)?;
-            entry.push_array(elements, length, kind as usize)?;
+            entry.push_array(elements, length, length)?;
             ElementViews::Typed(Some(kind))
         };
         views = Some(views.map_or(Some(found), |seen: ElementViews| seen.common(found))?);

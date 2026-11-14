@@ -368,21 +368,23 @@ fn a_loop_function_that_has_run_long_compiles_under_the_measured_model() {
     assert!(vm.tier_events().count(crate::vm::tier_events::Event::Published) > 0, "the step runs as a lane body: {:?}", vm.tier_events());
 }
 
-/// A loop over typed arrays of several kinds runs as a b-jit region whose element rows read the typed
-/// views its entry recorded (`staged::entry_views`), the kind being the entry's word; the stores convert
-/// as the interpreter's do (the clamp, ToInt32, the binary32 rounding). The functions that index a typed
-/// parameter have no body (it would leave at its first element), so nothing leaves.
+/// A loop over a typed array runs as a b-jit region whose element and `length` rows read the typed view its entry
+/// recorded (`LoopEntry::push_array`), one row per element kind; the stores convert as the interpreter's do (the clamp,
+/// ToInt32, the binary32 rounding). The functions that index a typed parameter have no body (it would leave at its
+/// first element), so nothing leaves.
 #[test]
-fn a_loop_over_typed_arrays_runs_as_a_base_region_that_never_leaves() {
-    let source = r#"(function () {
-      function fill(a, n) { for (let i = 0; i < n; i++) a[i] = i * 0.25 - 3; }
-      function sum(a, n) { let s = 0; for (let i = 0; i < n; i++) s = s + a[i]; return s; }
-      const kinds = [new Float64Array(2048), new Int32Array(2048), new Uint8ClampedArray(2048), new Float32Array(2048)];
-      let total = 0;
-      for (let round = 0; round < 12; round++) for (const a of kinds) { fill(a, 2000); total = total + sum(a, 2000); }
-      globalThis.answer = total;
-    })();"#;
-    let run = assert_tier_agrees(source, Tier::BJit, Expect { completed: 0, leaves: 0 });
-    assert!(run.regions() > 0, "the loops run as regions: {:?}", run.events);
-    assert!(run.outcome.answer.is_some());
+fn a_loop_over_a_typed_array_runs_as_a_base_region_that_never_leaves() {
+    for kind in ["Float64Array", "Int32Array", "Uint8ClampedArray", "Float32Array", "Int8Array"] {
+        let source = format!(r#"(function () {{
+          function fill(a) {{ for (let i = 0; i < a.length; i++) a[i] = i * 0.25 - 3; }}
+          function sum(a) {{ let s = 0; for (let i = 0; i < a.length; i++) s = s + a[i]; return s; }}
+          const a = new {kind}(2000);
+          let total = 0;
+          for (let round = 0; round < 12; round++) {{ fill(a); total = total + sum(a); }}
+          globalThis.answer = total;
+        }})();"#);
+        let run = assert_tier_agrees(&source, Tier::BJit, Expect { completed: 0, leaves: 0 });
+        assert!(run.regions() > 0, "{kind}: the loops run as regions: {:?}", run.events);
+        assert!(run.outcome.answer.is_some());
+    }
 }

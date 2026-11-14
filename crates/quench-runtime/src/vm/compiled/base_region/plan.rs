@@ -140,7 +140,7 @@ impl Planned {
 fn heap_variant(heap: Heap, hole: u64, operand: Place) -> bool {
     match heap {
         Heap::Store | Heap::Index => hole != 0,
-        Heap::TypedStore | Heap::TypedIndex => true,
+        Heap::TypedStore(_) | Heap::TypedIndex(_) | Heap::TypedLength => true,
         Heap::SiteChain | Heap::ThisChain | Heap::ThisHeld => true,
         Heap::GlobalStore => operand == Place::Mem,
         _ => false,
@@ -169,10 +169,10 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
 pub(super) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bool, holes @ [dst_hole, a_hole, b_hole]: [u64; 3]) -> [u64; HOLES] {
     let base = if entry { decoded.hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
     site_holes(decoded, heap, base, holes).or_else(|| global_holes(decoded, heap, holes)).or_else(|| slot_holes(heap, dst_hole, a_hole)).or_else(|| test_holes(decoded, heap, dst_hole, a_hole)).unwrap_or_else(|| padded_holes(match heap {
-        Heap::Store | Heap::TypedStore => [base, a_hole, b_hole],
+        Heap::Store | Heap::TypedStore(_) => [base, a_hole, b_hole],
         Heap::This => [dst_hole, 0, 0],
-        Heap::Index | Heap::TypedIndex if entry => [dst_hole, decoded.hole, b_hole],
-        Heap::Field => [dst_hole, decoded.hole, 0],
+        Heap::Index | Heap::TypedIndex(_) if entry => [dst_hole, decoded.hole, b_hole],
+        Heap::Field | Heap::TypedLength => [dst_hole, decoded.hole, 0],
         Heap::Instanceof => {
             let link = decoded.instanceof.map_or(0, |(_, fact)| u64::from(fact.link));
             [dst_hole | a_hole << numeric::library::SITE_OBJECT_AT, b_hole | link << numeric::library::HELD_LINK_AT, decoded.hole]

@@ -256,8 +256,10 @@ fn field_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instructi
     if let Some(FieldLookup::Atom { atom, base, .. }) = instruction.field_lookup()
         && known.names_length(atom)
     {
-        let array = Some(Source::Register(base.register_index()?));
-        return Some(Decoded::heap(Heap::Length, Some(instruction.result_register()), array, None));
+        let register = base.register_index()?;
+        let (heap, hole) = element_heap(region, facts, register, (Heap::Length, |_| Heap::TypedLength));
+        let row = Decoded::heap(heap, Some(instruction.result_register()), Some(Source::Register(register)), None);
+        return Some(Decoded { hole: if heap == Heap::TypedLength { hole } else { 0 }, ..row });
     }
     match facts {
         Facts::Entry { writes: false, .. } => recorded_field(region, pc, instruction).or_else(|| site_row(known, instruction)),

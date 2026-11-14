@@ -140,31 +140,28 @@ fn element_address<S: Stage>(stage: &mut S, values: S::Word, index: S::Word, kin
     stage.add(values, offset)
 }
 
-/// What `access` makes of the element the kind word `kind` names: the arm of the first of
-/// `ELEMENTS` it equals, and a kind none names leaves at `miss`. The arms are one nested choice
-/// each, unrolled where the macro is used, so no stage meets a recursion or a call: a stencil row
-/// is straight code. Indices are positions in `ELEMENTS`.
-macro_rules! by_word {
-    ($stage:ident, $kind:ident, $access:ident, $miss:ident; $last:literal) => {{
-        let named = $stage.eq_imm($kind, ELEMENTS[$last].kind as u64);
-        $stage.guard(named, $miss)?;
-        $access($stage, ELEMENTS[$last])
-    }};
-    ($stage:ident, $kind:ident, $access:ident, $miss:ident; $first:literal, $($rest:literal),+) => {{
-        let named = $stage.eq_imm($kind, ELEMENTS[$first].kind as u64);
-        $stage.choose_leaving(named, |stage| $access(stage, ELEMENTS[$first]),
-            |stage| by_word!(stage, $kind, $access, $miss; $($rest),+))
-    }};
+/// What `access` makes of the element the kind word `kind` names, one arm per kind of `kinds`
+/// from the first; a kind no arm names leaves at `miss`.
+fn by_word<S: Stage>(stage: &mut S, kind: S::Word, (first, rest): (NativeKind, &[NativeKind]),
+    access: &dyn Fn(&mut S, NativeKind) -> Option<S::Word>, miss: S::Miss) -> Option<S::Word> {
+    let named = stage.eq_imm(kind, first.kind as u64);
+    match rest.split_first() {
+        None => {
+            stage.guard(named, miss)?;
+            access(stage, first)
+        }
+        Some((next, rest)) => stage.choose_leaving(named, |stage| access(stage, first),
+            |stage| by_word(stage, kind, (*next, rest), access, miss)),
+    }
 }
 
 /// What `access` makes of the element `kind` names: the one arm of a kind the proof fixed, else
 /// the arm of the kind word that matches.
-#[inline(always)]
 fn by_kind<S: Stage>(stage: &mut S, kind: ViewKind<S::Word>,
-    access: impl Fn(&mut S, NativeKind) -> Option<S::Word>, miss: S::Miss) -> Option<S::Word> {
+    access: &dyn Fn(&mut S, NativeKind) -> Option<S::Word>, miss: S::Miss) -> Option<S::Word> {
     match kind {
         ViewKind::Static(native) => access(stage, native),
-        ViewKind::Dynamic(word) => by_word!(stage, word, access, miss; 0, 1, 2, 3, 4, 5, 6, 7, 8),
+        ViewKind::Dynamic(word) => by_word(stage, word, (ELEMENTS[0], &ELEMENTS[1..]), access, miss),
     }
 }
 
@@ -179,7 +176,7 @@ pub(crate) fn typed_read<S: NumericStage>(stage: &mut S, view: TypedView<S::Word
         let address = element_address(stage, view.values, index, native.kind);
         Some(load_number(stage, native.element, address))
     };
-    by_kind(stage, view.kind, access, miss)
+    by_kind(stage, view.kind, &access, miss)
 }
 
 /// Stores the Number `number` at element `index` of `view`: past the elements, of a kind
@@ -193,5 +190,5 @@ pub(crate) fn typed_write<S: NumericStage>(stage: &mut S, view: TypedView<S::Wor
         let address = element_address(stage, view.values, index, native.kind);
         store_number(stage, native.element, address, number, miss).map(|()| number)
     };
-    by_kind(stage, view.kind, access, miss).map(|_| ())
+    by_kind(stage, view.kind, &access, miss).map(|_| ())
 }
