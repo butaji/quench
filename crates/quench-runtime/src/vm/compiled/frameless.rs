@@ -68,9 +68,9 @@ struct CallEntry {
 /// The per-VM storage of frameless calls. The windows are never scanned: no collection runs
 /// while one is live, since every exit from native code makes their frames first.
 pub(crate) struct Frameless {
-    windows: Box<[Value]>,
-    shadow: Box<[ShadowRecord]>,
-    cache: Box<[CallEntry]>,
+    /// The windows, shadow records and call cache, made when native code first binds them
+    /// (`bind`): a VM that runs no native body keeps none of their 0.6 MiB resident.
+    stacks: std::sync::OnceLock<FramelessStacks>,
     /// Each function's last admission, by function index, with its program and closure
     /// environment: a fresh closure of it shares all but its callee and captures (`admit`).
     functions: Vec<(u32, Value, CallEntry)>,
@@ -81,44 +81,72 @@ pub(crate) struct Frameless {
 
 impl Default for Frameless {
     fn default() -> Self {
-        let empty = ShadowRecord { call_pc: 0, this: Value::UNDEFINED, callee: Value::UNDEFINED };
         Self {
-            windows: vec![Value::UNDEFINED; WINDOW_VALUES].into_boxed_slice(),
-            shadow: vec![empty; SHADOW_RECORDS].into_boxed_slice(),
-            cache: vec![CallEntry::default(); CACHE_ENTRIES].into_boxed_slice(),
+            stacks: std::sync::OnceLock::new(),
             functions: Vec::new(),
             materializations: rustc_hash::FxHashMap::default(),
         }
     }
 }
 
+/// `Frameless`'s storage, which native code addresses directly: its boxes never move once made.
+struct FramelessStacks {
+    windows: Box<[Value]>,
+    shadow: Box<[ShadowRecord]>,
+    cache: Box<[CallEntry]>,
+}
+
+impl FramelessStacks {
+    fn new() -> Self {
+        let empty = ShadowRecord { call_pc: 0, this: Value::UNDEFINED, callee: Value::UNDEFINED };
+        Self {
+            windows: vec![Value::UNDEFINED; WINDOW_VALUES].into_boxed_slice(),
+            shadow: vec![empty; SHADOW_RECORDS].into_boxed_slice(),
+            cache: vec![CallEntry::default(); CACHE_ENTRIES].into_boxed_slice(),
+        }
+    }
+}
+
 impl Frameless {
+    fn stacks(&self) -> &FramelessStacks {
+        self.stacks.get_or_init(FramelessStacks::new)
+    }
+
+    fn cache_mut(&mut self) -> &mut [CallEntry] {
+        self.stacks();
+        &mut self.stacks.get_mut().expect("made above").cache
+    }
+
     /// Binds a general entry's payload to empty stacks: a native entry starts with no
     /// frameless activation live (`leave`).
     pub(super) fn bind(&self, dispatch: &mut JsStepDispatch) {
-        let windows = self.windows.as_ptr_range();
-        let shadow = self.shadow.as_ptr_range();
+        let stacks = self.stacks();
+        let windows = stacks.windows.as_ptr_range();
+        let shadow = stacks.shadow.as_ptr_range();
         (dispatch.native_top, dispatch.native_end) = (windows.start as usize, windows.end as usize);
         (dispatch.shadow_top, dispatch.shadow_end) = (shadow.start as usize, shadow.end as usize);
-        dispatch.call_cache = self.cache.as_ptr() as usize;
+        dispatch.call_cache = stacks.cache.as_ptr() as usize;
     }
 
     /// Whether the payload runs inside a frameless activation.
     #[cfg(feature = "native-execution")]
     pub(super) fn inside(&self, dispatch: &JsStepDispatch) -> bool {
-        dispatch.shadow_top != self.shadow.as_ptr() as usize
+        dispatch.shadow_top != self.stacks().shadow.as_ptr() as usize
     }
 
     /// Forgets every admission (`Vm::clear_call_targets`).
     pub(in crate::vm) fn clear(&mut self) {
-        self.cache.fill(CallEntry::default());
+        if let Some(stacks) = self.stacks.get_mut() {
+            stacks.cache.fill(CallEntry::default());
+        }
         self.functions.clear();
     }
 
     #[cfg(feature = "native-execution")]
     fn live(&self, dispatch: &JsStepDispatch) -> &[ShadowRecord] {
-        let count = (dispatch.shadow_top - self.shadow.as_ptr() as usize) / size_of::<ShadowRecord>();
-        &self.shadow[..count]
+        let shadow = &self.stacks().shadow;
+        let count = (dispatch.shadow_top - shadow.as_ptr() as usize) / size_of::<ShadowRecord>();
+        &shadow[..count]
     }
 }
 
@@ -171,7 +199,7 @@ pub(super) fn chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch
     let live = vm.frameless.live(dispatch);
     let continues = live.iter().skip(1).map(|record| record.call_pc as u32).chain([pc]);
     // An admitted callee is a user function of the entry's program; its window follows (`emit_enter`).
-    let mut window = vm.frameless.windows.as_ptr();
+    let mut window = vm.frameless.stacks().windows.as_ptr();
     let records: Vec<_> = live.iter().zip(continues).map(|(record, source_pc)| {
         let Some(crate::heap::FunctionKind::User(_, function)) = vm.heap.function(record.callee).map(|callee| callee.kind)
             else { unreachable!("a frameless callee is an admitted user function") };
