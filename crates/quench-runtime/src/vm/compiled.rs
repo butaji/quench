@@ -4590,6 +4590,15 @@ pub unsafe extern "C" fn native_js_operation_entry<H: Host, const OPCODE: usize>
     unsafe { js_semantic_callout::<H, true, OPCODE>(context.cast(), pc, arguments, result) }
 }
 
+/// Whether the callout's step pushed a frame: it runs in the program its push made active, so
+/// the program that was running when the code was entered is not made active again over it.
+#[cfg(feature = "native-execution")]
+fn pushed_a_frame<E>(called: &Result<Result<JsCalloutStep, JsError>, E>) -> bool {
+    matches!(called, Ok(Ok(JsCalloutStep::Stop(JsNativeStep {
+        result: Ok(StepResult::PushFrame { .. } | StepResult::ResumeFrames(_)), ..
+    }))))
+}
+
 #[cfg(feature = "native-execution")]
 unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCODE: usize>(
     context: *mut CallContext,
@@ -4989,7 +4998,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         }
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
-    if let Some(previous) = entered_from.get() {
+    if let Some(previous) = entered_from.get().filter(|_| !pushed_a_frame(&called)) {
         // SAFETY: the context's VM outlives the callout.
         unsafe { &mut *context_ref.vm.cast::<Vm<H>>() }.set_active_program(previous);
     }
