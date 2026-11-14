@@ -206,7 +206,7 @@ impl Heap {
         unsafe { self.slots.get_unchecked(index) }.cell.as_ref()
     }
 
-    pub fn get_mut(&mut self, value: Value) -> Option<&mut Cell> {
+    #[inline] pub fn get_mut(&mut self, value: Value) -> Option<&mut Cell> {
         let HeapReference::LegacySlot(index) = value.heap_reference()? else {
             return None;
         };

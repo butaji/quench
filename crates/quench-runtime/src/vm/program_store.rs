@@ -1303,7 +1303,7 @@ impl ProgramStore {
         if let Some(existing) = &entry.wasm_signatures {
             return Rc::ptr_eq(existing, signatures);
         }
-        if entry.residual.validate().is_err()
+        if entry.residual.validate_unless_proven().is_err()
             || signatures.defined_count() != entry.residual.function_count()
         {
             return false;
@@ -1437,7 +1437,7 @@ impl ProgramStore {
             .defined_signature(index)
     }
 
-    pub(crate) fn wasm_signatures(&self, id: ProgramId) -> Option<&crate::wasm::WasmSignatures> {
+    #[inline] pub(crate) fn wasm_signatures(&self, id: ProgramId) -> Option<&crate::wasm::WasmSignatures> {
         self.entry(id)?.wasm_signatures.as_deref()
     }
 
@@ -2776,7 +2776,7 @@ const LANE_VIEW_FIRST_CHUNK: usize = 8;
 pub(super) type LaneViewCell = std::cell::OnceCell<std::ptr::NonNull<super::dispatch_fast::LaneView>>;
 
 /// The view a cell holds, if its function's was derived.
-pub(super) fn derived_lane_view(cell: &LaneViewCell) -> Option<&super::dispatch_fast::LaneView> {
+#[inline(always)] pub(super) fn derived_lane_view(cell: &LaneViewCell) -> Option<&super::dispatch_fast::LaneView> {
     // SAFETY: a cell points into its table's arena (`LaneViews::store`), which outlives it.
     cell.get().map(|view| unsafe { view.as_ref() })
 }

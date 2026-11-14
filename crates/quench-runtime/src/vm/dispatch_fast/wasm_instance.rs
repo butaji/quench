@@ -8,7 +8,11 @@ lane_handler! {
     pub(super) fn lane_instance_binding<MEMORY: bool>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let env = vm.frames[unsafe { (*cx).frame }].env;
-        let Some(value) = vm.heap.environment_slot(env, i.imm() as usize) else {
+        // An instance's bindings are its own, never shared with another environment.
+        let Some(Cell::Environment { slots, .. }) = vm.heap.get(env) else {
+            return exit(ip);
+        };
+        let Some(value) = slots.owned(i.imm() as usize) else {
             return exit(ip);
         };
         r.set(i.a, value);

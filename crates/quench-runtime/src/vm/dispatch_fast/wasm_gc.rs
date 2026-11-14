@@ -1,6 +1,12 @@
 //! Wasm GC operations the lane makes in place with the interpreter's own step for them
 //! (`Vm::wasm_gc_value_step`), rather than leaving for the general loop at each.
 use super::*;
+use super::super::dispatch_wasm::{wasm_gc_allocates, wasm_gc_field_op, wasm_gc_reads_instance};
+
+/// The `wasm_gc_value_op` numbered `OP`.
+const fn gc_op<const OP: u16>() -> Op {
+    Op::from_index(OP as usize).expect("a Wasm GC opcode")
+}
 
 lane_handler! {
     /// The `wasm_gc_value_op` numbered `OP` of the running function's registers, made by the
@@ -10,18 +16,32 @@ lane_handler! {
     #[inline(never)]
     fn lane_wasm_gc_step<OP: u16>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
+        let op = const { gc_op::<OP>() };
         // SAFETY: the context outlives the lane run.
         let (program, frame) = unsafe { ((*cx).program, (*cx).frame) };
-        let op = const { Op::from_index(OP as usize).expect("a Wasm GC opcode") };
+        let env = if const { wasm_gc_reads_instance(gc_op::<OP>()) } { vm.frames[frame].env } else { Value::UNDEFINED };
         let instruction = WideInstruction::new(op, i.a, i.b, i.c, i.imm());
-        let Ok(value) = vm.wasm_gc_value_step(program, vm.frames[frame].env, instruction, |_, register| r.get(register)) else {
+        // A field access allocates nothing and reads no instance state: a miss, which traps,
+        // takes the general path, which raises it.
+        if const { wasm_gc_field_op(gc_op::<OP>()) } {
+            let Ok(Some(value)) = vm.wasm_gc_field_hit(instruction, |_, register| r.get(register)) else {
+                return exit(ip);
+            };
+            if let Some(value) = value {
+                r.set(instruction.result_register(), value);
+            }
+            next!(cx, r, following(ip), view)
+        }
+        let Ok(value) = vm.wasm_gc_value_step(program, env, instruction, |_, register| r.get(register)) else {
             return exit(ip);
         };
         if let Some(value) = value {
             r.set(instruction.result_register(), value);
         }
-        // The step may allocate, which can make a collection due.
-        note_allocation(vm);
+        // An allocating step can make a collection due.
+        if const { wasm_gc_allocates(gc_op::<OP>()) } {
+            note_allocation(vm);
+        }
         next!(cx, r, following(ip), view)
     }
 }

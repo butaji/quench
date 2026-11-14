@@ -91,7 +91,7 @@ impl WideInstruction {
         }
     }
 
-    pub(crate) const fn new(op: Op, a: u16, b: u16, c: u16, imm: u32) -> Self {
+    #[inline(always)] pub(crate) const fn new(op: Op, a: u16, b: u16, c: u16, imm: u32) -> Self {
         Self { op, a, b, c, imm }
     }
 
@@ -163,7 +163,7 @@ macro_rules! layout_accessors {
                 }
             }
 
-            pub(crate) fn result_register(self) -> Register {
+            #[inline(always)] pub(crate) fn result_register(self) -> Register {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::A),
                     FieldLayout::ResultRegister

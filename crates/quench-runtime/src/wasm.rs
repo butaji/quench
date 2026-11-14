@@ -832,11 +832,7 @@ impl Engine {
             };
             let memory_registers: Vec<_> =
                 form.memories.iter().copied().map(&mut reserve).collect();
-            let mut accessed = form.globals.iter().peekable();
-            let global_registers: Vec<_> = (0..globals.len() as u32)
-                .map(|global| accessed.next_if_eq(&&global).is_some())
-                .map(&mut reserve)
-                .collect();
+            let global_registers: Vec<_> = form.globals.iter().map(|&global| (global, reserve(true).expect("a reserved register"))).collect();
             let local_base = (usize::from(reserved) + usize::from(local_count)
                 <= MAX_REGISTER_LOCALS)
                 .then_some(reserved);
@@ -885,17 +881,10 @@ impl Engine {
                     }
                 }
             }
-            let global_slots = lowering.global_registers.iter().copied().enumerate();
-            let memory_slots = lowering
-                .memory_registers
-                .iter()
-                .copied()
-                .enumerate()
-                .map(|(memory, register)| (lowering.globals.len() + memory, register));
-            let bindings: Vec<_> = global_slots
-                .chain(memory_slots)
-                .filter_map(|(slot, register)| Some((slot, register?)))
-                .collect();
+            let global_slots = lowering.global_registers.iter().map(|&(global, register)| (global as usize, register));
+            let memory_slots = lowering.memory_registers.iter().enumerate()
+                .filter_map(|(memory, register)| Some((lowering.globals.len() + memory, (*register)?)));
+            let bindings: Vec<_> = global_slots.chain(memory_slots).collect();
             for (slot, register) in bindings {
                 lowering.emit(Op::WasmInstanceBinding, register, 0, 0, slot as u32)?;
             }
@@ -1000,9 +989,8 @@ impl Engine {
             load_encoding: Default::default(),
             closure_reads: None,
         };
-        program
-            .validate()
-            .map_err(|e| Diagnostic::unsupported(name, e))?;
+        program.validate().map_err(|e| Diagnostic::unsupported(name, e))?;
+        program.validated.establish();
         Ok(WasmModule {
             program: Rc::new(program),
             signatures: Rc::new(signature_pool),
@@ -1224,6 +1212,8 @@ mod tests {
                 }],
             )
             .unwrap();
+            // The mutated program is a clone, which starts unproven (`ValidationProof`).
+            let held = Rc::clone(&function.module.program);
             let residual = &mut Rc::make_mut(&mut function.module.program).functions[0];
             let pc = residual.code.iter().position(|i| i.op() == opcode).unwrap();
             let index = residual.wide.len();
@@ -1236,10 +1226,8 @@ mod tests {
                 u32::MAX,
             ));
             residual.code[pc] = Instr::wide(index).unwrap();
-            assert!(function.module.program.validate().is_err());
-            let error = crate::Runtime::new(crate::SystemHost)
-                .execute_wasm(&function, &[ty.default_value().unwrap()])
-                .unwrap_err();
+            assert!(function.module.program.validate().is_err() && !Rc::ptr_eq(&held, &function.module.program));
+            let error = crate::Runtime::new(crate::SystemHost).execute_wasm(&function, &[ty.default_value().unwrap()]).unwrap_err();
             assert_eq!(error.wasm_trap(), None);
         }
     }
@@ -1447,8 +1435,8 @@ struct Lowering<'a> {
     temporary_locals: u16,
     // Prologue-loaded binding register per memory used by direct accesses.
     memory_registers: Vec<Option<Register>>,
-    // Prologue-loaded binding register per global the body reads or writes.
-    global_registers: Vec<Option<Register>>,
+    // Prologue-loaded binding register per global the body reads or writes, by global index.
+    global_registers: Vec<(u32, Register)>,
     // First register of the Wasm locals when they live in frame registers.
     local_base: Option<Register>,
     // Operand-stack positions whose value is still a local register or a
@@ -1514,6 +1502,12 @@ enum WasmCallTarget {
 }
 
 impl Lowering<'_> {
+    /// The register the prologue loads `global`'s binding into, if the body accesses it.
+    fn global_register(&self, global: u32) -> Option<Register> {
+        let at = self.global_registers.binary_search_by_key(&global, |&(used, _)| used).ok()?;
+        Some(self.global_registers[at].1)
+    }
+
     fn emit(
         &mut self,
         op: Op,
@@ -1635,7 +1629,7 @@ impl Lowering<'_> {
         ) || matches!(
             operator,
             Operator::GlobalGet { global_index } | Operator::GlobalSet { global_index }
-                if matches!(self.global_registers.get(*global_index as usize), Some(Some(_)))
+                if self.global_register(*global_index).is_some()
         ) || (numeric_operator(operator).is_some() && !integer::wide_integer(operator))
             || simd::reads_aliases(operator) || reference::reads_aliases(operator)
             || memory::direct_access(operator).is_some_and(|(_, memarg)| {
@@ -2025,7 +2019,7 @@ impl Lowering<'_> {
                 if self.path == Reachability::Dead {
                     return Ok(());
                 }
-                if let Some(&Some(binding)) = self.global_registers.get(global_index as usize) {
+                if let Some(binding) = self.global_register(global_index) {
                     if write {
                         let value = self.pop()?;
                         return self.emit(Op::WasmGlobalSet, value, binding, 0, 0);

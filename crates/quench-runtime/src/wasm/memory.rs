@@ -370,7 +370,7 @@ macro_rules! loads {
             pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, wasmparser::MemArg)> {
                 match op { $(wasmparser::Operator::$name { memarg } => Some((Self::$name, *memarg)),)+ _ => None }
             }
-            pub(crate) const fn width(self) -> usize { match self { $(Self::$name => std::mem::size_of::<$word>(),)+ } }
+            #[inline(always)] pub(crate) const fn width(self) -> usize { match self { $(Self::$name => std::mem::size_of::<$word>(),)+ } }
             #[inline(always)]
             pub(crate) fn read(self, bytes: &[u8], address: u64) -> Result<WasmValue, WasmTrap> {
                 let range = checked_range(address, self.width(), bytes.len())?;
@@ -442,10 +442,10 @@ macro_rules! stores {
             pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, wasmparser::MemArg)> {
                 match op { $(wasmparser::Operator::$name { memarg } => Some((Self::$name, *memarg)),)+ _ => None }
             }
-            pub(crate) fn value_type(self) -> WasmType {
+            #[inline(always)] pub(crate) fn value_type(self) -> WasmType {
                 match self { $(Self::$name => WasmType::$variant,)+ }
             }
-            pub(crate) const fn width(self) -> usize { match self { $(Self::$name => std::mem::size_of::<$word>(),)+ } }
+            #[inline(always)] pub(crate) const fn width(self) -> usize { match self { $(Self::$name => std::mem::size_of::<$word>(),)+ } }
             #[inline(always)]
             pub(crate) fn write(self, bytes: &mut [u8], address: u64, value: WasmValue) -> Result<(), WasmTrap> {
                 let range = checked_range(address, self.width(), bytes.len())?;

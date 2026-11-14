@@ -136,11 +136,17 @@ impl<H: Host> Vm<H> {
         self.wasm_index_operand(value, ty)
     }
 
+    #[inline]
     pub(super) fn wasm_index_operand(
         &self,
         value: Value,
         ty: crate::WasmType,
     ) -> Result<u64, JsError> {
+        match (ty, value.as_int(), value.bits64()) {
+            (crate::WasmType::I32, Some(bits), _) => return Ok(u64::from(bits as u32)),
+            (crate::WasmType::I64, _, Some(bits)) => return Ok(bits),
+            _ => {}
+        }
         match self.decode_wasm_value(value, ty)? {
             crate::WasmValue::I32(value) => Ok(u64::from(value as u32)),
             crate::WasmValue::I64(value) => Ok(value as u64),
@@ -162,40 +168,6 @@ impl<H: Host> Vm<H> {
             Some(Cell::WasmTable { elements, .. }) => Ok(elements),
             _ => Err(JsError::validation("invalid Wasm table binding".into())),
         }
-    }
-
-    pub(super) fn wasm_indirect_target(
-        &self,
-        caller: ProgramId,
-        table: Value,
-        index: u64,
-        expected_index: u32,
-    ) -> Result<Value, JsError> {
-        let elements = self.wasm_table_elements(table)?;
-        let reference = usize::try_from(index)
-            .ok()
-            .and_then(|index| elements.get(index))
-            .copied()
-            .ok_or_else(|| JsError::wasm_trap_error(crate::WasmTrap::UndefinedElement))?;
-        if reference.is_null() {
-            return Err(JsError::wasm_trap_error(
-                crate::WasmTrap::UninitializedElement,
-            ));
-        }
-        let expected = self
-            .programs
-            .wasm_signatures(caller)
-            .filter(|pool| pool.type_signature(expected_index).is_some())
-            .ok_or_else(|| JsError::validation("invalid Wasm signature index".into()))?;
-        let matches = self
-            .wasm_callable_matches(reference, expected, expected_index, false)
-            .ok_or_else(|| JsError::validation("invalid Wasm function signature".into()))?;
-        if !matches {
-            return Err(JsError::wasm_trap_error(
-                crate::WasmTrap::IndirectCallTypeMismatch,
-            ));
-        }
-        Ok(reference)
     }
 
     pub(super) fn wasm_table_get(&self, table: Value, index: u64) -> Result<Value, JsError> {

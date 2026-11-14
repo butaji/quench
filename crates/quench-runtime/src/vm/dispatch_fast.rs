@@ -13186,9 +13186,9 @@ fn lane_native_value<H: Host>(
         Native::RegExpExec | Native::RegExpTest | Native::StringReplace | Native::StringMatch => {
             return lane_regexp_call(cx, ip, i, native, callee, receiver, args);
         }
-        // A generator's resumption runs its body, guest code that no in-place shortcut of
-        // `lane_string_or_native_call` makes.
-        Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow => {
+        // A generator's resumption runs its body, and a Wasm export its function: guest code
+        // that no in-place shortcut of `lane_string_or_native_call` makes.
+        Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow | Native::WasmExportedFunction => {
             return lane_call_native(cx, ip, native, callee, receiver, args);
         }
         // Neither a string method nor a pure native: the promise shortcut, else the native.
@@ -13211,7 +13211,7 @@ mod denoted;
 mod wasm_calls;
 mod capture_update_calls;
 use capture_update_calls::capture_update_call_handler;
-use wasm_calls::{known_call_handler, reference_call_handler};
+use wasm_calls::{known_call_handler, reference_call_handler, wasm_return_handler};
 use denoted::{denoted_handler, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
@@ -16380,10 +16380,12 @@ fn lane_script_call_frame<H: Host>(ip: Ip, room: usize) -> Ip {
 const LANE_SCRIPT_WINDOW: usize = 4 * ACTIVATION_FILL_BLOCK;
 
 /// A Wasm view's handler for `op` where it differs from a JavaScript view's: a reference call
-/// enters Wasm functions; a capture store's handler reads the context a Wasm view lacks.
+/// enters Wasm functions and a return completes a Wasm activation; a capture store's handler
+/// reads the context a Wasm view lacks.
 fn wasm_lane_handler<H: Host>(op: Op) -> Option<Option<LaneHandler>> {
     let call = LaneHandler { handler: reference_call_handler::<H>(), produces: false };
-    match op.class() { Class::Call => Some(Some(call)), Class::StoreCapture => Some(None), _ => None }
+    let ret = LaneHandler { handler: wasm_return_handler::<H>(), produces: false };
+    match op.class() { Class::Call => Some(Some(call)), Class::Return => Some(Some(ret)), Class::StoreCapture => Some(None), _ => None }
 }
 
 return_handler! {
