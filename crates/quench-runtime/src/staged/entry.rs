@@ -37,7 +37,6 @@ fn own_entry<S: Stage>(stage: &mut S, entry: S::Word) -> S::Cond {
 
 /// The slot the entry at `entry` names.
 #[inline(always)]
-#[allow(dead_code)] // read by the specializer's field-slot address (`vm/compiled.rs`)
 pub(crate) fn entry_slot<S: Stage>(stage: &mut S, entry: S::Word) -> S::Word {
     let slot = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.slot_offset as i32);
     stage.and_imm(slot, u64::from(u16::MAX))

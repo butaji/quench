@@ -70,6 +70,14 @@ impl<'b, B: Builds<'b>> MachineAccess for B {
         if private { builder.func.private_stores.push(store); }
     }
 
+    fn raw_atomic_load(&mut self, lane: Lane, flags: MemFlagsData, base: ir::Value) -> ir::Value {
+        self.function_builder().ins().atomic_load(machine_type(lane), flags, base)
+    }
+
+    fn stack_pointer(&mut self) -> ir::Value {
+        self.function_builder().ins().get_stack_pointer(types::I64)
+    }
+
     fn load_access(&mut self, access: Access, flags: MemFlagsData, address: ir::Value) -> ir::Value {
         let kind = Kind::of(access.ty).expect("a scalar access");
         let (cell, result) = (cell_lane(access.bytes), lane_of(kind.ir()));

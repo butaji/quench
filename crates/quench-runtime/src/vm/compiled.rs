@@ -41,7 +41,6 @@ use crate::staged::ConcreteWasm;
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName,
     condcodes::{FloatCC, IntCC},
-    immediates::{Ieee32, Ieee64},
     types,
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -1122,7 +1121,12 @@ impl LaneHelpers {
     /// bodies costs raytrace compile Ir +17.5%, run-only +0.6%).
     fn address(self, builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
         if self.names_symbols() { return lane_region::helper_symbol(builder, helper); }
-        self.table_address(builder.ins(), helper)
+        let mut stage = object_slots::emit(builder);
+        match self.table_address(helper) {
+            HelperAddress::Embedded(address) => stage.raw_const(crate::staged::machine::Lane::I64, address),
+            HelperAddress::Loaded { table, offset } =>
+                stage.raw_load(crate::staged::machine::Lane::I64, invariant(), table, offset),
+        }
     }
 
     /// Whether helpers are symbols a loader resolves, not table entries.
@@ -1130,21 +1134,26 @@ impl LaneHelpers {
         matches!(self, Self::Numeric | Self::Ahead)
     }
 
-    /// The address of `helper` in this process's table, embedded, or loaded from the bound one.
-    fn table_address<'f>(self, builder: impl ir::InstBuilder<'f>, helper: LaneHelper) -> ir::Value {
+    /// Where the address of `helper` in this process's table is: embedded, or loaded from the bound one.
+    fn table_address(self, helper: LaneHelper) -> HelperAddress {
         match self {
             Self::Numeric => unreachable!("a frameless Number region names its helper by symbol"),
             Self::Ahead => unreachable!("an ahead region names its helper by symbol"),
-            Self::Process(addresses) => builder.iconst(types::I64, addresses[helper as usize] as i64),
+            Self::Process(addresses) => HelperAddress::Embedded(addresses[helper as usize] as i64),
             #[cfg(feature = "aot")]
-            Self::Bound(table, _) => {
-                builder.load(types::I64, invariant(), table,
-                    (helper as usize * std::mem::size_of::<usize>()) as i32)
-            },
+            Self::Bound(table, _) => HelperAddress::Loaded {
+                table, offset: (helper as usize * std::mem::size_of::<usize>()) as i32 },
             #[cfg(feature = "aot")]
             Self::Linked(..) => unreachable!("linked helpers bind at region entry"),
         }
     }
+}
+
+/// Where a helper's address is: a constant, or an entry of the table a region bound.
+#[derive(Clone, Copy)]
+enum HelperAddress {
+    Embedded(i64),
+    Loaded { table: ir::Value, offset: i32 },
 }
 
 /// Immutable host-specific helper addresses, resolved by the running image.
@@ -1348,6 +1357,14 @@ impl Kind {
         match self {
             Self::I32 => crate::WasmType::I32,
             Self::I64 => crate::WasmType::I64,
+        }
+    }
+
+    fn lane(self) -> crate::staged::machine::Lane {
+        use crate::staged::machine::Lane;
+        match self {
+            Self::I32 => Lane::I32,
+            Self::I64 => Lane::I64,
         }
     }
 }
@@ -4586,15 +4603,13 @@ fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction
 
 #[cfg(feature = "aot")]
 pub(super) fn native_js_start_pc(builder: &mut FunctionBuilder<'_>, context: ir::Value) -> ir::Value {
-    let pointer = builder.func.signature.params[0].value_type;
-    let payload = builder.ins().load(
-        pointer, MemFlagsData::trusted(), context,
-        std::mem::offset_of!(CallContext, adapter_payload) as i32,
-    );
-    builder.ins().load(
-        types::I64, MemFlagsData::trusted(), payload,
-        std::mem::offset_of!(JsStepDispatch, start_pc) as i32,
-    )
+    use crate::staged::machine::Lane;
+    let pointer = emit_machine::lane_of(builder.func.signature.params[0].value_type);
+    let mut stage = object_slots::emit(builder);
+    let payload = stage.raw_load(pointer, MemFlagsData::trusted(), context,
+        std::mem::offset_of!(CallContext, adapter_payload) as i32);
+    stage.raw_load(Lane::I64, MemFlagsData::trusted(), payload,
+        std::mem::offset_of!(JsStepDispatch, start_pc) as i32)
 }
 
 /// Execute one compile-time-selected semantic operation and return its exact
@@ -5914,7 +5929,7 @@ fn dispatch_path(instructions: &[WideInstruction], plan: &Plan, start: usize) ->
 fn native_interrupt_pointer(builder: &mut FunctionBuilder<'_>, context: ir::Value, fault_poll: bool) -> ir::Value {
     let offset = if fault_poll { std::mem::offset_of!(CallContext, poll_start) as i32 }
         else { CONTEXT_INTERRUPT };
-    builder.ins().load(types::I64, invariant(), context, offset)
+    object_slots::emit(builder).raw_load(crate::staged::machine::Lane::I64, invariant(), context, offset)
 }
 
 /// The common native region core: builder, call context, interrupt check and its
@@ -5947,15 +5962,11 @@ impl<'b> RegionCore<'b> {
     /// Read the call context's interrupt flag. A JS region uses the result to
     /// take its exact-PC callout; scalar regions use it for termination exits.
     fn interrupt_requested(&mut self) -> ir::Value {
+        use crate::staged::machine::{Lane, Relation};
         let context = self.context;
         let pointer = native_interrupt_pointer(&mut self.builder, context, false);
-        let requested = self
-            .builder
-            .ins()
-            .atomic_load(types::I8, MemFlagsData::trusted(), pointer);
-        self.builder
-            .ins()
-            .icmp_imm_u(IntCC::NotEqual, requested, 0)
+        let requested = self.raw_atomic_load(Lane::I8, MemFlagsData::trusted(), pointer);
+        self.raw_compare_imm(Relation::NotEqual, requested, 0)
     }
 
     /// Checks for a termination request: a read of the poll page, which faults once one is
@@ -5965,9 +5976,7 @@ impl<'b> RegionCore<'b> {
         if let Some(poll) = self.poll {
             // The read faults once termination is requested, and the fault resumes as the
             // termination (`guard_fault`). Atomic, so it is neither merged nor dropped.
-            self.builder
-                .ins()
-                .atomic_load(types::I8, MemFlagsData::trusted(), poll);
+            self.raw_atomic_load(crate::staged::machine::Lane::I8, MemFlagsData::trusted(), poll);
             return;
         }
         let stop = self.interrupt_requested();
@@ -5980,7 +5989,7 @@ impl<'b> RegionCore<'b> {
             }
         };
         let next = self.builder.create_block();
-        self.builder.ins().brif(stop, termination, &[], next, &[]);
+        self.branch_if(stop, (termination, &[]), (next, &[]));
         self.builder.switch_to_block(next);
         self.builder.seal_block(next);
     }
@@ -6056,12 +6065,13 @@ impl<'b> Body<'b> {
 
     /// The register's value viewed as `ty`.
     fn read(&mut self, register: u16, ty: crate::WasmType) -> ir::Value {
+        use crate::staged::machine::{Lane, Unary};
         let variable = self.views(register)[view(ty)];
         let stored = self.builder.use_var(variable);
         if ty != crate::WasmType::I32 || self.int32_extension == Int32Extension::Sign {
             return stored;
         }
-        let value = self.builder.ins().ireduce(types::I32, stored);
+        let value = self.raw_unary(Unary::Narrow(Lane::I32), stored);
         self.extended[value] = stored.into();
         value
     }
@@ -6069,11 +6079,12 @@ impl<'b> Body<'b> {
     /// `value`, an i32, extended to 64 bits as `extension` does: the i32 view it was read
     /// from, if the view holds it so.
     fn extend(&mut self, value: ir::Value, extension: Int32Extension) -> ir::Value {
+        use crate::staged::machine::{Lane, Unary};
         match self.extended[value].expand() {
             Some(wide) if extension == self.int32_extension => wide,
             _ => match extension {
-                Int32Extension::Zero => self.builder.ins().uextend(types::I64, value),
-                Int32Extension::Sign => self.builder.ins().sextend(types::I64, value),
+                Int32Extension::Zero => self.raw_unary(Unary::ZeroExtend(Lane::I64), value),
+                Int32Extension::Sign => self.raw_unary(Unary::SignExtend(Lane::I64), value),
             },
         }
     }
@@ -6093,11 +6104,9 @@ impl<'b> Body<'b> {
 
     /// Define the register as `value` of type `ty`, in both views of its bits.
     fn write(&mut self, register: u16, ty: crate::WasmType, value: ir::Value) {
+        use crate::staged::machine::Unary;
         let other = counterpart(ty);
-        let converted = self
-            .builder
-            .ins()
-            .bitcast(scalar_ir(other), MemFlagsData::new(), value);
+        let converted = self.raw_unary(Unary::Bitcast(emit_machine::lane_of(scalar_ir(other))), value);
         let stored = self.view_value(ty, value);
         let converted = self.view_value(other, converted);
         let variables = self.views(register);
@@ -6212,22 +6221,15 @@ impl<H: Host> Emitter<'_, '_, H> {
 
     /// Define the register as the constant `bits` of width `kind`.
     fn write_constant(&mut self, register: u16, kind: Kind, bits: i64) {
+        use crate::staged::machine::Lane;
         self.known.retain(|(known, _)| *known != register);
         if kind == Kind::I32 && self.selectors.contains(&register) {
             self.known.push((register, bits as i32));
         }
         let (integer, float) = match kind {
             // The i32 view holds the constant zero-extended (`view_ir`).
-            Kind::I32 => (
-                self.body.core.builder
-                    .ins()
-                    .iconst(types::I64, i64::from(bits as u32)),
-                self.body.core.builder.ins().f32const(Ieee32::with_bits(bits as u32)),
-            ),
-            Kind::I64 => (
-                self.body.core.builder.ins().iconst(types::I64, bits),
-                self.body.core.builder.ins().f64const(Ieee64::with_bits(bits as u64)),
-            ),
+            Kind::I32 => (self.raw_const(Lane::I64, i64::from(bits as u32)), self.raw_const(Lane::F32, bits)),
+            Kind::I64 => (self.raw_const(Lane::I64, bits), self.raw_const(Lane::F64, bits)),
         };
         let float_type = counterpart(kind.integer());
         let variables = self.body.views(register);
@@ -6264,7 +6266,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     fn trap_if(&mut self, condition: ir::Value, trap: crate::WasmTrap) {
         let trap = self.trap_block(trap);
         let next = self.body.core.builder.create_block();
-        self.body.core.builder.ins().brif(condition, trap, &[], next, &[]);
+        self.branch_if(condition, (trap, &[]), (next, &[]));
         self.body.core.builder.switch_to_block(next);
         self.body.core.builder.seal_block(next);
     }
@@ -6274,39 +6276,37 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     fn finish_traps(&mut self) {
+        use crate::staged::machine::Lane;
         if let Some(block) = self.body.termination_block {
             self.body.core.builder.switch_to_block(block);
-            let status = self.body.core.builder.ins().iconst(types::I64, TERMINATED_STATUS);
+            let status = self.raw_const(Lane::I64, TERMINATED_STATUS);
             let mut values = vec![status];
             if let Some(ty) = self.plan.result {
                 let kind = Kind::of(ty).expect("planned");
-                values.push(self.body.core.builder.ins().iconst(kind.ir(), 0));
+                values.push(self.raw_const(kind.lane(), 0));
             }
-            self.body.core.builder.ins().return_(&values);
+            self.leave(&values);
         }
         for (index, block) in self.trap_blocks.into_iter().enumerate() {
             let Some(block) = block else { continue };
             self.body.core.builder.switch_to_block(block);
-            let status = self.body.core.builder.ins().iconst(types::I64, index as i64 + 1);
+            let status = self.raw_const(Lane::I64, index as i64 + 1);
             let mut values = vec![status];
             if let Some(ty) = self.plan.result {
                 let kind = Kind::of(ty).expect("planned");
-                values.push(self.body.core.builder.ins().iconst(kind.ir(), 0));
+                values.push(self.raw_const(kind.lane(), 0));
             }
-            self.body.core.builder.ins().return_(&values);
+            self.leave(&values);
         }
     }
 
     /// The address of the native slot of the global bound at `slot`: the instance's global area
     /// holds it, indexed by the binding.
     fn global_address(&mut self, slot: u32) -> ir::Value {
-        let table = self
-            .body.core.builder
-            .ins()
-            .load(types::I64, invariant(), self.body.core.context, CONTEXT_GLOBALS);
-        self.body.core.builder
-            .ins()
-            .load(types::I64, invariant(), table, (slot as usize * size_of::<*mut u64>()) as i32)
+        use crate::staged::machine::Lane;
+        let context = self.body.core.context;
+        let table = self.raw_load(Lane::I64, invariant(), context, CONTEXT_GLOBALS);
+        self.raw_load(Lane::I64, invariant(), table, (slot as usize * size_of::<*mut u64>()) as i32)
     }
 
     /// The binding the `b` register of instruction `pc` holds.
@@ -6323,18 +6323,14 @@ impl<H: Host> Emitter<'_, '_, H> {
         let unwound = self.body.core.builder.create_block();
         self.body.core.builder.set_cold_block(unwound);
         let next = self.body.core.builder.create_block();
-        self.body.core.builder.ins().brif(status, unwound, &[], next, &[]);
+        self.branch_if(status, (unwound, &[]), (next, &[]));
         self.body.core.builder.switch_to_block(unwound);
         self.body.core.builder.seal_block(unwound);
         let mut values = vec![status];
         if let Some(ty) = self.plan.result {
-            values.push(
-                self.body.core.builder
-                    .ins()
-                    .iconst(Kind::of(ty).expect("planned").ir(), 0),
-            );
+            values.push(self.raw_const(Kind::of(ty).expect("planned").lane(), 0));
         }
-        self.body.core.builder.ins().return_(&values);
+        self.leave(&values);
         self.body.core.builder.switch_to_block(next);
         self.body.core.builder.seal_block(next);
     }
@@ -6385,6 +6381,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         signature: &crate::WasmSignature,
         instruction: WideInstruction,
     ) {
+        use crate::staged::machine::{Lane, Unary};
         let word = types::I64.bytes();
         let signature = signature.clone();
         let words = signature.params.len() + 1;
@@ -6398,23 +6395,15 @@ impl<H: Host> Emitter<'_, '_, H> {
             let kind = Kind::of(*ty).expect("planned");
             let value = self.read(window.base + offset as u16, kind);
             let value = match kind {
-                Kind::I32 => self.body.core.builder.ins().uextend(types::I64, value),
+                Kind::I32 => self.raw_unary(Unary::ZeroExtend(Lane::I64), value),
                 Kind::I64 => value,
             };
-            let address =
-                self.body.core.builder
-                    .ins()
-                    .stack_addr(types::I64, slot, (offset as u32 * word) as i32);
-            self.body.core.builder
-                .ins()
-                .store(MemFlagsData::trusted(), value, address, 0);
+            let address = self.slot_address(slot, (offset as u32 * word) as i32);
+            self.raw_store(Lane::I64, MemFlagsData::trusted(), (value, false), address, 0);
         }
         let result_offset = (signature.params.len() as u32 * word) as i32;
-        let args = self.body.core.builder.ins().stack_addr(types::I64, slot, 0);
-        let out = self
-            .body.core.builder
-            .ins()
-            .stack_addr(types::I64, slot, result_offset);
+        let args = self.slot_address(slot, 0);
+        let out = self.slot_address(slot, result_offset);
         let callout_signature = match self.callout_signature {
             Some(signature) => signature,
             None => {
@@ -6428,28 +6417,18 @@ impl<H: Host> Emitter<'_, '_, H> {
                 callout
             }
         };
-        let target =
-            self.body.core.builder
-                .ins()
-                .load(types::I64, invariant(), self.body.core.context, CONTEXT_CALLOUT);
-        let function = self.body.core.builder.ins().iconst(types::I64, i64::from(function));
-        let call = self.body.core.builder.ins().call_indirect(
-            callout_signature,
-            target,
-            &[self.body.core.context, function, args, out],
-        );
-        let status = self.body.core.builder.inst_results(call)[0];
+        let context = self.body.core.context;
+        let target = self.raw_load(Lane::I64, invariant(), context, CONTEXT_CALLOUT);
+        let function = self.raw_const(Lane::I64, i64::from(function));
+        let status = self.call_signature(callout_signature, target, &[context, function, args, out])[0];
         self.propagate(status);
         let destination = instruction.result_register();
         match signature.results.first() {
             Some(ty) => {
                 let kind = Kind::of(*ty).expect("planned");
-                let bits = self
-                    .body.core.builder
-                    .ins()
-                    .load(types::I64, MemFlagsData::trusted(), out, 0);
+                let bits = self.raw_load(Lane::I64, MemFlagsData::trusted(), out, 0);
                 let value = match kind {
-                    Kind::I32 => self.body.core.builder.ins().ireduce(types::I32, bits),
+                    Kind::I32 => self.raw_unary(Unary::Narrow(Lane::I32), bits),
                     Kind::I64 => bits,
                 };
                 self.write(destination, kind, value);
@@ -6473,7 +6452,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             block = self.body.core.builder.create_block();
             self.pending.push((block, thread));
         }
-        self.body.core.builder.ins().jump(block, &[]);
+        self.goto(block, &[]);
     }
 
     /// A conditional transfer from `pc`. It checks for an interrupt when
@@ -6492,13 +6471,13 @@ impl<H: Host> Emitter<'_, '_, H> {
         let taken = self.edge(target);
         let next = self.edge(fallthrough);
         if target >= fallthrough {
-            self.body.core.builder.ins().brif(condition, taken, &[], next, &[]);
+            self.branch_if(condition, (taken, &[]), (next, &[]));
             return;
         }
         let exit = self.body.core.builder.create_block();
-        self.body.core.builder.ins().brif(condition, taken, &[], exit, &[]);
+        self.branch_if(condition, (taken, &[]), (exit, &[]));
         self.body.core.builder.switch_to_block(exit);
-        self.body.core.builder.ins().jump(next, &[]);
+        self.goto(next, &[]);
     }
 
     /// Whether an edge from `pc` to `target` checks for an interrupt: a back edge does, except
@@ -6629,7 +6608,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             return;
         };
         let target = self.block(target);
-        self.body.core.builder.ins().jump(target, &[]);
+        self.goto(target, &[]);
     }
 
     /// Emit the instruction at `pc`; returns whether control falls through.
@@ -6837,6 +6816,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             UserFuncName::User(function_name(index)),
             internal_signature(memory, &plan.params, plan.result, call_conv),
         );
+        use crate::staged::machine::{Lane, Relation};
         let mut builder_context = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
         let entry = builder.create_block();
@@ -6849,7 +6829,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         // A constant base folds into each access's addressing mode and
         // frees the register a parameter would occupy.
         let base = match fixed_base {
-            Some(fixed) => builder.ins().iconst(types::I64, i64::from(fixed)),
+            Some(fixed) => object_slots::emit(&mut builder).raw_const(crate::staged::machine::Lane::I64, i64::from(fixed)),
             None => passed.next().expect("a passed base"),
         };
         let length = memory
@@ -6930,16 +6910,9 @@ impl<'a, H: Host> Analysis<'a, H> {
             );
         }
         // Each activation checks the stack it may still use.
-        let stack_pointer = emitter.body.core.builder.ins().get_stack_pointer(types::I64);
-        let limit =
-            emitter
-                .body.core.builder
-                .ins()
-                .load(types::I64, invariant(), context, CONTEXT_STACK_LIMIT);
-        let exhausted = emitter
-            .body.core.builder
-            .ins()
-            .icmp(IntCC::UnsignedLessThan, stack_pointer, limit);
+        let stack_pointer = emitter.stack_pointer();
+        let limit = emitter.raw_load(Lane::I64, invariant(), context, CONTEXT_STACK_LIMIT);
+        let exhausted = emitter.raw_compare(Relation::UnsignedLess, stack_pointer, limit);
         emitter.trap_if(exhausted, crate::WasmTrap::CallStackExhausted);
         emitter.known.clear();
         emitter.jump(0, true);
@@ -6977,7 +6950,7 @@ impl<'a, H: Host> Analysis<'a, H> {
                 emitter.known.clear();
                 let block = emitter.block(pc);
                 if open {
-                    emitter.body.core.builder.ins().jump(block, &[]);
+                    emitter.goto(block, &[]);
                 }
                 emitter.body.core.builder.switch_to_block(block);
             }
@@ -6991,7 +6964,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             // now so falling into it stays explicit.
             if open && emitter.blocks.get(pc + 1).is_some_and(Option::is_some) {
                 let next = emitter.block(pc + 1);
-                emitter.body.core.builder.ins().jump(next, &[]);
+                emitter.goto(next, &[]);
                 open = false;
             }
         }
@@ -7022,6 +6995,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         plan: &Plan,
         memory: MemoryArguments,
     ) -> ir::Function {
+        use crate::staged::machine::{Lane, Unary};
         let call_conv = isa.default_call_conv();
         let signature = native_entry_signature(isa.pointer_type(), call_conv);
         let mut func = ir::Function::with_name_signature(
@@ -7042,53 +7016,40 @@ impl<'a, H: Host> Analysis<'a, H> {
             parameters[3],
             parameters[4],
         );
-        let context = if builder.func.dfg.value_type(context) == types::I64 {
-            context
-        } else {
-            builder.ins().uextend(types::I64, context)
-        };
-        let mut call_args = vec![context];
-        call_args.extend(memory.select(base, length));
-        for (offset, ty) in plan.params.iter().enumerate() {
-            let raw = builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                args,
-                (offset * 8) as i32,
-            );
-            call_args.push(match Kind::of(*ty).expect("planned") {
-                Kind::I32 => builder.ins().ireduce(types::I32, raw),
-                Kind::I64 => raw,
-            });
-        }
         let target_signature = builder.import_signature(internal_signature(
             memory,
             &plan.params,
             plan.result,
             call_conv,
         ));
-        let table = builder
-            .ins()
-            .load(types::I64, MemFlagsData::trusted(), context, CONTEXT_TABLE);
-        let target = builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            table,
-            (index * 8) as i32,
-        );
-        let call = builder
-            .ins()
-            .call_indirect(target_signature, target, &call_args);
-        let results = builder.inst_results(call).to_vec();
+        let wide_context = builder.func.dfg.value_type(context) == types::I64;
+        let mut stage = object_slots::emit(&mut builder);
+        let context = if wide_context {
+            context
+        } else {
+            stage.raw_unary(Unary::ZeroExtend(Lane::I64), context)
+        };
+        let mut call_args = vec![context];
+        call_args.extend(memory.select(base, length));
+        for (offset, ty) in plan.params.iter().enumerate() {
+            let raw = stage.raw_load(Lane::I64, MemFlagsData::trusted(), args, (offset * 8) as i32);
+            call_args.push(match Kind::of(*ty).expect("planned") {
+                Kind::I32 => stage.raw_unary(Unary::Narrow(Lane::I32), raw),
+                Kind::I64 => raw,
+            });
+        }
+        let table = stage.raw_load(Lane::I64, MemFlagsData::trusted(), context, CONTEXT_TABLE);
+        let target = stage.raw_load(Lane::I64, MemFlagsData::trusted(), table, (index * 8) as i32);
+        let results = stage.call_signature(target_signature, target, &call_args);
         if let Some(ty) = plan.result {
             let value = match Kind::of(ty).expect("planned") {
-                Kind::I32 => builder.ins().uextend(types::I64, results[1]),
+                Kind::I32 => stage.raw_unary(Unary::ZeroExtend(Lane::I64), results[1]),
                 Kind::I64 => results[1],
             };
-            builder.ins().store(MemFlagsData::trusted(), value, out, 0);
+            stage.raw_store(Lane::I64, MemFlagsData::trusted(), (value, false), out, 0);
         }
-        let status = builder.ins().ireduce(types::I32, results[0]);
-        builder.ins().return_(&[status]);
+        let status = stage.raw_unary(Unary::Narrow(Lane::I32), results[0]);
+        stage.leave(&[status]);
         builder.finalize(isa.frontend_config());
         func
     }

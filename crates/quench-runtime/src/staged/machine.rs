@@ -109,6 +109,10 @@ pub(crate) trait MachineAccess: MachineScalar {
     fn load_access(&mut self, access: Access, flags: Self::Flags, address: Self::Word) -> Self::Word;
     /// The low bytes of `value` as `access` at `address`.
     fn store_access(&mut self, access: Access, flags: Self::Flags, address: Self::Word, value: Self::Word);
+    /// An atomic load of the `lane` that `base` addresses: neither merged nor dropped.
+    fn raw_atomic_load(&mut self, lane: Lane, flags: Self::Flags, base: Self::Word) -> Self::Word;
+    /// The stack pointer.
+    fn stack_pointer(&mut self) -> Self::Word;
     /// The `width` word `offset` bytes from `base`.
     fn load_word(&mut self, width: Width, flags: Self::Flags, base: Self::Word, offset: i32) -> Self::Word {
         self.raw_load(width.into(), flags, base, offset)

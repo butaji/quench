@@ -95,9 +95,12 @@ pub(crate) fn number_bitwise<M: MachineScalar>(machine: &mut M, operation: Numbe
     }
 }
 
+/// The parameter lanes of the remainder leaf: its dividend and its divisor.
+const REMAINDER_PARAMETERS: [Lane; 2] = [Lane::F64, Lane::F64];
+
 /// The remainder of two binary64 Numbers: a call of the shared leaf, which touches no VM state.
 pub(crate) fn float_remainder<M: MachineAccess>(machine: &mut M, left: M::Word, right: M::Word) -> M::Word {
-    machine.call_leaf_lanes(number_remainder as *const () as usize, ([Lane::F64; 2].as_slice(), Lane::F64), &[left, right])
+    machine.call_leaf_lanes(number_remainder as *const () as usize, (REMAINDER_PARAMETERS.as_slice(), Lane::F64), &[left, right])
 }
 
 /// The ToBoolean stage of a machine: `number_truthiness`' predicates as comparison and bitwise rows.
