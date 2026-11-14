@@ -20582,9 +20582,14 @@ fn derive_lane_view<'live, H: Host>(
         Box::default()
     } else {
         let handlers: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
-        number_loop::NumberLoop::find(&decoded, constants, &jump_targets, &handlers, |operator, decrement, counter| {
-            update_loop_handler::<H>(operator, decrement, counter)
-        })
+        number_loop::NumberLoop::find(
+            &decoded,
+            constants,
+            &jump_targets,
+            &handlers,
+            |operator, decrement, counter| update_loop_handler::<H>(operator, decrement, counter),
+            |operator, decrement, capture| update_load_loop_handler::<H>(operator, decrement, capture),
+        )
         .into_boxed_slice()
     };
     for found in &number_loops {

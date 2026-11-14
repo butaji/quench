@@ -64,6 +64,17 @@ enum Instruction {
     Binary { dst: u16, operator: BinaryOperator, left: Operand, right: Operand },
     Write { base: u16, key: Operand, value: u16 },
     Move { dst: u16, src: Operand },
+    /// `dst = src ± 1`, an update inside the body.
+    Step { dst: u16, src: u16, decrement: bool },
+}
+
+/// The loop bound the header loads before the test, from a capture or a frame local: the
+/// body calls nothing and stores no binding, so the run loads it once.
+#[derive(Clone, Copy, Debug)]
+struct Bound {
+    register: u16,
+    capture: bool,
+    imm: u32,
 }
 
 /// The body planned for one assignment of entry kinds.
@@ -79,9 +90,11 @@ struct Plan {
 
 /// A loop `lane_number_loop` runs, which the view owns.
 pub(super) struct NumberLoop {
-    /// The update record (`U`) and the test record (`T`) by their PCs.
+    /// The update record (`U`) and the header the back edge enters (`T`, or the bound's
+    /// load before it) by their PCs.
     update: u32,
-    test: u32,
+    header: u32,
+    bound: Option<Bound>,
     counter: (u16, u16),
     decrement: bool,
     operator: u32,
@@ -107,7 +120,9 @@ pub(super) enum Ran {
 
 /// A rotated counted loop's records: test `T`, update `U`, the test's operator.
 struct Shape {
+    header: usize,
     test: usize,
+    bound: Option<Bound>,
     counter: (u16, u16),
     decrement: bool,
     operator: u32,
@@ -136,11 +151,15 @@ impl NumberLoop {
         jump_targets: &InstructionSet,
         handlers: &[*const ()],
         looped: impl Fn(u32, bool, bool) -> Handler,
+        loaded: impl Fn(u32, bool, bool) -> Handler,
     ) -> Vec<NumberLoop> {
         (0..decoded.len().saturating_sub(1))
             .filter_map(|update| {
                 let shape = shape(decoded, constants, update)?;
-                let fallback = looped(shape.operator, shape.decrement, decoded[shape.test].operand_b().register_index() == Some(shape.counter.0));
+                let fallback = match shape.bound {
+                    Some(bound) => loaded(shape.operator, shape.decrement, bound.capture),
+                    None => looped(shape.operator, shape.decrement, decoded[shape.test].operand_b().register_index() == Some(shape.counter.0)),
+                };
                 // Control enters the body only at its top, from the test.
                 let entered = (shape.test + 1..update).any(|pc| jump_targets.contains(pc));
                 (handlers[update] == fallback as *const () && !entered).then_some(())?;
@@ -165,7 +184,8 @@ impl NumberLoop {
         }
         Some(NumberLoop {
             update: update as u32,
-            test: shape.test as u32,
+            header: shape.header as u32,
+            bound: shape.bound,
             counter: shape.counter,
             decrement: shape.decrement,
             operator: shape.operator,
@@ -223,7 +243,7 @@ impl NumberLoop {
             test: (operand(self.test_operands.0)?, operand(self.test_operands.1)?),
             body,
             update: self.update,
-            test_pc: self.test,
+            test_pc: self.header,
         });
         Some(Plan { entry: entry.into_boxed_slice(), kinds, arrays, driver })
     }
@@ -247,6 +267,10 @@ impl NumberLoop {
 
     /// Runs the loop from its update record over `r`, the frame's registers.
     pub(super) fn run<H: Host>(&self, cx: *mut LaneContext<H>, vm: &mut Vm<H>, r: Registers) -> Ran {
+        if let Some(bound) = self.bound {
+            let Some(value) = load_bound(cx, vm, bound) else { return Ran::Decline };
+            r.set(bound.register, value);
+        }
         let Some(plan) = self.planned(vm, r) else { return Ran::Decline };
         let mut state = nodes::Ctx { slots: [0; SLOTS], values: [std::ptr::null_mut(); ARRAYS], lengths: [0; ARRAYS], at: 0 };
         if !resolve_arrays(vm, r, plan, &mut state) {
@@ -280,19 +304,45 @@ impl NumberLoop {
     }
 }
 
+/// The loop bound `bound` names, as the header would load it now.
+fn load_bound<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>, bound: Bound) -> Option<Value> {
+    if bound.capture {
+        let slots = capture_reads(unsafe { (*cx).capture });
+        // SAFETY: as `lane_inc_dec_load_loop`'s read of the same record.
+        unsafe { crate::heap::EnvironmentSlots::read_storage(slots, ImmediateLayout::capture_slot(bound.imm)) }
+    } else {
+        // SAFETY: as `lane_inc_dec_load_loop`'s local read.
+        Some(unsafe { vm.read_validated_local((*cx).frame, bound.imm as usize) })
+    }
+}
+
+/// The header load of a loop bound, when the back edge enters one before its test.
+fn bound_at(instruction: WideInstruction) -> Option<Bound> {
+    let capture = match instruction.op().class() {
+        Class::LoadCapture => true,
+        Class::LoadLocal | Class::LoadLocalPlain => false,
+        _ => return None,
+    };
+    Some(Bound { register: instruction.register_a(), capture, imm: instruction.imm() })
+}
+
 /// The rotated counted loop whose update record is `update`.
 fn shape(decoded: &[WideInstruction], constants: &[Value], update: usize) -> Option<Shape> {
     let (increment, back) = (decoded[update], decoded[update + 1]);
     if increment.op().class() != Class::IncDec || back.op().class() != Class::Jump {
         return None;
     }
-    let test = back.jump_target() as usize;
+    let header = back.jump_target() as usize;
+    let bound = decoded.get(header).copied().and_then(bound_at);
+    let test = header + usize::from(bound.is_some());
     let check = decoded.get(test).filter(|_| test < update)?;
     if check.op().class() != Class::JumpBinaryFalse || check.jump_target() as usize != update + 2 {
         return None;
     }
     Some(Shape {
+        header,
         test,
+        bound,
         counter: (increment.register_a(), increment.register_b()),
         decrement: increment.boolean_flag()?,
         operator: check.binary_operator_field(),
@@ -332,6 +382,7 @@ fn instruction(instruction: WideInstruction, constants: &[Value]) -> Option<Inst
             value: instruction.register_a(),
         },
         Class::Move => Instruction::Move { dst: instruction.register_a(), src: Operand::Register(instruction.register_b()) },
+        Class::IncDec => Instruction::Step { dst: instruction.register_a(), src: instruction.register_b(), decrement: instruction.boolean_flag()? },
         Class::LoadConst => {
             let value = *constants.get(instruction.constant_index())?;
             value.as_number()?;
@@ -411,7 +462,9 @@ impl Operand {
 impl Instruction {
     fn defined(self) -> Option<u16> {
         match self {
-            Instruction::Read { dst, .. } | Instruction::Binary { dst, .. } | Instruction::Move { dst, .. } => Some(dst),
+            Instruction::Read { dst, .. } | Instruction::Binary { dst, .. } | Instruction::Move { dst, .. } | Instruction::Step { dst, .. } => {
+                Some(dst)
+            }
             Instruction::Write { .. } => None,
         }
     }
@@ -423,7 +476,7 @@ impl Instruction {
             Instruction::Binary { left, right, .. } => [left.register(), right.register()],
             Instruction::Write { value, .. } => [Some(value), None],
             Instruction::Move { src, .. } => [src.register(), None],
-            Instruction::Read { .. } => [None, None],
+            Instruction::Read { .. } | Instruction::Step { .. } => [None, None],
         };
         operands.into_iter().flatten()
     }
@@ -434,6 +487,7 @@ impl Instruction {
             Instruction::Binary { left, right, .. } => [left.register(), right.register(), None],
             Instruction::Write { base, key, value } => [Some(base), key.register(), Some(value)],
             Instruction::Move { src, .. } => [src.register(), None, None],
+            Instruction::Step { src, .. } => [Some(src), None, None],
         };
         operands.into_iter().flatten()
     }

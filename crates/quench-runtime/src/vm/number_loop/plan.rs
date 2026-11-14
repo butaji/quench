@@ -15,6 +15,8 @@ pub(super) enum KeyForm {
     Int(u16),
     Double(u16),
     Constant(usize),
+    /// An int32 register stepped by one first (`x[++i]`), the step's own PC its leave.
+    Step { register: u16, decrement: bool, at: u32 },
 }
 
 /// One instruction's computation, with the operands it reads folded in.
@@ -27,6 +29,7 @@ pub(super) enum Tree {
     Numeric { operator: BinaryOperator, dst: u16, left: Box<Tree>, right: Box<Tree> },
     Bits { op: u8, dst: u16, left: Box<Tree>, right: Box<Tree> },
     Move { dst: u16, int: bool, src: Box<Tree> },
+    Step { dst: u16, src: u16, int: bool, decrement: bool, at: u32 },
 }
 
 impl Tree {
@@ -34,7 +37,7 @@ impl Tree {
     pub(super) fn is_int(&self) -> bool {
         match self {
             Tree::Int(_) | Tree::Bits { .. } => true,
-            Tree::Move { int, .. } => *int,
+            Tree::Move { int, .. } | Tree::Step { int, .. } => *int,
             Tree::Constant(number) => i32_of(*number).is_some(),
             _ => false,
         }
@@ -81,6 +84,7 @@ fn defines(kinds: &[Option<Kind>; SLOTS], instruction: Instruction) -> Option<(u
             Some((dst, if int { Kind::Int } else { Kind::Double }))
         }
         Instruction::Move { dst, src } => Some((dst, operand_kind(kinds, src).unwrap_or(Kind::Double))),
+        Instruction::Step { dst, src, .. } => Some((dst, kinds[usize::from(src)].unwrap_or(Kind::Double))),
         Instruction::Write { .. } => None,
     }
 }
@@ -126,11 +130,46 @@ impl<'a> Builder<'a> {
 
     /// Every step, in order; `None` where a step needs what its kinds cannot give.
     pub(super) fn build(mut self) -> Option<Self> {
-        for &(at, instruction) in self.found.body.iter() {
-            self.step(at, instruction)?;
+        let body = &self.found.body;
+        let mut index = 0;
+        while index < body.len() {
+            let (at, instruction) = body[index];
+            match (instruction, body.get(index + 1)) {
+                // `x[++i]`: the update folds into the read's key.
+                (Instruction::Step { dst, src, decrement }, Some(&(read_at, Instruction::Read { dst: read, base, key: Operand::Register(key) })))
+                    if dst == src && key == dst && self.kinds[usize::from(dst)] == Some(Kind::Int) =>
+                {
+                    self.read(read_at, read, base, KeyForm::Step { register: dst, decrement, at })?;
+                    index += 2;
+                }
+                _ => {
+                    self.step(at, instruction)?;
+                    index += 1;
+                }
+            }
         }
         self.flush();
         Some(self)
+    }
+
+    /// A read whose key form the caller chose; nothing folds into a key.
+    fn read(&mut self, at: u32, dst: u16, base: u16, key: KeyForm) -> Option<()> {
+        if self.temporary(base) || matches!(key, KeyForm::Int(register) | KeyForm::Double(register) if self.temporary(register)) {
+            self.flush();
+        }
+        let tree = Tree::Read { dst, array: self.array(base, false)?, key, at };
+        self.define(dst, tree);
+        Some(())
+    }
+
+    /// A tree defining `dst`: pending when `dst` is a temporary, else its own statement.
+    fn define(&mut self, dst: u16, tree: Tree) {
+        if self.reads_of(dst) == 1 && self.defs_of(dst) == 1 && dst != self.found.counter.0 {
+            self.pending.push((dst, tree));
+        } else {
+            self.flush();
+            self.statements.push(Statement::Tree(tree));
+        }
     }
 
     fn step(&mut self, at: u32, instruction: Instruction) -> Option<()> {
@@ -162,14 +201,12 @@ impl<'a> Builder<'a> {
                 let (left, right) = (Box::new(self.operand(left)), Box::new(self.operand(right)));
                 binary_tree(dst, self.kinds[usize::from(dst)]?, operator, left, right)
             }
+            Instruction::Step { dst, src, decrement } => {
+                let int = self.kinds[usize::from(dst)]? == Kind::Int;
+                Tree::Step { dst, src, int, decrement, at }
+            }
         };
-        let dst = instruction.defined()?;
-        if self.reads_of(dst) == 1 && self.defs_of(dst) == 1 && dst != self.found.counter.0 {
-            self.pending.push((dst, tree));
-        } else {
-            self.flush();
-            self.statements.push(Statement::Tree(tree));
-        }
+        self.define(instruction.defined()?, tree);
         Some(())
     }
 

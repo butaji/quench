@@ -115,9 +115,10 @@ impl<N: Num> NumNode for N {
     }
 }
 
-/// An array key: an index below 2^31, or `usize::MAX` for any other key.
+/// An array key: an index below 2^31, or `usize::MAX` for any other key; `None` where
+/// computing it left.
 pub(super) trait Key {
-    fn index(&self, cx: &Ctx) -> usize;
+    fn index(&self, cx: &mut Ctx) -> Option<usize>;
 }
 
 pub(super) struct IntKey(pub(super) u16);
@@ -126,25 +127,65 @@ pub(super) struct ConstantKey(pub(super) usize);
 
 impl Key for IntKey {
     #[inline(always)]
-    fn index(&self, cx: &Ctx) -> usize {
+    fn index(&self, cx: &mut Ctx) -> Option<usize> {
         // A negative int32 widens past every length.
-        cx.slot(self.0) as i32 as isize as usize
+        Some(cx.slot(self.0) as i32 as isize as usize)
     }
 }
 
 impl Key for DoubleKey {
     #[inline(always)]
-    fn index(&self, cx: &Ctx) -> usize {
+    fn index(&self, cx: &mut Ctx) -> Option<usize> {
         let number = f64::from_bits(cx.slot(self.0));
         let index = number as i32;
-        if index >= 0 && f64::from(index) == number { index as usize } else { usize::MAX }
+        Some(if index >= 0 && f64::from(index) == number { index as usize } else { usize::MAX })
     }
 }
 
 impl Key for ConstantKey {
     #[inline(always)]
-    fn index(&self, _: &Ctx) -> usize {
-        self.0
+    fn index(&self, _: &mut Ctx) -> Option<usize> {
+        Some(self.0)
+    }
+}
+
+/// `++register` or `--register` of an int32 slot, then its value as the key: an overflow
+/// leaves at the update, before it writes.
+pub(super) struct StepKey<const DECREMENT: bool> {
+    pub(super) register: u16,
+    pub(super) at: u32,
+}
+
+impl<const DECREMENT: bool> Key for StepKey<DECREMENT> {
+    #[inline(always)]
+    fn index(&self, cx: &mut Ctx) -> Option<usize> {
+        let stepped = step_int::<DECREMENT>(cx, self.register, self.register, self.at)?;
+        Some(stepped as isize as usize)
+    }
+}
+
+/// `dst = src ± 1` of an int32 slot; `None`, having left at `at`, where it overflows.
+#[inline(always)]
+pub(super) fn step_int<const DECREMENT: bool>(cx: &mut Ctx, dst: u16, src: u16, at: u32) -> Option<i32> {
+    let current = cx.slot(src) as i32;
+    let Some(next) = (if DECREMENT { current.checked_sub(1) } else { current.checked_add(1) }) else { return cx.leave(at) };
+    cx.set(dst, next as i64 as u64);
+    Some(next)
+}
+
+/// `dst = src ± 1` of a double slot.
+pub(super) struct DoubleStep<const DECREMENT: bool> {
+    pub(super) dst: u16,
+    pub(super) src: u16,
+}
+
+impl<const DECREMENT: bool> Num for DoubleStep<DECREMENT> {
+    #[inline(always)]
+    fn num(&self, cx: &mut Ctx) -> Option<f64> {
+        let current = f64::from_bits(cx.slot(self.src));
+        let next = if DECREMENT { current - 1.0 } else { current + 1.0 };
+        cx.set(self.dst, next.to_bits());
+        Some(next)
     }
 }
 
@@ -160,7 +201,8 @@ pub(super) struct Read<K> {
 impl<K: Key> Num for Read<K> {
     #[inline(always)]
     fn num(&self, cx: &mut Ctx) -> Option<f64> {
-        let Some(number) = cx.element(self.array, self.key.index(cx)) else { return cx.leave(self.at) };
+        let index = self.key.index(cx)?;
+        let Some(number) = cx.element(self.array, index) else { return cx.leave(self.at) };
         cx.set(self.dst, number.to_bits());
         Some(number)
     }
@@ -260,7 +302,7 @@ pub(super) struct Write<K, N> {
 impl<K: Key, N: Num> Stmt for Write<K, N> {
     fn exec(&self, cx: &mut Ctx) -> bool {
         let Some(value) = self.value.num(cx) else { return true };
-        let index = self.key.index(cx);
+        let Some(index) = self.key.index(cx) else { return true };
         if cx.element(self.array, index).is_none() {
             cx.at = self.at;
             return true;

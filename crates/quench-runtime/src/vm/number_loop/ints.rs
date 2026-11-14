@@ -112,3 +112,17 @@ impl<I: Int> Int for MoveInt<I> {
         Some(value)
     }
 }
+
+/// `dst = src ± 1` of an int32 slot (`nodes::step_int`).
+pub(super) struct IntStep<const DECREMENT: bool> {
+    pub(super) dst: u16,
+    pub(super) src: u16,
+    pub(super) at: u32,
+}
+
+impl<const DECREMENT: bool> Int for IntStep<DECREMENT> {
+    #[inline(always)]
+    fn int(&self, cx: &mut Ctx) -> Option<i32> {
+        super::nodes::step_int::<DECREMENT>(cx, self.dst, self.src, self.at)
+    }
+}

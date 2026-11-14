@@ -1,9 +1,9 @@
 //! A plan's trees as nodes: each operand form picks the monomorphic node that reads it.
 
-use super::ints::{Bits, IntConstant, IntNode, IntOf, MoveInt, NumOf, ToInt32};
+use super::ints::{Bits, IntConstant, IntNode, IntOf, IntStep, MoveInt, NumOf, ToInt32};
 use super::nodes::{
-    Arith, Constant, ConstantKey, DoubleKey, DoubleSlot, IntKey, IntSlot, IntStmt, MoveDouble, Num, NumNode, NumStmt, Numeric,
-    Read, Stmt, Write,
+    Arith, Constant, ConstantKey, DoubleKey, DoubleSlot, DoubleStep, IntKey, IntSlot, IntStmt, MoveDouble, Num, NumNode, NumStmt,
+    Numeric, Read, StepKey, Stmt, Write,
 };
 use super::plan::{KeyForm, Statement, Tree};
 
@@ -39,6 +39,10 @@ macro_rules! num_operand {
             Tree::Int(register) => { let $x = IntSlot(register); $body }
             Tree::Constant(number) => { let $x = Constant(number); $body }
             Tree::Read { dst, array, key: KeyForm::Int(key), at } => { let $x = Read { dst, array, key: IntKey(key), at }; $body }
+            Tree::Read { dst, array, key: KeyForm::Step { register, decrement: false, at: step }, at } => {
+                let $x = Read { dst, array, key: StepKey::<false> { register, at: step }, at };
+                $body
+            }
             tree => { let $x = node(tree); $body }
         }
     };
@@ -67,6 +71,8 @@ macro_rules! key_form {
             KeyForm::Int(register) => { let $x = IntKey(register); $body }
             KeyForm::Double(register) => { let $x = DoubleKey(register); $body }
             KeyForm::Constant(index) => { let $x = ConstantKey(index); $body }
+            KeyForm::Step { register, decrement: false, at } => { let $x = StepKey::<false> { register, at }; $body }
+            KeyForm::Step { register, decrement: true, at } => { let $x = StepKey::<true> { register, at }; $body }
         }
     };
 }
@@ -99,6 +105,8 @@ fn number<S: Sink>(tree: Tree) -> S::Out {
         Tree::Double(register) => S::num(DoubleSlot(register)),
         Tree::Int(register) => S::num(IntSlot(register)),
         Tree::Constant(number) => S::num(Constant(number)),
+        Tree::Step { dst, src, decrement: false, .. } => S::num(DoubleStep::<false> { dst, src }),
+        Tree::Step { dst, src, .. } => S::num(DoubleStep::<true> { dst, src }),
         Tree::Bits { .. } => S::num(NumOf(int_node(tree))),
     }
 }
@@ -126,6 +134,8 @@ fn int_node(tree: Tree) -> Box<dyn IntNode> {
         Tree::Bits { op, dst, left, right } => bits(op, dst, *left, *right),
         Tree::Move { dst, src, int: true } => int_operand!(*src, src => Box::new(MoveInt { dst, src }) as Box<dyn IntNode>),
         Tree::Int(register) => Box::new(IntOf(register)),
+        Tree::Step { dst, src, int: true, decrement: false, at } => Box::new(IntStep::<false> { dst, src, at }),
+        Tree::Step { dst, src, int: true, decrement: true, at } => Box::new(IntStep::<true> { dst, src, at }),
         tree => int_operand!(tree, value => Box::new(value) as Box<dyn IntNode>),
     }
 }
