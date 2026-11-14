@@ -94,6 +94,44 @@ pub(super) fn raw_result_triples<'l>(
     triples
 }
 
+/// How far past an arithmetic record `raw_result_reaches` looks for its reader.
+const RAW_REACH: usize = 6;
+
+/// Whether the arithmetic at `producer` writes a plain register whose first reader, within
+/// `RAW_REACH` records that each read only their own fields and fall through (`passes_raw`),
+/// is an arithmetic operand, after which the register is dead or that arithmetic's own
+/// result: as `a * b + c * d + e * f`, whose partial sums wait for the next product. Every path
+/// from the producer reaches that reader with the register unread; a record the lane leaves
+/// runs on the general path, which reads Numbers by value.
+fn raw_result_reaches(decoded: &[WideInstruction], live: &RegisterMasks, producer: usize) -> bool {
+    let register = decoded[producer].a();
+    let end = decoded.len().min(producer + 1 + RAW_REACH);
+    for pc in producer + 1..end {
+        let instruction = decoded[pc];
+        if names_register(instruction, register) {
+            return is_arithmetic(instruction)
+                && reads_operand(instruction, register)
+                && (instruction.a() == register
+                    || live.get(pc + 1).is_some_and(|after| register_dead(after, usize::from(register))));
+        }
+        if !passes_raw(instruction) {
+            return false;
+        }
+    }
+    false
+}
+
+/// Whether `instruction` reads no register but those its fields name and falls through to the
+/// next record (or leaves the function by an exception): a read, an update, an operator, a
+/// constant, a copy or a capture read. Calls, windows and jumps stop the search.
+fn passes_raw(instruction: WideInstruction) -> bool {
+    instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
+        || matches!(
+            instruction.op().class(),
+            Class::GetIndex | Class::IncDec | Class::Binary | Class::LoadConst | Class::Move | Class::GetField | Class::LoadCapture
+        )
+}
+
 /// Whether the arithmetic at `operation` writes a plain register that only the next
 /// arithmetic reads before it dies: the arithmetic right after it, or the operation of the
 /// next triple, whose update and read do not name the register.
@@ -109,7 +147,7 @@ fn raw_result_dies(decoded: &[WideInstruction], live: &RegisterMasks, operation:
     } else if passes_over(decoded, operation, register) && reads(operation + NEXT_OPERATION) {
         operation + NEXT_OPERATION
     } else {
-        return false;
+        return raw_result_reaches(decoded, live, operation);
     };
     decoded[consumer].a() == register
         || live.get(consumer + 1).is_some_and(|after| register_dead(after, usize::from(register)))
