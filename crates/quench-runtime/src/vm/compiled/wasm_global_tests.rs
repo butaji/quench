@@ -65,11 +65,22 @@ fn run(compiled: bool, ty: crate::WasmType, initial: crate::WasmValue, operators
     (result, vm.wasm_global(&instance, 0).unwrap())
 }
 
+/// `run`'s pair with every NaN's payload dropped: a NaN's payload after arithmetic is the
+/// specification's nondeterminism, which the tier's raw slot keeps and the interpreter's register
+/// does not.
+fn arithmetic_nans(pair: (crate::WasmValue, crate::WasmValue)) -> [crate::WasmValue; 2] {
+    let canonical = |value| match value {
+        crate::WasmValue::F64(bits) if f64::from_bits(bits).is_nan() => crate::WasmValue::F64(f64::NAN.to_bits()),
+        other => other,
+    };
+    [canonical(pair.0), canonical(pair.1)]
+}
+
 /// The tier's run of `operators` over a global of type `ty` is the interpreter's.
 fn assert_tier_matches(ty: crate::WasmType, initial: crate::WasmValue, step: Vec<Operator<'static>>) {
     let operators = loop_over_global(step);
     let expected = run(false, ty, initial, operators.clone());
-    assert_eq!(run(true, ty, initial, operators), expected, "{initial:?}");
+    assert_eq!(arithmetic_nans(run(true, ty, initial, operators)), arithmetic_nans(expected), "{initial:?}");
     assert_eq!(expected.0, expected.1);
 }
 
