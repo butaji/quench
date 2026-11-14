@@ -13864,8 +13864,8 @@ script_handler! {
 
 /// `lane_script_call_keeping`'s activation: the callee's registers and first record, the
 /// record to continue at, or `None` for a callee whose target keeps nothing, which the full
-/// form calls. Out of line, as `lane_construct_keeping_activation`.
-#[inline(never)]
+/// form calls. Inline in its one handler, which is itself out of line.
+#[inline(always)]
 fn lane_call_keeping_activation<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
