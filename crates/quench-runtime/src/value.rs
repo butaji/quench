@@ -406,9 +406,7 @@ impl Value {
     }
 
     /// Whether the value is a Number stored as a double: no tag claims its bits.
-    #[inline(always)] pub(crate) fn is_double(self) -> bool {
-        !self.is_tagged()
-    }
+    #[inline(always)] pub(crate) fn is_double(self) -> bool { !self.is_tagged() }
 
     #[inline(always)] pub(crate) fn as_int(self) -> Option<i32> {
         ((self.0 & TAG_MASK) == TAG_INT).then_some(self.0 as u32 as i32)
@@ -490,7 +488,7 @@ impl Value {
     pub fn as_number(self) -> Option<f64> {
         // One tag field decides all three: a double, an integer, or neither.
         let field = (self.0 >> TAG_SHIFT) as u32;
-        if field.wrapping_sub((FIRST_TAG >> TAG_SHIFT) as u32) > ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as u32 {
+        if !Self::tagged_field(field) {
             Some(f64::from_bits(self.0))
         } else if u64::from(field) == TAG_INT >> TAG_SHIFT {
             Some(f64::from(self.0 as u32 as i32))
@@ -662,12 +660,11 @@ impl Value {
         self.0 & TAG_MASK == TAG_DELETED
     }
 
-    #[inline(always)]
-    fn is_tagged(self) -> bool {
-        // The tag field, shifted down, compared as one small range.
-        let field = (self.0 >> TAG_SHIFT) as u32;
-        field.wrapping_sub((FIRST_TAG >> TAG_SHIFT) as u32)
-            <= ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as u32
+    #[inline(always)] fn is_tagged(self) -> bool { Self::tagged_field((self.0 >> TAG_SHIFT) as u32) }
+
+    /// Whether a tag field (`bits >> TAG_SHIFT`) lies in the tag range: one small range test.
+    #[inline(always)] fn tagged_field(field: u32) -> bool {
+        field.wrapping_sub((FIRST_TAG >> TAG_SHIFT) as u32) <= ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as u32
     }
 
     #[cfg(feature = "profile-aggregate")]
