@@ -4970,8 +4970,27 @@ fn lane_index_slot_element<H: Host>(vm: &mut Vm<H>, ip: Ip, base: Value, key: Va
 /// store's site does (`lane_typed_array_store`).
 fn lane_typed_array_element<H: Host>(ip: Ip, vm: &mut Vm<H>, base: Value, key: Value) -> Option<Value> {
     let value = vm.plain_typed_element(base, key)?;
-    requicken::<H>(ip, lane_get_index_typed::<H>);
+    requicken::<H>(ip, typed_kind_handler::<H>(vm.typed_array_kind_of(base), true));
     Some(value)
+}
+
+/// The typed array element record for a site that has seen kind `kind`: its kind variant
+/// (`lane_get_index_typed_kind`, `lane_set_index_typed_kind`), or the any-kind record for a
+/// kind no variant serves; `read` picks reads, else stores.
+fn typed_kind_handler<H: Host>(kind: Option<TypedArrayKind>, read: bool) -> Handler {
+    macro_rules! kinds {
+        ($($kind:ident),*) => {
+            match kind {
+                $(Some(TypedArrayKind::$kind) => if read {
+                    lane_get_index_typed_kind::<H, { TypedArrayKind::$kind as usize }> as Handler
+                } else {
+                    lane_set_index_typed_kind::<H, { TypedArrayKind::$kind as usize }> as Handler
+                },)*
+                _ => if read { lane_get_index_typed::<H> as Handler } else { lane_set_index_typed::<H> as Handler },
+            }
+        };
+    }
+    kinds!(Uint8, Uint8Clamped, Uint16, Uint32, Int8, Int16, Int32, Float32, Float64)
 }
 
 script_handler! {
@@ -4979,11 +4998,33 @@ script_handler! {
     /// array's element at an integer index, or `undefined` past its end, is the whole read;
     /// any other read takes the generic order (`lane_get_index_registers`).
     fn lane_get_index_typed<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { vm(cx) }).typed_element_quick(r.get(i.b), r.get(i.c)) else {
+        let Some(value) = (unsafe { vm(cx) }).typed_element_quick::<{ super::typed_array_access::ANY_TYPED_KIND }>(r.get(i.b), r.get(i.c)) else {
             sibling!(lane_get_index_typed_full::<H>, r, ip, view)
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `lane_get_index_typed` at a site that has read typed arrays of one kind only, `KIND`,
+    /// whose element access is compiled for it. Any other read makes the site any-kind
+    /// (`lane_get_index_typed`) and runs there.
+    fn lane_get_index_typed_kind<KIND: usize>(cx, r, ip, i, view) {
+        let Some(value) = (unsafe { vm(cx) }).typed_element_quick::<KIND>(r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_get_index_typed_mixed::<H>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// A kind variant's miss (`lane_get_index_typed_kind`): the site becomes any-kind.
+    #[inline(never)]
+    fn lane_get_index_typed_mixed<>(cx, r, ip, i, view) {
+        requicken::<H>(ip, lane_get_index_typed::<H>);
+        sibling!(lane_get_index_typed::<H>, r, ip, view)
     }
 }
 
@@ -5188,7 +5229,7 @@ fn lane_typed_array_store<H: Host>(ip: Ip, vm: &mut Vm<H>, object: Value, key: V
         .array_index_key(key)
         .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value));
     if stored {
-        requicken::<H>(ip, lane_set_index_typed::<H>);
+        requicken::<H>(ip, typed_kind_handler::<H>(vm.typed_array_kind_of(object), false));
     }
     stored
 }
@@ -5225,10 +5266,30 @@ script_handler! {
     /// index of one is the whole store, as the generic order reaches it once every array and
     /// symbol path declines a typed array; any other store takes the generic order.
     fn lane_set_index_typed<>(cx, r, ip, i, view) {
-        if !(unsafe { vm(cx) }).typed_set_quick(r.get(i.b), r.get(i.c), r.get(i.a)) {
+        if !(unsafe { vm(cx) }).typed_set_quick::<{ super::typed_array_access::ANY_TYPED_KIND }>(r.get(i.b), r.get(i.c), r.get(i.a)) {
             sibling!(lane_set_index_typed_full::<H>, r, ip, view)
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `lane_set_index_typed` at a site that has stored into typed arrays of one kind only,
+    /// `KIND` (as `lane_get_index_typed_kind`).
+    fn lane_set_index_typed_kind<KIND: usize>(cx, r, ip, i, view) {
+        if !(unsafe { vm(cx) }).typed_set_quick::<KIND>(r.get(i.b), r.get(i.c), r.get(i.a)) {
+            sibling!(lane_set_index_typed_mixed::<H>, r, ip, view)
+        }
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// A kind variant's miss (`lane_set_index_typed_kind`): the site becomes any-kind.
+    #[inline(never)]
+    fn lane_set_index_typed_mixed<>(cx, r, ip, i, view) {
+        requicken::<H>(ip, lane_set_index_typed::<H>);
+        sibling!(lane_set_index_typed::<H>, r, ip, view)
     }
 }
 

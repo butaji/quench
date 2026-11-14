@@ -289,31 +289,26 @@ impl<H: Host> Vm<H> {
     }
 
     /// `plain_typed_element`'s common case, inline: a canonical integer key inside a fixed
-    /// length typed array of Number elements over an owned buffer. `None` leaves the read to
-    /// `plain_typed_element`, which answers every other case (`undefined` past the end, a
-    /// tracking or detached view, Float16, a double key).
+    /// length typed array of Number elements over an owned buffer, of kind `KIND`
+    /// (`TypedArrayKind as usize`, a site's one kind) or of any kind (`ANY_TYPED_KIND`).
+    /// `None` leaves the read to `plain_typed_element`, which answers every other case
+    /// (`undefined` past the end, a tracking or detached view, Float16, a double key).
     #[inline(always)]
-    pub(super) fn typed_element_quick(&self, object: Value, key: Value) -> Option<Value> {
+    pub(super) fn typed_element_quick<const KIND: usize>(&self, object: Value, key: Value) -> Option<Value> {
         let Some(Cell::TypedArray { kind, object: view, buffer, length }) = self.heap.get(object) else {
             return None;
         };
+        let kind = typed_kind::<KIND>(*kind)?;
         let length = length.get()?;
         let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(*buffer) else {
             return None;
         };
         let store = bytes.owned()?;
-        let width = kind.width();
-        // The view lies inside the buffer (`ViewLength::within`) and the key is an int32 inside
-        // the view: one unsigned compare of the key's offset (`Value::int_key_offset`) against
-        // a bound below 2^31 tests tag, sign and bound.
-        let index = key.int_key_offset();
-        if index >= length.min(i32::MAX as usize) || view.offset + length * width > store.len() {
-            return None;
-        }
-        let start = view.offset + index * width;
+        let start = typed_element_start(kind, view.offset, length, key, store.len())?;
         macro_rules! element {
             ($type:ty) => {
-                <$type>::from_ne_bytes(store.get(start..start + size_of::<$type>())?.try_into().ok()?)
+                // SAFETY: `typed_element_start` proved the element's bytes inside the store.
+                unsafe { store.as_ptr().add(start).cast::<$type>().read_unaligned() }
             };
         }
         Some(match kind {
@@ -336,16 +331,19 @@ impl<H: Host> Vm<H> {
     }
 
     /// `typed_array_set_number`'s common case, inline: a Number stored at a canonical integer
-    /// key inside a fixed length typed array whose buffer the view owns alone
-    /// (`BufferBytes::lane_mut`), of an integer into an integer kind or of any Number into a
-    /// Float32 or Float64 kind. False leaves the store to `typed_array_set_number`, which
-    /// stores nothing before it decides.
+    /// key inside a fixed length typed array of kind `KIND` (as `typed_element_quick`) whose
+    /// buffer the view owns alone (`BufferBytes::lane_mut`), of an integer into an integer
+    /// kind or of any Number into a Float32 or Float64 kind. False leaves the store to
+    /// `typed_array_set_number`, which stores nothing before it decides.
     #[inline(always)]
-    pub(super) fn typed_set_quick(&mut self, object: Value, key: Value, value: Value) -> bool {
+    pub(super) fn typed_set_quick<const KIND: usize>(&mut self, object: Value, key: Value, value: Value) -> bool {
         let Some(Cell::TypedArray { kind, object: view, buffer, length }) = self.heap.get(object) else {
             return false;
         };
-        let (kind, offset, buffer) = (*kind, view.offset, *buffer);
+        let Some(kind) = typed_kind::<KIND>(*kind) else {
+            return false;
+        };
+        let (offset, buffer) = (view.offset, *buffer);
         let Some(length) = length.get() else {
             return false;
         };
@@ -355,20 +353,14 @@ impl<H: Host> Vm<H> {
         let Some(store) = bytes.lane_mut() else {
             return false;
         };
-        let width = kind.width();
-        // As `typed_element_quick`: one compare tests the key's tag, sign and bound.
-        let index = key.int_key_offset();
-        if index >= length.min(i32::MAX as usize) || offset + length * width > store.len() {
+        let Some(start) = typed_element_start(kind, offset, length, key, store.len()) else {
             return false;
-        }
-        let start = offset + index * width;
+        };
         macro_rules! store {
             ($element:expr) => {{
-                let encoded = $element.to_ne_bytes();
-                match store.get_mut(start..start + encoded.len()) {
-                    Some(target) => target.copy_from_slice(&encoded),
-                    None => return false,
-                }
+                let element = $element;
+                // SAFETY: `typed_element_start` proved the element's bytes inside the store.
+                unsafe { write_element(store.as_mut_ptr().add(start), element) }
             }};
         }
         match (kind, value.as_int()) {
@@ -387,6 +379,15 @@ impl<H: Host> Vm<H> {
             _ => return false,
         }
         true
+    }
+
+    /// The kind of the typed array `object`, which picks a site's kind variant
+    /// (`typed_element_quick`).
+    pub(super) fn typed_array_kind_of(&self, object: Value) -> Option<TypedArrayKind> {
+        match self.heap.get(object) {
+            Some(Cell::TypedArray { kind, .. }) => Some(*kind),
+            _ => None,
+        }
     }
 
     /// `typed_array_get` of a non-BigInt typed array, which allocates nothing: the element,
@@ -1057,4 +1058,41 @@ fn store_element(store: &mut [u8], start: usize, width: usize, encoded: &[u8; MA
         4 => fixed::<4>(store, start, encoded),
         _ => fixed::<MAX_TYPED_ARRAY_ELEMENT_WIDTH>(store, start, encoded),
     }
+}
+
+/// `typed_element_quick`'s `KIND` for a site that has seen more than one kind.
+pub(super) const ANY_TYPED_KIND: usize = usize::MAX;
+
+/// `kind` where it is the site's `KIND`, as a constant the element access is compiled for;
+/// any kind under `ANY_TYPED_KIND`.
+#[inline(always)]
+fn typed_kind<const KIND: usize>(kind: TypedArrayKind) -> Option<TypedArrayKind> {
+    if KIND == ANY_TYPED_KIND {
+        return Some(kind);
+    }
+    let constant = crate::heap::TYPED_ARRAYS[KIND % TypedArrayKind::COUNT].kind;
+    (kind == constant).then_some(constant)
+}
+
+/// The byte offset of the element at `key` of a fixed view of `length` elements of `kind`
+/// from `offset` in a store of `store_length` bytes, where the view lies inside the store
+/// (`ViewLength::within`) and the key is an int32 inside the view: one unsigned compare of
+/// the key's offset (`Value::int_key_offset`) against a bound below 2^31 tests its tag, sign
+/// and bound. `None` otherwise.
+#[inline(always)]
+fn typed_element_start(kind: TypedArrayKind, offset: usize, length: usize, key: Value, store_length: usize) -> Option<usize> {
+    let width = kind.width();
+    let index = key.int_key_offset();
+    (index < length.min(i32::MAX as usize) && offset.saturating_add(length.saturating_mul(width)) <= store_length)
+        .then(|| offset + index * width)
+}
+
+/// Writes `element` at `target`, which need not be aligned.
+///
+/// # Safety
+/// `target` is valid for a write of `size_of::<T>()` bytes.
+#[inline(always)]
+unsafe fn write_element<T>(target: *mut u8, element: T) {
+    // SAFETY: the caller's contract.
+    unsafe { target.cast::<T>().write_unaligned(element) }
 }
