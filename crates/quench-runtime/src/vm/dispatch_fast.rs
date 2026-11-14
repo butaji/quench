@@ -22,7 +22,7 @@
 //! safepoint jump leaves the lane.
 
 use crate::staged::compare::{IN_OPERATOR, INSTANCEOF_OPERATOR};
-use super::compiled::tier_policy::TIERS;
+use super::compiled::tier_policy::Tiers;
 use super::tier_events::Event;
 use super::compiled::{CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
 use super::dispatch_frame::PendingGeneralCall;
@@ -266,6 +266,8 @@ pub(super) struct LoopSite {
     entering: std::cell::Cell<bool>,
     /// Whether this VM requested OSR diagnostics when its lane view was derived.
     diagnostics: bool,
+    /// The thresholds its VM's tier controllers read.
+    tiers: &'static Tiers,
     lane_backedge_count: std::cell::Cell<u64>,
     native_entry_attempts: std::cell::Cell<u64>,
     native_region_runs: std::cell::Cell<u64>,
@@ -293,7 +295,7 @@ impl LoopSite {
     /// entries are not declining, and it has code or may compile it. A site without it
     /// retires at its next backward jump (`lane_loop_retire`).
     fn may_run_natively(&self, policy: crate::MemoryPolicy) -> bool {
-        self.enters() && self.tier.borrow().may_run(policy)
+        self.enters() && self.tier.borrow().may_run(self.tiers, policy)
     }
 
     fn enters(&self) -> bool {
@@ -321,6 +323,8 @@ pub(super) struct LaneView {
     /// entry cost, and its record does not read the accumulator. Kept apart
     /// from the records, which only the lane reads.
     entries: Box<[u64]>,
+    /// The thresholds its VM's tier controllers read, as the VM held them when the view was derived.
+    tiers: &'static Tiers,
     memory_register: Option<u16>,
     /// How a lane call activates the function without a frame; `None`
     /// when its activation needs a frame (locals outside registers).
@@ -7953,7 +7957,7 @@ fn lane_count_backedge<H: Host>(cx: *mut LaneContext<H>) {
         .last()
         .map_or_else(|| machine.frames[unsafe { (*cx).frame() }].function, |activation| activation.function);
     machine.programs.note_wasm_tier_backedges(program, function);
-    unsafe { (*cx).backedges_left = Some(TIERS.wasm.backedges_per_entry) };
+    unsafe { (*cx).backedges_left = Some(machine.programs.tiers().wasm.backedges_per_entry) };
 }
 
 lane_handler! {
@@ -8162,7 +8166,7 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
                 || matches!(op.class(), Class::LoadCapture)).then(|| op.is_get_index())
         })
     });
-    if let Some(read) = counted { site.tier.borrow_mut().left_at(pc as usize, read); }
+    if let Some(read) = counted { site.tier.borrow_mut().left_at(site.tiers, pc as usize, read); }
 }
 
 /// Gives `site` its `header` record (`LoopSite::hookable`) once its region has code: the
@@ -8357,12 +8361,12 @@ fn lane_loop_run<H: Host>(
 ) -> LoopContinuation {
     use super::compiled::LoopOutcome;
     let mut tier = site.tier.borrow_mut();
-    if !tier.select(views) {
+    if !tier.select(site.tiers, views) {
         return LoopContinuation::Jump;
     }
     if !tier.is_published() {
         // SAFETY: the lane's VM is live, and nothing borrows it across the read.
-        if !tier.may_run(unsafe { vm(cx) }.heap.memory_policy()) {
+        if !tier.may_run(site.tiers, unsafe { vm(cx) }.heap.memory_policy()) {
             return LoopContinuation::Jump;
         }
         let number_arrays = loop_tier::number_arrays(unsafe { vm(cx) }, r, region);
@@ -8544,7 +8548,7 @@ fn lane_inlined_continuation<H: Host>(cx: *mut LaneContext<H>, r: Registers, sit
     }
     // The exit is feedback as a top-level one is: the callee's instruction widens in the next plan, and is counted.
     let call = code.calls.inlined[frame];
-    site.tier.borrow_mut().left_at(super::compiled::base_region::inlined_exit_key(call.call, pc), false);
+    site.tier.borrow_mut().left_at(site.tiers, super::compiled::base_region::inlined_exit_key(call.call, pc), false);
     // SAFETY: the context's program outlives the lane run.
     if let Some(body) = unsafe { &*(*cx).code }.function_get(call.target.function as usize) {
         super::compiled::base_region::leave(call.target.function, pc, decoded_instruction(body, body.code[pc as usize]).op());
@@ -11033,7 +11037,7 @@ fn lane_frame_state<H: Host>(
     let lane_view = match derived {
         Some(view) => view,
         None => {
-            let diagnostics = vm.programs.reports_on_drop();
+            let (diagnostics, tiers) = (vm.programs.reports_on_drop(), vm.programs.tiers());
             let Some(lane_view) = vm.programs.lane_view(program, function, |code, constants, kind, live, sites| {
                 derive_lane_view::<H>(
                     function,
@@ -11045,6 +11049,7 @@ fn lane_frame_state<H: Host>(
                     sites,
                     vm.tier_may_run(crate::jit_mode::Tier::ANY),
                     diagnostics,
+                    tiers,
                 )
             }) else {
                 unreachable!("an inline Wasm frame runs a function of its program");
@@ -11841,6 +11846,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn lane_view_any(&self, program: ProgramId, function: u32) -> Option<*const LaneView> {
         if !self.execution_mode.allows_dynamic_execution() { return None; }
         let diagnostics = self.programs.reports_on_drop();
+        let tiers = self.programs.tiers();
         self.programs.lane_view(program, function, |code, constants, kind, live, sites| {
             derive_lane_view::<H>(
                 function,
@@ -11852,6 +11858,7 @@ impl<H: Host> Vm<H> {
                 sites,
                 self.tier_may_run(crate::jit_mode::Tier::ANY),
                 diagnostics,
+                tiers,
             )
         })
     }
@@ -18587,6 +18594,7 @@ fn derive_lane_view<'live, H: Host>(
     sites: &[crate::bytecode::FieldSite],
     loop_tier: bool,
     diagnostics: bool,
+    tiers: &'static Tiers,
 ) -> LaneView {
     // Each pass below reads instructions by PC; they are decoded once, here.
     let decoded: Vec<WideInstruction> = function.instructions().collect();
@@ -19606,7 +19614,7 @@ fn derive_lane_view<'live, H: Host>(
             constants,
             sites,
             live,
-            diagnostics,
+            (diagnostics, tiers),
             &mut records,
         )
     } else {
@@ -19668,6 +19676,7 @@ fn derive_lane_view<'live, H: Host>(
     LaneView {
         records,
         entries,
+        tiers,
         memory_register,
         activation,
         target_body: std::cell::OnceCell::new(),
@@ -19738,7 +19747,7 @@ fn install_loop_sites<'live, H: Host>(
     constants: &[Value],
     sites: &[crate::bytecode::FieldSite],
     live: &dyn Fn() -> Option<&'live std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
-    diagnostics: bool,
+    (diagnostics, tiers): (bool, &'static Tiers),
     records: &mut [LaneInstruction],
 ) -> (Box<[LoopSite]>, Vec<(super::compiled::RegionRejection, usize)>) {
     let backward = lane_jump_always::<H, true> as Handler as *const ();
@@ -19828,9 +19837,10 @@ fn install_loop_sites<'live, H: Host>(
                     header_handler: std::cell::Cell::new(std::ptr::null()),
                     hookable: holds_no_call_link(decoded[header as usize].op()),
                     taken: std::cell::Cell::new(0),
-                    needed: std::cell::Cell::new(TIERS.loops.warmup_taken),
+                    needed: std::cell::Cell::new(tiers.loops.warmup_taken),
                     entering: std::cell::Cell::new(true),
                     diagnostics,
+                    tiers,
                     lane_backedge_count: std::cell::Cell::new(0),
                     native_entry_attempts: std::cell::Cell::new(0),
                     native_region_runs: std::cell::Cell::new(0),
@@ -21039,6 +21049,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn entry_lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
         if !self.execution_mode.allows_dynamic_execution() { return std::ptr::null(); }
         let diagnostics = self.programs.reports_on_drop();
+        let tiers = self.programs.tiers();
         // A Wasm function that may loop gets its view at entry; a JavaScript one derives it
         // once a loop turns hot (`Vm::note_back_edge`).
         let wasm = self.programs.residual(program).is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Wasm);
@@ -21053,7 +21064,8 @@ impl<H: Host> Vm<H> {
                     live,
                     sites,
                     self.tier_may_run(crate::jit_mode::Tier::ANY),
-                        diagnostics,
+                    diagnostics,
+                    tiers,
                 )
             })
             .unwrap_or(std::ptr::null())

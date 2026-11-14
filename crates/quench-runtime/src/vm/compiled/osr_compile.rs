@@ -8,6 +8,7 @@ use super::{
 };
 use super::base_region::function::{build_region, Body, BodySpec};
 use super::lane_compile::LaneDependencies;
+use super::tier_policy::Tiers;
 use super::lane_region::StableFacts;
 use crate::code_dependencies::Invalidation;
 mod calls;
@@ -287,6 +288,7 @@ struct LoopPlanner<'a> {
     function_id: u32,
     helpers: LaneHelpers,
     views: super::ElementViews,
+    tiers: &'static Tiers,
 }
 
 impl LoopPlanner<'_> {
@@ -301,7 +303,7 @@ impl LoopPlanner<'_> {
         super::lane_region::RegionSpecializer {
             number_reads: &number_reads, int_entries: self.observation.int_entries, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
             function_id: self.function_id, unit, helpers: self.helpers, fields: self.fields,
-            global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts::STATIC, generic,
+            global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts { tiers: self.tiers, ..VmFacts::STATIC }, generic,
             direct: &BTreeMap::new(), frame_captures: &[], isa: self.isa,
             entry_fields,
             plan: super::lane_region::RegionPlan {
@@ -370,7 +372,7 @@ fn lower_loop(planner: &LoopPlanner<'_>, region: &LoopRegion,
 pub(in crate::vm) fn start_osr_region(
     region: &LoopRegion, views: super::ElementViews,
     observation: &Observation<'_>,
-    policy: crate::MemoryPolicy,
+    (policy, tiers): (crate::MemoryPolicy, &'static Tiers),
     program: &ResidualProgram,
     function_id: u32,
     helpers: LaneHelpers,
@@ -383,21 +385,22 @@ pub(in crate::vm) fn start_osr_region(
     let invalidation = Invalidation::default();
     // The b-jit's rows hold global slots where the VM and the program run specialized (`stores` is that fact).
     let globals = (crate::jit_mode::base_regions() && region.inlining.is_none() && stores.is_some()).then(|| global_reads(&loop_unit(program.function(function_id as usize)), GlobalTable::Base));
-    let known = super::base_region::Known { program, stores, reads: None, adds: None, names: None, invalidation: Some(invalidation.address()), constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: globals.as_ref() };
+    let known = super::base_region::Known { program, stores, reads: None, adds: None, names: None, invalidation: Some(invalidation.address()), constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: globals.as_ref(), stitch: &tiers.stitch };
     if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation)) {
         return decided;
     }
-    let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views };
+    let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views, tiers };
     let lowered = lower_loop(&planner, region, global_reads, widened)?;
     let function = lowered.function;
     super::residuals::report_clif(region.header, &function);
     let clif = native_dump_directory().map(|_| function.display().to_string());
     let facts = OsrFacts { roots: lowered.stable.roots, ..OsrFacts::observed(observation) };
     let ir = function.dfg.num_insts();
+    let priors = &tiers.priors;
     let code = super::super::jit_backend::run_in_background(move || {
         let started = std::time::Instant::now();
         let code = compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()));
-        super::tier_model::note_compile(started.elapsed(), ir);
+        super::tier_model::note_compile(priors, started.elapsed(), ir);
         code
     });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));

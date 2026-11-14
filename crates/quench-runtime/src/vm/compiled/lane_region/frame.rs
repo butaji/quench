@@ -74,6 +74,8 @@ pub(super) struct EmitFrame<'a> {
     pub(super) capture: Option<&'a super::captures::CaptureSite>,
     /// Whether an IsHTMLDDA object can exist (`VmFacts::html_dda`).
     pub(super) html_dda: bool,
+    /// The compiling VM's thresholds (`VmFacts::tiers`).
+    pub(super) tiers: &'static super::super::tier_policy::Tiers,
     /// The Stable `prototype` link of the step's `instanceof` constructor.
     pub(super) prototype: Option<u32>,
     /// The region's entry proofs, whose object record table a prototype walk addresses where the

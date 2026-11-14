@@ -73,6 +73,8 @@ use webs::*;
 #[derive(Clone, Copy)]
 pub(in crate::vm::compiled) struct Known<'a> {
     pub(in crate::vm::compiled) program: &'a ResidualProgram,
+    /// The compiling VM's stitch-inlining thresholds (`tier_policy::Stitch`), a Static fact of the code.
+    pub(in crate::vm::compiled) stitch: &'static super::tier_policy::Stitch,
     /// The names method caches hold now, where the VM and the program run specialized, so a
     /// store of an unnamed atom may run in place; `None` where none may. Code that stores holds
     /// each such atom unnamed as a Stable fact (`Body::atoms`), which a cache naming it retires.

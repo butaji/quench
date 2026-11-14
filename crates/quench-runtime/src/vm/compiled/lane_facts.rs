@@ -66,10 +66,10 @@ pub(super) fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
 /// Whether a body has work that amortizes an entry, which costs a few hundred instructions
 /// the lane's own run of a short leaf never pays: a loop, an inlined call, a call of itself
 /// (its recursion runs natively inside the entry), or length (`Tiers::amortizing_instructions`).
-pub(super) fn amortizes_entry(unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
+pub(super) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
     let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
         instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-    loops || !unit.frames.is_empty() || direct.iter().any(|callee| callee.target.function == function) || unit.instructions.len() >= TIERS.amortizing_instructions(tier_policy::lane_body_tier())
+    loops || !unit.frames.is_empty() || direct.iter().any(|callee| callee.target.function == function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
 }
 
 /// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was
@@ -85,9 +85,9 @@ pub(super) fn plan_key(unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug,
 
 /// Whether the tier model admits compiling `function`'s body for the `entries` it has made
 /// (`tier_model::admits`): the gate every lane-body compile request passes.
-pub(super) fn pays_compile(program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &super::super::dispatch_fast::LaneView, diagnostics: bool) -> bool {
+pub(super) fn pays_compile(tiers: &Tiers, program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &super::super::dispatch_fast::LaneView, diagnostics: bool) -> bool {
     let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
-    super::tier_model::admits(&super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region: caller.enters_region(), ir }, diagnostics)
+    super::tier_model::admits(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region: caller.enters_region(), ir }, diagnostics)
 }
 
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a

@@ -24,7 +24,7 @@ impl super::LoopSite {
     /// Stops entering native code once the entries cost more than the iterations they ran save.
     fn settle(&self) {
         let tier = self.tier.borrow();
-        if !loop_model::repays(self.span(), tier.entries(), tier.iterations()) {
+        if !loop_model::repays(self.tiers, self.span(), tier.entries(), tier.iterations()) {
             self.entering.set(false);
         }
     }
@@ -47,7 +47,7 @@ impl super::LoopSite {
     fn decide(&self) -> bool {
         let taken = self.taken.get();
         self.taken.set(taken.saturating_add(1));
-        let required = loop_model::admission_taken(self.span());
+        let required = loop_model::admission_taken(self.tiers, self.span());
         if required <= taken { return false; }
         self.needed.set(required);
         true

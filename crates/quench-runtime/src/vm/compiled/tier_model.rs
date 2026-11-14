@@ -4,7 +4,7 @@
 //! numbers it reads are `TIERS.priors`, and the compile cost is learned from this process's
 //! own compiles.
 
-use super::tier_policy::{Priors, PER_MILLE, TIERS};
+use super::tier_policy::{Priors, Tiers, PER_MILLE};
 use std::sync::Mutex;
 
 /// What the model knows of one function at a decision point.
@@ -27,12 +27,10 @@ pub(super) struct Observed {
 /// has one (the compile then takes the program's own time).
 const SINGLE_CORE: usize = 1;
 
-pub(super) fn compile_wall_permille() -> u64 {
-    static SHARE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *SHARE.get_or_init(|| match std::thread::available_parallelism() {
-        Ok(cores) if cores.get() > SINGLE_CORE => TIERS.priors.compile_wall_permille,
-        _ => PER_MILLE,
-    })
+pub(super) fn compile_wall_permille(priors: &Priors) -> u64 {
+    static SECOND_CORE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let second_core = *SECOND_CORE.get_or_init(|| std::thread::available_parallelism().is_ok_and(|cores| cores.get() > SINGLE_CORE));
+    if second_core { priors.compile_wall_permille } else { PER_MILLE }
 }
 
 /// Compile cost per IR instruction as a forgetting running ratio of the compiles this process
@@ -58,12 +56,12 @@ impl CompileCost {
 }
 
 /// Records a finished compile of `ir` instructions that took `took`.
-pub(super) fn note_compile(took: std::time::Duration, ir: usize) {
-    COMPILES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).record(&TIERS.priors, took.as_nanos() as u64, ir);
+pub(super) fn note_compile(priors: &Priors, took: std::time::Duration, ir: usize) {
+    COMPILES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).record(priors, took.as_nanos() as u64, ir);
 }
 
-pub(super) fn learned_ns_per_ir() -> u64 {
-    COMPILES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).ns_per_ir(&TIERS.priors)
+pub(super) fn learned_ns_per_ir(priors: &Priors) -> u64 {
+    COMPILES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).ns_per_ir(priors)
 }
 
 /// The net gain in ns of compiling `observed` into code that takes `share` per mille of the
@@ -80,16 +78,17 @@ pub(super) fn net_ns(priors: &Priors, share: u64, compile_ns_per_ir: u64, wall_p
 
 /// Whether the model admits the compile of `observed`; under `tier-stress` every eligible
 /// compile is admitted (`TIERS` floor row).
-pub(super) fn admits(observed: &Observed, diagnostics: bool) -> bool {
-    let net = net_ns(&TIERS.priors, TIERS.priors.body_share, learned_ns_per_ir(), compile_wall_permille(), observed);
-    if diagnostics { shadow_log(observed, net); }
-    super::tier_policy::admits_every_compile() || net > 0
+pub(super) fn admits(tiers: &Tiers, observed: &Observed, diagnostics: bool) -> bool {
+    let priors = &tiers.priors;
+    let net = net_ns(priors, priors.body_share, learned_ns_per_ir(priors), compile_wall_permille(priors), observed);
+    if diagnostics { shadow_log(priors, observed, net); }
+    tiers.admits_all || net > 0
 }
 
 /// The decision under `QUENCH_TRACE=js-jit`.
-fn shadow_log(observed: &Observed, net: i64) {
+fn shadow_log(priors: &Priors, observed: &Observed, net: i64) {
     eprintln!("QUENCH_TIER_MODEL entries={} ir={} region={} compile_ns_per_ir={} net_ns={net} pick={}",
-        observed.entries, observed.ir, observed.region, learned_ns_per_ir(), if net > 0 { "u-jit" } else { "interp" });
+        observed.entries, observed.ir, observed.region, learned_ns_per_ir(priors), if net > 0 { "u-jit" } else { "interp" });
 }
 
 #[cfg(test)]

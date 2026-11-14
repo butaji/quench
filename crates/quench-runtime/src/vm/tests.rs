@@ -14491,7 +14491,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
         );
         assert!(
             site.tier_threshold_reached
-                && site.lane_backedge_count >= u64::from(crate::vm::compiled::tier_policy::TIERS.loops.warmup_taken)
+                && site.lane_backedge_count >= u64::from(crate::vm::compiled::tier_policy::TierRows::PROCESS.table().loops.warmup_taken)
         );
         assert_eq!(site.analysis_rejection, None);
         let body = program.function_get(function_id).unwrap();
@@ -17558,7 +17558,7 @@ fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
 
     // Each fixed look spends alpha/4 under p=0.8. Testing at these points
     // bounds false promotion across looks for this function at 5%.
-    for (observations, minimum) in crate::vm::compiled::tier_policy::TIERS.js_function.promotion_looks {
+    for (observations, minimum) in crate::vm::compiled::tier_policy::TierRows::PROCESS.table().js_function.promotion_looks {
         assert!(upper_tail(observations, minimum, 0.8) <= 0.05 / 4.0);
         assert!(upper_tail(observations, minimum - 1, 0.8) > 0.05 / 4.0);
     }

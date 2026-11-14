@@ -21,6 +21,8 @@ pub(super) struct LanePlan {
     pub(super) invalidation: crate::code_dependencies::Invalidation,
     /// The callee instructions its unit inlined at most (`lane_unit::with_budget`).
     pub(super) budget: usize,
+    /// The thresholds of the VM that planned it, which its publication reads (`amortizes_entry`).
+    pub(super) tiers: &'static Tiers,
 }
 
 /// A plan whose code compiles on the code generator's thread. It holds while the facts it
@@ -152,7 +154,7 @@ impl<H: Host> Vm<H> {
         trips: &dyn Fn(u32, u32) -> Option<u64>, generic: &[LaneExit], budget: usize) -> Option<lane_unit::Unit> {
         let body = program.function_get(function as usize)?;
         let valid = std::cell::Cell::new(true);
-        let unit = lane_unit::with_trips(program, function, body, budget,
+        let unit = lane_unit::with_trips(program, function, body, (budget, self.programs.tiers().lane_body.max_inlined_instructions),
             &|caller, pc| self.lane_bindings(program, function, generic, targets, &valid, caller, pc), trips,
             &|callee| program.function_get(callee as usize)).or_else(|| { plan_miss(Miss::PlanNoUnit); None })?;
         if !valid.get() { plan_miss(Miss::PlanInvalidBindings); return None; }
@@ -201,7 +203,7 @@ impl<H: Host> Vm<H> {
             &leaves, &direct_sites, &frame_captures, entry, &number_reads).or_else(|| { plan_miss(Miss::PlanNotLowered); None })?;
         if lowered.region.native == 0 { plan_miss(Miss::PlanNothingNative); return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
-        Some((LanePlan { unit, lowered, fields, direct, closed, function, invalidation, budget }, native))
+        Some((LanePlan { unit, lowered, fields, direct, closed, function, invalidation, budget, tiers: self.programs.tiers() }, native))
     }
 
     /// The lane helpers of this process, noted for the coverage census.
@@ -265,12 +267,12 @@ impl<H: Host> Vm<H> {
         // A body that cannot amortize a lane entry would serve native callers only
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
-        if entry.is_none() && !called && !amortizes_entry(&plan.unit, function, &plan.direct) { plan_miss(Miss::PlanNotAmortized); return Err(Unstarted::Short); }
+        if entry.is_none() && !called && !amortizes_entry(plan.tiers, &plan.unit, function, &plan.direct) { plan_miss(Miss::PlanNotAmortized); return Err(Unstarted::Short); }
         bind_callees(&plan.direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget, arrays));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
-        if let Some(entries) = observed && !pays_compile(program, function, entries, native.dfg.num_insts(), caller, self.programs.js_jit_diagnostics_enabled()) { return Err(Unstarted::Unpaid); }
-        if !self.programs.admit_lane_compile(&key, TIERS.lane_body.max_compiles) { plan_miss(Miss::PlanCompileBound); return Err(Unstarted::Declined); }
+        if let Some(entries) = observed && !pays_compile(plan.tiers, program, function, entries, native.dfg.num_insts(), caller, self.programs.js_jit_diagnostics_enabled()) { return Err(Unstarted::Unpaid); }
+        if !self.programs.admit_lane_compile(&key, plan.tiers.lane_body.max_compiles) { plan_miss(Miss::PlanCompileBound); return Err(Unstarted::Declined); }
         let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
         watch.hold_roots(plan.lowered.region.stable.roots.clone(), &mut self.heap);
         let watcher: Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();
@@ -281,12 +283,12 @@ impl<H: Host> Vm<H> {
         let census = self.programs.js_jit_diagnostics_enabled().then(|| Census {
             function, osr: entry.is_some(), unit: plan.unit.instructions.len(), ir: native.dfg.num_insts(), key: key.3,
             generic: generic.len(), direct: plan.direct.len(), budget, observed, closed: plan.closed });
-        let ir = native.dfg.num_insts();
+        let (ir, priors) = (native.dfg.num_insts(), &plan.tiers.priors);
         let code = super::jit_backend::run_in_background(move || {
             let started = std::time::Instant::now();
             let code = lane_code(native, super::jit_backend::CompileLevel::run_default());
             let took = started.elapsed();
-            super::tier_model::note_compile(took, ir);
+            super::tier_model::note_compile(priors, took, ir);
             if let Some(census) = census { eprintln!("{}", census.report(took, code.as_ref().map_or(0, |code| code.len()))); }
             code
         });
@@ -421,7 +423,7 @@ impl LanePlan {
     pub(super) fn finish(mut self, code: &[u8]) -> Option<LaneMethod> {
         let stable = std::mem::take(&mut self.lowered.region.stable);
         let unit = &self.unit;
-        let amortizes = amortizes_entry(unit, self.function, &self.direct);
+        let amortizes = amortizes_entry(self.tiers, unit, self.function, &self.direct);
         let (dependencies, recovery_space) = (self.dependencies(), super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames));
         let (scratch_width, caller_registers) = (usize::from(unit.registers - unit.caller_registers), unit.caller_registers);
         let names_shapes = self.names_shapes();

@@ -23,7 +23,7 @@
 //! interpreter's `WasmTrap`, and an imported call is a callout through which
 //! the VM makes the call exactly as the interpreter would (`import_callout`).
 
-use tier_policy::TIERS;
+use tier_policy::Tiers;
 use super::dispatch_fast::Activation;
 use super::*;
 use crate::bytecode::{Class, Traits,
@@ -1645,6 +1645,8 @@ pub(super) struct VmFacts<'a> {
     pub(super) html_dda: bool,
     /// Whether leaves record the guard they took (`JsStepDispatch::exit_line`).
     pub(super) diagnostics: bool,
+    /// The thresholds the compiling VM's tier controllers read: a Static fact of the code it makes.
+    pub(super) tiers: &'static Tiers,
     /// The Stable facts the code may fold under a code dependency: `None` for code that takes
     /// no dependency on this VM (`Division::Offline`).
     pub(super) online: Option<OnlineFacts<'a>>,
@@ -1660,14 +1662,14 @@ pub(super) struct VmFacts<'a> {
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
-    pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, online: None, frozen: false,
+    pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
         frozen_fields: None, frozen_constants: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
-        VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), online: None, frozen: false,
+        VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
             frozen_fields: None, frozen_constants: None }
     }
 }
@@ -4271,7 +4273,7 @@ impl<H: Host> Vm<H> {
             .flat_map(|instruction| Self::instruction_field_sites(program, instruction))
             .filter(|(site, _)| !generic.contains(site))
             .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }.into_iter().map(|load| NativeFieldLoad { function_shape: functions.contains(load.shape as usize), ..load }).collect::<Vec<_>>()))
-            .filter(|(site, shapes)| !shapes.is_empty() && site_posterior::SiteEvidence::of(self.field_site_leaves(self.field_cache_index(*site)), shapes.len()).speculates())
+            .filter(|(site, shapes)| !shapes.is_empty() && site_posterior::SiteEvidence::of(self.programs.tiers(), self.field_site_leaves(self.field_cache_index(*site)), shapes.len()).speculates())
             .map(|(site, shapes)| (usize::from(site), shapes));
         lane_region::flat_table(sites)
     }
@@ -7910,7 +7912,7 @@ const FUNCTION_ALIGNMENT: usize = 64;
 
 impl<H: Host> Vm<H> {
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
-        self.execution_mode = mode; super::regexp_native::enable(mode != ExecutionMode::Interpreted);
+        self.execution_mode = mode; super::regexp_native::enable(mode != ExecutionMode::Interpreted, self.programs.tiers().regexp_native_runs);
     }
 
     /// Lets hot functions reach lane bodies by the tier gate (`Runtime` runs for speed).
@@ -7970,7 +7972,7 @@ impl<H: Host> Vm<H> {
         // costs a short call-free one its leaf calls. A function the numeric tier cannot take
         // is still theirs to claim.
         let lane_claims = self.programs.js_jit_lane_methods_enabled()
-            && program.function_get(function as usize).is_some_and(lane_body_may_amortize);
+            && program.function_get(function as usize).is_some_and(|body| lane_body_may_amortize(self.programs.tiers(), body));
         if super::tier_machine::js_tier_state(state.as_ref()) == super::tier_machine::TierState::Declined {
             return lane_claims;
         }
@@ -9413,8 +9415,8 @@ const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 /// Whether a lane body for `body` could amortize an entry (`lane_facts::amortizes_entry`): a
 /// loop, a call (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
-pub(super) fn lane_body_may_amortize(body: &crate::bytecode::Function) -> bool {
-    body.loops() || body.code.len() >= TIERS.amortizing_instructions(tier_policy::lane_body_tier())
+pub(super) fn lane_body_may_amortize(tiers: &Tiers, body: &crate::bytecode::Function) -> bool {
+    body.loops() || body.code.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
         || body.code.iter().any(|packed| super::dispatch_fast::decoded_instruction(body, *packed).op().is_call())
 }
 
