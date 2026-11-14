@@ -358,6 +358,10 @@ impl ArrayElements {
     }
 }
 
+/// An array record keeps its elements' header pointer as a raw word where it has no extras
+/// (`ArrayObject`): the word an `ArrayElements` is, owned by whoever holds it.
+const _: () = assert!(size_of::<ArrayElements>() == size_of::<u64>());
+
 impl Default for ArrayElements {
     fn default() -> Self {
         Self::new()

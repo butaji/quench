@@ -51,14 +51,14 @@ pub(crate) fn advance_prototype_layout_epoch() {
 mod cell_layout_tests {
     use super::*;
 
-    /// Every heap slot stores an `Option<Cell>`. The largest payload is an array: its object
-    /// and its element backing.
-    const CELL_TAG_WORD_BYTES: usize = std::mem::size_of::<Value>();
-    const MAX_CELL_BYTES: usize = std::mem::size_of::<ArrayObject>() + CELL_TAG_WORD_BYTES;
+    /// Every heap slot stores an `Option<Cell>`: a tag word and a payload of at most three
+    /// words. No variant may grow past that; an array record is smaller.
+    const MAX_CELL_BYTES: usize = 32;
 
     #[test]
     fn cells_stay_compact() {
-        assert_eq!(std::mem::size_of::<Option<Cell>>(), MAX_CELL_BYTES);
+        assert!(std::mem::size_of::<Option<Cell>>() <= MAX_CELL_BYTES);
+        assert!(std::mem::size_of::<ArrayObject>() + std::mem::size_of::<Value>() <= MAX_CELL_BYTES);
     }
 
     #[test]
@@ -1636,6 +1636,12 @@ impl ArrayObject {
     #[inline(always)]
     pub(crate) fn elements_mut(&mut self) -> &mut super::ArrayElements {
         self.announce_shrinking();
+        self.elements_raw_mut()
+    }
+
+    /// The elements for a change no proof observes (`elements_mut` announces one first).
+    #[inline(always)]
+    fn elements_raw_mut(&mut self) -> &mut super::ArrayElements {
         &mut self.elements
     }
 
@@ -1652,13 +1658,13 @@ impl ArrayObject {
     /// Whether a dead array owns anything its drop frees: extras, or an element allocation
     /// it counts among its backing's owners. Young runs and the empty header need none.
     #[inline] pub(crate) fn needs_drop(&self) -> bool {
-        self.object.extras_pointer().is_some() || self.elements.owner_count() != 0
+        self.object.extras_pointer().is_some() || self.elements().owner_count() != 0
     }
 
     /// Copies a young run of elements to an allocation of the array's own
     /// (`ArrayElements::leave_nursery`): the same values, so no proof or dependent retires.
     pub(crate) fn leave_nursery(&mut self) {
-        self.elements.leave_nursery();
+        self.elements_raw_mut().leave_nursery();
     }
 
     /// Replaces the present element at `index` in place where this array alone owns its
@@ -1666,7 +1672,7 @@ impl ArrayObject {
     /// changes no backing, so no array storage proof retires; a prototype's dependents do.
     #[inline(always)]
     pub(crate) fn replace_in_place(&mut self, index: usize, value: Value) -> bool {
-        if !self.elements.replace_in_place(index, value) {
+        if !self.elements_raw_mut().replace_in_place(index, value) {
             return false;
         }
         self.object.note_prototype_elements_change();
@@ -1677,7 +1683,7 @@ impl ArrayObject {
     /// replaces elements through (`ArrayStorageProofs::replace`); `None` where it is shared.
     #[inline(always)]
     pub(crate) fn unique_values(&mut self) -> Option<std::ptr::NonNull<Value>> {
-        self.elements.unique_values()
+        self.elements_raw_mut().unique_values()
     }
 }
 
