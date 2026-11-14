@@ -54,6 +54,22 @@ pub struct DependencyGraph {
     pub requires_dynamic_source: bool,
 }
 
+impl DependencyGraph {
+    /// Keep a module's literal source obligations and its offsets of sites that
+    /// may receive source first known at execution, in file coordinates.
+    fn record_source_demands(&mut self, manifest: &mut SourceManifest, demands: quench_runtime::SourceDemands, path: &Path, base: u32) {
+        self.requires_dynamic_source |= demands.requires_dynamic_source();
+        for key in demands.keys { manifest.insert_key(key); }
+        for (sites, offsets) in [
+            (&mut self.dynamic_eval_sites, demands.eval),
+            (&mut self.dynamic_function_sites, demands.function),
+            (&mut self.dynamic_reflective_sites, demands.reflective),
+        ] {
+            sites.extend(offsets.into_iter().map(|offset| (path.to_path_buf(), offset + base)));
+        }
+    }
+}
+
 struct Requests<'s> {
     scoping: &'s oxc_semantic::Scoping,
     loaders: &'s LoaderBindings<'s>,
@@ -240,18 +256,8 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
         let semantic = oxc_semantic::SemanticBuilder::new().build(&parsed.program);
         let scoping = semantic.semantic.scoping();
         let demands = quench_runtime::Engine::source_demands(&parsed.program, scoping, true);
-        graph.requires_dynamic_source |= demands.requires_dynamic_source();
-        for key in demands.keys {
-            manifest.insert_key(key);
-        }
         let path = crate::host::shared_vm::referrer_location(&name).map_err(|error| error.message)?.1;
-        for (sites, offsets) in [
-            (&mut graph.dynamic_eval_sites, demands.eval),
-            (&mut graph.dynamic_function_sites, demands.function),
-            (&mut graph.dynamic_reflective_sites, demands.reflective),
-        ] {
-            sites.extend(offsets.into_iter().map(|offset| (path.clone(), offset + base)));
-        }
+        graph.record_source_demands(manifest, demands, &path, base);
         let loaders = LoaderBindings::discover(&parsed.program, scoping, &path);
         let mut requests = Requests::new(scoping, &loaders);
         requests.visit_program(&parsed.program);
