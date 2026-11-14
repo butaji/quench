@@ -1319,7 +1319,9 @@ impl Heap {
             self.alloc(cell)
         } else {
             self.allocated += 1;
-            self.alloc_in_slot(cell, self.tracks_young_cells())
+            // An environment holds no weak entries (`Cell::has_weak_entries`).
+            let track_young = self.tracks_young_cells();
+            self.alloc_in_slot_with(track_young, false, || cell)
         };
         let storage = match self.get(environment) {
             Some(Cell::Environment { slots, .. }) => slots as *const EnvironmentSlots,
