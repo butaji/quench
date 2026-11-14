@@ -3385,6 +3385,24 @@ impl EnvironmentSlots {
         }
     }
 
+    /// `read_storage` of a slot the storage's length is known to cover: a function's own
+    /// depth-0 capture, whose slot the compiler took from the locals of the frame that made
+    /// the environment, which a dense storage holds in full (`EnvironmentSlots::from_values`
+    /// of the frame's locals, `from_captured` of an activation window's). The bounds test is
+    /// the compiler's, not each read's; an internal marker still leaves for the long way.
+    /// # Safety
+    /// As `read_storage`, and `slot` below the storage's length.
+    #[inline(always)]
+    pub(crate) unsafe fn read_covered_storage(storage: *const usize, slot: u16) -> Option<Value> {
+        // SAFETY: as guaranteed by the caller.
+        unsafe {
+            let (values, len) = Self::borrow_storage(storage)?.0.run();
+            debug_assert!(usize::from(slot) < len, "a depth-0 capture slot past its storage");
+            let value = values.add(usize::from(slot)).cast::<Value>().read();
+            (!value.is_internal_marker()).then_some(value)
+        }
+    }
+
     /// # Safety
     /// `storage` is null or live as for `dense_storage`; no element is mutably borrowed.
     #[inline(always)]

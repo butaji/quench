@@ -5401,8 +5401,8 @@ script_handler! {
         debug_assert_eq!(ImmediateLayout::capture_depth(imm), 0);
         let slots = capture_reads(unsafe { (*cx).capture });
         // SAFETY: null or the running function's dense storage, found this run
-        // (`LaneContext::capture`). The scoped read retains bounds/marker checks.
-        let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, ImmediateLayout::capture_slot(imm)) };
+        // (`LaneContext::capture`), which covers each of its depth-0 slots.
+        let value = unsafe { crate::heap::EnvironmentSlots::read_covered_storage(slots, ImmediateLayout::capture_slot(imm)) };
         let Some(value) = value else {
             sibling!(lane_load_capture_walk::<H>, r, ip, view)
         };
