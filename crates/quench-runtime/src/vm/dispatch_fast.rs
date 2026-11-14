@@ -15984,6 +15984,33 @@ unsafe fn window_environment<H: Host>(
         if !made.is_deleted() {
             return made;
         }
+        let slots = window_slots_taken(entries);
+        // A non-arrow binds its `this` where its closures' arrows find it
+        // (`Vm::captured_lexical_this`), as a frame does when a closure or the body itself
+        // can observe its implicit bindings (`Function::activation_bindings_observable`);
+        // any other scope names only its program, which needs no allocation.
+        let body = code.function(function as usize);
+        if !body.is_arrow && body.activation_bindings_observable(code) {
+            bindings.insert(0, (vm.runtime_atoms.lexical_this, this));
+        }
+        let scope = window_scope_ref(program, bindings);
+        let (environment, storage) = vm.heap.alloc_environment(parent, function, slots, scope);
+        entries.add(usize::from(WINDOW_ENVIRONMENT)).write(environment);
+        entries
+            .add(usize::from(WINDOW_SLOTS))
+            .write(std::mem::transmute::<u64, Value>(storage as u64));
+        environment
+    }
+}
+
+/// The slots of an environment made from the window whose entries are `entries`: the locals a
+/// closure captured, each cleared in the window, which the environment owns from then on.
+///
+/// # Safety
+/// `entries` starts the entries of a live environment window (`lane_activate_environment`).
+unsafe fn window_slots_taken(entries: *mut Value) -> crate::heap::EnvironmentSlots {
+    // SAFETY: as the caller guarantees.
+    unsafe {
         let captured = std::mem::transmute::<Value, u64>(*entries.add(usize::from(WINDOW_CAPTURED)));
         let in_place = &*(std::mem::transmute::<Value, u64>(*entries.add(usize::from(WINDOW_SLOTS)))
             as *const crate::heap::EnvironmentSlots);
@@ -15999,32 +16026,23 @@ unsafe fn window_environment<H: Host>(
             locals.add(remaining.trailing_zeros() as usize).write(Value::DELETED);
             remaining &= remaining - 1;
         }
-        // A non-arrow binds its `this` where its closures' arrows find it
-        // (`Vm::captured_lexical_this`), as a frame does when a closure or the body itself
-        // can observe its implicit bindings (`Function::activation_bindings_observable`);
-        // any other scope names only its program, which needs no allocation.
-        let body = code.function(function as usize);
-        if !body.is_arrow && body.activation_bindings_observable(code) {
-            bindings.insert(0, (vm.runtime_atoms.lexical_this, this));
-        }
-        let scope = if bindings.is_empty() {
-            crate::heap::EnvironmentScopeRef::of_program(program.raw())
-        } else {
-            crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
-                program: Some(program.raw()),
-                root_eval_scope: false,
-                binding_site_pc: None,
-                dynamic_bindings: bindings.into(),
-                with_objects: Box::default(),
-            })
-        };
-        let (environment, storage) = vm.heap.alloc_environment(parent, function, slots, scope);
-        entries.add(usize::from(WINDOW_ENVIRONMENT)).write(environment);
-        entries
-            .add(usize::from(WINDOW_SLOTS))
-            .write(std::mem::transmute::<u64, Value>(storage as u64));
-        environment
+        slots
     }
+}
+
+/// The scope of a window's environment: its program's alone, which needs no allocation, or
+/// holding the dynamic `bindings` it takes over.
+fn window_scope_ref(program: ProgramId, bindings: Vec<(crate::bytecode::Atom, Value)>) -> crate::heap::EnvironmentScopeRef {
+    if bindings.is_empty() {
+        return crate::heap::EnvironmentScopeRef::of_program(program.raw());
+    }
+    crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+        program: Some(program.raw()),
+        root_eval_scope: false,
+        binding_site_pc: None,
+        dynamic_bindings: bindings.into(),
+        with_objects: Box::default(),
+    })
 }
 
 /// The body of [[Construct]] for a constructor that only stores its parameters into fields
@@ -20595,7 +20613,37 @@ fn specialize_environment_window<H: Host>(
     let registers = function.registers;
     // The handlers derivation gives these records alone: a record any other pass gave a
     // handler, such as one carrying an accumulator to the next, keeps the function's.
-    let plain: [Handler; 12] = [
+    let plain = plain_window_handlers::<H>();
+    let mut replacements = Vec::new();
+    for (pc, &instruction) in decoded.iter().enumerate() {
+        match window_record(function, instruction) {
+            WindowRecord::Keeps => {}
+            WindowRecord::Eval => replacements.push((pc, lane_eval::direct_eval::<H>(), instruction.imm())),
+            WindowRecord::Local(own) => {
+                if own > ENVIRONMENT_WINDOW_FIELD || !plain.iter().any(|handler| *handler as *const () == records[pc].handler) {
+                    return None;
+                }
+                let handler = window_local_handler::<H>(function, instruction.op(), own as usize, scoped);
+                replacements.push((pc, handler, own | u32::from(registers) << ENVIRONMENT_WINDOW_SHIFT));
+            }
+        }
+    }
+    for (pc, handler, imm) in replacements {
+        records[pc].handler = handler as *const ();
+        records[pc].operand = LaneOperand { imm };
+    }
+    Some(EnvironmentWindow {
+        locals: function.locals,
+        captured: (0..usize::from(function.locals))
+            .filter(|slot| function.local_slot_uses_environment(*slot))
+            .fold(0, |mask, slot| mask | 1 << slot),
+    })
+}
+
+/// The handlers derivation gives the records an environment window specializes, which no other
+/// pass changed.
+fn plain_window_handlers<H: Host>() -> [Handler; 12] {
+    [
         lane_clone_env::<H>,
         lane_load_local::<H>,
         lane_load_local_plain::<H>,
@@ -20608,64 +20656,83 @@ fn specialize_environment_window<H: Host>(
         lane_initialize_tdz::<H>,
         lane_make_closure::<H>,
         lane_exit::<H>,
-    ];
-    let mut replacements = Vec::new();
-    for (pc, &instruction) in decoded.iter().enumerate() {
-        let op = instruction.op();
-        // A direct eval runs in a window activation (`lane_eval`); in a frame's run it leaves.
-        if op.class().eq(Class::Call) && instruction.direct_eval() {
-            replacements.push((pc, lane_eval::direct_eval::<H>(), instruction.imm()));
-            continue;
-        }
-        let own = match op.class() {
-            Class::MakeClosure => instruction.imm(),
-            Class::CloneEnv => 0,
-            Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal | Class::StoreLocal | Class::StoreLocalPlain
-            | Class::StoreEnvLocal | Class::InitializeTdz => instruction.local_slot() as u32,
-            // A function's Annex B store to its `var` binding is a store to the slot
-            // (`Function::window_reads_locals`).
-            _ if op == Op::StoreVarBinding && function.parent.is_some() => instruction.local_slot() as u32,
-            _ => continue,
-        };
-        if own > ENVIRONMENT_WINDOW_FIELD
-            || !plain.iter().any(|handler| *handler as *const () == records[pc].handler)
-        {
-            return None;
-        }
-        let environment = !op.captures_environment() && function.local_slot_uses_environment(own as usize);
-        let mapped = mapped_windows::mapped_parameter_handler::<H>(function, op.class(), own as usize);
-        // A store to the function's own name is ignored or throws (`Function::strict`), which
-        // the general step decides.
-        let own_name_store = function.is_self_binding_slot(own as usize)
-            && matches!(op.class(), Class::StoreLocal | Class::StoreLocalPlain | Class::StoreEnvLocal);
-        // A program's root, whose slots may stand for bindings outside its window (`root_windows`).
-        let root = function.parent.is_none() && !scoped;
-        let handler: Handler = mapped.or_else(|| root.then(|| root_windows::root_local_handler::<H>(op.class(), environment)).flatten()).unwrap_or(match (op.class(), environment) {
-            _ if own_name_store => lane_exit::<H>,
-            (Class::MakeClosure, _) if scoped => scoped_names::scoped_closure::<H>(),
-            (Class::MakeClosure, _) => lane_make_window_closure::<H>,
-            (Class::CloneEnv, _) => lane_clone_window_env::<H>,
-            (Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal, true) => lane_load_window_local::<H, true>,
-            (Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal, false) => lane_load_window_local::<H, false>,
-            (Class::InitializeTdz, true) => lane_initialize_window_tdz::<H, true>,
-            (Class::InitializeTdz, false) => lane_initialize_window_tdz::<H, false>,
-            (Class::StoreEnvLocal, true) if scoped => scoped_names::scoped_store_local::<H, true>(),
-            (Class::StoreEnvLocal, false) if scoped => scoped_names::scoped_store_local::<H, false>(),
-            (_, true) => lane_store_window_local::<H, true>,
-            (_, false) => lane_store_window_local::<H, false>,
-        });
-        replacements.push((pc, handler, own | u32::from(registers) << ENVIRONMENT_WINDOW_SHIFT));
+    ]
+}
+
+/// What an environment window does with one record.
+enum WindowRecord {
+    /// The record reads no local and makes no closure: it keeps its handler.
+    Keeps,
+    /// A direct eval, which runs in a window activation (`lane_eval`); in a frame's run it leaves.
+    Eval,
+    /// A record of the local slot, or the closure or environment clone, `.0` names.
+    Local(u32),
+}
+
+fn window_record(function: &Function, instruction: WideInstruction) -> WindowRecord {
+    let op = instruction.op();
+    if op.class().eq(Class::Call) && instruction.direct_eval() {
+        return WindowRecord::Eval;
     }
-    for (pc, handler, imm) in replacements {
-        records[pc].handler = handler as *const ();
-        records[pc].operand = LaneOperand { imm };
-    }
-    Some(EnvironmentWindow {
-        locals: function.locals,
-        captured: (0..usize::from(function.locals))
-            .filter(|slot| function.local_slot_uses_environment(*slot))
-            .fold(0, |mask, slot| mask | 1 << slot),
+    WindowRecord::Local(match op.class() {
+        Class::MakeClosure => instruction.imm(),
+        Class::CloneEnv => 0,
+        Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal | Class::StoreLocal | Class::StoreLocalPlain
+        | Class::StoreEnvLocal | Class::InitializeTdz => instruction.local_slot() as u32,
+        // A function's Annex B store to its `var` binding is a store to the slot
+        // (`Function::window_reads_locals`).
+        _ if op == Op::StoreVarBinding && function.parent.is_some() => instruction.local_slot() as u32,
+        _ => return WindowRecord::Keeps,
     })
+}
+
+/// The handler of the window record of `op` on local slot `own`: the mapped parameter's, the program
+/// root's, one that leaves for a store to the function's own name, the scoped one of a function
+/// that resolves names at run time (`scoped`), else the plain window's.
+fn window_local_handler<H: Host>(function: &Function, op: Op, own: usize, scoped: bool) -> Handler {
+    let class = op.class();
+    let environment = !op.captures_environment() && function.local_slot_uses_environment(own);
+    if let Some(mapped) = mapped_windows::mapped_parameter_handler::<H>(function, class, own) {
+        return mapped;
+    }
+    // A program's root, whose slots may stand for bindings outside its window (`root_windows`).
+    if function.parent.is_none() && !scoped && let Some(root) = root_windows::root_local_handler::<H>(class, environment) {
+        return root;
+    }
+    // A store to the function's own name is ignored or throws (`Function::strict`), which
+    // the general step decides.
+    if function.is_self_binding_slot(own) && matches!(class, Class::StoreLocal | Class::StoreLocalPlain | Class::StoreEnvLocal) {
+        return lane_exit::<H>;
+    }
+    if scoped && let Some(scoped_handler) = scoped_window_handler::<H>(class, environment) {
+        return scoped_handler;
+    }
+    plain_window_handler::<H>(class, environment)
+}
+
+/// The handler a function that resolves names at run time gives a closure or an environment store.
+fn scoped_window_handler<H: Host>(class: Class, environment: bool) -> Option<Handler> {
+    match (class, environment) {
+        (Class::MakeClosure, _) => Some(scoped_names::scoped_closure::<H>()),
+        (Class::StoreEnvLocal, true) => Some(scoped_names::scoped_store_local::<H, true>()),
+        (Class::StoreEnvLocal, false) => Some(scoped_names::scoped_store_local::<H, false>()),
+        _ => None,
+    }
+}
+
+/// The handler of an environment window's record of `class`, `environment` where the local lives
+/// in the window's environment once a closure made one.
+fn plain_window_handler<H: Host>(class: Class, environment: bool) -> Handler {
+    match class {
+        Class::MakeClosure => lane_make_window_closure::<H>,
+        Class::CloneEnv => lane_clone_window_env::<H>,
+        Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal if environment => lane_load_window_local::<H, true>,
+        Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal => lane_load_window_local::<H, false>,
+        Class::InitializeTdz if environment => lane_initialize_window_tdz::<H, true>,
+        Class::InitializeTdz => lane_initialize_window_tdz::<H, false>,
+        _ if environment => lane_store_window_local::<H, true>,
+        _ => lane_store_window_local::<H, false>,
+    }
 }
 
 /// Gives each capture record its handler by the capture's depth, which the bytecode fixes:
