@@ -61,7 +61,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     /// Makes `block` the current one: the code that follows is its own.
-    fn enter(&mut self, block: ir::Block) {
+    pub(super) fn enter(&mut self, block: ir::Block) {
         self.body.core.builder.switch_to_block(block);
         self.body.core.builder.seal_block(block);
     }
