@@ -7,8 +7,6 @@ const STRING_CONCAT_INLINE_PARTS: usize = 9;
 /// past it the copy a flat concatenation makes costs more than its record saves, and a string
 /// read soon is copied twice.
 const PARTS_KNOWN_LIMIT: usize = 64;
-/// The most parts `string_of_parts` reads before it knows the window is too long for it.
-const PARTS_PROBED: usize = super::wtf16::MAX_PARTS + 1;
 
 impl<H: Host> Vm<H> {
     /// `left + right` of strings and Numbers whose text is ASCII and short enough to sit
@@ -98,29 +96,45 @@ impl<H: Host> Vm<H> {
     /// `StringConcat` of two or three parts, at most one a Number and the rest flat ASCII
     /// strings, whose text will not fit inline: a string of parts, which writes its text out
     /// when it is first read (`Heap::written_out_string`) and costs a record until then. `None`
-    /// for any other parts.
+    /// for any other parts. It is a small string (`Heap::alloc_small_string`), in a smaller
+    /// record, while that space has room.
     #[inline(always)]
     pub(super) fn string_of_parts(&mut self, count: usize, part: impl Fn(&Self, usize) -> Value) -> Option<Value> {
-        let mut parts = super::wtf16::Parts::EMPTY;
-        let (mut known, mut numbers) = (0, 0);
-        for index in 0..count.min(PARTS_PROBED) {
+        use super::wtf16::{MAX_PARTS, MIN_PARTS, Parts};
+        if !(MIN_PARTS..=MAX_PARTS).contains(&count) {
+            return None;
+        }
+        // The string ids in order, and the Number and its place.
+        let (mut ids, mut texts, mut number, mut known) = ([0; MAX_PARTS], 0, None, 0);
+        for index in 0..count {
             let value = part(self, index);
-            let pushed = match value.direct_string_index() {
+            match value.direct_string_index() {
                 Some(record_id) => {
                     known += self.heap.string(value)?.existing_flat()?.ascii_len()?;
-                    parts.push_text(record_id)
+                    ids[texts] = record_id;
+                    texts += 1;
                 }
-                None => {
-                    numbers += 1;
-                    parts.push_number(value.as_number()?)
-                }
-            };
-            if !pushed {
-                return None;
+                None if number.is_none() => number = Some((value.as_number()?, index)),
+                None => return None,
             }
         }
-        if !parts.is_complete() || known + numbers <= wtf16::SHORT_ASCII_CAPACITY || known >= PARTS_KNOWN_LIMIT {
+        let numbers = usize::from(number.is_some());
+        if known + numbers <= wtf16::SHORT_ASCII_CAPACITY || known >= PARTS_KNOWN_LIMIT {
             return None;
+        }
+        if let Some(small) = crate::heap::SmallParts::new(ids, texts, number)
+            && let Some(string) = self.heap.alloc_small_string(small)
+        {
+            return Some(string);
+        }
+        let mut parts = Parts::EMPTY;
+        let mut text = ids.into_iter();
+        for index in 0..count {
+            let pushed = match number {
+                Some((value, at)) if at == index => parts.push_number(value),
+                _ => parts.push_text(text.next().expect("a string id per string part")),
+            };
+            debug_assert!(pushed, "at most `MAX_PARTS` parts, one a Number");
         }
         Some(self.heap.alloc_parts_string(parts))
     }

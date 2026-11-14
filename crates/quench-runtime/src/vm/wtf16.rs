@@ -11,7 +11,7 @@ pub(crate) mod native_string;
 mod concat_all;
 mod parts;
 mod payload;
-pub(crate) use parts::{Part, Parts, MAX_PARTS};
+pub(crate) use parts::{Part, Parts, MAX_PARTS, MIN_PARTS};
 mod search;
 pub(super) use concat_all::JsStringBuilder;
 pub(crate) mod split;

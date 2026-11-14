@@ -35,6 +35,11 @@ impl Heap {
         }
         write_records(writer, &self.iterator_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.string_records, |writer, record: &JsString| Ok(record.write_snapshot(writer)))?;
+        // Every small string was written out above: each is kept as its text.
+        write_records(writer, &self.small_strings, |writer, record| {
+            // SAFETY: the record is live and owns its text.
+            Ok(unsafe { self.small_strings_text_of(record) }.write_snapshot(writer))
+        })?;
         self.properties.write_snapshot(writer);
         self.roots.write_snapshot(writer);
         let sparse = self.sparse_arrays.as_deref();
@@ -90,6 +95,8 @@ impl Heap {
         read_records(reader, &mut heap.promise_records, PromiseCell::read_snapshot)?;
         read_records(reader, &mut heap.iterator_records, IteratorRecord::read_snapshot)?;
         read_records(reader, &mut heap.string_records, JsString::read_snapshot)?;
+        let texts = &mut heap.small_texts;
+        read_records(reader, &mut heap.small_strings, |reader| Ok(small_strings::SmallParts::written(texts, JsString::read_snapshot(reader)?)))?;
         heap.properties = crate::value_vec::ValueArena::read_snapshot(reader)?;
         heap.roots = root::RootTable::read_snapshot(reader)?;
         let sparse = read_list(reader, |reader| {
@@ -145,6 +152,8 @@ impl Heap {
         self.for_each_cell(|cell| payload += cell.payload_bytes());
         self.array_records.for_each_live(|_, array| payload += external::array_payload_bytes(array));
         self.string_records.for_each_live(|_, string| payload += string.flat_unit_bytes());
+        // SAFETY: each live record owns its text, made before the snapshot was written.
+        self.small_strings.for_each_live(|_, record| payload += unsafe { self.small_strings_text_of(record) }.flat_unit_bytes());
         self.payload_bytes = payload;
         let legacy_live = self.slots.len() - self.free_slots;
         let live = legacy_live
@@ -153,7 +162,8 @@ impl Heap {
             + self.function_records.live_count()
             + self.promise_records.live_count()
             + self.iterator_records.live_count()
-            + self.string_records.live_count();
+            + self.string_records.live_count()
+            + self.small_strings.live_count();
         self.old_live = legacy_live;
         self.live_after_full = live;
         let live_weight = live + self.payload_bytes / payload_unit();
@@ -237,5 +247,33 @@ mod tests {
         }
         restored.collect([prototype, record_prototype]);
         assert_eq!(restored.prototypes.len(), 2, "live prototypes stay registered");
+    }
+
+    #[test]
+    fn small_strings_survive_a_snapshot_and_collections_as_their_text() {
+        let text = |heap: &Heap, value: Value| heap.string(value).unwrap().to_string();
+        let mut heap = Heap::new();
+        let prefix = heap.alloc_string(JsString::from_str("a prefix long enough "));
+        let suffix = heap.alloc_string(JsString::from_str(" and a suffix"));
+        let (prefix_id, suffix_id) = (prefix.direct_string_index().unwrap(), suffix.direct_string_index().unwrap());
+        let small = heap.alloc_small_string(SmallParts::new([prefix_id, suffix_id, 0], 2, Some((2.5, 1))).unwrap()).unwrap();
+        assert!(is_small_string(small.direct_string_index().unwrap()));
+        let nested = SmallParts::new([small.direct_string_index().unwrap(), 0, 0], 1, Some((-1.0, 0))).unwrap();
+        let outer = heap.alloc_small_string(nested).unwrap();
+        // The parts outlive collections that root only the small strings, read or not.
+        heap.collect([small, outer]);
+        heap.collect([small, outer]);
+        assert_eq!(text(&heap, outer), "-1a prefix long enough 2.5 and a suffix");
+        heap.collect([small, outer]);
+        assert_eq!(text(&heap, small), "a prefix long enough 2.5 and a suffix");
+        let mut writer = crate::snapshot::Writer::new();
+        heap.write_snapshot(&mut writer).unwrap();
+        let bytes = writer.finish();
+        let mut reader = crate::snapshot::Reader::new(&bytes, None).unwrap();
+        let mut restored = Heap::read_snapshot(&mut reader, MemoryPolicy::default()).unwrap();
+        assert_eq!(text(&restored, small), "a prefix long enough 2.5 and a suffix");
+        restored.collect([outer]);
+        assert!(!restored.is_live(small), "a small string no root reaches is freed");
+        assert_eq!(text(&restored, outer), "-1a prefix long enough 2.5 and a suffix");
     }
 }

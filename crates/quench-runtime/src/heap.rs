@@ -46,6 +46,8 @@ mod string_alloc;
 mod string_atoms;
 mod native_layout;
 mod string_parts;
+mod small_strings;
+pub(crate) use small_strings::{SMALL_STRING_ID_BASE, SMALL_STRING_ID_MASK, SmallParts, is_small_string};
 mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
@@ -522,7 +524,7 @@ struct SweepOutput {
 }
 
 /// The record families `Heap::record_families` lists.
-const RECORD_FAMILIES: usize = 8;
+const RECORD_FAMILIES: usize = 9;
 
 /// Every family's mark bits, borrowed apart from the slot a trace holds (`mark_bits!`).
 #[derive(Clone, Copy)]
@@ -534,6 +536,7 @@ pub(super) struct MarkBits<'a> {
     await_records: &'a AwaitRecordSpace,
     iterator_records: &'a IteratorRecordSpace,
     string_records: &'a StringRecordSpace,
+    small_strings: &'a small_strings::SmallStringSpace,
     v128_records: &'a V128RecordSpace,
     marks: &'a [AtomicU64],
 }
@@ -548,7 +551,10 @@ impl MarkBits<'_> {
             Some(HeapReference::PromiseRecord(id)) => self.promise_records.is_marked(id),
             Some(HeapReference::AwaitRecord(id)) => self.await_records.is_marked(id),
             Some(HeapReference::IteratorRecord(id)) => self.iterator_records.is_marked(id),
-            Some(HeapReference::StringRecord(id)) => self.string_records.is_marked(id),
+            Some(HeapReference::StringRecord(id)) => match small_strings::small_string_local(id) {
+                Some(local) => self.small_strings.is_marked(local),
+                None => self.string_records.is_marked(id),
+            },
             Some(HeapReference::V128Record(id)) => self.v128_records.is_marked(id),
             Some(HeapReference::LegacySlot(index)) => {
                 let index = index as usize;
@@ -572,6 +578,7 @@ macro_rules! mark_bits {
             await_records: &$heap.await_records,
             iterator_records: &$heap.iterator_records,
             string_records: &$heap.string_records,
+            small_strings: &$heap.small_strings,
             v128_records: &$heap.v128_records,
             marks: &$heap.marks,
         }
@@ -598,6 +605,9 @@ pub(crate) struct Heap {
     iterator_records: IteratorRecordSpace,
     /// Strings: immutable leaves, never prototypes, with no legacy-slot form.
     string_records: StringRecordSpace,
+    /// Small strings (`small_strings`): ids of the string records' hole, and the texts read.
+    small_strings: small_strings::SmallStringSpace,
+    small_texts: small_strings::SharedSmallTexts,
     string_atoms: string_atoms::StringAtoms,
     /// Wasm vectors: immutable leaves (`Heap::alloc_v128`), in a slot when this is full.
     v128_records: V128RecordSpace,
@@ -1061,6 +1071,7 @@ impl Heap {
             (&self.await_records, Value::direct_await),
             (&self.iterator_records, Value::direct_iterator),
             (&self.string_records, Value::direct_string),
+            (&self.small_strings, small_strings::small_string_value),
             (&self.v128_records, Value::direct_v128),
         ]
     }
@@ -1083,6 +1094,7 @@ impl Heap {
             (&mut self.await_records, Value::direct_await),
             (&mut self.iterator_records, Value::direct_iterator),
             (&mut self.string_records, Value::direct_string),
+            (&mut self.small_strings, small_strings::small_string_value),
             (&mut self.v128_records, Value::direct_v128),
         ]
     }
@@ -2035,6 +2047,8 @@ impl Heap {
         self.await_records = AwaitRecordSpace::default();
         self.iterator_records = IteratorRecordSpace::default();
         self.string_records = StringRecordSpace::default();
+        self.small_strings = small_strings::SmallStringSpace::default();
+        self.small_texts = small_strings::SharedSmallTexts::default();
         self.clear_string_atoms();
         self.v128_records = V128RecordSpace::default();
         self.marks.clear();
@@ -2712,6 +2726,16 @@ impl Heap {
                         self.sparse_arrays = None;
                     }
                 }
+                // Small strings sweep here, beside the worker's string records: they share
+                // nothing with them (no atom, no record) and their texts drop on this thread.
+                let small = small_strings::sweep(
+                    &mut self.small_strings,
+                    &mut self.small_texts,
+                    payload_bytes,
+                    live_payload_bytes,
+                    full,
+                    age,
+                );
                 (
                     (object_live, object_freed),
                     (function_live, function_freed),
@@ -2720,6 +2744,7 @@ impl Heap {
                     (v128_live, v128_freed),
                     (iterator_live, iterator_freed),
                     (array_live, array_freed),
+                    small,
                 )
             };
             let (
@@ -2730,6 +2755,7 @@ impl Heap {
                 (v128_live, v128_freed),
                 (iterator_live, iterator_freed),
                 (array_live, array_freed),
+                (small_live, small_freed),
             ) = match string_worker {
                 Some(pool) => pool.in_place_scope(|scope| {
                     let out = &mut string_out;
@@ -2745,7 +2771,7 @@ impl Heap {
             drop(std::mem::take(&mut string_out.rc_strings));
             self.payload_bytes = self.payload_bytes.saturating_sub(string_out.dead_bytes);
             *live_payload_bytes += string_out.live_bytes;
-            let (string_live, string_freed) = (string_out.live, string_out.freed);
+            let (string_live, string_freed) = (string_out.live + small_live, string_out.freed + small_freed);
             live += object_live
                 + array_live
                 + function_live
@@ -3477,6 +3503,17 @@ impl Heap {
             let mark_bits = mark_bits!(self);
             ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
         } else if let Some(record_id) = value.direct_string_index() {
+            if let Some(local) = small_strings::small_string_local(record_id) {
+                if self.small_strings.mark(local) {
+                    small_strings::trace_small(&self.small_strings, &mut self.string_records, local, work);
+                    #[cfg(feature = "profile-aggregate")]
+                    {
+                        self.gc_profile.marked += 1;
+                        self.gc_profile.marked_kinds[CellKind::String as usize] += 1;
+                    }
+                }
+                return;
+            }
             // A string holds no edges but its parts': marking it and tracing them is the visit.
             if self.string_records.mark(record_id) {
                 string_parts::trace_parts(&mut self.string_records, record_id, work);

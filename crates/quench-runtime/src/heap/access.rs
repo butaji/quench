@@ -802,7 +802,10 @@ impl Heap {
             Some(HeapReference::PromiseRecord(id)) => self.promise_records.is_live(id),
             Some(HeapReference::AwaitRecord(id)) => self.await_records.is_live(id),
             Some(HeapReference::IteratorRecord(id)) => self.iterator_records.is_live(id),
-            Some(HeapReference::StringRecord(id)) => self.string_records.is_live(id),
+            Some(HeapReference::StringRecord(id)) => match super::small_strings::small_string_local(id) {
+                Some(local) => self.small_strings.is_live(local),
+                None => self.string_records.is_live(id),
+            },
             Some(HeapReference::V128Record(id)) => self.v128_records.is_live(id),
             None => false,
         }

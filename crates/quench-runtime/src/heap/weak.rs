@@ -118,6 +118,7 @@ impl Heap {
             await_records,
             iterator_records,
             string_records,
+            small_strings,
             v128_records,
             marks,
             aged,
@@ -134,6 +135,7 @@ impl Heap {
             await_records,
             iterator_records,
             string_records,
+            small_strings,
             v128_records,
             marks,
         };

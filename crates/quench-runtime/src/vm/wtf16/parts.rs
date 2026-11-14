@@ -17,7 +17,7 @@ pub(crate) enum Part {
 /// The most parts a `Parts` string holds.
 pub(crate) const MAX_PARTS: usize = 3;
 /// The fewest parts: one part is the string itself.
-const MIN_PARTS: usize = 2;
+pub(crate) const MIN_PARTS: usize = 2;
 const NO_NUMBER: u8 = 3;
 /// Bytes of a string part's record id and of a Number's bits.
 const ID_BYTES: usize = 4;
@@ -75,12 +75,6 @@ impl Parts {
         self.number = value.to_bits().to_le_bytes();
         self.shape = (count as u8 + 1) | (count as u8) << NUMBER_SHIFT;
         true
-    }
-
-    /// Whether the parts pushed make a string of parts: at least `MIN_PARTS`.
-    #[inline(always)]
-    pub(crate) fn is_complete(&self) -> bool {
-        self.count() >= MIN_PARTS
     }
 
     /// The string parts' record ids, in order: what a collector traces.

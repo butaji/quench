@@ -65,6 +65,7 @@ struct ParallelMarkView<'heap> {
     awaits: ParallelRecordMarks<'heap, AwaitState>,
     iterators: ParallelRecordMarks<'heap, IteratorRecord>,
     strings: ParallelRecordMarks<'heap, JsString>,
+    small_strings: ParallelRecordMarks<'heap, super::SmallParts>,
     v128s: ParallelRecordMarks<'heap, [u8; crate::wasm::V128_BYTES]>,
     /// The keys weak map values wait for, which change only between rounds.
     ephemerons: &'heap weak::EphemeronWork,
@@ -170,6 +171,7 @@ impl<'heap> ParallelMarkView<'heap> {
             awaits: heap.await_records.parallel_marks(),
             iterators: heap.iterator_records.parallel_marks(),
             strings: heap.string_records.parallel_marks(),
+            small_strings: heap.small_strings.parallel_marks(),
             v128s: heap.v128_records.parallel_marks(),
             ephemerons,
             reads_closures,
@@ -277,13 +279,13 @@ impl<'heap> ParallelMarkView<'heap> {
                 }
                 // SAFETY: this view just marked the occupied record.
                 let object = unsafe { self.objects.get(id) };
-                let strings = self.strings;
+                let (strings, small_strings) = (self.strings, self.small_strings);
                 Heap::object_children_marking(
                     value,
                     object,
                     properties,
                     |child, work, last_proto| match child.heap_reference() {
-                        Some(HeapReference::StringRecord(string)) => super::string_parts::mark_leaf_string_if_new(&strings, string, work),
+                        Some(HeapReference::StringRecord(string)) => super::string_parts::mark_leaf_string_if_new(&strings, &small_strings, string, work),
                         Some(HeapReference::ArrayRecord(array)) => {
                             self.mark_leaf_array_if_new(child, array, parallel_object_roots, trace_kind, last_proto, work)
                         }
@@ -365,10 +367,17 @@ impl<'heap> ParallelMarkView<'heap> {
             }
             // A vector holds no heap edges: marking one is the whole visit; a string's are its parts.
             HeapReference::StringRecord(id) => {
-                if !self.strings.mark_if_new(id) {
-                    return;
+                if let Some(local) = super::small_strings::small_string_local(id) {
+                    if !self.small_strings.mark_if_new(local) {
+                        return;
+                    }
+                    super::small_strings::trace_small_if_new(&self.small_strings, &self.strings, local, work);
+                } else {
+                    if !self.strings.mark_if_new(id) {
+                        return;
+                    }
+                    super::string_parts::trace_parts_if_new(&self.strings, id, work);
                 }
-                super::string_parts::trace_parts_if_new(&self.strings, id, work);
                 CellKind::String
             }
             HeapReference::V128Record(id) => {

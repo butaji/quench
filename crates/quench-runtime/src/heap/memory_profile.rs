@@ -463,7 +463,7 @@ impl Heap {
         counts[CellKind::Object as usize] += self.promise_records.live_count();
         counts[CellKind::AwaitState as usize] = self.await_records.live_count();
         counts[CellKind::Iterator as usize] = self.iterator_records.live_count();
-        counts[CellKind::String as usize] = self.string_records.live_count();
+        counts[CellKind::String as usize] = self.string_records.live_count() + self.small_strings.live_count();
         counts[CellKind::WasmV128 as usize] = self.v128_records.live_count();
         self.for_each_live_value(|identity| {
             // Every record family is counted above; only legacy slots hold a `Cell`.
@@ -514,6 +514,7 @@ impl Heap {
             + self.await_records.allocated_bytes()
             + self.iterator_records.allocated_bytes()
             + self.string_records.allocated_bytes()
+            + self.small_string_bytes()
             + self.v128_records.allocated_bytes()
             + self.live_value_payload_bytes()
             + self

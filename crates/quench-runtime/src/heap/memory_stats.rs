@@ -291,7 +291,7 @@ impl Heap {
             promise_record_reserved_bytes: self.promise_records.allocated_bytes(),
             await_record_reserved_bytes: self.await_records.allocated_bytes(),
             iterator_record_reserved_bytes: self.iterator_records.allocated_bytes(),
-            string_record_reserved_bytes: self.string_records.allocated_bytes(),
+            string_record_reserved_bytes: self.string_records.allocated_bytes() + self.small_string_bytes(),
             v128_record_reserved_bytes: self.v128_records.allocated_bytes(),
             v128_record_used_bytes: self.v128_records.live_count() * crate::wasm::V128_BYTES,
             legacy_cell_record_reserved_bytes: 0,

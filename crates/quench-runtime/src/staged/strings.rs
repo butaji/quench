@@ -32,6 +32,10 @@ pub(crate) fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: 
     let present = stage.ne_imm(record_base, 0u32);
     stage.guard(present, miss)?;
     let index = stage.and_imm(value, u64::from(u32::MAX));
+    // A small string has no string record (`Heap::small_string_text`).
+    let small_bits = stage.and_imm(index, u64::from(crate::heap::SMALL_STRING_ID_MASK));
+    let has_record = stage.ne_imm(small_bits, u64::from(crate::heap::SMALL_STRING_ID_BASE));
+    stage.guard(has_record, miss)?;
     let offset = stage.mul_imm(index, form::RECORD_SIZE as u64);
     let record = stage.add(record_base, offset);
     let tag = stage.load_u8(Region::HeapMeta.mutable(), record, form::TAG_OFFSET);

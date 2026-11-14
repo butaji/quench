@@ -21,10 +21,21 @@ pub(super) fn trace_parts_if_new(records: &ParallelRecordMarks<'_, JsString>, re
 
 /// Marks the string `record_id` that an object property holds where the trace finds it
 /// (`Heap::object_children_marking`), and traces its parts as its visit would: a flat part is
-/// marked in place and any other goes to `work`, so the string itself never enters it.
-pub(super) fn mark_leaf_string_if_new(records: &ParallelRecordMarks<'_, JsString>, record_id: RecordId, work: &mut Vec<Value>) -> bool {
+/// marked in place and any other goes to `work`, so the string itself never enters it. A small
+/// string is marked in its own space (`small_strings::mark_leaf_small_if_new`). Out of line, so
+/// the property loop that calls it stays small.
+#[inline(never)]
+pub(super) fn mark_leaf_string_if_new(
+    records: &ParallelRecordMarks<'_, JsString>,
+    small: &ParallelRecordMarks<'_, super::SmallParts>,
+    record_id: RecordId,
+    work: &mut Vec<Value>,
+) -> bool {
     if cfg!(feature = "profile-aggregate") {
         return false;
+    }
+    if let Some(local) = super::small_strings::small_string_local(record_id) {
+        return super::small_strings::mark_leaf_small_if_new(small, records, local, work);
     }
     if records.mark_if_new(record_id) {
         trace_parts_if_new(records, record_id, work);
@@ -43,8 +54,11 @@ fn mark_leaf_part(mark_flat: impl FnOnce(RecordId) -> bool, part: u32) -> bool {
 }
 
 /// Marks the string `record_id` of an array element if it holds no parts, which a leaf visit
-/// would skip; answers whether it did.
+/// would skip; answers whether it did. A small string (`super::small_strings`) is left to its visit.
 pub(super) fn mark_flat(records: &mut StringRecordSpace, record_id: RecordId) -> bool {
+    if super::is_small_string(record_id) {
+        return false;
+    }
     // SAFETY: an array holds live strings.
     let flat = unsafe { records.get_live(record_id) }.parts().is_none();
     if flat {
@@ -55,6 +69,9 @@ pub(super) fn mark_flat(records: &mut StringRecordSpace, record_id: RecordId) ->
 
 /// `mark_flat` through a parallel view.
 pub(super) fn mark_flat_if_new(records: &ParallelRecordMarks<'_, JsString>, record_id: RecordId) -> bool {
+    if super::is_small_string(record_id) {
+        return false;
+    }
     // SAFETY: an array holds live strings.
     let flat = unsafe { records.get(record_id) }.parts().is_none();
     if flat {
@@ -71,6 +88,10 @@ impl Heap {
     /// `record_id` names a live string, retained by a reachable Value.
     #[inline(always)]
     pub(crate) unsafe fn written_out_string(&self, record_id: u32) -> &JsString {
+        if let Some(local) = super::small_strings::small_string_local(record_id) {
+            // SAFETY: the caller's contract.
+            return unsafe { self.small_string_text(local) };
+        }
         // SAFETY: the caller's contract.
         let string = unsafe { self.string_records.get_live(record_id) };
         if string.parts().is_none() {
@@ -154,6 +175,12 @@ impl Heap {
         for record_id in parts {
             // SAFETY: the id was live a moment ago and nothing was freed since.
             unsafe { self.written_out_string(record_id) };
+        }
+        let mut small = Vec::new();
+        self.small_strings.for_each_live(|local, _| small.push(local));
+        for local in small {
+            // SAFETY: as above.
+            unsafe { self.small_string_text(local) };
         }
     }
 }

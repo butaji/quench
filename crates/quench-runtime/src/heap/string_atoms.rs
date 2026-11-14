@@ -92,6 +92,10 @@ impl Heap {
             return;
         };
         debug_assert!(record_id & KEPT == 0, "string record ids leave the kept bit free");
+        // A small string keeps no atom: its id would size these tables past the string records.
+        if super::is_small_string(record_id) {
+            return;
+        }
         set(&mut self.string_atoms.atoms.borrow_mut(), record_id, atom, UNKNOWN);
         let mut records = self.string_atoms.records.borrow_mut();
         let current = records.get(atom as usize).copied().unwrap_or(UNKNOWN);
