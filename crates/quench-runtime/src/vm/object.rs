@@ -998,27 +998,7 @@ impl<H: Host> Vm<H> {
         self.heap.property_set(object, slot, value);
     }
     pub(super) fn invalidate_field_caches(&mut self) {
-        match &mut self.field_cache_writes {
-            Some(sites) => {
-                for &site in sites.iter() {
-                    let site = site as usize;
-                    self.field_caches.set(site, EMPTY_CACHE);
-                    self.field_add_indices.set(site, NO_FIELD_ADD_SET);
-                    self.megamorphic_field_indices.set(site, NO_MEGAMORPHIC_FIELD);
-                    self.inherited_field_indices.set(site, NO_INHERITED_FIELD);
-                    self.accessor_field_indices.set(site, NO_ACCESSOR_FIELD);
-                }
-                sites.clear();
-            }
-            None => {
-                self.field_caches.reset();
-                self.field_add_indices.reset();
-                self.megamorphic_field_indices.reset();
-                self.inherited_field_indices.reset();
-                self.accessor_field_indices.reset();
-                self.field_cache_writes = Some(Vec::new());
-            }
-        }
+        self.reset_field_cache_tables();
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
         self.array_iteration_shape = None;
@@ -1047,6 +1027,31 @@ impl<H: Host> Vm<H> {
         self.regexp_last_index_layouts.clear();
         self.regexp_builtin_layouts.clear();
         self.regexp_symbol_layouts.clear();
+    }
+    /// Empties the per-site cache tables: the sites written since the last reset where they were
+    /// tracked, else every site, which starts the tracking (`field_cache_writes`).
+    fn reset_field_cache_tables(&mut self) {
+        match &mut self.field_cache_writes {
+            Some(sites) => {
+                for &site in sites.iter() {
+                    let site = site as usize;
+                    self.field_caches.set(site, EMPTY_CACHE);
+                    self.field_add_indices.set(site, NO_FIELD_ADD_SET);
+                    self.megamorphic_field_indices.set(site, NO_MEGAMORPHIC_FIELD);
+                    self.inherited_field_indices.set(site, NO_INHERITED_FIELD);
+                    self.accessor_field_indices.set(site, NO_ACCESSOR_FIELD);
+                }
+                sites.clear();
+            }
+            None => {
+                self.field_caches.reset();
+                self.field_add_indices.reset();
+                self.megamorphic_field_indices.reset();
+                self.inherited_field_indices.reset();
+                self.accessor_field_indices.reset();
+                self.field_cache_writes = Some(Vec::new());
+            }
+        }
     }
     /// Notes that `site`'s per-site cache entries change (`field_cache_writes`).
     pub(super) fn note_field_cache_write(&mut self, site: usize) {
