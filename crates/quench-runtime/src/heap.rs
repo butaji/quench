@@ -456,6 +456,60 @@ struct ParallelSweepResult {
     swept_slots: usize,
 }
 
+/// The string family's sweep in a full collection, run on a mark-pool worker while the
+/// collector sweeps the other families (`collect_with_object_roots`). It touches only the
+/// string records and `StringAtoms`, which no other family's sweep reads. A dead string that
+/// shares an `Rc` is handed back for the collector thread to drop after the join, as
+/// `StoppedCellDrop` hands back cells: another family's dead record may drop a clone of the
+/// same `Rc` at the same time.
+struct StoppedStringSweep<'a> {
+    records: &'a mut StringRecordSpace,
+    atoms: &'a mut string_atoms::StringAtoms,
+    full: bool,
+    age: PromotionAge,
+}
+
+#[derive(Default)]
+struct StringSweepOutput {
+    live: usize,
+    freed: usize,
+    /// Units of the surviving strings, summed by full sweeps only.
+    live_bytes: usize,
+    dead_bytes: usize,
+    /// Dead strings sharing an `Rc`, for the collector thread to drop.
+    rc_strings: Vec<JsString>,
+}
+
+// SAFETY: the job holds exclusive borrows of the string records and atoms, which no other
+// code reads until the scope joins, with the mutator stopped. On a worker it drops only
+// strings whose drop writes no reference count (`JsString::drop_is_local`) and reads the
+// others' units without cloning them, so no count is written off the collector thread.
+unsafe impl Send for StoppedStringSweep<'_> {}
+// SAFETY: as above; `rc_strings` is only moved across the join, never touched on the worker
+// after the push.
+unsafe impl Send for StringSweepOutput {}
+
+impl StoppedStringSweep<'_> {
+    fn run(self, on_worker: bool) -> StringSweepOutput {
+        let mut out = StringSweepOutput::default();
+        let atoms = self.atoms;
+        self.records.warm_before_drop(JsString::prefetch_allocation);
+        // Survivors are visited only by a full sweep, which recounts the payload ledger.
+        let (live, freed) = self.records.sweep(self.full, self.age, self.full, |record| match record {
+            RecordSweep::Keep(_, string) => out.live_bytes += string.flat_unit_bytes(),
+            RecordSweep::Dead(record_id, string) => {
+                atoms.forget(record_id);
+                out.dead_bytes += string.flat_unit_bytes();
+                if on_worker && !string.drop_is_local() {
+                    out.rc_strings.push(string);
+                }
+            }
+        });
+        (out.live, out.freed) = (live, freed);
+        out
+    }
+}
+
 #[derive(Default)]
 struct SweepOutput {
     live: usize,
@@ -2233,6 +2287,8 @@ impl Heap {
         full: bool,
     ) -> Vec<(Value, Value)> {
         let full = self.start_collection(full);
+        // `QUENCH_TRACE=gc` reports the mark, sweep, and record-sweep times.
+        let trace_started = crate::trace::Channel::Gc.on().then(std::time::Instant::now);
         let age = self.promotion_age();
         // A minor collection that leaves survivors young carries the old owners that may
         // point at them to the next one (`carried_owners`): those the barriers logged, then
@@ -2424,6 +2480,7 @@ impl Heap {
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let sweep_started = std::time::Instant::now();
+        let trace_sweep_started = trace_started.map(|_| std::time::Instant::now());
         // Property-arena owners are listed only for a full collection that compacts: the
         // lists hold an entry per live owner at the heap's peak. A compaction that this
         // sweep's releases make due waits for the next full collection.
@@ -2462,6 +2519,7 @@ impl Heap {
         let legacy_live = live;
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let records_started = std::time::Instant::now();
+        let trace_records_started = trace_started.map(|_| std::time::Instant::now());
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
             self.gc_profile.sweep_phase_nanos[0] +=
@@ -2476,147 +2534,190 @@ impl Heap {
                         .map(|(family, _)| family.high_water())
                         .sum::<usize>() as u64;
             }
+            // A full collection sweeps the strings on a mark-pool worker meanwhile, once
+            // there are enough to pay for the hand-off.
+            let string_worker = (full
+                && !cfg!(feature = "profile-memory")
+                && (self.parallel_mark_forced()
+                    || self.string_records.live_count() >= PARALLEL_MARK_MINIMUM_CELLS / 4))
+                .then(parallel_mark::parallel_mark_pool)
+                .flatten();
+            let strings = StoppedStringSweep {
+                records: &mut self.string_records,
+                atoms: &mut self.string_atoms,
+                full,
+                age,
+            };
+            let mut string_out = StringSweepOutput::default();
             #[cfg(feature = "profile-memory")]
             let memory_profile = &mut self.memory_profile;
             let properties = &mut self.properties;
             let payload_bytes = &mut self.payload_bytes;
-            // Every young run's owner is a direct object (`ValueArena::young_run_padded`), so
-            // their sweep shows its survivors, minor or full, and lists those it keeps.
-            // A dead object's storage is released in place; one without extras, which its drop
-            // would free, is then forgotten.
-            let young_runs = properties.young_runs();
-            let dispose = |_record_id: RecordId, object: &Object| {
-                #[cfg(feature = "profile-memory")]
-                memory_profile.freed_record_cell(Value::direct_object(_record_id), properties.len(object.properties()));
-                object.release_storage(properties)
+            let live_payload_bytes = &mut live_payload_bytes;
+            let mut sweep_rest = || {
+                // Every young run's owner is a direct object (`ValueArena::young_run_padded`), so
+                // their sweep shows its survivors, minor or full, and lists those it keeps.
+                // A dead object's storage is released in place; one without extras, which its drop
+                // would free, is then forgotten.
+                let young_runs = properties.young_runs();
+                let dispose = |_record_id: RecordId, object: &Object| {
+                    #[cfg(feature = "profile-memory")]
+                    memory_profile.freed_record_cell(Value::direct_object(_record_id), properties.len(object.properties()));
+                    object.release_storage(properties)
+                };
+                let (object_live, object_freed) = self.object_records.sweep_disposing(full, age, records::sweep_support::objects_visited(young_runs, compacts), dispose, |record| match record {
+                    RecordSweep::Keep(record_id, object) => {
+                        if compacts && object.properties().has_compact_range() {
+                            direct_property_owners.push((
+                                object.properties().start_offset(),
+                                Value::direct_object(record_id),
+                            ));
+                        } else if young_runs.hold(object.properties()) {
+                            note_young_owner(&mut young_owners, object.properties().start_offset(), record_id);
+                        }
+                    }
+                    // Released in place: dropping it frees its extras.
+                    RecordSweep::Dead(..) => {}
+                });
+                let (function_live, function_freed) =
+                    self.function_records.sweep(full, age, full, |record| match record {
+                        RecordSweep::Keep(record_id, function) => {
+                            if compacts && function.object.properties().has_compact_range() {
+                                direct_property_owners.push((
+                                    function.object.properties().start_offset(),
+                                    Value::direct_function(record_id),
+                                ));
+                            }
+                        }
+                        RecordSweep::Dead(_record_id, function) => {
+                            #[cfg(feature = "profile-memory")]
+                            let slots = properties.len(function.object.properties());
+                            properties.release_ordinary(function.object.properties());
+                            #[cfg(feature = "profile-memory")]
+                            memory_profile.freed_record_cell(Value::direct_function(_record_id), slots);
+                        }
+                    });
+                let abandoned_contexts = &mut self.abandoned_contexts;
+                let (promise_live, promise_freed) =
+                    self.promise_records.sweep(full, age, full, |record| match record {
+                        RecordSweep::Keep(record_id, promise) => {
+                            if compacts && promise.object.properties().has_compact_range() {
+                                direct_property_owners.push((
+                                    promise.object.properties().start_offset(),
+                                    Value::direct_promise(record_id),
+                                ));
+                            }
+                        }
+                        RecordSweep::Dead(_record_id, promise) => {
+                            abandoned_contexts.abandon(&promise.record);
+                            #[cfg(feature = "profile-memory")]
+                            let slots = properties.len(promise.object.properties());
+                            properties.release_ordinary(promise.object.properties());
+                            #[cfg(feature = "profile-memory")]
+                            memory_profile.freed_record_cell(Value::direct_promise(_record_id), slots);
+                        }
+                    });
+                // An await state owns no arena storage; dropping a dead one frees its unresumed
+                // continuation.
+                let (await_live, await_freed) = self.await_records.sweep(full, age, false, |_| {});
+                // A vector owns nothing beyond its record.
+                let (v128_live, v128_freed) = self.v128_records.sweep(full, age, false, |_| {});
+                let (iterator_live, iterator_freed) =
+                    self.iterator_records.sweep(full, age, full, |record| match record {
+                        RecordSweep::Keep(record_id, iterator) => {
+                            if compacts && iterator.object.properties().has_compact_range() {
+                                direct_property_owners.push((
+                                    iterator.object.properties().start_offset(),
+                                    Value::direct_iterator(record_id),
+                                ));
+                            }
+                        }
+                        RecordSweep::Dead(_record_id, iterator) => {
+                            #[cfg(feature = "profile-memory")]
+                            let slots = properties.len(iterator.object.properties());
+                            properties.release_ordinary(iterator.object.properties());
+                            #[cfg(feature = "profile-memory")]
+                            memory_profile.freed_record_cell(Value::direct_iterator(_record_id), slots);
+                        }
+                    });
+                let mut dead_arrays = Vec::new();
+                // Every young run of elements is a young array's (`ArrayElements::young`), so
+                // their sweep, which shows its survivors minor or full, lists those it keeps.
+                let young_arrays = &mut young_arrays;
+                // A dead array is released in place; one owning nothing its drop frees is then
+                // forgotten, as a young array whose elements its young cycle takes back is.
+                let sparse = self.sparse_arrays.is_some();
+                let dispose = |record_id: RecordId, array: &ArrayObject| {
+                    *payload_bytes = payload_bytes.saturating_sub(array_payload_bytes(array));
+                    #[cfg(feature = "profile-memory")]
+                    memory_profile.freed_record_cell(Value::direct_array(record_id), properties.len(array.properties()));
+                    properties.release_ordinary(array.properties());
+                    if sparse {
+                        dead_arrays.push(Value::direct_array(record_id));
+                    }
+                    array.needs_drop()
+                };
+                self.array_records.warm_before_drop(records::sweep_support::warm_array_elements);
+                let (array_live, array_freed) = self.array_records.sweep_disposing(full, age, true, dispose, |record| match record {
+                    RecordSweep::Keep(record_id, array) => {
+                        if full {
+                            *live_payload_bytes += array_payload_bytes(array);
+                        }
+                        if array.elements().is_young() {
+                            young_arrays.push(record_id);
+                        }
+                        if compacts && array.properties().has_compact_range() {
+                            direct_property_owners.push((
+                                array.properties().start_offset(),
+                                Value::direct_array(record_id),
+                            ));
+                        }
+                    }
+                    // Released in place: dropping it frees what it owns.
+                    RecordSweep::Dead(..) => {}
+                });
+                if let Some(arrays) = &mut self.sparse_arrays {
+                    for array in dead_arrays {
+                        arrays.remove(&array);
+                    }
+                    if arrays.is_empty() {
+                        self.sparse_arrays = None;
+                    }
+                }
+                (
+                    (object_live, object_freed),
+                    (function_live, function_freed),
+                    (promise_live, promise_freed),
+                    (await_live, await_freed),
+                    (v128_live, v128_freed),
+                    (iterator_live, iterator_freed),
+                    (array_live, array_freed),
+                )
             };
-            let (object_live, object_freed) = self.object_records.sweep_disposing(full, age, records::sweep_support::objects_visited(young_runs, compacts), dispose, |record| match record {
-                RecordSweep::Keep(record_id, object) => {
-                    if compacts && object.properties().has_compact_range() {
-                        direct_property_owners.push((
-                            object.properties().start_offset(),
-                            Value::direct_object(record_id),
-                        ));
-                    } else if young_runs.hold(object.properties()) {
-                        note_young_owner(&mut young_owners, object.properties().start_offset(), record_id);
-                    }
+            let (
+                (object_live, object_freed),
+                (function_live, function_freed),
+                (promise_live, promise_freed),
+                (await_live, await_freed),
+                (v128_live, v128_freed),
+                (iterator_live, iterator_freed),
+                (array_live, array_freed),
+            ) = match string_worker {
+                Some(pool) => pool.in_place_scope(|scope| {
+                    let out = &mut string_out;
+                    scope.spawn(move |_| *out = strings.run(true));
+                    sweep_rest()
+                }),
+                None => {
+                    string_out = strings.run(false);
+                    sweep_rest()
                 }
-                // Released in place: dropping it frees its extras.
-                RecordSweep::Dead(..) => {}
-            });
-            let (function_live, function_freed) =
-                self.function_records.sweep(full, age, full, |record| match record {
-                    RecordSweep::Keep(record_id, function) => {
-                        if compacts && function.object.properties().has_compact_range() {
-                            direct_property_owners.push((
-                                function.object.properties().start_offset(),
-                                Value::direct_function(record_id),
-                            ));
-                        }
-                    }
-                    RecordSweep::Dead(_record_id, function) => {
-                        #[cfg(feature = "profile-memory")]
-                        let slots = properties.len(function.object.properties());
-                        properties.release_ordinary(function.object.properties());
-                        #[cfg(feature = "profile-memory")]
-                        memory_profile.freed_record_cell(Value::direct_function(_record_id), slots);
-                    }
-                });
-            let abandoned_contexts = &mut self.abandoned_contexts;
-            let (promise_live, promise_freed) =
-                self.promise_records.sweep(full, age, full, |record| match record {
-                    RecordSweep::Keep(record_id, promise) => {
-                        if compacts && promise.object.properties().has_compact_range() {
-                            direct_property_owners.push((
-                                promise.object.properties().start_offset(),
-                                Value::direct_promise(record_id),
-                            ));
-                        }
-                    }
-                    RecordSweep::Dead(_record_id, promise) => {
-                        abandoned_contexts.abandon(&promise.record);
-                        #[cfg(feature = "profile-memory")]
-                        let slots = properties.len(promise.object.properties());
-                        properties.release_ordinary(promise.object.properties());
-                        #[cfg(feature = "profile-memory")]
-                        memory_profile.freed_record_cell(Value::direct_promise(_record_id), slots);
-                    }
-                });
-            // An await state owns no arena storage; dropping a dead one frees its unresumed
-            // continuation.
-            let (await_live, await_freed) = self.await_records.sweep(full, age, false, |_| {});
-            // A vector owns nothing beyond its record.
-            let (v128_live, v128_freed) = self.v128_records.sweep(full, age, false, |_| {});
-            let (iterator_live, iterator_freed) =
-                self.iterator_records.sweep(full, age, full, |record| match record {
-                    RecordSweep::Keep(record_id, iterator) => {
-                        if compacts && iterator.object.properties().has_compact_range() {
-                            direct_property_owners.push((
-                                iterator.object.properties().start_offset(),
-                                Value::direct_iterator(record_id),
-                            ));
-                        }
-                    }
-                    RecordSweep::Dead(_record_id, iterator) => {
-                        #[cfg(feature = "profile-memory")]
-                        let slots = properties.len(iterator.object.properties());
-                        properties.release_ordinary(iterator.object.properties());
-                        #[cfg(feature = "profile-memory")]
-                        memory_profile.freed_record_cell(Value::direct_iterator(_record_id), slots);
-                    }
-                });
-            self.string_records.warm_before_drop(JsString::prefetch_allocation);
-            let (string_live, string_freed) = self.string_records.sweep(full, age, full, |record| match record {
-                RecordSweep::Keep(_, string) => live_payload_bytes += if full { string.flat_unit_bytes() } else { 0 },
-                RecordSweep::Dead(record_id, string) => {
-                    self.string_atoms.forget(record_id);
-                    *payload_bytes = payload_bytes.saturating_sub(string.flat_unit_bytes());
-                }
-            });
-            let mut dead_arrays = Vec::new();
-            // Every young run of elements is a young array's (`ArrayElements::young`), so
-            // their sweep, which shows its survivors minor or full, lists those it keeps.
-            let young_arrays = &mut young_arrays;
-            // A dead array is released in place; one owning nothing its drop frees is then
-            // forgotten, as a young array whose elements its young cycle takes back is.
-            let sparse = self.sparse_arrays.is_some();
-            let dispose = |record_id: RecordId, array: &ArrayObject| {
-                *payload_bytes = payload_bytes.saturating_sub(array_payload_bytes(array));
-                #[cfg(feature = "profile-memory")]
-                memory_profile.freed_record_cell(Value::direct_array(record_id), properties.len(array.properties()));
-                properties.release_ordinary(array.properties());
-                if sparse {
-                    dead_arrays.push(Value::direct_array(record_id));
-                }
-                array.needs_drop()
             };
-            self.array_records.warm_before_drop(records::sweep_support::warm_array_elements);
-            let (array_live, array_freed) = self.array_records.sweep_disposing(full, age, true, dispose, |record| match record {
-                RecordSweep::Keep(record_id, array) => {
-                    if full {
-                        live_payload_bytes += array_payload_bytes(array);
-                    }
-                    if array.elements().is_young() {
-                        young_arrays.push(record_id);
-                    }
-                    if compacts && array.properties().has_compact_range() {
-                        direct_property_owners.push((
-                            array.properties().start_offset(),
-                            Value::direct_array(record_id),
-                        ));
-                    }
-                }
-                // Released in place: dropping it frees what it owns.
-                RecordSweep::Dead(..) => {}
-            });
-            if let Some(arrays) = &mut self.sparse_arrays {
-                for array in dead_arrays {
-                    arrays.remove(&array);
-                }
-                if arrays.is_empty() {
-                    self.sparse_arrays = None;
-                }
-            }
+            // The strings that share an `Rc` die on the collector thread.
+            drop(std::mem::take(&mut string_out.rc_strings));
+            self.payload_bytes = self.payload_bytes.saturating_sub(string_out.dead_bytes);
+            *live_payload_bytes += string_out.live_bytes;
+            let (string_live, string_freed) = (string_out.live, string_out.freed);
             live += object_live
                 + array_live
                 + function_live
@@ -2664,6 +2765,7 @@ impl Heap {
         {
             self.gc_profile.sweep_phase_nanos[1] += records_started.elapsed().as_nanos() as u64;
         }
+        let trace_records_us = trace_records_started.map_or(0, |started| started.elapsed().as_micros());
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let compaction_started = std::time::Instant::now();
         if full {
@@ -2690,6 +2792,9 @@ impl Heap {
             self.gc_profile.sweep_phase_nanos[2] += compaction_started.elapsed().as_nanos() as u64;
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
         }
+        let trace_times = trace_started.zip(trace_sweep_started).map_or((0, 0), |(started, sweep)| {
+            ((sweep - started).as_micros(), sweep.elapsed().as_micros())
+        });
         // Live weight in the units allocation is charged in: one per cell or record plus
         // its payload.
         let live_weight = live + self.payload_bytes / payload_unit();
@@ -2737,7 +2842,8 @@ impl Heap {
             },
         );
         if crate::trace::Channel::Gc.on() {
-            eprintln!("gc full={full} resident_start={} resident_kept={} weight_between_fulls={} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.resident_at_full_start, self.resident_after_full, self.weight_between_fulls, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state);
+            let (mark_us, sweep_us) = trace_times;
+            eprintln!("gc full={full} mark_us={mark_us} sweep_us={sweep_us} records_us={trace_records_us} resident_start={} resident_kept={} weight_between_fulls={} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.resident_at_full_start, self.resident_after_full, self.weight_between_fulls, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state);
         }
         self.live_weight_after_previous = live_weight;
         self.set_young_budget(next.threshold);

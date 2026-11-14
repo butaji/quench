@@ -1678,3 +1678,61 @@ fn memory_census_distinguishes_sparse_environment_storage_from_logical_slots() {
     heap.collect([]);
     assert_eq!(heap.memory_composition().environment_storage_bytes, 0);
 }
+
+#[test]
+fn a_full_collection_sweeping_strings_on_a_worker_matches_the_serial_sweep() {
+    use crate::vm::wtf16::{JsString, Parts};
+    let run = |on_worker: bool| {
+        let mut heap = Heap::new();
+        if on_worker {
+            heap.force_parallel_mark_for_test();
+        }
+        // Text shared with this frame: every dead heap copy and slice drops a clone of its `Rc`.
+        let shared = JsString::from_str(&"s".repeat(200));
+        let wide = JsString::from_units(&[0x3b1, 0x3b2, 0x3b3, 0x3b4]);
+        let (mut kept, mut dead) = (Vec::new(), Vec::new());
+        for i in 0..300_usize {
+            let mut rope = JsString::from_str(&"r".repeat(1024));
+            rope.push_js_string(&shared);
+            let strings = [
+                JsString::from_str("ab"),
+                JsString::from_str(&"x".repeat(40 + i % 7)),
+                shared.clone(),
+                shared.substring(3..150),
+                wide.clone(),
+                rope,
+            ];
+            for (position, string) in strings.into_iter().enumerate() {
+                let value = heap.alloc_string(string);
+                if (i + position) % 2 == 0 { kept.push(value) } else { dead.push(value) }
+            }
+            // Parts are ASCII strings (`Vm::string_of_parts`).
+            let mut parts = Parts::EMPTY;
+            let (first, second) = (heap.alloc_string(JsString::from_str("part one")), heap.alloc_string(JsString::from_str(&"p".repeat(64))));
+            kept.extend([first, second]);
+            let Some(HeapReference::StringRecord(first)) = first.heap_reference() else { unreachable!() };
+            let Some(HeapReference::StringRecord(second)) = second.heap_reference() else { unreachable!() };
+            assert!(parts.push_text(first) && parts.push_text(second) && parts.push_number(i as f64));
+            let value = heap.alloc_parts_string(parts);
+            if i % 3 == 0 { kept.push(value) } else { dead.push(value) }
+        }
+        for (atom, &value) in dead.iter().chain(&kept).enumerate() {
+            heap.record_string_atom(value, atom as u32);
+        }
+        let texts: Vec<String> = kept
+            .iter()
+            .map(|&value| heap.string(value).map_or_else(String::new, JsString::to_host_owned))
+            .collect();
+        heap.collect_with_object_roots(kept.iter().copied(), |_, _, _, _, _| {}, None, None, true);
+        assert!(kept.iter().all(|&value| heap.is_live(value)));
+        assert!(dead.iter().all(|&value| !heap.is_live(value)));
+        assert!(dead.iter().all(|&value| heap.string_atom(value).is_none()), "a dead string's atom is forgotten");
+        assert!(kept.iter().all(|&value| heap.string_atom(value).is_some()));
+        for (&value, text) in kept.iter().zip(&texts) {
+            assert_eq!(&heap.string(value).map_or_else(String::new, JsString::to_host_owned), text);
+        }
+        assert_eq!(shared.to_host_owned(), "s".repeat(200));
+        (heap.string_records.live_count(), heap.payload_bytes)
+    };
+    assert_eq!(run(true), run(false));
+}

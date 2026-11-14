@@ -19,6 +19,14 @@ impl JsString {
         let _ = address;
     }
 
+    /// Whether dropping this string writes no reference count: inline short text, or parts not
+    /// yet written out (`Parts` holds record ids only). Every other form shares an `Rc`, so only
+    /// these may be dropped off the thread that owns the heap (`StoppedStringSweep`).
+    #[inline]
+    pub(crate) fn drop_is_local(&self) -> bool {
+        matches!(self.repr, Repr::Flat(FlatUnits::Short(_) | FlatUnits::Parts(_)))
+    }
+
     /// Bytes of flat units this string holds; a rope owns only its node until it flattens.
     #[inline]
     pub(crate) fn flat_unit_bytes(&self) -> usize {
