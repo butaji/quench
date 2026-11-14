@@ -20210,6 +20210,31 @@ fn lane_name_loads_resolve_undefined_intrinsics_and_call_receivers() {
     }
 }
 
+#[test]
+fn lane_intrinsic_native_reads_keep_each_name_its_own_native() {
+    // Hot reads of several intrinsic names (`{ __proto__: v }`, `super.x = v`) interleave: each
+    // atom reads the native its own first run recorded (`Vm::intrinsic_natives`, by atom).
+    let source = r#"
+      function hot(f) { var s = 0; for (var i = 0; i < 3000; i++) s = (s + f(i)) | 0; return s; }
+      class A { set x(v) { this.y = v; } }
+      class B extends A { m(v) { super.x = v; return this.y; } }
+      var b = new B();
+      var p = { tag: 1 };
+      print([hot(function (i) { return { __proto__: p, v: i }.tag; }),
+             hot(function (i) { return b.m(i & 3); }),
+             hot(function (i) { return { __proto__: null, v: i }.v & 1; })].join(" "));
+    "#;
+    let program = Engine::specialize(source, "lane-intrinsic-natives.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["3000 4500 1500"], "{mode:?}");
+    }
+}
+
 #[cfg(not(quench_profiled))]
 #[test]
 fn global_reads_follow_redefinition_deletion_accessors_and_later_lexical_declarations() {
