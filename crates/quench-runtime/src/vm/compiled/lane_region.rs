@@ -3104,53 +3104,6 @@ impl Lowering<'_, '_> {
         self.leave_site().with(&mut self.builder, status, word);
     }
 
-    fn interrupt_check(&mut self, state: &mut State, pc: u32) {
-        if self.fault_poll {
-            let interrupt = self.interrupt;
-            let proof = super::EmitProof::Safepoint { interrupt, miss: None, fault_poll: true };
-            self.step(state, frame::Edges::Value, crate::staged::Operation::Safepoint { proof });
-            return;
-        }
-        let interrupt = self.interrupt;
-        let exit = self.guard_exit(state, pc);
-        let proof = super::EmitProof::Safepoint { interrupt, miss: Some(exit), fault_poll: false };
-        self.step(state, frame::Edges::ValueGuarded { miss: exit }, crate::staged::Operation::Safepoint { proof });
-    }
-
-    fn emit_fault_poll(&mut self) {
-        frame::calls::safepoint_parts(&mut self.builder, &mut self.polls,
-            super::EmitProof::Safepoint { interrupt: self.interrupt, miss: None, fault_poll: true });
-    }
-
-    /// Joining edges must not move a guard, conversion or recovery across the
-    /// interrupt check. Only already-conforming SSA views may share this latch;
-    /// flag-based checks retain their exact-PC recovery on the original edge.
-    fn shared_backedge(&mut self, state: &State, target: usize) -> bool {
-        if !self.fault_poll || !self.shared_headers.contains(target) || !self.entered.contains(target) { return false; }
-        let Some(block) = self.blocks.get(target).copied().flatten() else { return false };
-        let Some(types) = self.facts.at(target) else { return false };
-        if !types.iter().copied().enumerate().all(|(index, ty)| {
-            if !self.is_live(target, index as Register) { return true; }
-            let fact = state.values[index];
-            fact.value.ty.is_subtype(ty) && if ty == Type::INT32 {
-                fact.value.representation == Representation::Int32
-            } else if ty == Type::NUMBER {
-                fact.value.representation == Representation::Float64
-            } else { fact.tagged.current() }
-        }) { return false; }
-        let latch = match self.poll_latches[block] {
-            Some(latch) => latch,
-            None => {
-                let latch = self.builder.create_block();
-                self.poll_latches[block] = Some(latch);
-                latch
-            }
-        };
-        self.finishes = true;
-        self.goto(latch, &[]);
-        true
-    }
-
     fn continue_branch(&mut self, state: &mut State, pc: usize, target: usize,
         taken_block: ir::Block, fall_block: ir::Block) {
         let back = target <= pc && target == self.coverage.entry();
