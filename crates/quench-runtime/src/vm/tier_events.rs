@@ -3,6 +3,7 @@
 //! here (or behind a diagnostics switch) decides what the tiers run.
 
 use super::compiled::LaneExit;
+use super::dispatch_fast::lane_body_stats::Miss;
 use std::cell::Cell;
 
 /// One kind of tier event. The ends of a lane body's run are contiguous, `Completed` first
@@ -37,6 +38,14 @@ pub enum Event {
     OsrEntered,
     /// A loop site's run ran published code that left at an exit.
     OsrLeft,
+    /// A loop region's code ran, on the lane frame's payload or bare (`CompiledOsrRegion::run`).
+    OsrRun,
+    /// A run of a lane-ABI region that ran on the lane frame's payload, lent to its callees' entries.
+    OsrLent,
+    /// A lane-ABI region's run that left inside its loop: an exit, or a leave inside a callee.
+    OsrExited,
+    /// A lane-ABI region's run that left inside an inlined callee.
+    OsrInlined,
     /// A body a leave retired: dropped for recompiling or declined.
     Retired,
 }
@@ -46,7 +55,7 @@ impl Event {
     pub const ALL: [Event; Self::COUNT] = [
         Self::Published, Self::Inlined, Self::Entered, Self::Completed, Self::LeftAt, Self::LeftInlined,
         Self::LeftInCallee, Self::Terminated, Self::Refused, Self::CellCrossed, Self::RunBound,
-        Self::Returned, Self::OsrEntered, Self::OsrLeft, Self::Retired,
+        Self::Returned, Self::OsrEntered, Self::OsrLeft, Self::OsrRun, Self::OsrLent, Self::OsrExited, Self::OsrInlined, Self::Retired,
     ];
     /// How many kinds there are.
     pub const COUNT: usize = Self::Retired as usize + 1;
@@ -70,20 +79,33 @@ impl Event {
     pub(in crate::vm) fn end_index(self) -> usize { self as usize - Self::Completed as usize }
 }
 
-/// The counters of one VM, indexed by `Event`.
-#[derive(Clone, Default)]
-pub struct TierEvents([Cell<u64>; Event::COUNT]);
+/// The counters of one VM: one per `Event`, and one per `Miss`, the reason a lane body's call or
+/// construction helper left its body at the call.
+#[derive(Clone)]
+pub struct TierEvents { events: [Cell<u64>; Event::COUNT], misses: [Cell<u64>; Miss::COUNT] }
+
+impl Default for TierEvents {
+    fn default() -> Self { Self { events: std::array::from_fn(|_| Cell::default()), misses: std::array::from_fn(|_| Cell::default()) } }
+}
 
 impl TierEvents {
     pub(in crate::vm) fn record(&self, event: Event) { self.add(event, 1); }
 
     pub(in crate::vm) fn add(&self, event: Event, count: usize) {
-        let counter = &self.0[event as usize];
+        let counter = &self.events[event as usize];
         counter.set(counter.get() + count as u64);
     }
 
+    pub(in crate::vm) fn record_miss(&self, reason: Miss) {
+        let counter = &self.misses[reason as usize];
+        counter.set(counter.get() + 1);
+    }
+
+    /// The misses of each reason, in `MISS_NAMES` order.
+    pub(in crate::vm) fn miss_counts(&self) -> impl Iterator<Item = u64> + '_ { self.misses.iter().map(Cell::get) }
+
     /// How many times `event` happened.
-    pub fn count(&self, event: Event) -> u64 { self.0[event as usize].get() }
+    pub fn count(&self, event: Event) -> u64 { self.events[event as usize].get() }
 
     /// Runs that left a body, whatever the reason.
     pub fn leaves(&self) -> u64 {

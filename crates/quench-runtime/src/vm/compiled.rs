@@ -3394,33 +3394,12 @@ fn write_perf_map(kind: &str, base: usize, bytes: &[u8], spans: &[(usize, usize,
     let _ = std::fs::write(format!("/tmp/quench-jit-{pid}-{base:x}.bin"), bytes);
 }
 
-#[cfg(test)]
-thread_local! {
-    /// Lane-ABI OSR runs in this test thread.
-    pub(super) static LANE_OSR_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// What the lane-ABI OSR runs in this test thread did (`OsrRunKinds`).
-    pub(super) static LANE_OSR_KINDS: std::cell::Cell<OsrRunKinds> = const { std::cell::Cell::new(OsrRunKinds { lent: 0, left: 0, inlined: 0 }) };
-}
-
-/// The runs of lane-ABI OSR regions that ran on the lane frame's payload (a direct row), that left
-/// inside their loop (an exit, a leave inside a callee), and that left inside an inlined callee.
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct OsrRunKinds {
-    pub(super) lent: usize,
-    pub(super) left: usize,
-    pub(super) inlined: usize,
-}
-
-#[cfg(test)]
-impl OsrRunKinds {
-    /// Counts a run that ended in `outcome`, `lent` the payload.
-    fn note(outcome: &LoopOutcome, lent: bool) {
-        let left = matches!(outcome, LoopOutcome::Exit(_) | LoopOutcome::Inlined { .. } | LoopOutcome::Left { .. } | LoopOutcome::Callee);
-        LANE_OSR_KINDS.with(|kinds| {
-            let now = kinds.get();
-            kinds.set(Self { lent: now.lent + usize::from(lent), left: now.left + usize::from(left), inlined: now.inlined + usize::from(matches!(outcome, LoopOutcome::Inlined { .. })) });
-        });
+/// Counts a lane-ABI region's run that ended in `outcome`, `lent` the payload, in the VM's tier events.
+fn note_osr_run(events: &super::tier_events::TierEvents, outcome: &LoopOutcome, lent: bool) {
+    use super::tier_events::Event;
+    let left = matches!(outcome, LoopOutcome::Exit(_) | LoopOutcome::Inlined { .. } | LoopOutcome::Left { .. } | LoopOutcome::Callee);
+    for (event, happened) in [(Event::OsrLent, lent), (Event::OsrExited, left), (Event::OsrInlined, matches!(outcome, LoopOutcome::Inlined { .. }))] {
+        if happened { events.record(event); }
     }
 }
 
@@ -3482,6 +3461,8 @@ impl CompiledOsrRegion {
         from: u32,
     ) -> LoopOutcome {
         let start = self.start_at(region, from);
+        // SAFETY: the caller's contract covers `vm`.
+        unsafe { (*vm).programs.tier_events().record(super::tier_events::Event::OsrRun) };
         // SAFETY: the caller's contract; the region runs the same lane entry ABI.
         unsafe { if self.crossing == Crossing::Bare { stencil_run::run_bare(start, registers, entry, region, interrupt) }
             else { self.run_lane(start, registers, entry, region, vm, program, function, frame, interrupt, lane) } }
@@ -3506,8 +3487,6 @@ impl CompiledOsrRegion {
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
         (lane_context, direct_calls): (usize, bool),
     ) -> LoopOutcome {
-        #[cfg(test)]
-        LANE_OSR_RUNS.with(|count| count.set(count.get() + 1));
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
         let outcome = unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, self.crossing == Crossing::General, |native, vm| {
             osr_lane::bind_loop(native, vm, region, entry, (frame, lane_context));
@@ -3518,8 +3497,8 @@ impl CompiledOsrRegion {
             let lend = self.calls.enters_callees().then_some(direct_calls);
             osr_lane::enter(native, vm, region, program, (code, resume), registers, interrupt, (lane_context, lend))
         }) }.unwrap_or(LoopOutcome::Terminated);
-        #[cfg(test)]
-        OsrRunKinds::note(&outcome, self.calls.enters_callees());
+        // SAFETY: as above; the activation that held `vm` has returned.
+        note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, self.calls.enters_callees());
         outcome
     }
 

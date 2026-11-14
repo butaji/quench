@@ -244,7 +244,7 @@ impl ProgramStore {
             return;
         };
         self.report_lane_bodies();
-        eprintln!("{}", super::super::dispatch_fast::lane_miss_report());
+        eprintln!("{}", super::super::dispatch_fast::lane_miss_report(&self.tier_events));
         eprintln!("{}", super::super::dispatch_fast::lane_unlowered_report());
         let mut records: Vec<_> = diagnostics.iter().collect();
         records.sort_unstable_by_key(|(key, _)| **key);

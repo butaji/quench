@@ -112,7 +112,7 @@ macro_rules! miss_reasons {
     ($($variant:ident => $name:literal),+ $(,)?) => {
         #[derive(Clone, Copy)]
         pub(in crate::vm) enum Miss { $($variant),+ }
-        const MISS_NAMES: [&str; [$($name),+].len()] = [$($name),+];
+        pub(in crate::vm) const MISS_NAMES: [&str; [$($name),+].len()] = [$($name),+];
     };
 }
 miss_reasons! {
@@ -154,20 +154,23 @@ miss_reasons! {
     NativeNotNative => "native:not-native",
     NativeNotCompleted => "native:not-completed",
 }
-static MISSES: [std::sync::atomic::AtomicU64; MISS_NAMES.len()] = [const { std::sync::atomic::AtomicU64::new(0) }; MISS_NAMES.len()];
 
-/// Counts a miss for `reason` and answers the helper's miss.
+impl Miss {
+    /// How many reasons there are.
+    pub(in crate::vm) const COUNT: usize = MISS_NAMES.len();
+}
+
+/// Counts a miss for `reason` in the VM's tier events and answers the helper's miss.
 #[cold]
-pub(in crate::vm) fn miss(reason: Miss) -> u64 {
-    MISSES[reason as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+pub(in crate::vm) fn miss<H: super::super::Host>(vm: &super::super::Vm<H>, reason: Miss) -> u64 {
+    vm.programs.tier_events().record_miss(reason);
     decline(MISS_NAMES[reason as usize]);
     super::super::compiled::LANE_CALL_MISSED
 }
 
 /// The report line of the misses, `QUENCH_LANE_MISSES {...}`, most frequent first.
-pub(in crate::vm) fn miss_report() -> String {
-    let mut counts: Vec<_> = MISS_NAMES.iter().zip(&MISSES)
-        .map(|(name, count)| (*name, count.load(std::sync::atomic::Ordering::Relaxed))).filter(|(_, count)| *count != 0).collect();
+pub(in crate::vm) fn miss_report(events: &super::super::tier_events::TierEvents) -> String {
+    let mut counts: Vec<_> = MISS_NAMES.iter().zip(events.miss_counts()).filter(|(_, count)| *count != 0).collect();
     counts.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
     let fields = counts.iter().map(|(name, count)| format!("\"{name}\":{count}")).collect::<Vec<_>>().join(",");
     format!("QUENCH_LANE_MISSES {{{fields}}}")

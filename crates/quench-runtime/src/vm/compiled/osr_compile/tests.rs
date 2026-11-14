@@ -29,7 +29,6 @@ fn a_simple_loop_is_planned_by_the_region_specializer() {
 /// The lane-ABI code the region specializer planned executes the loop correctly.
 #[test]
 fn a_loop_compiled_by_the_region_specializer_runs() {
-    super::super::LANE_OSR_RUNS.with(|count| count.set(0));
     let program = crate::Engine::specialize(
         "function run(){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){s=s+i;} } return s; } throw run();",
         "lane-osr.js").unwrap();
@@ -40,7 +39,7 @@ fn a_loop_compiled_by_the_region_specializer_runs() {
     vm.programs.disable_js_entry_specializations();
     let error = vm.execute(&program).unwrap_err();
     assert_eq!(error.thrown_value(), Some(crate::Value::integer(9_900_000)));
-    assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
+    assert!(vm.tier_events().count(crate::vm::tier_events::Event::OsrRun) > 0,
         "the lane OSR path ran");
 }
 
@@ -48,7 +47,6 @@ fn a_loop_compiled_by_the_region_specializer_runs() {
 /// signed zeros and leaving a coercing operand to the general path.
 #[test]
 fn a_remainder_loop_runs_through_the_lane_unit() {
-    super::super::LANE_OSR_RUNS.with(|count| count.set(0));
     let program = crate::Engine::specialize(
         "function remainderLoop(left, right) { let result = 0; for (let i = 0; i < 64; i++) result = left % right; return result; }
          for (let i = 0; i < 100; i++) remainderLoop(7, 3);
@@ -68,7 +66,7 @@ fn a_remainder_loop_runs_through_the_lane_unit() {
     assert_eq!(output.borrow().as_slice(), [
         "-0,-0,0,NaN,NaN,NaN,NaN,2,-2,NaN,NaN,-0,0.09999999999999998,1.5", "1", "64",
     ]);
-    assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
+    assert!(vm.tier_events().count(crate::vm::tier_events::Event::OsrRun) > 0,
         "the lane OSR path ran");
 }
 
@@ -77,7 +75,6 @@ fn a_remainder_loop_runs_through_the_lane_unit() {
 #[test]
 fn a_return_inside_a_loop_completes_through_the_lane_unit() {
     crate::vm::compiled::tier_policy::force_admission();
-    super::super::LANE_OSR_RUNS.with(|count| count.set(0));
     let program = crate::Engine::specialize(
         "function cmp(a, b) { var i = a.length; while (--i >= 0) { var r = a[i] - b[i]; if (r != 0) return r; } return 0; }
          var a = [], b = [];
@@ -114,7 +111,6 @@ fn a_return_inside_a_loop_completes_through_the_lane_unit() {
 /// helper grows the backing and the loop's normal continuation is a resume, not an exit.
 #[test]
 fn an_append_growth_loop_runs_through_the_lane_unit() {
-    super::super::LANE_OSR_RUNS.with(|count| count.set(0));
     let program = crate::Engine::specialize(
         "function fill(n) { var a = []; for (var i = 0; i < n; i++) a[i] = (i * 7 + 3) & 255; return a; }
          var sum = 0;
@@ -132,7 +128,7 @@ fn an_append_growth_loop_runs_through_the_lane_unit() {
     vm.programs.disable_js_entry_specializations();
     vm.execute(&program).unwrap();
     assert_eq!(*output.borrow(), *expected.borrow());
-    assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
+    assert!(vm.tier_events().count(crate::vm::tier_events::Event::OsrRun) > 0,
         "the lane OSR path ran");
 }
 
@@ -140,7 +136,6 @@ fn an_append_growth_loop_runs_through_the_lane_unit() {
 /// keeping `-0` and widening an overflowing int32 negation.
 #[test]
 fn a_float_unary_loop_runs_through_the_lane_unit() {
-    super::super::LANE_OSR_RUNS.with(|count| count.set(0));
     let program = crate::Engine::compile(crate::ExecutionRequest::script(
         "function negate(value){ let index=0; while(index<9999){ value=-value; index++; } return value; }
          for(let call=0;call<100;call++) negate(0.5);
@@ -156,14 +151,13 @@ fn a_float_unary_loop_runs_through_the_lane_unit() {
     vm.programs.disable_js_entry_specializations();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["ok"]);
-    assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
+    assert!(vm.tier_events().count(crate::vm::tier_events::Event::OsrRun) > 0,
         "the lane OSR path ran");
 }
 
 /// A loop reading a static own field lowers through the lane unit's field sites.
 #[test]
 fn a_field_loop_compiled_by_the_region_specializer_runs() {
-    super::super::LANE_OSR_RUNS.with(|count| count.set(0));
     let program = crate::Engine::specialize(
         "function helper(o){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=(s+i+o.x)|0; } } return s; } throw helper({x:1});",
         "lane-osr-field.js").unwrap();
@@ -174,13 +168,12 @@ fn a_field_loop_compiled_by_the_region_specializer_runs() {
     vm.programs.disable_js_entry_specializations();
     let error = vm.execute(&program).unwrap_err();
     assert_eq!(error.thrown_value(), Some(crate::Value::integer(10_100_000)));
-    assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
+    assert!(vm.tier_events().count(crate::vm::tier_events::Event::OsrRun) > 0,
         "the lane OSR path ran");
 }
 /// A loop indexing a dense record array lowers through the lane unit's array views.
 #[test]
 fn an_array_loop_compiled_by_the_region_specializer_runs() {
-    super::super::LANE_OSR_RUNS.with(|count| count.set(0));
     let program = crate::Engine::specialize(
         "function helper(arr){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=(s+i+arr[i&3])|0; } } return s; } throw helper([1,2,3,4]);",
         "lane-osr-array.js").unwrap();
@@ -191,7 +184,7 @@ fn an_array_loop_compiled_by_the_region_specializer_runs() {
     vm.programs.disable_js_entry_specializations();
     let error = vm.execute(&program).unwrap_err();
     assert_eq!(error.thrown_value(), Some(crate::Value::integer(10_400_000)));
-    assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
+    assert!(vm.tier_events().count(crate::vm::tier_events::Event::OsrRun) > 0,
         "the lane OSR path ran");
 }
 /// Runs `source` compiled, with OSR diagnostics, to the value it throws, and the native
@@ -240,7 +233,6 @@ fn an_array_length_condition_loop_runs() {
 /// A loop reading a captured binding carries the loop entry's capture view.
 #[test]
 fn a_capture_loop_keeps_its_capture_value() {
-    super::super::LANE_OSR_RUNS.with(|count| count.set(0));
     let program = crate::Engine::specialize(
         "function helper(){ let add=1; let f=()=>add; let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=s+i+add; } } return s; } function main(){ return helper(); } throw main();",
         "lane-osr-capture.js").unwrap();
@@ -334,7 +326,6 @@ fn an_allocating_loop_keeps_its_objects() {
 /// the interpreter; it never takes the private lowering.
 #[test]
 fn a_field_store_loop_keeps_its_result() {
-    super::super::LANE_OSR_RUNS.with(|count| count.set(0));
     let program = crate::Engine::specialize(
         "function helper(o){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ o.x=(o.x+i)|0; s=(s+o.x)|0; } } return s; } throw helper({x:1});",
         "lane-osr-field-store.js").unwrap();
@@ -393,7 +384,6 @@ fn an_inlining_region_maps_onto_a_lane_unit() {
 /// An inlined callee's loop executes through the lane unit when it lowers.
 #[test]
 fn an_inlined_call_loop_runs_through_the_lane_unit() {
-    super::super::LANE_OSR_RUNS.with(|count| count.set(0));
     let program = crate::Engine::specialize(
         "function callee(o){ return o.x; } function caller(o){ let s=0; for(let k=0;k<2000;k++){ for(let i=0;i<100;i++){ s=(s+callee(o))|0; } } return s; } throw caller({x:1});",
         "lane-osr-inline.js").unwrap();
@@ -404,7 +394,7 @@ fn an_inlined_call_loop_runs_through_the_lane_unit() {
     vm.programs.disable_js_entry_specializations();
     let error = vm.execute(&program).unwrap_err();
     assert_eq!(error.thrown_value(), Some(crate::Value::integer(200_000)));
-    assert!(super::super::LANE_OSR_RUNS.with(|count| count.get()) > 0,
+    assert!(vm.tier_events().count(crate::vm::tier_events::Event::OsrRun) > 0,
         "the inlining lane OSR path ran");
 }
 
