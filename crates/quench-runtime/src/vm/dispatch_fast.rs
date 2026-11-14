@@ -91,6 +91,21 @@ const CAPTURE_LEAF: LeafForm = 2;
 /// Its receiver, and maybe its captures (`CallEntry::ContextLeaf`): the call makes the
 /// receiver and the environment its own.
 const CONTEXT_LEAF: LeafForm = 3;
+/// Its receiver and not its captures (`CallEntry::ThisLeaf`): the call binds the receiver
+/// and keeps the caller's environment, which only a materialization makes the callee's.
+const THIS_LEAF: LeafForm = 4;
+
+/// Whether a leaf of `form` runs with its receiver bound (`THIS_LEAF`, `CONTEXT_LEAF`).
+#[inline(always)]
+const fn leaf_binds_this(form: LeafForm) -> bool {
+    form == CONTEXT_LEAF || form == THIS_LEAF
+}
+
+/// Whether a leaf of `form` runs in its own environment (`CAPTURE_LEAF`, `CONTEXT_LEAF`).
+#[inline(always)]
+const fn leaf_swaps_env(form: LeafForm) -> bool {
+    form == CONTEXT_LEAF || form == CAPTURE_LEAF
+}
 
 /// One instruction of a lane view.
 #[repr(C)]
@@ -475,6 +490,7 @@ impl LaneView {
         let forms = match form {
             CONTEXT_LEAF => forms!(CONTEXT_LEAF),
             CAPTURE_LEAF => forms!(CAPTURE_LEAF),
+            THIS_LEAF => forms!(THIS_LEAF),
             _ => forms!(PLAIN_LEAF),
         };
         for record in self.records.iter() {
@@ -12774,8 +12790,8 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
     // (`lane_script_call_leaf`).
     let window = unsafe { (*cx).registers.0 };
     unsafe { stack.values.set_top(window.add(usize::from(target.registers))) };
-    let caller_this = if form == CONTEXT_LEAF { leaf.caller_this } else { unsafe { (*cx).this } };
-    let (caller_env, caller_capture) = if form == PLAIN_LEAF {
+    let caller_this = if leaf_binds_this(form) { leaf.caller_this } else { unsafe { (*cx).this } };
+    let (caller_env, caller_capture) = if !leaf_swaps_env(form) {
         unsafe { ((*cx).env, (*cx).capture) }
     } else {
         (leaf.caller_env, leaf.caller_capture)
@@ -12799,14 +12815,14 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
     };
     // SAFETY: the call proved room for the activation (`lane_activation_room`).
     unsafe { stack.push_activation(activation, window) };
-    if form != CONTEXT_LEAF {
+    if !leaf_binds_this(form) {
         // The receiver the call proved it binds directly (`lane_script_call_leaf`), from the
         // caller's registers, which the leaf does not write.
         let this = lane_direct_call_this(vm, target, leaf.caller_registers.get(call.c))
             .expect("the leaf's call proved its receiver's binding");
         unsafe { (*cx).this = this };
     }
-    if form == PLAIN_LEAF {
+    if !leaf_swaps_env(form) {
         unsafe {
             (*cx).env = target.env;
             (*cx).capture = target.capture;

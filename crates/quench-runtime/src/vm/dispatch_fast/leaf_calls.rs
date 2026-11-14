@@ -33,19 +33,13 @@ script_handler! {
             if target.entry == CallEntry::Activates {
                 lane_plain_activation!(cx, vm, r, ip, i, target, ARGC, false)
             }
-            let other: Handler = match target.entry.leaf_form() {
-                PLAIN_LEAF => lane_script_call_leaf::<H, PLAIN_LEAF, ARGC>,
-                CAPTURE_LEAF => lane_script_call_leaf::<H, CAPTURE_LEAF, ARGC>,
-                CONTEXT_LEAF => lane_script_call_leaf::<H, CONTEXT_LEAF, ARGC>,
-                _ => lane_script_call_full::<H>,
-            };
-            sibling!(other, r, ip, Carried::script(cx))
+            sibling!(other_leaf_form::<H, ARGC>(target.entry), r, ip, Carried::script(cx))
         }
         // Only a leaf reading its receiver binds it here; any other binds it if it
         // materializes (`lane_materialize_leaf`), which a binding past the receiver's own
         // bits could not.
         let receiver = r.get(i.c);
-        let this = if LEAF == CONTEXT_LEAF {
+        let this = if leaf_binds_this(LEAF) {
             lane_direct_call_this(vm, target, receiver)
         } else {
             lane_binds_directly(target, receiver).then_some(receiver)
@@ -78,11 +72,11 @@ script_handler! {
             leaf.caller_registers = r;
             leaf.caller_base = (*cx).base;
             leaf.target = target;
-            if LEAF == CONTEXT_LEAF {
+            if leaf_binds_this(LEAF) {
                 leaf.caller_this = (*cx).this;
                 (*cx).this = this;
             }
-            if LEAF != PLAIN_LEAF {
+            if leaf_swaps_env(LEAF) {
                 leaf.caller_env = (*cx).env;
                 leaf.caller_capture = (*cx).capture;
                 (*cx).env = target.env;
@@ -92,6 +86,21 @@ script_handler! {
             (*cx).base = base;
         }
         next!(cx, registers, base, Carried::script(cx))
+    }
+}
+
+/// The `lane_script_call_leaf` form of `entry` for a record of `ARGC` arguments, or
+/// `lane_script_call_full` for no leaf, out of line: a site meeting another form's callee
+/// takes it from the leaf it was made for.
+#[cold]
+#[inline(never)]
+fn other_leaf_form<H: Host, const ARGC: u16>(entry: CallEntry) -> Handler {
+    match entry.leaf_form() {
+        PLAIN_LEAF => lane_script_call_leaf::<H, PLAIN_LEAF, ARGC>,
+        CAPTURE_LEAF => lane_script_call_leaf::<H, CAPTURE_LEAF, ARGC>,
+        CONTEXT_LEAF => lane_script_call_leaf::<H, CONTEXT_LEAF, ARGC>,
+        THIS_LEAF => lane_script_call_leaf::<H, THIS_LEAF, ARGC>,
+        _ => lane_script_call_full::<H>,
     }
 }
 
@@ -119,6 +128,7 @@ pub(super) fn leaf_call_handler<H: Host>(entry: CallEntry, i: &LaneInstruction) 
     match entry.leaf_form() {
         CONTEXT_LEAF => leaf!(CONTEXT_LEAF),
         CAPTURE_LEAF => leaf!(CAPTURE_LEAF),
+        THIS_LEAF => leaf!(THIS_LEAF),
         _ => leaf!(PLAIN_LEAF),
     }
 }
@@ -149,10 +159,10 @@ pub(super) fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value,
     // SAFETY: the call record belongs to the caller's live view; the target stays cached.
     unsafe {
         debug_assert!(leaf.form == form);
-        if form == CONTEXT_LEAF {
+        if leaf_binds_this(form) {
             (*cx).this = leaf.caller_this;
         }
-        if form != PLAIN_LEAF {
+        if leaf_swaps_env(form) {
             (*cx).env = leaf.caller_env;
             (*cx).capture = leaf.caller_capture;
         }

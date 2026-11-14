@@ -174,16 +174,22 @@ pub(super) fn leaf_body(body: &Function, code: &ResidualProgram, private: impl F
     if keeps_frame_state(body) {
         return None;
     }
-    let mut form = PLAIN_LEAF;
+    // A record reads the receiver (`CONTEXT_LEAF`), the captures (`CAPTURE_LEAF`), or neither.
+    let (mut this, mut captures) = (false, false);
     for (pc, instruction) in body.instructions().enumerate() {
         let reads = leaf_reads(instruction, body, code, &private)?;
         if instruction.op().immediate_role() == ImmediateRole::JumpTarget && instruction.imm() as usize <= pc {
             return None;
         }
-        // Each form makes its own what the forms before it do, and more.
-        form = form.max(reads);
+        this |= reads == CONTEXT_LEAF;
+        captures |= reads == CAPTURE_LEAF;
     }
-    Some(form)
+    Some(match (this, captures) {
+        (true, true) => CONTEXT_LEAF,
+        (true, false) => THIS_LEAF,
+        (false, true) => CAPTURE_LEAF,
+        (false, false) => PLAIN_LEAF,
+    })
 }
 
 /// What `instruction`'s lane record reads of the context in a leaf (`leaf_body`), or `None`
