@@ -5,15 +5,28 @@ use super::records::{ParallelRecordMarks, StringRecordSpace};
 use crate::vm::wtf16::{Part, Parts, Units};
 
 /// The strings the just-marked string `record_id` is made of, pushed onto `work`.
-pub(super) fn trace_parts(records: &StringRecordSpace, record_id: RecordId, work: &mut Vec<Value>) {
+pub(super) fn trace_parts(records: &mut StringRecordSpace, record_id: RecordId, work: &mut Vec<Value>) {
     // SAFETY: the caller just marked the record, so it is occupied.
-    push_parts(unsafe { records.get_live(record_id) }, work);
+    let Some(parts) = (unsafe { records.get_live(record_id) }).parts().copied() else { return };
+    parts.for_each_text(|part| if !mark_leaf_part(|id| mark_flat(records, id), part) { work.push(Value::direct_string(part)) });
 }
 
 /// `trace_parts` through a parallel view.
 pub(super) fn trace_parts_if_new(records: &ParallelRecordMarks<'_, JsString>, record_id: RecordId, work: &mut Vec<Value>) {
     // SAFETY: the caller's view just marked the occupied record.
-    push_parts(unsafe { records.get(record_id) }, work);
+    if let Some(parts) = unsafe { records.get(record_id) }.parts() {
+        parts.for_each_text(|part| if !mark_leaf_part(|id| mark_flat_if_new(records, id), part) { work.push(Value::direct_string(part)) });
+    }
+}
+
+/// Marks a flat part where the trace finds it, as an array's flat string elements are
+/// (`Heap::mark_leaf`): a flat string holds no edges, so pushing it would only pop a value
+/// already marked or one whose mark is the whole visit (V8-v7 Splay: three parts per leaf
+/// string, about two fifths of a full collection's pops). Profiling builds push every part,
+/// so each visit is counted.
+#[inline(always)]
+fn mark_leaf_part(mark_flat: impl FnOnce(RecordId) -> bool, part: u32) -> bool {
+    !cfg!(feature = "profile-aggregate") && mark_flat(part)
 }
 
 /// Marks the string `record_id` of an array element if it holds no parts, which a leaf visit
@@ -37,12 +50,6 @@ pub(super) fn mark_flat_if_new(records: &ParallelRecordMarks<'_, JsString>, reco
     flat
 }
 
-#[inline]
-fn push_parts(string: &JsString, work: &mut Vec<Value>) {
-    if let Some(parts) = string.parts() {
-        parts.for_each_text(|record_id| work.push(Value::direct_string(record_id)));
-    }
-}
 
 impl Heap {
     /// The string record `record_id`, written out first if it is parts.

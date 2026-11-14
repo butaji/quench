@@ -3266,7 +3266,7 @@ impl Heap {
         } else if let Some(record_id) = value.direct_string_index() {
             // A string holds no edges but its parts': marking it and tracing them is the visit.
             if self.string_records.mark(record_id) {
-                string_parts::trace_parts(&self.string_records, record_id, work);
+                string_parts::trace_parts(&mut self.string_records, record_id, work);
                 #[cfg(feature = "profile-aggregate")]
                 {
                     self.gc_profile.marked += 1;
