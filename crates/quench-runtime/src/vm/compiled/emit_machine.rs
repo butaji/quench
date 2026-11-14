@@ -3,6 +3,8 @@
 //! is the interpreter's (`staged::wasm`, `staged::wasm_float`); this file only says what one
 //! operator is on the machine.
 
+mod vector;
+
 use super::{Emitter, Host, Kind, scalar_ir};
 use crate::staged::machine::{MachineAccess, MachineFlow, MachineStage};
 use crate::staged::wasm_memory::Access;
@@ -397,6 +399,13 @@ impl<H: Host> MachineAccess for Emitter<'_, '_, H> {
         self.call_signature(signature, target, arguments)[0]
     }
 
+    type Function = ir::FuncRef;
+
+    fn call_function(&mut self, target: ir::FuncRef, arguments: &[ir::Value]) -> Vec<ir::Value> {
+        let call = self.body.core.builder.ins().call(target, arguments);
+        self.body.core.builder.inst_results(call).to_vec()
+    }
+
     type Signature = ir::SigRef;
     type Slot = ir::StackSlot;
 
@@ -412,6 +421,15 @@ impl<H: Host> MachineAccess for Emitter<'_, '_, H> {
 
 impl<H: Host> MachineFlow for Emitter<'_, '_, H> {
     type Block = ir::Block;
+    type Table = ir::JumpTable;
+
+    fn dispatch(&mut self, selector: ir::Value, table: ir::JumpTable) {
+        self.body.core.builder.ins().br_table(selector, table);
+    }
+
+    fn leave(&mut self, values: &[ir::Value]) {
+        self.body.core.builder.ins().return_(values);
+    }
 
     fn goto(&mut self, block: ir::Block, arguments: &[ir::Value]) {
         self.body.core.builder.ins().jump(block, &block_args(arguments));

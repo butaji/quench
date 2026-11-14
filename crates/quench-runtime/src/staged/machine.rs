@@ -5,8 +5,10 @@
 
 use super::wasm::Width;
 use super::wasm_memory::Access;
+use super::wasm_simd::{Lanes, Native};
 use super::wasm_float::{Float, Truncation};
-use crate::WasmTrap;
+use crate::wasm::V128_BYTES;
+use crate::{WasmTrap, WasmType};
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
@@ -83,6 +85,10 @@ pub(crate) trait MachineAccess: MachineStage {
         let target = self.constant(Width::I64, leaf as i64);
         self.call_words(target, arguments)
     }
+    /// A function the machine calls directly, linked where the code is placed.
+    type Function: Copy;
+    /// A call of `target` on `arguments`: all of its results.
+    fn call_function(&mut self, target: Self::Function, arguments: &[Self::Word]) -> Vec<Self::Word>;
     /// What a call's signature is: its parameter and result machine types.
     type Signature: Copy;
     /// A stack slot a caller spills words into.
@@ -99,6 +105,12 @@ pub(crate) trait MachineFlow: MachineStage {
     type Block: Copy;
     /// Continues at `block` with `arguments` as its parameters.
     fn goto(&mut self, block: Self::Block, arguments: &[Self::Word]);
+    /// What a jump table is: the targets a selector indexes, the last being the default.
+    type Table: Copy;
+    /// Continues at the target of `table` that `selector` indexes.
+    fn dispatch(&mut self, selector: Self::Word, table: Self::Table);
+    /// Leaves the function with `values`.
+    fn leave(&mut self, values: &[Self::Word]);
     /// Continues at `then` where `flag` is nonzero, else at `otherwise`, each with its arguments.
     fn branch_if(
         &mut self,
@@ -106,4 +118,25 @@ pub(crate) trait MachineFlow: MachineStage {
         then: (Self::Block, &[Self::Word]),
         otherwise: (Self::Block, &[Self::Word]),
     );
+}
+
+/// A machine with vector registers: lane-wise operations by a (lane shape, operator) row, views
+/// of a vector's bits in a lane shape, constants, shuffles, and moves through memory and stack
+/// words. A vector is a `Word` of the machine.
+pub(crate) trait MachineVector: MachineAccess {
+    /// The row's operation on `left` (and `right`, a vector or a scalar shift count).
+    fn lane_operation(&mut self, native: Native, left: Self::Word, right: Option<Self::Word>) -> Self::Word;
+    /// `value`, a vector, with the lane shape `shape`: the same bits.
+    fn vector_view(&mut self, shape: Lanes, value: Self::Word) -> Self::Word;
+    /// The vector whose bits are `bits`.
+    fn vector_immediate(&mut self, bits: u128) -> Self::Word;
+    /// The vector of the byte `lanes` selected from the concatenation of `left` and `right`.
+    fn vector_shuffle_lanes(&mut self, lanes: [u8; V128_BYTES], left: Self::Word, right: Self::Word) -> Self::Word;
+    /// The vector at `address`.
+    fn load_vector(&mut self, flags: Self::Flags, address: Self::Word) -> Self::Word;
+    /// An operand into the two words of `slot` at word position `at`: a vector whole, a scalar
+    /// in the low word.
+    fn spill_operand(&mut self, slot: Self::Slot, at: usize, value: Self::Word);
+    /// The value of type `ty` the word position `at` of `slot` holds.
+    fn reload_result(&mut self, slot: Self::Slot, at: usize, ty: WasmType) -> Self::Word;
 }

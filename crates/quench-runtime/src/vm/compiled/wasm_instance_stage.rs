@@ -3,7 +3,7 @@
 
 use super::{Analysis, AnalysisState, Emitter, Host, Kind, Region, Slot};
 use crate::bytecode::{Function, WideInstruction};
-use crate::staged::machine::{MachineAccess, MachineStage};
+use crate::staged::machine::{MachineAccess, MachineStage, MachineVector};
 use crate::staged::wasm::Width;
 use crate::staged::wasm_instance::{Instance, Storage, WasmInstance};
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
@@ -97,7 +97,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             .expect("planned");
         if let Some(bits) = self.analysis.constant_vector(constant) {
             for register in registers {
-                let value = self.vector_constant(bits);
+                let value = self.vector_immediate(bits);
                 self.write_vector(register, value);
             }
             return;

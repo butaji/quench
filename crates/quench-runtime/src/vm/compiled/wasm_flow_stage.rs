@@ -6,10 +6,11 @@ use super::wasm_instance_stage::value_kind;
 use super::{Analysis, AnalysisState, Emitter, Host, Kind, Slot, eager_unreachable_admitted};
 use crate::WasmType;
 use crate::bytecode::{Function, WideInstruction};
-use crate::staged::machine::MachineStage;
+use crate::staged::machine::{MachineFlow, MachineStage};
+use crate::staged::wasm::Width;
 use crate::staged::wasm_flow::{Flow, Leave};
 use crate::vm::dispatch_fast::decoded_instruction;
-use cranelift_codegen::ir::{self, InstBuilder, types};
+use cranelift_codegen::ir;
 
 impl<H: Host> Emitter<'_, '_, H> {
     /// Lowers a flow step; whether control continues to the next instruction.
@@ -32,7 +33,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             Leave::Table(targets) => self.table(pc, instruction.a(), &targets),
             Leave::Trap(trap) => {
                 let block = self.trap_block(trap);
-                self.body.core.builder.ins().jump(block, &[]);
+                self.goto(block, &[]);
             }
             Leave::Return => self.return_register(instruction.a()),
         }
@@ -68,17 +69,17 @@ impl<H: Host> Emitter<'_, '_, H> {
             .collect();
         let table = ir::JumpTableData::new(default, &cases);
         let table = self.body.core.builder.create_jump_table(table);
-        self.body.core.builder.ins().br_table(selector, table);
+        self.dispatch(selector, table);
     }
 
     /// Returns the function's result, read from `register`, with the success status.
     fn return_register(&mut self, register: u16) {
-        let status = self.body.core.builder.ins().iconst(types::I64, 0);
+        let status = self.constant(Width::I64, 0);
         let mut values = vec![status];
         if let Some(ty) = self.plan.result {
             values.push(self.read(register, Kind::of(ty).expect("planned")));
         }
-        self.body.core.builder.ins().return_(&values);
+        self.leave(&values);
     }
 }
 
