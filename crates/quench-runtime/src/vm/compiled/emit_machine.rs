@@ -25,6 +25,14 @@ pub(in crate::vm::compiled) trait Builds<'b> {
     fn function_builder(&mut self) -> &mut FunctionBuilder<'b>;
 }
 
+/// A bare builder is a backend: the emitters of a function that no tier owns (a stencil, a
+/// regexp search, a dispatch shell) compose the primitives on the function builder itself.
+impl<'b> Builds<'b> for FunctionBuilder<'b> {
+    fn function_builder(&mut self) -> &mut FunctionBuilder<'b> {
+        self
+    }
+}
+
 impl<'b> Builds<'b> for RegionCore<'b> {
     fn function_builder(&mut self) -> &mut FunctionBuilder<'b> {
         &mut self.builder

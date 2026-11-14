@@ -1,5 +1,5 @@
 //! The primitives of a machine a specializer emits for, one set for every backend. `Machine` names
-//! the word; `MachineScalar`, `MachineAccess`, `MachineFlow` and `MachineVector` are the
+//! the word; `MachineScalar`, `MachineAccess`, `MachineFlow`, `MachineTail` and `MachineVector` are the
 //! operations a stage is composed from (constants, arithmetic by op row, typed memory, control
 //! transfer, vector views) and carry no layout or language meaning; `MachineStage` is the Wasm
 //! operator layer the interpreter (`ConcreteWasm`) and a specializer both run. Rules written over
@@ -90,6 +90,12 @@ pub(crate) trait MachineScalar: Machine {
     fn raw_compare_imm(&mut self, relation: Relation, a: Self::Word, bits: i64) -> Self::Word;
     fn raw_select(&mut self, cond: Self::Word, then: Self::Word, otherwise: Self::Word) -> Self::Word;
     fn raw_unary(&mut self, operation: Unary, a: Self::Word) -> Self::Word;
+    /// `raw_binary` of `a` and the constant `bits` at `a`'s own lane.
+    fn raw_binary_imm(&mut self, operation: Binary, a: Self::Word, bits: i64) -> Self::Word {
+        let lane = self.raw_lane(a);
+        let b = self.raw_const(lane, bits);
+        self.raw_binary(operation, a, b)
+    }
 }
 
 /// A machine that addresses memory and calls code: loads and stores of a lane, or of an `Access`'s
@@ -170,6 +176,10 @@ pub(crate) trait MachineFlow: MachineScalar {
     fn dispatch(&mut self, selector: Self::Word, table: Self::Table);
     /// Leaves the function with `values`.
     fn leave(&mut self, values: &[Self::Word]);
+    /// A parameter of `lane` added to `block`: the word it holds once `block` is entered.
+    fn block_parameter(&mut self, block: Self::Block, lane: Lane) -> Self::Word;
+    /// The jump table of `cases`, which a selector indexes, past which it takes `default` with its arguments.
+    fn jump_table(&mut self, cases: &[Self::Block], default: (Self::Block, &[Self::Word])) -> Self::Table;
     /// Continues at `then` where `flag` is nonzero, else at `otherwise`, each with its arguments.
     fn branch_if(
         &mut self,
@@ -177,6 +187,13 @@ pub(crate) trait MachineFlow: MachineScalar {
         then: (Self::Block, &[Self::Word]),
         otherwise: (Self::Block, &[Self::Word]),
     );
+}
+
+/// A machine that continues in the code it calls, so the call is the end of the function: a tail
+/// call of `target`, or of the code at an address under a `signature`, on `arguments`.
+pub(crate) trait MachineTail: MachineAccess + MachineFlow {
+    fn tail_call(&mut self, target: Self::Function, arguments: &[Self::Word]);
+    fn tail_call_indirect(&mut self, signature: Self::Signature, target: Self::Word, arguments: &[Self::Word]);
 }
 
 /// A machine with vector registers: lane-wise operations by a (lane shape, operator) row, views
