@@ -3946,20 +3946,27 @@ script_handler! {
     /// non-numeric binding its window or in-place storage holds densely, saving no
     /// registers; any other load takes the general handler.
     fn lane_load_window_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
-        // A frame run whose environment storage a local access found (`lane_frame_storage`):
-        // the one read this record makes inline; every other takes the window's out of line,
-        // so this one keeps few registers.
+        // An activation's read of its window's storage, then a frame run's of the environment
+        // storage a local access found (`lane_frame_storage`), each inline.
         if ENVIRONMENT {
-            let (slot, _) = environment_window_fields(i);
-            if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0
-                && unsafe { (*cx).env }.is_deleted()
-                && let Some((storage, _)) = lane_known_frame_storage(cx)
-                && let Some(value) = storage.dense().and_then(|dense| dense.dense_plain(slot))
-            {
-                r.set(i.a, value);
-                next!(cx, r, following(ip), view)
+            let (slot, registers) = environment_window_fields(i);
+            if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0 {
+                let value = if !unsafe { (*cx).env }.is_deleted() {
+                    // SAFETY: as `lane_load_window_local_general`'s read of the window's storage.
+                    let storage = unsafe {
+                        &*(std::mem::transmute::<Value, u64>(r.get(registers + WINDOW_SLOTS))
+                            as *const crate::heap::EnvironmentSlots)
+                    };
+                    storage.dense().and_then(|dense| dense.dense_plain(slot))
+                } else {
+                    lane_known_frame_storage(cx).and_then(|(storage, _)| storage.dense().and_then(|dense| dense.dense_plain(slot)))
+                };
+                if let Some(value) = value {
+                    r.set(i.a, value);
+                    next!(cx, r, following(ip), view)
+                }
             }
-            sibling!(lane_load_window_local_window::<H, true>, r, ip, view)
+            sibling!(lane_load_window_local_general::<H, true>, r, ip, view)
         }
         let (slot, registers) = environment_window_fields(i);
         if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0
@@ -3974,32 +3981,6 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_load_window_local` of a binding its window or in-place storage holds densely;
-    /// any other load takes the general handler.
-    #[inline(never)]
-    fn lane_load_window_local_window<ENVIRONMENT: bool>(cx, r, ip, i, view) {
-        let (slot, registers) = environment_window_fields(i);
-        if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0 && !unsafe { (*cx).env }.is_deleted() {
-            let value = if ENVIRONMENT {
-                // SAFETY: as `lane_load_window_local_general`'s read of the window's storage.
-                let storage = unsafe {
-                    &*(std::mem::transmute::<Value, u64>(r.get(registers + WINDOW_SLOTS))
-                        as *const crate::heap::EnvironmentSlots)
-                };
-                storage.dense().and_then(|dense| dense.dense_plain(slot))
-            } else {
-                Some(r.get(registers + WINDOW_LOCALS + slot as u16)).filter(|value| !value.is_deleted())
-            };
-            if let Some(value) = value {
-                r.set(i.a, value);
-                next!(cx, r, following(ip), view)
-            }
-        }
-        sibling!(lane_load_window_local_general::<H, ENVIRONMENT>, r, ip, view)
-    }
-}
-
-script_handler! {
     /// `lane_store_window_local_general` in an environment activation writing an
     /// initialized binding its window or in-place storage holds densely, saving no
     /// registers; any other store takes the general handler. The write needs no barrier:
@@ -4007,7 +3988,25 @@ script_handler! {
     /// slot no collection has marked since, and no collection runs in the lane, so it is
     /// young.
     fn lane_store_window_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
-        let (slot, _) = environment_window_fields(i);
+        let (slot, registers) = environment_window_fields(i);
+        // An activation's store to an initialized binding of its window's storage, inline.
+        if ENVIRONMENT && i.c == 0 && !unsafe { (*cx).env }.is_deleted() {
+            // SAFETY: as `lane_load_window_local_general`'s read of the window's storage.
+            let storage = unsafe {
+                &mut *(std::mem::transmute::<Value, u64>(r.get(registers + WINDOW_SLOTS))
+                    as *mut crate::heap::EnvironmentSlots)
+            };
+            if let Some(binding) = storage.dense_mut().and_then(|dense| dense.dense_plain_mut(slot)) {
+                debug_assert!(!unsafe { vm(cx) }.heap.is_old(r.get(registers + WINDOW_ENVIRONMENT)));
+                let value = r.get(i.a);
+                *binding = value;
+                if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
+                    r.set(register, value);
+                }
+                next!(cx, r, following(ip), view)
+            }
+            sibling!(lane_store_window_local_general::<H, true>, r, ip, view)
+        }
         // A frame run's store to an initialized binding of its environment's storage, after
         // the environment's barrier.
         if ENVIRONMENT
