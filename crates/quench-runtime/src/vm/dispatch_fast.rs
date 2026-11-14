@@ -12056,6 +12056,8 @@ script_handler! {
             sibling!(lane_frame_call::<H>, r, ip, Carried::script(cx))
         }
         if target.entry == CallEntry::Environment {
+            // The site calls its environment target's form directly from now on.
+            requicken::<H>(ip, lane_script_call_environment::<H>);
             sibling!(lane_script_call_environment::<H>, r, ip, Carried::script(cx))
         }
         if target.settles() {
@@ -12146,17 +12148,21 @@ script_handler! {
     fn lane_script_call_environment<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
-        let target = vm
-            .script_call_entry(callee)
-            .filter(|_| unsafe { (*cx).script_calls } && !lane_constructing(vm, callee));
-        // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
-        let Some(target) = target.map(|target| unsafe { &*target }).filter(|target| target.entry == CallEntry::Environment)
-        else {
-            // A site this form serves since `lane_script_call` saw an environment target
-            // calls the full form once its callee differs.
-            requicken::<H>(ip, lane_script_call_full::<H>);
+        if !unsafe { (*cx).script_calls } || lane_constructing(vm, callee) {
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+        }
+        // The site's linked entry, which a fresh closure of a function already resolved relinks
+        // (`Vm::linked_script_call_entry`); a callee with no target yet resolves in the full form.
+        let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         };
+        // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
+        let target = unsafe { &*target };
+        if target.entry != CallEntry::Environment {
+            // A site this form serves calls the full form once its callee's target differs.
+            requicken::<H>(ip, lane_script_call_full::<H>);
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+        }
         let Some(this) = lane_call_this(vm, target, r.get(i.c)) else {
             return exit(ip);
         };
