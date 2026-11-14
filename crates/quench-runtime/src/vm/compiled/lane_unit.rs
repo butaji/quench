@@ -245,7 +245,7 @@ fn terminal_return(code: &[WideInstruction]) -> Option<usize> {
 /// unit it plans always emits.
 fn renamable(instruction: WideInstruction) -> bool {
     match instruction.op() {
-        opcode if opcode.is_call() || opcode.is_return() || opcode.is_load_this() || opcode.is_load_name() || opcode.is_construct() || opcode.is_throw() => true,
+        opcode if opcode.is_unit_rewritten() => true,
         opcode if opcode.is_get_field() && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => true,
         _ => {
             let plain = if super::osr_loop::inlined_returning(instruction) {

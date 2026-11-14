@@ -399,7 +399,7 @@ fn named_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instructi
     match instruction.op().class() {
         Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
         Class::Binary => membership_row(known, pc, instruction, instruction.result_register()),
-        Class::LoadName | Class::LoadNameCall | Class::LoadNameTypeof | Class::StoreName => global_row(known, pc, instruction),
+        _ if instruction.op().traits().has(crate::bytecode::Traits::GLOBAL_NAME_ACCESS) => global_row(known, pc, instruction),
         _ if instruction.op().is_field_store() => field_store_row(known, instruction),
         _ => None,
     }
