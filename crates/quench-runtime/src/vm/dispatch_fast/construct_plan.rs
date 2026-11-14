@@ -510,5 +510,12 @@ pub(super) fn lane_initialize_stores<H: Host>(
 /// the frame's own return of it (`lane_frame_return`).
 #[inline(always)]
 pub(super) fn lane_return_constructed<H: Host>(cx: *mut LaneContext<H>, ip: Ip, this: Value) -> Resumed {
+    // The common return first, as a `Return` record takes it (`lane_complete_plain_activation`),
+    // where no leaf call runs.
+    if unsafe { (*cx).leaf.call }.is_null()
+        && let Some(resumed) = lane_complete_plain_activation::<H, NOT_LEAF>(cx, this)
+    {
+        return resumed;
+    }
     lane_complete_activation(cx, ip, this).unwrap_or_else(|| Resumed::Exit(lane_frame_return(unsafe { vm(cx) }, ip, this)))
 }
