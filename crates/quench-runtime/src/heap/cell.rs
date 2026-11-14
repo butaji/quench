@@ -877,67 +877,23 @@ impl Native {
     pub(crate) fn runs_beside_activations(self) -> bool {
         matches!(
             self,
-            Self::ObjectLiteralPrototype
-                | Self::ObjectLiteralCreate
-                | Self::ObjectKeys
-                | Self::ObjectAssign
-                | Self::ObjectDefineProperty
-                | Self::ObjectGetPrototypeOf
-                | Self::ObjectSetPrototypeOf
-                | Self::ObjectEntries
-                | Self::ObjectGetOwnPropertyNames
-                | Self::ObjectHasOwn
-                | Self::ObjectGetOwnPropertyDescriptor
-                | Self::ObjectPrototypeHasOwnProperty
-                | Self::ObjectPrototypeToString
-                | Self::ReflectGetPrototypeOf
-                | Self::ReflectSetPrototypeOf
-                | Self::ArrayJoin
-                | Self::ArraySplice
-                | Self::StringSplit
-                | Self::StringMatch
-                | Self::StringReplace
-                | Self::StringReplaceAll
-                | Self::NumberString
-                | Self::MapEntries
-                | Self::ArraySlice
-                | Self::ArrayMap
-                | Self::ArrayForEach
-                | Self::ArrayFilter
-                | Self::ArraySome
-                | Self::ArrayEvery
-                | Self::ArrayFind
-                | Self::ArrayFindIndex
-                | Self::ArrayFindLast
-                | Self::ArrayFindLastIndex
-                | Self::ArrayReduce
-                | Self::ArrayReduceRight
-                | Self::ArrayFlatMap
-                | Self::ArraySort
-                | Self::MapForEach
-                | Self::SetForEach
-                | Self::RegExpTest
-                | Self::JsonParse
-                | Self::JsonStringify
-                | Self::ParseInt
-                | Self::EncodeUri
-                | Self::EncodeUriComponent
-                | Self::DecodeUri
-                | Self::DecodeUriComponent
-                | Self::ArrayShift
-                | Self::WeakMapSet
-                | Self::FinalizationRegistryRegister
-                | Self::TypedArrayToStringTag
-                | Self::TypedArrayBufferGetter
-                | Self::TypedArrayByteLengthGetter
-                | Self::TypedArrayByteOffsetGetter
-                | Self::TypedArrayLengthGetter
-                | Self::FunctionPrototypeHasInstance
-                | Self::FunctionBind
-                | Self::Array
-                | Self::PromiseResolve
-                | Self::PromiseWithResolvers
-                | Self::WasmExportedFunction
+            Self::ObjectLiteralPrototype | Self::ObjectLiteralCreate | Self::ObjectKeys | Self::ObjectAssign
+            | Self::ObjectDefineProperty | Self::ObjectGetPrototypeOf | Self::ObjectSetPrototypeOf
+            | Self::ObjectEntries | Self::ObjectGetOwnPropertyNames | Self::ObjectHasOwn
+            | Self::ObjectGetOwnPropertyDescriptor | Self::ObjectPrototypeHasOwnProperty
+            | Self::ObjectPrototypeToString | Self::ReflectGetPrototypeOf | Self::ReflectSetPrototypeOf
+            | Self::ArrayJoin | Self::ArraySplice | Self::StringSplit | Self::StringMatch | Self::StringReplace
+            | Self::StringReplaceAll | Self::NumberString | Self::MapEntries | Self::ArraySlice | Self::ArrayMap
+            | Self::ArrayForEach | Self::ArrayFilter | Self::ArraySome | Self::ArrayEvery | Self::ArrayFind
+            | Self::ArrayFindIndex | Self::ArrayFindLast | Self::ArrayFindLastIndex | Self::ArrayReduce
+            | Self::ArrayReduceRight | Self::ArrayFlatMap | Self::ArraySort | Self::MapForEach
+            | Self::SetForEach | Self::RegExpTest | Self::JsonParse | Self::JsonStringify | Self::ParseInt
+            | Self::EncodeUri | Self::EncodeUriComponent | Self::DecodeUri | Self::DecodeUriComponent
+            | Self::ArrayShift | Self::WeakMapSet | Self::FinalizationRegistryRegister
+            | Self::TypedArrayToStringTag | Self::TypedArrayBufferGetter | Self::TypedArrayByteLengthGetter
+            | Self::TypedArrayByteOffsetGetter | Self::TypedArrayLengthGetter
+            | Self::FunctionPrototypeHasInstance | Self::FunctionBind | Self::Array | Self::PromiseResolve
+            | Self::PromiseWithResolvers | Self::WasmExportedFunction
         )
     }
 
@@ -3907,13 +3863,22 @@ impl Cell {
             Self::Error(_) => "error",
             Self::PromiseResolvingState { .. } => "promise_resolving_state",
             Self::Promise(_) => "promise",
+            Self::TemporalDuration { .. } | Self::TemporalPlainDate { .. } | Self::TemporalPlainDateTime { .. }
+            | Self::TemporalPlainMonthDay { .. } | Self::TemporalPlainYearMonth { .. }
+            | Self::TemporalZonedDateTime { .. } | Self::TemporalInstant { .. } => self.temporal_variant_name(),
+        }
+    }
+
+    /// `profile_variant_name` of a Temporal cell.
+    fn temporal_variant_name(&self) -> &'static str {
+        match self {
             Self::TemporalDuration { .. } => "temporal_duration",
             Self::TemporalPlainDate { .. } => "temporal_plain_date",
             Self::TemporalPlainDateTime { .. } => "temporal_plain_date_time",
             Self::TemporalPlainMonthDay { .. } => "temporal_plain_month_day",
             Self::TemporalPlainYearMonth { .. } => "temporal_plain_year_month",
             Self::TemporalZonedDateTime { .. } => "temporal_zoned_date_time",
-            Self::TemporalInstant { .. } => "temporal_instant",
+            _ => "temporal_instant",
         }
     }
 }

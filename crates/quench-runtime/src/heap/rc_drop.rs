@@ -93,6 +93,9 @@ fn cell_has_shared_rc_payload(cell: &Cell) -> bool {
     }
 }
 
+/// Cells are allocated 16-byte aligned, so an address's low bits carry nothing a stripe could use.
+const RC_DROP_ADDRESS_ALIGN_BITS: u32 = 4;
+
 fn rc_drop_lock_index(address: usize) -> usize {
-    (address >> 4) & (RC_DROP_LOCK_STRIPES - 1)
+    (address >> RC_DROP_ADDRESS_ALIGN_BITS) & (RC_DROP_LOCK_STRIPES - 1)
 }
