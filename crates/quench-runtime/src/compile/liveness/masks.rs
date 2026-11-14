@@ -68,6 +68,28 @@ impl RegisterMasks {
         }
     }
 
+    /// Appends to `roots` the values of `registers` live at `pc` (`live_at`), each one with no
+    /// mask entry there conservatively: a narrow mask is read once and its set bits walked,
+    /// where a collection's root scan asked every register in turn.
+    pub(crate) fn extend_live(&self, pc: usize, registers: &[crate::Value], roots: &mut Vec<crate::Value>) {
+        if let Self::Narrow(masks) = self {
+            let Some(&mask) = masks.get(pc) else {
+                roots.extend_from_slice(registers);
+                return;
+            };
+            let mut mask = if registers.len() < u64::BITS as usize { mask & ((1u64 << registers.len()) - 1) } else { mask };
+            roots.reserve(mask.count_ones() as usize);
+            while mask != 0 {
+                roots.push(registers[mask.trailing_zeros() as usize]);
+                mask &= mask - 1;
+            }
+            return;
+        }
+        roots.extend(
+            registers.iter().enumerate().filter(|(register, _)| self.live_at(pc, *register).unwrap_or(true)).map(|(_, value)| *value),
+        );
+    }
+
     /// Whether the mask holds more than one register window.
     pub(crate) fn is_windowed(&self) -> bool { matches!(self, Self::Windowed { .. }) }
 

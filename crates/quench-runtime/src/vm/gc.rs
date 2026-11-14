@@ -745,32 +745,23 @@ impl<H: Host> Vm<H> {
         roots.extend(self.well_known_symbols.values());
         roots.extend(self.typeof_names);
         roots.extend(self.startup_intrinsic_roots());
-        roots.extend(self.frames.iter().flat_map(|frame| {
-            // A missing map means the function uses a register form
-            // the liveness pass cannot represent; keep the safe
-            // conservative scan for that activation.
+        for frame in &self.frames {
+            // A missing map means the function uses a register form the liveness pass cannot
+            // represent; keep the safe conservative scan for that activation.
             let register_masks = self
                 .programs
                 .residual(frame.program)
                 .and_then(|program| program.register_root_masks(frame.function));
-            [frame.env, frame.this]
-                .into_iter()
-                .chain(frame.context.callee())
-                .chain(frame.original_arguments.iter().copied())
-                .chain(frame.locals.iter().copied())
-                .chain(frame.dynamic_bindings.iter().map(|(_, value)| *value))
-                .chain(
-                    frame
-                        .registers
-                        .iter()
-                        .enumerate()
-                        .filter_map(move |(register, value)| {
-                            register_masks
-                                .and_then(|masks| masks.live_at(frame.pc, register))
-                                .unwrap_or(true).then_some(*value)
-                        }),
-                )
-        }));
+            roots.extend([frame.env, frame.this]);
+            roots.extend(frame.context.callee());
+            roots.extend(frame.original_arguments.iter().copied());
+            roots.extend(frame.locals.iter().copied());
+            roots.extend(frame.dynamic_bindings.iter().map(|(_, value)| *value));
+            match register_masks {
+                Some(masks) => masks.extend_live(frame.pc as usize, &frame.registers, &mut roots),
+                None => roots.extend(frame.registers.iter().copied()),
+            }
+        }
         roots.extend(external_roots);
         #[cfg(feature = "profile-memory")]
         if crate::trace::Channel::MemoryPeak.on() {
