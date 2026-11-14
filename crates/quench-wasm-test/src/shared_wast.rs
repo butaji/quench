@@ -98,9 +98,13 @@ const SPECTEST_TABLE_MAX: u32 = 20;
 pub const EXECUTION_MODE_VARIABLE: &str = "QUENCH_EXECUTION_MODE";
 
 /// The execution mode `name` selects, as `execution_mode_name` spells it: `no-jit`, a JIT tier alone
-/// (`b-jit`, `u-jit`, `q-jit`) or `jit` (every tier); the tier choice becomes the process's.
+/// (`b-jit`, `u-jit`, `q-jit`), `jit` (every tier) or `aot`; the tier choice becomes the process's.
 pub fn mode_named(name: &str) -> Option<quench_runtime::ExecutionMode> {
     use quench_runtime::JitMode;
+    #[cfg(feature = "aot")]
+    if name == "aot" {
+        return Some(quench_runtime::ExecutionMode::NativeOnly);
+    }
     let jit = JitMode::FLAGGED.iter().map(|(mode, _)| *mode).chain([JitMode::default()]).find(|mode| mode.name() == name)?;
     jit.set_process_mode();
     Some(jit.execution_mode())
