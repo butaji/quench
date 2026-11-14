@@ -11710,21 +11710,39 @@ impl<H: Host> Vm<H> {
         let index = if self.script_call_holds(linked, callee) {
             linked
         } else {
-            let index = self
-                .script_call_index(callee)
-                .or_else(|| self.relink_known_closure(callee, linked))
-                .or_else(|| self.relink_closure(callee, linked))?;
+            let index = match self.script_call_index(callee) {
+                Some(index) => index,
+                None => self.relink_site_closure(callee, linked)?,
+            };
             // The callee in hand joins the site's record (`LaneStack::call_sites`): the entry it
             // linked may hold another site's callee since, so only the record names its own.
-            let current = &self.lane_stack.script_targets.entries[index];
-            self.note_site_callee(link, super::compiled::CallTarget {
-                callee: super::compiled::CalleeBinding::Identity(current.callee), function: current.function });
+            if self.tier_may_run(crate::jit_mode::Tier::ANY) {
+                self.note_linked_callee(link, index);
+            }
             // The entry count stays below `NO_CALL_LINK` (`SCRIPT_CALL_TARGETS`).
             link.set(index as u16);
             index
         };
         // SAFETY: `script_call_holds` found the entry within the cache.
         Some(unsafe { self.lane_stack.script_targets.entries.get_unchecked(index) } as *const ScriptCallTarget)
+    }
+
+    /// `linked_script_call_entry`'s target for a closure no cache set holds: a fresh closure
+    /// of the site's linked function, relinked in place, out of line, since a polymorphic
+    /// site's every miss would otherwise carry it.
+    #[cold]
+    #[inline(never)]
+    fn relink_site_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
+        self.relink_known_closure(callee, linked).or_else(|| self.relink_closure(callee, linked))
+    }
+
+    /// The site record of `link` notes entry `index`'s callee (`Vm::note_site_callee`).
+    #[cold]
+    #[inline(never)]
+    fn note_linked_callee(&self, link: &std::cell::Cell<u16>, index: usize) {
+        let current = &self.lane_stack.script_targets.entries[index];
+        self.note_site_callee(link, super::compiled::CallTarget {
+            callee: super::compiled::CalleeBinding::Identity(current.callee), function: current.function });
     }
 
     /// `script_call_entry` of a callee of another program than the running one, whose
