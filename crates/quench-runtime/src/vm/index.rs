@@ -244,7 +244,11 @@ impl<H: Host> Vm<H> {
     /// `dense_array_element` of an array whose object is a record; `None` for any other base.
     #[inline(always)]
     pub(super) fn direct_dense_element(&self, base: Value, key: Value) -> Option<Value> {
-        let index = usize::try_from(key.as_int()?).ok()?;
+        // One unsigned compare of the word past the int tag is the tag, sign and range test.
+        let index = key.int_key_offset();
+        if index >= 1 << 31 {
+            return None;
+        }
         crate::staged::elements::concrete_record_element(self.heap.array_record_base()?, base, index)
     }
 
@@ -341,6 +345,30 @@ impl<H: Host> Vm<H> {
         key.as_int()
             .and_then(|index| usize::try_from(index).ok())
             .is_some_and(|index| self.fill_dense_hole(object, index, value))
+    }
+
+    /// `try_fill_dense_hole` of a record array with ordinary elements whose own backing holds
+    /// a hole at a canonical int32 `key` below its length, while its chain holds no index
+    /// (`chain_holds_no_index`, a held proof) and the write barrier passes `value` unlogged:
+    /// OrdinarySet then defines a plain data element in the hole, one write in place. `false`
+    /// changes nothing and leaves the store to the general steps.
+    #[inline(always)]
+    pub(super) fn try_fill_record_hole(&mut self, object: Value, key: Value, value: Value) -> bool {
+        let index = key.int_key_offset();
+        if index >= 1 << 31 {
+            return false;
+        }
+        let Some(array) = self.heap.record_array(object) else {
+            return false;
+        };
+        if !array.holds_ordinary_elements() || !array.elements().get(index).is_some_and(|element| element.is_deleted()) {
+            return false;
+        }
+        let proto = array.proto();
+        if !self.chain_holds_no_index(proto) {
+            return false;
+        }
+        self.heap.record_array_store_mut_unlogged(object, value).is_some_and(|array| array.replace_in_place(index, value))
     }
 
     /// `try_replace_dense_element` of an array whose object is a record and whose elements no
