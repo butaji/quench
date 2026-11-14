@@ -139,14 +139,14 @@ const MATMUL: &str = "function mm(a, b, c, n) { for (var i = 0; i < n; i++) for 
     for (var k = 0; k < n; k++) s += a[i * n + k] * b[k * n + j]; c[i * n + j] = s; } }";
 
 /// The innermost loop of the function `source` declares entered natively at its header as an OSR region
-/// is, over typed `views`, every register an int32 there (`int_entries`).
-fn entered_region(source: &str, views: ElementViews) -> ir::Function {
+/// is, over typed `views`, every register an int32 of the range `entering` there (`int_entries`).
+fn entered_region(source: &str, views: ElementViews, entering: IntRange) -> ir::Function {
     let program = crate::Engine::specialize(source, "index-math.js").unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let (header, backedge) = unit.instructions.iter().enumerate().find_map(|(pc, instruction)|
         successors(pc, *instruction).into_iter().flatten().find(|target| *target <= pc).map(|target| (target, pc)))
         .expect("the function has a loop");
-    let entries: Vec<(Register, IntRange)> = (0..unit.registers).map(|register| (register, IntRange::FULL)).collect();
+    let entries: Vec<(Register, IntRange)> = (0..unit.registers).map(|register| (register, entering)).collect();
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
     lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
@@ -171,7 +171,7 @@ fn wide_operations(function: &ir::Function, body: &[ir::Inst], opcode: ir::Opcod
 #[test]
 fn matmul_indices_are_computed_in_integer_words_with_no_conversion_in_the_loop() {
     use crate::heap::TypedArrayKind as Kind;
-    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)));
+    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
     let body = loop_body(&function);
     assert_eq!(conversions(&function, &body), 0, "an index is no Number that converts to an integer and back: {function}");
     let products = wide_operations(&function, &body, ir::Opcode::Imul, |function, operands|
@@ -188,7 +188,7 @@ fn an_index_that_may_be_a_negative_zero_is_still_an_integer_word() {
     // `x * y` is `-0` for a zero and a negative factor, which no integer type holds; an element
     // index reads no sign, so the product is the integer word it would be without that case.
     let source = "function f(a, x, y) { var s = 0; for (var i = 0; i < 100; i++) s += a[x * y]; return s; }";
-    let function = entered_region(source, ElementViews::Typed(Some(Kind::Float64)));
+    let function = entered_region(source, ElementViews::Typed(Some(Kind::Float64)), IntRange::FULL);
     let body = loop_body(&function);
     assert_eq!(conversions(&function, &body), 0, "{function}");
     let products = wide_operations(&function, &body, ir::Opcode::Imul, |function, operands|
@@ -209,7 +209,7 @@ fn overflow_exits(function: &ir::Function, body: &[ir::Inst]) -> usize {
 #[test]
 fn matmul_indices_check_no_overflow_and_no_span_in_the_loop() {
     use crate::heap::TypedArrayKind as Kind;
-    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)));
+    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
     let body = loop_body(&function);
     assert_eq!(overflow_exits(&function, &body), 0, "the counter stays below its int32 bound and the indices are words: {function}");
     // The entry proved the inputs of the index arithmetic within `INDEX_INPUT_BITS`: a product of two
@@ -234,7 +234,7 @@ fn version_compares(function: &ir::Function, instructions: &[ir::Inst]) -> usize
 #[test]
 fn a_counted_loop_compares_its_bound_with_the_array_length_once_and_not_per_access() {
     use crate::heap::TypedArrayKind as Kind;
-    let function = entered_region(SUM, ElementViews::Typed(Some(Kind::Float64)));
+    let function = entered_region(SUM, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
     let body = loop_body(&function);
     let before: Vec<ir::Inst> = function.layout.blocks().flat_map(|block| function.layout.block_insts(block))
         .filter(|inst| !body.contains(inst)).collect();
@@ -242,7 +242,7 @@ fn a_counted_loop_compares_its_bound_with_the_array_length_once_and_not_per_acce
     assert!(version_compares(&function, &before) >= 1, "the entry compares the bound with the length: {function}");
     // A loop that writes its bound keeps the per-access test and has nothing to compare at its entry.
     let shrinking = "function sum(a, n) { var s = 0; for (var i = 0; i < n; i++) { s += a[i]; if (s > 1e9) n--; } return s; }";
-    let function = entered_region(shrinking, ElementViews::Typed(Some(Kind::Float64)));
+    let function = entered_region(shrinking, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
     let body = loop_body(&function);
     assert!(bounds_compares(&function, &body) >= 1, "a bound the loop writes proves nothing: {function}");
 }
