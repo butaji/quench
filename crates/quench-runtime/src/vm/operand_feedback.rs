@@ -97,6 +97,12 @@ impl OperandKinds {
             Self::INT32
         } else if value.as_number().is_some() {
             Self::DOUBLE
+        } else if value.is_record() {
+            // An object or array record, by its handle's family: no cell lookup, and no call
+            // per execution for the `===` of two objects that notes its operands every time.
+            Self::OTHER
+        } else if value.direct_string_index().is_some() {
+            Self::STRING
         } else {
             Self::of_heap(heap, value)
         }
