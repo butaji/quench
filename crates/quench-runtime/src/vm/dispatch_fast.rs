@@ -7819,7 +7819,7 @@ script_handler! {
             _ if left == right => true,
             // Two distinct heap values are equal only as strings or BigInts, which their
             // handles' families name; a slot cell that is no BigInt (a Symbol) is not.
-            _ if left.is_heap() && right.is_heap() => match left.distinct_heap_pair(right) {
+            _ => match left.distinct_heap_pair(right) {
                 crate::value::DistinctHeapPair::Unequal => false,
                 crate::value::DistinctHeapPair::Strings => {
                     sibling!(lane_jump_strict_equal_cells::<H, BACKWARD, NEGATED>, r, ip, Carried::script(cx))
@@ -7831,7 +7831,6 @@ script_handler! {
                     false
                 }
             },
-            _ => false,
         };
         if equal == NEGATED {
             resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));

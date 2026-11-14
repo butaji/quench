@@ -483,10 +483,14 @@ impl Value {
     /// conversion has already handled the integer pair.
     #[inline(always)]
     pub fn as_number(self) -> Option<f64> {
-        if !self.is_tagged() {
+        // One tag field decides all three: a double, an integer, or neither.
+        let field = (self.0 >> TAG_SHIFT) as u32;
+        if field.wrapping_sub((FIRST_TAG >> TAG_SHIFT) as u32) > ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as u32 {
             Some(f64::from_bits(self.0))
+        } else if u64::from(field) == TAG_INT >> TAG_SHIFT {
+            Some(f64::from(self.0 as u32 as i32))
         } else {
-            self.as_int().map(f64::from)
+            None
         }
     }
 
