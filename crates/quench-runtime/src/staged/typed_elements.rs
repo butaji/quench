@@ -155,28 +155,34 @@ fn by_word<S: Stage>(stage: &mut S, kind: S::Word, (first, rest): (NativeKind, &
     }
 }
 
-/// What `access` makes of the element `kind` names: the one arm of a kind the proof fixed, else
-/// the arm of the kind word that matches.
-fn by_kind<S: Stage>(stage: &mut S, kind: ViewKind<S::Word>,
-    access: &dyn Fn(&mut S, NativeKind) -> Option<S::Word>, miss: S::Miss) -> Option<S::Word> {
-    match kind {
-        ViewKind::Static(native) => access(stage, native),
-        ViewKind::Dynamic(word) => by_word(stage, word, (ELEMENTS[0], &ELEMENTS[1..]), access, miss),
-    }
+/// The Number at element `index` of `values` for `native`.
+#[inline(always)]
+fn read_element<S: NumericStage>(stage: &mut S, values: S::Word, index: S::Word, native: NativeKind) -> Option<S::Word> {
+    let address = element_address(stage, values, index, native.kind);
+    Some(load_number(stage, native.element, address))
+}
+
+/// Stores `number` at element `index` of `values` for `native`.
+#[inline(always)]
+fn write_element<S: NumericStage>(stage: &mut S, access: (S::Word, S::Word, S::Word), native: NativeKind,
+    miss: S::Miss) -> Option<S::Word> {
+    let (values, index, number) = access;
+    let address = element_address(stage, values, index, native.kind);
+    store_number(stage, native.element, address, number, miss).map(|()| number)
 }
 
 /// The Number at element `index` of `view`: past the elements or of a kind without a native
-/// element leaves at `miss`.
+/// element leaves at `miss`. A kind the proof fixed is one direct arm (no closure to outline).
 #[inline(always)]
 pub(crate) fn typed_read<S: NumericStage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     let in_bounds = stage.ult(index, view.length);
     stage.guard(in_bounds, miss)?;
-    let access = |stage: &mut S, native: NativeKind| {
-        let address = element_address(stage, view.values, index, native.kind);
-        Some(load_number(stage, native.element, address))
-    };
-    by_kind(stage, view.kind, &access, miss)
+    match view.kind {
+        ViewKind::Static(native) => read_element(stage, view.values, index, native),
+        ViewKind::Dynamic(word) => by_word(stage, word, (ELEMENTS[0], &ELEMENTS[1..]),
+            &|stage, native| read_element(stage, view.values, index, native), miss),
+    }
 }
 
 /// Stores the Number `number` at element `index` of `view`: past the elements, of a kind
@@ -186,9 +192,11 @@ pub(crate) fn typed_write<S: NumericStage>(stage: &mut S, view: TypedView<S::Wor
     number: S::Word, miss: S::Miss) -> Option<()> {
     let in_bounds = stage.ult(index, view.length);
     stage.guard(in_bounds, miss)?;
-    let access = |stage: &mut S, native: NativeKind| {
-        let address = element_address(stage, view.values, index, native.kind);
-        store_number(stage, native.element, address, number, miss).map(|()| number)
-    };
-    by_kind(stage, view.kind, &access, miss).map(|_| ())
+    let access = (view.values, index, number);
+    match view.kind {
+        ViewKind::Static(native) => write_element(stage, access, native, miss),
+        ViewKind::Dynamic(word) => by_word(stage, word, (ELEMENTS[0], &ELEMENTS[1..]),
+            &|stage, native| write_element(stage, access, native, miss), miss),
+    }
+    .map(|_| ())
 }
