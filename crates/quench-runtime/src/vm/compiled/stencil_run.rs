@@ -1,6 +1,5 @@
 //! The run of a stencil region that needs no activation: `Crossing::Bare`.
 
-#[cfg(test)]
 use super::{enter_body, BodyEntry, BodyReturn, CallContext, LaneExit, LoopEntry, LoopOutcome, LoopRegion, Raised};
 
 
