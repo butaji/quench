@@ -122,9 +122,7 @@ impl EntryCell {
     }
 }
 
-/// Bits of a capture word that hold the dense slots' address; the slot count sits above them
-/// (a user-space address fits 48 bits).
-pub(super) const CAPTURE_ADDRESS_BITS: u32 = 48;
+pub(super) use quench_bjit::shared_words::CAPTURE_ADDRESS_BITS;
 /// The bit of the address a store tag takes: slots are aligned past it (`CAPTURE_STORES`).
 const CAPTURE_STORES_BIT: u64 = super::super::dispatch_fast::CAPTURE_STORES as u64;
 /// The mask of the address bits.

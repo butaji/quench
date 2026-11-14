@@ -355,10 +355,8 @@ mod tests {
         let own = vec![
             ("adapter_payload", at!(CallContext, adapter_payload), m::CALL_CONTEXT_ADAPTER_PAYLOAD),
             ("property_buffer_base", crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, m::PROPERTY_BUFFER_BASE),
-            ("capture_address_bits", super::super::entry_cell::CAPTURE_ADDRESS_BITS as usize, m::CAPTURE_ADDRESS_BITS as usize),
             ("capture_stores_bit", super::super::super::dispatch_fast::CAPTURE_STORES, m::CAPTURE_STORES_BIT as usize),
             ("activation_kind", crate::vm::dispatch_fast::KIND_OFFSET, m::ACTIVATION_KIND_OFFSET),
-            ("kind_native", usize::from(crate::vm::dispatch_fast::KIND_NATIVE), usize::from(m::KIND_NATIVE)),
             ("cell_entry", at!(super::super::entry_cell::EntryCell, entry), m::CELL_ENTRY_AT),
             ("cell_recovery", at!(super::super::entry_cell::EntryCell, recovery), m::CELL_RECOVERY_AT),
             ("cell_body", at!(super::super::entry_cell::EntryCell, body), m::CELL_BODY_AT),
@@ -416,8 +414,8 @@ mod tests {
             assert_eq!(runtime, copy, "{name}: the runtime's offset is the stencil layout's");
         }
         assert_eq!(
-            [form::RECORD_SIZE as i32, form::TAG_OFFSET, i32::from(form::TAG_SHORT), i32::from(form::TAG_ASCII), i32::from(form::TAG_WIDE), form::SHORT_LENGTH_OFFSET, form::SHARED_LENGTH_OFFSET],
-            [mirror::string_form::RECORD_SIZE as i32, mirror::string_form::TAG_OFFSET, i32::from(mirror::string_form::TAG_SHORT), i32::from(mirror::string_form::TAG_ASCII), i32::from(mirror::string_form::TAG_WIDE), mirror::string_form::SHORT_LENGTH_OFFSET, mirror::string_form::SHARED_LENGTH_OFFSET]
+            [form::RECORD_SIZE as i32, form::SHORT_LENGTH_OFFSET, form::SHARED_LENGTH_OFFSET],
+            [mirror::string_form::RECORD_SIZE as i32, mirror::string_form::SHORT_LENGTH_OFFSET, mirror::string_form::SHARED_LENGTH_OFFSET]
         );
     }
 }

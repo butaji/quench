@@ -1332,7 +1332,7 @@ pub(in crate::vm) struct Activation {
 
 /// The tags of `ActivationKind`: the discriminants, which emitted code writes as the first
 /// word of the kind (`NATIVE_TAG`) and the lane reads to tell a native frame from an activation.
-pub(in crate::vm) const KIND_NATIVE: u8 = 0;
+pub(in crate::vm) use quench_bjit::shared_words::KIND_NATIVE;
 /// Where the kind's tag lies in an activation.
 pub(in crate::vm) const KIND_OFFSET: usize = std::mem::offset_of!(Activation, kind);
 const KIND_SCRIPT: u8 = 1;

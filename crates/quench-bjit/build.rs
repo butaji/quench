@@ -69,7 +69,7 @@ const RUSTC_FLAGS: &[&str] = &[
 
 /// Every file whose change must recompile the stencils: the stencil sources and the runtime's
 /// staged rows they include, and nothing else.
-const SOURCES: [&str; 23] = [
+const SOURCES: [&str; 24] = [
     "stencils",
     "../quench-runtime/src/staged/stage.rs",
     "../quench-runtime/src/staged/value.rs",
@@ -87,6 +87,7 @@ const SOURCES: [&str; 23] = [
     "src/class.rs",
     "src/numeric.rs",
     "src/call_record.rs",
+    "src/shared_words.rs",
     "../quench-runtime/src/staged/numeric.rs",
     "../quench-runtime/src/staged/iteration.rs",
     "../quench-runtime/src/staged/register_frame.rs",

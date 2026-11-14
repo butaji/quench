@@ -14,6 +14,7 @@ mod shards;
 pub mod numeric;
 pub mod call;
 pub mod call_record;
+pub mod shared_words;
 pub mod stub;
 pub use class::{EXIT, LOCAL, NEXT, TAKEN, ABS64, BRANCH14, BRANCH19, BRANCH26, MOVW, REL32};
 pub use patch::{HOLES, Imm32, padded_holes, PatchError, patch_successor, patch_value};

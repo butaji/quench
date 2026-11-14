@@ -7,8 +7,8 @@ use quench_runtime::{
     WasmType, WasmValue,
 };
 use wasmparser::{Encoding, ExternalKind, Parser, Payload, WasmFeatures};
-use wast::core::{WastArgCore, WastRetCore};
-use wast::{QuoteWat, WastArg, WastExecute, WastInvoke};
+use wast::core::WastRetCore;
+use wast::{QuoteWat, WastExecute, WastInvoke};
 
 use crate::wast_protocol::{LinkError, Outcome};
 use crate::wast_values::{scalar_matches, shared_arg};

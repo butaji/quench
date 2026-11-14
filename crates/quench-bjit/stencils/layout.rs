@@ -213,6 +213,10 @@ pub(crate) const CALL_CONTEXT_ADAPTER_PAYLOAD: usize = 240;
 /// The lane-call protocol, shared with the host (`quench_bjit::call_record`).
 #[path = "../src/call_record.rs"]
 pub(crate) mod call_record;
+/// The words shared with the host (`quench_bjit::shared_words`).
+#[path = "../src/shared_words.rs"]
+pub(crate) mod shared_words;
+pub(crate) use shared_words::{CAPTURE_ADDRESS_BITS, KIND_NATIVE};
 pub(crate) const JS_STEP_LOOP_ENTRY: usize = 0;
 pub(crate) const JS_STEP_CAPTURE_VALUES: usize = 80;
 pub(crate) const JS_STEP_CAPTURE_LEN: usize = 88;
@@ -260,7 +264,6 @@ pub(crate) const JS_STEP_FIELD_ENTRIES: usize = 152;
 pub(crate) const PROPERTY_BUFFER_BASE: usize = 0;
 /// Bits of a body's capture word that hold the dense slots' address; the slot count sits above
 /// them (`entry_cell::CAPTURE_ADDRESS_BITS`), and the pad is what a shift pair clears them with.
-pub(crate) const CAPTURE_ADDRESS_BITS: u32 = 48;
 pub(crate) const CAPTURE_ADDRESS_PAD: u32 = u64::BITS - CAPTURE_ADDRESS_BITS;
 /// The record a completed body names (`LANE_BODY_RETURNED`).
 pub(crate) const JS_STEP_RETURNED_PC: usize = 248;
@@ -279,7 +282,6 @@ pub(crate) const JS_STEP_LANE_FRAMES_END: usize = 312;
 /// An activation's size, and where its kind tag lies; `KIND_NATIVE` marks a frame a direct call wrote.
 pub(crate) const ACTIVATION_BYTES: usize = 128;
 pub(crate) const ACTIVATION_KIND_OFFSET: usize = 72;
-pub(crate) const KIND_NATIVE: u8 = 0;
 /// The entry cell's run counters, and the unit a raised run adds (`entry_cell::RAISED_RUN`).
 pub(crate) const CELL_COUNTERS_AT: usize = 56;
 pub(crate) const RAISED_RUN: u64 = 1 << 32;
@@ -297,10 +299,7 @@ pub(crate) const RECOVERY_ACTIVATIONS_AT: usize = 8;
 /// shared form keep their unit count. Checked against the runtime by `stencil_layout_matches`.
 pub(crate) mod string_form {
     pub(crate) const RECORD_SIZE: usize = 3 * core::mem::size_of::<usize>();
-    pub(crate) const TAG_OFFSET: i32 = 0;
-    pub(crate) const TAG_SHORT: u8 = 0;
-    pub(crate) const TAG_ASCII: u8 = 1;
-    pub(crate) const TAG_WIDE: u8 = 3;
+    pub(crate) use super::shared_words::string_tag::{TAG_ASCII, TAG_OFFSET, TAG_SHORT, TAG_WIDE};
     /// A short record's length byte follows its tag byte.
     pub(crate) const SHORT_LENGTH_OFFSET: i32 = 1;
     /// A shared record's pointer follows its tag at the next word, then its length.
