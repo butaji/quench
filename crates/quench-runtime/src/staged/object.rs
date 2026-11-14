@@ -413,9 +413,9 @@ pub(crate) fn decode_narrow_through<S: Stage>(stage: &mut S, narrow: S::Word, up
 const CONSTANT_UPPER_WORDS: [u64; 4] = [TAG_UNDEFINED, TAG_NULL, TAG_BOOL, TAG_DELETED];
 const FIRST_CONSTANT_CODE: u64 = NARROW_HEAP_FAMILIES as u64;
 /// A bit mask's complement in the low word: the upper word of a value.
-const UPPER_WORD: u64 = !(u32::MAX as u64);
+pub(super) const UPPER_WORD: u64 = !(u32::MAX as u64);
 /// The word a value that has no narrow form (a Number, a wide reference) yields.
-const NOT_NARROW: u64 = u64::MAX;
+pub(super) const NOT_NARROW: u64 = u64::MAX;
 
 /// `narrow_form` of an int32 `value`: its biased low word where it fits the span, else `NOT_NARROW`.
 #[inline(always)]

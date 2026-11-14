@@ -168,6 +168,7 @@ mod tests {
     use super::*;
     use crate::staged::{Arguments, CallFacts, Callee, Receiver};
     use crate::staged::call::concrete_fits;
+    use crate::staged::test_words::FACTS;
     use crate::staged::Concrete;
 
     const RETURNED: u32 = 7;
@@ -257,8 +258,6 @@ mod tests {
         complete_call(&mut trace, words[0], words[1], Some(words[2]), RETURNED, ());
         assert!(trace.holes.is_empty());
     }
-
-    const FACTS: CallFacts = CallFacts { registers: 10, activates: true, forwarding: false, forms: false };
 
     #[test]
     fn a_return_is_admitted_by_its_register_and_the_tier_completing() {

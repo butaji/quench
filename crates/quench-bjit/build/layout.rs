@@ -18,7 +18,7 @@ use std::ops::Range;
 /// A relocation as `build.rs` reads it: (offset, class, hole index, addend).
 pub(crate) type Reloc = (u16, u8, u8, i32);
 
-use crate::class::{LOCAL as LOCAL_INDEX, NEXT, REL32 as SUCCESSOR};
+use crate::class::{JMP_REL32, LOCAL as LOCAL_INDEX, NEXT, REL32 as SUCCESSOR, REL32_BYTES};
 
 /// The hole index of a successor relocation to the row's own code (`class::LOCAL`), as a relocation tuple carries it.
 pub(crate) const LOCAL: u8 = LOCAL_INDEX as u8;
@@ -29,11 +29,9 @@ const ORIGINAL_BASE: u64 = 1 << 20;
 /// Where the encoder puts the parts: far enough apart that a branch between them stays rel32.
 const HOT_BASE: u64 = 0;
 const COLD_BASE: u64 = 1 << 30;
-const REL32_BYTES: usize = 4;
 /// The pc-relative addend of a rel32 field that ends its instruction.
 #[cfg(test)]
 const REL32_ADDEND: i32 = -(REL32_BYTES as i32);
-const JMP_REL32: u8 = 0xe9;
 const JMP_LEN: usize = 1 + REL32_BYTES;
 const JCC_ESCAPE: u8 = 0x0f;
 const JCC_NEAR_BASE: u8 = 0x80;

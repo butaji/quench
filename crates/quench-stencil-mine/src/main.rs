@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 const DEFAULT_TOP: usize = 40;
 /// Exit statuses: a command-line mistake, a failed run.
-const USAGE_STATUS: i32 = 2;
+const MISUSE_STATUS: i32 = 2;
 const FAILURE_STATUS: i32 = 1;
 const USAGE: &str = "usage: quench-stencil-mine [--census FILE] [--trace FILE] [--json FILE] [--top N] \
 [--max-supernodes N] [--max-variants N] PATH...\n  PATH: JavaScript files or directories\n  \
@@ -104,7 +104,7 @@ fn main() {
         Ok(args) => args,
         Err(message) => {
             eprintln!("{message}");
-            std::process::exit(USAGE_STATUS);
+            std::process::exit(MISUSE_STATUS);
         }
     };
     // The compiler recurses deeply on nested source; run on the runtime's worker stack size.

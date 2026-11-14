@@ -376,6 +376,8 @@ pub(crate) enum Edge {
 }
 
 #[cfg(test)]
+mod test_words;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod property_tests;

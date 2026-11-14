@@ -3,17 +3,14 @@
 //! frame, no red-zone spill), and its hot path ends with the continuation jump, so the stitcher
 //! can drop that jump when the next row follows.
 
-use crate::class::{NEXT, REL32 as SUCCESSOR};
+use crate::class::{JMP_REL32, NEXT, REL32 as SUCCESSOR, REL32_BYTES};
 
 /// The routines around the rows (`stencils/entry.rs`) and the rows that may make a call (`stencils/call_rows.rs`).
 const ENTRY_PREFIX: &str = "entry_";
 const LEAVE_PREFIX: &str = "leave_";
-const CALL_ROW_PREFIX: &str = "call_";
+/// The rows that may make a call through a register (`stencils/call_rows.rs`).
+pub(crate) const CALL_ROW_PREFIX: &str = "call_";
 
-/// `jmp rel32`.
-const JMP_REL32: u8 = 0xe9;
-/// Bytes of a rel32 field.
-const REL32_BYTES: usize = 4;
 /// `push r64`: `50 + register`, behind a REX.B byte for r8-r15.
 const PUSH_OPCODES: std::ops::RangeInclusive<u8> = 0x50..=0x57;
 const REX_B: u8 = 0x41;

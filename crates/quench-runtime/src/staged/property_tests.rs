@@ -2,14 +2,12 @@
 
 use super::ic::IcOp;
 use super::property::{read_with, Arm, FieldPlan, Owner, PlanSource, StoreArm, StoreJoin, StorePlan};
+use super::test_words::ANSWER;
 use super::*;
 use crate::bytecode::{FieldBase, Operand};
 use crate::heap::{Cell, Heap, Object};
 use crate::typed_ir::Type;
 use crate::{Value, ValueType};
-
-/// The word a host callout answers, and what each callout was asked.
-const ANSWER: u64 = 0xA5A5;
 
 /// The plans of a test site: `lookup`'s read, cache site `store`'s store.
 struct Plans {

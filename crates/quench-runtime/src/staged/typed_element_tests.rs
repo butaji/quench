@@ -5,6 +5,7 @@
 use super::element_rows::ElementView;
 use super::typed_elements::{typed_read, NativeKind, TypedView, ViewKind};
 use super::typed_view::{concrete_typed_read, concrete_typed_view, prove_typed_view, TypedRecords, ViewAccess};
+use super::test_words::{READ, WRITE};
 use super::*;
 use crate::bytecode::Operand;
 use crate::heap::TypedArrayKind as Kind;
@@ -106,9 +107,6 @@ fn run(kind: Kind, bytes: &mut [u8], (key, number): (i32, f64), operation: Opera
         Step::Control(_) => unreachable!("an element access transfers no control"),
     }
 }
-
-const READ: Operation<u64, ()> = Operation::ElementRead { base: 0, key: Operand(1) };
-const WRITE: Operation<u64, ()> = Operation::ElementWrite { value: 2, base: 0, key: 1 };
 
 /// Elements of `kind` filled with a pattern whose bytes are all distinct and high.
 fn pattern(kind: Kind) -> Vec<u8> { (0..kind.width() * 3).map(|byte| 0xF0_u8.wrapping_add(byte as u8 * 7)).collect() }

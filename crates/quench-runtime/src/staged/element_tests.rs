@@ -1,14 +1,12 @@
 //! The element rows on the concrete stage, against the heap's own array model.
 
 use super::element_rows::{concrete_record_element, concrete_record_replace};
+use super::test_words::{ANSWER, READ, WRITE};
 use super::*;
 use crate::bytecode::Operand;
 use crate::typed_ir::Type;
 use crate::heap::{ArrayObject, Cell, Heap, Object};
 use crate::Value;
-
-/// The word the host read answers.
-const ANSWER: u64 = 0xA5A5;
 
 /// A frame over a few registers and the heap's array records, whose host paths log their name.
 struct Probe {
@@ -86,9 +84,6 @@ fn run(frame: &mut Probe, operation: Operation<u64, ()>) -> Option<Value> {
         Step::Control(_) => unreachable!("an element access transfers no control"),
     }
 }
-
-const READ: Operation<u64, ()> = Operation::ElementRead { base: 0, key: Operand(1) };
-const WRITE: Operation<u64, ()> = Operation::ElementWrite { value: 2, base: 0, key: 1 };
 
 #[test]
 #[cfg(not(feature = "profile-aggregate"))]
