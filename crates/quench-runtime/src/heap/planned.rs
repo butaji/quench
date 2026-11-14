@@ -57,7 +57,7 @@ impl Heap {
     /// slow path, so a handler's hit path builds no frame.
     #[inline(always)]
     pub(crate) fn alloc_planned_inline_quick(&mut self, header: InlineObjectHeader, inline: [Value; INLINE_PROPERTY_COUNT], len: usize) -> Option<Value> {
-        if !self.properties.plan_values_admitted(header.shape(), &inline[..len]) {
+        if !self.properties.inline_plan_values_admitted(header.shape(), inline, len) {
             return None;
         }
         let object = Object::from_inline_header(header, inline)?;

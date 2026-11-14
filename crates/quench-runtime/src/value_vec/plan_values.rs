@@ -19,6 +19,18 @@ impl ValueArena {
         }
     }
 
+    /// `plan_values_admitted` of the first `len` of the inline values `values`, taken by value
+    /// so a caller keeps them in registers: no array lives in memory for the slice.
+    #[inline(always)]
+    pub(crate) fn inline_plan_values_admitted(&self, shape: u32, values: [Value; INLINE_PROPERTY_COUNT], len: usize) -> bool {
+        !self.tracking || self.tracked_inline_values_admitted(shape, values, len)
+    }
+
+    #[inline(never)]
+    fn tracked_inline_values_admitted(&self, shape: u32, values: [Value; INLINE_PROPERTY_COUNT], len: usize) -> bool {
+        self.plan_values_admitted(shape, &values[..len])
+    }
+
     /// Whether `note_plan_values` of `values` into `shape` would widen nothing, read only, so a
     /// caller that may not call out of line can leave before any effect.
     #[inline(always)]
