@@ -1757,13 +1757,10 @@ fn concurrent_cycles_are_refused_until_every_gate_passes() {
     heap.collect([]);
     heap.pacing_state.favor_full_collections_for_test();
     assert_eq!(heap.concurrent_cycle_refusal_with(true, false), passing);
+    // Weak cells hold their entries strongly through a cycle: they refuse none.
     let weak_ref = heap.alloc(Cell::WeakRef { object: Box::new(plain_object()), target: None });
-    assert_eq!(heap.concurrent_cycle_refusal_with(true, false), Some(CycleRefusal::WeakCells));
-    // The heap remembers weak cells it made, even once they die.
-    heap.collect([]);
-    assert!(!heap.is_live(weak_ref));
-    heap.pacing_state.favor_full_collections_for_test();
-    assert_eq!(heap.concurrent_cycle_refusal_with(true, false), Some(CycleRefusal::WeakCells));
+    assert_eq!(heap.concurrent_cycle_refusal_with(true, false), passing);
+    assert!(heap.is_live(weak_ref));
     heap.reset();
     heap.pacing_state.favor_full_collections_for_test();
     assert_eq!(heap.concurrent_cycle_refusal_with(true, false), passing);
@@ -1861,7 +1858,8 @@ fn an_incremental_cycle_keeps_what_its_snapshot_reached_under_interleaved_mutati
         seen
     };
     for seed in 1..=24_u64 {
-        for budget in [1, 2, 7, 64, usize::MAX] {
+        // Budget 0: the marker thread marks beside the mutation, whose steps share its work.
+        for budget in [0, 1, 2, 7, 64, usize::MAX] {
             let mut state = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
             let mut next = move |bound: usize| {
                 state ^= state << 13;
@@ -1906,7 +1904,10 @@ fn an_incremental_cycle_keeps_what_its_snapshot_reached_under_interleaved_mutati
                 let slot = next(fields[&owner].len());
                 store(&mut heap, &mut fields, owner, slot, Value::NULL);
             }
-            heap.begin_cycle(roots.iter().copied());
+            if budget == 0 {
+                assert!(heap.properties.values_stay_in_place(), "a marker thread reads the arena in place");
+            }
+            heap.begin_cycle_with(roots.iter().copied(), budget == 0);
             let at_start = reachable(&roots, &fields);
             for _ in 0..300 {
                 let mut now: Vec<Value> = reachable(&roots, &fields).into_iter().collect();

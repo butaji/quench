@@ -27,6 +27,15 @@ impl UniqueElements {
     /// Inserts `values` before the first value by moving the header back into the room front
     /// removals left, or a new backing leaves (`regrow_front`): unshifting is amortized O(1).
     pub(super) fn prepend(&mut self, values: &[Value]) {
+        if quarantining() {
+            // A concurrent marker may hold the current header's address, which moving the
+            // header back would cover with values: a fresh backing instead.
+            let mut all = Vec::with_capacity(values.len() + self.0.len());
+            all.extend_from_slice(values);
+            all.extend_from_slice(&self.0);
+            self.0 = ArrayElements::from_slice(&all);
+            return;
+        }
         let count = values.len();
         if self.0.bias() < count {
             self.regrow_front(count.max(self.0.len()));
@@ -67,13 +76,21 @@ impl UniqueElements {
             moved.cast::<usize>().sub(1).write(front);
             std::ptr::copy_nonoverlapping(self.0.values(), moved.cast::<u8>().add(VALUES_OFFSET).cast(), len);
             let (old, old_layout) = self.0.allocation();
-            dealloc(old, old_layout);
+            super::release(old, old_layout);
             self.0.header = NonNull::new_unchecked(moved);
         }
     }
 
     /// Moves the header and values back to the start of the allocation, clearing `BIASED`.
     pub(super) fn unbias(&mut self) {
+        if quarantining() {
+            // As in `prepend`: the moved values would cover the headers before this one.
+            self.0 = match self.0.len() {
+                0 => ArrayElements::new(),
+                _ => ArrayElements::copied(&self.0, self.0.header().others),
+            };
+            return;
+        }
         let (start, _) = self.0.allocation();
         let (bias, len) = (self.0.bias(), self.0.len());
         // SAFETY: the header and its `len` values move back `bias` values within their own

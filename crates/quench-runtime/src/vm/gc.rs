@@ -332,8 +332,23 @@ impl<H: Host> Vm<H> {
         if !self.heap.should_collect() {
             return;
         }
+        self.collect_due(program);
+    }
+
+    /// An allocation threshold passed: a running concurrent cycle's poll, which remarks once
+    /// its marking is done, else a collection, or a cycle's start when its gates pass.
+    #[cold]
+    #[inline(never)]
+    fn collect_due(&mut self, program: &ResidualProgram) {
+        if self.heap.cycle_running() {
+            if self.heap.cycle_poll() {
+                self.collect_slow(program, true);
+            }
+            return;
+        }
         let full = self.heap.should_full_collect();
-        self.collect_slow(program, full);
+        let begin_cycle = full && self.heap.concurrent_cycle_refusal().is_none();
+        self.collect_inner(program, full, begin_cycle);
     }
 
     #[cold]
@@ -370,14 +385,22 @@ impl<H: Host> Vm<H> {
             .retain(|(program, _, _), _| !reclaimed.contains(program));
     }
 
-    pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
+    pub(super) fn collect_slow(&mut self, program: &ResidualProgram, full: bool) {
+        self.collect_inner(program, full, false);
+    }
+
+    /// A collection, or with `begin_cycle` the start of a concurrent cycle: the same roots
+    /// plus every edge a collection finds only through a marked owner (shapes' keys and
+    /// constructors, owned edges) and the VM's weak caches, all held strongly from the
+    /// snapshot, and no sweep until the cycle's remark.
+    fn collect_inner(&mut self, _program: &ResidualProgram, full: bool, begin_cycle: bool) {
         // Frameless activations' registers are no roots; their frames are.
         self.materialize_deferred_lane();
         self.clear_call_targets();
         self.resolved_module_requests.clear();
         self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
-        if full {
+        if full && !begin_cycle {
             self.host.at_collection_boundary(self.memory_policy());
         }
         #[cfg(feature = "profile-memory")]
@@ -801,6 +824,20 @@ impl<H: Host> Vm<H> {
             owned_root_filter: &owned_root_filter,
             _shape_borrow: std::marker::PhantomData,
         };
+        if begin_cycle {
+            for shape in 0..shape_count as u32 {
+                shape_trace.append_shape_edges(GcTraceKind::Collection, shape, false, &mut roots);
+            }
+            roots.extend(owned_roots.values().flatten().copied());
+            if let Some(strings) = &self.dynamic_strings {
+                roots.extend(strings.values().copied());
+            }
+            roots.extend(self.holder_hints.iter().flat_map(|hint| [hint.holder, hint.value]));
+            roots.extend(self.private_homes.iter().flat_map(|(key, home)| [key.environment, *home]));
+            self.private_site_homes.for_each_value(|value| roots.push(value));
+            self.heap.begin_cycle(roots);
+            return;
+        }
         let parallel_trace =
             |trace_kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
                 shape_trace.append(trace_kind, owner, shape, prototype, roots);
@@ -856,7 +893,9 @@ impl<H: Host> Vm<H> {
         // Do shape work immediately after sweep. In particular, dead method
         // cache handles must be pruned before any runtime cleanup can allocate
         // a new heap cell into a freed slot.
-        if full && self.should_compact_live_shapes(&live_shapes) {
+        // A remark marks only what its cycle had not: its shape bitmap misses the rest.
+        let shapes_complete = !self.heap.last_collection_kept_cycle_marks();
+        if full && shapes_complete && self.should_compact_live_shapes(&live_shapes) {
             #[cfg(feature = "profile-aggregate")]
             self.snapshot_method_caches(0);
             self.compact_live_shapes(live_shapes);

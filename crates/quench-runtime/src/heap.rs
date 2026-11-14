@@ -24,6 +24,7 @@ mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
 mod concurrent_mark;
+mod concurrent_view;
 mod environment_trace;
 pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, EnvironmentTrace};
 mod external;
@@ -610,6 +611,9 @@ const WITHHELD_PROTOTYPE_IDS: usize = 4096;
 
 #[derive(Default)]
 pub(crate) struct Heap {
+    /// The concurrent cycle's mark state between steps (`concurrent_mark`). First, so a heap
+    /// dropped mid-cycle stops its marker before any space the marker reads goes.
+    cycle: Option<Box<concurrent_mark::ConcurrentCycle>>,
     slots: SlotArena,
     object_records: ObjectRecordSpace,
     array_records: ArrayRecordSpace,
@@ -740,14 +744,15 @@ pub(crate) struct Heap {
     memory_profile: memory_profile::MemoryProfile,
     /// Whether a concurrent cycle is marking (`concurrent_mark`): never set yet.
     satb_active: bool,
-    /// The incremental cycle's mark state between steps (`concurrent_mark`).
-    cycle: Option<Box<concurrent_mark::ConcurrentCycle>>,
-    /// Whether the next full collection finds its marks made by a finished cycle and keeps
-    /// them (`Heap::finish_cycle`).
-    cycle_marked: bool,
-    /// Whether any weak collection, weak reference or finalization registry was made since the
-    /// heap began: such a heap runs no concurrent cycle (`CycleRefusal::WeakCells`).
-    weak_cells_made: bool,
+    /// Values the cycle's weak reads handed out (`Heap::shade`), for its mark: a value read
+    /// through a weak reference may be one its snapshot does not reach.
+    satb_shaded: std::cell::RefCell<Vec<Value>>,
+    /// Whether the last collection kept the marks a finished cycle made, so its own trace
+    /// reached only what the cycle had not (`Heap::last_collection_kept_cycle_marks`).
+    last_collection_premarked: bool,
+    /// The last finished cycle's polls, the allocation weight and wall time it ran over, and
+    /// the values its remark marked, for the trace.
+    last_cycle_extent: (u32, usize, u128, usize),
     /// Marks on the parallel pool whatever the heap's size (`Heap::parallel_mark`), so unit
     /// tests reach the parallel path with small heaps.
     #[cfg(test)]
@@ -1733,7 +1738,6 @@ impl Heap {
         }
         if weak {
             self.young_weak.push(index);
-            self.weak_cells_made = true;
         }
         if self.satb_active {
             self.blacken_slot(index as usize);
@@ -1780,7 +1784,6 @@ impl Heap {
         }
         if weak {
             self.young_weak.push(index as u32);
-            self.weak_cells_made = true;
         }
         if self.satb_active {
             self.blacken_slot(index);
@@ -2052,8 +2055,7 @@ impl Heap {
         }
     }
     pub(crate) fn reset(&mut self) {
-        self.finish_cycle_now();
-        self.weak_cells_made = false;
+        self.abandon_cycle();
         self.slots.clear();
         self.object_records = ObjectRecordSpace::default();
         self.array_records = ArrayRecordSpace::default();
@@ -2307,7 +2309,8 @@ impl Heap {
     }
 
     pub(crate) fn collection_is_full(&self, full: bool) -> bool {
-        full
+        // A collection while a cycle runs is its remark, a full one.
+        full || self.cycle.is_some()
     }
 
     /// `collection_is_full`, noting a full collection's start for the old-generation sizing
@@ -2381,9 +2384,11 @@ impl Heap {
                 self.gc_profile.young_cells_swept += self.young.count() as u64;
             }
         }
-        // A finished incremental cycle made the marks this full collection keeps.
-        let premarked = std::mem::take(&mut self.cycle_marked);
+        // A collection while a cycle runs finishes it: the cycle's marks are this full
+        // collection's, which its own trace from `roots` only completes (the remark).
+        let premarked = self.complete_cycle_marking();
         debug_assert!(!premarked || full);
+        self.last_collection_premarked = premarked;
         if full {
             if !premarked {
                 Self::clear_marks(&self.marks);
@@ -2472,7 +2477,9 @@ impl Heap {
         // then are what grew it, and slots cleared before stay cleared. Between them the
         // trace's per-environment state would only add to each full collection's peak
         // (V8-v7 max RSS +50 to +156 KiB on most fixtures when every full collection traced).
-        let trims_environments = full && self.environment_trim_due();
+        // A remark traces only what the cycle did not reach, so it cannot tell which slots
+        // closures read: environments are trimmed by stop-the-world collections only.
+        let trims_environments = full && !premarked && self.environment_trim_due();
         let environment_reads = if trims_environments {
             EnvironmentReads::Closures
         } else {
@@ -2910,6 +2917,14 @@ impl Heap {
         if crate::trace::Channel::Gc.on() {
             let (mark_us, sweep_us) = trace_times;
             let concurrent = if full { format!(" concurrent={:?}", self.concurrent_cycle_refusal()) } else { String::new() };
+            let concurrent = if self.last_collection_premarked {
+                format!(
+                    "{concurrent} remark_after_polls={} cycle_weight={} cycle_us={} remark_values={}",
+                    self.last_cycle_extent.0, self.last_cycle_extent.1, self.last_cycle_extent.2, self.last_cycle_extent.3
+                )
+            } else {
+                concurrent
+            };
             eprintln!("gc full={full}{concurrent} mark_us={mark_us} sweep_us={sweep_us} records_us={trace_records_us} resident_start={} resident_kept={} weight_between_fulls={} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.resident_at_full_start, self.resident_after_full, self.weight_between_fulls, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state);
         }
         self.live_weight_after_previous = live_weight;

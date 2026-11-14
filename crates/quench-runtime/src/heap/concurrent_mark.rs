@@ -2,8 +2,8 @@
 //! cycle instead of a stop-the-world full collection, and the hook every operation that needs
 //! a consistent heap calls first (`finish_cycle_now`).
 //!
-//! No cycle starts yet: `satb_active` stays false outside tests, so `finish_cycle_now` has
-//! nothing to finish and the snapshot barrier (`RecordSpace::satb_note`) never runs.
+//! A cycle runs only where every gate passes (`concurrent_cycle_refusal`), which includes
+//! `QUENCH_DEV=concurrent-gc`; marking runs in steps on the mutator thread at allocation polls.
 use super::*;
 
 /// Live legacy cells past which no cycle starts: the initial mark pushes every live cell's
@@ -21,9 +21,6 @@ pub(crate) enum CycleRefusal {
     /// Pacing favors minor collections; a cycle replaces full collections only where they
     /// alone reclaim memory (`Regime::FullOnly`).
     Generational,
-    /// A weak collection, weak reference or finalization registry was made: ephemerons and
-    /// weak clearing need a remark that knows them.
-    WeakCells,
     /// The property arena lives in a moving allocation, not its fixed reservation, so a
     /// marker could read a buffer the mutator freed.
     MovingProperties,
@@ -52,11 +49,9 @@ impl Heap {
             Some(CycleRefusal::NativeCode)
         } else if self.pacing_state.regime(&self.pacing()) != pacing::Regime::FullOnly {
             Some(CycleRefusal::Generational)
-        } else if self.weak_cells_made {
-            Some(CycleRefusal::WeakCells)
         } else if !self.properties.values_stay_in_place() {
             Some(CycleRefusal::MovingProperties)
-        } else if self.live_slots() > CONCURRENT_CYCLE_MAX_LEGACY_CELLS {
+        } else if self.slots.len() - self.free_slots > CONCURRENT_CYCLE_MAX_LEGACY_CELLS {
             Some(CycleRefusal::LegacyCells)
         } else if cfg!(feature = "profile-memory") {
             Some(CycleRefusal::ProfilingMemory)
@@ -66,18 +61,20 @@ impl Heap {
     }
 
     /// Whether a concurrent cycle is marking: the snapshot barrier is on and allocation is
-    /// black. Never set yet.
+    /// black.
     #[inline(always)]
     pub(crate) fn satb_active(&self) -> bool {
         self.satb_active
     }
 
-    /// Finishes a running concurrent cycle on this thread, before an operation that needs a
-    /// consistent heap: an explicit or minor collection, a reset, a snapshot, a walk over
-    /// every live cell. No cycle runs yet, so there is nothing to finish.
-    #[inline(always)]
+    /// Brings a running cycle's marking to its end on this thread, before an operation that
+    /// needs it: an explicit collection, a snapshot. The barrier stays on until the collection
+    /// that follows (any collection while a cycle runs is full and finishes it,
+    /// `collect_with_object_roots`), so writes meanwhile are still snapshotted.
     pub(crate) fn finish_cycle_now(&mut self) {
-        debug_assert!(!self.satb_active || cfg!(test), "no concurrent cycle starts yet");
+        if self.cycle.is_some() {
+            while !self.mark_step(usize::MAX) {}
+        }
     }
 }
 
@@ -147,7 +144,6 @@ impl records::SatbSnapshot for AwaitState {
 impl Heap {
     /// Turns the snapshot barrier on or off in every record family, as a concurrent cycle's
     /// start and remark will; the children it copies are taken with `take_satb_values`.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn set_satb(&mut self, active: bool) {
         self.satb_active = active;
         for (family, _) in self.record_families_mut() {
@@ -165,7 +161,6 @@ impl Heap {
     }
 
     /// The children the snapshot barrier copied in every family since the last call.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn take_satb_values(&mut self) -> Vec<Value> {
         let mut values = Vec::new();
         for (family, _) in self.record_families_mut() {
@@ -179,24 +174,72 @@ impl Heap {
 /// serial mark keeps across them. Steps run on the mutator thread (`Heap::mark_step`), between
 /// which the mutator writes through the snapshot barrier and allocates black.
 pub(super) struct ConcurrentCycle {
+    /// The marker thread, when the cycle marks on one (`begin_cycle_with`); `work` is then
+    /// the mutator's share left over. Before the quarantine, so it is joined first.
+    marker: Option<concurrent_view::MarkerThread>,
     work: Vec<Value>,
     ephemerons: weak::EphemeronWork,
     last_proto: PushedProtos,
+    /// Values a poll marks (`Heap::cycle_poll`), and the allocation weight between polls.
+    step_values: usize,
+    poll_weight: usize,
+    /// Polls taken, and the allocation count at the start (`last_cycle_extent`).
+    polls: u32,
+    started_at: usize,
+    started: std::time::Instant,
+    /// Holds the array backings freed during the cycle until it is dropped.
+    _quarantine: BackingQuarantine,
 }
+
+/// Array backings freed while it lives wait for its drop (`array_elements::begin_quarantine`),
+/// as a concurrent marker may read them until then.
+struct BackingQuarantine;
+
+impl BackingQuarantine {
+    fn begin() -> Self {
+        array_elements::begin_quarantine();
+        Self
+    }
+}
+
+impl Drop for BackingQuarantine {
+    fn drop(&mut self) {
+        array_elements::end_quarantine();
+    }
+}
+
+/// Polls a cycle takes to mark the live set, at most: the mutator marks a share of it at each,
+/// so the cycle ends within about `1 / CYCLE_POLLS_PER_LIVE_SET`'s worth of the interval since
+/// the last full collection, past whatever the barrier adds.
+const CYCLE_POLLS_PER_LIVE_SET: usize = 8;
+/// Polls a cycle spreads over the allocation one full collection interval charges.
+const CYCLE_POLLS_PER_INTERVAL: usize = 128;
 
 impl Heap {
     /// Starts an incremental cycle, as a full collection starts: the marks are cleared, and
     /// the snapshot is pushed: `roots`, the root table, and the children of every live cell
     /// (cells pass no snapshot barrier, so what one holds now is all the cycle needs of it),
-    /// with sparse elements. The snapshot barrier and black allocation then run until
-    /// `finish_cycle`.
+    /// with sparse elements. Weak entries are held strongly for the cycle (a weak map's keys
+    /// and values, a weak reference's target), so no ephemeron waits on a key and nothing a
+    /// weak read hands out goes unmarked; the remark's own trace prunes them as any full
+    /// collection does. The snapshot barrier and black allocation then run until the next
+    /// collection finishes the cycle (`collect_with_object_roots`).
     ///
-    /// The caller has passed the gates (`concurrent_cycle_refusal`): there is no weak cell, so
-    /// no ephemeron waits on a key; shape roots are among `roots`.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn begin_cycle(&mut self, roots: impl IntoIterator<Item = Value>) {
+    /// The caller has passed the gates (`concurrent_cycle_refusal`); shape roots and every
+    /// weakly held VM value a weak read cannot shade are among `roots`.
+    pub(crate) fn begin_cycle(&mut self, roots: impl IntoIterator<Item = Value>) {
+        self.begin_cycle_with(roots, true);
+    }
+
+    /// `begin_cycle`, marking on a marker thread (`concurrent_view`) or, without `threaded`,
+    /// in the mutator's steps alone.
+    pub(super) fn begin_cycle_with(&mut self, roots: impl IntoIterator<Item = Value>, threaded: bool) {
         assert!(self.cycle.is_none() && !self.satb_active, "one cycle at a time");
-        debug_assert!(!self.weak_cells_made, "a heap with weak cells runs no cycle");
+        // The shared unit strings are handed out with no barrier: a cycle starts them anew,
+        // as a collection does.
+        if let Some(strings) = &mut self.ascii_unit_strings {
+            strings.fill(Value::UNDEFINED);
+        }
         Self::clear_marks(&self.marks);
         self.remembered.clear();
         self.remembered_marks.fill(0);
@@ -210,16 +253,21 @@ impl Heap {
         work.extend(self.roots.values());
         let mut last_proto = PushedProtos::default();
         for (index, slot) in self.slots.iter().enumerate() {
-            if let Some(cell) = &slot.cell {
-                Self::children(
-                    Value::heap(index as u32),
-                    cell,
-                    &self.properties,
-                    &mut work,
-                    &mut |_, _, _, _, _| {},
-                    GcTraceKind::Collection,
-                    &mut last_proto,
-                );
+            let Some(cell) = &slot.cell else { continue };
+            Self::children(
+                Value::heap(index as u32),
+                cell,
+                &self.properties,
+                &mut work,
+                &mut |_, _, _, _, _| {},
+                GcTraceKind::Collection,
+                &mut last_proto,
+            );
+            match cell {
+                Cell::WeakMap { entries, .. } => work.extend(entries.iter().flat_map(|(key, value)| [key, value])),
+                Cell::WeakSet { entries, .. } => work.extend(entries.iter()),
+                Cell::WeakRef { target: Some(target), .. } => work.push(target.value),
+                _ => {}
             }
         }
         if let Some(arrays) = &self.sparse_arrays {
@@ -227,31 +275,71 @@ impl Heap {
                 work.extend(elements.values.values().copied());
             }
         }
+        let live = self.live_after_full.max(work.len());
+        let interval = self.weight_between_fulls.max(self.pacing().minimum_young);
         self.set_satb(true);
+        let quarantine = BackingQuarantine::begin();
+        let (marker, work) = if threaded {
+            let view = concurrent_view::ConcurrentMarkView::new(self);
+            (Some(concurrent_view::MarkerThread::start(view, work)), Vec::new())
+        } else {
+            (None, work)
+        };
         self.cycle = Some(Box::new(ConcurrentCycle {
+            marker,
             work,
             ephemerons: weak::EphemeronWork::default(),
             last_proto: PushedProtos::default(),
+            step_values: (live / CYCLE_POLLS_PER_LIVE_SET).max(1024),
+            poll_weight: (interval / CYCLE_POLLS_PER_INTERVAL).max(1),
+            polls: 0,
+            started_at: self.allocated,
+            started: std::time::Instant::now(),
+            _quarantine: quarantine,
         }));
+        self.arm_cycle_poll();
+    }
+
+    /// Makes `should_collect` answer at the cycle's next poll.
+    fn arm_cycle_poll(&mut self) {
+        let weight = self.cycle.as_ref().map_or(0, |cycle| cycle.poll_weight);
+        self.collect_at = self.allocated.saturating_add(weight);
     }
 
     /// Whether an incremental cycle is running (`begin_cycle`).
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn cycle_running(&self) -> bool {
+    pub(crate) fn cycle_running(&self) -> bool {
         self.cycle.is_some()
     }
 
+    /// One poll of the running cycle, at an allocation safepoint once `should_collect` says
+    /// so: marks a step's share, then arms the next poll. Whether its marking is done, so the
+    /// caller's full collection, the remark, is due.
+    pub(crate) fn cycle_poll(&mut self) -> bool {
+        let Some(cycle) = self.cycle.as_mut() else { return true };
+        cycle.polls += 1;
+        let budget = cycle.step_values;
+        let done = self.mark_step(budget);
+        self.arm_cycle_poll();
+        done
+    }
+
     /// Marks up to `budget` values of the running cycle on this thread, after taking what the
-    /// snapshot barrier copied since the last step; whether its marking is done (nothing left
-    /// to mark, nothing copied).
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// snapshot barrier copied and weak reads shaded since the last step; whether its marking
+    /// is done (nothing left to mark, nothing copied).
     pub(super) fn mark_step(&mut self, budget: usize) -> bool {
         let mut cycle = self.cycle.take().expect("a running cycle");
+        if let Some(marker) = cycle.marker.take() {
+            let done = self.share_marking(&marker, &mut cycle);
+            cycle.marker = Some(marker);
+            self.cycle = Some(cycle);
+            return done;
+        }
         cycle.work.append(&mut self.take_satb_values());
+        cycle.work.append(self.satb_shaded.get_mut());
         // No closure-read source: closure environment edges are ordinary edges, and every
         // environment is traced whole.
         let mut environments = EnvironmentTrace::new(None, EnvironmentReads::Projections);
-        let ConcurrentCycle { work, ephemerons, last_proto } = &mut *cycle;
+        let ConcurrentCycle { work, ephemerons, last_proto, .. } = &mut *cycle;
         for _ in 0..budget {
             let Some(value) = work.pop() else { break };
             self.mark_value(value, work, &mut |_, _, _, _, _| {}, ephemerons, GcTraceKind::Collection, &mut environments, last_proto);
@@ -259,23 +347,91 @@ impl Heap {
         debug_assert!(!environments.has_pending());
         let done = cycle.work.is_empty();
         self.cycle = Some(cycle);
-        done && self.satb_values_empty()
+        done && self.satb_values_empty() && self.satb_shaded.get_mut().is_empty()
+    }
+
+    /// The mutator's step while the marker thread marks: what the marker deferred and the
+    /// mutator's own leftovers are traced here, and the barrier's copies, weak reads and the
+    /// records reached go to the marker. Done once the marker idles with nothing sent or
+    /// deferred and this step sent it nothing.
+    fn share_marking(&mut self, marker: &concurrent_view::MarkerThread, cycle: &mut ConcurrentCycle) -> bool {
+        let mut for_marker = self.take_satb_values();
+        for_marker.append(self.satb_shaded.get_mut());
+        let quiet = marker.take_deferred(&mut cycle.work);
+        if quiet && cycle.work.is_empty() {
+            // The marker drained what it was given: the remark marks what the mutator wrote
+            // since, which the barrier still holds, as the mutator keeps writing.
+            self.satb_shaded.get_mut().append(&mut for_marker);
+            return true;
+        }
+        let ConcurrentCycle { work, ephemerons, last_proto, .. } = cycle;
+        self.trace_deferred(marker.view(), work, &mut for_marker, ephemerons, last_proto);
+        let done = quiet && for_marker.is_empty();
+        marker.send(&mut for_marker);
+        done
     }
 
     fn satb_values_empty(&mut self) -> bool {
         self.record_families_mut().iter_mut().all(|(family, _)| family.satb_values_empty())
     }
 
-    /// Finishes the running cycle: marks what is left, ends the snapshot barrier (which marks
-    /// what the cycle allocated), and runs a full collection that keeps those marks, tracing
-    /// `roots` again from them and sweeping: the remark. What the snapshot reached, and what
-    /// was made since, survives.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn finish_cycle(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
+    /// A weak read handed out `value` while a cycle marks: the cycle marks it, as its snapshot
+    /// may not reach it and the mutator may now store it anywhere.
+    #[inline(always)]
+    pub(super) fn shade(&self, value: Value) {
+        if self.satb_active {
+            self.shade_slow(value);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn shade_slow(&self, value: Value) {
+        self.satb_shaded.borrow_mut().push(value);
+    }
+
+    /// Marks what is left of the running cycle and ends its snapshot barrier (which marks
+    /// what it allocated): the start of its remark, the collection that keeps these marks.
+    /// `false` when no cycle runs.
+    pub(super) fn complete_cycle_marking(&mut self) -> bool {
+        let Some(cycle) = self.cycle.as_mut() else {
+            return false;
+        };
+        // The marker stops first: the rest is marked here, serially.
+        if let Some(marker) = cycle.marker.take() {
+            let mut left = marker.stop();
+            cycle.work.append(&mut left);
+        }
+        let remark_values = cycle.work.len() + self.satb_shaded.get_mut().len()
+            + self.record_families_mut().iter_mut().map(|(family, _)| family.satb_values_len()).sum::<usize>();
+        let cycle = self.cycle.as_ref().expect("a running cycle");
+        self.last_cycle_extent = (cycle.polls, self.allocated - cycle.started_at, cycle.started.elapsed().as_micros(), remark_values);
         while !self.mark_step(usize::MAX) {}
         self.cycle = None;
         self.set_satb(false);
-        self.cycle_marked = true;
+        true
+    }
+
+    /// Drops a running cycle without finishing it, for a heap discarding everything
+    /// (`Heap::reset`).
+    pub(super) fn abandon_cycle(&mut self) {
+        if self.cycle.take().is_some() {
+            self.set_satb(false);
+        }
+        self.satb_shaded.get_mut().clear();
+    }
+
+    /// Whether the last collection kept the marks a finished cycle made: its own trace reached
+    /// only what the cycle had not, so a by-product of that trace (the VM's reached shapes) is
+    /// incomplete.
+    pub(crate) fn last_collection_kept_cycle_marks(&self) -> bool {
+        self.last_collection_premarked
+    }
+
+    /// Finishes the running cycle with a full collection from `roots` (the remark).
+    #[cfg(test)]
+    pub(super) fn finish_cycle(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
         self.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, None, true)
     }
 }
+
