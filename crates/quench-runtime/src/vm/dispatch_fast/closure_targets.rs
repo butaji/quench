@@ -35,8 +35,10 @@ impl<H: Host> Vm<H> {
             return None;
         }
         if let Some(target) = self.sibling_closure_target(&entry, callee, env) {
-            self.lane_stack.remember_script_target(target, self.heap.memory_policy());
-            return self.script_call_index(callee);
+            // The site's entry turns to the closure in hand in place: a site meeting each
+            // fresh closure of one function in turn keeps one entry, with no set displaced.
+            self.lane_stack.script_targets.entries[linked] = target;
+            return Some(linked);
         }
         let known = self.lane_stack.function_target(program, function, false)?;
         // SAFETY: no program is installed or retired while a call resolves.

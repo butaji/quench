@@ -12281,7 +12281,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         let target = vm
-            .script_call_entry(callee)
+            .linked_script_call_entry(callee, &i.call_link)
             .filter(|_| unsafe { (*cx).script_calls } && !lane_constructing(vm, callee));
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let Some(target) = target.map(|target| unsafe { &*target }).filter(|target| {
@@ -12352,7 +12352,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         let target = vm
-            .script_call_entry(callee)
+            .linked_script_call_entry(callee, &i.call_link)
             .filter(|_| unsafe { (*cx).script_calls } && !lane_constructing(vm, callee));
         // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
         let Some(target) = target.map(|target| unsafe { *target }).filter(ScriptCallTarget::settles) else {
