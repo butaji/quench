@@ -425,6 +425,12 @@ fn steady_search(meta: &crate::heap::RegExpMeta, input: &JsString, slot: usize, 
     let stateful = meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
     let start = if stateful { crate::units::to_length(index) } else { 0 };
     let sticky = meta.flags.contains(RegExpFlags::STICKY);
+    if !stateful && !captures && regex.matches_at_every_start() {
+        // Nothing reads the match but where it starts (test, or an exec whose result is
+        // unused, and no lastIndex to store): a search from 0 matches at 0. The legacy
+        // statics find the match again from there if read (`record_regexp_legacy_pending`).
+        return SteadyRead::Ascii { slot, stateful, matched: Some((Rc::clone(regex), input.clone(), quench_regexp::Match::native(0..0))) };
+    }
     if let crate::vm::wtf16::Units::Ascii(bytes) = units.view() {
         // A flat ASCII subject is searched in place, which makes the prefilter's tests
         // itself (`Regex::find_ascii`): the match outlives the borrows of the regexp and the

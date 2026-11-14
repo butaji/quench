@@ -296,6 +296,23 @@ struct CompleteMatcher {
     /// The fewest code points any match consumes (`min_length`). A code point is at least
     /// one unit of any subject, so a search with fewer units left has no match.
     min_length: usize,
+    /// Whether some path through the pattern matches the empty string unconditionally: with
+    /// no assertion, lookaround or backreference on it. A search from any position then
+    /// succeeds at that position (`Regex::matches_at_every_start`).
+    empty_everywhere: bool,
+}
+
+/// Whether some path through `expr` matches empty whatever the subject and position: as
+/// `nullable`, but an assertion, lookaround or backreference may fail, so it never counts.
+fn empty_everywhere(expr: &Expr) -> bool {
+    match expr {
+        Expr::Literal(_) | Expr::Dot | Expr::Class(_) => false,
+        Expr::Sequence(parts) => parts.iter().all(empty_everywhere),
+        Expr::Alternation(alternatives) => alternatives.iter().any(empty_everywhere),
+        Expr::Capture { body, .. } | Expr::Mode { body, .. } => empty_everywhere(body),
+        Expr::Repeat { body, min, .. } => *min == 0 || empty_everywhere(body),
+        Expr::Assertion(_) | Expr::Lookaround { .. } | Expr::Backreference(_) => false,
+    }
 }
 
 /// A searcher for a literal byte run. The searcher is several hundred bytes, so it is boxed:
@@ -332,6 +349,7 @@ impl CompleteMatcher {
         })
         .map(|bytes| literal_finder(&bytes));
         let min_length = min_length(&program);
+        let empty_everywhere = empty_everywhere(&program);
         let literal_run = range_search::LiteralRun::of(&program, &required_literal);
         let tree = OnceCell::new();
         if backtracking.is_none() {
@@ -345,6 +363,7 @@ impl CompleteMatcher {
             required_wide: OnceCell::new(),
             literal_run,
             min_length,
+            empty_everywhere,
         }
     }
 }
@@ -541,6 +560,13 @@ impl Regex {
             None => return Some(None),
         };
         Some(program.find(bytes, start, sticky, captures).map(|found| self.offset_match(found, captures)))
+    }
+
+    /// Whether a non-sticky search from any position in any subject matches at that position:
+    /// some path through the pattern matches empty unconditionally, so a caller that reads
+    /// only where a match starts needs no search.
+    pub fn matches_at_every_start(&self) -> bool {
+        self.complete().empty_everywhere
     }
 
     /// The range `find_ascii` finds, for a caller that observes no captures.
