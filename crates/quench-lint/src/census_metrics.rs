@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 use proc_macro2::{TokenStream, TokenTree};
 use syn::{Item, visit::Visit};
 
+use crate::catalog::{self, is_punct};
 use crate::shape::is_test;
 
 const OPCODE_OWNERS: &[&str] = &["Op", "Class"];
@@ -13,11 +14,8 @@ const OPCODE_CATALOG: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/
 const PREDICATE_TABLE_MACRO: &str = "op_predicates";
 const OPCODE_RECEIVERS: &[&str] = &["op", "opcode"];
 const OPCODE_ACCESSOR: &str = "op";
-const BYTECODE_OWNER: &[&str] = &["Op"];
 const CLASS_OWNER: &[&str] = &["Class"];
-const DECODER_ROW_FUNCTIONS: &[&str] = &["numeric_row", "heap_row"];
-const OPCODE_TABLE_MACRO: &str = "opcodes";
-const STAGED_OPERATION: &str = "Operation";
+const DECODER_ROW_FUNCTIONS: &[&str] = &["numeric_row", "heap_row", "named_row"];
 const LANE_EXIT: &str = "LaneExit";
 const TIER_TABLE: &str = "MEASURED";
 const ENTRY_ALIAS: &str = "Entry";
@@ -84,37 +82,14 @@ impl<'ast> Visit<'ast> for Arms<'_> {
     }
 }
 
-/// The opcodes the `opcodes!` table declares: each entry is `Name => ...` after a separator.
+/// The opcodes the `opcodes!` table declares: one row each.
 pub fn opcode_variants(file: &syn::File) -> usize {
-    let tables = file.items.iter().filter_map(|item| match item {
-        Item::Macro(call) if call.mac.path.is_ident(OPCODE_TABLE_MACRO) => Some(&call.mac.tokens),
-        _ => None,
-    });
-    tables.map(entry_names).sum()
+    catalog::table(file).len()
 }
 
-fn entry_names(tokens: &TokenStream) -> usize {
-    let trees: Vec<TokenTree> = tokens.clone().into_iter().collect();
-    let is_punct = |tree: Option<&TokenTree>, mark: char| matches!(tree, Some(TokenTree::Punct(punct)) if punct.as_char() == mark);
-    (0..trees.len())
-        .filter(|&at| {
-            let starts = at == 0 || is_punct(trees.get(at - 1), ',') || is_punct(trees.get(at - 1), ';');
-            starts && matches!(trees[at], TokenTree::Ident(_)) && is_punct(trees.get(at + 1), '=')
-        })
-        .count()
-}
-
-/// The distinct opcodes on the left of an arm in `impl Operation`.
+/// The opcodes the catalog gives a staged operation: the rows that declare a `staged` decoder.
 pub fn staged_opcodes(file: &syn::File) -> usize {
-    let mut arms = Arms::new(BYTECODE_OWNER);
-    for item in module_items(&file.items) {
-        if let Item::Impl(block) = item
-            && matches!(&*block.self_ty, syn::Type::Path(path) if path.path.segments.last().is_some_and(|last| last.ident == STAGED_OPERATION))
-        {
-            arms.visit_item_impl(block);
-        }
-    }
-    arms.variants.len()
+    catalog::table(file).iter().filter(|row| row.declares(catalog::STAGED)).count()
 }
 
 /// Non-empty lines that are not `#` comments.
@@ -139,7 +114,6 @@ fn catalog_predicates() -> &'static BTreeSet<String> {
 /// The identifiers an `op_predicates!` table names before a `=>`.
 fn predicate_names(tokens: &TokenStream) -> Vec<String> {
     let trees: Vec<TokenTree> = tokens.clone().into_iter().collect();
-    let is_punct = |tree: Option<&TokenTree>, mark: char| matches!(tree, Some(TokenTree::Punct(punct)) if punct.as_char() == mark);
     (0..trees.len())
         .filter(|&at| is_punct(trees.get(at + 1), '=') && (at == 0 || is_punct(trees.get(at - 1), ',')))
         .filter_map(|at| match &trees[at] {
@@ -311,10 +285,10 @@ mod tests {
     }
 
     #[test]
-    fn staged_opcodes_are_distinct_arms_of_operation_impls() {
+    fn staged_opcodes_are_the_rows_that_declare_a_decoder() {
         let file = parse(
-            "impl<W> Operation<W> { fn a(i: I) { match i.op() { Op::A | Op::B => 1, Op::A => 2, _ => 3 } } }
-             impl Other { fn b(i: I) { match i { Op::C => 1, _ => 2 } } }",
+            "opcodes!($; Nop => Effect::PURE; layout Scalar, @ R, Add => X::Y; layout Scalar; staged Flow; step Body, @ R,
+             Sub => X::Y; layout Scalar; staged Value, @ R);",
         );
         assert_eq!(staged_opcodes(&file), 2);
     }
@@ -381,9 +355,10 @@ mod tests {
         let file = parse(
             "fn numeric_row(i: I) { match i.class() { Class::A | Class::B => 1, _ => 2 } }
              fn heap_row(i: I) { match i.class() { Class::B => 1, Class::C if x => 2, _ => 3 } }
+             fn named_row(i: I) { match i.class() { Class::E => 1, _ => 2 } }
              fn reject(i: I) { match i.class() { Class::D => 1, _ => 2 } }",
         );
-        assert_eq!(decoder_classes(&file), 3);
+        assert_eq!(decoder_classes(&file), 4);
     }
 
     #[test]

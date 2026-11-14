@@ -8,6 +8,7 @@
 //!
 //! usage: quench-lint [--update] [ROOT...]   |   quench-lint --census [--update-census]   (default: crates quench-bench/src tools)
 
+mod catalog;
 mod census;
 mod census_metrics;
 mod data_layout;
@@ -20,6 +21,9 @@ mod hot_path;
 mod magic;
 mod native_forms;
 mod shape;
+mod test_paths;
+
+pub(crate) use test_paths::in_test_path;
 
 use std::{
     fs,
@@ -30,14 +34,6 @@ use std::{
 const DEFAULT_ROOTS: &[&str] = &["crates", "quench-bench/src", "tools"];
 /// Checked-out third-party corpora and build output, not Quench code.
 const SKIPPED_DIRECTORIES: &[&str] = &["target", "testsuite", "node_modules", "jetstream", "js-engine-benchmark"];
-/// Paths that hold only tests and benchmarks of Quench itself.
-const TEST_PATHS: &[&str] = &["test", "primitive_bench"];
-
-/// Whether a function, named by its `file::path` subject, lives in tests or benchmarks.
-pub(crate) fn in_test_path(subject: &str) -> bool {
-    let file = subject.split("::").next().unwrap_or(subject);
-    TEST_PATHS.iter().any(|path| file.contains(path))
-}
 
 /// Whether an operator tests equality (`==` or `!=`).
 pub(crate) fn is_equality(op: &syn::BinOp) -> bool {
@@ -86,6 +82,7 @@ fn main() -> ExitCode {
     let mut files = Vec::new();
     roots.iter().for_each(|root| rust_files(Path::new(root), &mut files));
     files.sort();
+    test_paths::declare(&files);
     let (repeated, mut oversized, trees) = match scan(&files) {
         Ok(found) => found,
         Err(error) => {

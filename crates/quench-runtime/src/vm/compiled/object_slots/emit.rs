@@ -4,6 +4,7 @@ use super::*;
 use crate::staged::region::Mutability;
 use crate::staged::{Access, Domain, NumericStage, Stage, Table};
 use crate::staged::flow::FlowStage;
+use crate::staged::number_machine as numbers;
 use crate::staged::machine::{Binary, Extend, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
 use crate::vm::compiled::regions;
 use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
@@ -224,7 +225,7 @@ impl Stage for Emit<'_, '_> {
     }
     fn number_truthy(&mut self, bits: ir::Value) -> ir::Value {
         let number = self.raw_unary(Unary::Bitcast(Lane::F64), bits);
-        super::super::emit_number_truthiness(self.builder, number)
+        numbers::number_truthy(self, number)
     }
     fn choose(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
         otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
@@ -301,21 +302,21 @@ impl Emit<'_, '_> {
 impl NumericStage for Emit<'_, '_> {
     fn relation(&mut self, relation: NumberRelation, domain: Domain,
         left: ir::Value, right: ir::Value) -> ir::Value {
-        emit_number_relation(self.builder, relation, left, right, domain)
+        numbers::number_relation(self, relation, left, right, domain)
     }
     fn float_arithmetic(&mut self, operation: NumberArithmetic,
         left: ir::Value, right: ir::Value) -> ir::Value {
-        emit_number_arithmetic_operation(self.builder, operation, left, right)
+        numbers::float_arithmetic(self, operation, left, right)
     }
     fn float_negate(&mut self, value: ir::Value) -> ir::Value {
         self.raw_unary(Unary::FloatNegate, value)
     }
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
-        emit_checked_int32_arithmetic(self.builder, operation, left, right)
+        numbers::checked_int32_arithmetic(self, operation, left, right)
     }
     fn float_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
-        emit_number_remainder(self.builder, types::I64, left, right)
+        numbers::float_remainder(self, left, right)
     }
     fn int_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
         self.raw_binary(Binary::RemainderSigned, left, right)
@@ -342,7 +343,7 @@ impl NumericStage for Emit<'_, '_> {
         Some(emit_number_to_int32(self.builder, number, miss))
     }
     fn int_bitwise(&mut self, operation: NumberBitwise, left: ir::Value, right: ir::Value) -> ir::Value {
-        emit_number_bitwise_bits(self.builder, operation, left, right)
+        numbers::int32_bitwise(self, operation, left, right)
     }
     fn i32_is_zero(&mut self, a: ir::Value) -> ir::Value { self.raw_compare_imm(Relation::Equal, a, 0) }
     fn i32_is_negative(&mut self, a: ir::Value) -> ir::Value { self.raw_compare_imm(Relation::SignedLess, a, 0) }

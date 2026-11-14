@@ -282,6 +282,57 @@ impl NumberUnaryStage<f64> for NumberF64Stage {
     }
 }
 
+/// A stage supplies predicate operations for the shared JavaScript Number ToBoolean
+/// denotation. Interpreter, stencil and codegen stages use the same nonzero-and-not-NaN formula.
+pub(crate) trait NumberTruthinessStage<T> {
+    type Predicate;
+
+    fn zero(&mut self) -> T;
+    fn equal(&mut self, left: T, right: T) -> Self::Predicate;
+    fn not_equal(&mut self, left: T, right: T) -> Self::Predicate;
+    fn and(&mut self, left: Self::Predicate, right: Self::Predicate) -> Self::Predicate;
+}
+
+#[inline(always)]
+pub(crate) fn number_truthiness<T: Copy, S: NumberTruthinessStage<T>>(
+    stage: &mut S,
+    value: T,
+) -> S::Predicate {
+    let zero = stage.zero();
+    let nonzero = stage.not_equal(value, zero);
+    let not_nan = stage.equal(value, value);
+    stage.and(nonzero, not_nan)
+}
+
+impl NumberTruthinessStage<f64> for NumberF64Stage {
+    type Predicate = bool;
+
+    #[inline(always)]
+    fn zero(&mut self) -> f64 {
+        0.0
+    }
+
+    #[inline(always)]
+    fn equal(&mut self, left: f64, right: f64) -> Self::Predicate {
+        left == right
+    }
+
+    #[inline(always)]
+    fn not_equal(&mut self, left: f64, right: f64) -> Self::Predicate {
+        left != right
+    }
+
+    #[inline(always)]
+    fn and(&mut self, left: Self::Predicate, right: Self::Predicate) -> Self::Predicate {
+        left && right
+    }
+}
+
+#[inline(always)]
+pub(crate) fn number_is_truthy(value: f64) -> bool {
+    number_truthiness(&mut NumberF64Stage, value)
+}
+
 pub(crate) struct PartialOrderStage;
 
 impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {

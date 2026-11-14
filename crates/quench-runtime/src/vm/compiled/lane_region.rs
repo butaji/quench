@@ -2894,11 +2894,12 @@ impl Lowering<'_, '_> {
         self.ins().brif(ints, int_block, &[], number_block, &[]);
         self.builder.switch_to_block(int_block);
         let (left_bits, right_bits) = (self.ins().ireduce(types::I32, left), self.ins().ireduce(types::I32, right));
-        let int_holds = emit_number_relation_operator(&mut self.builder, operator, left_bits, right_bits, NumberRelationDomain::Int32)?;
+        let relation = super::operations::NumberRelation::from_operator(operator)?;
+        let int_holds = crate::staged::number_machine::number_relation(&mut super::object_slots::emit(&mut self.builder), relation, left_bits, right_bits, NumberRelationDomain::Int32);
         self.ins().jump(join, &[ir::BlockArg::Value(int_holds)]);
         self.builder.switch_to_block(number_block);
         let (left, right) = (emit_js_tagged_number(&mut self.builder, left, exit), emit_js_tagged_number(&mut self.builder, right, exit));
-        let number_holds = emit_number_relation_operator(&mut self.builder, operator, left, right, NumberRelationDomain::Float64)?;
+        let number_holds = crate::staged::number_machine::number_relation(&mut super::object_slots::emit(&mut self.builder), relation, left, right, NumberRelationDomain::Float64);
         self.ins().jump(join, &[ir::BlockArg::Value(number_holds)]);
         self.builder.switch_to_block(join);
         Some(holds)
@@ -4159,7 +4160,7 @@ impl Lowering<'_, '_> {
             // consumer cannot fail once these signed-int32 inputs are proved.
             let left = self.operand_int(state, left, exit)?;
             let right = self.operand_int(state, right, exit)?;
-            let bits = arithmetic.apply(&mut EmitWord32Arithmetic { builder: &mut self.builder }, left, right);
+            let bits = crate::staged::number_machine::wrapping_int32_arithmetic(&mut super::object_slots::emit(&mut self.builder), arithmetic, left, right);
             self.set_int(state, next.result_register(), bits);
             self.consumed.insert(pc + 1);
             return Some(true);
@@ -4214,7 +4215,7 @@ impl Lowering<'_, '_> {
                     self.builder.switch_to_block(float);
                     let left_number = self.operand_number(&mut float_state, left, exit)?;
                     let right_number = self.operand_number(&mut float_state, right, exit)?;
-                    let number = emit_number_arithmetic_operation(&mut self.builder, arithmetic, left_number, right_number);
+                    let number = crate::staged::number_machine::float_arithmetic(&mut super::object_slots::emit(&mut self.builder), arithmetic, left_number, right_number);
                     let truncated = self.number_to_int32(number, exit);
                     self.ins().jump(join, &[ir::BlockArg::Value(truncated)]);
                     self.builder.switch_to_block(join);
@@ -4226,7 +4227,7 @@ impl Lowering<'_, '_> {
                     let mut float_state = state.clone();
                     let left_int = self.operand_int(state, left, float).expect("supported operand");
                     let right_int = self.operand_int(state, right, float).expect("supported operand");
-                    let (result, overflow) = arithmetic.apply(&mut EmitArithmetic::<true> { builder: &mut self.builder }, left_int, right_int);
+                    let (result, overflow) = crate::staged::number_machine::checked_int32_arithmetic(&mut super::object_slots::emit(&mut self.builder), arithmetic, left_int, right_int);
                     let int_done = self.builder.create_block();
                     self.ins().brif(overflow, float, &[], int_done, &[]);
                     self.builder.switch_to_block(int_done);
@@ -4244,7 +4245,7 @@ impl Lowering<'_, '_> {
                     self.builder.switch_to_block(float);
                     let left_number = self.operand_number(&mut float_state, left, exit)?;
                     let right_number = self.operand_number(&mut float_state, right, exit)?;
-                    let result = emit_number_arithmetic_operation(&mut self.builder, arithmetic, left_number, right_number);
+                    let result = crate::staged::number_machine::float_arithmetic(&mut super::object_slots::emit(&mut self.builder), arithmetic, left_number, right_number);
                     self.ins().jump(join, &[ir::BlockArg::Value(result)]);
                     self.builder.switch_to_block(join);
                     self.join_states(state, &float_state, pc);
@@ -4256,10 +4257,10 @@ impl Lowering<'_, '_> {
                 let right_int = self.operand_to_int32(state, right, exit)?;
                 let right_constant = super::facts::constant_number(&self.program.constants, right);
                 if !bitwise.result_is_int32(right_constant) {
-                    let number = emit_number_bitwise_operation(&mut self.builder, bitwise, left_int, right_int);
+                    let number = crate::staged::number_machine::number_bitwise(&mut super::object_slots::emit(&mut self.builder), bitwise, left_int, right_int);
                     self.set_number(state, destination, number);
                 } else {
-                    let result = emit_number_bitwise_bits(&mut self.builder, bitwise, left_int, right_int);
+                    let result = crate::staged::number_machine::int32_bitwise(&mut super::object_slots::emit(&mut self.builder), bitwise, left_int, right_int);
                     self.set_int(state, destination, result);
                 }
             }

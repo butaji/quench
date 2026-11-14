@@ -1,6 +1,9 @@
-//! The opcode catalog's tier facts, each declared once per opcode: its operation family
-//! (`Class`, `class_of!`) and its orthogonal tier traits (`Traits`, `traits_of!`), which the
-//! `opcodes!` table expands into `Op::class` and `Op::traits`.
+//! The opcode catalog's column types. The `opcodes!` table (`bytecode.rs`) is the one row per
+//! opcode, and each fact is a column of it: operand shape, effects, flow, its operation family
+//! (`Class`), its semantic source (`Decoder`: the staged operation every tier steps;
+//! `GenericStep`: the interpreter's step a lane or a body makes in place) and its orthogonal
+//! tier traits (`Traits`). The table expands into `Op::class`, `Op::staged`,
+//! `Op::generic_step` and `Op::traits`.
 use super::Op;
 pub(crate) use super::opcode_table::{OPCODE_COUNT, opcode_name};
 /// A tier's operation family, declared once by the catalog (`Op::class`).
@@ -138,132 +141,45 @@ impl Class {
     pub(crate) const fn eq(self, other: Self) -> bool { self as u8 == other as u8 }
 }
 
-/// The class of each opcode, the catalog's one home for the family.
-macro_rules! class_of {
-    (Move) => { Class::Move };
-    (LoadConst) => { Class::LoadConst };
-    (WasmF32Binary) => { Class::WasmFloatBinary32 };
-    (WasmF64Binary) => { Class::WasmFloatBinary64 };
-    (WasmF32Unary) => { Class::WasmFloatUnary32 };
-    (WasmF64Unary) => { Class::WasmFloatUnary64 };
-    (WasmI32Add) => { Class::WasmI32AddRegister };
-    (WasmI32AddImmediate) => { Class::WasmI32AddImmediate };
-    (WasmI32SubtractImmediate) => { Class::WasmI32SubtractImmediate };
-    (WasmI32AddImmediateJumpNonZero) => { Class::WasmI32AddJump };
-    (WasmI32ShiftRightUnsignedAndImmediate) => { Class::WasmI32ShiftRightUnsignedAnd };
-    (WasmI32Unary) => { Class::WasmI32Unary };
-    (WasmI64Binary) => { Class::WasmI64Binary };
-    (WasmI64Unary) => { Class::WasmI64Unary };
-    (WasmScalarConvert) => { Class::WasmScalarConvert };
-    (WasmSelect) => { Class::WasmSelect };
-    (WasmI32Load) => { Class::WasmI32Load };
-    (WasmI32Load8U) => { Class::WasmI32Load8U };
-    (WasmI32Load16U) => { Class::WasmI32Load16U };
-    (WasmI32Load16S) => { Class::WasmI32Load16S };
-    (WasmI32Load8S) => { Class::WasmI32Load8S };
-    (WasmJumpI32EqualImmediate) => { Class::WasmJumpI32EqualImmediate };
-    (WasmJumpI32NotEqualImmediate) => { Class::WasmJumpI32NotEqualImmediate };
-    (GetField) => { Class::GetField };
-    (LoadCapture) => { Class::LoadCapture };
-    (SetIndex) => { Class::SetIndex };
-    (GetIndex) => { Class::GetIndex };
-    (JumpBinaryFalse) => { Class::JumpBinaryFalse };
-    (LoadThis) => { Class::LoadThis };
-    (Nop) => { Class::Nop };
-    (Jump) => { Class::Jump };
-    (JumpTrue) => { Class::JumpTrue };
-    (Unary) => { Class::Unary };
-    (Return) => { Class::Return };
-    (IncDec) => { Class::IncDec };
-    (Binary) => { Class::Binary };
-    (Call) => { Class::Call };
-    (Construct) => { Class::Construct };
-    (RequireObjectCoercible) => { Class::RequireObjectCoercible };
-    (ToNumeric) => { Class::ToNumeric };
-    (CallKnown) => { Class::CallKnown };
-    (CallMethod) => { Class::CallMethod };
-    (ArgumentsLength) => { Class::ArgumentsLength };
-    (ArgumentGet) => { Class::ArgumentGet };
-    (Throw) => { Class::Throw };
-    (Await) => { Class::Await };
-    (Yield) => { Class::Yield };
-    (YieldStar) => { Class::YieldStar };
-    (DefineArrayElement) => { Class::DefineArrayElement };
-    (StoreLocalPlain) => { Class::StoreLocalPlain };
-    (LoadLocalPlain) => { Class::LoadLocalPlain };
-    (NumericAdd) => { Class::NumericAdd };
-    (NumericMultiply) => { Class::NumericMultiply };
-    (JumpFalse) => { Class::JumpFalse };
-    (CloneEnv) => { Class::CloneEnv };
-    (LoadName) => { Class::LoadName };
-    (WasmFillRegisters) => { Class::WasmFillRegisters };
-    (WasmMemoryAddress) => { Class::WasmMemoryAddress };
-    (WasmMemorySize) => { Class::WasmMemorySize };
-    (WasmMemoryGrow) => { Class::WasmMemoryGrow };
-    (WasmMemoryFill) => { Class::WasmMemoryFill };
-    (WasmMemoryCopy) => { Class::WasmMemoryCopy };
-    (WasmIndirectTarget) => { Class::WasmIndirectTarget };
-    (WasmRefFunc) => { Class::WasmRefFunc };
-    (WasmUnreachable) => { Class::WasmUnreachable };
-    (WasmRefGetDesc) => { Class::WasmRefGetDesc };
-    (WasmArrayNewData) => { Class::WasmArrayNewData };
-    (WasmArrayNewElem) => { Class::WasmArrayNewElem };
-    (WasmArrayNew) => { Class::WasmArrayNew };
-    (WasmArrayNewDefault) => { Class::WasmArrayNewDefault };
-    (WasmArrayNewFixed) => { Class::WasmArrayNewFixed };
-    (WasmDescriptorTest) => { Class::WasmDescriptorTest };
-    (WasmDescriptorCast) => { Class::WasmDescriptorCast };
-    (WasmRefTest) => { Class::WasmRefTest };
-    (WasmRefCast) => { Class::WasmRefCast };
+/// The decoder of an opcode's staged operation (`Operation::decode`): the one column that
+/// says which opcodes have a staged operation and which family builds it. An opcode with no
+/// decoder is the interpreter's hand path alone (a tier leaves at its exact PC).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Decoder {
+    /// A register move, a constant, a jump or a return.
+    Flow,
+    /// A frame local's load or store.
+    Local,
+    /// A value step the words decide (`Binary`, `ToPropertyKey`, `JumpBinaryFalse`).
+    Generic,
+    /// A value, `this` or capture operation.
+    Value,
+    /// A named field read, a named field store or `delete`.
+    Property,
+    /// An indexed element read or write.
+    Element,
+    /// A call or a construction through its forms.
+    Call,
+    /// An environment, global, iteration or spread operation.
+    Names,
+    /// A by-name read decoded under a tier's proof of the global it names
+    /// (`Operation::decode_load_name`), so `Operation::decode` has none.
+    Proved,
+}
 
-    (WasmMemoryLoad) => { Class::WasmMemoryLoad };
-    (WasmMemoryStore) => { Class::WasmMemoryStore };
-    (CallArray) => { Class::CallArray };
-    (CallForwardingArguments) => { Class::CallForwardingArguments };
-    (CallSpread) => { Class::CallSpread };
-    (CheckPrivate) => { Class::CheckPrivate };
-    (CopyDataProperties) => { Class::CopyDataProperties };
-    (CreateRegExpLiteral) => { Class::CreateRegExpLiteral };
-    (DefineField) => { Class::DefineField };
-    (ForInNext) => { Class::ForInNext };
-    (DefinePrivateField) => { Class::DefinePrivateField };
-    (MarkPrivateName) => { Class::MarkPrivateName };
-    (DefinePropertyRecord) => { Class::DefinePropertyRecord };
-    (Delete) => { Class::Delete };
-    (InitializeTdz) => { Class::InitializeTdz };
-    (IteratorCleanupPop) => { Class::IteratorCleanupPop };
-    (IteratorCleanupPush) => { Class::IteratorCleanupPush };
-    (LoadCallee) => { Class::LoadCallee };
-    (LoadEnvLocal) => { Class::LoadEnvLocal };
-    (LoadLocal) => { Class::LoadLocal };
-    (LoadNameCall) => { Class::LoadNameCall };
-    (LoadNameTypeof) => { Class::LoadNameTypeof };
-    (MakeArray) => { Class::MakeArray };
-    (MakeClosure) => { Class::MakeClosure };
-    (MakeConstArray) => { Class::MakeConstArray };
-    (MakeObject) => { Class::MakeObject };
-    (MakeObject2) => { Class::MakeObject2 };
-    (MakeObjectLiteral) => { Class::MakeObjectLiteral };
-    (PrivateIn) => { Class::PrivateIn };
-    (SetFunctionName) => { Class::SetFunctionName };
-    (AppendArray) => { Class::AppendArray };
-    (RequireIteratorResult) => { Class::RequireIteratorResult };
-    (StoreCapture) => { Class::StoreCapture };
-    (StoreEnvLocal) => { Class::StoreEnvLocal };
-    (StoreLocal) => { Class::StoreLocal };
-    (StoreName) => { Class::StoreName };
-    (StringCaseIndex) => { Class::StringCaseIndex };
-    (SuperConstArrayObject2) => { Class::SuperConstArrayObject2 };
-    (ToPropertyKey) => { Class::ToPropertyKey };
-    (WasmBranchTable) => { Class::WasmBranchTable };
-    (WasmGlobalGet) => { Class::WasmGlobalGet };
-    (WasmGlobalSet) => { Class::WasmGlobalSet };
-    (WasmInstanceBinding) => { Class::WasmInstanceBinding };
-    (WasmJumpI32NonZero) => { Class::WasmJumpI32NonZero };
-    (WasmJumpI32Zero) => { Class::WasmJumpI32Zero };
-    (WasmSimd) => { Class::WasmSimd };
-    (WasmSimdShuffle) => { Class::WasmSimdShuffle };
-    ($other:ident) => { Class::Other };
+/// An opcode's general step a lane or a body makes in place, by one helper of the
+/// interpreter's own definition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GenericStep {
+    /// A body's helper only: it may replace the frame's environment, which the lane's own
+    /// dispatch caches (the scope, operator, constant, name, literal, element, field and class steps).
+    Body,
+    /// The lane makes it in place: it reads and writes only the frame, its registers and heap
+    /// values, and continues or throws.
+    Lane,
+    /// `Lane`, and a call-out row (`Operation::call_out`) whose result the lane writes back
+    /// to its frame (`Vm::call_out`).
+    LaneResult,
 }
 
 /// Orthogonal tier traits of an opcode, each declared once by the catalog.
@@ -298,122 +214,23 @@ impl Traits {
     pub(crate) const SCALAR_REGION: Self = Self(1 << 18);
     /// An indexed element read or write, which a loop region views its arrays for.
     pub(crate) const ELEMENT_ACCESS: Self = Self(1 << 19);
-    /// A general step that reads and writes only the frame, its registers and heap values.
-    pub(crate) const LANE_IN_PLACE: Self = Self(1 << 20);
-    /// A frame-local step that runs beside frameless activations.
-    pub(crate) const LANE_RESULT_STEP: Self = Self(1 << 21);
     /// An op whose result may return from the frame instead of the register file.
-    pub(crate) const FRAME_RETURNABLE: Self = Self(1 << 22);
+    pub(crate) const FRAME_RETURNABLE: Self = Self(1 << 20);
     /// An op that reads and writes only registers and control, no heap value.
-    pub(crate) const FRAME_ONLY: Self = Self(1 << 23);
+    pub(crate) const FRAME_ONLY: Self = Self(1 << 21);
     /// An op the lifetime-role loop admission can rename a register through.
-    pub(crate) const LIFETIME_SAFE: Self = Self(1 << 24);
-    /// A call form a read memo's call site may answer.
-    pub(crate) const SCRIPT_CALL: Self = Self(1 << 25);
+    pub(crate) const LIFETIME_SAFE: Self = Self(1 << 22);
     /// An op whose handler keeps its call target hint in the record's `call_link`.
-    pub(crate) const CALL_LINK: Self = Self(1 << 26);
+    pub(crate) const CALL_LINK: Self = Self(1 << 23);
     /// A by-name load or store access.
-    pub(crate) const GLOBAL_NAME_ACCESS: Self = Self(1 << 27);
+    pub(crate) const GLOBAL_NAME_ACCESS: Self = Self(1 << 24);
     /// A Wasm op that calls out to the VM or ends the body, which no unrolled loop admits.
-    pub(crate) const UNROLL_EXCLUDED: Self = Self(1 << 28);
+    pub(crate) const UNROLL_EXCLUDED: Self = Self(1 << 25);
     /// An op that always completes abruptly: it raises the value of its operand as an exception.
-    pub(crate) const RAISES: Self = Self(1 << 29);
+    pub(crate) const RAISES: Self = Self(1 << 26);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
-}
-
-/// The traits of each opcode, the catalog's one home for them.
-macro_rules! traits_of {
-    (Nop) => { Traits::LEAF_VALUE.union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY) };
-    (LoadConst) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::LIFETIME_SAFE) };
-    (Move) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
-    (Unary) => { Traits::LEAF_VALUE.union(Traits::RETURNING_UNARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::FRAME_RETURNABLE).union(Traits::LIFETIME_SAFE) };
-    (IncDec) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::SCALAR_REGION).union(Traits::LIFETIME_SAFE) };
-    (Return) => { Traits::LEAF_VALUE.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION) };
-    (Jump) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
-    (JumpFalse) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
-    (JumpTrue) => { Traits::LEAF_JUMP.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
-    (Binary) => { Traits::LEAF_BINARY.union(Traits::RETURNING_BINARY).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::LIFETIME_SAFE) };
-    (NumericAdd) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::LIFETIME_SAFE) };
-    (NumericMultiply) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::ACTIVATION_FREE).union(Traits::LIFETIME_SAFE) };
-    (JumpBinaryFalse) => { Traits::LEAF_BINARY.union(Traits::INLINABLE).union(Traits::ACTIVATION_FREE).union(Traits::SCALAR_REGION).union(Traits::FRAME_ONLY).union(Traits::LIFETIME_SAFE) };
-    (LoadThis) => { Traits::THIS_LEAF };
-    (LoadName) => { Traits::NAME_LEAF.union(Traits::NAME_OPERATION).union(Traits::GLOBAL_NAME_ACCESS) };
-    (LoadNameCall) => { Traits::NAME_OPERATION.union(Traits::CALL_LINK).union(Traits::GLOBAL_NAME_ACCESS) };
-    (LoadNameTypeof) => { Traits::NAME_OPERATION.union(Traits::GLOBAL_NAME_ACCESS) };
-    (ResolveName) => { Traits::NAME_OPERATION };
-    (LoadResolvedName) => { Traits::NAME_OPERATION };
-    (DeleteName) => { Traits::NAME_OPERATION };
-    (StoreName) => { Traits::NAME_OPERATION.union(Traits::GLOBAL_NAME_ACCESS) };
-    (StoreResolvedName) => { Traits::NAME_OPERATION };
-    (StoreVarBinding) => { Traits::NAME_OPERATION };
-    (CloneEnv) => { Traits::NAME_OPERATION };
-    (InitializeThis) => { Traits::NAME_OPERATION };
-    (SuperCallCheck) => { Traits::NAME_OPERATION.union(Traits::CALL_LINK) };
-    (MakeClosure) => { Traits::MAKES_CLOSURE };
-    (GetField) => { Traits::FIELD_LEAF.union(Traits::RETURNING_FIELD).union(Traits::INLINABLE).union(Traits::PURE_SETUP).union(Traits::FRAME_RETURNABLE) };
-    (MakeObject2) => { Traits::RETURNING_OBJECT.union(Traits::FRAME_RETURNABLE) };
-    (MakeObjectLiteral) => { Traits::RETURNING_OBJECT_LITERAL.union(Traits::FRAME_RETURNABLE) };
-    (SuperConstArrayObject2) => { Traits::RETURNING_LITERAL.union(Traits::FRAME_RETURNABLE) };
-    (Call) => { Traits::INLINABLE.union(Traits::FRAME_RETURNABLE).union(Traits::SCRIPT_CALL).union(Traits::CALL_LINK) };
-    (SetField) => { Traits::INLINABLE };
-    (SetThisField) => { Traits::INLINABLE };
-    (LoadCapture) => { Traits::INLINABLE };
-    (ToNumeric) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
-    (GetIndex) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::ELEMENT_ACCESS).union(Traits::LIFETIME_SAFE) };
-    (SetIndex) => { Traits::INLINABLE.union(Traits::ELEMENT_ACCESS).union(Traits::LIFETIME_SAFE) };
-    (RequireObjectCoercible) => { Traits::INLINABLE.union(Traits::PURE_SETUP).union(Traits::LIFETIME_SAFE) };
-    (WasmMemorySize) => { Traits::WASM_MEMORY };
-    (WasmMemoryFill) => { Traits::WASM_MEMORY.union(Traits::UNROLL_EXCLUDED) };
-    (WasmMemoryCopy) => { Traits::WASM_MEMORY.union(Traits::UNROLL_EXCLUDED) };
-    (WasmMemoryAddress) => { Traits::WASM_MEMORY };
-    (WasmMemoryLoad) => { Traits::WASM_MEMORY };
-    (WasmMemoryStore) => { Traits::WASM_MEMORY };
-    (DefineField) => { Traits::LANE_IN_PLACE };
-    (DefineComputedField) => { Traits::LANE_IN_PLACE };
-    (DefinePrivateField) => { Traits::LANE_IN_PLACE };
-    (CheckPrivate) => { Traits::LANE_IN_PLACE };
-    (PrivateIn) => { Traits::LANE_IN_PLACE };
-    (MarkPrivateName) => { Traits::LANE_IN_PLACE };
-    (DeclarePrivateName) => { Traits::LANE_IN_PLACE };
-    (SetFunctionName) => { Traits::LANE_IN_PLACE };
-    (SetFunctionNameKey) => { Traits::LANE_IN_PLACE };
-    (SetFunctionDebugName) => { Traits::LANE_IN_PLACE };
-    (DefineArrayElement) => { Traits::LANE_IN_PLACE };
-    (AppendArray) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
-    (ToPropertyKey) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
-    (CopyDataProperties) => { Traits::LANE_IN_PLACE };
-    (GetIterator) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
-    (ForInStart) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
-    (ForInNext) => { Traits::LANE_IN_PLACE };
-    (RequireIteratorResult) => { Traits::LANE_IN_PLACE };
-    (IteratorClose) => { Traits::LANE_IN_PLACE.union(Traits::LANE_RESULT_STEP) };
-    (IteratorCleanupPush) => { Traits::LANE_IN_PLACE };
-    (IteratorCleanupPop) => { Traits::LANE_IN_PLACE };
-    (CallForwardingArguments) => { Traits::FRAME_RETURNABLE.union(Traits::SCRIPT_CALL).union(Traits::CALL_LINK) };
-    (Construct) => { Traits::FRAME_RETURNABLE.union(Traits::SCRIPT_CALL).union(Traits::CALL_LINK) };
-    (LoadLocal) => { Traits::ACTIVATION_FREE };
-    (LoadLocalPlain) => { Traits::ACTIVATION_FREE };
-    (StoreLocal) => { Traits::ACTIVATION_FREE };
-    (StoreLocalPlain) => { Traits::ACTIVATION_FREE };
-    (CallArray) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
-    (CallKnown) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
-    (CallMethod) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
-    (CallSpread) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
-    (CallThisMethod) => { Traits::SCRIPT_CALL.union(Traits::CALL_LINK) };
-    (Throw) => { Traits::RAISES };
-    (WasmMemoryGrow) => { Traits::UNROLL_EXCLUDED };
-    (WasmMemoryInit) => { Traits::UNROLL_EXCLUDED };
-    (WasmTableGet) => { Traits::UNROLL_EXCLUDED };
-    (WasmTableSet) => { Traits::UNROLL_EXCLUDED };
-    (WasmTableGrow) => { Traits::UNROLL_EXCLUDED };
-    (WasmTableFill) => { Traits::UNROLL_EXCLUDED };
-    (WasmTableCopy) => { Traits::UNROLL_EXCLUDED };
-    (WasmTableInit) => { Traits::UNROLL_EXCLUDED };
-    (WasmTableSize) => { Traits::UNROLL_EXCLUDED };
-    (WasmIndirectTarget) => { Traits::UNROLL_EXCLUDED };
-    ($other:ident) => { Traits::NONE };
 }
 
 pub(crate) use super::denotation::JsDenotation;

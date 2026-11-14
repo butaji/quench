@@ -37,21 +37,30 @@ fn staged_coverage_layout_decodes_outside_staged_only_shrink() {
 /// The interpreters: the one place an opcode's meaning is written by hand.
 const INTERPRETERS: &[&str] = &["vm/dispatch.rs", "vm/dispatch_wasm.rs", "vm/dispatch_wasm/gc.rs"];
 
+/// The directories of the tiers that execute, lower, profile or link opcodes: the interpreter,
+/// its fast paths and the JIT (`vm`), the per-opcode profile (`profile`), the typed analyses
+/// (`typed_ir`), the native link (`native_link`) and the memory edge (`memory_edge`).
+const TIER_DIRECTORIES: &[&str] = &["vm", "profile", "typed_ir", "native_link", "memory_edge"];
+
+/// Whether `file` (relative to `src`) holds only tests: a `tests` or `*_tests` module file or directory.
+fn is_test_file(file: &str) -> bool {
+    file.split('/').map(|part| part.strip_suffix(".rs").unwrap_or(part)).any(|part| part == "tests" || part.ends_with("_tests"))
+}
+
 /// Opcode names per file and opcode (`Op::X` anywhere: a match arm, a comparison, a shape
-/// table) in `vm/`, outside the interpreters and tests. A tier that names an opcode decides
-/// something about its meaning by hand; one that reads the opcode table's facts
-/// (`control_flow_layout`, `input_binding_times`, `field_store`) derives it.
+/// table) in the tier directories, outside the interpreters and tests. A tier that names an
+/// opcode decides something about its meaning by hand; one that reads the opcode table's
+/// facts (`control_flow_layout`, `input_binding_times`, `field_store`) derives it.
 fn opcode_arms() -> std::collections::BTreeMap<(String, String), usize> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut pending = vec![root.join("vm")];
+    let mut pending: Vec<std::path::PathBuf> = TIER_DIRECTORIES.iter().map(|directory| root.join(directory)).collect();
     let mut arms = std::collections::BTreeMap::new();
     while let Some(directory) = pending.pop() {
         for entry in std::fs::read_dir(&directory).unwrap().map(Result::unwrap) {
             let path = entry.path();
             if path.is_dir() { pending.push(path); continue; }
             let file = path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
-            let name = path.file_name().unwrap().to_string_lossy();
-            if !name.ends_with(".rs") || name.ends_with("tests.rs") || INTERPRETERS.contains(&file.as_str()) { continue; }
+            if !file.ends_with(".rs") || is_test_file(&file) || INTERPRETERS.contains(&file.as_str()) { continue; }
             count_opcode_names(&std::fs::read_to_string(&path).unwrap(), &file, &mut arms);
         }
     }
@@ -70,7 +79,8 @@ fn count_opcode_names(source: &str, file: &str, arms: &mut std::collections::BTr
         // `WideInstruction::new(Op::X, ...)` supplies an opcode value to the builder; it is
         // not a second definition of the opcode's meaning.
         if code[..at].trim_end().ends_with("WideInstruction::new(") { continue; }
-        if !qualified && op.starts_with(|c: char| c.is_ascii_uppercase()) {
+        // An opcode is a CamelCase variant, not an associated constant (`Op::COUNT`, `Op::NAMES`).
+        if !qualified && op.starts_with(|c: char| c.is_ascii_uppercase()) && op.contains(|c: char| c.is_ascii_lowercase()) {
             *arms.entry((file.to_owned(), op)).or_insert(0) += 1;
         }
     }
