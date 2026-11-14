@@ -15948,7 +15948,7 @@ fn lane_push_callback<H: Host>(
 /// by the environment, every other local `undefined`), then the values passed. The
 /// environment is reachable only from the window until the lane leaves, which makes the
 /// activation a frame holding it.
-#[inline(never)]
+#[inline(always)]
 fn lane_activate_environment<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
