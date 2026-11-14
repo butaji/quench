@@ -2204,6 +2204,12 @@ impl<H: Host> Vm<H> {
         })?
     }
 
+    /// Whether the holder hint `index` is held and its watch still published.
+    #[inline(always)]
+    pub(super) fn holder_hint_live(&self, index: u16) -> bool {
+        self.holder_hints.get(usize::from(index)).is_some_and(|hint| hint.watch.is_published())
+    }
+
     /// `holder_hint_hit` for a string primitive, whose read `String.prototype` answers
     /// (`hold_string_hint`): the realm's `String.prototype` still, under the hint's watch
     /// was read in.

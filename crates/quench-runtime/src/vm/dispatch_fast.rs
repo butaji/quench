@@ -5828,8 +5828,16 @@ script_handler! {
                     return Some(value);
                 }
                 let (value, hit) = vm.hinted_polymorphic_field_hit(code, object, i.c, super::EMPTY_CACHE)?;
+                // A live hint another receiver of this site answers stays: rewriting it at
+                // every receiver switch re-marked and re-watched the prototype each time
+                // (V8-v7 Richards: 0.71M rewrites, 5% of its run).
                 if matches!(hit, super::object::PolymorphicHit::Holder) {
-                    set_prototype_hint(ip, |owned| vm.hold_holder_hint(owned, i.imm(), object, value, NO_CALL_LINK));
+                    set_prototype_hint(ip, |owned| {
+                        if owned.is_some_and(|index| vm.holder_hint_live(index)) {
+                            return None;
+                        }
+                        vm.hold_holder_hint(owned, i.imm(), object, value, NO_CALL_LINK)
+                    });
                 }
                 return Some(value);
             }
