@@ -22,7 +22,22 @@ fn array_length_uint32(number: f64) -> u32 {
 }
 
 impl<H: Host> Vm<H> {
+    /// An own array's `length`: inline for a direct array without extras, whose dense
+    /// elements' count is its length (no arguments object, no sparse elements:
+    /// `Object::mark_sparse_elements`), as `emit_array_length_read` reads it; any other
+    /// target out of line.
+    #[inline(always)]
     pub(super) fn own_array_length(&self, target: Value) -> Option<usize> {
+        if let Some(object) = self.heap.record_array(target)
+            && !object.has_extras()
+        {
+            return Some(object.elements().len());
+        }
+        self.own_array_length_general(target)
+    }
+
+    #[inline(never)]
+    fn own_array_length_general(&self, target: Value) -> Option<usize> {
         // A direct array's record is found inline, as nearly every `length` read finds it.
         let object = match self.heap.record_array(target) {
             Some(object) => object,
