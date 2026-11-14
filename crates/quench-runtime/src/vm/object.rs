@@ -118,7 +118,7 @@ const SHAPE_INDEX_WALK_DISTANCE: usize = 32;
 const SHAPE_INDEX_LONG_WALKS: u8 = 8;
 pub(super) const FIELD_CACHE_SLOT_CAPACITY: usize = u16::MAX as usize + 1;
 /// `AccessorFieldCache::holder` of an accessor the receiver holds itself.
-const OWN_ACCESSOR: Value = Value::UNDEFINED;
+pub(super) const OWN_ACCESSOR: Value = Value::UNDEFINED;
 
 struct FieldCacheHit {
     value: Value,
@@ -2979,47 +2979,6 @@ impl<H: Host> Vm<H> {
         if let Some(slot) = record_mru_entry(&mut self.accessor_fields, head, ACCESSOR_FIELD_CACHE_WAYS, entry) {
             self.accessor_field_indices.set(site, slot);
             self.note_field_cache_write(site);
-        }
-    }
-
-    /// The getter a field read of `atom` at cache index `site` calls on `object`, when the
-    /// site's recorded accessor still answers it (`record_accessor_field_cache`).
-    pub(super) fn cached_field_getter(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
-        self.cached_field_accessor(object, atom, site)?.0
-    }
-
-    /// The accessor functions the site's recorded entry answers for `object`: its getter, and
-    /// its setter where it has one.
-    pub(super) fn cached_field_accessor(&self, object: Value, atom: Atom, site: usize) -> Option<super::ShapeAccessors> {
-        let mut index = self.accessor_field_indices.get(site);
-        if index == NO_ACCESSOR_FIELD {
-            return None;
-        }
-        let receiver = self.shape_property_lookup(object, atom)?;
-        let (shape, proto, epoch) = (receiver.shape(), receiver.proto(), crate::heap::prototype_layout_epoch());
-        let cache = loop {
-            let cache = self.accessor_fields.get(index as usize)?;
-            if shape == cache.receiver && proto == cache.prototype && epoch == cache.epoch {
-                break cache;
-            }
-            index = cache.next;
-        };
-        let holder = if cache.holder == OWN_ACCESSOR {
-            if receiver.has_side_descriptors() {
-                return None;
-            }
-            receiver
-        } else {
-            self.heap.ordinary_object(cache.holder)?
-        };
-        let held = self.heap.property_get(holder, usize::from(cache.slot));
-        match cache.slot_accessor {
-            super::SlotAccessor::Getter => held.map(|getter| (Some(getter), None)),
-            super::SlotAccessor::Pair => match self.heap.get(held?) {
-                Some(Cell::AccessorPair { getter, setter }) => Some((Some(*getter), Some(*setter))),
-                _ => None,
-            },
-            super::SlotAccessor::Attributes => self.slot_attributes(holder, usize::from(cache.slot)).map(|attributes| (attributes.getter, attributes.setter)),
         }
     }
 

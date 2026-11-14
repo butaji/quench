@@ -78,10 +78,8 @@ print(run(8) + ":" + cnt);
 /// gains a getter-only form, an accessor defined after data stores, `Object.setPrototypeOf`
 /// moving the receiver or its prototype, a pair redefined in its slot, a proxy inserted up the
 /// chain and a frozen receiver each leave the store Node's (the same program prints the same
-/// line under Node 24).
-#[test]
-fn cached_setter_stores_follow_invalidation_like_node() {
-    const CACHED: &str = r#"const out = [];
+/// The program of `cached_setter_stores_follow_invalidation_like_node`.
+const CACHED_SETTERS: &str = r#"const out = [];
 const log = (...a) => out.push(a.join(","));
 class A { constructor(){ this.f = 0; } get v(){ return this.f; } set v(x){ this.f = x + 1; } }
 function store(o, n) { for (let i = 0; i < n; i++) o.v = i; return o.f; }
@@ -131,7 +129,11 @@ log(setK(fz, 3000)); Object.freeze(fz); log(setK(fz, 3));
 const sym = Symbol("s"); const so = { set [sym](v){ this.t = v; } }; function setSym(o, n){ for (let i = 0; i < n; i++) o[sym] = i; return o.t; } log(setSym(so, 3000));
 print(out.join("|"));
 "#;
-    assert_eq!(printed(CACHED, "setter_cache.js"), ["3000|300|3000,9|-4|-2999,3,f,v|-2999:3|TypeError|2999|8,_x|p12999|p24|p24,a,s|p24|1|2|2999|2999,y|2999|2999|2999"]);
+
+/// line under Node 24).
+#[test]
+fn cached_setter_stores_follow_invalidation_like_node() {
+    assert_eq!(printed(CACHED_SETTERS, "setter_cache.js"), ["3000|300|3000,9|-4|-2999,3,f,v|-2999:3|TypeError|2999|8,_x|p12999|p24|p24,a,s|p24|1|2|2999|2999,y|2999|2999|2999"]);
 }
 
 /// A prototype holder's accessor read from a cached entry (`Vm::cached_field_accessor`)
@@ -139,10 +141,8 @@ print(out.join("|"));
 /// back, deleted, shadowed by a nearer accessor, an intermediate prototype gaining one,
 /// `Object.setPrototypeOf` on the receiver, a subclass override defined later, a receiver
 /// that gains or loses fields, a proxy inserted up the chain and a function receiver each
-/// read what Node 24 prints for the same program.
-#[test]
-fn cached_getter_reads_follow_invalidation_like_node() {
-    const CACHED: &str = r#"const out = [];
+/// The program of `cached_getter_reads_follow_invalidation_like_node`.
+const CACHED_GETTERS: &str = r#"const out = [];
 const log = (...a) => out.push(a.join(","));
 function read(o, n) { let s = 0; for (let i = 0; i < n; i++) s += o.v; return s; }
 // accessors with non-default attributes on a prototype (shape-held attributes)
@@ -183,5 +183,9 @@ const seen = []; Object.setPrototypeOf(U, new Proxy({}, { get(t, k, r) { seen.pu
 function F() {} Object.defineProperty(F, "v", { get() { return 14; }, configurable: true }); log(read(F, 3000));
 print(out.join("|"));
 "#;
-    assert_eq!(printed(CACHED, "getter_cache.js"), ["3000|10|15|20|25|NaN|18000|35|24000|45|30000|55|NaN|6000|100|100|NaN|36000|39,v,v,v|42000"]);
+
+/// read what Node 24 prints for the same program.
+#[test]
+fn cached_getter_reads_follow_invalidation_like_node() {
+    assert_eq!(printed(CACHED_GETTERS, "getter_cache.js"), ["3000|10|15|20|25|NaN|18000|35|24000|45|30000|55|NaN|6000|100|100|NaN|36000|39,v,v,v|42000"]);
 }

@@ -1,6 +1,6 @@
 #[cfg(feature = "native-execution")]
 mod native_operands;
-mod shape_lookup; mod string_wrapper;
+mod shape_lookup; mod string_wrapper; mod accessor_cache;
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
 #[cfg(feature = "aot")]
