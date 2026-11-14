@@ -4132,10 +4132,8 @@ impl Lowering<'_, '_> {
             self.consumed.insert(pc + 1);
             return Some(true);
         }
-        if remainder {
-            return Some(self.remainder(state, destination, [left, right], exit));
-        }
         match (arithmetic, bitwise) {
+            _ if remainder => { self.remainder(state, destination, [left, right], exit); }
             (Some(arithmetic), _) => {
                 let float_operand = [left, right].iter().any(|operand| match operand.kind() {
                     Some(OperandKind::Register) => state.values[usize::from(operand.payload())].value.representation == Representation::Float64,
