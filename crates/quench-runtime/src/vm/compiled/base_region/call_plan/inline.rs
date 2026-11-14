@@ -428,7 +428,7 @@ mod tests {
         assert_eq!(plan(&throws, &mut Context::root(CALLER, BASE)), Some(Refused::Opcode(Class::Throw)));
         assert_eq!(plan(&sum(), &mut Context::root(CALLEE, BASE)), Some(Refused::Recursion));
         let mut deep = Context::root(CALLER, BASE);
-        deep.chain.extend((0..policy.max_depth as u32).map(|function| function + CALLER + 1));
+        deep.chain.extend((0..policy.max_depth as u32).map(|function| function + CALLEE + 1));
         assert_eq!(plan(&sum(), &mut deep), Some(Refused::Depth));
         let mut high = Context::root(CALLER, BASE);
         high.top = high.limit;

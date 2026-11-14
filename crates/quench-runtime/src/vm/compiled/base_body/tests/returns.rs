@@ -98,8 +98,8 @@ fn returning_call_forms_complete_the_activation() {
 /// the bodies compiled, and a read of a binding in its temporal dead zone still raises.
 #[test]
 fn non_number_constants_and_local_initializations_are_fast_rows() {
-    use crate::bytecode::Op;
-    let ops = [Op::LoadConst, Op::InitializeTdz, Op::StoreLocal];
+    use crate::bytecode::Op as Opcode;
+    let ops = [Opcode::LoadConst, Opcode::InitializeTdz, Opcode::StoreLocal];
     let before = ops.map(crate::vm::compiled::base_region::fast_rows);
     let (interpreted, compiled, [runs, _]) = run_both(
         "function tdz(n) { let s = 0; for (let i = 0; i < n; i++) { try { s = s + z; let z = 1; } catch (e) { s = s + 1; } } return s; }

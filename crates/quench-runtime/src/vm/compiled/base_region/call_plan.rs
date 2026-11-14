@@ -76,8 +76,8 @@ impl CallForm {
     /// caller's scope) is the step helper's own step made in place, a helper call row whatever its form: the
     /// helper binds the frame's `this` and publishes the receiver, or runs the eval in the frame.
     pub(super) fn of(instruction: WideInstruction) -> Option<Self> {
-        if !instruction.op().makes_script_call() || instruction.op().class() == Class::CallKnown
-            || instruction.result_flags() & !crate::bytecode::SET_THIS_REGISTER != 0 {
+        let bound_this = if instruction.writes_current_this() { crate::bytecode::SET_THIS_REGISTER } else { 0 };
+        if !instruction.op().makes_script_call() || instruction.op().class() == Class::CallKnown || instruction.result_flags() & !bound_this != 0 {
             return None;
         }
         let in_place = instruction.writes_current_this() || instruction.resolves_dynamic_scope();
