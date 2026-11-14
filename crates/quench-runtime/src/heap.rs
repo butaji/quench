@@ -4632,6 +4632,14 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
     // SAFETY: the caller matched the exact shape, which holds the slot.
     let widened = unsafe { properties.note_exact_slot_value(data.shape(), slot, value) };
     if widened && layout == PropertyStoreLayout::PreserveNative { return false; }
+    // A plain arena run first, by one payload compare (`Object::plain_arena_start`): the
+    // extras-tag and flag tests of `exact_storage` were six instructions per store.
+    if let Some(start) = data.plain_arena_start() {
+        debug_assert!(matches!(data.exact_storage(), ExactStorage::Plain(plain) if plain == start));
+        // SAFETY: as below.
+        unsafe { properties.set_flat_at(start, slot, value) };
+        return true;
+    }
     match data.exact_storage() {
         // SAFETY: as above.
         ExactStorage::Plain(start) => unsafe { properties.set_flat_at(start, slot, value) },
