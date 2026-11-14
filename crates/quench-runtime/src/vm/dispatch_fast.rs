@@ -556,6 +556,8 @@ impl LaneView {
 struct EnvironmentWindow {
     locals: u16,
     captured: u64,
+    /// Whether the function has a rest parameter (`Function::rest`).
+    rest: bool,
 }
 
 /// An environment window's entries after its registers: its environment, `DELETED` until
@@ -15967,17 +15969,25 @@ fn lane_activate_environment<H: Host>(
     if returns && !lane_returning_call_admitted(cx) {
         return Err(exit(ip));
     }
-    let Some(code) = vm.programs.residual(target.program) else {
-        return Err(exit(ip));
-    };
-    let body = code.function(target.function as usize);
-    let rest = body.rest;
-    let plan = body.call_plan(code);
+    // SAFETY: the program store keeps a derived view alive with its program, and an
+    // environment target's view has a window (`ScriptCallTarget::entry`).
+    let layout = unsafe { (*target.view).environment_window.unwrap_unchecked() };
+    let rest = layout.rest;
     // A body reading its `arguments` keeps every value passed past its parameters too, as
     // a frame does where legacy reflection (`f.arguments`) can read them; elsewhere nothing
-    // observes them, and the window keeps only those its parameters bind.
-    let extra = argc > target.params && !(rest || plan.reads_passed_arguments);
-    if extra && plan.legacy_reflection || vm.with_scope_entered {
+    // observes them, and the window keeps only those its parameters bind. Only a call
+    // passing more values than the parameters reads the body's plan.
+    let extra = argc > target.params && !rest && {
+        let Some(code) = vm.programs.residual(target.program) else {
+            return Err(exit(ip));
+        };
+        let plan = code.function(target.function as usize).call_plan(code);
+        if !plan.reads_passed_arguments && plan.legacy_reflection {
+            return Err(exit(ip));
+        }
+        !plan.reads_passed_arguments
+    };
+    if vm.with_scope_entered {
         return Err(exit(ip));
     }
     let (passed, argc) = if extra { (&passed[..usize::from(target.params)], target.params) } else { (passed, argc) };
@@ -15995,9 +16005,6 @@ fn lane_activate_environment<H: Host>(
         let fixed = usize::from(target.params) - 1;
         vm.rest_parameter_array(passed.get(fixed..).unwrap_or_default())
     });
-    // SAFETY: the program store keeps a derived view alive with its program, and an
-    // environment target's view has a window (`ScriptCallTarget::entry`).
-    let layout = unsafe { (*target.view).environment_window.unwrap_unchecked() };
     let count = usize::from(target.registers);
     let locals = usize::from(layout.locals);
     let stack = &mut vm.lane_stack;
@@ -16102,7 +16109,7 @@ unsafe fn window_environment<H: Host>(
         let in_place = &*(std::mem::transmute::<Value, u64>(*entries.add(usize::from(WINDOW_SLOTS)))
             as *const crate::heap::EnvironmentSlots);
         let locals = entries.add(usize::from(WINDOW_LOCALS));
-        let window = EnvironmentWindow { locals: in_place.len() as u16, captured };
+        let window = EnvironmentWindow { locals: in_place.len() as u16, captured, rest: false };
         // SAFETY: the mask names locals of the window, which hold owned values.
         let slots = crate::heap::EnvironmentSlots::from_captured(in_place.len(), window.captured, locals);
         // Each captured local, one per bit of the mask, which names no slot past the locals.
@@ -20537,6 +20544,7 @@ fn specialize_environment_window<H: Host>(
         captured: (0..usize::from(function.locals))
             .filter(|slot| function.local_slot_uses_environment(*slot))
             .fold(0, |mask, slot| mask | 1 << slot),
+        rest: function.rest,
     })
 }
 
