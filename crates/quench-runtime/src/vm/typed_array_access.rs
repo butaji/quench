@@ -574,9 +574,9 @@ impl<H: Host> Vm<H> {
     fn typed_array_set_integer(&mut self, object: Value, index: usize, integer: i32) -> bool {
         let Some(view) = self.typed_array_view(object) else { return false };
         let width = match view.kind {
-            TypedArrayKind::Uint8Clamped | TypedArrayKind::Uint8 | TypedArrayKind::Int8 => 1,
-            TypedArrayKind::Uint16 | TypedArrayKind::Int16 => 2,
-            TypedArrayKind::Uint32 | TypedArrayKind::Int32 => 4,
+            TypedArrayKind::Uint8Clamped | TypedArrayKind::Uint8 | TypedArrayKind::Int8 => size_of::<u8>(),
+            TypedArrayKind::Uint16 | TypedArrayKind::Int16 => size_of::<u16>(),
+            TypedArrayKind::Uint32 | TypedArrayKind::Int32 => size_of::<u32>(),
             _ => return false,
         };
         let Some(Cell::ArrayBuffer { bytes: store, detached: false, resizable, .. }) = self.heap.buffer_bytes_mut(view.buffer) else {
@@ -592,8 +592,8 @@ impl<H: Host> Vm<H> {
             match view.kind {
                 TypedArrayKind::Uint8Clamped => store[start] = integer.clamp(0, i32::from(u8::MAX)) as u8,
                 TypedArrayKind::Uint8 | TypedArrayKind::Int8 => store[start] = integer as u8,
-                TypedArrayKind::Uint16 | TypedArrayKind::Int16 => store[start..start + 2].copy_from_slice(&(integer as u16).to_ne_bytes()),
-                _ => store[start..start + 4].copy_from_slice(&(integer as u32).to_ne_bytes()),
+                TypedArrayKind::Uint16 | TypedArrayKind::Int16 => store[start..start + size_of::<u16>()].copy_from_slice(&(integer as u16).to_ne_bytes()),
+                _ => store[start..start + size_of::<u32>()].copy_from_slice(&(integer as u32).to_ne_bytes()),
             }
         }
         true
