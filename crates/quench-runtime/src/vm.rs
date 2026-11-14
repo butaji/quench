@@ -1109,6 +1109,8 @@ impl FieldAddCacheSet {
 }
 const NO_FIELD_ADD_SET: u32 = u32::MAX;
 const NO_MEGAMORPHIC_FIELD: u32 = u32::MAX;
+/// A `Vm::megamorphic_method_indices` entry for a site with no megamorphic set.
+const NO_MEGAMORPHIC_METHOD: u32 = u32::MAX;
 /// `object_shapes` entry of an object literal site that has recorded no shape.
 const NO_OBJECT_SHAPE: u32 = u32::MAX;
 /// The share of all cache sites, as a divisor, up to which an invalidation resets the
@@ -2173,6 +2175,9 @@ pub(crate) struct Vm<H> {
     object_templates: Vec<object_template::ObjectTemplate>,
     method_caches: Vec<[MethodCache; method_cache::METHOD_CACHE_WAYS]>,
     megamorphic_methods: Vec<MethodCacheSet>,
+    /// The position in `megamorphic_methods` of each promoted method site's set, by site: a
+    /// site past its end, or holding `NO_MEGAMORPHIC_METHOD`, has none.
+    megamorphic_method_indices: Vec<u32>,
     method_cache_atoms: method_cache::MethodCacheAtoms,
     #[cfg(feature = "profile-aggregate")]
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
@@ -3132,7 +3137,7 @@ impl<H: Host> Vm<H> {
         self.to_fixed_atom = self.intern_atom("toFixed");
         self.to_precision_atom = self.intern_atom("toPrecision");
         self.method_caches = vec![[EMPTY_METHOD_CACHE; method_cache::METHOD_CACHE_WAYS]; program.method_sites.len()];
-        self.megamorphic_methods.clear();
+        self.clear_megamorphic_methods();
         self.method_cache_atoms.clear();
         self.object_shapes = site_table::SiteTable::with_empty(program.object_sites.len());
         self.descriptors.clear();

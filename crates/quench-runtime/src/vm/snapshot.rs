@@ -180,6 +180,7 @@ impl<H: Host> Vm<H> {
             object_templates: _,
             method_caches: _,
             megamorphic_methods: _,
+            megamorphic_method_indices: _,
             method_cache_atoms: _,
             #[cfg(feature = "profile-aggregate")]
                 invalidated_methods: _,

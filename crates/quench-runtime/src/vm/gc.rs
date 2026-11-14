@@ -1000,7 +1000,7 @@ impl<H: Host> Vm<H> {
         self.holder_hints.clear();
         self.programs.invalidate_shape_bindings();
         self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);
-        self.megamorphic_methods.clear();
+        self.clear_megamorphic_methods();
         self.method_cache_atoms.clear();
         #[cfg(feature = "profile-aggregate")]
         self.remap_invalidated_method_shapes(&mapping);

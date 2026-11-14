@@ -3975,6 +3975,32 @@ fn untaken_closure_branch_does_not_allocate_environments() {
 }
 
 #[test]
+fn method_site_serves_colliding_receiver_shapes_and_reads_a_redefined_method_live() {
+    // One call site sees four receiver shapes, more than the inline ways hold, so ways collide
+    // and the site goes megamorphic; a method redefined after the caches filled is read live.
+    // The expectations are Node's.
+    let source = r#"
+      function A() {} A.prototype.m = function () { return 1; };
+      function B() { this.x = 1; } B.prototype.m = function () { return 2; };
+      function C() { this.x = 1; this.y = 2; } C.prototype.m = function () { return 3; };
+      function D() { this.x = 1; this.y = 2; this.z = 3; } D.prototype.m = function () { return 4; };
+      var receivers = [new A(), new B(), new C(), new D()];
+      function call(o) { return o.m(); }
+      function round() { var s = 0; for (var i = 0; i < 1000; i++) for (var j = 0; j < 4; j++) s += call(receivers[j]); return s; }
+      var before = round();
+      A.prototype.m = function () { return 10; };
+      var redefined = round();
+      B.prototype.m = function () { return 20; };
+      print([before, redefined, round()].join(" "));
+    "#;
+    let program = Engine::specialize(source, "method-site-ways.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["10000 19000 37000"]);
+}
+
+#[test]
 fn third_method_receiver_promotes_site_to_megamorphic() {
     let mut vm = Vm::new(TestHost::default());
     vm.method_caches.push([super::EMPTY_METHOD_CACHE; 2]);
