@@ -19,6 +19,10 @@ pub(crate) struct TypedView<W> {
     pub(crate) values: W,
     pub(crate) length: W,
     pub(crate) kind: ViewKind<W>,
+    /// Whether the access's index is proved below `length` (a range proof, or its loop's entry
+    /// comparing its bound with the length once: `lane_region::loop_versions`), so no test of it
+    /// remains.
+    pub(crate) within: bool,
 }
 
 /// The kind of a proved view: the kind the proof compared the record's with, or the record's
@@ -193,13 +197,21 @@ fn by_kind<S: Stage>(stage: &mut S, kind: ViewKind<S::Word>,
     }
 }
 
+/// Continues where `index` is below the elements of `view`, which a proof of it (`TypedView::within`)
+/// has made so before any run; else leaves at `miss`.
+#[inline(always)]
+fn bounded<S: Stage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word, miss: S::Miss) -> Option<()> {
+    if view.within { return Some(()); }
+    let in_bounds = stage.ult(index, view.length);
+    stage.guard(in_bounds, miss)
+}
+
 /// The Number at element `index` of `view`: past the elements or of a kind without a native
 /// element leaves at `miss`.
 #[inline(always)]
 pub(crate) fn typed_read<S: NumericStage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
-    let in_bounds = stage.ult(index, view.length);
-    stage.guard(in_bounds, miss)?;
+    bounded(stage, view, index, miss)?;
     let access = |stage: &mut S, native: NativeKind| {
         let address = element_address(stage, view.values, index, native.kind);
         Some(load_number(stage, native.element, address))
@@ -215,8 +227,7 @@ pub(crate) fn typed_read_integer<S: Stage>(stage: &mut S, view: TypedView<S::Wor
     miss: S::Miss) -> Option<S::Word> {
     let ViewKind::Static(native @ NativeKind { kind, element: Element::Integer(integer) }) = view.kind else { return None };
     if !native.is_int32() { return None; }
-    let in_bounds = stage.ult(index, view.length);
-    stage.guard(in_bounds, miss)?;
+    bounded(stage, view, index, miss)?;
     let address = element_address(stage, view.values, index, kind);
     Some(load_integer(stage, integer, address))
 }
@@ -226,8 +237,7 @@ pub(crate) fn typed_read_integer<S: Stage>(stage: &mut S, view: TypedView<S::Wor
 #[inline(always)]
 pub(crate) fn typed_write<S: NumericStage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
     number: S::Word, miss: S::Miss) -> Option<()> {
-    let in_bounds = stage.ult(index, view.length);
-    stage.guard(in_bounds, miss)?;
+    bounded(stage, view, index, miss)?;
     let access = |stage: &mut S, native: NativeKind| {
         let address = element_address(stage, view.values, index, native.kind);
         store_number(stage, native.element, address, number, miss).map(|()| number)

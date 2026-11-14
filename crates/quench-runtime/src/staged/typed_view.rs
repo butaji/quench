@@ -85,7 +85,7 @@ pub(crate) fn prove_typed_view<S: Stage>(stage: &mut S, records: TypedRecords<S:
     }
     let values = stage.load_u64(Region::Records.mutable(), record, VIEW.data_offset as i32);
     let length = stage.load_u32(Region::Records.mutable(), record, VIEW.length_offset as i32);
-    Some(TypedView { values, length, kind })
+    Some(TypedView { values, length, kind, within: false })
 }
 
 /// The interpreter's view of the typed array `base` among the record pages of `directory`: the proof

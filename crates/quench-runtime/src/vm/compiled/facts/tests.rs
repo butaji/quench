@@ -203,3 +203,23 @@ fn a_seeded_typed_array_load_types_its_register_with_the_kinds_range() {
     assert!(!loaded.is_empty() && loaded.iter().all(|ty| *ty == byte), "{loaded:?}");
     assert_eq!(byte.machine(), Type::INT32, "an int32 representation, not a Float64 one");
 }
+
+#[test]
+fn a_register_below_another_is_a_relation_that_dies_with_either_write_and_survives_a_call() {
+    use super::lengths::Relations;
+    use super::super::super::operations::NumberRelation;
+    let (index, bound, copy) = (0, 1, 2);
+    let mut relations = Relations::new(3);
+    relations.bound(NumberRelation::LessThan, [Operand::register(index), Operand::register(bound)]);
+    assert_eq!(relations.under[usize::from(index)], Some(bound));
+    relations.copy(copy, index);
+    assert_eq!(relations.under[usize::from(copy)], Some(bound), "a copy of an index is below the same bound");
+    relations.clear();
+    assert_eq!(relations.under[usize::from(index)], Some(bound), "a bound on a value outlives what changes a length");
+    relations.kill(bound);
+    assert!(relations.under.iter().all(Option::is_none), "the bound's write retires every relation to it");
+    relations.bound(NumberRelation::GreaterThan, [Operand::register(bound), Operand::register(index)]);
+    assert_eq!(relations.under[usize::from(index)], Some(bound), "`bound > index` bounds the same register");
+    relations.kill(index);
+    assert!(relations.under[usize::from(index)].is_none());
+}

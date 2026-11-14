@@ -44,6 +44,7 @@ pub(super) struct Facts {
     /// The length relations at each row, parallel to its types (empty where the run tracks none).
     length_of: Vec<Option<Register>>,
     below: Vec<Option<Register>>,
+    under: Vec<Option<Register>>,
 }
 
 impl Facts {
@@ -62,7 +63,7 @@ impl Facts {
         let start = self.offsets[pc].expect("a pending leader has facts").get() - 1;
         let relations = |rows: &[Option<Register>]| rows.get(start..start + self.registers).map_or_else(Vec::new, <[_]>::to_vec);
         run::Point { types: self.types[start..start + self.registers].iter().copied().collect(),
-            relations: Relations { length_of: relations(&self.length_of), below: relations(&self.below) } }
+            relations: Relations { length_of: relations(&self.length_of), below: relations(&self.below), under: relations(&self.under) } }
     }
 
     /// The types on entry to the block led by `pc`. Rows share one flat buffer;
@@ -145,6 +146,7 @@ impl Facts {
                 self.types.extend_from_slice(incoming);
                 self.length_of.extend_from_slice(&relations.length_of);
                 self.below.extend_from_slice(&relations.below);
+                self.under.extend_from_slice(&relations.under);
                 (self.types.len() - incoming.len(), true)
             }
             Some(offset) => {
@@ -156,7 +158,7 @@ impl Facts {
                     changed |= joined != *known;
                     *known = joined;
                 }
-                for (rows, theirs) in [(&mut self.length_of, &relations.length_of), (&mut self.below, &relations.below)] {
+                for (rows, theirs) in [(&mut self.length_of, &relations.length_of), (&mut self.below, &relations.below), (&mut self.under, &relations.under)] {
                     for (known, theirs) in rows.get_mut(start..start + theirs.len()).into_iter().flatten().zip(theirs) {
                         changed |= lengths::meet(known, *theirs);
                     }
@@ -434,6 +436,7 @@ pub(super) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Co
 #[path = "facts/run.rs"] mod run;
 pub(in crate::vm) use immediates::{constant_number, constant_type, immediate, is_int32};
 pub(in crate::vm) use binary::{generic_operator, heap_primitive_binary};
+pub(super) use lengths::IndexProof;
 pub(super) use run::{analyze, analyze_text, Model, Seeds, Text};
 
 #[cfg(test)]

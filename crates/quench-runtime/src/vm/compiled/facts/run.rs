@@ -28,8 +28,8 @@ pub(in crate::vm::compiled) struct Model<'a> {
     /// The PCs a previous body left at (`Lowering::generic`): their rows are unknown, and their
     /// instructions run guest code.
     pub(in crate::vm::compiled) generic: &'a [usize],
-    /// Whether the element access at a PC reads or writes a hoisted dense view, whose miss
-    /// leaves the body (`Lowering::dense_loop_access`).
+    /// Whether the element access at a PC reads or writes a hoisted view, whose miss leaves the
+    /// body (`Lowering::hoisted_access`).
     pub(in crate::vm::compiled) dense: &'a dyn Fn(usize) -> bool,
 }
 

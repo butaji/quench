@@ -51,6 +51,7 @@ mod polls;
 #[path = "lane_region/arithmetic.rs"] mod arithmetic;
 #[path = "lane_region/index_math.rs"] mod index_math;
 #[path = "lane_region/int_inputs.rs"] mod int_inputs;
+#[path = "lane_region/loop_versions.rs"] mod loop_versions;
 #[path = "lane_region/exits.rs"] mod exits;
 #[cfg(all(test, feature = "aot"))] #[path = "lane_region/exit_tests.rs"] mod exit_tests;
 #[cfg(all(test, feature = "aot"))] #[path = "lane_region/home_tests.rs"] mod home_tests;
@@ -3566,6 +3567,7 @@ impl Lowering<'_, '_> {
                 ElementViews::Typed(_) => self.hoist_typed_view(array, bits, variables, exit),
             }
         }
+        if !captured { self.version_bounds(state, header, exit); }
     }
 
     /// The tagged value of `array`'s source on the loop's entry edge: its register's, or its

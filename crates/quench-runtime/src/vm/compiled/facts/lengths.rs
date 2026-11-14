@@ -1,7 +1,7 @@
 //! What ranges cannot say: a register's relation to an array's `length`, naming the register
-//! that holds the array. A run that proves element indices (`Model`) tracks them beside the
-//! registers' types; a relation dies with either register's next write, and with any
-//! instruction that may change an array's length.
+//! that holds the array, or to another register's value. A run that proves element indices
+//! (`Model`) tracks them beside the registers' types; a relation dies with either register's
+//! next write, and one to an array's length with any instruction that may change it.
 
 use super::run::{Model, Point};
 use crate::bytecode::{Class, FieldLookup, Operand, Register, ResidualProgram, WideInstruction};
@@ -14,6 +14,9 @@ pub(in crate::vm::compiled) struct Relations {
     pub(super) length_of: Vec<Option<Register>>,
     /// Registers known below the `length` of the named register's array.
     pub(super) below: Vec<Option<Register>>,
+    /// Registers known below the value of the named register, whatever it holds: a bound a loop's
+    /// entry may compare with an array's length once (`IndexProof::Versioned`).
+    pub(super) under: Vec<Option<Register>>,
 }
 
 /// `known` met with `incoming`: a relation the other state does not keep is lost; whether that
@@ -25,17 +28,21 @@ pub(super) fn meet(known: &mut Option<Register>, incoming: Option<Register>) -> 
 }
 
 impl Relations {
-    pub(super) fn new(registers: usize) -> Self { Self { length_of: vec![None; registers], below: vec![None; registers] } }
+    pub(super) fn new(registers: usize) -> Self {
+        Self { length_of: vec![None; registers], below: vec![None; registers], under: vec![None; registers] }
+    }
 
     pub(super) fn kill(&mut self, register: Register) {
-        for slot in self.length_of.iter_mut().chain(self.below.iter_mut()) {
+        for slot in self.length_of.iter_mut().chain(self.below.iter_mut()).chain(self.under.iter_mut()) {
             if *slot == Some(register) { *slot = None; }
         }
-        for table in [&mut self.length_of, &mut self.below] {
+        for table in [&mut self.length_of, &mut self.below, &mut self.under] {
             if let Some(slot) = table.get_mut(usize::from(register)) { *slot = None; }
         }
     }
 
+    /// Forgets what an instruction that may change an array's length retires: the relations to
+    /// lengths. A register's value stays what it was.
     pub(super) fn clear(&mut self) {
         self.length_of.fill(None);
         self.below.fill(None);
@@ -43,17 +50,20 @@ impl Relations {
 
     /// `to` takes `from`'s relations, but not to itself.
     pub(super) fn copy(&mut self, to: Register, from: Register) {
-        let [length, below] = [&self.length_of, &self.below].map(|table| table.get(usize::from(from)).copied().flatten());
+        let [length, below, under] = [&self.length_of, &self.below, &self.under]
+            .map(|table| table.get(usize::from(from)).copied().flatten());
         self.kill(to);
-        for (table, array) in [(&mut self.length_of, length), (&mut self.below, below)] {
+        for (table, array) in [(&mut self.length_of, length), (&mut self.below, below), (&mut self.under, under)] {
             if let Some(slot) = table.get_mut(usize::from(to)) { *slot = array.filter(|array| *array != to); }
         }
     }
 
-    /// `small < big` holds, `big` holding an array's `length`: `small` is an index of it.
+    /// `small < big` holds: `small` is below `big`'s value, and an index of the array `big` holds
+    /// the length of.
     fn bound_below(&mut self, [small, big]: [Operand; 2]) {
-        if let Some((index, length)) = small.register_index().zip(big.register_index())
-            && let Some(array) = self.length_of.get(usize::from(length)).copied().flatten()
+        let Some((index, bound)) = small.register_index().zip(big.register_index()).filter(|(index, bound)| index != bound) else { return };
+        if let Some(slot) = self.under.get_mut(usize::from(index)) { *slot = Some(bound); }
+        if let Some(array) = self.length_of.get(usize::from(bound)).copied().flatten()
             && array != index
             && let Some(slot) = self.below.get_mut(usize::from(index)) {
             *slot = Some(array);
@@ -95,8 +105,8 @@ impl Relations {
 
 impl Model<'_> {
     /// Whether `instruction` may change an array's length or run guest code that can: all but
-    /// numeric steps, moves, jumps and reads of a hoisted dense view, whose misses leave.
-    fn disturbs_lengths(&self, pc: usize, instruction: WideInstruction) -> bool {
+    /// numeric steps, moves, jumps and reads of a hoisted view, whose misses leave.
+    pub(in crate::vm::compiled) fn disturbs_lengths(&self, pc: usize, instruction: WideInstruction) -> bool {
         let class = instruction.op().class();
         let quiet = matches!(class, Class::Move | Class::LoadConst | Class::Nop | Class::Jump | Class::JumpTrue
                 | Class::JumpFalse | Class::JumpBinaryFalse | Class::IncDec)
@@ -106,18 +116,36 @@ impl Model<'_> {
     }
 }
 
+/// What proves the index of an element access within its array.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(in crate::vm::compiled) enum IndexProof {
+    /// Non-negative and below the array's length where it is accessed.
+    Proven,
+    /// Non-negative and below `bound`, a register of the access's loop whose value the loop's entry
+    /// may compare with the length of the array held in `array` once, instead of every access.
+    Versioned { array: Register, bound: Register },
+    /// Tested at the access.
+    Check,
+}
+
 impl Point {
-    /// Whether the index of the element access at `pc` lies in `0..length` of its array: the
-    /// access reads or writes a hoisted dense view, its index is non-negative and below the
-    /// array's length.
-    pub(in crate::vm::compiled) fn in_bounds(&self, model: &Model<'_>, pc: usize, instruction: WideInstruction) -> bool {
+    /// What proves the index of the element access at `pc` within `0..length` of its array: the
+    /// access reads or writes a hoisted view and its index is non-negative, and below the array's
+    /// length (`Proven`) or below another register's value (`Versioned`).
+    pub(in crate::vm::compiled) fn index_proof(&self, model: &Model<'_>, pc: usize, instruction: WideInstruction) -> IndexProof {
         let (array, index) = match instruction.op().class() {
             Class::GetIndex => (instruction.operand_b().register_index(), instruction.operand_c().register_index()),
             Class::SetIndex => (Some(instruction.register_b()), Some(instruction.register_c())),
-            _ => return false,
+            _ => return IndexProof::Check,
         };
-        let Some((array, index)) = array.zip(index) else { return false };
-        (model.dense)(pc) && self.relations.below.get(usize::from(index)).copied().flatten() == Some(array)
-            && self.types.get(usize::from(index)).copied().and_then(Type::int_range).is_some_and(|range| range.min >= 0)
+        let Some((array, index)) = array.zip(index) else { return IndexProof::Check };
+        let non_negative = self.types.get(usize::from(index)).copied().and_then(Type::int_range).is_some_and(|range| range.min >= 0);
+        if !(model.dense)(pc) || !non_negative { return IndexProof::Check; }
+        let related = |table: &[Option<Register>]| table.get(usize::from(index)).copied().flatten();
+        match (related(&self.relations.below), related(&self.relations.under)) {
+            (Some(held), _) if held == array => IndexProof::Proven,
+            (_, Some(bound)) if bound != array => IndexProof::Versioned { array, bound },
+            _ => IndexProof::Check,
+        }
     }
 }

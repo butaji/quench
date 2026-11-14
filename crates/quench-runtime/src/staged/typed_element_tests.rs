@@ -99,7 +99,7 @@ fn written(kind: Kind, number: f64) -> Vec<u8> {
 
 /// The row `operation` over `kind`'s elements, `count` of them at `bytes`.
 fn run(kind: Kind, bytes: &mut [u8], (key, number): (i32, f64), operation: Operation<u64, ()>) -> Option<u64> {
-    let view = TypedView { values: bytes.as_mut_ptr() as u64, length: (bytes.len() / kind.width()) as u64, kind: ViewKind::Dynamic(kind as u64) };
+    let view = TypedView { values: bytes.as_mut_ptr() as u64, length: (bytes.len() / kind.width()) as u64, kind: ViewKind::Dynamic(kind as u64), within: false };
     let mut frame = Typed { registers: [Value::UNDEFINED.to_bits(), Value::integer(key).to_bits(), number.to_bits()], view };
     match step(&mut Concrete::new(std::ptr::null()), &mut frame, operation) {
         Step::Value(word) => Some(word),
@@ -132,7 +132,7 @@ fn a_read_leaves_past_the_elements_at_a_negative_index_and_for_a_kind_without_a_
         }
     }
     let mut bytes = [0_u8; 16];
-    let view = TypedView { values: bytes.as_mut_ptr() as u64, length: 1, kind: ViewKind::Dynamic(Kind::BigInt64 as u64) };
+    let view = TypedView { values: bytes.as_mut_ptr() as u64, length: 1, kind: ViewKind::Dynamic(Kind::BigInt64 as u64), within: false };
     let mut frame = Typed { registers: [0, Value::integer(0).to_bits(), 0], view };
     assert!(matches!(step(&mut Concrete::new(std::ptr::null()), &mut frame, READ), Step::Unresolved));
 }

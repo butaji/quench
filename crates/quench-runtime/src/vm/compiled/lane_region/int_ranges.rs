@@ -1,6 +1,7 @@
 //! The integer proofs of a lane unit, computed once before lowering: the int32 arithmetic whose
-//! exact result fits (no overflow exit) and the hoisted dense element accesses whose index is
-//! non-negative and below their array's length (no bounds guard).
+//! exact result fits (no overflow exit) and the hoisted element accesses whose index is
+//! non-negative and below their array's length (no bounds guard), at the access or by one
+//! comparison at the entry of its loop (`loop_versions`).
 //!
 //! A thin view over the facts analysis: one run of it models the unit (`facts::Model`: its
 //! inlined frames, its dense accesses, the PCs a previous body left at) and takes the entry's
@@ -15,6 +16,9 @@ use super::super::facts::{self, Model, Observed, ObservedRead, Seeds, Text};
 pub(super) struct IntRanges {
     overflow_free: CompoundBitSet,
     in_bounds: CompoundBitSet,
+    /// The accesses whose index is below a bound its loop's entry compares with the array's
+    /// length once (`Lowering::version_bounds`), by PC (ascending), with the bound's register.
+    versioned: Vec<(usize, Register)>,
     /// The arithmetic whose result leaves int32 within `IntRange::WORD`, by PC (ascending), with its range.
     index_ranges: Vec<(usize, IntRange)>,
     /// The products no consumer reads the sign of a zero of, by PC (ascending).
@@ -26,7 +30,7 @@ pub(super) struct IntRanges {
 impl IntRanges {
     pub(super) fn new(instructions: usize) -> Self {
         Self { overflow_free: CompoundBitSet::with_capacity(instructions), in_bounds: CompoundBitSet::with_capacity(instructions),
-            index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions) }
+            versioned: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions) }
     }
 
     /// Whether the product at `pc` may keep the int32 zero for a negative one: no operands make a
@@ -45,8 +49,15 @@ impl IntRanges {
     /// result, whatever int32 operands reach it.
     pub(super) fn overflow_free(&self, pc: usize) -> bool { self.overflow_free.contains(pc) }
 
-    /// Whether the index of the element access at `pc` lies in `0..length` of its array.
-    pub(super) fn in_bounds(&self, pc: usize) -> bool { self.in_bounds.contains(pc) }
+    /// Whether the index of the element access at `pc` lies in `0..length` of its array: proved
+    /// at the access, or by its loop's entry (`versioned`).
+    pub(super) fn in_bounds(&self, pc: usize) -> bool {
+        self.in_bounds.contains(pc) || self.versioned.binary_search_by_key(&pc, |(at, _)| *at).is_ok()
+    }
+
+    /// The accesses whose bound their loop's entry compares with the array's length, by PC, with
+    /// the bound's register.
+    pub(super) fn versioned(&self) -> &[(usize, Register)] { &self.versioned }
 }
 
 impl Lowering<'_, '_> {
@@ -80,7 +91,7 @@ impl Lowering<'_, '_> {
     /// The proofs of the unit entered at `entry` with the checked inputs `initial`.
     pub(super) fn prove_ranges(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
         leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) -> IntRanges {
-        let dense = |pc: usize| self.dense_loop_access(pc);
+        let dense = |pc: usize| self.hoisted_access(pc);
         let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
         let reads = self.element_reads(instructions);
         let signless = self.signless_products(instructions);
@@ -89,13 +100,19 @@ impl Lowering<'_, '_> {
         let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
             native_calls: self.native_calls };
         let mut proved = IntRanges::new(instructions.len());
+        let mut bounded = Vec::new();
         facts::analyze_text(&text, initial, seeds).replay(&text, seeds, |pc, point| {
             if point.overflow_free(&self.program.constants, instructions[pc]) { proved.overflow_free.insert(pc); }
-            if point.in_bounds(&model, pc, instructions[pc]) { proved.in_bounds.insert(pc); }
+            match point.index_proof(&model, pc, instructions[pc]) {
+                facts::IndexProof::Proven => { proved.in_bounds.insert(pc); }
+                facts::IndexProof::Versioned { array, bound } => bounded.push((pc, array, bound)),
+                facts::IndexProof::Check => {}
+            }
             let signless = signless.binary_search(&pc).is_ok();
             if let Some(range) = point.index_range(&self.program.constants, instructions[pc], signless) { proved.index_ranges.push((pc, range)); }
             if point.zero_free(&self.program.constants, instructions[pc]) { proved.zero_free.insert(pc); }
         });
+        proved.versioned = self.versioned_bounds(&model, instructions, &bounded);
         proved.signless = signless;
         proved
     }

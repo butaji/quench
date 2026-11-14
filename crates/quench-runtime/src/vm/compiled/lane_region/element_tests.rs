@@ -217,3 +217,32 @@ fn matmul_indices_check_no_overflow_and_no_span_in_the_loop() {
     let span = (IntRange::EXACT.max - IntRange::EXACT.min) as u64;
     assert_eq!(compares_with(&function, &body, span), 0, "{function}");
 }
+
+/// The unsigned `index < length` tests of element accesses among `instructions`.
+fn bounds_compares(function: &ir::Function, instructions: &[ir::Inst]) -> usize {
+    instructions.iter().filter(|&&inst| matches!(function.dfg.insts[inst],
+        ir::InstructionData::IntCompare { cond: IntCC::UnsignedLessThan, .. })).count()
+}
+
+/// The signed `bound <= length` compares among `instructions`: the comparison of a loop's bound with
+/// its array's length (`loop_versions`).
+fn version_compares(function: &ir::Function, instructions: &[ir::Inst]) -> usize {
+    instructions.iter().filter(|&&inst| matches!(function.dfg.insts[inst],
+        ir::InstructionData::IntCompare { cond: IntCC::SignedLessThanOrEqual, .. })).count()
+}
+
+#[test]
+fn a_counted_loop_compares_its_bound_with_the_array_length_once_and_not_per_access() {
+    use crate::heap::TypedArrayKind as Kind;
+    let function = entered_region(SUM, ElementViews::Typed(Some(Kind::Float64)));
+    let body = loop_body(&function);
+    let before: Vec<ir::Inst> = function.layout.blocks().flat_map(|block| function.layout.block_insts(block))
+        .filter(|inst| !body.contains(inst)).collect();
+    assert_eq!(bounds_compares(&function, &body), 0, "the loop's accesses carry their proof: {function}");
+    assert!(version_compares(&function, &before) >= 1, "the entry compares the bound with the length: {function}");
+    // A loop that writes its bound keeps the per-access test and has nothing to compare at its entry.
+    let shrinking = "function sum(a, n) { var s = 0; for (var i = 0; i < n; i++) { s += a[i]; if (s > 1e9) n--; } return s; }";
+    let function = entered_region(shrinking, ElementViews::Typed(Some(Kind::Float64)));
+    let body = loop_body(&function);
+    assert!(bounds_compares(&function, &body) >= 1, "a bound the loop writes proves nothing: {function}");
+}
