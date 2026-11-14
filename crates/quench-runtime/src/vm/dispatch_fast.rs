@@ -16615,7 +16615,10 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
     // SAFETY: the call record belongs to the caller's live view.
     let destination = unsafe { (*top.call).a };
     if !INTO_BODY && destination & crate::bytecode::RETURN_REGISTER != 0 {
-        return None;
+        if CROSSES || CONSTRUCTS || SETTLES {
+            return None;
+        }
+        return lane_return_chain(cx, value);
     }
     let destination = destination & crate::bytecode::REGISTER_MASK;
     let (call, caller_registers, caller_base, window) = (top.call, top.caller_registers, top.caller_base, top.native.window as *mut Value);
@@ -16636,6 +16639,47 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
              (*cx).env = env; (*cx).capture = capture; }
     if SETTLES { value = lane_settle_promise(cx, value, then); }
     caller_registers.set(destination, value);
+    Some((caller_registers, following(call)))
+}
+
+/// `lane_return_plain` of a plain activation that returns the completion of its call, and
+/// whose callers do in turn (`return f(...)`), down to the plain activation whose call takes
+/// `value`: that activation's caller resumes with it, as the run's completion one activation
+/// at a time (`lane_complete_plain_chain`) makes it. `None`, which changes nothing, for a run
+/// another completion ends; the general completions take it.
+#[inline(never)]
+fn lane_return_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
+    let vm = unsafe { vm(cx) };
+    let stack = &mut vm.lane_stack;
+    let activations = stack.activations.as_slice();
+    // The innermost returns its call's completion, which the caller of `lane_return_from` proved.
+    let mut index = activations.len().checked_sub(1)?;
+    let (outer, script, destination) = loop {
+        index = index.checked_sub(1)?;
+        let activation = &activations[index];
+        let ActivationKind::Script(script) = &activation.kind else { return None };
+        if script.completion != Completion::Plain {
+            return None;
+        }
+        // SAFETY: the call record belongs to the caller's live view.
+        let destination = unsafe { (*activation.call).a };
+        if destination & crate::bytecode::RETURN_REGISTER == 0 {
+            break (activation, script, destination);
+        }
+    };
+    debug_assert!(matches!(&activations.last()?.kind, ActivationKind::Script(top) if top.completion == Completion::Plain));
+    let (call, caller_registers, caller_base, window) = (outer.call, outer.caller_registers, outer.caller_base, outer.native.window as *mut Value);
+    let (this, env, capture) = (script.caller_this, script.caller_env, script.caller_capture);
+    stack.drop_iterators_from(index + 1);
+    stack.drop_trap_checks_from(index + 1);
+    // SAFETY: script activations hold no drop glue or Wasm storage; the window is in the values.
+    unsafe {
+        stack.activations.set_len(index);
+        stack.values.set_top(window);
+        (*cx).registers = caller_registers; (*cx).base = caller_base; (*cx).this = this;
+        (*cx).env = env; (*cx).capture = capture;
+    }
+    caller_registers.set(destination & crate::bytecode::REGISTER_MASK, value);
     Some((caller_registers, following(call)))
 }
 
