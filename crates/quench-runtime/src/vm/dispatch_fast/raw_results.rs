@@ -29,8 +29,24 @@ const NEXT_OPERATION: usize = 3;
 #[inline(always)]
 pub(super) fn raw_number_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
     let (left, right) = Value::number_pair(left, right)?;
-    let result = super::super::operations::number_operator::<OP>(left, right)?;
-    Some(if result.is_nan() { Value::NAN } else { Value::from_bits(result.to_bits()) })
+    Some(raw_number(super::super::operations::number_operator::<OP>(left, right)?))
+}
+
+/// A Number in double form whatever its value; NaN canonical, as every Number's must be.
+#[inline(always)]
+pub(super) fn raw_number(value: f64) -> Value {
+    if value.is_nan() { Value::NAN } else { Value::from_bits(value.to_bits()) }
+}
+
+/// Whether the arithmetic at `operation` may leave its result raw (`raw_result_dies`), in a
+/// function with no handler (a catch may read any register).
+pub(super) fn raw_result_allowed(
+    decoded: &[WideInstruction],
+    handlers: &[crate::bytecode::Handler],
+    live: Option<&RegisterMasks>,
+    operation: usize,
+) -> bool {
+    handlers.is_empty() && live.is_some_and(|live| raw_result_dies(decoded, live, operation))
 }
 
 /// The raw forms (`raw_results`) of the proved fused updates, reads and operations, each with

@@ -4455,7 +4455,8 @@ script_handler! {
     ///
     /// With `FIRST_DEAD` the first result's register is dead after the pair (liveness, or the
     /// second overwrites it), so it is stored only when the second record runs on its own.
-    fn lane_operator_pair<FIRST: u32, SECOND: u32, FIRST_DEAD: bool>(cx, r, ip, i, view) {
+    /// With `SECOND_RAW` a double second result keeps its double form (`raw_results`).
+    fn lane_operator_pair<FIRST: u32, SECOND: u32, FIRST_DEAD: bool, SECOND_RAW: bool>(cx, r, ip, i, view) {
         use super::operations::{int32_operator, integer_operator, number_operator};
         let (left, right) = (r.get(i.b), r.get(i.c));
         // SAFETY: the pair is two records, the second never the view's last.
@@ -4520,7 +4521,7 @@ script_handler! {
         if !FIRST_DEAD {
             r.set(i.a, Value::number(first));
         }
-        r.set(second.a, Value::number(value));
+        r.set(second.a, if SECOND_RAW { raw_results::raw_number(value) } else { Value::number(value) });
         next!(cx, r, following(following(ip)), Carried::script_in(cx, view))
     }
 }
@@ -20123,7 +20124,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_update_jumps::<H>(&decoded, &mut records);
         specialize_nullish_back_edges::<H>(&decoded, &mut records);
         specialize_store_moves::<H>(&mut records);
-        specialize_operator_pairs::<H>(&mut records, live().map(|masks| &**masks));
+        specialize_operator_pairs::<H>(&decoded, &function.handlers, &mut records, live().map(|masks| &**masks));
         specialize_int32_truncations::<H>(&mut records, live().map(|masks| &**masks));
         specialize_capture_updates::<H>(&mut records);
         specialize_constant_returns::<H>(&mut records);
@@ -20763,7 +20764,7 @@ fn specialize_updated_index_operators<H: Host>(records: &mut [LaneInstruction]) 
 ///
 /// Liveness (`live`) selects the variant that leaves a first result dead after the pair
 /// unstored on the fast path (`lane_operator_pair`'s `FIRST_DEAD`).
-fn specialize_operator_pairs<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>) {
+fn specialize_operator_pairs<H: Host>(decoded: &[WideInstruction], handlers: &[crate::bytecode::Handler], records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>) {
     use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
     let mut pc = 0;
     while pc + 1 < records.len() {
@@ -20784,17 +20785,17 @@ fn specialize_operator_pairs<H: Host>(records: &mut [LaneInstruction], live: Opt
             pc += 1;
             continue;
         }
-        let first_dead = second.a == first.a
-            || live
-                .and_then(|masks| masks.get(pc + 2))
-                .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(first.a)));
+        let after = live.and_then(|masks| masks.get(pc + 2));
+        let first_dead = second.a == first.a || after.is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(first.a)));
+        let raw = first_dead && constant.is_none() && raw_results::raw_result_allowed(decoded, handlers, live, pc + 1);
         macro_rules! seconds {
             ($first:ident; $($second:ident),*) => {
-                match (right, first_dead, constant.is_some()) {
-                    $(($second, false, false) => lane_operator_pair::<H, $first, $second, false> as Handler,
-                      ($second, true, false) => lane_operator_pair::<H, $first, $second, true> as Handler,
-                      ($second, false, true) => lane_operator_constant_pair::<H, $first, $second, false> as Handler,
-                      ($second, true, true) => lane_operator_constant_pair::<H, $first, $second, true> as Handler,)*
+                match (right, first_dead, constant.is_some(), raw) {
+                    $(($second, false, false, _) => lane_operator_pair::<H, $first, $second, false, false> as Handler,
+                      ($second, true, false, false) => lane_operator_pair::<H, $first, $second, true, false> as Handler,
+                      ($second, true, false, true) => lane_operator_pair::<H, $first, $second, true, true> as Handler,
+                      ($second, false, true, _) => lane_operator_constant_pair::<H, $first, $second, false> as Handler,
+                      ($second, true, true, _) => lane_operator_constant_pair::<H, $first, $second, true> as Handler,)*
                     _ => unreachable!("an arithmetic operator the lane fuses"),
                 }
             };
