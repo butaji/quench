@@ -3194,11 +3194,11 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    /// Only native code reads slot representations, so only a runtime that runs lane bodies
-    /// keeps them, from its shape table and what its live objects hold: once its builtins
+    /// Only native code (Cranelift's or `--b-jit`'s stencils) reads slot representations, so only a runtime that
+    /// runs lane bodies keeps them, from its shape table and what its live objects hold: once its builtins
     /// exist or its realm is restored.
     pub(super) fn keep_slot_representations(&mut self) {
-        if self.programs.js_jit_lane_methods_enabled() && crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) {
+        if self.programs.js_jit_lane_methods_enabled() && (crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) || crate::jit_mode::base_only()) {
             let layouts = self.shape_layouts();
             self.heap.track_slot_representations(&layouts);
         }
