@@ -323,6 +323,13 @@ pub(in crate::vm) fn lane_body_tier() -> Tier {
 /// The base a share in percent is a share of.
 pub(in crate::vm) const PERCENT: u64 = 100;
 
+/// The magnitude bits an OSR loop's entry assumes of the invariant int32 inputs of its index
+/// arithmetic (`Lowering::entering_ranges`): the product of two of them and a sum with a third
+/// lie within what a Number holds exactly (2^24 * 2^24 + 2^24 is below 2^53), so the arithmetic
+/// leaves nowhere per iteration. An entry whose input is larger leaves to the interpreter, and a
+/// site that left there recompiles without the assumption (`Loops::widen_after_leaves`).
+pub(in crate::vm) const INDEX_INPUT_BITS: u32 = 24;
+
 const MEASURED: Tiers = Tiers {
     loops: Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 128, widen_after_leaves: 4, max_compilations: 8 },
     lane_body: LaneBody {

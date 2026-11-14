@@ -1753,7 +1753,7 @@ pub(super) fn lower(
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && instructions[at].op().is_load_capture())),
         lowering.views, typed_captures);
-    lowering.entering = lowering.entering_ranges(entry_pc);
+    lowering.entering = lowering.entering_ranges(entry_pc, &loops);
     lowering.ranges = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape);
     lowering.arrays_fixed = lowering.arrays_stay_put(&leaders, &writes);
     lowering.loop_fields = loop_fields(program, unit, &loops);
@@ -2425,26 +2425,6 @@ impl Lowering<'_, '_> {
         self.conform(state, pc);
         self.proving_entry = false;
         self.guard_entering_ranges(state, pc);
-    }
-
-    /// The observed int32 entries live at `entry` (a dead register's value is stale, and nothing
-    /// conforms it) whose range is narrower than int32 and whose entry fact is
-    /// int32: what the entry guards once (`guard_entering_ranges`) and the pass assumes.
-    fn entering_ranges(&self, entry: usize) -> Vec<(Register, IntRange)> {
-        let types = self.facts.at(entry);
-        self.int_entries.iter().copied().filter(|&(register, range)| range != IntRange::FULL && self.is_live(entry, register)
-            && types.and_then(|types| types.get(usize::from(register))).is_some_and(|ty| ty.is_subtype(Type::INT32))).collect()
-    }
-
-    /// Leaves at `pc` where an entering register is below its range's minimum: the one guard
-    /// the ranges pass's entry state relies on (the range's maximum is int32's).
-    fn guard_entering_ranges(&mut self, state: &mut State, pc: usize) {
-        for (register, range) in self.entering.clone() {
-            let exit = self.guard_exit(state, pc as u32);
-            let value = self.int(state, register, exit);
-            let within = self.raw_compare_imm(Relation::SignedGreaterEqual, value, range.min);
-            emit_js_guard(&mut self.builder, within, exit);
-        }
     }
 
     /// The guards' leaves to fill, once the entry's shared leave (`entry_conform`) is filled:

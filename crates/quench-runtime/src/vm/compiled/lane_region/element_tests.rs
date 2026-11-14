@@ -195,3 +195,25 @@ fn an_index_that_may_be_a_negative_zero_is_still_an_integer_word() {
         operands.iter().all(|operand| is_sign_extension(function, *operand)));
     assert_eq!(products, 1, "the product runs in 64-bit words: {function}");
 }
+
+/// The branches in `body` on an int32 overflow flag: the exits an int32 operation takes.
+fn overflow_exits(function: &ir::Function, body: &[ir::Inst]) -> usize {
+    body.iter().filter(|&&inst| {
+        let ir::InstructionData::Brif { arg, .. } = function.dfg.insts[inst] else { return false };
+        matches!(function.dfg.value_def(function.dfg.resolve_aliases(arg)),
+            ir::ValueDef::Result(def, 1) if matches!(function.dfg.insts[def].opcode(),
+                ir::Opcode::SaddOverflow | ir::Opcode::SsubOverflow | ir::Opcode::SmulOverflow))
+    }).count()
+}
+
+#[test]
+fn matmul_indices_check_no_overflow_and_no_span_in_the_loop() {
+    use crate::heap::TypedArrayKind as Kind;
+    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)));
+    let body = loop_body(&function);
+    assert_eq!(overflow_exits(&function, &body), 0, "the counter stays below its int32 bound and the indices are words: {function}");
+    // The entry proved the inputs of the index arithmetic within `INDEX_INPUT_BITS`: a product of two
+    // and a sum with a third lie within what a Number holds exactly, so no per-iteration test of it.
+    let span = (IntRange::EXACT.max - IntRange::EXACT.min) as u64;
+    assert_eq!(compares_with(&function, &body, span), 0, "{function}");
+}
