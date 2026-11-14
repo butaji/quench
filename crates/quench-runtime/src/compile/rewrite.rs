@@ -82,7 +82,7 @@ fusion_recipes! {
         LoadConst, Move; LoadLocal, Move; LoadEnvLocal, Move; LoadCapture, Move;
         LoadName, Move; Binary, Move; Unary, Move; GetField, Move; IncDec, Move;
         Call, Move; CallKnown, Move; CallMethod, Move; CallThisMethod, Move; Construct, Move;
-        LoadThis, Move; MakeObject2, Move; SuperConstArrayObject2, Move; GetIndex, Move
+        LoadThis, Move; MakeObject2, Move; SuperConstArrayObject2, Move
     ] => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
         if second.register_b() != first.result_register() { return None; }
         first.set_result_register(second.result_register());
@@ -1551,7 +1551,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
 
     #[test]
     fn recipe_schema_generates_ordered_pattern_rows() {
-        assert_eq!(RULES.len(), 36);
+        assert_eq!(RULES.len(), 35);
         assert_eq!(RULES[0].pattern, [Op::LoadConst, Op::Binary]);
         assert_eq!(RULES[1].pattern, [Op::LoadConst, Op::Binary]);
         assert!(matches!(RULES[0].recipe, Recipe::ConstantLeft));
