@@ -3060,7 +3060,7 @@ fn lane_window_closure_value<H: Host>(
     // SAFETY: the running environment activation's window, whose function is the
     // innermost activation's and whose environment's parent is the context's.
     let environment = activation.map(|activation| unsafe {
-        window_environment(vm, &*(*cx).code, r.0.add(usize::from(registers)), activation.function, (*cx).env, (*cx).program, (*cx).this, bindings)
+        window_environment(vm, &*(*cx).code, r.0.add(usize::from(registers)), activation.function, (*cx).env, (*cx).program, (*cx).this, Some(bindings))
     });
     // SAFETY: the context's program outlives the lane run.
     let value = environment.and_then(|environment| vm.closure(unsafe { &*(*cx).code }, function, environment).ok());
@@ -11420,7 +11420,7 @@ impl<H: Host> Vm<H> {
         // and its locals.
         let held = usize::from(code.function(activation.function as usize).registers);
         // SAFETY: the activation's window, intact.
-        let environment = unsafe { window_environment(self, code, activation.window_ptr().add(held), activation.function, env, program, this, Vec::default()) };
+        let environment = unsafe { window_environment(self, code, activation.window_ptr().add(held), activation.function, env, program, this, None) };
         let frame = self.frames.last_mut().expect("the activation pushed a frame");
         frame.env = environment;
         frame.captured = true;
@@ -15880,7 +15880,7 @@ unsafe fn window_environment<H: Host>(
     parent: Value,
     program: ProgramId,
     this: Value,
-    mut bindings: Vec<(crate::bytecode::Atom, Value)>,
+    bindings: Option<Vec<(crate::bytecode::Atom, Value)>>,
 ) -> Value {
     // SAFETY: as the caller guarantees.
     unsafe {
@@ -15893,6 +15893,7 @@ unsafe fn window_environment<H: Host>(
         // (`Vm::captured_lexical_this`), as a frame does when a closure or the body itself
         // can observe its implicit bindings (`Function::activation_bindings_observable`);
         // any other scope names only its program, which needs no allocation.
+        let mut bindings = bindings.unwrap_or_default();
         let body = code.function(function as usize);
         if !body.is_arrow && body.activation_bindings_observable(code) {
             bindings.insert(0, (vm.runtime_atoms.lexical_this, this));
@@ -18766,7 +18767,7 @@ fn derive_lane_view<'live, H: Host>(
             &exits,
             &produced,
         ),
-        None => Vec::default(),
+        None => Vec::new(),
     }
     .into_boxed_slice();
     for region in &vector_regions {

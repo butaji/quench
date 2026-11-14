@@ -257,7 +257,7 @@ fn lane_scoped_closure_value<H: Host>(
     // SAFETY: the running window activation's entries start at `registers`, and its
     // environment's parent is the context's.
     let environment = unsafe {
-        window_environment(vm, code, r.0.add(usize::from(registers)), scope.function, (*cx).env, scope.program, (*cx).this, bindings)
+        window_environment(vm, code, r.0.add(usize::from(registers)), scope.function, (*cx).env, scope.program, (*cx).this, Some(bindings))
     };
     let site = scope.site.filter(|pc| vm.site_has_bindings(scope.program, scope.function, *pc));
     let value = vm
