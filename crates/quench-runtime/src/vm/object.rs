@@ -4637,7 +4637,7 @@ impl<H: Host> Vm<H> {
         }
     }
     #[inline(always)]
-    fn megamorphic_field_cache(
+    pub(super) fn megamorphic_field_cache(
         &self,
         site: usize,
         receiver: u32,

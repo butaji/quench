@@ -100,6 +100,42 @@ const CASES: &str = r#"(function () {
   function noOwn() { var b = Object.create(Box.prototype), acc = 0; for (var i = 0; i < 300; i++) acc += b.v; return acc; }
   lr.push(noOwn());
   out(lr.join("|"));
+  // polymorphic sites: nested reads, prototype-held fields of many receiver shapes, functions
+  var kinds = [];
+  for (var k = 0; k < 40; k++) {
+    var C = new Function("this.id = " + k + ";");
+    if (k % 3 === 0) C.prototype.extra = k;
+    if (k % 5 === 0) C.prototype.constructor = Object;
+    kinds.push(new C());
+  }
+  function ctorName(o) { return o.constructor.name; }
+  var names = [];
+  for (var rep = 0; rep < 60; rep++) for (var k = 0; k < kinds.length; k++) { var n = ctorName(kinds[k]); if (rep === 59) names.push(n); }
+  out(names.join(","));
+  Object.setPrototypeOf(kinds[1], kinds[0]);
+  Object.setPrototypeOf(kinds[2], Array.prototype);
+  kinds[3].constructor = Map;
+  out([ctorName(kinds[1]), ctorName(kinds[2]), ctorName(kinds[3]), ctorName(kinds[4])].join(","));
+  var fns = [];
+  for (var k = 0; k < 40; k++) fns.push(new Function("a", "return a + " + k + ";"));
+  function callIt(f) { return f.call(null, 1); }
+  var cs = 0;
+  for (var rep = 0; rep < 60; rep++) for (var k = 0; k < fns.length; k++) cs += callIt(fns[k]);
+  fns[7].call = function () { return "own"; };
+  Object.defineProperty(fns[8], "call", { get: function () { return function () { return "acc"; }; } });
+  var saved = Function.prototype.call;
+  out([cs, callIt(fns[7]), callIt(fns[8]), callIt(fns[9])].join(","));
+  Function.prototype.call = function () { return "patched"; };
+  out(callIt(fns[10]) + "," + callIt(fns[7]));
+  Function.prototype.call = saved;
+  out(callIt(fns[10]));
+  var arrs = [[1, 2, 3], [], new Array(5)];
+  function len(a) { return a.length; }
+  var ls = 0;
+  for (var rep = 0; rep < 300; rep++) for (var k = 0; k < arrs.length; k++) ls += len(arrs[k]);
+  Object.defineProperty(arrs[0], "length", { writable: false });
+  arrs[1].push(4, 5);
+  out([ls, len(arrs[0]), len(arrs[1]), len({ length: 9 }), len("abcd"), len(function (a, b) {})].join(","));
   // returning getter
   var G = { get g() { return this.base + 1; }, base: 1 };
   function retG(o) { return o.g; }
@@ -123,6 +159,12 @@ const EXPECTED: &[&str] = &[
     r#"1800|199|{"value":11,"writable":true,"enumerable":false,"configurable":true}|{"get":"fn","enumerable":true,"configurable":true}|false|false"#,
     r#"true|true|false|true|true|true|has:a,has:z,has:q,has:a,has:z"#,
     r#"2000|4000|403600|406000|15000"#,
+    r#"Object,anonymous,anonymous,anonymous,anonymous,Object,anonymous,anonymous,anonymous,anonymous,Object,anonymous,anonymous,anonymous,anonymous,Object,anonymous,anonymous,anonymous,anonymous,Object,anonymous,anonymous,anonymous,anonymous,Object,anonymous,anonymous,anonymous,anonymous,Object,anonymous,anonymous,anonymous,anonymous,Object,anonymous,anonymous,anonymous,anonymous"#,
+    r#"Object,Array,Map,anonymous"#,
+    r#"49200,own,acc,10"#,
+    r#"patched,own"#,
+    r#"11"#,
+    r#"2400,3,2,9,4,2"#,
     r#"609"#,
 ];
 

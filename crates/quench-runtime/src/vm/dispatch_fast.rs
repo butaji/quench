@@ -6709,12 +6709,12 @@ fn lane_cached_field<H: Host>(
     let probe = {
         let vm = unsafe { vm(cx) };
         // A string's own `length`, which its chain never shadows, as a tokenizer's
-        // `this.input.length` reads: no cache records a primitive's, and the probes below
-        // all decline it (`Vm::cached_string_field_hit`).
+        // `this.input.length` reads, and an array's, no shape slot: no cache records either, and
+        // the probes below all decline a primitive (`Vm::cached_string_field_hit`).
         if atom == vm.length_atom
-            && let Some(text) = vm.heap.string(object)
+            && let Some(length) = own_length(vm, object)
         {
-            return Some(Value::length(text.len()));
+            return Some(length);
         }
         // A typed array's geometry, which no field cache records (`AtomClass::VIRTUAL_FIELD`).
         if vm.atom_class(atom).contains(super::object::AtomClass::VIRTUAL_FIELD)
@@ -6791,6 +6791,10 @@ fn lane_cached_field_miss<H: Host>(
         // The order `Vm::get_field_cached` takes: an array's `length` before the lookups.
         super::object::FieldCacheProbe::OrdinaryMiss => vm
             .array_length_field(object, atom)
+            // The entries of a site past one shape, whose handler may be a nested site's or a
+            // local base's, as `lane_get_field_hashed` reads them.
+            .or_else(|| vm.polymorphic_field_hit(code, object, site))
+            .or_else(|| vm.cell_polymorphic_holder_hit(object, site))
             .or_else(|| vm.probed_field_miss_value(object, atom, site)),
         super::object::FieldCacheProbe::Ineligible => vm
             .array_length_field(object, atom)
