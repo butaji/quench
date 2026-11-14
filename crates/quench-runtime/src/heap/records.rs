@@ -54,6 +54,9 @@ pub(super) trait RecordFamily {
     /// What minor sweeps found of the aged records since the last call, emptied.
     fn take_aged_fates(&mut self) -> AgedFates;
     fn live_count(&self) -> usize;
+    /// Bytes of the occupied ids: live plus unswept garbage before a sweep, the survivors
+    /// after it (pacing's resident measure).
+    fn occupied_bytes(&self) -> usize;
     /// Visits every live record's id.
     fn for_each_live_id(&self, visit: &mut dyn FnMut(RecordId));
     #[cfg(feature = "profile-aggregate")]
@@ -89,6 +92,9 @@ impl<T, const CAPACITY: usize> RecordFamily for RecordSpace<T, CAPACITY> {
     }
     fn live_count(&self) -> usize {
         RecordSpace::live_count(self)
+    }
+    fn occupied_bytes(&self) -> usize {
+        self.live.saturating_mul(size_of::<T>())
     }
     fn for_each_live_id(&self, visit: &mut dyn FnMut(RecordId)) {
         self.for_each_live(|id, _| visit(id));

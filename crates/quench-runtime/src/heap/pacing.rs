@@ -220,7 +220,15 @@ pub(super) struct PacingState {
     aging: Aging,
     /// Where the old-generation sizing stands (`GenerationalPacing::old_sizing`).
     pub(super) old_generation: OldGenerationState,
+    /// Smoothed resident bytes occupied per unit of allocation weight between full
+    /// collections, times `RESIDENT_SCALE`; zero until two full collections measured it.
+    resident_per_weight: usize,
+    /// Resident bytes the last full collection kept.
+    resident_after_full: usize,
 }
+
+/// The fixed-point scale of `PacingState::resident_per_weight`.
+const RESIDENT_SCALE: usize = 256;
 
 impl PacingState {
     /// The minor collections a survivor needs to become old now: the table's, or the oldest
@@ -291,6 +299,11 @@ pub(super) struct CollectionOutcome {
     pub(super) aged: AgedFates,
     /// Allocation weight since the last full collection.
     pub(super) since_full: usize,
+    /// Record and payload bytes occupied when this full collection started and kept by it,
+    /// and the weight charged since the previous full collection; zero for a minor.
+    pub(super) resident_at_start: usize,
+    pub(super) resident_live: usize,
+    pub(super) since_previous_full: usize,
 }
 
 /// When the next collection runs (allocation weight from now) and whether it is full.
@@ -306,6 +319,16 @@ impl GenerationalPacing {
         state.aging.start(self.ages_from_start);
         self.old_sizing.after_collection(outcome.full, &mut state.old_generation);
         if outcome.full {
+            if state.resident_after_full > 0 && outcome.since_previous_full > 0 {
+                let growth = outcome.resident_at_start.saturating_sub(state.resident_after_full);
+                let sample = growth.saturating_mul(RESIDENT_SCALE) / outcome.since_previous_full;
+                state.resident_per_weight = if state.resident_per_weight == 0 {
+                    sample
+                } else {
+                    (state.resident_per_weight + sample) / 2
+                };
+            }
+            state.resident_after_full = outcome.resident_live;
             // What a minor collection would have kept: the previous live weight and this
             // cycle's expected survivors. A full collection pays when it reclaims old garbage
             // beyond that. Past the survival limit the estimate measures nothing minor
@@ -356,7 +379,14 @@ impl GenerationalPacing {
                 }
                 // A probe runs inside the interval between full collections; it does not
                 // lengthen it.
-                let interval = self.old_sizing.headroom(&state.old_generation).of(outcome.live_after_full);
+                let mut interval = self.old_sizing.headroom(&state.old_generation).of(outcome.live_after_full);
+                let resident_eighths = self.old_sizing.resident_headroom_eighths as usize;
+                if resident_eighths > 0 && state.resident_per_weight > 0 {
+                    // Bound the garbage in bytes, not records: the weight a byte budget buys
+                    // at the bytes per weight the last intervals measured.
+                    let garbage = state.resident_after_full / 8 * resident_eighths;
+                    interval = interval.min(garbage.saturating_mul(RESIDENT_SCALE) / state.resident_per_weight);
+                }
                 NextCollection {
                     threshold: interval
                         .saturating_sub(outcome.since_full)

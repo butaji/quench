@@ -601,6 +601,12 @@ pub(crate) struct Heap {
     /// Live weight after the previous collection.
     live_weight_after_previous: usize,
     live_weight_after_full: usize,
+    /// Record and payload bytes occupied when the current full collection started, and what
+    /// the last full collection kept (`occupied_resident_bytes`).
+    resident_at_full_start: usize,
+    resident_after_full: usize,
+    /// Allocation weight between the last two full collections.
+    weight_between_fulls: usize,
     /// Backing-store bytes allocated since the last collection, against its budget.
     external_since_collection: usize,
     external_collection_budget: usize,
@@ -981,6 +987,12 @@ impl Heap {
             (&self.string_records, Value::direct_string),
             (&self.v128_records, Value::direct_v128),
         ]
+    }
+
+    /// Record and payload bytes occupied now: live plus unswept garbage before a sweep.
+    fn occupied_resident_bytes(&mut self) -> usize {
+        let payload = self.payload_bytes;
+        self.record_families_mut().iter().map(|(family, _)| family.occupied_bytes()).sum::<usize>() + payload
     }
 
     /// `record_families`, mutably.
@@ -1947,6 +1959,9 @@ impl Heap {
         self.pacing_state = pacing::PacingState::default();
         self.live_weight_after_previous = 0;
         self.live_weight_after_full = 0;
+        self.resident_at_full_start = 0;
+        self.resident_after_full = 0;
+        self.weight_between_fulls = 0;
         self.old_live = 0;
         self.collections = 0;
         self.layout_id = Self::next_layout_id();
@@ -2170,6 +2185,7 @@ impl Heap {
         let full = self.collection_is_full(full);
         if full {
             self.pacing_state.old_generation.start_full();
+            self.resident_at_full_start = self.occupied_resident_bytes();
         }
         full
     }
@@ -2659,6 +2675,7 @@ impl Heap {
         self.external_since_collection = 0;
         self.external_collection_budget = self.external_bytes.max(self.pacing().minimum_external_budget);
         if full {
+            self.weight_between_fulls = self.allocated_since_full();
             self.allocated_at_full = self.allocated;
             self.reclaimable_program_bytes_since_full = 0;
             self.old_live = legacy_live;
@@ -2669,6 +2686,7 @@ impl Heap {
         if full {
             self.live_after_full = live;
             self.live_weight_after_full = live_weight;
+            self.resident_after_full = self.occupied_resident_bytes();
         }
         if trims_environments && closure_reads.is_some() {
             self.live_at_environment_trim = Some(live);
@@ -2690,10 +2708,13 @@ impl Heap {
                 allocated,
                 since_full,
                 aged,
+                resident_at_start: if full { self.resident_at_full_start } else { 0 },
+                resident_live: if full { self.resident_after_full } else { 0 },
+                since_previous_full: if full { self.weight_between_fulls } else { 0 },
             },
         );
         if crate::trace::Channel::Gc.on() {
-            eprintln!("gc full={full} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state);
+            eprintln!("gc full={full} resident_start={} resident_kept={} weight_between_fulls={} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.resident_at_full_start, self.resident_after_full, self.weight_between_fulls, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state);
         }
         self.live_weight_after_previous = live_weight;
         self.set_young_budget(next.threshold);

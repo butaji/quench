@@ -31,6 +31,10 @@ pub(crate) struct OldGenerationSizing {
     /// below which it tightens: where collections cost little, a tighter headroom buys memory.
     pub(super) headroom_widen_from: Ratio,
     pub(super) headroom_tighten_below: Ratio,
+    /// The most garbage, in resident bytes, a full-only interval may let accumulate, in
+    /// eighths of the record and payload bytes the last full collection kept
+    /// (`GenerationalPacing::plan`); zero leaves the time-share headroom alone.
+    pub(super) resident_headroom_eighths: u32,
 }
 
 /// Where a heap's sizing stands and the clock readings that move it.
@@ -117,6 +121,7 @@ pub(super) const THROUGHPUT_OLD_SIZING: OldGenerationSizing = OldGenerationSizin
     headroom_step_eighths: THROUGHPUT_FULL_ONLY_HEADROOM_STEP,
     headroom_widen_from: THROUGHPUT_FULL_ONLY_TIME_TARGET,
     headroom_tighten_below: THROUGHPUT_FULL_ONLY_TIME_TARGET,
+    resident_headroom_eighths: THROUGHPUT_FULL_ONLY_RESIDENT_HEADROOM_EIGHTHS,
 };
 /// The share of time full collections may take before the old generation widens: G1's
 /// default `GCTimeRatio` of 12, one part in thirteen.
@@ -133,6 +138,7 @@ pub(super) const MEMORY_FIRST_OLD_SIZING: OldGenerationSizing = OldGenerationSiz
     headroom_step_eighths: 0,
     headroom_widen_from: THROUGHPUT_FULL_TIME_TARGET,
     headroom_tighten_below: THROUGHPUT_FULL_TIME_TARGET,
+    resident_headroom_eighths: 0,
 };
 
 /// Allocation between full collections, as a share of the live set, once most of each young
@@ -151,6 +157,13 @@ const THROUGHPUT_FULL_ONLY_HEADROOM_TIGHTEST: u32 = 12;
 const THROUGHPUT_FULL_ONLY_HEADROOM_STEP: u32 = 4;
 /// The share of time a full collection takes at which the headroom turns from tightening to widening: a quarter.
 const THROUGHPUT_FULL_ONLY_TIME_TARGET: Ratio = Ratio::new(1, 4);
+/// Garbage between full-only collections, in resident bytes, at most this many eighths of
+/// what the last one kept; zero is off. The time-share headroom is counted in records, and
+/// its three live sets of weight reached about 2.15 live sets of bytes on V8-v7 Splay. Splay
+/// no-JIT max RSS by eighths (experiment profile, 2026-11-14): off 73.4 MB, 12: 64, 8: 52,
+/// 6: 47, 4: 40.4, at Scores falling with the GC share (stop-the-world full collections
+/// mark the whole live set), so it stays off until full collections cost less.
+const THROUGHPUT_FULL_ONLY_RESIDENT_HEADROOM_EIGHTHS: u32 = 0;
 
 /// Memory-first lets half a live set of allocation pass between full collections once most of
 /// each young generation survives, not a whole one, which let the heap reach twice its live
@@ -177,6 +190,7 @@ mod tests {
         headroom_step_eighths: 4,
         headroom_widen_from: Ratio::new(1, 4),
         headroom_tighten_below: Ratio::new(1, 4),
+        resident_headroom_eighths: 0,
     };
 
     /// A full collection that took `full` of a cycle of `cycle` since the last one ended.

@@ -111,6 +111,9 @@ fn minor(live: usize, previous_live: usize, allocated: usize) -> CollectionOutco
         live_weight_after_full: previous_live,
         allocated,
         since_full: allocated,
+        resident_at_start: 0,
+        resident_live: 0,
+        since_previous_full: 0,
         aged: AgedFates::default(),
     }
 }
