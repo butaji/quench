@@ -689,6 +689,7 @@ fn instanceof_layout_index(shape: u32) -> usize {
 }
 
 /// The `Vm::instanceof_inheriting_holders` entry of `holder`, by its cell.
+#[inline(always)]
 fn instanceof_holder_index(holder: Value) -> usize {
     holder.heap_index().map_or(0, |index| index as usize % INSTANCEOF_CONSTRUCTOR_LAYOUTS)
 }
