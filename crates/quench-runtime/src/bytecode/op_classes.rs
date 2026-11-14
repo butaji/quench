@@ -1,7 +1,7 @@
 //! Named classes of opcodes and control-flow layouts, each decided once and asked by every
 //! analysis that needs it.
 
-use super::{ControlFlowLayout, FieldLayout, Op};
+use super::{ControlFlowLayout, FieldLayout, GenericStep, Op};
 
 impl Op {
     /// A leaf record that only moves or computes an immediate value.
@@ -48,23 +48,23 @@ impl Op {
 
     /// A general step a b-jit body's helper makes in place (`lane_body_step`): one that only continues,
     /// jumps or throws, on the frame's own registers, bindings and environment, with no call, return,
-    /// suspension or `this` binding. The lane's own in-place steps (`LANE_IN_PLACE`) are among them;
-    /// the rest may replace the frame's environment, which the lane's own dispatch caches, so only a
-    /// body, whose helper drops those caches after the step, makes them: the scope, operator,
-    /// constant, name, literal, element, field and class steps, and `InitializeThis` (whose helper publishes the receiver it bound to the payload).
+    /// suspension or `this` binding (the catalog's `GenericStep`). The lane's own in-place steps
+    /// (`steps_in_lane`) are among them; the rest may replace the frame's environment, which the lane's
+    /// own dispatch caches, so only a body, whose helper drops those caches after the step, makes them.
     pub(crate) const fn steps_in_body(self) -> bool {
-        self.traits().has(crate::bytecode::Traits::LANE_IN_PLACE) || matches!(
-            self,
-            Op::CloneEnv | Op::InitializeTdz | Op::LoadLocal | Op::StoreLocal | Op::LoadEnvLocal | Op::StoreEnvLocal | Op::StoreVarBinding
-                | Op::LoadConst | Op::Unary | Op::Binary | Op::JumpBinaryFalse | Op::Throw
-                | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof | Op::ResolveName | Op::LoadResolvedName | Op::DeleteName | Op::StoreName | Op::StoreResolvedName
-                | Op::LoadCallee | Op::LoadImportMeta | Op::LoadCapture | Op::StoreCapture | Op::InitializeThis
-                | Op::MakeClosure | Op::MakeArray | Op::MakeConstArray | Op::MakeObject | Op::MakeObject2 | Op::MakeObjectLiteral
-                | Op::MakeLiteralTemplate | Op::SuperConstArrayObject2 | Op::CreateRegExpLiteral | Op::CacheTemplateObject | Op::LoadCachedTemplateObject
-                | Op::StringCaseIndex | Op::StringConcat | Op::Delete | Op::GetAsyncIterator
-                | Op::GetField | Op::GetIndex | Op::SetIndex | Op::SetField | Op::SetThisField | Op::SetFieldStrict | Op::SetThisFieldStrict
-                | Op::ValidateClassHeritage | Op::SuperCallCheck
-        )
+        self.generic_step().is_some()
+    }
+
+    /// A general step the lane makes in place: it reads and writes only the frame, its registers and
+    /// heap values, runs guest code only through nested calls, and continues or throws.
+    pub(crate) const fn steps_in_lane(self) -> bool {
+        matches!(self.generic_step(), Some(GenericStep::Lane | GenericStep::LaneResult))
+    }
+
+    /// A lane step that is a call-out row (`Operation::call_out`) whose result the lane writes back to
+    /// the frame (`Vm::call_out`).
+    pub(crate) const fn steps_with_result(self) -> bool {
+        matches!(self.generic_step(), Some(GenericStep::LaneResult))
     }
 
     /// A step that reads and writes only the variables of the activation that runs it (its locals,
@@ -86,9 +86,9 @@ impl Op {
     }
 
     /// A call form that activates a script function: the plain call, the method, known, array, spread and
-    /// forwarding calls, and the construction (the catalog's `SCRIPT_CALL` trait).
+    /// forwarding calls, and the construction (the catalog's `Call` control flow).
     pub(crate) const fn makes_script_call(self) -> bool {
-        self.traits().has(crate::bytecode::Traits::SCRIPT_CALL)
+        matches!(self.control_flow_layout(), ControlFlowLayout::Call)
     }
 
     /// A suspension point: an `await`, or a `yield` of a generator.

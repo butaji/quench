@@ -3393,7 +3393,7 @@ script_handler! {
 }
 
 lane_handler! {
-    /// An instruction whose general step only continues or throws (`lane_steps_in_place`),
+    /// An instruction whose general step only continues or throws (`Op::steps_in_lane`),
     /// run in place by that step when the lane runs the frame's own code: the frame's
     /// registers are the lane's, and its PC is published as the general loop publishes it.
     /// A throw is stashed in `Vm::lane_raised` for the general path to raise at this
@@ -3447,7 +3447,7 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
     let instruction = decoded_instruction(body, body.code[pc]);
-    if !instruction.op().traits().has(crate::bytecode::Traits::LANE_RESULT_STEP) {
+    if !instruction.op().steps_with_result() {
         return Resumed::Exit(exit(ip));
     }
     let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::of(code))
@@ -3507,13 +3507,6 @@ fn lane_in_place<H: Host, T>(
             None
         }
     }
-}
-
-/// Instructions whose general step reads and writes only the frame, its registers and heap
-/// values, runs guest code only through nested calls, and continues (a backward jump in the
-/// general path) or throws: no call, return, `this` binding or environment change the lane caches.
-const fn lane_steps_in_place(op: Op) -> bool {
-    op.traits().has(crate::bytecode::Traits::LANE_IN_PLACE)
 }
 
 script_handler! {
@@ -17174,7 +17167,7 @@ const READ_MEMOS: usize = 4096;
 /// before its first, or once the table refilled and gave the slot to another site.
 #[inline(always)]
 fn site_read_memo<'a>(memos: &'a [ReadMemo], site: &LaneInstruction) -> Option<&'a ReadMemo> {
-    // SAFETY: a memo's site is a call record (`is_script_call`), whose operand is `call`.
+    // SAFETY: a memo's site is a call record (`Op::makes_script_call`), whose operand is `call`.
     let slot = unsafe { site.operand.call.memo };
     memos.get(slot as usize).filter(|held| std::ptr::eq(held.site, site))
 }
@@ -17272,7 +17265,7 @@ fn lane_memoize_read<H: Host>(
         read,
     };
     let memos = &mut vm.lane_stack.read_memos;
-    // SAFETY: `site` is a call record (`is_script_call`) of the running view, whose operand is
+    // SAFETY: `site` is a call record (`Op::makes_script_call`) of the running view, whose operand is
     // `call`, written as `requicken` writes it.
     unsafe {
         if site_read_memo(memos, &*site).is_some() {
@@ -18090,7 +18083,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::DefineField => Some(lane_define_field::<H>),
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
         Class::CopyDataProperties => Some(lane_copy_data_properties::<H>),
-        _ if lane_steps_in_place(opcode) => Some(lane_general_step::<H>),
+        _ if opcode.steps_in_lane() => Some(lane_general_step::<H>),
         Class::IncDec => Some(lane_inc_dec::<H, false>),
         _ if denoted_handler::<H>(opcode).is_some() => denoted_handler::<H>(opcode),
         Class::GetIndex => Some(lane_get_index::<H>),
@@ -18302,7 +18295,7 @@ fn lane_operand(
         _ if holds_field_hint(instruction.op()) => LaneOperand {
             field: FieldOperand { imm: instruction.imm(), shape: super::NO_FIELD_RECEIVER },
         },
-        _ if is_script_call(instruction.op()) => LaneOperand {
+        _ if instruction.op().makes_script_call() => LaneOperand {
             call: CallOperand { imm: instruction.imm(), memo: NO_READ_MEMO },
         },
         _ => LaneOperand {
@@ -19685,12 +19678,6 @@ fn derive_lane_view<'live, H: Host>(
 /// `var` capture read's of the global object (`lane_load_name_bound`, `lane_load_root_var`).
 fn holds_field_hint(op: Op) -> bool {
     op.is_field_store() || op.is_get_field() || op.is_load_capture() || is_global_name_access(op)
-}
-
-/// Whether an instruction's record is a call site a read memo may answer
-/// (`lane_memoize_read`), whose operand is `call`.
-fn is_script_call(op: Op) -> bool {
-    op.traits().has(crate::bytecode::Traits::SCRIPT_CALL)
 }
 
 /// Whether an instruction is a by-name load (`LOAD_NAME`) or store, whose hint a global
