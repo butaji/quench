@@ -715,6 +715,11 @@ pub(crate) struct Heap {
     memory_profile: memory_profile::MemoryProfile,
     /// Whether a concurrent cycle is marking (`concurrent_mark`): never set yet.
     satb_active: bool,
+    /// The incremental cycle's mark state between steps (`concurrent_mark`).
+    cycle: Option<Box<concurrent_mark::ConcurrentCycle>>,
+    /// Whether the next full collection finds its marks made by a finished cycle and keeps
+    /// them (`Heap::finish_cycle`).
+    cycle_marked: bool,
     /// Whether any weak collection, weak reference or finalization registry was made since the
     /// heap began: such a heap runs no concurrent cycle (`CycleRefusal::WeakCells`).
     weak_cells_made: bool,
@@ -2341,15 +2346,22 @@ impl Heap {
                 self.gc_profile.young_cells_swept += self.young.count() as u64;
             }
         }
+        // A finished incremental cycle made the marks this full collection keeps.
+        let premarked = std::mem::take(&mut self.cycle_marked);
+        debug_assert!(!premarked || full);
         if full {
-            Self::clear_marks(&self.marks);
+            if !premarked {
+                Self::clear_marks(&self.marks);
+            }
             self.remembered.clear();
             self.remembered_marks.fill(0);
             self.carried_owners.clear();
             // A full collection promotes every survivor, aged or not.
             self.aged.clear();
             for (family, _) in self.record_families_mut() {
-                family.clear_marks();
+                if !premarked {
+                    family.clear_marks();
+                }
                 family.forget_ages();
             }
         }

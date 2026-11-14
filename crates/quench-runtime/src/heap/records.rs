@@ -62,6 +62,7 @@ pub(super) trait RecordFamily {
     fn begin_satb(&mut self);
     fn end_satb(&mut self);
     fn take_satb_values(&mut self) -> Vec<Value>;
+    fn satb_values_empty(&self) -> bool;
     /// What minor sweeps found of the aged records since the last call, emptied.
     fn take_aged_fates(&mut self) -> AgedFates;
     fn live_count(&self) -> usize;
@@ -106,6 +107,9 @@ impl<T, const CAPACITY: usize> RecordFamily for RecordSpace<T, CAPACITY> {
     }
     fn take_satb_values(&mut self) -> Vec<Value> {
         RecordSpace::take_satb_values(self)
+    }
+    fn satb_values_empty(&self) -> bool {
+        self.satb_values.is_empty()
     }
     fn take_aged_fates(&mut self) -> AgedFates {
         std::mem::take(&mut self.aged_fates)

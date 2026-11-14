@@ -1847,3 +1847,108 @@ fn allocation_is_black_while_the_snapshot_barrier_is_on() {
     assert!(during.iter().all(|&value| !heap.is_live(value)) && !heap.is_live(cell));
     assert!(kept.iter().all(|&value| heap.is_live(value)));
 }
+
+#[test]
+fn an_incremental_cycle_keeps_what_its_snapshot_reached_under_interleaved_mutation() {
+    use std::collections::{HashMap, HashSet};
+    let reachable = |roots: &[Value], fields: &HashMap<Value, Vec<Value>>| {
+        let (mut seen, mut stack) = (HashSet::new(), roots.to_vec());
+        while let Some(node) = stack.pop() {
+            if node.is_heap() && seen.insert(node) {
+                stack.extend(fields.get(&node).into_iter().flatten().copied());
+            }
+        }
+        seen
+    };
+    for seed in 1..=24_u64 {
+        for budget in [1, 2, 7, 64, usize::MAX] {
+            let mut state = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+            let mut next = move |bound: usize| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state % bound as u64) as usize
+            };
+            let mut heap = Heap::new();
+            // Two-slot objects keep their values inline; four-slot ones in an arena run.
+            heap.register_property_shape(1, 2, None);
+            heap.register_property_shape(2, 4, None);
+            let mut fields: HashMap<Value, Vec<Value>> = HashMap::new();
+            let make = |heap: &mut Heap, fields: &mut HashMap<Value, Vec<Value>>, wide: bool| {
+                let node = if wide {
+                    heap.alloc_object_with_properties(Value::NULL, 2, &[Value::NULL; 4])
+                } else {
+                    heap.alloc_object_pair(Value::NULL, 1, Value::NULL, Value::NULL)
+                };
+                fields.insert(node, vec![Value::NULL; if wide { 4 } else { 2 }]);
+                node
+            };
+            let store = |heap: &mut Heap, fields: &mut HashMap<Value, Vec<Value>>, node: Value, slot: usize, value: Value| {
+                heap.property_set(node, slot, value);
+                fields.get_mut(&node).unwrap()[slot] = value;
+            };
+            let nodes: Vec<Value> = (0..48).map(|index| make(&mut heap, &mut fields, index % 3 == 0)).collect();
+            for &node in &nodes {
+                for slot in 0..fields[&node].len() {
+                    let value = if next(3) == 0 { Value::NULL } else { nodes[next(nodes.len())] };
+                    store(&mut heap, &mut fields, node, slot, value);
+                }
+            }
+            let roots = nodes[..3].to_vec();
+            heap.collect(roots.iter().copied());
+            let live = reachable(&roots, &fields);
+            fields.retain(|node, _| live.contains(node));
+            // Edges dropped before the cycle leave garbage its snapshot does not reach.
+            let mut existing: Vec<Value> = fields.keys().copied().collect();
+            existing.sort_by_key(|value| value.to_bits());
+            for _ in 0..12 {
+                let owner = existing[next(existing.len())];
+                let slot = next(fields[&owner].len());
+                store(&mut heap, &mut fields, owner, slot, Value::NULL);
+            }
+            heap.begin_cycle(roots.iter().copied());
+            let at_start = reachable(&roots, &fields);
+            for _ in 0..300 {
+                let mut now: Vec<Value> = reachable(&roots, &fields).into_iter().collect();
+                now.sort_by_key(|value| value.to_bits());
+                match next(4) {
+                    0 => {
+                        heap.mark_step(budget);
+                    }
+                    1 => {
+                        let node = make(&mut heap, &mut fields, next(2) == 0);
+                        let owner = now[next(now.len())];
+                        let slot = next(fields[&owner].len());
+                        store(&mut heap, &mut fields, owner, slot, node);
+                        store(&mut heap, &mut fields, node, 0, now[next(now.len())]);
+                    }
+                    _ => {
+                        // Move, drop or re-link an edge among what the mutator can reach.
+                        let owner = now[next(now.len())];
+                        let slot = next(fields[&owner].len());
+                        let value = if next(4) == 0 { Value::NULL } else { now[next(now.len())] };
+                        store(&mut heap, &mut fields, owner, slot, value);
+                    }
+                }
+            }
+            heap.finish_cycle(roots.iter().copied());
+            assert!(!heap.cycle_running() && !heap.satb_active());
+            let survivors = reachable(&roots, &fields);
+            for &node in &survivors {
+                assert!(heap.is_live(node), "seed {seed} budget {budget}: a reachable node was freed");
+                let object = heap.object(node).unwrap();
+                for (slot, &value) in fields[&node].iter().enumerate() {
+                    assert_eq!(heap.property_get(object, slot), Some(value), "seed {seed} budget {budget}");
+                }
+            }
+            // What the snapshot could not reach is garbage the cycle frees.
+            for node in existing.iter().filter(|node| !at_start.contains(node)) {
+                assert!(!heap.is_live(*node), "seed {seed}: garbage at the cycle's start survived it");
+            }
+            // The heap collects as usual afterwards.
+            heap.collect(roots.iter().copied());
+            assert!(survivors.iter().all(|&node| heap.is_live(node)));
+            assert!(heap.object_records.marks_within_occupancy());
+        }
+    }
+}

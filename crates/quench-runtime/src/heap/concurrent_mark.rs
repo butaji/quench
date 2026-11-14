@@ -174,3 +174,108 @@ impl Heap {
         values
     }
 }
+
+/// An incremental cycle's mark state between steps: the values left to mark and the state the
+/// serial mark keeps across them. Steps run on the mutator thread (`Heap::mark_step`), between
+/// which the mutator writes through the snapshot barrier and allocates black.
+pub(super) struct ConcurrentCycle {
+    work: Vec<Value>,
+    ephemerons: weak::EphemeronWork,
+    last_proto: PushedProtos,
+}
+
+impl Heap {
+    /// Starts an incremental cycle, as a full collection starts: the marks are cleared, and
+    /// the snapshot is pushed: `roots`, the root table, and the children of every live cell
+    /// (cells pass no snapshot barrier, so what one holds now is all the cycle needs of it),
+    /// with sparse elements. The snapshot barrier and black allocation then run until
+    /// `finish_cycle`.
+    ///
+    /// The caller has passed the gates (`concurrent_cycle_refusal`): there is no weak cell, so
+    /// no ephemeron waits on a key; shape roots are among `roots`.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn begin_cycle(&mut self, roots: impl IntoIterator<Item = Value>) {
+        assert!(self.cycle.is_none() && !self.satb_active, "one cycle at a time");
+        debug_assert!(!self.weak_cells_made, "a heap with weak cells runs no cycle");
+        Self::clear_marks(&self.marks);
+        self.remembered.clear();
+        self.remembered_marks.fill(0);
+        self.carried_owners.clear();
+        self.aged.clear();
+        for (family, _) in self.record_families_mut() {
+            family.clear_marks();
+            family.forget_ages();
+        }
+        let mut work: Vec<Value> = roots.into_iter().collect();
+        work.extend(self.roots.values());
+        let mut last_proto = PushedProtos::default();
+        for (index, slot) in self.slots.iter().enumerate() {
+            if let Some(cell) = &slot.cell {
+                Self::children(
+                    Value::heap(index as u32),
+                    cell,
+                    &self.properties,
+                    &mut work,
+                    &mut |_, _, _, _, _| {},
+                    GcTraceKind::Collection,
+                    &mut last_proto,
+                );
+            }
+        }
+        if let Some(arrays) = &self.sparse_arrays {
+            for elements in arrays.values() {
+                work.extend(elements.values.values().copied());
+            }
+        }
+        self.set_satb(true);
+        self.cycle = Some(Box::new(ConcurrentCycle {
+            work,
+            ephemerons: weak::EphemeronWork::default(),
+            last_proto: PushedProtos::default(),
+        }));
+    }
+
+    /// Whether an incremental cycle is running (`begin_cycle`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn cycle_running(&self) -> bool {
+        self.cycle.is_some()
+    }
+
+    /// Marks up to `budget` values of the running cycle on this thread, after taking what the
+    /// snapshot barrier copied since the last step; whether its marking is done (nothing left
+    /// to mark, nothing copied).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn mark_step(&mut self, budget: usize) -> bool {
+        let mut cycle = self.cycle.take().expect("a running cycle");
+        cycle.work.append(&mut self.take_satb_values());
+        // No closure-read source: closure environment edges are ordinary edges, and every
+        // environment is traced whole.
+        let mut environments = EnvironmentTrace::new(None, EnvironmentReads::Projections);
+        let ConcurrentCycle { work, ephemerons, last_proto } = &mut *cycle;
+        for _ in 0..budget {
+            let Some(value) = work.pop() else { break };
+            self.mark_value(value, work, &mut |_, _, _, _, _| {}, ephemerons, GcTraceKind::Collection, &mut environments, last_proto);
+        }
+        debug_assert!(!environments.has_pending());
+        let done = cycle.work.is_empty();
+        self.cycle = Some(cycle);
+        done && self.satb_values_empty()
+    }
+
+    fn satb_values_empty(&mut self) -> bool {
+        self.record_families_mut().iter_mut().all(|(family, _)| family.satb_values_empty())
+    }
+
+    /// Finishes the running cycle: marks what is left, ends the snapshot barrier (which marks
+    /// what the cycle allocated), and runs a full collection that keeps those marks, tracing
+    /// `roots` again from them and sweeping: the remark. What the snapshot reached, and what
+    /// was made since, survives.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn finish_cycle(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
+        while !self.mark_step(usize::MAX) {}
+        self.cycle = None;
+        self.set_satb(false);
+        self.cycle_marked = true;
+        self.collect_with_object_roots(roots, |_, _, _, _, _| {}, None, None, true)
+    }
+}
