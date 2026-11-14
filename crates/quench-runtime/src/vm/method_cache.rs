@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 use super::*;
 mod atoms;
+mod invalidate;
+#[cfg(feature = "profile-aggregate")]
+use invalidate::method_cache_shadowed_by;
 pub(super) use atoms::{AtomBits, MethodCacheAtoms};
 
 /// Entries of a call site's inline method cache, most recent first; a site that sees more
@@ -27,39 +30,6 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn method_caches_may_name(&self, atom: Atom) -> bool {
         self.method_cache_atoms.contains(atom)
-    }
-
-    pub(super) fn invalidate_method_caches_for_atom(&mut self, atom: Atom) {
-        #[cfg(feature = "profile-aggregate")]
-        self.snapshot_method_caches_for_atom(atom, 1);
-        for entries in &mut self.method_caches {
-            let len = entries.len();
-            retain_other_atom(entries, len, atom);
-        }
-        for set in &mut self.megamorphic_methods {
-            set.len = retain_other_atom(&mut set.entries, usize::from(set.len), atom) as u8;
-        }
-        self.megamorphic_methods.retain(|set| set.len != 0);
-    }
-
-    pub(super) fn invalidate_method_caches_for_prototype_add(&mut self, object: Value, atom: Atom) {
-        #[cfg(feature = "profile-aggregate")]
-        self.snapshot_shadowed_method_caches(object, atom);
-        let heap = &self.heap;
-        for entries in &mut self.method_caches {
-            let len = entries.len();
-            retain_unshadowed_entries(heap, entries, len, object, atom);
-        }
-        for set in &mut self.megamorphic_methods {
-            set.len = retain_unshadowed_entries(
-                heap,
-                &mut set.entries,
-                usize::from(set.len),
-                object,
-                atom,
-            ) as u8;
-        }
-        self.megamorphic_methods.retain(|set| set.len != 0);
     }
 
     pub(super) fn is_function(&self, value: Value) -> bool {
@@ -201,22 +171,28 @@ impl<H: Host> Vm<H> {
             .iter_mut()
             .find(|set| set.site == site)
         {
-            if let Some(entry) = set.entries[..usize::from(set.len)]
-                .iter_mut()
-                .find(|entry| entry.records_same(&cache))
-            {
+            let held = &mut set.entries[..usize::from(set.len)];
+            let named = held.iter().any(|entry| entry.atom == cache.atom);
+            if let Some(entry) = held.iter_mut().find(|entry| entry.records_same(&cache)) {
                 *entry = cache;
             } else if usize::from(set.len) < super::compiled::tier_policy::POLYMORPHISM {
                 set.entries[usize::from(set.len)] = cache;
                 set.len += 1;
+            }
+            if !named {
+                self.method_cache_atoms.list_site(cache.atom, site, true);
             }
             return;
         }
         let entries = &mut self.method_caches[site];
         if entries.iter().any(|entry| entry.records_same(&cache)) || entries[1].target.is_none()
         {
+            let named = entries.iter().any(|entry| entry.atom == cache.atom);
             entries[1] = entries[0];
             entries[0] = cache;
+            if !named {
+                self.method_cache_atoms.list_site(cache.atom, site, false);
+            }
             return;
         }
         let mut set = MethodCacheSet {
@@ -226,6 +202,10 @@ impl<H: Host> Vm<H> {
         };
         set.entries[..METHOD_CACHE_WAYS].copy_from_slice(entries);
         set.entries[METHOD_CACHE_WAYS] = cache;
+        // The entries the set now holds are listed with its flag.
+        for entry in set.entries[..=METHOD_CACHE_WAYS].iter().filter(|entry| entry.target.is_some()) {
+            self.method_cache_atoms.list_site(entry.atom, site, true);
+        }
         self.megamorphic_methods.push(set);
     }
 }
@@ -290,60 +270,6 @@ impl<H: Host> Vm<H> {
             depth = depth.checked_add(1)?;
         }
     }
-}
-
-fn retain_other_atom(entries: &mut [MethodCache], len: usize, atom: Atom) -> usize {
-    let mut retained = 0;
-    for index in 0..len {
-        let entry = entries[index];
-        if entry.atom != atom {
-            entries[retained] = entry;
-            retained += 1;
-        }
-    }
-    entries[retained..].fill(EMPTY_METHOD_CACHE);
-    retained
-}
-
-fn retain_unshadowed_entries(
-    heap: &crate::heap::Heap,
-    entries: &mut [MethodCache],
-    len: usize,
-    object: Value,
-    atom: Atom,
-) -> usize {
-    let mut retained = 0;
-    for index in 0..len {
-        let entry = entries[index];
-        if !method_cache_shadowed_by(heap, entry, object, atom) {
-            entries[retained] = entry;
-            retained += 1;
-        }
-    }
-    entries[retained..].fill(EMPTY_METHOD_CACHE);
-    retained
-}
-
-fn method_cache_shadowed_by(
-    heap: &crate::heap::Heap,
-    entry: MethodCache,
-    object: Value,
-    atom: Atom,
-) -> bool {
-    if entry.atom != atom || entry.guard.depth <= 1 {
-        return false;
-    }
-    let mut prototype = entry.proto;
-    for _ in 1..entry.guard.depth {
-        if prototype == object {
-            return true;
-        }
-        let Some(data) = heap.object_record(prototype) else {
-            return false;
-        };
-        prototype = data.proto();
-    }
-    false
 }
 
 fn retain_entries(heap: &crate::heap::Heap, entries: &mut [MethodCache], len: usize) -> usize {

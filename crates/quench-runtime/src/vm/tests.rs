@@ -3998,6 +3998,51 @@ fn third_method_receiver_promotes_site_to_megamorphic() {
     assert_eq!(vm.megamorphic_methods[0].len, 4);
 }
 
+/// A method cache entry of `atom` at shape `shape`.
+fn method_entry_for_test(shape: u32, atom: crate::bytecode::Atom) -> MethodCache {
+    MethodCache {
+        shape,
+        atom,
+        proto: crate::Value::NULL,
+        callee: crate::Value::NULL,
+        guard: super::EMPTY_METHOD_GUARD,
+        target: Some(CallTarget::User(super::program_store::ProgramId::MAIN, shape, crate::Value::NULL)),
+    }
+}
+
+#[test]
+fn atom_invalidation_drops_only_the_entries_naming_the_atom() {
+    let mut vm = Vm::new(TestHost::default());
+    vm.method_caches.resize(6, [super::EMPTY_METHOD_CACHE; 2]);
+    // Sites 0 and 1 name atom 7; site 2 names atoms 7 and 8; site 3 names only 8; site 4
+    // grows a megamorphic set naming both.
+    vm.record_method_cache(0, method_entry_for_test(1, 7));
+    vm.record_method_cache(1, method_entry_for_test(1, 7));
+    vm.record_method_cache(2, method_entry_for_test(1, 7));
+    vm.record_method_cache(2, method_entry_for_test(2, 8));
+    vm.record_method_cache(3, method_entry_for_test(1, 8));
+    for shape in 1..=3 {
+        vm.record_method_cache(4, method_entry_for_test(shape, 7));
+    }
+    vm.record_method_cache(4, method_entry_for_test(9, 8));
+    vm.invalidate_method_caches_for_atom(7);
+    let names = |vm: &Vm<TestHost>, atom| {
+        vm.method_caches.iter().flatten().chain(vm.megamorphic_methods.iter().flat_map(|set| set.entries[..usize::from(set.len)].iter())).any(|entry| entry.atom == atom)
+    };
+    assert!(!names(&vm, 7), "every entry for the invalidated atom is gone");
+    assert!(names(&vm, 8), "entries for other atoms stay");
+    assert_eq!(vm.method_caches[3][0].atom, 8);
+    assert_eq!(vm.megamorphic_methods[0].len, 1, "the set keeps its entry for atom 8");
+    // The atom caches again afterwards, and a second invalidation finds it.
+    vm.record_method_cache(0, method_entry_for_test(5, 7));
+    assert!(names(&vm, 7));
+    vm.invalidate_method_caches_for_atom(7);
+    assert!(!names(&vm, 7));
+    // An atom no entry names visits nothing.
+    vm.invalidate_method_caches_for_atom(99);
+    assert!(names(&vm, 8));
+}
+
 #[test]
 fn method_cache_gc_retains_live_and_rejects_reused_handles() {
     let mut vm = Vm::new(TestHost::default());
