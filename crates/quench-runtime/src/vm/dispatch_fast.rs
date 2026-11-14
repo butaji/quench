@@ -15817,6 +15817,24 @@ fn lane_push_callback<H: Host>(
     Some(start)
 }
 
+/// Writes the `passed` values into the window's locals at `local`: each of the first `bound` as
+/// its parameter's local, and every one after the `locals`, as the value a frame keeps for legacy
+/// reflection.
+///
+/// # Safety
+/// `local` starts room for the `locals` and the `passed` values after them.
+unsafe fn write_window_arguments(local: *mut Value, locals: usize, passed: &[Value], bound: usize) {
+    // SAFETY: the caller's contract.
+    unsafe {
+        for (slot, &value) in passed.iter().enumerate() {
+            if slot < bound {
+                local.add(slot).write(value);
+            }
+            local.add(locals + slot).write(value);
+        }
+    }
+}
+
 /// `lane_activate` of an environment target (`CallEntry::Environment`): its window holds
 /// its registers, then its environment, made now as the frame's promotion would make it
 /// (each captured slot its parameter's argument or `undefined`, every other slot owned
@@ -15903,13 +15921,7 @@ fn lane_activate_environment<H: Host>(
         // The few values a call passes are copied in place: one pass writes each as its
         // parameter's local and, after the locals, as the value a frame keeps for legacy
         // reflection, with no library copy per run.
-        let bound = usize::from(argc.min(target.params));
-        for (slot, &value) in passed.iter().enumerate() {
-            if slot < bound {
-                local.add(slot).write(value);
-            }
-            local.add(locals + slot).write(value);
-        }
+        write_window_arguments(local, locals, passed, usize::from(argc.min(target.params)));
         if let Some(gathered) = gathered {
             local.add(usize::from(target.params) - 1).write(gathered);
         }
@@ -15941,13 +15953,7 @@ fn lane_activate_environment<H: Host>(
     unsafe { stack.push_activation(activation, callee_registers.0) };
     // SAFETY: the program store keeps a derived view alive with its program.
     let base = unsafe { (*target.view).records() };
-    unsafe {
-        (*cx).registers = callee_registers;
-        (*cx).base = base;
-        (*cx).this = this;
-        (*cx).env = target.env;
-        (*cx).capture = target.capture;
-    }
+    unsafe { lane_set_running(cx, (callee_registers, base), (this, target.env, target.capture)) };
     if cross {
         lane_enter_program(cx, target.program);
     }
@@ -16450,18 +16456,18 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
         unsafe { (*cx).memory = MemoryView::script(cx) };
     }
     debug_assert!(unsafe { (*cx).memory.bytes } == cx.cast::<u8>(), "a JavaScript run carries its context");
-    unsafe { lane_resume_caller(cx, (caller_registers, caller_base), (this, env, capture)) };
+    unsafe { lane_set_running(cx, (caller_registers, caller_base), (this, env, capture)) };
     caller_registers.set(destination, value);
     Some((caller_registers, following(call)))
 }
 
-/// Makes the caller's registers, record base, receiver, environment and capture the running ones
-/// again after its callee's activation returned.
+/// Makes `registers`, the record `base`, the receiver, the environment and the capture the running
+/// activation's: the caller's again after its callee's activation returned, or a new callee's.
 ///
 /// # Safety
 /// `cx` is the running lane's context.
 #[inline(always)]
-unsafe fn lane_resume_caller<H: Host>(cx: *mut LaneContext<H>, (registers, base): (Registers, Ip), (this, env, capture): (Value, Value, *const usize)) {
+unsafe fn lane_set_running<H: Host>(cx: *mut LaneContext<H>, (registers, base): (Registers, Ip), (this, env, capture): (Value, Value, *const usize)) {
     // SAFETY: the caller's contract.
     unsafe {
         (*cx).registers = registers;
