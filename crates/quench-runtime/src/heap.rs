@@ -13,7 +13,7 @@ pub(crate) use dense_growth::dense_write_gap_limit;
 mod store_gate;
 pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod array_proofs;
-pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope, retire_array_storage_proofs};
+pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope, ProvedElements, retire_array_storage_proofs};
 mod cell;
 mod dependencies;
 pub(crate) use dependencies::{

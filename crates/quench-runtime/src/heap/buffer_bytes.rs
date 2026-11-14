@@ -6,6 +6,7 @@
 //! unshared memory detaches its view before the linear bytes can move. Shared views lock
 //! the common backing store on every access and retain their length after memory growth.
 
+use super::array_proofs::retire_array_storage_proofs;
 use crate::shared_backing::{SharedBacking, State};
 use crate::wasm::memory::MemoryStorage;
 use std::rc::Rc;
@@ -32,8 +33,19 @@ enum BufferStore {
     AtomicShared(Arc<SharedBacking>),
 }
 
+/// A lane run's typed array proofs name the bytes a store holds and that it is the only owner
+/// of them (`Heap::prove_typed_storage`). They retire wherever a buffer's bytes could move or
+/// gain an owner: a store is shared, unshared or grown, and a handle on one is dropped, which
+/// is how a detached or replaced buffer releases its bytes.
+impl Drop for BufferBytes {
+    fn drop(&mut self) {
+        retire_array_storage_proofs();
+    }
+}
+
 impl Clone for BufferBytes {
     fn clone(&self) -> Self {
+        retire_array_storage_proofs();
         if matches!(*self.0, BufferStore::AddressPinned(_)) {
             Self::from(self.to_vec())
         } else {
@@ -156,6 +168,7 @@ impl BufferBytes {
 
     /// Preserve this fixed allocation when future cell snapshots are cloned.
     pub(crate) fn pin_address(&mut self) -> usize {
+        retire_array_storage_proofs();
         let store = Rc::make_mut(&mut self.0);
         match store {
             BufferStore::Owned(bytes) => {
@@ -184,6 +197,7 @@ impl BufferBytes {
 
     /// The bytes for writing; an owned store is unshared from other cells first.
     pub(crate) fn make_mut(&mut self) -> BufferWrite<'_> {
+        retire_array_storage_proofs();
         let store = Rc::make_mut(&mut self.0);
         if let BufferStore::Shared(bytes) = store {
             *store = BufferStore::Owned(bytes.to_vec());
@@ -202,7 +216,7 @@ impl BufferBytes {
     /// Another handle on these bytes, for reading them while a different buffer is written:
     /// only for stores that any write copies first, so no write can reach the bytes it reads.
     pub(crate) fn unaliased_handle(&self) -> Option<Self> {
-        matches!(*self.0, BufferStore::Owned(_) | BufferStore::Shared(_)).then(|| Self(self.0.clone()))
+        matches!(*self.0, BufferStore::Owned(_) | BufferStore::Shared(_)).then(|| self.clone())
     }
     pub(crate) fn from_shared(backing: Arc<SharedBacking>) -> Self {
         Self(Rc::new(BufferStore::AtomicShared(backing)))
@@ -226,15 +240,30 @@ impl BufferBytes {
         self.read().to_vec()
     }
     pub(crate) fn read(&self) -> BufferRead<'_> {
+        match (self.unlocked(), &*self.0) {
+            (Some(bytes), _) => BufferRead::Borrowed(bytes),
+            (None, BufferStore::AtomicShared(b)) => BufferRead::Shared { state: b.lock(), length: b.len_for_view() },
+            (None, _) => unreachable!("only the atomically shared store is locked"),
+        }
+    }
+
+    /// The bytes of an owned store, which a typed array's elements are read from in place.
+    #[inline(always)]
+    pub(crate) fn owned(&self) -> Option<&[u8]> {
         match &*self.0 {
-            BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes) => {
-                BufferRead::Borrowed(bytes)
-            }
-            BufferStore::Shared(bytes) => BufferRead::Borrowed(bytes),
-            BufferStore::AtomicShared(b) => BufferRead::Shared { state: b.lock(), length: b.len_for_view() },
-            BufferStore::Wasm(v) => {
-                BufferRead::Borrowed(unsafe { std::slice::from_raw_parts(v.base, v.len) })
-            }
+            BufferStore::Owned(bytes) => Some(bytes),
+            _ => None,
+        }
+    }
+
+    /// The bytes where no lock guards them (every store but the atomically shared one),
+    /// which `read` would borrow through a guard; `None` leaves the read to `read`.
+    pub(crate) fn unlocked(&self) -> Option<&[u8]> {
+        match &*self.0 {
+            BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes) => Some(bytes),
+            BufferStore::Shared(bytes) => Some(bytes),
+            BufferStore::Wasm(v) => Some(unsafe { std::slice::from_raw_parts(v.base, v.len) }),
+            BufferStore::AtomicShared(_) => None,
         }
     }
 
@@ -253,7 +282,10 @@ impl BufferBytes {
 
     /// The bytes as one owned vector, without a copy when this is their only owner.
     pub(crate) fn into_vec(self) -> Vec<u8> {
-        match Rc::try_unwrap(self.0) {
+        retire_array_storage_proofs();
+        let this = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `this` is never used or dropped again; its handle moves out whole.
+        match Rc::try_unwrap(unsafe { std::ptr::read(&this.0) }) {
             Ok(BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes)) => bytes,
             Ok(store) => Self(Rc::new(store)).to_vec(),
             Err(shared) => Self(shared).to_vec(),
@@ -262,6 +294,7 @@ impl BufferBytes {
 
     /// The owned bytes for resizing. Views are never resizable buffers.
     pub(crate) fn owned_mut(&mut self) -> &mut Vec<u8> {
+        retire_array_storage_proofs();
         let store = Rc::make_mut(&mut self.0);
         if let BufferStore::Shared(bytes) = store {
             *store = BufferStore::Owned(bytes.to_vec());

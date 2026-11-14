@@ -2732,6 +2732,7 @@ mod local_fields;
 use local_fields::local_field_handler;
 mod loop_body;
 mod loop_resume;
+mod typed_sites;
 use loop_body::LoopBody;
 use lane_frame::{lane_load_const, lane_move, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_object_coercible, staged_to_numeric, staged_typeof_index};
 
@@ -4640,7 +4641,8 @@ fn lane_index_slot_element<H: Host>(vm: &mut Vm<H>, ip: Ip, base: Value, key: Va
 /// store's site does (`lane_typed_array_store`).
 fn lane_typed_array_element<H: Host>(ip: Ip, vm: &mut Vm<H>, base: Value, key: Value) -> Option<Value> {
     let value = vm.plain_typed_element(base, key)?;
-    requicken::<H>(ip, lane_get_index_typed::<H>);
+    let kind = vm.typed_array_kind(base)?;
+    requicken::<H>(ip, typed_sites::read_handler::<H>(kind));
     Some(value)
 }
 
@@ -4844,8 +4846,8 @@ fn lane_typed_array_store<H: Host>(ip: Ip, vm: &mut Vm<H>, object: Value, key: V
     let stored = vm
         .array_index_key(key)
         .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value));
-    if stored {
-        requicken::<H>(ip, lane_set_index_typed::<H>);
+    if let Some(kind) = vm.typed_array_kind(object).filter(|_| stored) {
+        requicken::<H>(ip, typed_sites::store_handler::<H>(kind));
     }
     stored
 }

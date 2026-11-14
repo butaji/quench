@@ -696,7 +696,7 @@ print(JSON.stringify(out));
 fn integer_stores_into_typed_arrays_wrap_and_clamp() {
     // An integer stored into an integer typed array writes its low bytes, a Uint8Clamped
     // clamps it, a float view converts it, and a store past the end writes nothing
-    // (`typed_array_set_integer`), through views sharing one buffer too.
+    // (`store_number_in_place`), through views sharing one buffer too.
     let source = r#"
 const out = [];
 const kinds = [Uint8Array, Int8Array, Uint8ClampedArray, Uint16Array, Int16Array, Uint32Array, Int32Array, Float32Array];

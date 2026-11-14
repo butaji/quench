@@ -1476,7 +1476,7 @@ file-lines crates/quench-runtime/src/vm/temporal_plain_time.rs 728
 file-lines crates/quench-runtime/src/vm/temporal_zoned_date_time.rs 3351
 file-lines crates/quench-runtime/src/vm/tests.rs 25378
 file-lines crates/quench-runtime/src/vm/typed_array.rs 1139
-file-lines crates/quench-runtime/src/vm/typed_array_access.rs 959
+file-lines crates/quench-runtime/src/vm/typed_array_access.rs 872
 file-lines crates/quench-runtime/src/vm/value_serializer.rs 1957
 file-lines crates/quench-runtime/src/vm/vector_region.rs 950
 file-lines crates/quench-runtime/src/vm/wasm.rs 6501
@@ -5140,9 +5140,7 @@ magic crates/quench-runtime/src/vm/typed_array.rs::Vm<H>::typed_array_fill_nativ
 magic crates/quench-runtime/src/vm/typed_array.rs::Vm<H>::typed_array_native 2
 magic crates/quench-runtime/src/vm/typed_array.rs::Vm<H>::uint8_clamped_from_value 5
 magic crates/quench-runtime/src/vm/typed_array_access.rs::Vm<H>::typed_array_get 2
-magic crates/quench-runtime/src/vm/typed_array_access.rs::Vm<H>::typed_array_number_element 1
 magic crates/quench-runtime/src/vm/typed_array_access.rs::Vm<H>::typed_array_number_of 12
-magic crates/quench-runtime/src/vm/typed_array_access.rs::Vm<H>::typed_array_set_integer 2
 magic crates/quench-runtime/src/vm/typed_array_access.rs::store_element 4
 magic crates/quench-runtime/src/vm/typed_array_base64.rs::decode_group 7
 magic crates/quench-runtime/src/vm/typed_array_base64.rs::decode_hex 5

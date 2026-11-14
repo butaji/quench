@@ -136,6 +136,8 @@ mod subset_scope_tests;
 #[cfg(test)]
 mod subset_tests;
 #[cfg(test)]
+mod typed_element_tests;
+#[cfg(test)]
 mod string_parts_tests;
 
 pub mod owned_clone;

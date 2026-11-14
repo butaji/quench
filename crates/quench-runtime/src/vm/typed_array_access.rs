@@ -288,40 +288,6 @@ impl<H: Host> Vm<H> {
         self.embedding_with_buffer_bytes_mut(output, |to| f(from, to))
     }
 
-    /// `typed_array_get` of a non-BigInt typed array, which allocates nothing: the element,
-    /// or `undefined` past the end or of a detached buffer. One read of the view's cell, and
-    /// an integer element's value made as an integer, so an index loop over a `Uint8Array`
-    /// (ws's frame masking) converts through no float. `None` for any other object.
-    #[inline]
-    pub(super) fn typed_array_number_element(&self, object: Value, index: usize) -> Option<Value> {
-        let view = self.typed_array_view(object)?;
-        let kind = view.kind;
-        if kind.is_bigint() {
-            return None;
-        }
-        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(view.buffer) else {
-            return Some(Value::UNDEFINED);
-        };
-        let bytes = bytes.read();
-        let Some(start) = view.element(index, bytes.len()) else {
-            return Some(Value::UNDEFINED);
-        };
-        Some(match kind {
-            TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => Value::integer(i32::from(bytes[start])),
-            TypedArrayKind::Int8 => Value::integer(i32::from(bytes[start] as i8)),
-            TypedArrayKind::Uint16 => Value::integer(i32::from(u16::from_ne_bytes([bytes[start], bytes[start + 1]]))),
-            TypedArrayKind::Int16 => Value::integer(i32::from(i16::from_ne_bytes([bytes[start], bytes[start + 1]]))),
-            TypedArrayKind::Int32 => Value::integer(i32::from_ne_bytes(
-                bytes[start..start + 4].try_into().expect("an Int32 element has four bytes"),
-            )),
-            _ => {
-                let mut element = [0; size_of::<u64>()];
-                element[..kind.width()].copy_from_slice(&bytes[start..start + kind.width()]);
-                Value::number(Self::typed_array_number_of(kind, &element))
-            }
-        })
-    }
-
     /// A lane loop's view of the typed array `object`'s elements: its first element's address,
     /// element count and kind, which native code reads (and, `writable`, replaces) in place
     /// until the loop calls out. Only an attached buffer of Number elements this heap holds
@@ -376,7 +342,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The Number a numeric typed array element of `kind` holds in its leading `bytes`.
-    fn typed_array_number_of(kind: TypedArrayKind, bytes: &[u8; size_of::<u64>()]) -> f64 {
+    pub(super) fn typed_array_number_of(kind: TypedArrayKind, bytes: &[u8; size_of::<u64>()]) -> f64 {
         match kind {
             TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => bytes[0] as f64,
             TypedArrayKind::Uint16 => u16::from_ne_bytes([bytes[0], bytes[1]]) as f64,
@@ -546,59 +512,6 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    /// `typed_array_set` of a Number into a typed array of Number content: its ToNumber has no
-    /// effect, so the write needs neither a root nor a conversion. False leaves the store to
-    /// `typed_array_set`.
-    pub(super) fn typed_array_set_number(&mut self, object: Value, index: usize, value: Value) -> bool {
-        if let Some(integer) = value.as_int()
-            && self.typed_array_set_integer(object, index, integer)
-        {
-            return true;
-        }
-        let Some(number) = value.as_number() else {
-            return false;
-        };
-        match self.typed_array_view(object) {
-            Some(view) if !view.kind.is_bigint() => {
-                self.typed_array_write_view(view, index, &TypedArrayElement::Number(number));
-                true
-            }
-            _ => false,
-        }
-    }
-
-    /// `typed_array_set_number` of an integer into an integer typed array whose buffer the
-    /// view owns alone (`BufferBytes::lane_mut`): an integer's ToInt8 through ToUint32 is its low
-    /// bytes, and Uint8Clamped clamps it. False leaves the store to the general write.
-    #[inline]
-    fn typed_array_set_integer(&mut self, object: Value, index: usize, integer: i32) -> bool {
-        let Some(view) = self.typed_array_view(object) else { return false };
-        let width = match view.kind {
-            TypedArrayKind::Uint8Clamped | TypedArrayKind::Uint8 | TypedArrayKind::Int8 => size_of::<u8>(),
-            TypedArrayKind::Uint16 | TypedArrayKind::Int16 => size_of::<u16>(),
-            TypedArrayKind::Uint32 | TypedArrayKind::Int32 => size_of::<u32>(),
-            _ => return false,
-        };
-        let Some(Cell::ArrayBuffer { bytes: store, detached: false, resizable, .. }) = self.heap.buffer_bytes_mut(view.buffer) else {
-            return false;
-        };
-        let Some(store) = store.lane_mut() else { return false };
-        // A fixed view of a fixed buffer is in bounds by its length; past it nothing is written.
-        let start = match view.length.get() {
-            Some(length) if !*resizable => (index < length).then(|| view.offset + index * width),
-            _ => view.element(index, store.len()),
-        };
-        if let Some(start) = start {
-            match view.kind {
-                TypedArrayKind::Uint8Clamped => store[start] = integer.clamp(0, i32::from(u8::MAX)) as u8,
-                TypedArrayKind::Uint8 | TypedArrayKind::Int8 => store[start] = integer as u8,
-                TypedArrayKind::Uint16 | TypedArrayKind::Int16 => store[start..start + size_of::<u16>()].copy_from_slice(&(integer as u16).to_ne_bytes()),
-                _ => store[start..start + size_of::<u32>()].copy_from_slice(&(integer as u32).to_ne_bytes()),
-            }
-        }
-        true
-    }
-
     pub(super) fn typed_array_write_element(
         &mut self,
         object: Value,
@@ -614,7 +527,7 @@ impl<H: Host> Vm<H> {
 
     /// Writes element `index` of the typed array `view` describes; an index past its
     /// current length, or a detached or shrunken buffer, writes nothing.
-    fn typed_array_write_view(&mut self, view: TypedArrayView, index: usize, value: &TypedArrayElement) {
+    pub(super) fn typed_array_write_view(&mut self, view: TypedArrayView, index: usize, value: &TypedArrayElement) {
         let encoded = Self::typed_array_element_bytes(view.kind, value);
         let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.buffer_bytes_mut(view.buffer) else {
             return;
@@ -634,7 +547,7 @@ impl<H: Host> Vm<H> {
 
     /// What an element access reads of the typed array `object` before its buffer: one heap
     /// read, where `typed_array_length` and the buffer checks would each make their own.
-    fn typed_array_view(&self, object: Value) -> Option<TypedArrayView> {
+    pub(super) fn typed_array_view(&self, object: Value) -> Option<TypedArrayView> {
         match self.heap.get(object) {
             Some(Cell::TypedArray { kind, object, buffer, length }) => Some(TypedArrayView {
                 kind: *kind,
@@ -647,7 +560,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// One element encoding serves indexed stores and validated bulk fills.
-    fn typed_array_element_bytes(
+    pub(super) fn typed_array_element_bytes(
         kind: TypedArrayKind,
         value: &TypedArrayElement,
     ) -> [u8; MAX_TYPED_ARRAY_ELEMENT_WIDTH] {
@@ -918,11 +831,11 @@ mod backing_address_tests {
 
 /// A typed array's view of its buffer, as an element access reads it (`Vm::typed_array_view`).
 #[derive(Clone, Copy)]
-struct TypedArrayView {
-    kind: TypedArrayKind,
-    buffer: Value,
-    offset: usize,
-    length: crate::heap::ViewLength,
+pub(super) struct TypedArrayView {
+    pub(super) kind: TypedArrayKind,
+    pub(super) buffer: Value,
+    pub(super) offset: usize,
+    pub(super) length: crate::heap::ViewLength,
 }
 
 impl TypedArrayView {
@@ -930,14 +843,14 @@ impl TypedArrayView {
     /// `Vm::typed_array_length` derives them: a length-tracking view covers the buffer past its
     /// offset, a fixed one covers none of it once the buffer shrank below its end.
     #[inline(always)]
-    fn length_within(self, byte_length: usize) -> usize {
+    pub(super) fn length_within(self, byte_length: usize) -> usize {
         self.length.within(self.offset, self.kind.width(), byte_length).unwrap_or(0)
     }
 
     /// The byte offset of element `index` in an attached buffer of `byte_length` bytes, or
     /// `None` past the array's length (`length_within`).
     #[inline(always)]
-    fn element(self, index: usize, byte_length: usize) -> Option<usize> {
+    pub(super) fn element(self, index: usize, byte_length: usize) -> Option<usize> {
         (index < self.length_within(byte_length)).then(|| self.offset + index * self.kind.width())
     }
 }

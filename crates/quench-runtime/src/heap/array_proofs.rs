@@ -1,4 +1,5 @@
-//! Array storage proofs: what a lane run proved about record arrays' dense element storage
+//! Array storage proofs: what a lane run proved about record arrays' dense element storage, and
+//! typed arrays' element bytes
 //! (`ArrayStorageProofs`), so that a loop's element accesses read and replace elements
 //! through the proof instead of decoding the array at every access (Linear TOD-1247 M2).
 //!
@@ -27,7 +28,7 @@
 //! could carry one past a change: entering a nested run, ending its own, and restoring a
 //! context a native's callback copied.
 
-use super::{ArrayElements, ArrayObject, Heap};
+use super::{ArrayElements, ArrayObject, Cell, Heap, TypedArrayKind};
 use crate::value::Value;
 use std::mem::MaybeUninit;
 use std::ptr::NonNull;
@@ -52,6 +53,26 @@ pub(crate) struct ArrayStorageProofs {
     bases: [MaybeUninit<Value>; ARRAY_PROOF_SLOTS],
     /// Its first element.
     values: [MaybeUninit<NonNull<Value>>; ARRAY_PROOF_SLOTS],
+    /// Elements of the typed array a slot proves (`prove_typed_storage`): its length, zero
+    /// for an unproved slot.
+    typed_bounds: [usize; ARRAY_PROOF_SLOTS],
+    /// The proved typed array, its first element and its form (`TYPED_WRITABLE`).
+    typed_bases: [MaybeUninit<Value>; ARRAY_PROOF_SLOTS],
+    typed_data: [MaybeUninit<NonNull<u8>>; ARRAY_PROOF_SLOTS],
+    typed_forms: [u8; ARRAY_PROOF_SLOTS],
+}
+
+/// The form byte's flag: the proved view's buffer is owned by it alone, so that a store may
+/// write its bytes in place (`BufferBytes::lane_mut`). The rest is the element kind, as its
+/// `TYPED_ARRAYS` row.
+const TYPED_WRITABLE: u8 = 1 << (u8::BITS - 1);
+
+/// A typed array a proof covers: `bound` elements from `data`.
+#[derive(Clone, Copy)]
+pub(crate) struct ProvedElements {
+    pub(crate) bound: usize,
+    pub(crate) data: NonNull<u8>,
+    pub(crate) writable: bool,
 }
 
 impl ArrayStorageProofs {
@@ -63,7 +84,36 @@ impl ArrayStorageProofs {
             writable: [0; ARRAY_PROOF_SLOTS],
             bases: [MaybeUninit::uninit(); ARRAY_PROOF_SLOTS],
             values: [MaybeUninit::uninit(); ARRAY_PROOF_SLOTS],
+            typed_bounds: [0; ARRAY_PROOF_SLOTS],
+            typed_bases: [MaybeUninit::uninit(); ARRAY_PROOF_SLOTS],
+            typed_data: [MaybeUninit::uninit(); ARRAY_PROOF_SLOTS],
+            typed_forms: [0; ARRAY_PROOF_SLOTS],
         }
+    }
+
+    /// The elements of the typed array `base`, of the kind `KIND` (a `TYPED_ARRAYS` row),
+    /// through the proof in `register`'s slot; `None` where the slot does not prove `base` of
+    /// that kind. The proof holds until the next retirement (module documentation), so the
+    /// view's bytes are where `data` names them, and `bound` of them are the view's.
+    #[inline(always)]
+    pub(crate) fn typed_elements<const KIND: usize>(&self, register: u16, base: Value) -> Option<ProvedElements> {
+        let slot = Self::slot(register);
+        let bound = self.typed_bounds[slot];
+        let form = self.typed_forms[slot];
+        // SAFETY: a nonzero bound was written by `prove_typed` with the slot's base and data.
+        if bound == 0 || unsafe { self.typed_bases[slot].assume_init() } != base || form & !TYPED_WRITABLE != KIND as u8 {
+            return None;
+        }
+        Some(ProvedElements { bound, data: unsafe { self.typed_data[slot].assume_init() }, writable: form & TYPED_WRITABLE != 0 })
+    }
+
+    /// Proves the typed array `base` of the kind row `kind` in `register`'s slot.
+    fn prove_typed(&mut self, register: u16, base: Value, kind: usize, elements: ProvedElements) {
+        let slot = Self::slot(register);
+        self.typed_forms[slot] = kind as u8 | if elements.writable { TYPED_WRITABLE } else { 0 };
+        self.typed_bases[slot] = MaybeUninit::new(base);
+        self.typed_data[slot] = MaybeUninit::new(elements.data);
+        self.typed_bounds[slot] = elements.bound;
     }
 
     /// The slot of base register `register`.
@@ -144,6 +194,7 @@ impl ArrayStorageProofs {
     pub(crate) fn retire(&mut self) {
         self.readable = [0; ARRAY_PROOF_SLOTS];
         self.writable = [0; ARRAY_PROOF_SLOTS];
+        self.typed_bounds = [0; ARRAY_PROOF_SLOTS];
     }
 }
 
@@ -157,13 +208,52 @@ impl Heap {
         // SAFETY: direct-array Values name live records; `&mut self` is exclusive; proving
         // writes nothing into the record, so no barrier applies.
         let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
-        let armed: *mut ArrayStorageProofs = proofs;
-        if ARMED_PROOFS.get() != armed {
-            retire_array_storage_proofs();
-            ARMED_PROOFS.set(armed);
-        }
+        arm(proofs);
         proofs.prove(register, base, array);
         true
+    }
+
+    /// Proves the elements of the typed array `base` in `register`'s slot of `proofs`: a view
+    /// of Number elements (not BigInt or Float16) over a fixed, attached buffer that holds its
+    /// bytes in place, which then cannot move, shrink or detach without dropping or copying
+    /// them (`BufferBytes` retires). Writable where the view owns them alone and the buffer is
+    /// not immutable. `false` for any other value or buffer.
+    pub(crate) fn prove_typed_storage(&mut self, proofs: &mut ArrayStorageProofs, register: u16, base: Value) -> bool {
+        let Some(Cell::TypedArray { kind, object, buffer, length }) = self.get(base) else {
+            return false;
+        };
+        let (kind, offset, buffer, length) = (*kind, object.offset, *buffer, length.get());
+        if kind.is_bigint() || kind == TypedArrayKind::Float16 {
+            return false;
+        }
+        let Some(Cell::ArrayBuffer { bytes, detached: false, resizable: false, immutable, .. }) = self.buffer_bytes_mut(buffer) else {
+            return false;
+        };
+        let immutable = *immutable;
+        let (data, held, writable) = match bytes.lane_mut() {
+            Some(store) if !immutable => (store.as_mut_ptr(), store.len(), true),
+            _ => match bytes.owned() {
+                Some(store) => (store.as_ptr().cast_mut(), store.len(), false),
+                None => return false,
+            },
+        };
+        let Some(bound) = length.filter(|&length| length != 0 && offset.checked_add(length * kind.width()).is_some_and(|end| end <= held)) else {
+            return false;
+        };
+        arm(proofs);
+        // SAFETY: the offset lies within the store, which is not empty.
+        let data = unsafe { NonNull::new_unchecked(data.add(offset)) };
+        proofs.prove_typed(register, base, kind as usize, ProvedElements { bound, data, writable });
+        true
+    }
+}
+
+/// Arms `proofs` as the thread's, retiring those it replaces.
+fn arm(proofs: &mut ArrayStorageProofs) {
+    let armed: *mut ArrayStorageProofs = proofs;
+    if ARMED_PROOFS.get() != armed {
+        retire_array_storage_proofs();
+        ARMED_PROOFS.set(armed);
     }
 }
 
@@ -217,7 +307,7 @@ impl Drop for LaneProofScope {
 #[cfg(all(test, not(feature = "profile-aggregate")))]
 mod tests {
     use super::*;
-    use crate::heap::{Cell, Object};
+    use crate::heap::Object;
 
     fn array(heap: &mut Heap) -> Value {
         heap.alloc(Cell::Array {
@@ -304,5 +394,107 @@ mod tests {
             assert!(!proofs.holds(0, base));
         }
         assert!(!proofs.holds(0, base));
+    }
+
+    const INT32: usize = TypedArrayKind::Int32 as usize;
+
+    fn buffer(heap: &mut Heap, bytes: Vec<u8>, resizable: bool, immutable: bool) -> Value {
+        heap.alloc(Cell::ArrayBuffer {
+            object: Box::new(Object::new(Value::NULL)),
+            bytes: crate::heap::BufferBytes::from(bytes),
+            shared: false,
+            detached: false,
+            max_byte_length: 0,
+            resizable,
+            immutable,
+        })
+    }
+
+    fn view(heap: &mut Heap, kind: TypedArrayKind, buffer: Value, offset: usize, length: usize) -> Value {
+        let object = crate::heap::BufferViewObject { object: Object::new(Value::NULL), offset };
+        heap.alloc(Cell::TypedArray { kind, object: Box::new(object), buffer, length: crate::heap::ViewLength::fixed(length) })
+    }
+
+    fn int32s(heap: &mut Heap) -> (Value, Value) {
+        let bytes = [1i32, 2, 3].iter().flat_map(|element| element.to_ne_bytes()).collect();
+        let buffer = buffer(heap, bytes, false, false);
+        (buffer, view(heap, TypedArrayKind::Int32, buffer, 4, 2))
+    }
+
+    #[test]
+    fn typed_proofs_cover_a_fixed_owned_view_and_name_its_bytes() {
+        let mut heap = Heap::new();
+        let mut proofs = Box::new(ArrayStorageProofs::new());
+        let _scope = LaneProofScope::enter();
+        let (_, base) = int32s(&mut heap);
+        assert!(proofs.typed_elements::<INT32>(0, base).is_none());
+        assert!(heap.prove_typed_storage(&mut proofs, 0, base));
+        let elements = proofs.typed_elements::<INT32>(0, base).unwrap();
+        assert!(elements.writable);
+        assert_eq!(elements.bound, 2);
+        assert_eq!(unsafe { elements.data.as_ptr().cast::<i32>().read_unaligned() }, 2);
+        assert!(proofs.typed_elements::<{ TypedArrayKind::Uint8 as usize }>(0, base).is_none(), "a proof states its kind");
+        assert!(proofs.typed_elements::<INT32>(1, base).is_none(), "a proof is in its register's slot");
+    }
+
+    #[test]
+    fn typed_proofs_decline_what_they_cannot_hold() {
+        let mut heap = Heap::new();
+        let mut proofs = Box::new(ArrayStorageProofs::new());
+        let _scope = LaneProofScope::enter();
+        let bytes = || vec![0; 16];
+        let (fixed, resizable, immutable) = (buffer(&mut heap, bytes(), false, false), buffer(&mut heap, bytes(), true, false), buffer(&mut heap, bytes(), false, true));
+        let declined = [
+            view(&mut heap, TypedArrayKind::BigInt64, fixed, 0, 2),
+            view(&mut heap, TypedArrayKind::Float16, fixed, 0, 2),
+            view(&mut heap, TypedArrayKind::Int32, resizable, 0, 2),
+            view(&mut heap, TypedArrayKind::Int32, fixed, 0, 0),
+            view(&mut heap, TypedArrayKind::Int32, fixed, 8, 4),
+        ];
+        for base in declined {
+            assert!(!heap.prove_typed_storage(&mut proofs, 0, base));
+            assert!(proofs.typed_elements::<INT32>(0, base).is_none());
+        }
+        let read_only = view(&mut heap, TypedArrayKind::Int32, immutable, 0, 4);
+        assert!(heap.prove_typed_storage(&mut proofs, 0, read_only));
+        assert!(!proofs.typed_elements::<INT32>(0, read_only).unwrap().writable, "an immutable buffer proves no store");
+        assert!(!heap.prove_typed_storage(&mut proofs, 0, fixed), "an ArrayBuffer is no typed array");
+    }
+
+    #[test]
+    fn typed_proofs_retire_when_the_buffer_gains_an_owner_unshares_detaches_or_is_collected() {
+        let mut heap = Heap::new();
+        let mut proofs = Box::new(ArrayStorageProofs::new());
+        let _scope = LaneProofScope::enter();
+        let (buffer, base) = int32s(&mut heap);
+        let prove = |heap: &mut Heap, proofs: &mut ArrayStorageProofs| {
+            assert!(heap.prove_typed_storage(proofs, 0, base));
+            assert!(proofs.typed_elements::<INT32>(0, base).is_some());
+        };
+        let bytes = |heap: &mut Heap| match heap.get_mut(buffer) {
+            Some(Cell::ArrayBuffer { bytes, .. }) => bytes as *mut crate::heap::BufferBytes,
+            _ => unreachable!("an ArrayBuffer"),
+        };
+        prove(&mut heap, &mut proofs);
+        let shared = unsafe { (*bytes(&mut heap)).clone() };
+        assert!(proofs.typed_elements::<INT32>(0, base).is_none(), "a second owner retires the proof");
+        prove(&mut heap, &mut proofs);
+        assert!(!proofs.typed_elements::<INT32>(0, base).unwrap().writable, "a shared store proves no store");
+        unsafe { (*bytes(&mut heap)).make_mut() }[0] = 9;
+        assert!(proofs.typed_elements::<INT32>(0, base).is_none(), "unsharing retires the proof");
+        drop(shared);
+        prove(&mut heap, &mut proofs);
+        assert!(proofs.typed_elements::<INT32>(0, base).unwrap().writable);
+        // DetachArrayBuffer: the bytes are taken and dropped.
+        if let Some(Cell::ArrayBuffer { bytes, detached, .. }) = heap.get_mut(buffer) {
+            drop(std::mem::take(bytes));
+            *detached = true;
+        }
+        assert!(proofs.typed_elements::<INT32>(0, base).is_none(), "detaching retires the proof");
+        assert!(!heap.prove_typed_storage(&mut proofs, 0, base), "a detached buffer proves nothing");
+        let (_, other) = int32s(&mut heap);
+        assert!(heap.prove_typed_storage(&mut proofs, 0, other));
+        heap.collect([other]);
+        assert!(proofs.typed_elements::<INT32>(0, other).is_none(), "a collection retires the proof");
     }
 }
