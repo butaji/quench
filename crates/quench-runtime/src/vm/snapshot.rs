@@ -46,60 +46,30 @@ impl<H: Host> Vm<H> {
             return Err(SnapshotError::unsupported("a runtime native source resolver"));
         }
         let Self {
-            native_microtask_running,
+            native_microtask_running: _,
             unobserved_jobs_entered: _,
             host,
             specialized,
             heap,
             realm,
-            object_proto: _,
-            function_proto: _,
-            array_proto: _,
-            string_proto: _,
-            array_buffer_proto: _,
-            shared_array_buffer_proto: _,
-            array_iterator_proto: _,
-            typed_array_proto: _,
-            uint8_array_proto: _,
-            uint8_clamped_array_proto: _,
-            uint16_array_proto: _,
-            uint32_array_proto: _,
-            int8_array_proto: _,
-            int16_array_proto: _,
-            int32_array_proto: _,
-            bigint64_array_proto: _,
-            biguint64_array_proto: _,
-            float16_array_proto: _,
-            float32_array_proto: _,
-            float64_array_proto: _,
-            data_view_proto: _,
-            map_proto: _,
-            set_proto: _,
-            shadow_realm_proto: _,
-            map_iterator_proto: _,
-            set_iterator_proto: _,
-            weak_map_proto: _,
-            weak_set_proto: _,
-            weak_ref_proto: _,
-            kept_alive,
-            finalization_registry_proto: _,
-            iterator_proto: _,
-            string_iterator_proto: _,
-            regexp_string_iterator_proto: _,
-            generator_proto: _,
-            iterator_helper_proto: _,
-            wrap_for_valid_iterator_proto: _,
-            async_iterator_proto: _,
-            async_generator_proto: _,
-            async_from_sync_iterator_proto: _,
-            regexp_proto: _,
-            temporal_plain_date_proto: _,
-            temporal_plain_time_proto: _,
-            temporal_plain_month_day_proto: _,
+            object_proto: _, function_proto: _, array_proto: _, string_proto: _,
+            array_buffer_proto: _, shared_array_buffer_proto: _, array_iterator_proto: _,
+            typed_array_proto: _, uint8_array_proto: _, uint8_clamped_array_proto: _,
+            uint16_array_proto: _, uint32_array_proto: _, int8_array_proto: _,
+            int16_array_proto: _, int32_array_proto: _, bigint64_array_proto: _,
+            biguint64_array_proto: _, float16_array_proto: _, float32_array_proto: _,
+            float64_array_proto: _, data_view_proto: _, map_proto: _, set_proto: _,
+            shadow_realm_proto: _, map_iterator_proto: _, set_iterator_proto: _,
+            weak_map_proto: _, weak_set_proto: _, weak_ref_proto: _, kept_alive: _,
+            finalization_registry_proto: _, iterator_proto: _, string_iterator_proto: _,
+            regexp_string_iterator_proto: _, generator_proto: _, iterator_helper_proto: _,
+            wrap_for_valid_iterator_proto: _, async_iterator_proto: _, async_generator_proto: _,
+            async_from_sync_iterator_proto: _, regexp_proto: _, temporal_plain_date_proto: _,
+            temporal_plain_time_proto: _, temporal_plain_month_day_proto: _,
             temporal_plain_year_month_proto: _,
             natives,
-            frames,
-            native_stack_frames,
+            frames: _,
+            native_stack_frames: _,
             native_root_lists: _,
             gc_owned_root_count: _,
             frame_pool: _,
@@ -114,22 +84,22 @@ impl<H: Host> Vm<H> {
             #[cfg(feature = "native-execution")]
             native_program_resolver: _,
             execution_interrupt: _,
-            active_call_roots,
-            with_stack,
+            active_call_roots: _,
+            with_stack: _,
             startup_intrinsics,
             with_scope_entered,
-            test262_agent,
-            shared_async_waiters,
+            test262_agent: _,
+            shared_async_waiters: _,
             programs,
             program_cache_layouts: _,
             free_cache_layouts: _,
             active_registers: _,
-            lane_raised,
+            lane_raised: _,
             lane_raise_site: _,
-            lane_returned,
-            lane_native,
-            lane_native_returned,
-            lane_suspended,
+            lane_returned: _,
+            lane_native: _,
+            lane_native_returned: _,
+            lane_suspended: _,
             active_layout: _, active_constants: _, active_field_entries: _, field_entries_epoch: _,
             active_program: _,
             profile: _,
@@ -216,17 +186,17 @@ impl<H: Host> Vm<H> {
             object_shapes: _,
             descriptors,
             function_values,
-            wasm_exported_functions,
+            wasm_exported_functions: _,
             private_homes,
             next_private_atom,
             default_collation: _,
             wasm_js,
-            direct_eval,
-            direct_eval_var_program,
-            parameter_eval,
-            eval_script_context,
-            deferred_dependency_batch,
-            construct_target,
+            direct_eval: _,
+            direct_eval_var_program: _,
+            parameter_eval: _,
+            eval_script_context: _,
+            deferred_dependency_batch: _,
+            construct_target: _,
             // Each process draws its own sequence (`fresh_random_seed`).
             random_state: _,
             // Each process keeps its own budget.
@@ -246,29 +216,11 @@ impl<H: Host> Vm<H> {
             global_lexical_states,
             parked,
             intrinsics,
-            jobs,
+            jobs: _,
             template_objects,
             promise,
         } = realm;
-        let running = [
-            ("a running frame", frames.is_empty() && native_stack_frames.is_empty() && active_call_roots.is_empty()),
-            ("a with statement", with_stack.is_empty()),
-            ("a pending job", jobs.is_empty() && kept_alive.is_empty() && !native_microtask_running),
-            ("an Atomics waiter", shared_async_waiters.is_empty() && !test262_agent.installed),
-            ("a lane completion", lane_raised.is_none() && lane_returned.is_none() && lane_native_returned.is_none() && lane_suspended.is_none()),
-            ("a lane native call", lane_native.is_none()),
-            (
-                "an eval or construction",
-                !direct_eval
-                    && direct_eval_var_program.is_none()
-                    && !parameter_eval
-                    && !eval_script_context
-                    && !deferred_dependency_batch
-                    && construct_target.is_none(),
-            ),
-            ("WebAssembly", wasm_exported_functions.is_empty()),
-        ];
-        if let Some((what, _)) = running.iter().find(|(_, quiescent)| !quiescent) {
+        if let Some(what) = self.running_work() {
             return Err(SnapshotError::unsupported(what));
         }
         let mut writer = Writer::new();
@@ -331,6 +283,41 @@ impl<H: Host> Vm<H> {
         writer.value(*instanceof_has_instance_holder);
         write_host(host, &mut crate::SnapshotWriter { writer: &mut writer, heap }).map_err(SnapshotError)?;
         Ok(writer.finish())
+    }
+
+    /// What a snapshot cannot be taken across that is running or waiting now, if anything.
+    fn running_work(&self) -> Option<&'static str> {
+        self.running_execution().or_else(|| self.running_embedding())
+    }
+
+    /// The running frames, jobs and lane completions a snapshot cannot be taken across.
+    fn running_execution(&self) -> Option<&'static str> {
+        let running = [
+            ("a running frame", self.frames.is_empty() && self.native_stack_frames.is_empty() && self.active_call_roots.is_empty()),
+            ("a with statement", self.with_stack.is_empty()),
+            ("a pending job", self.realm.jobs.is_empty() && self.kept_alive.is_empty() && !self.native_microtask_running),
+            ("a lane completion", self.lane_raised.is_none() && self.lane_returned.is_none() && self.lane_native_returned.is_none() && self.lane_suspended.is_none()),
+            ("a lane native call", self.lane_native.is_none()),
+        ];
+        running.into_iter().find(|(_, quiescent)| !quiescent).map(|(what, _)| what)
+    }
+
+    /// The waiters, evals and WebAssembly exports a snapshot cannot be taken across.
+    fn running_embedding(&self) -> Option<&'static str> {
+        let running = [
+            ("an Atomics waiter", self.shared_async_waiters.is_empty() && !self.test262_agent.installed),
+            (
+                "an eval or construction",
+                !self.direct_eval
+                    && self.direct_eval_var_program.is_none()
+                    && !self.parameter_eval
+                    && !self.eval_script_context
+                    && !self.deferred_dependency_batch
+                    && self.construct_target.is_none(),
+            ),
+            ("WebAssembly", self.wasm_exported_functions.is_empty()),
+        ];
+        running.into_iter().find(|(_, quiescent)| !quiescent).map(|(what, _)| what)
     }
 
     /// Makes this VM, newly made, the one `write_snapshot` wrote into `bytes`, with `entry` as
@@ -407,19 +394,7 @@ impl<H: Host> Vm<H> {
         self.to_precision_atom = reader.u32()?;
         self.runtime_atoms = Snap::unsnap(&mut reader)?;
         self.descriptors = Snap::unsnap(&mut reader)?;
-        let function_values =
-            read_list(&mut reader, |reader| Ok((<(ProgramId, u32)>::unsnap(reader)?, reader.values()?)))?;
-        for (key, functions) in function_values {
-            let handles = functions
-                .into_iter()
-                .map(|function| {
-                    self.heap
-                        .weak_handle(function)
-                        .ok_or_else(|| SnapshotError("snapshot function cache names a dead value".into()))
-                })
-                .collect::<SnapshotResult<Vec<_>>>()?;
-            self.function_values.record(key, handles);
-        }
+        self.read_function_values(&mut reader)?;
         self.private_homes = Snap::unsnap(&mut reader)?;
         self.next_private_atom = reader.u32()?;
         let [module, instance, memory, table, global, tag, js_tag] = <[Value; 7]>::unsnap(&mut reader)?;
@@ -431,6 +406,24 @@ impl<H: Host> Vm<H> {
         reader.finish()?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_host");
+        Ok(())
+    }
+
+    /// Reads the function cache: each key's functions, held weakly as the running VM holds them.
+    fn read_function_values(&mut self, reader: &mut Reader<'_>) -> SnapshotResult<()> {
+        let function_values =
+            read_list(reader, |reader| Ok((<(ProgramId, u32)>::unsnap(reader)?, reader.values()?)))?;
+        for (key, functions) in function_values {
+            let handles = functions
+                .into_iter()
+                .map(|function| {
+                    self.heap
+                        .weak_handle(function)
+                        .ok_or_else(|| SnapshotError("snapshot function cache names a dead value".into()))
+                })
+                .collect::<SnapshotResult<Vec<_>>>()?;
+            self.function_values.record(key, handles);
+        }
         Ok(())
     }
 
