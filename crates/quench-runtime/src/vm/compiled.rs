@@ -1855,9 +1855,10 @@ impl CallContext {
     }
 
     /// The context of code that reads only the interrupt state: the flag, and the VM's
-    /// poll page, whose fault ends the call as terminated (`guard_fault`).
+    /// poll page, whose fault ends the call as terminated (`guard_fault`), where the entry
+    /// runs through the fault-resuming trampoline (`native_poll_page`).
     fn interrupt_only(interrupt: &crate::execution_interrupt::ExecutionInterrupt) -> Self {
-        let poll = interrupt.poll_page();
+        let poll = native_poll_page(interrupt);
         Self {
             stack_limit: 0,
             interrupt: interrupt.attention_flag(),
