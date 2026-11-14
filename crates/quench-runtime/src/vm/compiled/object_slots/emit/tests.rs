@@ -284,7 +284,7 @@ fn record_base_loads_kept(function: ir::Function, isa: &dyn cranelift_codegen::i
     compiling.optimize(isa, &mut cranelift_codegen::control::ControlPlane::default()).unwrap();
     compiling.flowgraph();
     compiling.compute_loop_analysis();
-    let record_base = regions::record_base().alias_region();
+    let record_base = regions::flags(Region::RecordBases.readonly()).alias_region();
     let (mut inside, mut outside) = (0, 0);
     for block in compiling.func.layout.blocks() {
         for inst in compiling.func.layout.block_insts(block) {
