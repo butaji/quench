@@ -2008,7 +2008,7 @@ impl Function {
     }
 
     /// Whether `atom` is among `environment_atoms`.
-    pub(crate) fn declares_environment_atom(&self, atom: Atom) -> bool {
+    #[inline(always)] pub(crate) fn declares_environment_atom(&self, atom: Atom) -> bool {
         self.declared_atoms().environment.contains(&atom)
     }
 

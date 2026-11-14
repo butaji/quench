@@ -1983,7 +1983,7 @@ impl LaneStack {
     /// Derive `activation_limit` from the activations' capacity, the guest calls the
     /// thread admits beyond the frames and activations already counted, and a due
     /// collection.
-    fn refresh_activation_limit(&self) {
+    #[inline(always)] fn refresh_activation_limit(&self) {
         let limit = if lane_floor().load(std::sync::atomic::Ordering::Relaxed) == COLLECTION_DUE_FLOOR {
             0
         } else {

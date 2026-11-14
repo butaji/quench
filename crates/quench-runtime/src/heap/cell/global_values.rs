@@ -228,7 +228,7 @@ impl super::Object {
     }
 
     /// The table code that read this global object's values made, if any.
-    pub(crate) fn global_values(&self) -> Option<u32> {
+    #[inline(always)] pub(crate) fn global_values(&self) -> Option<u32> {
         self.extras()?.global_values.as_ref().map(|values| values.table)
     }
 

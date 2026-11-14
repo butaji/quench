@@ -40,7 +40,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `same_realm_user_target`, and whether its body is numeric (`DispatchClass::Numeric`).
-    pub(super) fn same_realm_script_target(
+    #[inline(always)] pub(super) fn same_realm_script_target(
         &self,
         callee: Value,
     ) -> Option<(super::ProgramId, u32, Value, bool)> {
@@ -48,7 +48,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether function `id` of `program` has a numeric body (`DispatchClass::Numeric`).
-    pub(super) fn numeric_body(&self, program: super::ProgramId, id: u32) -> bool {
+    #[inline(always)] pub(super) fn numeric_body(&self, program: super::ProgramId, id: u32) -> bool {
         self.programs.residual(program).and_then(|code| code.function_get(id as usize).map(|body| body.dispatch))
             == Some(crate::bytecode::DispatchClass::Numeric)
     }

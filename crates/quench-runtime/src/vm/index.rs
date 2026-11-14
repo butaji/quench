@@ -337,7 +337,7 @@ impl<H: Host> Vm<H> {
 
     /// `object[key] = value` that fills a hole of a dense array (`fill_dense_hole`); `false`
     /// leaves the store, unobserved, to the general path.
-    pub(super) fn try_fill_dense_hole(&mut self, object: Value, key: Value, value: Value) -> bool {
+    #[inline(always)] pub(super) fn try_fill_dense_hole(&mut self, object: Value, key: Value, value: Value) -> bool {
         key.as_int()
             .and_then(|index| usize::try_from(index).ok())
             .is_some_and(|index| self.fill_dense_hole(object, index, value))

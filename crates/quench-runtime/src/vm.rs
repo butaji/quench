@@ -1525,7 +1525,7 @@ impl ShapeLookupIndex {
             self.attributes.insert(slot, attributes);
         }
     }
-    fn slot(&self, key: property_key::PropertyKey) -> Option<u32> {
+    #[inline(always)] fn slot(&self, key: property_key::PropertyKey) -> Option<u32> {
         self.positions
             .find(Self::key_hash(key), |&position| {
                 self.entries[position as usize].0 == key
@@ -1652,7 +1652,7 @@ impl Shape {
         table
     }
 
-    fn parent(&self) -> Option<u32> {
+    #[inline(always)] fn parent(&self) -> Option<u32> {
         (self.parent != NO_PARENT_SHAPE).then_some(self.parent)
     }
 

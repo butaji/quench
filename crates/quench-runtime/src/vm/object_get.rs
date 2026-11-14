@@ -493,7 +493,7 @@ impl<H: Host> Vm<H> {
     /// An object `plain_property_lookup` walks through as ordinary for `key`: what a proved
     /// read starts from (`proved_read_receiver`), or an array where `array_ordinary` says
     /// the key is none of its exotic ones.
-    fn plain_link(&self, object: Value, key: PropertyKey, array_ordinary: bool) -> Option<&Object> {
+    #[inline(always)] fn plain_link(&self, object: Value, key: PropertyKey, array_ordinary: bool) -> Option<&Object> {
         self.proved_read_receiver(object, key)
             .or_else(|| (array_ordinary && self.heap.array(object).is_some()).then(|| self.heap.object(object)).flatten())
     }

@@ -750,7 +750,7 @@ impl ProgramId {
         self.0
     }
 
-    pub(crate) const fn from_raw(raw: u32) -> Self {
+    #[inline(always)] pub(crate) const fn from_raw(raw: u32) -> Self {
         Self(raw)
     }
 }

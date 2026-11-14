@@ -872,7 +872,7 @@ impl Instr {
         Self::wide(usize::try_from(index).ok()?)
     }
 
-    pub(crate) const fn is_wide(self) -> bool {
+    #[inline(always)] pub(crate) const fn is_wide(self) -> bool {
         self.op().is_wide_marker()
     }
 
@@ -884,7 +884,7 @@ impl Instr {
         (self.0 >> Self::OP_BITS) as usize
     }
 
-    pub(crate) const fn as_wide(self) -> WideInstruction {
+    #[inline(always)] pub(crate) const fn as_wide(self) -> WideInstruction {
         WideInstruction::new(self.op(), self.a(), self.b(), self.c(), self.imm())
     }
 
@@ -997,7 +997,7 @@ impl Instr {
         )
     }
 
-    const fn unpack_field(op: Op, position: usize, packed: u16) -> u16 {
+    #[inline(always)] const fn unpack_field(op: Op, position: usize, packed: u16) -> u16 {
         let packed = packed & Self::FIELD_MASK as u16;
         if position == 1
             && matches!(op.field_layout(InstructionField::B), FieldLayout::FieldBase)

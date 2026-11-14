@@ -485,7 +485,7 @@ impl Heap {
     }
 
     /// Frees a block of one of this heap's pages, on its owner's thread.
-    unsafe fn free(&mut self, page: *mut Page, block: *mut u8) {
+    #[inline(always)] unsafe fn free(&mut self, page: *mut Page, block: *mut u8) {
         // SAFETY: the block came from `allocate` for the page's class, and the page is ours.
         unsafe {
             let free = block.cast::<FreeBlock>();
@@ -610,7 +610,7 @@ impl Heap {
     }
 }
 
-fn page_of(block: *mut u8) -> *mut Page {
+#[inline(always)] fn page_of(block: *mut u8) -> *mut Page {
     (block as usize & !(PAGE_BYTES - 1)) as *mut Page
 }
 

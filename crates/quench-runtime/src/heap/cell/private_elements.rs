@@ -10,14 +10,14 @@ impl Object {
             .into_iter()
             .flat_map(|extras| extras.private_elements.iter().map(|element| element.brand))
     }
-    #[inline]
+    #[inline(always)]
     pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
         self.private_position(brand, 0).is_some()
     }
     /// The position of the element carrying `brand`: `hint`'s when it carries it, else the
     /// first that does. A class's instances add their elements in one order, so a site that
     /// passes the position it found last finds it at once.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn private_position(&self, brand: PrivateBrand, hint: usize) -> Option<usize> {
         let elements = &self.extras()?.private_elements;
         if elements.get(hint).is_some_and(|element| element.brand == brand) {
@@ -27,7 +27,7 @@ impl Object {
     }
     /// The data of the element at `position` (`private_position`); `None` for a method's or
     /// accessor's brand-only element.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn private_data(&self, position: usize) -> Option<Value> {
         self.extras()?.private_elements.get(position)?.data
     }
@@ -38,23 +38,23 @@ impl Object {
                 .push(PrivateElement { brand, data: None });
         }
     }
-    #[inline]
+    #[inline(always)]
     pub(crate) fn private_field(&self, brand: PrivateBrand) -> Option<Value> {
         self.private_data(self.private_position(brand, 0)?)
     }
     /// Stores `value` into the initialized field at `position` (`private_position`); `false`
     /// for a brand-only element, which no store reaches.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn set_private_data(&mut self, position: usize, value: Value) -> bool {
         let Some(element) = self.extras_mut_existing().and_then(|extras| extras.private_elements.get_mut(position)).filter(|element| element.data.is_some()) else { return false; };
         element.data = Some(value);
         true
     }
-    #[inline]
+    #[inline(always)]
     pub(crate) fn set_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
         self.private_position(brand, 0).is_some_and(|position| self.set_private_data(position, value))
     }
-    pub(crate) fn initialize_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
+    #[inline(always)] pub(crate) fn initialize_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
         let elements = &mut self.extras_mut().private_elements;
         if let Some(element) = elements.iter_mut().find(|element| element.brand == brand) {
             if element.data.is_some() {

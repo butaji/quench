@@ -585,7 +585,7 @@ impl Heap {
         true
     }
 
-    pub(crate) fn array(&self, value: Value) -> Option<&ArrayObject> {
+    #[inline(always)] pub(crate) fn array(&self, value: Value) -> Option<&ArrayObject> {
         if let Some(object) = self.record_array(value) {
             return Some(object);
         }
@@ -610,7 +610,7 @@ impl Heap {
     /// `Value`. The heap must remain alive, and the reader must finish before any VM safepoint;
     /// it must resolve the record's current backing for each access because array mutation can
     /// replace that backing.
-    pub(crate) fn array_record_base(&self) -> Option<*const ArrayObject> {
+    #[inline(always)] pub(crate) fn array_record_base(&self) -> Option<*const ArrayObject> {
         self.array_records.base_ptr()
     }
 

@@ -223,7 +223,7 @@ impl Records {
     }
 
     /// The first record.
-    pub(super) fn base(&self) -> Ip {
+    #[inline(always)] pub(super) fn base(&self) -> Ip {
         // SAFETY: `front` records lie before the end of `cells`; the pointer keeps the whole
         // allocation's provenance, which the feedback bytes before it need.
         unsafe { std::cell::UnsafeCell::raw_get(self.cells.as_ptr().add(self.front)).cast_const() }

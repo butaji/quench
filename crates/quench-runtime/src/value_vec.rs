@@ -201,7 +201,7 @@ impl ValueVec {
         }
     }
 
-    pub(crate) fn is_frozen(self) -> bool {
+    #[inline(always)] pub(crate) fn is_frozen(self) -> bool {
         self.start & FROZEN != 0
     }
 
@@ -519,7 +519,7 @@ impl ValueArena {
         class != held && self.widen_owner(owner, class)
     }
 
-    pub(crate) fn get(&self, vector: ValueVec, index: usize) -> Option<Value> {
+    #[inline(always)] pub(crate) fn get(&self, vector: ValueVec, index: usize) -> Option<Value> {
         debug_assert!(!vector.has_inline_property_storage());
         if index >= self.len(vector) {
             return None;

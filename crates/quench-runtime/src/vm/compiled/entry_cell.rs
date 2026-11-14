@@ -68,7 +68,7 @@ unsafe extern "C" fn lane_entry_stub(_: *mut CallContext, _: u64, _: u64, _: *co
 static NO_RECOVERY: LaneRecoverySpace = LaneRecoverySpace { values: 0, activations: 0 };
 
 impl EntryCell {
-    pub(in crate::vm) fn stub() -> usize { lane_entry_stub as BodyEntry as usize }
+    #[inline(always)] pub(in crate::vm) fn stub() -> usize { lane_entry_stub as BodyEntry as usize }
 
     pub(in crate::vm) fn new() -> Self {
         Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default(), validity: Default::default(), view: Default::default(), env: Default::default(), capture: Default::default(), counters: Default::default() }
