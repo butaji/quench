@@ -1764,7 +1764,7 @@ impl ProgramStore {
     /// hand it to the general dispatcher, whose normal entry hook records the
     /// final observation and claims the one-shot compile attempt.
     pub(super) fn note_wasm_tier_lane_entry(&mut self, id: ProgramId, function: u32) -> bool {
-        let policy = self.wasm_module_compile;
+        let (policy, tiers) = (self.wasm_module_compile, self.tiers);
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
@@ -2938,6 +2938,7 @@ mod lane_diagnostic_tests {
 
 #[cfg(test)]
 mod jit_code_cache_tests {
+    use crate::vm::compiled::tier_policy::TierRows;
     use super::{
         JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS, WASM_JIT_MAX_BASELINE_MAPPED_BYTES,
         JS_JIT_MAX_MAPPED_BYTES, JitArtifactKind, JitCodeCacheBudget,

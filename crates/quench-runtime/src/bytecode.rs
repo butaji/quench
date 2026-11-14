@@ -2012,15 +2012,12 @@ impl Function {
                 name_bindings::reads_hidden_name(instruction, tables)
                     || matches!(
                         instruction.op(),
-                        Op::ResolveName
-                            | Op::LoadResolvedName
-                            | Op::DeleteName
-                            | Op::StoreResolvedName
-                            | Op::StoreVarBinding
-                            | Op::InitializeThis
-                            | Op::SuperCallCheck
+                        Op::DeleteName | Op::StoreResolvedName | Op::StoreVarBinding | Op::InitializeThis | Op::SuperCallCheck
                     )
             })
+            // A direct eval beside names resolved through a scope may declare dynamic bindings, which only
+            // a frame (or a suspended record) keeps: the scope's other names the window's handlers serve.
+            || self.evals_in_scope() && self.instructions().any(|instruction| matches!(instruction.op(), Op::ResolveName | Op::LoadResolvedName))
     }
 
     /// Every instruction in fixed-width form.
@@ -2162,6 +2159,7 @@ impl Function {
             // a suspended function's record keeps them (and gives them to the environment its
             // window makes, `window_environment`), and the opcodes that read them
             // exit the lane to the frame it becomes.
+            && (self.names_resolve_in_window() || self.holds_scope())
             && (!self.reads_implicit_bindings(tables) || self.suspends_in_record())
             && self.instructions().all(|instruction| {
                 instruction.op().immediate_role() != ImmediateRole::SuperinstructionIndex
@@ -2189,6 +2187,20 @@ impl Function {
                 }
                 _ => op.reads_arguments(),
             }
+    }
+
+    /// Whether every name of the function resolves by slot, which an environment window answers: none
+    /// goes through a `with` object, a binding site or a dynamic binding (`has_dynamic_scope_access`).
+    fn names_resolve_in_window(&self) -> bool {
+        !self.inherited_with_scope && self.binding_sites.is_empty() && !self.has_dynamic_scope_access()
+    }
+
+    /// Whether a function may lay out an environment window though it resolves names through `with`
+    /// objects, binding sites or dynamic bindings, which its activation's scope chain and, for a
+    /// function that suspends, its record carry: one that makes no iteration copy of its environment
+    /// (`CloneEnv`), which would have to share them (`Vm::iteration_environment`).
+    fn holds_scope(&self) -> bool {
+        !self.instructions().any(|instruction| instruction.op() == Op::CloneEnv)
     }
 
     /// Whether the `arguments` object a suspending function made on entry rides its window as

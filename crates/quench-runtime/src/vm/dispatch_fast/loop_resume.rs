@@ -29,7 +29,7 @@ pub(super) fn lane_loop_resume<H: Host>(cx: *mut LaneContext<H>, r: Registers, o
     let mut entry = super::super::compiled::LoopEntry::new();
     let views = lane_loop_entry(cx, r, region, &mut entry)?;
     let continuation = lane_loop_run(cx, r, site, region, &mut entry, views, pc as u32);
-    count_continuation(&continuation);
+    count_continuation(cx, &continuation);
     if matches!(continuation, LoopContinuation::Jump) {
         site.note_decline();
     }

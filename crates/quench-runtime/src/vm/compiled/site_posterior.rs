@@ -50,7 +50,7 @@ pub(super) fn break_even() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::tier_policy::TierRows;
+    use crate::vm::compiled::tier_policy::TierRows;
 
     fn evidence(hits: u32, misses: u32) -> SiteEvidence { SiteEvidence { hits, misses } }
 
