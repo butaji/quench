@@ -50,8 +50,15 @@ pub(super) fn plain_value<S: Stage>(stage: &mut S, record: S::Word, slot: S::Wor
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
+    Some(plain_slot(stage, record, payload, slot))
+}
+
+/// The value at `slot` of the record at `record` whose payload word `payload` holds plain
+/// storage (`plain_payload`): packed values decode from the record, flat ones read from the arena run.
+#[inline(always)]
+fn plain_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::Word, slot: S::Word) -> S::Word {
     let inline = inline_storage(stage, record);
-    Some(stage.choose(inline, |stage| {
+    stage.choose(inline, |stage| {
         let half = stage.mul_imm(slot, std::mem::size_of::<u32>() as u64);
         let address = stage.add(record, half);
         let narrow = stage.load_u32(Region::Payload.mutable(), address, OBJECT.payload_offset as i32);
@@ -61,7 +68,7 @@ pub(super) fn plain_value<S: Stage>(stage: &mut S, record: S::Word, slot: S::Wor
         let offset = stage.mul_imm(slot, OBJECT.property_value_size as u64);
         let address = stage.add(run, offset);
         stage.load_u64(Region::ObjectSlots.mutable(), address, 0)
-    }))
+    })
 }
 
 /// A field read through two cache entries: the first names a value the second entry's site reads from.
@@ -166,14 +173,17 @@ fn holder_value<S: Stage>(stage: &mut S, holder: S::Word, slot: S::Word, miss: S
 }
 
 /// The value an own entry at `entry` (an address) names in the object record at `record`:
-/// `None` (leaving at `miss`) where the record's exact shape is not the entry's or its values
-/// are not plain. The entry stores each of its words complemented against the empty entry, so
+/// `None` (leaving at `miss`) where the record's exact shape is not the entry's. A record whose
+/// extras displaced its values (an intrinsic such as `Math`, a prototype) answers from them
+/// (`holder_value`). The entry stores each of its words complemented against the empty entry, so
 /// a shape equal to the record's shape complemented is the guard.
 #[inline(always)]
 fn own_entry_value<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
     let slot = entry_slot(stage, entry);
-    plain_value(stage, record, slot, miss)
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+    let plain = plain_payload(stage, payload);
+    stage.choose_leaving(plain, |stage| Some(plain_slot(stage, record, payload, slot)), |stage| holder_value(stage, record, slot, miss))
 }
 
 /// The value a prototype-held entry at `entry` names for the object record at `record`
