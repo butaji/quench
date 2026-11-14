@@ -16,11 +16,18 @@ pub const STAGED: &str = "staged";
 pub const STEP: &str = "step";
 /// The column naming an opcode's operation family.
 pub const CLASS: &str = "class";
+/// The staged decoders (`staged` column) whose rows the lane steps by their definitions: the
+/// register, window and capture rows (`lane_region/register_rows.rs` and kin).
+pub const LANE_DECODERS: [&str; 3] = ["Flow", "Value", "Local"];
+/// The column naming the JavaScript denotation a lowering consumes in place of a family name.
+pub const JS: &str = "js";
 /// The `step` value of a lane step whose result the lane writes back (a call-out row).
 pub const RESULT_STEP: &str = "LaneResult";
 
 /// One opcode of the table: the idents each column of its row declares.
 pub struct Row {
+    /// The opcode's name.
+    pub name: String,
     columns: BTreeMap<String, Vec<String>>,
 }
 
@@ -66,7 +73,8 @@ fn column(clause: &[TokenTree]) -> Option<(String, Vec<String>)> {
 /// The row of `trees`, which start at its opcode name: the clauses after the effect, each
 /// separated by `;`.
 fn row(trees: &[TokenTree]) -> Row {
-    Row { columns: trees[1..].split(|tree| is_punct(Some(tree), ';')).skip(1).filter_map(column).collect() }
+    let name = trees.first().map(ToString::to_string).unwrap_or_default();
+    Row { name, columns: trees[1..].split(|tree| is_punct(Some(tree), ';')).skip(1).filter_map(column).collect() }
 }
 
 /// The rows of the `opcodes!` table `file` invokes, in table order.
