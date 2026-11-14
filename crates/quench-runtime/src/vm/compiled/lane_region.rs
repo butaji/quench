@@ -1753,7 +1753,7 @@ pub(super) fn lower(
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders,
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && instructions[at].op().is_load_capture())),
-        lowering.views, typed_captures);
+        lowering.views, typed_captures, |pc| coverage.lowered(pc));
     lowering.entering = lowering.entering_ranges(entry_pc, &loops);
     lowering.ranges = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape);
     lowering.arrays_fixed = lowering.arrays_stay_put(&leaders, &writes);

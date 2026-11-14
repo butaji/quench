@@ -246,3 +246,14 @@ fn a_counted_loop_compares_its_bound_with_the_array_length_once_and_not_per_acce
     let body = loop_body(&function);
     assert!(bounds_compares(&function, &body) >= 1, "a bound the loop writes proves nothing: {function}");
 }
+
+#[test]
+fn a_loop_nest_proves_the_views_of_its_arrays_once_where_their_bases_are_invariant() {
+    use crate::heap::TypedArrayKind as Kind;
+    let function = region_over(MATMUL, false, false, ElementViews::Typed(Some(Kind::Float64)));
+    let kind = Kind::Float64 as u64;
+    let everything: Vec<ir::Inst> = function.layout.blocks().flat_map(|block| function.layout.block_insts(block)).collect();
+    assert!(compares_with(&function, &everything, kind) >= 3, "each of `a`, `b` and `c` is proved: {function}");
+    assert_eq!(compares_with(&function, &loop_body(&function), kind), 0,
+        "no loop of the nest proves a view again per iteration of the one around it: {function}");
+}
