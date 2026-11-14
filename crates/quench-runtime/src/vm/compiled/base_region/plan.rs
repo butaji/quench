@@ -137,7 +137,7 @@ impl Planned {
 /// is named by its record offset, else by its slot; a site read is a chain of two reads, a
 /// folded read of the receiver stands on the receiver, and a global store of a value held in a frame
 /// slot (any value, not a Number) takes the store gate.
-pub(super) fn heap_variant(heap: Heap, hole: u64, operand: Place) -> bool {
+fn heap_variant(heap: Heap, hole: u64, operand: Place) -> bool {
     match heap {
         Heap::Store | Heap::Index => hole != 0,
         Heap::SiteChain | Heap::ThisChain | Heap::ThisHeld => true,

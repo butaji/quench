@@ -98,14 +98,11 @@ pub(super) struct Decoded {
     /// The global lexical binding's word the row reads or stores live (`globals`), at the address in `hole`, under the global
     /// object's layout: a Stable fact the code takes.
     pub(super) lexical: Option<LexicalSlot>,
-    /// The heap row a method call's chain loads its callee by (`methods`), over the receiver `a` (none for the activation's own
-    /// `this`), with the cache entry's byte offset, or the folded value and its receiver (`folded`), as that row has them.
-    pub(super) load: Option<Heap>,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, load: None, add: None, name: None }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -116,7 +113,7 @@ impl Decoded {
         Self { step: Some(step), ..Self::number(Kind::Move, dst, None, None, None) }
     }
 
-    /// Whether the row holds a Stable fact its code took: a folded prototype-held read (a heap row's, or the load of a method call), an
+    /// Whether the row holds a Stable fact its code took: a folded prototype-held read, an
     /// `instanceof` of a constructor's `prototype`, a global object's slot, an add, or a store in place for an atom no method cache
     /// names. A change of the fact retires the code, and a run already inside it learns that from the invalidation word (`Heap::Live`).
     pub(super) fn holds_stable(&self) -> bool {
@@ -251,7 +248,7 @@ fn site_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
 
 /// The row that reads cache site `first` (and, chained, `second`) of the object in register `object`, or of the receiver where there is
 /// none, into the register `dst`: folded to the prototype's value where the site proves exactly that (`folded_read`).
-pub(super) fn cached_read(known: Known, (object, first, second): (Option<Register>, u16, Option<u16>), dst: Register) -> Decoded {
+fn cached_read(known: Known, (object, first, second): (Option<Register>, u16, Option<u16>), dst: Register) -> Decoded {
     let folded = second.is_none().then(|| folded_read(known, first)).flatten();
     let heap = match (object.is_none(), second.is_some(), folded.is_some()) {
         (false, false, false) => Heap::Site,

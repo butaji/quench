@@ -36,7 +36,6 @@
 
 pub(super) mod inline;
 use super::{Exit, SLOT};
-use super::methods::{push_loads, MethodLoad};
 use super::super::direct_callee::DirectCallee;
 use super::super::entry_cell::capture_word;
 use super::super::{FRAME_BYTES, LaneHelper, LaneHelpers};
@@ -62,10 +61,6 @@ pub(super) enum CallForm {
     /// callee to call by its entry cell, and a method call's callee is the method cache's lookup,
     /// which no register holds for a call row to read.
     Stepped,
-    /// A method call whose callee the stitch loaded into a scratch register (`methods`) and whose arguments are a
-    /// window of registers: a plain call's direct row where its site's method cache recorded the callee, else the step
-    /// helper, which makes the whole call as `Stepped` does.
-    Method,
 }
 
 impl CallForm {
@@ -94,7 +89,7 @@ impl CallForm {
         match self {
             Self::Plain => LaneHelper::Call,
             Self::Construct => LaneHelper::ConstructCall,
-            Self::Stepped | Self::Method => LaneHelper::Step,
+            Self::Stepped => LaneHelper::Step,
         }
     }
 }
@@ -102,7 +97,7 @@ impl CallForm {
 /// What a call instruction names, decoded once: the record the helper takes (`call_pc`), the
 /// register that receives the result and the form. A plain call also names the callee and receiver
 /// registers, the first argument register and the argument count (zero for the other forms, whose
-/// helpers read their own operands from the record, but a method call's, which `methods` names).
+/// helpers read their own operands from the record).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct CallShape {
     pub(super) call_pc: u32,
@@ -132,7 +127,7 @@ impl CallShape {
                 returning,
                 form,
             },
-            CallForm::Construct | CallForm::Stepped | CallForm::Method => Self { call_pc, callee: 0, this: 0, window: 0, argc: 0, result, returning, form },
+            CallForm::Construct | CallForm::Stepped => Self { call_pc, callee: 0, this: 0, window: 0, argc: 0, result, returning, form },
         }
     }
 }
@@ -194,7 +189,7 @@ pub(super) enum Declined {
     /// A construction, which the helper row's `lane_body_call` does not make either: the
     /// planner for `Construct` chooses.
     Construction,
-    /// The call is neither a plain `Call` nor a method call with its callee loaded: no direct row makes it (`CallForm`).
+    /// The call is not a plain `Call`: no direct row makes it (`CallForm`).
     Form,
     /// A callee with no registers has no window the room check can refuse.
     Window,
@@ -214,7 +209,7 @@ pub(super) enum Choice {
 /// The row class of a call: direct when its target's cell is stable and describes the callee,
 /// else the helper row, with the first reason it cannot be direct.
 pub(super) fn choose(shape: &CallShape, direct: Option<&DirectFacts>) -> Choice {
-    if !matches!(shape.form, CallForm::Plain | CallForm::Method) {
+    if shape.form != CallForm::Plain {
         return Choice::Helper(Declined::Form);
     }
     let Some(facts) = direct else { return Choice::Helper(Declined::NoTarget) };
@@ -252,8 +247,6 @@ pub(super) struct CallPlan<'a> {
     pub(super) helper: usize,
     pub(super) spills: &'a [(Place, Register)],
     pub(super) reloads: &'a [(Place, Register)],
-    /// What a method call loads before its direct row, where it has the rows of one (`CallForm::Method`).
-    pub(super) load: Option<MethodLoad>,
 }
 
 /// The address of `helper` in a process helper table; none for a linked or symbolic one.
@@ -332,9 +325,6 @@ pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
     };
     let mut record = None;
     if let Some((mut row, owned)) = direct {
-        if let Some(load) = &plan.load {
-            push_loads(&mut parts, load)?;
-        }
         // Past the direct row and the helper row that follows it: the first reload, or the next instruction.
         row.taken = Some(parts.len() + ROWS_PAST_DIRECT);
         parts.push(row);
@@ -381,8 +371,6 @@ mod tests {
     fn a_stable_cell_that_describes_the_callee_is_called_directly() {
         assert_eq!(choose(&SHAPE, Some(&facts(4, 2))), Choice::Direct);
         assert_eq!(choose(&SHAPE, Some(&facts(4, 5))), Choice::Direct, "fewer arguments than params");
-        assert_eq!(choose(&CallShape { form: CallForm::Method, ..SHAPE }, Some(&facts(4, 2))), Choice::Direct, "a method call with its callee loaded");
-        assert_eq!(CallForm::Method.helper(), CallForm::Stepped.helper(), "a method call's helper makes the whole call");
     }
 
     #[test]
@@ -406,7 +394,7 @@ mod tests {
     }
 
     fn plan<'a>(direct: Option<&'a DirectFacts>, spills: &'a [(Place, Register)], reloads: &'a [(Place, Register)]) -> CallPlan<'a> {
-        CallPlan { shape: SHAPE, direct, helper: 0x4000, spills, reloads, load: None }
+        CallPlan { shape: SHAPE, direct, helper: 0x4000, spills, reloads }
     }
 
     #[test]

@@ -263,13 +263,12 @@ fn instanceof_and_in_jumps_are_rows_followed_by_the_branch() {
     assert!(fast_rows(Opcode::JumpBinaryFalse) > before, "no instanceof or `in` jump row");
 }
 
-/// `o.m(x)` and `this.m(x)` of a method the site's method cache remembered are loads of the method (the prototype's value folded, or
-/// the cache entry's slot) into a scratch slot, then the direct call through the callee's entry cell with that slot as its callee, whose
-/// miss, for another receiver layout or another method, is the step helper that makes the whole call.
+/// `o.m(x)` and `this.m(x)` are a load of the method (`GetField`) followed by a plain call of the register that holds it, which is a direct
+/// call through the callee's entry cell once the site recorded its callee: for one receiver layout, for two, and with the prototype's
+/// method replaced after the body was built.
 #[test]
 fn a_method_call_of_a_cached_callee_is_a_direct_call_after_its_load() {
-    let ops = [Opcode::CallMethod, Opcode::CallThisMethod];
-    let before = ops.map(fast_rows);
+    let before = fast_rows(Opcode::Call);
     let (interpreted, compiled, [runs, returns]) = run_both(
         "class A { constructor(n) { this.n = n; } add(x) { return this.n + x; } twice(x) { return this.add(x) + this.add(1); } }
          function drive(o, n) { let s = 0; for (let i = 0; i < n; i++) s = (s + o.add(i) + o.twice(i)) | 0; return s; }
@@ -277,14 +276,14 @@ fn a_method_call_of_a_cached_callee_is_a_direct_call_after_its_load() {
          for (let k = 0; k < 300; k++) t = (t + drive(a, 5)) | 0;
          print(t); print(drive(a, 7)); print(drive(new A(9), 4));
          print(drive({ n: 1, add(x) { return x; }, twice(x) { return x * 2; } }, 3));
+         for (let k = 0; k < 300; k++) t = (t + drive(k % 2 ? a : { n: k, add(x) { return x + 2; }, twice(x) { return x * 3; } }, 4)) | 0;
+         print(t);
          A.prototype.add = function (x) { return x - 1; };
          print(drive(a, 6));",
     );
     assert_eq!(interpreted, compiled);
     assert!(runs > 100 && returns > 100, "the bodies ran {runs} times and completed {returns}");
-    for (op, before) in ops.into_iter().zip(before) {
-        assert!(fast_rows(op) > before, "{op:?} has no method call row");
-    }
+    assert!(fast_rows(Opcode::Call) > before, "no direct call row");
 }
 
 /// A global lexical binding the declarative record retains (a finished script's top-level `let`) is read and written by a row over its word at

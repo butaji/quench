@@ -15085,16 +15085,6 @@ fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, pc: u
     })
 }
 
-impl<H: Host> Vm<H> {
-    /// The `compiled::DirectCallee` of `callee`, the method the method call at `pc` of `view`, a function of `code`, passes `argc`
-    /// arguments, which its site's method cache remembers: its call target, resolved as a call by its entry resolves it
-    /// (`lane_direct_callee`).
-    pub(super) fn method_direct_callee(&mut self, code: &ResidualProgram, view: &LaneView, (function, pc, argc): (u32, usize, u16), callee: Value) -> Option<super::compiled::DirectCallee> {
-        let target = self.resolve_script_call_target(code, callee)?;
-        lane_direct_callee(self, view, function, pc, argc, target)
-    }
-}
-
 /// Whether a lane body's run may call bodies by their compiled entries: the lane may make
 /// their activations should it leave inside one (`lane_body_call`'s own conditions).
 fn lane_direct_calls<H: Host>(cx: *mut LaneContext<H>) -> bool {

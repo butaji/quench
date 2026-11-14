@@ -59,7 +59,7 @@ pub(in crate::vm::compiled) struct Body {
     pub(in crate::vm::compiled) slot_types: Box<[crate::code_dependencies::SlotDependency]>,
     /// Where a run that left a loop region at a PC re-enters it (`resume`); none for a body.
     pub(in crate::vm::compiled) resumes: ResumeTable,
-    /// The registers its rows name past the function's own: its inlined callees' windows and the scratch of its method calls and
+    /// The registers its rows name past the function's own: its inlined callees' windows and the scratch of its
     /// `instanceof`/`in` jumps, whose frame slots its recovery room covers (`LaneRecoverySpace::reaching`).
     pub(in crate::vm::compiled) scratch: usize,
 }
@@ -149,25 +149,19 @@ fn call(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstru
 }
 
 /// The rows of an instruction a body makes in the scratch registers past the function's own (`scratch`): the comparison and the jump on it
-/// of an `instanceof` or `in` jump (`sites::compare_jump`), or the method call whose chain loads its callee (`methods::method_call`). A
-/// region reads its entry record, and leaves these instructions to `cover`.
+/// of an `instanceof` or `in` jump (`sites::compare_jump`). A region reads its entry record, and leaves it to `cover`.
 fn expanded(sites: &Sites, pc: u32, instruction: WideInstruction) -> Option<Vec<What>> {
     (sites.ending == Ending::Body).then_some(())?;
-    let direct = sites.facts.get(pc as usize).and_then(Option::as_ref);
-    let rows = compare_jump(sites.known, pc, instruction, sites.registers).or_else(|| method_call(sites.known, pc, instruction, sites.registers, direct).map(|call| vec![call]))?;
+    let rows = compare_jump(sites.known, pc, instruction, sites.registers)?;
     #[cfg(test)]
     note_fast(instruction.op());
     Some(rows.into_iter().map(What::Row).collect())
 }
 
-/// The registers the rows name above the function's own `registers`: the scratch the rows of `expanded` write or load a method call's callee
-/// and receiver to, and inlined windows, whose frame slots the body's recovery room covers (`LaneRecoverySpace::reaching`).
+/// The registers the rows name above the function's own `registers`: the scratch the rows of `expanded` write, and inlined windows, whose
+/// frame slots the body's recovery room covers (`LaneRecoverySpace::reaching`).
 fn scratch(rows: &[Decoded], registers: u16) -> usize {
-    let loaded = rows.iter().filter_map(|row| match row.step {
-        Some(Step::Call(shape)) if shape.form == CallForm::Method => Some(shape.callee.max(shape.this)),
-        _ => None,
-    });
-    let reach = rows.iter().flat_map(Decoded::registers).chain(loaded).map(|register| usize::from(register) + 1).max().unwrap_or(0);
+    let reach = rows.iter().flat_map(Decoded::registers).map(|register| usize::from(register) + 1).max().unwrap_or(0);
     reach.saturating_sub(usize::from(registers))
 }
 
