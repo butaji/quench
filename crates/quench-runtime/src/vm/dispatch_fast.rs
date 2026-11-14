@@ -8490,6 +8490,10 @@ unsafe fn lane_region_run<H: Host>(
     (function, from): (u32, u32),
     (machine, program, interrupt): (*mut Vm<H>, ProgramId, *const crate::execution_interrupt::ExecutionInterrupt),
 ) -> super::compiled::LoopOutcome {
+    // A job's frameless lane (a generator step) has no frame for the region's activation.
+    if code.needs_frame() && !unsafe { &*cx }.has_frame() {
+        return super::compiled::LoopOutcome::NotEntered;
+    }
     if !lane_region_admits(cx, function, code) {
         // A run the lane lacks room for grows it and leaves at the loop's header, so the next entry admits.
         let grown = !lane_locals_in_window(cx, function) && lane_room_prepare(cx, code.calls.recovery_space());

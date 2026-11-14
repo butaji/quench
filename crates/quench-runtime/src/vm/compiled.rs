@@ -3041,6 +3041,8 @@ impl CompiledOsrRegion {
 
     /// Whether Cranelift made the region (UltraJIT), not BaseJIT's stencils.
     pub(super) fn is_ultra(&self) -> bool { self.crossing == Crossing::General }
+    /// Whether a run builds an activation over the lane's VM frame; a bare run reads the registers alone.
+    pub(super) fn needs_frame(&self) -> bool { self.crossing != Crossing::Bare }
 
     /// Runs the region on `registers` with `entry`'s record, through the lane body ABI
     /// (`enter_body`), from its header or, where `can_run_from`, from the instruction at `from`;

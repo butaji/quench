@@ -48,6 +48,12 @@ impl<H: Host> LaneContext<H> {
     pub(super) fn frame(&self) -> usize {
         self.root.frame().unwrap_or(NO_FRAME)
     }
+
+    /// Whether the lane runs a VM frame, which a region's activation reads (`CompiledOsrRegion::needs_frame`).
+    #[inline(always)]
+    pub(super) fn has_frame(&self) -> bool {
+        self.root.frame().is_some()
+    }
 }
 
 /// The words of an innermost activation's state that a parked lane keeps: its receiver and its environment.
