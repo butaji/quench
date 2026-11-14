@@ -2084,6 +2084,7 @@ impl Object {
         }
     }
 
+    #[inline]
     fn set_storage_position(&mut self, position: u32) {
         match self.extras_mut_existing() {
             Some(extras) => extras.arena_start = position,
@@ -2654,6 +2655,7 @@ impl Object {
     #[inline] pub(crate) fn is_arguments_object(&self) -> bool {
         self.brand() == ObjectBrand::Arguments
     }
+    #[inline]
     pub(crate) fn has_indexed_descriptors(&self) -> bool {
         self.element_facts().has(ElementFacts::INDEXED_DESCRIPTORS)
     }

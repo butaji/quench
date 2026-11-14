@@ -585,6 +585,7 @@ impl Heap {
         true
     }
 
+    #[inline]
     pub(crate) fn array(&self, value: Value) -> Option<&ArrayObject> {
         if let Some(object) = self.record_array(value) {
             return Some(object);

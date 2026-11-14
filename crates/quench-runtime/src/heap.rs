@@ -1129,6 +1129,7 @@ impl Heap {
     }
 
     /// The object `mark_prototype` marks: a record's, or a cell's.
+    #[inline]
     fn prototype_object_mut(&mut self, prototype: Value) -> Option<&mut Object> {
         // A flag, not an edge: no write barrier for record prototypes.
         match prototype.direct_object_index() {
