@@ -251,24 +251,25 @@ mod tests {
         let prefix = heap.alloc_string(JsString::from_str("a prefix long enough "));
         let suffix = heap.alloc_string(JsString::from_str(" and a suffix"));
         let (prefix_id, suffix_id) = (prefix.direct_string_index().unwrap(), suffix.direct_string_index().unwrap());
-        let small = heap.alloc_small_string(SmallParts::new([prefix_id, suffix_id, 0], 2, Some((2.5, 1))).unwrap()).unwrap();
+        let small = heap.alloc_small_string(SmallParts::new([prefix_id, suffix_id, 0], 2, Some((25.0, 1))).unwrap()).unwrap();
+        assert!(SmallParts::new([prefix_id, suffix_id, 0], 2, Some((2.5, 1))).is_none(), "a double beside two strings takes a parts record");
         assert!(is_small_string(small.direct_string_index().unwrap()));
-        let nested = SmallParts::new([small.direct_string_index().unwrap(), 0, 0], 1, Some((-1.0, 0))).unwrap();
+        let nested = SmallParts::new([small.direct_string_index().unwrap(), 0, 0], 1, Some((-1.5, 0))).unwrap();
         let outer = heap.alloc_small_string(nested).unwrap();
         // The parts outlive collections that root only the small strings, read or not.
         heap.collect([small, outer]);
         heap.collect([small, outer]);
-        assert_eq!(text(&heap, outer), "-1a prefix long enough 2.5 and a suffix");
+        assert_eq!(text(&heap, outer), "-1.5a prefix long enough 25 and a suffix");
         heap.collect([small, outer]);
-        assert_eq!(text(&heap, small), "a prefix long enough 2.5 and a suffix");
+        assert_eq!(text(&heap, small), "a prefix long enough 25 and a suffix");
         let mut writer = crate::snapshot::Writer::new();
         heap.write_snapshot(&mut writer).unwrap();
         let bytes = writer.finish();
         let mut reader = crate::snapshot::Reader::new(&bytes, None).unwrap();
         let mut restored = Heap::read_snapshot(&mut reader, MemoryPolicy::default()).unwrap();
-        assert_eq!(text(&restored, small), "a prefix long enough 2.5 and a suffix");
+        assert_eq!(text(&restored, small), "a prefix long enough 25 and a suffix");
         restored.collect([outer]);
         assert!(!restored.is_live(small), "a small string no root reaches is freed");
-        assert_eq!(text(&restored, outer), "-1a prefix long enough 2.5 and a suffix");
+        assert_eq!(text(&restored, outer), "-1.5a prefix long enough 25 and a suffix");
     }
 }

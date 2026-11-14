@@ -1,9 +1,9 @@
-//! Small strings: strings of parts (two or three, at most one a Number) in a 16-byte record
+//! Small strings: strings of parts (two or three, at most one a Number) in a 12-byte record
 //! of their own space, where a string of parts (`JsString::from_parts`) takes a 24-byte string
 //! record. Their ids are string ids of the hole the string record space keeps
 //! (`records::STRING_RECORD_HOLE`), so a Value names one as it names any string and stays
 //! narrow. The text is made on first read and replaces the parts in the record: its shared
-//! storage's pointer and length, the 16 bytes still. A read is answered by a view of that text
+//! storage's pointer and length, the 12 bytes still. A read is answered by a view of that text
 //! (`SmallViews`), a string value held until the next collection, which no reference outlives.
 use super::*;
 use super::records::{ParallelRecordMarks, STRING_RECORD_CAPACITY, STRING_RECORD_HOLE};
@@ -23,37 +23,56 @@ const ID_MASK: u32 = (1 << 28) - 1;
 const NO_TEXT: u32 = ID_MASK;
 /// Where `SmallParts::head` keeps its shape, one of the `SHAPE_*`.
 const SHAPE_SHIFT: u32 = 28;
-/// `[head] Number [tail]`, either string absent (`NO_TEXT`); `extra` holds the Number's bits.
-const SHAPE_NUMBER_MIDDLE: u32 = 0;
-/// `head tail Number`.
-const SHAPE_NUMBER_LAST: u32 = 1;
-/// `Number head tail`.
-const SHAPE_NUMBER_FIRST: u32 = 2;
+/// `[head] Number [tail]`, either string absent (`NO_TEXT`); `extra` holds the Number, an int32.
+const SHAPE_INT_MIDDLE: u32 = 0;
+/// `head tail Number`, the Number an int32 in `extra`.
+const SHAPE_INT_LAST: u32 = 1;
+/// `Number head tail`, the Number an int32 in `extra`.
+const SHAPE_INT_FIRST: u32 = 2;
 /// `head tail [extra]`, strings only; `extra` holds the third id, or `NO_TEXT`.
 const SHAPE_TEXTS: u32 = 3;
+/// `Number head`: one string and a Number of any value, its bits in `tail` (low) and `extra`.
+const SHAPE_WIDE_FIRST: u32 = 4;
+/// `head Number`, as `SHAPE_WIDE_FIRST`.
+const SHAPE_WIDE_LAST: u32 = 5;
 /// `SmallParts::head`'s flag once the text has been made: the bits below it hold the text's
-/// length, `extra` the address `Rc::into_raw` gave for its storage, and `tail` the slot of its
-/// latest view (`SmallViews`), which may be stale.
+/// length, and `tail` (low) with `extra` one word (`written_word`): the address `Rc::into_raw`
+/// gave for its storage over `VIEW_BITS`, and below them the slot of its latest view
+/// (`SmallViews`), which may be stale.
 const WRITTEN: u32 = 1 << 31;
-/// No view yet.
-const NO_VIEW: u32 = u32::MAX;
-const _: () = assert!(STRING_RECORD_CAPACITY as u32 <= NO_TEXT && SHAPE_TEXTS << SHAPE_SHIFT < WRITTEN);
+/// Bits of the written word holding the view slot.
+const VIEW_BITS: u32 = 19;
+const VIEW_MASK: u64 = (1 << VIEW_BITS) - 1;
+/// No view yet, or a slot the word cannot hold.
+const NO_VIEW: u32 = VIEW_MASK as u32;
+/// Low bits a text storage address always has clear (its `Rc` is word aligned).
+const TEXT_ALIGN_BITS: u32 = 3;
+const _: () = assert!(STRING_RECORD_CAPACITY as u32 <= NO_TEXT && SHAPE_WIDE_LAST << SHAPE_SHIFT < WRITTEN);
+const _: () = assert!(VIEW_COLLECTION_LIMIT < NO_VIEW && 48 - TEXT_ALIGN_BITS + VIEW_BITS <= 64);
 
-/// The parts of a string of parts (`Parts`: two or three, at most one a Number) in 16 bytes:
-/// string ids in `head` (below its shape) and `tail`, and the Number's bits or a third id in
-/// `extra`. Once read, the record owns its text instead (`WRITTEN`).
+/// The parts of a string of parts (`Parts`: two or three, at most one a Number) in 12 bytes:
+/// string ids in `head` (below its shape) and `tail`, and a third id or an int32 Number in
+/// `extra`; a Number beside one string may be any double, in `tail` and `extra`. Once read, the
+/// record owns its text instead (`WRITTEN`).
 #[repr(C)]
 pub(crate) struct SmallParts {
     head: u32,
     tail: u32,
-    extra: u64,
+    extra: u32,
 }
-const _: () = assert!(size_of::<SmallParts>() == 16);
+const _: () = assert!(size_of::<SmallParts>() == 12);
+
+/// A Number's int32 when it is exactly one (not -0).
+#[inline(always)]
+fn exact_int(number: f64) -> Option<i32> {
+    let int = number as i32;
+    (f64::from(int).to_bits() == number.to_bits()).then_some(int)
+}
 
 impl SmallParts {
     /// The record of the parts of a `Parts` string: its string ids in order, the first `texts`
     /// of `ids`, and its Number with the Number's position, if it has one; `None` when an id
-    /// cannot be held.
+    /// cannot be held, or a Number beside two strings is not an int32.
     #[inline(always)]
     pub(crate) fn new(ids: [u32; 3], texts: usize, number: Option<(f64, usize)>) -> Option<Self> {
         debug_assert!((2..=3).contains(&(texts + usize::from(number.is_some()))));
@@ -62,22 +81,45 @@ impl SmallParts {
             return None;
         }
         let Some((number, at)) = number else {
-            return Some(Self { head: SHAPE_TEXTS << SHAPE_SHIFT | id(0), tail: id(1), extra: u64::from(id(2)) });
+            return Some(Self { head: SHAPE_TEXTS << SHAPE_SHIFT | id(0), tail: id(1), extra: id(2) });
+        };
+        let Some(int) = exact_int(number) else {
+            if texts != 1 {
+                return None;
+            }
+            let shape = if at == 0 { SHAPE_WIDE_FIRST } else { SHAPE_WIDE_LAST };
+            let bits = number.to_bits();
+            return Some(Self { head: shape << SHAPE_SHIFT | id(0), tail: bits as u32, extra: (bits >> 32) as u32 });
         };
         let (shape, head, tail) = match (at, texts) {
-            (0, 2) => (SHAPE_NUMBER_FIRST, id(0), id(1)),
-            (0, _) => (SHAPE_NUMBER_MIDDLE, NO_TEXT, id(0)),
-            (2, _) => (SHAPE_NUMBER_LAST, id(0), id(1)),
-            _ => (SHAPE_NUMBER_MIDDLE, id(0), id(1)),
+            (0, 2) => (SHAPE_INT_FIRST, id(0), id(1)),
+            (0, _) => (SHAPE_INT_MIDDLE, NO_TEXT, id(0)),
+            (2, _) => (SHAPE_INT_LAST, id(0), id(1)),
+            _ => (SHAPE_INT_MIDDLE, id(0), id(1)),
         };
-        Some(Self { head: shape << SHAPE_SHIFT | head, tail, extra: number.to_bits() })
+        Some(Self { head: shape << SHAPE_SHIFT | head, tail, extra: int as u32 })
     }
 
     /// A record that owns `text`, already made (`WRITTEN`).
     pub(super) fn written(text: JsString) -> Self {
         let text = text.into_shared_ascii();
         let length = u32::try_from(text.len()).ok().filter(|length| length & WRITTEN == 0).expect("a short text");
-        Self { head: WRITTEN | length, tail: NO_VIEW, extra: Rc::into_raw(text).cast::<u8>() as u64 }
+        let address = Rc::into_raw(text).cast::<u8>() as u64;
+        debug_assert!(address.trailing_zeros() >= TEXT_ALIGN_BITS && address >> 48 == 0);
+        let word = address >> TEXT_ALIGN_BITS << VIEW_BITS | u64::from(NO_VIEW);
+        Self { head: WRITTEN | length, tail: word as u32, extra: (word >> 32) as u32 }
+    }
+
+    /// `tail` and `extra` as one word: a wide Number's bits, or a written text's address and view.
+    #[inline(always)]
+    fn word(&self) -> u64 {
+        u64::from(self.tail) | u64::from(self.extra) << 32
+    }
+
+    /// The slot of a written record's latest view, possibly stale (`NO_VIEW` for none).
+    #[inline(always)]
+    fn view_slot(&self) -> u32 {
+        (self.word() & VIEW_MASK) as u32
     }
 
     /// Whether its text has been made.
@@ -96,7 +138,8 @@ impl SmallParts {
     #[inline(always)]
     fn text(&self) -> Option<ManuallyDrop<Rc<str>>> {
         self.is_written().then(|| {
-            let bytes = std::ptr::slice_from_raw_parts(self.extra as *const u8, (self.head & !WRITTEN) as usize);
+            let address = (self.word() >> VIEW_BITS) << TEXT_ALIGN_BITS;
+            let bytes = std::ptr::slice_from_raw_parts(address as *const u8, (self.head & !WRITTEN) as usize);
             // SAFETY: `written` kept this storage's `Rc::into_raw`, and the record still owns it.
             ManuallyDrop::new(unsafe { Rc::from_raw(bytes as *const str) })
         })
@@ -117,32 +160,36 @@ impl SmallParts {
     fn each(&self) -> [Option<Part>; 3] {
         let text = |id: u32| (id != NO_TEXT).then_some(Part::Text(id));
         let (head, tail) = (text(self.head & ID_MASK), text(self.tail));
-        let number = Some(Part::Number(f64::from_bits(self.extra)));
+        let int = Some(Part::Number(f64::from(self.extra as i32)));
+        let wide = Some(Part::Number(f64::from_bits(self.word())));
         match self.head >> SHAPE_SHIFT {
-            SHAPE_NUMBER_MIDDLE => [head, number, tail],
-            SHAPE_NUMBER_LAST => [head, tail, number],
-            SHAPE_NUMBER_FIRST => [number, head, tail],
-            SHAPE_TEXTS => [head, tail, text(self.extra as u32)],
+            SHAPE_INT_MIDDLE => [head, int, tail],
+            SHAPE_INT_LAST => [head, tail, int],
+            SHAPE_INT_FIRST => [int, head, tail],
+            SHAPE_TEXTS => [head, tail, text(self.extra)],
+            SHAPE_WIDE_FIRST => [wide, head, None],
+            SHAPE_WIDE_LAST => [head, wide, None],
             _ => [None; 3],
         }
     }
 
-    /// The string parts not yet written out: what a collector traces. Every shape keeps its
-    /// ids in `head` and `tail`, and only `SHAPE_TEXTS` a third in `extra`.
+    /// The string parts not yet written out: what a collector traces. Every shape keeps an id
+    /// in `head`; all but the wide shapes one in `tail`, and only `SHAPE_TEXTS` a third in `extra`.
     #[inline(always)]
     fn for_each_text(&self, mut visit: impl FnMut(u32)) {
         if self.is_written() {
             return;
         }
+        let shape = self.head >> SHAPE_SHIFT;
         let head = self.head & ID_MASK;
         if head != NO_TEXT {
             visit(head);
         }
-        if self.tail != NO_TEXT {
+        if shape <= SHAPE_TEXTS && self.tail != NO_TEXT {
             visit(self.tail);
         }
-        if self.head >> SHAPE_SHIFT == SHAPE_TEXTS && self.extra as u32 != NO_TEXT {
-            visit(self.extra as u32);
+        if shape == SHAPE_TEXTS && self.extra != NO_TEXT {
+            visit(self.extra);
         }
     }
 }
@@ -154,13 +201,13 @@ impl SmallParts {
 /// # Safety
 /// `record` points to an initialized record that stays allocated during the call.
 pub(super) unsafe fn concurrent_small_parts(record: *const SmallParts, visit: impl FnMut(u32)) {
-    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::Relaxed};
+    use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
     // SAFETY: the caller's contract; each field is aligned for its atomic.
     let copy = unsafe {
         ManuallyDrop::new(SmallParts {
             head: AtomicU32::from_ptr(std::ptr::addr_of!((*record).head).cast_mut()).load(Relaxed),
             tail: AtomicU32::from_ptr(std::ptr::addr_of!((*record).tail).cast_mut()).load(Relaxed),
-            extra: AtomicU64::from_ptr(std::ptr::addr_of!((*record).extra).cast_mut()).load(Relaxed),
+            extra: AtomicU32::from_ptr(std::ptr::addr_of!((*record).extra).cast_mut()).load(Relaxed),
         })
     };
     copy.for_each_text(visit);
@@ -388,7 +435,7 @@ impl Heap {
         // SAFETY: the caller's contract.
         let record = unsafe { self.small_strings.get_live(local) };
         if record.is_written()
-            && let Some(view) = self.small_views.get().get(record.tail, local)
+            && let Some(view) = self.small_views.get().get(record.view_slot(), local)
         {
             return view;
         }
@@ -440,8 +487,10 @@ impl Heap {
             self.request_collection();
         }
         let base = self.small_strings.base_ptr().expect("a live record has a space").cast_mut();
-        // SAFETY: as above; `tail` of a written record is only a hint, read by copy.
-        unsafe { (*base.add(local as usize)).tail = slot };
+        // SAFETY: as above; the view bits of a written record are only a hint, read by copy.
+        // A slot past the bits leaves `NO_VIEW`, which no view answers.
+        let record = unsafe { &mut *base.add(local as usize) };
+        record.tail = record.tail & !(VIEW_MASK as u32) | slot.min(NO_VIEW);
         self.small_views.get().get(slot, local).expect("the view just made")
     }
 
