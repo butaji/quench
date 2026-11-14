@@ -3690,6 +3690,12 @@ fn proof_key(key: Value) -> usize {
 /// integer that does not overflow; `None` for any other value.
 #[inline(always)]
 pub(super) fn integer_increment<const DECREMENT: bool>(value: Value) -> Option<i32> {
+    // As `dispatch::integer_increment`: a non-negative step by one word-range compare.
+    let offset = value.int_key_offset();
+    let stepped = if DECREMENT { offset.wrapping_sub(1) } else { offset.wrapping_add(1) };
+    if stepped < 1 << 31 {
+        return Some(stepped as i32);
+    }
     let integer = value.as_int()?;
     if DECREMENT { integer.checked_sub(1) } else { integer.checked_add(1) }
 }
