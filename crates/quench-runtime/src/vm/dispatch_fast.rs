@@ -4965,6 +4965,28 @@ script_handler! {
             sibling!(lane_load_frame_outer_capture::<H>, r, ip, view)
         }
         let depth = ImmediateLayout::capture_depth(imm);
+        // The links from the closure environment's storage up its chain (`EnvironmentSlots::link`),
+        // one load and compare per level.
+        let capture = capture_reads(unsafe { (*cx).capture });
+        if !capture.is_null() {
+            let epoch = unsafe { vm(cx) }.heap.collection_epoch();
+            let mut storage = capture;
+            let mut remaining = depth;
+            // SAFETY: the context's capture is the closure environment's live dense storage, and
+            // each link of this collection names a live parent's.
+            while remaining > 0
+                && let Some(parent) = unsafe { crate::heap::EnvironmentSlots::linked_parent(storage, epoch) }
+            {
+                storage = parent;
+                remaining -= 1;
+            }
+            if remaining == 0
+                && let Some(value) = unsafe { crate::heap::EnvironmentSlots::read_storage(storage, ImmediateLayout::capture_slot(imm)) }
+            {
+                r.set(i.a, value);
+                next!(cx, r, following(ip), view)
+            }
+        }
         let walk = unsafe { (*cx).outer };
         let value = if walk.env == env && walk.depth == depth {
             // SAFETY: as `OuterWalk`.
@@ -4995,6 +5017,7 @@ script_handler! {
         let imm = i.imm();
         let vm = unsafe { vm(cx) };
         let (env, depth) = (unsafe { (*cx).env }, ImmediateLayout::capture_depth(imm));
+        vm.link_capture_chain(env, depth);
         let walked = vm.walked_capture_slots(env, false, depth);
         // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
         let value = walked.and_then(|(slots, root)| {
@@ -16256,6 +16279,16 @@ unsafe fn window_environment<H: Host>(
             crate::heap::EnvironmentScopeRef::of_program(program.raw())
         };
         let (environment, storage) = vm.heap.alloc_environment(parent, function, slots, scope);
+        // Its storage links to its parent's for its closures' outer captures
+        // (`EnvironmentSlots::link`), as a capture walk would find the parent's.
+        if let Some(Cell::Environment { function: owner, slots: parent_slots, .. }) = vm.heap.get(parent)
+            && *owner != u32::MAX
+            && *owner != super::ROOT_FUNCTION_ID
+            && let Some(parent_storage) = parent_slots.dense_storage()
+            && let Some(own) = (*storage).dense_storage()
+        {
+            crate::heap::EnvironmentSlots::link(own, parent_storage, vm.heap.collection_epoch());
+        }
         entries.add(usize::from(WINDOW_ENVIRONMENT)).write(environment);
         entries
             .add(usize::from(WINDOW_SLOTS))

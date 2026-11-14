@@ -1671,7 +1671,7 @@ fn memory_census_distinguishes_sparse_environment_storage_from_logical_slots() {
     assert_eq!(census.environment_logical_slots, 2 * width);
     assert_eq!(census.environment_sparse_count, 1);
     assert_eq!(census.environment_storage_bytes,
-        size_of::<usize>() + width * size_of::<EnvironmentSlot>() + sparse_bytes);
+        (1 + super::cell::ENVIRONMENT_PREFIX_WORDS) * size_of::<usize>() + width * size_of::<EnvironmentSlot>() + sparse_bytes);
     assert!(sparse_bytes < width * size_of::<EnvironmentSlot>());
     heap.collect([copy]);
     assert_eq!(heap.memory_composition().environment_storage_bytes, census.environment_storage_bytes);

@@ -1708,6 +1708,34 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Links each function environment's dense storage on the walk from `env` to `depth` to
+    /// its parent's (`EnvironmentSlots::link`), for an activation's later outer captures
+    /// (`lane_load_outer_capture`): only where both are function environments other than a
+    /// root, whose dense slots a capture walk reads as they are.
+    #[inline(never)]
+    pub(super) fn link_capture_chain(&self, env: Value, depth: u16) {
+        let epoch = self.heap.collection_epoch();
+        let function_storage = |cell: Option<&Cell>| match cell {
+            Some(Cell::Environment { parent, function, slots, .. })
+                if *function != u32::MAX && *function != super::ROOT_FUNCTION_ID =>
+            {
+                slots.dense_storage().map(|storage| (*parent, storage))
+            }
+            _ => None,
+        };
+        let Some((mut parent, mut storage)) = function_storage(self.heap.get(env)) else {
+            return;
+        };
+        for _ in 0..depth {
+            let Some((next_parent, parent_storage)) = function_storage(self.heap.get(parent)) else {
+                return;
+            };
+            // SAFETY: both are dense storages of live heap environments in this collection.
+            unsafe { crate::heap::EnvironmentSlots::link(storage, parent_storage, epoch) };
+            (parent, storage) = (next_parent, parent_storage);
+        }
+    }
+
     /// `slot` at the end of a capture walk `walked_capture_slots` remembers, when that end is
     /// a function environment holding the slot densely; `None` leaves the read to the walk.
     #[inline(always)]

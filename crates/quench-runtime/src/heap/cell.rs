@@ -3193,11 +3193,15 @@ impl std::fmt::Debug for EnvironmentScopeRef {
 /// with the default owner, sorted by index; every other slot is shared with that owner. The
 /// slice header's mark tells the two apart, so a dense read tests one bit it loads anyway.
 #[repr(transparent)]
-pub(crate) struct EnvironmentSlots(pub(super) super::thin_slice::ThinBoxSlice<EnvironmentSlot>);
+pub(crate) struct EnvironmentSlots(pub(super) super::thin_slice::ThinBoxSlice<EnvironmentSlot, ENVIRONMENT_PREFIX_WORDS>);
 
 /// Words an `EnvironmentSlots::lay_out_in_place` storage takes before its slots.
 pub(crate) const IN_PLACE_SLOTS_WORDS: usize =
-    super::thin_slice::ThinBoxSlice::<EnvironmentSlot>::IN_PLACE_WORDS;
+    super::thin_slice::ThinBoxSlice::<EnvironmentSlot, ENVIRONMENT_PREFIX_WORDS>::IN_PLACE_WORDS;
+
+/// Words before an environment's slot storage header (`ThinBoxSlice`'s prefix): the capture
+/// link (`EnvironmentSlots::link`). A storage laid out in place has none it may read.
+pub(crate) const ENVIRONMENT_PREFIX_WORDS: usize = 2;
 
 /// A per-iteration copy of an environment with at least this many slots stores only the
 /// slots it does not share with one owner. A module root with thousands of bindings would
@@ -3231,6 +3235,50 @@ impl EnvironmentSlots {
     }
 
     /// Read through a live dense-storage cache by `staged::environment::dense_capture`.
+    /// The dense storage of the parent environment of the environment whose dense storage is
+    /// at `storage`, as `link` recorded it in collection `epoch`; `None` when no link of that
+    /// collection was recorded.
+    ///
+    /// # Safety
+    /// `storage` came from `dense_storage` of a live heap environment in collection `epoch`
+    /// (never a storage laid out in place, which has no prefix of its own).
+    #[inline(always)]
+    pub(crate) unsafe fn linked_parent(storage: *const usize, epoch: u64) -> Option<*const usize> {
+        type Slice = super::thin_slice::ThinBoxSlice<EnvironmentSlot, ENVIRONMENT_PREFIX_WORDS>;
+        // SAFETY: as the caller guarantees, the prefix words precede the header; an empty
+        // storage's are the shared empty header's zeros, which name no collection.
+        unsafe {
+            let prefix = Slice::prefix(std::ptr::NonNull::new_unchecked(storage.cast_mut()));
+            if *prefix != epoch.wrapping_add(1) as usize {
+                return None;
+            }
+            let parent = *prefix.add(1) as *const usize;
+            (!parent.is_null()).then_some(parent)
+        }
+    }
+
+    /// Records `parent`, the dense storage of the parent environment of the environment whose
+    /// dense storage is at `storage`, for collection `epoch` (`linked_parent`). Within one
+    /// collection a live environment's storage never moves, and each collection names a new
+    /// epoch, so a link is read only while both storages it joins stand.
+    ///
+    /// # Safety
+    /// As `linked_parent`, for both storages.
+    #[inline(always)]
+    pub(crate) unsafe fn link(storage: *const usize, parent: *const usize, epoch: u64) {
+        type Slice = super::thin_slice::ThinBoxSlice<EnvironmentSlot, ENVIRONMENT_PREFIX_WORDS>;
+        // SAFETY: as the caller guarantees; an empty storage shares the static header, whose
+        // prefix is never written.
+        unsafe {
+            if *storage & !super::thin_slice::MARK_BIT == 0 {
+                return;
+            }
+            let prefix = Slice::prefix(std::ptr::NonNull::new_unchecked(storage.cast_mut()));
+            *prefix.add(1) = parent as usize;
+            *prefix = epoch.wrapping_add(1) as usize;
+        }
+    }
+
     /// # Safety
     /// `storage` is null or live as for `dense_storage`; no element is mutably borrowed.
     #[inline(always)]
@@ -3450,7 +3498,7 @@ impl EnvironmentSlots {
     /// `dense` stored sparsely around the owner most of its slots share, when it reaches
     /// `SPARSE_CLONE_MIN_SLOTS` and the sparse words are fewer; a copy that owns most of its
     /// slots stays dense, whose reads need no search.
-    fn compacted(dense: super::thin_slice::ThinBoxSlice<EnvironmentSlot>) -> Option<Self> {
+    fn compacted(dense: super::thin_slice::ThinBoxSlice<EnvironmentSlot, ENVIRONMENT_PREFIX_WORDS>) -> Option<Self> {
         let len = dense.len();
         if len < SPARSE_CLONE_MIN_SLOTS {
             return Some(Self(dense));
@@ -3582,7 +3630,7 @@ impl EnvironmentSlots {
     #[inline(always)]
     pub(crate) unsafe fn lay_out_in_place(words: *mut Value, len: usize) -> *const Self {
         // SAFETY: as the caller guarantees; a slot is a `Value`, a word.
-        unsafe { super::thin_slice::ThinBoxSlice::<EnvironmentSlot>::lay_out_in_place(words.cast(), len).cast() }
+        unsafe { super::thin_slice::ThinBoxSlice::<EnvironmentSlot, ENVIRONMENT_PREFIX_WORDS>::lay_out_in_place(words.cast(), len).cast() }
     }
 
     /// `len` slots, each `DELETED` but slot `k` of each bit `k` of `captured`, which holds
