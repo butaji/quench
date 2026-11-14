@@ -304,6 +304,33 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `proved_instanceof` under a current proof of a primitive (`false`, as there) or a direct
+    /// object whose chain is all object records: `None` for anything else (no proof, another
+    /// heap value, a link outside the records), which `proved_instanceof` decides. Calls
+    /// nothing, so a handler's hit path builds no frame.
+    #[inline(always)]
+    pub(super) fn record_instanceof(&self, value: Value, constructor: Value) -> Option<bool> {
+        let proof = &self.instanceof_proofs[instanceof_holder_index(constructor)];
+        if proof.0 != constructor || !proof.2.as_ref().is_some_and(|watch| watch.is_published()) {
+            return None;
+        }
+        let target = proof.1;
+        let Some(record) = value.direct_object_index() else {
+            return (!value.is_heap() || value.direct_string_index().is_some()).then_some(false);
+        };
+        let mut object = self.heap.object_record_by_id(record);
+        loop {
+            let link = object.proto_link();
+            if link == target {
+                return Some(true);
+            }
+            if link == ProtoLink::NULL {
+                return Some(false);
+            }
+            object = self.heap.object_record_by_id(link.object_record_id()?);
+        }
+    }
+
     /// `steady_instanceof` through the proof `constructor` holds (`Vm::instanceof_proofs`):
     /// its `prototype` link, read once and kept while no slot or layout of the constructor
     /// (marked a prototype) changes, so a use reads neither its layout nor its `prototype`.

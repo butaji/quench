@@ -7982,6 +7982,23 @@ script_handler! {
     /// record carries the jump's distance from itself, and the result register is written
     /// as the pair would. A case the steady test leaves runs the pair unfused, from the walk.
     fn lane_instanceof_jump_true<BACKWARD: bool>(cx, r, ip, i, view) {
+        let Some(holds) = (unsafe { vm(cx) }).record_instanceof(r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_instanceof_jump_true_proving::<H, BACKWARD>, r, ip, Carried::script_in(cx, view))
+        };
+        if holds {
+            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), Some((i.a, Value::TRUE))));
+        }
+        r.set(i.a, Value::FALSE);
+        // SAFETY: the fused pair is two records, the second never the view's last.
+        next!(cx, r, unsafe { ip.add(2) }, Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `lane_instanceof_jump_true` for whatever its record walk leaves (`Vm::record_instanceof`):
+    /// the proved test in full, which may prove, out of line so the walk calls nothing.
+    #[inline(never)]
+    fn lane_instanceof_jump_true_proving<BACKWARD: bool>(cx, r, ip, i, view) {
         let Some(holds) = (unsafe { vm(cx) }).proved_instanceof(r.get(i.b), r.get(i.c)) else {
             sibling!(lane_instanceof_value_walk::<H>, r, ip, Carried::script_in(cx, view))
         };
