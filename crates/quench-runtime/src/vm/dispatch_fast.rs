@@ -3268,16 +3268,9 @@ script_handler! {
     #[inline(never)]
     fn lane_make_const_array<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let function = match vm.lane_stack.activations.last() {
-            Some(activation) => activation.function,
-            None => vm.frames[unsafe { (*cx).frame }].function,
-        };
-        // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
-        // running function's view.
-        let (code, pc, program) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize, (*cx).program) };
-        let body = code.function(function as usize);
-        let wide = decoded_instruction(body, body.code[pc]);
-        let Some(value) = vm.const_array_value(program, wide.constant_index(), usize::from(wide.element_count())) else {
+        // The record holds the elements' constant index and count (`lane_operand`), so the
+        // running function's instruction is not decoded again.
+        let Some(value) = vm.const_array_value(unsafe { (*cx).program }, i.imm() as usize, usize::from(i.b)) else {
             return exit(ip);
         };
         note_allocation(vm);
@@ -18300,8 +18293,11 @@ fn lane_operand(
                 jump: distance.checked_mul(record)?,
             }
         }
-        // A case selector reads its run of constants from the context by index.
-        ImmediateRole::ConstantIndex if instruction.op().is_string_case_index() => {
+        // A case selector reads its run of constants from the context by index, as a constant
+        // array reads its elements' (`lane_make_const_array`).
+        ImmediateRole::ConstantIndex
+            if instruction.op().is_string_case_index() || instruction.op().class() == Class::MakeConstArray =>
+        {
             let start = instruction.imm() as usize;
             constants.get(start..start.checked_add(usize::from(instruction.b()))?)?;
             LaneOperand { imm: instruction.imm() }
