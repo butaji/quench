@@ -497,6 +497,13 @@ impl Value {
         Self(TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT | u64::from(index))
     }
 
+    /// Whether the value is an int32, tested on the shifted tag field as `as_number` tests
+    /// it, so that after an `as_number` of the same value LLVM reuses that test (a double's
+    /// field already failed it) instead of masking the word again.
+    #[inline(always)] pub(crate) fn has_int_tag_field(self) -> bool {
+        (self.0 >> TAG_SHIFT) as u32 == (TAG_INT >> TAG_SHIFT) as u32
+    }
+
     /// The Number this value holds. Doubles are tested first: arithmetic that reaches this
     /// conversion has already handled the integer pair.
     #[inline(always)]

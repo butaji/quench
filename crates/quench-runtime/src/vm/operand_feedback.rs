@@ -156,6 +156,17 @@ pub(super) unsafe fn note_operands<H: Host>(cx: *mut LaneContext<H>, ip: Ip, lef
     }
 }
 
+/// Adds both Number kinds to the feedback byte of the record at `ip`, for a handler that
+/// stops noting Number pairs (`requicken_number_relation`).
+///
+/// # Safety
+/// As `note_operands`.
+pub(super) unsafe fn note_number_kinds<H: Host>(cx: *mut LaneContext<H>, ip: Ip) {
+    // SAFETY: as the function's own.
+    let cell = unsafe { feedback_cell((*cx).base, ip) };
+    cell.set(OperandKinds(cell.get()).union(OperandKinds::INT32).union(OperandKinds::DOUBLE).0);
+}
+
 /// `note_operands` for a handler's first miss, out of line so the handler's own code stays as it is.
 ///
 /// # Safety
@@ -189,7 +200,9 @@ pub(super) unsafe fn note_widened<H: Host>(cx: *mut LaneContext<H>, ip: Ip, resu
 /// As `note_operands`.
 #[inline(always)]
 pub(super) unsafe fn note_pair_result<H: Host>(cx: *mut LaneContext<H>, ip: Ip, left: Value, right: Value, result: Value) {
-    if Value::int_pair(left, right).is_some() {
+    // Per operand on the tag field the Number step already tested, not `Value::int_pair`'s
+    // xor of both words: that recomputed both tags after every double operation.
+    if left.has_int_tag_field() && right.has_int_tag_field() {
         // SAFETY: the caller's.
         unsafe { note_widened(cx, ip, result) };
     }

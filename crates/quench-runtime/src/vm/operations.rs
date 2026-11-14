@@ -554,6 +554,15 @@ pub(super) fn number_relation(op: u32, left: Value, right: Value) -> Option<bool
     Some(number_comparison(op, left.as_number()?, right.as_number()?))
 }
 
+/// Comparison `op` (at most `LAST_COMPARISON_OPERATOR`) of two Numbers' doubles, as
+/// `number_relation` decides it past its int32 pair: an int32 converts exactly, so any two
+/// Numbers compare this way.
+#[inline(always)]
+pub(super) fn double_relation(op: u32, left: f64, right: f64) -> bool {
+    debug_assert!(op <= LAST_COMPARISON_OPERATOR);
+    number_comparison(op, left, right)
+}
+
 /// Number remainder after operand conversion. Also callable by the shared native
 /// emitter: no VM state, allocation, collection, guest effects, or integer traps.
 /// Floating remainder preserves negative zero and the Number NaN/infinity rules.

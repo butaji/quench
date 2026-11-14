@@ -639,7 +639,7 @@ mod body_calls;
 mod lane_leaves;
 #[path = "operand_feedback.rs"]
 pub(super) mod operand_feedback;
-use operand_feedback::{has_operand_feedback, note_first_miss, note_operands, note_pair_result, Records};
+use operand_feedback::{has_operand_feedback, note_first_miss, note_number_kinds, note_operands, note_pair_result, Records};
 #[path = "lane_body_tier.rs"]
 mod lane_body_tier;
 #[path = "loop_tier.rs"]
@@ -7677,6 +7677,8 @@ script_handler! {
     fn lane_jump_binary_false_registers_other<BACKWARD: bool, OP: u32>(cx, r, ip, i, view) {
         // SAFETY: the record is a comparison record of the running view.
         unsafe { note_operands(cx, ip, r.get(i.b), r.get(i.c)) };
+        // SAFETY: as above.
+        unsafe { requicken_number_relation::<H, BACKWARD, OP, false, false>(cx, ip, r.get(i.b), r.get(i.c)) };
         let Some(holds) = lane_relation::<H>(relation_operator::<OP>(i), r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
@@ -7684,6 +7686,63 @@ script_handler! {
             resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
         }
         next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// A jump test whose site met a Number that is no int32 (`requicken_number_relation`):
+    /// any two Numbers compare through their doubles, as `number_relation` decides, with the
+    /// right operand a register or (`SMALL`) the record's constant (`lane_small_constant`).
+    /// The site's feedback already holds both Number kinds, so a Number pair notes nothing;
+    /// any other pair runs the integer handler's out-of-line case, which notes it.
+    fn lane_jump_binary_false_numbers<BACKWARD: bool, OP: u32, SMALL: bool, TABLE: bool>(cx, r, ip, i, view) {
+        let left = r.get(i.b);
+        let right = if SMALL { lane_small_constant::<H, TABLE>(cx, i) } else { r.get(i.c) };
+        let (Some(left), Some(right)) = (left.as_number(), right.as_number()) else {
+            if SMALL {
+                sibling!(lane_jump_binary_false_small_other::<H, BACKWARD, TABLE>, r, ip, Carried::script(cx))
+            }
+            sibling!(lane_jump_binary_false_registers_other::<H, BACKWARD, OP>, r, ip, Carried::script(cx))
+        };
+        if !super::operations::double_relation(relation_operator::<OP>(i), left, right) {
+            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script(cx), None));
+        }
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+/// Moves the integer jump test at `ip` (`lane_jump_binary_false_registers`, `_small`) to
+/// `lane_jump_binary_false_numbers` once its site met a Number pair that is not two int32s,
+/// a relational or equality operator's: its feedback byte gains both Number kinds first, as
+/// the moved handler stops noting Number pairs (the site's class is Number either way, a
+/// double having been met). The handler there must be the integer one: a fused load test
+/// runs the out-of-line case for its branch record directly.
+///
+/// # Safety
+/// As `note_operands`.
+#[inline(always)]
+unsafe fn requicken_number_relation<H: Host, const BACKWARD: bool, const OP: u32, const SMALL: bool, const TABLE: bool>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    left: Value,
+    right: Value,
+) {
+    // SAFETY: the record is a live record of the running view.
+    let i = unsafe { &*ip };
+    let integer: Handler = if SMALL {
+        lane_jump_binary_false_small::<H, BACKWARD, OP, TABLE>
+    } else {
+        lane_jump_binary_false_registers::<H, BACKWARD, OP>
+    };
+    if relation_operator::<OP>(i) <= super::operations::LAST_COMPARISON_OPERATOR
+        && i.handler == integer as *const ()
+        && left.as_number().is_some()
+        && right.as_number().is_some()
+        && Value::int_pair(left, right).is_none()
+    {
+        // SAFETY: the caller's.
+        unsafe { note_number_kinds(cx, ip) };
+        requicken::<H>(ip, lane_jump_binary_false_numbers::<H, BACKWARD, OP, SMALL, TABLE>);
     }
 }
 
@@ -7727,6 +7786,8 @@ script_handler! {
         let right = lane_small_constant::<H, TABLE>(cx, i);
         // SAFETY: the record is a comparison record of the running view.
         unsafe { note_operands(cx, ip, r.get(i.b), right) };
+        // SAFETY: as above.
+        unsafe { requicken_small_number_relation::<H, BACKWARD, TABLE>(cx, ip, r.get(i.b), right) };
         let Some(holds) = super::operations::number_relation(u32::from(i.a), r.get(i.b), right)
             .or_else(|| lane_relation_other::<H>(u32::from(i.a), r.get(i.b), right))
         else {
@@ -19865,7 +19926,13 @@ fn install_loop_sites<'live, H: Host>(
 /// The relation jump against the integer constant `index`, and the operand `record.c` holds:
 /// the value itself where it fits 16 bits, else its constant-table index.
 fn integer_constant_relation_jump<H: Host>(constants: &[Value], operator: u32, index: u16, backward: bool) -> Option<(Handler, u16)> {
-    let value = constants.get(usize::from(index))?.as_int()?;
+    let constant = *constants.get(usize::from(index))?;
+    let Some(value) = constant.as_int() else {
+        // Another Number (`x < 0.5`) reads from the table too: its integer test declines
+        // once, and the site moves to the Number test (`requicken_number_relation`).
+        constant.as_number()?;
+        return Some((relation_jump_table_handler::<H>(operator, backward), index));
+    };
     Some(match i16::try_from(value) {
         Ok(small) => (relation_jump_handler::<H, true>(operator, backward), small as u16),
         Err(_) => (relation_jump_table_handler::<H>(operator, backward), index),
@@ -20797,6 +20864,27 @@ fn relation_jump_table_handler<H: Host>(operator: u32, backward: bool) -> Handle
         };
     }
     relation_operators!(operator, pick)
+}
+
+/// `requicken_number_relation` of a small-constant jump test, whose out-of-line case reads
+/// the operator from the record: the operator instantiation `relation_jump_handler` gave it.
+///
+/// # Safety
+/// As `note_operands`.
+unsafe fn requicken_small_number_relation<H: Host, const BACKWARD: bool, const TABLE: bool>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    left: Value,
+    right: Value,
+) {
+    macro_rules! pick {
+        ($op:expr) => {
+            // SAFETY: the caller's.
+            unsafe { requicken_number_relation::<H, BACKWARD, { $op }, true, TABLE>(cx, ip, left, right) }
+        };
+    }
+    // SAFETY: the record is a live record of the running view.
+    relation_operators!(u32::from(unsafe { (*ip).a }), pick)
 }
 
 /// The fused update, back edge and register test handler (`lane_inc_dec_loop`) of the test's
