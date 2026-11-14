@@ -220,6 +220,8 @@ pub(super) struct Records {
     cells: Box<[std::cell::UnsafeCell<LaneInstruction>]>,
     /// The records of `cells` before the first record, which hold the feedback bytes.
     front: usize,
+    /// The first record, kept so each activation's entry reads it with one load (`base`).
+    first: Ip,
 }
 
 impl Records {
@@ -238,16 +240,19 @@ impl Records {
     /// `records`, with feedback bytes (all `NONE`) in front of them where `feedback`.
     pub(super) fn new(records: Box<[LaneInstruction]>, feedback: bool) -> Self {
         let front = if feedback { records.len().div_ceil(RECORD_BYTES) } else { 0 };
-        let cells = std::iter::repeat_with(Self::blank).take(front).chain(records).map(std::cell::UnsafeCell::new).collect();
-        Self { cells, front }
+        let cells: Box<[std::cell::UnsafeCell<LaneInstruction>]> =
+            std::iter::repeat_with(Self::blank).take(front).chain(records).map(std::cell::UnsafeCell::new).collect();
+        // SAFETY: `front` records lie before the end of `cells`; the pointer keeps the whole
+        // allocation's provenance, which the feedback bytes before it need, and the boxed
+        // records never move.
+        let first = unsafe { std::cell::UnsafeCell::raw_get(cells.as_ptr().add(front)).cast_const() };
+        Self { cells, front, first }
     }
 
     /// The first record.
     #[inline(always)]
     pub(super) fn base(&self) -> Ip {
-        // SAFETY: `front` records lie before the end of `cells`; the pointer keeps the whole
-        // allocation's provenance, which the feedback bytes before it need.
-        unsafe { std::cell::UnsafeCell::raw_get(self.cells.as_ptr().add(self.front)).cast_const() }
+        self.first
     }
 
     fn has_feedback(&self) -> bool {
