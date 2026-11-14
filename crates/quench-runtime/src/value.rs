@@ -357,14 +357,21 @@ impl Value {
     /// same bits, which also excludes -0 (+0's bits differ) and NaN.
     #[inline] pub fn number(value: f64) -> Self {
         let integer = truncate_to_i32(value);
-        if f64::from(integer).to_bits() == value.to_bits() {
-            return Self::integer(integer);
+        // An ordered-equal comparison finds the integral values (and -0, which equals +0);
+        // every other double reaches the NaN test with no bit compare of its own.
+        let back = f64::from(integer);
+        if back == value {
+            if integer != 0 || value.to_bits() == 0 {
+                return Self::integer(integer);
+            }
+            // -0 keeps its sign as a double.
+            return Self(value.to_bits());
         }
-        Self(if value.is_nan() {
-            CANONICAL_NAN
-        } else {
-            value.to_bits()
-        })
+        if value.is_nan() {
+            std::hint::cold_path();
+            return Self(CANONICAL_NAN);
+        }
+        Self(value.to_bits())
     }
 
     /// `number` of a value an `i32` operation overflowed to: outside the `i32` integers and
@@ -381,7 +388,18 @@ impl Value {
     /// A count or index as a Number, as `number` stores it: an integer within `i32`, without
     /// the float round trip `number` makes to find that out.
     #[inline(always)] pub(crate) fn length(value: usize) -> Self {
-        i32::try_from(value).map_or_else(|_| Self::number(value as f64), Self::integer)
+        match i32::try_from(value) {
+            Ok(value) => Self::integer(value),
+            Err(_) => Self::long_length(value),
+        }
+    }
+
+    /// `length` of a count past the `i32` integers, out of line so that `length` stays a
+    /// tag `or` wherever it is mapped over an option.
+    #[cold]
+    #[inline(never)]
+    fn long_length(value: usize) -> Self {
+        Self::number(value as f64)
     }
 
     /// A 64-bit Wasm payload held in place. Every payload outside the tag

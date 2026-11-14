@@ -3577,9 +3577,19 @@ fn read_number_operands<const OP: u32>(r: Registers, operator: &LaneInstruction,
 
 /// The index a proved element record (`specialize_proved_arrays`) reads at: a non-negative
 /// integer key, as `Vm::direct_dense_element` takes one.
+#[cfg(all(test, feature = "bench-primitives"))]
 #[inline(always)]
 pub(super) fn proof_index(key: Value) -> Option<usize> {
     usize::try_from(key.as_int()?).ok()
+}
+
+/// The index a proved element record reads or replaces at for an int32 key, as its u32
+/// bits: a negative key becomes an index at or above 2^31, which every proof's bound
+/// (`ArrayStorageProofs::prove`, below 2^31) declines, so the proof's bounds test is the
+/// key's sign test too.
+#[inline(always)]
+fn proof_int_index(key: i32) -> usize {
+    key as u32 as usize
 }
 
 /// The integer `IncDec` of `value`, the update `dispatch::number_increment` makes of an
@@ -3653,8 +3663,8 @@ script_handler! {
     /// storage (`ArrayStorageProofs`), with no decoding of the array; any other read takes
     /// `lane_proof_miss`.
     fn lane_get_index_proved<>(cx, r, ip, i, view) {
-        let Some(value) = proof_index(r.get(i.c))
-            .and_then(|index| unsafe { (*cx).proofs.element(i.b, r.get(i.b), index) })
+        let Some(value) = r.get(i.c).as_int()
+            .and_then(|index| unsafe { (*cx).proofs.element(i.b, r.get(i.b), proof_int_index(index)) })
         else {
             sibling!(lane_proof_miss::<H>, r, ip, Carried::script(cx))
         };
@@ -3671,9 +3681,7 @@ macro_rules! proved_updated_read {
         $r.set($update.a, Value::integer($index));
         // SAFETY: the pair is two records, the second never the view's last.
         let read = unsafe { &*following($ip) };
-        let Some(element) = usize::try_from($index)
-            .ok()
-            .and_then(|index| unsafe { (*$cx).proofs.element(read.b, $r.get(read.b), index) })
+        let Some(element) = (unsafe { (*$cx).proofs.element(read.b, $r.get(read.b), proof_int_index($index)) })
         else {
             sibling!(lane_updated_proof_miss::<H>, $r, $ip, Carried::script($cx))
         };
@@ -4323,11 +4331,14 @@ script_handler! {
         else {
             sibling!(lane_operator_numbers::<H, FIRST>, r, ip, Carried::script(cx))
         };
+        // One operand at a time, each declining on its own: a zip of the two options kept
+        // the first result's constant `Some` as flag registers tested after both reads.
         let operand = |register: u16| if register == i.a { Some(first) } else { r.get(register).as_number() };
-        let Some(value) = operand(second.b)
-            .zip(operand(second.c))
-            .and_then(|(left, right)| number_operator::<SECOND>(left, right))
-        else {
+        let (Some(second_left), Some(second_right)) = (operand(second.b), operand(second.c)) else {
+            r.set(i.a, Value::number(first));
+            next!(cx, r, following(ip), Carried::script(cx))
+        };
+        let Some(value) = number_operator::<SECOND>(second_left, second_right) else {
             r.set(i.a, Value::number(first));
             next!(cx, r, following(ip), Carried::script(cx))
         };
@@ -4343,8 +4354,12 @@ script_handler! {
 /// `integer_operator`, any other Numbers through their double values.
 #[inline(always)]
 fn lane_number_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
-    super::operations::integer_operator::<OP>(left, right)
-        .or_else(|| super::operations::number_value_operator::<OP>(left, right))
+    // A branch, not `Option::or_else`: the closure was left out of line as a call per
+    // double operation (V8-v7 Crypto, 0.7M calls).
+    if let Some(value) = super::operations::integer_operator::<OP>(left, right) {
+        return Some(value);
+    }
+    super::operations::number_value_operator::<OP>(left, right)
 }
 
 script_handler! {
@@ -4469,11 +4484,14 @@ script_handler! {
         };
         // SAFETY: the pair is two records, the second never the view's last.
         let second = unsafe { &*following(ip) };
+        // One operand at a time, each declining on its own: a zip of the two options kept
+        // the first result's constant `Some` as flag registers tested after both reads.
         let operand = |register: u16| if register == i.a { Some(first) } else { r.get(register).as_number() };
-        let Some(value) = operand(second.b)
-            .zip(operand(second.c))
-            .and_then(|(left, right)| number_operator::<SECOND>(left, right))
-        else {
+        let (Some(second_left), Some(second_right)) = (operand(second.b), operand(second.c)) else {
+            r.set(i.a, Value::number(first));
+            next!(cx, r, following(ip), Carried::script(cx))
+        };
+        let Some(value) = number_operator::<SECOND>(second_left, second_right) else {
             r.set(i.a, Value::number(first));
             next!(cx, r, following(ip), Carried::script(cx))
         };
@@ -4759,7 +4777,7 @@ script_handler! {
 #[inline(always)]
 fn lane_proved_store<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Option<Value> {
     let value = r.get(i.a);
-    let index = proof_index(r.get(i.c))?;
+    let index = proof_int_index(r.get(i.c).as_int()?);
     unsafe { (*cx).proofs.replace(i.b, r.get(i.b), index, value) }.then_some(value)
 }
 

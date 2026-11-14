@@ -18,10 +18,15 @@ pub(in crate::vm) fn number_increment(input: Value, is_decrement: bool) -> Optio
         } else {
             integer.checked_add(1)
         };
-        return Some(next.map_or_else(
-            || Value::overflowed_integer(f64::from(integer) + increment_delta(is_decrement)),
-            Value::integer,
-        ));
+        // Overflow is rare: a branch, not a select that computes the double sum on every
+        // update.
+        return Some(match next {
+            Some(next) => Value::integer(next),
+            None => {
+                std::hint::cold_path();
+                Value::overflowed_integer(f64::from(integer) + increment_delta(is_decrement))
+            }
+        });
     }
     input
         .as_number()

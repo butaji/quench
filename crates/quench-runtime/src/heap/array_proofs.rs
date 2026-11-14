@@ -128,7 +128,10 @@ impl ArrayStorageProofs {
         let slot = Self::slot(register);
         let replaces = !array.has_indexed_descriptors() && !array.is_frozen() && array.arguments_map().is_none()
             && !array.was_used_as_prototype();
-        let length = array.elements().len();
+        // A bound below 2^31 lets an int32 key reach `element` and `replace` as its u32 bits
+        // (`dispatch_fast::proof_int_index`): a negative key lands at or above 2^31, past
+        // every bound, so the bounds test is also the sign test. No dense backing is that long.
+        let length = array.elements().len().min(i32::MAX as usize);
         let (values, writable) = match array.unique_values().filter(|_| replaces) {
             Some(values) => (values, length),
             // SAFETY: a slice's pointer is never null.
