@@ -1168,6 +1168,23 @@ impl Registers {
         Some(unsafe { halves.read() } as i32)
     }
 
+    /// The register's Number (`Value::as_number`), its tag read as the word's top half-word
+    /// (`movzx`) and a double loaded straight into a vector register: no copy and shift of
+    /// the whole word for the tag.
+    #[inline(always)]
+    fn number(self, register: u16) -> Option<f64> {
+        // SAFETY: as for `get`; the tag field is the word's high 16 bits (little endian).
+        let word = unsafe { self.0.add(usize::from(register)) };
+        let field = unsafe { word.cast::<u16>().add(3).read() };
+        if !crate::value::tag_field_is_tagged(field) {
+            return Some(unsafe { word.cast::<f64>().read() });
+        }
+        if u32::from(field) << 16 == crate::value::INT_TAG_HIGH {
+            return Some(f64::from(unsafe { word.cast::<i32>().read() }));
+        }
+        None
+    }
+
     #[inline(always)]
     fn i32(self, register: u16) -> i32 {
         self.get(register).wasm_bits32() as i32
@@ -4499,19 +4516,23 @@ script_handler! {
     /// second overwrites it), so it is stored only when the second record runs on its own.
     /// With `SECOND_RAW` a double second result keeps its double form (`raw_results`).
     fn lane_operator_pair<FIRST: u32, SECOND: u32, FIRST_DEAD: bool, SECOND_RAW: bool>(cx, r, ip, i, view) {
-        use super::operations::{int32_operator, integer_operator, number_operator};
-        let (left, right) = (r.get(i.b), r.get(i.c));
+        use super::operations::{int32_operator, number_operator};
         // SAFETY: the pair is two records, the second never the view's last.
         let second = unsafe { &*following(ip) };
         // Two int32 results in a row stay raw i32: the first never gets re-tested as an
         // operand of the second (V8-v7 Crypto am3, `a*b + c` on 14-bit digits).
         // One operand at a time, as `integer_operator`: a combined pair probe cost the
         // int-left double-right pairs (V8-v7 NavierStokes) a second tag test.
-        if let Some(l) = left.as_int()
-            && let Some(rr) = right.as_int()
+        // Both int32 or neither path: the integer forms below run only under this one pair
+        // of in-memory tag tests (`Registers::int`), so a double operand pays them once.
+        let ints = match r.int(i.b) {
+            Some(l) => r.int(i.c).map(|rr| (l, rr)),
+            None => None,
+        };
+        if let Some((l, rr)) = ints
             && let Some(first) = int32_operator::<FIRST>(l, rr)
         {
-            let operand = |register: u16| if register == i.a { Some(first) } else { r.get(register).as_int() };
+            let operand = |register: u16| if register == i.a { Some(first) } else { r.int(register) };
             if let (Some(second_left), Some(second_right)) = (operand(second.b), operand(second.c))
                 && let Some(value) = int32_operator::<SECOND>(second_left, second_right)
             {
@@ -4522,7 +4543,9 @@ script_handler! {
                 next!(cx, r, following(following(ip)), Carried::script(cx))
             }
         }
-        if let Some(value) = integer_operator::<FIRST>(left, right) {
+        if let Some((l, rr)) = ints
+            && let Some(value) = super::operations::integer_pair_operator::<FIRST>(l, rr)
+        {
             let operand = |register: u16| if register == i.a { value } else { r.get(register) };
             let Some(result) = lane_number_operator::<SECOND>(operand(second.b), operand(second.c)) else {
                 r.set(i.a, value);
@@ -4534,9 +4557,10 @@ script_handler! {
             r.set(second.a, result);
             next!(cx, r, following(following(ip)), Carried::script_in(cx, view))
         }
-        let Some(first) = Value::number_pair(left, right)
-            .and_then(|(left, right)| number_operator::<FIRST>(left, right))
-        else {
+        let Some(first) = (match (r.number(i.b), r.number(i.c)) {
+            (Some(left), Some(right)) => number_operator::<FIRST>(left, right),
+            _ => None,
+        }) else {
             sibling!(lane_operator_numbers::<H, FIRST>, r, ip, Carried::script_in(cx, view))
         };
         // One operand at a time, each declining on its own branch: an `Option` of the
@@ -4546,7 +4570,7 @@ script_handler! {
             ($register:expr) => {
                 if $register == i.a {
                     first
-                } else if let Some(number) = r.get($register).as_number() {
+                } else if let Some(number) = r.number($register) {
                     number
                 } else {
                     r.set(i.a, Value::number(first));
@@ -8040,9 +8064,8 @@ script_handler! {
     /// The site's feedback already holds both Number kinds, so a Number pair notes nothing;
     /// any other pair runs the integer handler's out-of-line case, which notes it.
     fn lane_jump_binary_false_numbers<BACKWARD: bool, OP: u32, SMALL: bool, TABLE: bool>(cx, r, ip, i, view) {
-        let left = r.get(i.b);
-        let right = if SMALL { lane_small_constant::<H, TABLE>(cx, i) } else { r.get(i.c) };
-        let (Some(left), Some(right)) = (left.as_number(), right.as_number()) else {
+        let right = if SMALL { lane_small_constant::<H, TABLE>(cx, i).as_number() } else { r.number(i.c) };
+        let (Some(left), Some(right)) = (r.number(i.b), right) else {
             if SMALL {
                 sibling!(lane_jump_binary_false_small_other::<H, BACKWARD, TABLE>, r, ip, Carried::script_in(cx, view))
             }
