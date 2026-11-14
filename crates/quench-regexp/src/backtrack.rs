@@ -59,6 +59,7 @@ impl Text for [u8] {
         u32::from(self[index])
     }
 
+    #[inline(always)]
     fn bytes(&self) -> Option<&[u8]> {
         Some(self)
     }

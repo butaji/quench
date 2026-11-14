@@ -200,6 +200,10 @@ impl Program {
         if let Some(code) = self.native.code.get() {
             return code.as_ref();
         }
+        // An interpreted run compiles no native search: no call to count its searches.
+        if !ENABLED.get() {
+            return None;
+        }
         self.native_counted()
     }
 

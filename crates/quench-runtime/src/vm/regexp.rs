@@ -3280,14 +3280,17 @@ impl RegExpFlags {
         Self::of(text).expect("compiled RegExp flags are valid")
     }
 
+    #[inline(always)]
     pub(crate) const fn with(self, other: Self) -> Self {
         Self(self.0 | other.0)
     }
 
+    #[inline(always)]
     pub(crate) const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
     }
 
+    #[inline(always)]
     pub(crate) const fn intersects(self, other: Self) -> bool {
         self.0 & other.0 != 0
     }
