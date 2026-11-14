@@ -6123,14 +6123,14 @@ script_handler! {
 }
 
 /// The bound own-field read (`lane_get_field_own_bound`) for the storage form the hint word
-/// `hint`'s bits name: an arena run or extras, whose layout it then reads untested; a packed
-/// form keeps the read that tests the bits.
+/// `hint`'s bits name: an arena run, extras or packed inline values, whose layout it then
+/// reads untested.
 fn own_formed_handler<H: Host, const THIS: bool>(hint: u32) -> Handler {
     use crate::value_vec::{EXTRAS_FORM, INLINE_FORM};
     match hint & (INLINE_FORM | EXTRAS_FORM) {
         0 => lane_get_field_own_bound::<H, THIS, 0>,
         EXTRAS_FORM => lane_get_field_own_bound::<H, THIS, EXTRAS_FORM>,
-        INLINE_FORM => lane_get_field_own_bound::<H, THIS, HINTED_FORM>,
+        INLINE_FORM => lane_get_field_own_bound::<H, THIS, INLINE_FORM>,
         _ => lane_get_field_own_bound::<H, THIS, { EXTRAS_FORM | INLINE_FORM }>,
     }
 }
@@ -17420,14 +17420,14 @@ enum FieldHit {
 }
 
 /// Every bound own-field read (`own_formed_handler`), of `this` and of a register.
-fn own_bound_handlers<H: Host>() -> [*const (); 8] {
+fn own_bound_handlers<H: Host>() -> [*const (); 10] {
     use crate::value_vec::{EXTRAS_FORM, INLINE_FORM};
     macro_rules! forms {
         ($($form:expr),*) => {
             [$(lane_get_field_own_bound::<H, true, { $form }> as *const (), lane_get_field_own_bound::<H, false, { $form }> as *const ()),*]
         };
     }
-    forms!(HINTED_FORM, 0, EXTRAS_FORM, EXTRAS_FORM | INLINE_FORM)
+    forms!(HINTED_FORM, 0, EXTRAS_FORM, INLINE_FORM, EXTRAS_FORM | INLINE_FORM)
 }
 
 impl FieldHit {
