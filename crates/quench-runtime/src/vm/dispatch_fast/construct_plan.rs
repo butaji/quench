@@ -292,6 +292,15 @@ fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl F
     if plan.kind != ConstructPlanKind::Passed {
         return lane_defaulted_construction(vm, index, argument);
     }
+    let len = usize::from(plan.fields);
+    if len <= INLINE_PROPERTY_COUNT {
+        // Fields that fit the inline slots are those slots: no values array gathered first.
+        const _: () = assert!(INLINE_PROPERTY_COUNT == 2, "the inline slots are filled one by one");
+        let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
+        if len > 0 { inline[0] = plan.passed_value(0, &argument); }
+        if len > 1 { inline[1] = plan.passed_value(1, &argument); }
+        return Some(vm.heap.alloc_planned_inline(plan.header, plan.prototype, inline, len));
+    }
     Some(plan.allocate(&mut vm.heap, |field| plan.passed_value(field, &argument)))
 }
 

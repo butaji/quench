@@ -33,6 +33,25 @@ impl Heap {
         }
     }
 
+    /// `alloc_planned_object` of a receiver whose `len` fields fit its inline slots, passed as
+    /// those slots themselves (`undefined` past `len`): no gathered values array.
+    #[inline(always)]
+    pub(crate) fn alloc_planned_inline(&mut self, header: InlineObjectHeader, prototype: Value, inline: [Value; INLINE_PROPERTY_COUNT], len: usize) -> Value {
+        debug_assert!(self.prototype_flagged(prototype) && len <= INLINE_PROPERTY_COUNT);
+        self.properties.note_plan_values(header.shape(), &inline[..len]);
+        let Some(object) = Object::from_inline_header(header, inline) else {
+            return self.alloc_object_with_properties(prototype, header.shape(), &inline[..len]);
+        };
+        match self.claim_object_record() {
+            // SAFETY: the claimed record is uninitialized and written whole, before any safepoint.
+            Some((value, record)) => {
+                unsafe { record.write(object) };
+                value
+            }
+            None => self.insert_admitted_object_record(object),
+        }
+    }
+
     /// A fresh direct object record claimed with nothing written: its `Value` and the address
     /// to write an `Object` at, `None` where the record space needs its slow path (the caller
     /// then allocates as `alloc_planned_object` does). Allocation never collects, so the
