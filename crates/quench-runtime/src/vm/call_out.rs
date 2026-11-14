@@ -105,8 +105,7 @@ impl<H: Host> Vm<H> {
     /// defines the instruction's result: a sloppy assignment to a function's own name does not.
     pub(super) fn store_env_local(&mut self, p: &ResidualProgram, owner: VarOwner, slot: usize, value: Value,
         initialize: bool) -> Result<bool, JsError> {
-        let view = self.owner_view(owner);
-        let (program, running) = (view.program(), view.function());
+        let (program, running) = (self.owner_view(owner).program(), self.owner_view(owner).function());
         let function = p.function(running as usize);
         let atom = function.local_atoms.get(slot).copied();
         if let Some(atom) = atom
@@ -122,10 +121,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "assignment to constant binding".into()));
         }
         if function.is_self_binding_slot(slot) {
-            if function.strict {
-                return Err(self.type_error(p, "assignment to function name binding".into()));
-            }
-            return Ok(false);
+            return if function.strict { Err(self.type_error(p, "assignment to function name binding".into())) } else { Ok(false) };
         }
         let global_var = self.root_global_var_atom(p, program, running, slot);
         if let Some(atom) = global_var {
@@ -158,7 +154,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `action` with `resume` as the activation's binding-site PC, restored after.
-    fn at_binding_site<T>(&mut self, owner: VarOwner, resume: usize, action: impl FnOnce(&mut Self) -> T) -> T {
+    pub(super) fn at_binding_site<T>(&mut self, owner: VarOwner, resume: usize, action: impl FnOnce(&mut Self) -> T) -> T {
         let previous = self.replace_binding_site(owner, Some(resume as u32));
         let result = action(self);
         self.replace_binding_site(owner, previous);

@@ -562,58 +562,9 @@ impl<H: Host> Vm<H> {
                 let value = unsafe { self.read_validated_local(f, i.local_slot()) };
                 self.write(f, i.result_register(), value);
             }
-            Op::LoadLocal | Op::LoadEnvLocal => {
-                let owner = self.step_owner(f);
-                let value = self.load_local_binding(p, owner, i.local_slot(), None)?;
-                self.set_owner_register(owner, i.result_register(), value);
-            }
-            Op::StoreVarBinding => {
-                let owner = self.step_owner(f);
-                let value = self.owner_register(owner, i.register_a());
-                self.store_var_binding(p, owner, i.local_slot(), value)?;
-            }
-            Op::StoreLocal => {
-                let owner = self.step_owner(f);
-                let value = self.owner_register(owner, i.register_a());
-                let slot = i.local_slot();
-                let running = self.owner_view(owner).function();
-                let function = &p.function(running as usize);
-                if function.is_self_binding_slot(slot) {
-                    if function.strict {
-                        return Err(
-                            self.type_error(p, "assignment to function name binding".into())
-                        );
-                    }
-                    if let Some(register) = i.optional_register_b() {
-                        self.set_owner_register(owner, register, value);
-                    }
-                    return Ok(StepResult::Continue);
-                }
-                self.check_local_assignment_initialized(
-                    p,
-                    owner,
-                    slot,
-                    i.boolean_field(crate::bytecode::InstructionField::C)
-                        .unwrap_or(false),
-                )?;
-                if running == 0
-                    && function
-                        .local_atoms
-                        .get(slot)
-                        .is_some_and(|atom| function.declares_global_immutable(*atom))
-                        && i.boolean_field(crate::bytecode::InstructionField::C) == Some(false)
-                    {
-                        return Err(self.type_error(p, "assignment to constant binding".into()));
-                    }
-                *self
-                    .owner_binding_mut(p, owner, slot)
-                    .ok_or_else(|| JsError("invalid local slot".into()))? = value;
-                self.mirror_global_lexical_binding(p, owner, slot, value);
-                self.mapped_argument_store(p, owner, slot, value);
-                if let Some(register) = i.optional_register_b() {
-                    self.set_owner_register(owner, register, value);
-                }
-            }
+            Op::LoadLocal | Op::LoadEnvLocal | Op::StoreVarBinding | Op::StoreLocal | Op::StoreEnvLocal
+            | Op::LoadCapture | Op::StoreCapture | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
+            | Op::StoreName => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
             Op::StoreLocalPlain => {
                 let value = self.read(f, i.register_a());
                 // SAFETY: validated bytecode bounds the slot by Function.locals,
@@ -622,70 +573,6 @@ impl<H: Host> Vm<H> {
                 if let Some(register) = i.optional_register_b() {
                     self.write(f, register, value);
                 }
-            }
-            Op::StoreEnvLocal => {
-                let owner = self.step_owner(f);
-                let value = self.owner_register(owner, i.register_a());
-                let initialize = i.boolean_field(crate::bytecode::InstructionField::C).unwrap_or(false);
-                if self.store_env_local(p, owner, i.local_slot(), value, initialize)?
-                    && let Some(register) = i.optional_register_b()
-                {
-                    self.set_owner_register(owner, register, value);
-                }
-            }
-            Op::LoadCapture => {
-                let owner = self.step_owner(f);
-                let v = self.capture(p, owner, i.capture_depth(), i.capture_slot())?;
-                self.set_owner_register(owner, i.result_register(), v);
-            }
-            Op::StoreCapture => {
-                let owner = self.step_owner(f);
-                let value = self.owner_register(owner, i.register_a());
-                self.store_capture(p, owner, i.capture_depth(), i.capture_slot(), value)?;
-            }
-            Op::LoadName => {
-                let owner = self.step_owner(f);
-                let function = self.owner_view(owner).function();
-                self.staged_load_name(p, super::call_out::CallSite { owner, function, resume: *pc }, i)?;
-            }
-            Op::LoadNameCall => {
-                let owner = self.step_owner(f);
-                let (callee, this) = with_binding_site_pc!(
-                    self,
-                    owner,
-                    *pc,
-                    self.load_name_call(p, owner, i.atom_index(), Some(i.cache_site_index()), false)
-                )?;
-                self.set_owner_register(owner, i.result_register(), callee);
-                self.set_owner_register(owner, i.register_b(), this);
-            }
-            Op::LoadNameTypeof => {
-                let owner = self.step_owner(f);
-                let v = with_binding_site_pc!(
-                    self,
-                    owner,
-                    *pc,
-                    self.load_name_typeof(p, owner, i.atom_index(), i.cache_site_index())
-                )?;
-                self.set_owner_register(owner, i.result_register(), v);
-            }
-            Op::StoreName => {
-                let owner = self.step_owner(f);
-                let value = self.owner_register(owner, i.register_a());
-                with_binding_site_pc!(
-                    self,
-                    owner,
-                    *pc,
-                    self.store_name(
-                        p,
-                        owner,
-                        i.atom_index(),
-                        value,
-                        i.cache_site_index(),
-                        i.boolean_field(crate::bytecode::InstructionField::B)
-                            .expect("validated initialization flag"),
-                    )
-                )?;
             }
             Op::LoadThis => {
                 let this = self.checked_this_binding(p, f)?;

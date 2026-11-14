@@ -69,7 +69,7 @@ impl Op {
 
     /// A step that reads and writes only the variables of the activation that runs it (its locals,
     /// captures and names) and the registers it addresses, so a frameless activation makes it over
-    /// its window (`Vm::step_owner`) as a frame does: the local, capture and name loads and stores.
+    /// its window (`Vm::owner_step`) as a frame does: the local, capture and name loads and stores.
     pub(crate) const fn steps_on_owner(self) -> bool {
         matches!(
             self,

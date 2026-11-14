@@ -13285,9 +13285,7 @@ mod native_calls; mod generator_yields; use generator_yields::suspend_handler;
 mod lane_roots;
 mod lane_trace;
 mod with_scopes;
-mod window_owner;
-pub(in crate::vm) use window_owner::WindowScope;
-mod scoped_names;
+mod scoped_names; mod window_owner; pub(in crate::vm) use window_owner::WindowScope;
 mod lane_eval;
 mod root_windows;
 use lane_roots::{LaneRoot, LaneStart};
@@ -21433,8 +21431,7 @@ impl<H: Host> Vm<H> {
         // A callback of a native an earlier callback's frames run nests its own boundary.
         let outer_boundary_frames = self.lane_stack.boundary_frames.take();
         // A native the callback calls defers in its own turn, with its own window.
-        self.lane_deferred = None;
-        let window = self.running_window.take();
+        self.lane_deferred = None; let window = self.running_window.take();
         unsafe { (*cx).memory = MemoryView::script(cx) };
         let exit = lane_dispatch(cx, start);
         let returned = self.lane_native_returned.take();
@@ -21447,8 +21444,7 @@ impl<H: Host> Vm<H> {
                     (*cx).pending = saved.pending;
                     (*cx).executing = saved.executing;
                 }
-                self.lane_deferred = Some(deferred);
-                self.running_window = window;
+                self.lane_deferred = Some(deferred); self.running_window = window;
                 Ok(value)
             }
             (returned, _) => {

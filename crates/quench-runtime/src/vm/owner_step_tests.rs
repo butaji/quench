@@ -2,7 +2,7 @@
 //! native callee's activation (`dispatch_fast::vm_steps::lane_owner_step_in`, `Vm::running_owner`)
 //! are made over the activation's window: a chain of compiled callees whose innermost ones make
 //! them leaves none of its runs, and prints what the interpreter prints.
-use super::catch_tests::{bodies_match_interpreter, BodyRuns};
+use crate::vm::catch_tests::{bodies_match_interpreter, BodyRuns};
 use crate::{JitMode, jit_mode::with_mode};
 
 /// Ten chained functions: `c9` reads and writes names (a `typeof` of an unbound name too), `c8` reads
@@ -39,23 +39,25 @@ const CHAIN: &str = r#"
 
 const NAMES: [&str; 10] = ["c0", "c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9"];
 
-/// The body runs of the chain in `mode`, whose output equals the interpreter's.
+/// The body runs of the chain in `mode`, whose output equals the interpreter's (`bodies_match_interpreter`).
 fn chain_runs(mode: JitMode) -> Vec<BodyRuns> {
     with_mode(mode, || bodies_match_interpreter(CHAIN, &NAMES))
 }
 
-fn no_run_left(runs: &[BodyRuns]) {
-    for (name, (_, left, _)) in NAMES.iter().zip(runs) {
+/// Every body ran natively to its end (`ended`) and none left for the general path.
+fn all_native_and_none_left(runs: &[BodyRuns]) {
+    for (name, (ended, left, _)) in NAMES.iter().zip(runs) {
+        assert!(*ended > 0, "{name} was never entered natively");
         assert_eq!(*left, 0, "a run of {name} left for the general path");
     }
 }
 
 #[test]
-fn a_base_jit_chain_of_name_local_and_with_steps_leaves_no_run() {
-    no_run_left(&chain_runs(JitMode::BaseOnly));
+fn a_base_jit_chain_of_name_local_and_with_steps_runs_natively_without_leaving() {
+    all_native_and_none_left(&chain_runs(JitMode::BaseOnly));
 }
 
 #[test]
-fn an_ultra_jit_chain_of_name_local_and_with_steps_leaves_no_run() {
-    no_run_left(&chain_runs(JitMode::UltraOnly));
+fn an_ultra_jit_chain_of_name_local_and_with_steps_runs_natively_without_leaving() {
+    all_native_and_none_left(&chain_runs(JitMode::UltraOnly));
 }

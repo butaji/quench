@@ -154,8 +154,8 @@ unsafe fn lane_left_at<H: Host>(cx: *mut LaneContext<H>, resume: Ip) -> u64 {
 }
 
 /// The record `record` at `call_pc` (`Op::steps_on_owner`: a local, capture or name step) of an activation that
-/// has no frame, made over the activation's window as the general loop makes it over a frame (`Vm::step` of the
-/// running window, `WINDOW_ACTIVATION`): `LANE_CALL_COMPLETED` with its effects in the window, so the body goes on
+/// has no frame, made over the activation's window as the general loop makes it over a frame (`Vm::owner_step` over the
+/// running window, `Vm::running_owner`): `LANE_CALL_COMPLETED` with its effects in the window, so the body goes on
 /// in place. Guest code the step ran (a getter or a proxy trap of a `with` object or the global object) made the
 /// activations frames, which finish the step: the body leaves for the general path past the record
 /// (`LANE_CALL_LEFT`), as `lane_frames_step_in` does. `LANE_CALL_MISSED` where it raised: the error is stashed for
@@ -169,8 +169,8 @@ unsafe fn lane_owner_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, rec
     let (base, pc) = unsafe { ((*cx).base, call_pc as usize) };
     let ip = unsafe { base.add(pc) };
     let made = lane_in_place(cx, ip, |vm, code| {
-        let mut next = pc + 1;
-        Vm::<H>::resolve_step_operation(instruction.op())(vm, code, WINDOW_ACTIVATION, instruction, &mut next, false)?;
+        let owner = vm.running_owner();
+        vm.owner_step(code, owner, instruction, pc + 1)?;
         // The activations stayed the lane's while the step made no frame of them.
         Ok(vm.lane_deferred.is_none().then(|| {
             record.returns_from_frame().then(|| vm.read(vm.frames.len() - 1, instruction.result_register()))
@@ -220,6 +220,22 @@ unsafe fn lane_body_step_record<H: Host>(_vm: u64, _residual: u64, context: u64,
     native_frames::in_innermost_frame(cx, || unsafe { lane_body_step_in(cx, call_pc) })
 }
 
+/// The step of the record at `call_pc` of the innermost lane activation: over its window where it is
+/// a local, capture or name step (`lane_owner_step_in`), else in the frames the activations become
+/// (`lane_frames_step_in`).
+///
+/// # Safety
+/// As `lane_body_step`.
+unsafe fn lane_activation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
+    let body = unsafe { &*(*cx).code }.function(lane_running_function(cx) as usize);
+    let record = decoded_instruction(body, body.code[call_pc as usize]);
+    if record.without_return().op().steps_on_owner() {
+        unsafe { lane_owner_step_in(cx, call_pc, record) }
+    } else {
+        unsafe { lane_frames_step_in(cx, call_pc, record) }
+    }
+}
+
 /// `lane_body_step` with the context of the running body, which a native callee's frame made the
 /// innermost (`native_frames::in_innermost_frame`). Where the body runs as lane activations (a native
 /// callee, a lane callee) the steps that have no frame to run in take the value step's form, which
@@ -234,15 +250,7 @@ unsafe fn lane_body_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run, and `call_pc` is a record of the running frame's function.
     if !vm.lane_stack.activations.is_empty() {
-        let body = unsafe { &*(*cx).code }.function(lane_running_function(cx) as usize);
-        let record = decoded_instruction(body, body.code[call_pc as usize]);
-        return unsafe {
-            if record.without_return().op().steps_on_owner() {
-                lane_owner_step_in(cx, call_pc, record)
-            } else {
-                lane_frames_step_in(cx, call_pc, record)
-            }
-        };
+        return unsafe { lane_activation_step_in(cx, call_pc) };
     }
     let (code, frame, ip) = unsafe { (&*(*cx).code, (*cx).frame(), (*cx).base.add(call_pc as usize)) };
     let function = code.function(vm.frames[frame].function as usize);

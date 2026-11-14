@@ -1172,8 +1172,7 @@ impl<H: Host> Vm<H> {
         let home_atom = p.function_get(function as usize)?.super_home_atom?;
         // Use the same binding operation as compiled super access. Its retained
         // metadata resolves captures across both scope views and eval programs.
-        let owner = self.running_owner();
-        self.load_name(p, owner, home_atom, None).ok()
+        let owner = self.running_owner(); self.load_name(p, owner, home_atom, None).ok()
     }
 
     fn direct_eval_binding(&self, atom: Atom) -> Option<crate::bytecode::EvalBinding> {

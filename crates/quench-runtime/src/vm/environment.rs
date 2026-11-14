@@ -1000,8 +1000,7 @@ impl<H: Host> Vm<H> {
         {
             return self.store_environment_binding(p, VarOwner::Frame(frame_index), env, slot as u16, value);
         }
-        let running = VarOwner::Frame(self.frames.len() - 1);
-        if self.store_global_var_binding(p, atom, value, self.owner_is_strict(p, running))? {
+        if self.store_global_var_binding(p, atom, value, self.owner_is_strict(p, VarOwner::Frame(self.frames.len() - 1)))? {
             return Ok(());
         }
         if strict { self.require_global_assignment_binding(p, atom)?; }
@@ -1523,9 +1522,8 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// The slots a direct capture at `depth` reads, and the program of a root environment
-    /// (`owned_capture`): the walk from an activation's environment `env` (past its own, once
-    /// `captured`) when every layer belongs to a function.
+    /// The slots a direct capture at `depth` reads, and a root environment's program (`owned_capture`):
+    /// the walk from an activation's environment `env` (past its own once `captured`), function layers only.
     pub(super) fn environment_capture_slots(
         &self,
         env: Value,
