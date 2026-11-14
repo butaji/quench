@@ -2155,6 +2155,17 @@ impl Object {
         plain.then_some(self.payload as usize)
     }
 
+    /// The arena storage start of an object whose auxiliary word is `hint` whole, a lane
+    /// record's own-field hint (`hint_shape`) of the arena form; `None` for any other word or form.
+    #[inline(always)]
+    pub(crate) fn formed_plain_start(&self, hint: u32) -> Option<usize> {
+        // The arena form (`STORAGE_FORM` clear) has neither inline storage nor extras, so the
+        // payload is the start (`plain_arena_start`) once the whole word matches.
+        let plain = hint & crate::value_vec::STORAGE_FORM == 0 && self.auxiliary == hint;
+        debug_assert!(!plain || self.plain_arena_start() == Some(self.payload as usize));
+        plain.then_some(self.payload as usize)
+    }
+
     /// `plain_storage_start` as one compare of the payload: a start never exceeds
     /// `VALUE_VEC_START_BITS`, and an extras word always does, so without inline storage a
     /// payload at most that bound is the start itself.
