@@ -65,6 +65,7 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) record_size: usize,
     pub(crate) record_align: usize,
     pub(crate) elements_offset: usize,
+    pub(crate) extras_elements_offset: usize,
     pub(crate) elements_header_offset: usize,
     pub(crate) header_length_offset: usize,
     pub(crate) header_values_offset: usize,
@@ -76,9 +77,10 @@ pub(crate) struct NativeArrayLayout {
 
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     record_capacity: 16777216,
-    record_size: 24,
+    record_size: 16,
     record_align: 8,
-    elements_offset: 16,
+    elements_offset: 0,
+    extras_elements_offset: 32,
     elements_header_offset: 0,
     header_length_offset: 4,
     header_values_offset: 16,

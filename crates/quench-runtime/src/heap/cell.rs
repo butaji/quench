@@ -67,9 +67,11 @@ mod cell_layout_tests {
         assert_eq!(NATIVE_ARRAY_RECORD_ALIGN, std::mem::align_of::<ArrayObject>());
         assert_eq!(
             NATIVE_ARRAY_ELEMENTS_OFFSET,
-            std::mem::offset_of!(ArrayObject, elements)
+            std::mem::offset_of!(ArrayObject, object) + std::mem::offset_of!(Object, payload)
         );
+        assert_eq!(NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET, std::mem::offset_of!(ObjectExtras, elements));
         let layout = super::super::NATIVE_ARRAY_LAYOUT;
+        assert_eq!(layout.extras_elements_offset, NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET);
         assert_eq!(layout.record_size, std::mem::size_of::<ArrayObject>());
         assert_eq!(layout.record_align, std::mem::align_of::<ArrayObject>());
         assert_eq!(layout.elements_offset, NATIVE_ARRAY_ELEMENTS_OFFSET);
@@ -1552,6 +1554,9 @@ impl Clone for Object {
         // The word copies bit for bit; a copy with extras gets its own.
         let payload = match self.extras() {
             Some(extras) => Self::tag_extras(Box::new(extras.clone())),
+            // An array's word is its element backing, which the object alone does not own
+            // (`ArrayObject::clone` copies it).
+            None if self.meta & OBJECT_ARRAY != 0 => u64::from(EMPTY_POSITION),
             None => self.payload,
         };
         Self {
@@ -1573,19 +1578,24 @@ impl Drop for Object {
 }
 
 /// An array: its object, which keeps named properties in the arena, and its dense element
-/// backing.
-#[derive(Clone)]
+/// backing. The backing has no field of its own: without extras, the object's payload word
+/// is its header pointer (`ArrayElements::into_raw`), as an array without extras holds no
+/// property store (`Object::set_storage_position`); with extras, they hold it
+/// (`ObjectExtras::elements`). `OBJECT_ARRAY` tells the object's own readers which.
 #[repr(C)]
 pub(crate) struct ArrayObject {
     object: Object,
-    elements: super::ArrayElements,
 }
 
 /// Native read-only layout facts for `ArrayObject`, kept beside its field declarations.
 pub(super) const NATIVE_ARRAY_RECORD_SIZE: usize = std::mem::size_of::<ArrayObject>();
 pub(super) const NATIVE_ARRAY_RECORD_ALIGN: usize = std::mem::align_of::<ArrayObject>();
+/// Where an array record without extras keeps its backing's header pointer: its object's
+/// payload word. With extras (`NATIVE_OBJECT_EXTRAS_TAG`), the word points at them, and
+/// they hold it at `NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET`.
 pub(super) const NATIVE_ARRAY_ELEMENTS_OFFSET: usize =
-    std::mem::offset_of!(ArrayObject, elements);
+    std::mem::offset_of!(ArrayObject, object) + NATIVE_OBJECT_PAYLOAD_OFFSET;
+pub(super) const NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET: usize = std::mem::offset_of!(ObjectExtras, elements);
 /// Where an array record's object part (`Object`: meta, auxiliary, payload) starts.
 pub(super) const NATIVE_ARRAY_OBJECT_OFFSET: usize = std::mem::offset_of!(ArrayObject, object);
 pub(super) const NATIVE_FUNCTION_RECORD_SIZE: usize = std::mem::size_of::<FunctionRecord>();
@@ -1594,6 +1604,13 @@ pub(super) const NATIVE_FUNCTION_OBJECT_OFFSET: usize = std::mem::offset_of!(Fun
 const _: () = assert!(
     NATIVE_ARRAY_ELEMENTS_OFFSET + std::mem::size_of::<super::ArrayElements>()
         <= NATIVE_ARRAY_RECORD_SIZE
+);
+const _: () = assert!(std::mem::size_of::<ArrayObject>() == 16);
+const _: () = assert!(std::mem::size_of::<ArrayObject>() == std::mem::size_of::<Object>());
+const _: () = assert!(NATIVE_ARRAY_ELEMENTS_OFFSET == NATIVE_ARRAY_OBJECT_OFFSET + NATIVE_OBJECT_PAYLOAD_OFFSET);
+const _: () = assert!(
+    NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET + std::mem::size_of::<super::ArrayElements>()
+        <= std::mem::size_of::<ObjectExtras>()
 );
 
 impl ArrayObject {
@@ -1608,7 +1625,9 @@ impl ArrayObject {
         };
         object.initialize_properties(ValueVec::new());
         debug_assert!(object.proto() == prototype);
-        Self { object, elements }
+        // No extras and no property store: the payload word takes the backing.
+        object.payload = elements.into_raw();
+        Self { object }
     }
 
     pub(crate) fn new(mut object: Object, elements: impl Into<super::ArrayElements>) -> Self {
@@ -1633,11 +1652,30 @@ impl ArrayObject {
             object.extras_mut();
         }
         object.meta |= OBJECT_ARRAY;
-        Self { object, elements }
+        Self::attach(object, elements)
     }
 
-    #[inline] pub(crate) fn elements(&self) -> &super::ArrayElements {
-        &self.elements
+    /// The array of `object`, an array's object in its array form (`new`), and `elements`:
+    /// they go to its extras, or to its payload word where it has none.
+    fn attach(mut object: Object, elements: super::ArrayElements) -> Self {
+        debug_assert!(object.is_array());
+        match object.extras_mut_existing() {
+            Some(extras) => extras.elements = elements,
+            None => {
+                debug_assert!(object.payload == u64::from(EMPTY_POSITION));
+                object.payload = elements.into_raw();
+            }
+        }
+        Self { object }
+    }
+
+    #[inline(always)]
+    pub(crate) fn elements(&self) -> &super::ArrayElements {
+        match self.object.extras() {
+            Some(extras) => &extras.elements,
+            // SAFETY: without extras, the payload word is the backing this array owns.
+            None => unsafe { super::ArrayElements::from_raw_ref(&self.object.payload) },
+        }
     }
 
     /// The elements for any change, including their backing's: the running lane's array
@@ -1651,7 +1689,12 @@ impl ArrayObject {
     /// The elements for a change no proof observes (`elements_mut` announces one first).
     #[inline(always)]
     fn elements_raw_mut(&mut self) -> &mut super::ArrayElements {
-        &mut self.elements
+        match self.object.extras_pointer() {
+            // SAFETY: owned by this array's object, and `&mut self` makes the borrow unique.
+            Some(extras) => unsafe { &mut (*extras).elements },
+            // SAFETY: as in `elements`, with `&mut self` making the borrow unique.
+            None => unsafe { super::ArrayElements::from_raw_mut(&mut self.object.payload) },
+        }
     }
 
     /// What a change to this array's elements that a proof may not bound retires: the proofs
@@ -1693,6 +1736,29 @@ impl ArrayObject {
     #[inline(always)]
     pub(crate) fn unique_values(&mut self) -> Option<std::ptr::NonNull<Value>> {
         self.elements_raw_mut().unique_values()
+    }
+}
+
+impl Clone for ArrayObject {
+    fn clone(&self) -> Self {
+        // `Object::clone` copies extras, their backing with them, and leaves the word of an
+        // array without extras empty.
+        let mut object = self.object.clone();
+        if object.extras_pointer().is_none() {
+            object.payload = self.elements().clone().into_raw();
+        }
+        Self { object }
+    }
+}
+
+impl Drop for ArrayObject {
+    fn drop(&mut self) {
+        // Extras drop their backing with the object; without them, the payload word owns it.
+        if self.object.extras_pointer().is_none() {
+            // SAFETY: the payload word is the backing this array owns, taken once here.
+            drop(unsafe { super::ArrayElements::from_raw(self.object.payload) });
+            self.object.payload = u64::from(EMPTY_POSITION);
+        }
     }
 }
 
@@ -1796,6 +1862,10 @@ struct ObjectExtras {
     inline_properties: DisplacedInline,
     /// An array's storage position, displaced from its first payload word.
     arena_start: u32,
+    /// An array's element backing, displaced from its payload word (`ArrayObject`); empty for
+    /// any other object. Native code reads it at a fixed offset, so it follows the fields that
+    /// native code reads, which keep theirs.
+    elements: super::ArrayElements,
     arguments_map: Option<Vec<u16>>,
     brand: ObjectBrand,
     external_address: Option<usize>,
@@ -1814,9 +1884,6 @@ struct ObjectExtras {
     watch: super::dependencies::Watch,
     /// A global object's table of the values code read from it by name (`global_values`).
     global_values: Option<Box<global_values::GlobalValues>>,
-    /// An array's element backing, displaced from its payload word (`ArrayObject`); empty for
-    /// any other object. Last, so the fields native code reads keep their offsets.
-    elements: super::ArrayElements,
 }
 /// How structured serialization treats an object (HTML [[Serializable]] and
 /// [[Transferable]] host objects).
@@ -2055,7 +2122,8 @@ impl Object {
     /// or extras, whose start `storage_position` decodes.
     #[inline(always)]
     pub(crate) fn plain_storage_start(&self) -> Option<usize> {
-        let plain = self.meta & OBJECT_INLINE_STORAGE == 0 && self.payload >> u32::BITS == 0;
+        // An array's word is its backing; one with values in the arena has extras.
+        let plain = self.meta & (OBJECT_INLINE_STORAGE | OBJECT_ARRAY) == 0 && self.payload >> u32::BITS == 0;
         debug_assert!(!plain || self.extras_pointer().is_none());
         plain.then_some(self.payload as usize)
     }
@@ -2108,11 +2176,15 @@ impl Object {
     fn storage_position(&self) -> u32 {
         match self.extras() {
             Some(extras) => extras.arena_start,
-            None => {
-                debug_assert!(self.meta & OBJECT_ARRAY == 0 || self.payload == u64::from(EMPTY_POSITION));
-                self.payload as u32
-            }
+            None => self.payload_position(),
         }
+    }
+
+    /// The storage position an object without extras keeps: its payload word, or for an
+    /// array, whose word holds its backing, the empty position (`set_storage_position`).
+    #[inline(always)]
+    fn payload_position(&self) -> u32 {
+        if self.meta & OBJECT_ARRAY != 0 { EMPTY_POSITION } else { self.payload as u32 }
     }
 
     #[inline]
@@ -2156,6 +2228,8 @@ impl Object {
     /// (`plain_storage_start`).
     #[inline(always)]
     pub(crate) fn release_storage(&self, arena: &mut ValueArena) -> bool {
+        // An array's sweep releases its properties (`ValueArena::release_ordinary`).
+        debug_assert!(!self.is_array());
         if self.meta & OBJECT_INLINE_STORAGE != 0 {
             return self.extras_pointer().is_some();
         }
@@ -2187,11 +2261,20 @@ impl Object {
                 let (inline, arena_start) = if self.meta & OBJECT_INLINE_STORAGE != 0 {
                     (Self::unpack_inline(self.payload), 0)
                 } else {
-                    ([Value::UNDEFINED; INLINE_PROPERTY_COUNT], self.payload as u32)
+                    ([Value::UNDEFINED; INLINE_PROPERTY_COUNT], self.payload_position())
+                };
+                // An array's word is its backing, which moves into the extras with it.
+                let elements = if self.meta & OBJECT_ARRAY != 0 {
+                    // SAFETY: without extras, an array's payload word is the backing it owns,
+                    // and the word is overwritten below.
+                    unsafe { super::ArrayElements::from_raw(self.payload) }
+                } else {
+                    super::ArrayElements::new()
                 };
                 self.payload = Self::tag_extras(Box::new(ObjectExtras {
                     inline_properties: DisplacedInline(inline),
                     arena_start,
+                    elements,
                     ..ObjectExtras::default()
                 }));
                 self.extras_pointer().expect("extras just installed")
@@ -2271,6 +2354,8 @@ impl Object {
     }
 
     fn store_inline_values(&mut self, values: [Value; INLINE_PROPERTY_COUNT]) {
+        // An array keeps no inline storage (`Heap::initialize_object_properties`).
+        debug_assert!(!self.is_array());
         match (self.extras_mut_existing(), Self::pack_inline(values)) {
             (Some(extras), _) => extras.inline_properties.0 = values,
             (None, Some(word)) => self.payload = word,
@@ -2437,7 +2522,7 @@ impl Object {
         match (self.extras_pointer(), inline) {
             (Some(_), _) => ExactStorage::Extended { inline },
             (None, true) => ExactStorage::PackedInline,
-            (None, false) => ExactStorage::Plain(self.payload as usize),
+            (None, false) => ExactStorage::Plain(self.payload_position() as usize),
         }
     }
 
@@ -4058,6 +4143,95 @@ fn merge_ascending(
         };
         if merged.last() != Some(&next) {
             merged.push(next);
+        }
+    }
+}
+
+#[cfg(test)]
+mod array_record_tests {
+    use super::*;
+    use super::super::ArrayElements;
+
+    fn values(array: &ArrayObject) -> Vec<Value> {
+        array.elements().as_slice().to_vec()
+    }
+
+    /// The backing header the staged reader finds for `array` (`staged::elements::array_header`).
+    fn staged_header(array: &ArrayObject) -> u64 {
+        let mut stage = crate::staged::Concrete::new(std::ptr::null());
+        crate::staged::elements::array_header(&mut stage, array as *const ArrayObject as u64)
+    }
+
+    #[test]
+    fn an_array_without_extras_keeps_its_backing_in_its_payload_word() {
+        let elements = ArrayElements::from_slice(&[Value::integer(1), Value::integer(2)]);
+        let array = ArrayObject::new(Object::new(Value::NULL), elements.clone());
+        assert!(!array.has_extras());
+        assert_eq!(array.object.payload, elements.as_ptr() as u64);
+        assert_eq!(staged_header(&array), elements.as_ptr() as u64);
+        assert_eq!(array.properties().into_parts().0 & VALUE_VEC_START_BITS, EMPTY_POSITION);
+        assert_eq!(array.plain_storage_start(), None);
+        assert_eq!(elements.owner_count(), 2);
+        let copy = array.clone();
+        assert_eq!(elements.owner_count(), 3);
+        assert_eq!(values(&copy), values(&array));
+        // The object alone owns no backing.
+        let object = Object::clone(&array);
+        assert_eq!(object.payload, u64::from(EMPTY_POSITION));
+        drop(object);
+        assert_eq!(elements.owner_count(), 3);
+        drop(copy);
+        drop(array);
+        assert_eq!(elements.owner_count(), 1);
+        // The empty backing and a fresh array own nothing.
+        let empty = ArrayObject::fresh(Value::NULL, ArrayElements::new());
+        assert!(!empty.needs_drop());
+        assert_eq!(empty.elements().len(), 0);
+    }
+
+    #[test]
+    fn extras_take_an_arrays_backing_with_them() {
+        let elements = ArrayElements::from_slice(&[Value::integer(3)]);
+        let mut array = ArrayObject::fresh(Value::NULL, elements.clone());
+        array.watch_as(Default::default());
+        assert!(array.has_extras() && array.needs_drop());
+        assert_eq!(values(&array), [Value::integer(3)]);
+        assert_eq!(staged_header(&array), elements.as_ptr() as u64);
+        assert_eq!(elements.owner_count(), 2);
+        let copy = array.clone();
+        assert!(copy.has_extras());
+        assert_eq!(elements.owner_count(), 3);
+        array.elements_mut().make_mut().push(Value::integer(4));
+        assert_eq!(values(&array), [Value::integer(3), Value::integer(4)]);
+        assert_eq!(values(&copy), [Value::integer(3)]);
+        assert_eq!(staged_header(&array), array.elements().as_ptr() as u64);
+        assert_eq!(elements.owner_count(), 2);
+        // A new array of an array's object with extras takes the new backing in them.
+        let rebuilt = ArrayObject::new(Object::clone(&copy), ArrayElements::from_slice(&[Value::integer(5)]));
+        assert!(rebuilt.has_extras());
+        assert_eq!(values(&rebuilt), [Value::integer(5)]);
+        assert_eq!(elements.owner_count(), 2);
+        drop((array, copy, rebuilt));
+        assert_eq!(elements.owner_count(), 1);
+    }
+
+    #[test]
+    fn array_records_round_trip_through_a_snapshot_with_and_without_extras() {
+        for extras in [false, true] {
+            let mut array = ArrayObject::fresh(Value::NULL, ArrayElements::from_slice(&[Value::integer(6), Value::NULL]));
+            if extras {
+                array.mark_indexed_descriptors();
+            }
+            let mut writer = crate::snapshot::Writer::new();
+            array.write_snapshot(&mut writer).unwrap();
+            let bytes = writer.finish();
+            let mut reader = crate::snapshot::Reader::new(&bytes, None).unwrap();
+            let restored = ArrayObject::read_snapshot(&mut reader).unwrap();
+            assert_eq!(restored.has_extras(), extras);
+            assert_eq!(restored.has_indexed_descriptors(), extras);
+            assert_eq!(values(&restored), [Value::integer(6), Value::NULL]);
+            assert_eq!(restored.elements().owner_count(), 1);
+            assert_eq!(restored.properties().into_parts().0 & VALUE_VEC_START_BITS, EMPTY_POSITION);
         }
     }
 }

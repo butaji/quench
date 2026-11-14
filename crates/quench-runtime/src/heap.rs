@@ -77,7 +77,11 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) record_capacity: usize,
     pub(crate) record_size: usize,
     pub(crate) record_align: usize,
+    /// Where an array record keeps its backing's header pointer without extras: its
+    /// object's payload word. With extras, that word points at them (`NATIVE_OBJECT_LAYOUT`'s
+    /// extras tag), and they keep the pointer at `extras_elements_offset`.
     pub(crate) elements_offset: usize,
+    pub(crate) extras_elements_offset: usize,
     pub(crate) elements_header_offset: usize,
     pub(crate) header_length_offset: usize,
     pub(crate) header_values_offset: usize,
@@ -112,6 +116,7 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     record_size: cell::NATIVE_ARRAY_RECORD_SIZE,
     record_align: cell::NATIVE_ARRAY_RECORD_ALIGN,
     elements_offset: cell::NATIVE_ARRAY_ELEMENTS_OFFSET,
+    extras_elements_offset: cell::NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET,
     elements_header_offset: array_elements::NATIVE_HEADER_POINTER_OFFSET,
     header_length_offset: array_elements::NATIVE_HEADER_LENGTH_OFFSET,
     header_values_offset: array_elements::NATIVE_HEADER_VALUES_OFFSET,

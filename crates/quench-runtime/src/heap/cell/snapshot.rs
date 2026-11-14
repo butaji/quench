@@ -142,7 +142,8 @@ fn write_object(writer: &mut Writer, object: &Object) -> SnapshotResult<()> {
         // The payload word: narrow inline values or the storage position.
         None => {
             writer.u8(0);
-            writer.u64(object.payload);
+            // An array's word is its backing, which its record writes on its own.
+            writer.u64(if object.is_array() { u64::from(super::EMPTY_POSITION) } else { object.payload });
         }
         // The payload word is the extras pointer; the extras are written field by field.
         Some(extras) => {
@@ -401,7 +402,7 @@ impl ArrayObject {
             return Err(SnapshotError("snapshot array without its array flag".into()));
         }
         let elements = super::super::ArrayElements::from(reader.values()?);
-        Ok(Self { object, elements })
+        Ok(Self::attach(object, elements))
     }
 }
 

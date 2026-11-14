@@ -362,6 +362,48 @@ impl ArrayElements {
 /// (`ArrayObject`): the word an `ArrayElements` is, owned by whoever holds it.
 const _: () = assert!(size_of::<ArrayElements>() == size_of::<u64>());
 
+impl ArrayElements {
+    /// The header pointer as a raw word, which takes over this owner (`from_raw`). Its upper
+    /// 16 bits are clear, so it is never an object's extras word (`EXTRAS_TAG`).
+    #[inline(always)]
+    pub(super) fn into_raw(self) -> u64 {
+        let raw = self.header.as_ptr() as usize as u64;
+        std::mem::forget(self);
+        assert!(raw >> 48 == 0, "array elements outside 48-bit space");
+        raw
+    }
+
+    /// The owner `into_raw` gave up.
+    ///
+    /// # Safety
+    /// `raw` came from `into_raw` and no other `ArrayElements` holds that ownership.
+    #[inline(always)]
+    pub(super) unsafe fn from_raw(raw: u64) -> Self {
+        // SAFETY: `into_raw` words are header pointers, never null.
+        Self { header: unsafe { NonNull::new_unchecked(raw as usize as *mut Header) } }
+    }
+
+    /// The elements a raw word (`into_raw`) owns, borrowed in place.
+    ///
+    /// # Safety
+    /// `raw` holds an `into_raw` word for the borrow's whole lifetime.
+    #[inline(always)]
+    pub(super) unsafe fn from_raw_ref(raw: &u64) -> &Self {
+        // SAFETY: `ArrayElements` is a transparent pointer, the size and alignment of `u64`.
+        unsafe { &*(raw as *const u64).cast::<Self>() }
+    }
+
+    /// `from_raw_ref`, mutably: a replacement written through it is a raw word again.
+    ///
+    /// # Safety
+    /// As `from_raw_ref`.
+    #[inline(always)]
+    pub(super) unsafe fn from_raw_mut(raw: &mut u64) -> &mut Self {
+        // SAFETY: as in `from_raw_ref`; `&mut` makes the borrow unique.
+        unsafe { &mut *(raw as *mut u64).cast::<Self>() }
+    }
+}
+
 impl Default for ArrayElements {
     fn default() -> Self {
         Self::new()

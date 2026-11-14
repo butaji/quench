@@ -43,7 +43,8 @@ pub(crate) struct Backing<W> {
 /// The backing of the direct array `base` among the array records at `record_base`: `None`
 /// (leaving at `miss`) for any other value, or before the first array record exists
 /// (`record_base` zero). The record's address is its index, `base`'s low half, times the
-/// record size past `record_base`; the backing's header is one load, its length another.
+/// record size past `record_base`; the backing's header is one load (`array_header`), its
+/// length another.
 #[inline(always)]
 pub(crate) fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<Backing<S::Word>> {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
@@ -54,10 +55,24 @@ pub(crate) fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base:
     stage.guard(present, miss)?;
     let offset = stage.mul_imm(index, ARRAY.record_size as u64);
     let record = stage.add(record_base, offset);
-    let header = stage.load_u64(Region::Records.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
+    let header = array_header(stage, record);
     let length = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_length_offset as i32);
     let values = stage.add_imm(header, ARRAY.header_values_offset as u64);
     Some(Backing { record, header, values, length })
+}
+
+/// The backing's header of the array record at `record`. Without extras, the record's object
+/// keeps the header pointer as its payload word; with extras (an array with named properties,
+/// a prototype, sparse or arguments facts), the word points at them and they hold it.
+#[inline(always)]
+pub(crate) fn array_header<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let word = stage.load_u64(Region::Payload.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
+    let extras = super::object::has_extras(stage, word);
+    stage.choose(extras, |stage| {
+        let extras = super::object::extras_pointer(stage, word);
+        stage.load_u64(Region::Payload.mutable(), extras, (ARRAY.extras_elements_offset + ARRAY.elements_header_offset) as i32)
+    }, |_| word)
 }
 
 /// `backing` as an in-place replacement needs it: its elements owned by this array alone, the
@@ -89,6 +104,7 @@ fn unbarred_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, barred: 
     let held = stage.and_imm(meta, u64::from(barred));
     let clear = stage.eq_imm(held, 0u32);
     stage.guard(clear, miss)?;
+    // Without extras, this word is the backing's header (`array_header`).
     let payload = stage.load_u64(Region::Payload.mutable(), backing.record, (ARRAY.object_offset + OBJECT.payload_offset) as i32);
     let plain = super::object::plain_payload(stage, payload);
     stage.guard(plain, miss)

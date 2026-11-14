@@ -684,15 +684,10 @@ fn emit_array_extras(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir
     crate::staged::object::has_extras(&mut object_slots::emit(builder), object_payload)
 }
 
-/// The backing header of an array record.
+/// The backing header of an array record, in its object's payload word or, with extras, in
+/// them (`staged::elements::array_header`).
 fn emit_array_header(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir::Value {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        record,
-        i32::try_from(ARRAY.elements_offset + ARRAY.elements_header_offset).expect("array header offset fits i32"),
-    )
+    crate::staged::elements::array_header(&mut object_slots::emit(builder), record)
 }
 
 /// The `length` of the direct array `base`, tagged, as an int32: its dense elements' count,
@@ -777,7 +772,9 @@ pub(super) fn emit_dense_array_view(
 
 /// The backing's first value and length of the array `base` (tagged) an earlier view
 /// proved, after a helper that may have grown its backing: the array, its record and its
-/// writability stay what the view proved, so only the backing is read again.
+/// writability stay what the view proved, so only the backing is read again. The helper may
+/// also have given the array extras (a sparse store's facts), which then hold the backing:
+/// `emit_array_header` reads it from either place.
 pub(super) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let record_id = builder.ins().ireduce(types::I32, base);

@@ -300,9 +300,9 @@ mod tests {
         let header = elements.as_ptr() as u64;
         let record_address = record.as_mut_ptr() as u64;
         let mut stage = stage();
-        stage.store_u64(Region::Records.mutable(), record_address, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32, header);
+        // Without extras, the object's payload word is the backing's header pointer.
+        stage.store_u64(Region::Payload.mutable(), record_address, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32, header);
         stage.store_u32(Region::Records.mutable(), record_address, (ARRAY.object_offset + OBJECT.meta_offset) as i32, u64::from(meta));
-        stage.store_u64(Region::Payload.mutable(), record_address, (ARRAY.object_offset + OBJECT.payload_offset) as i32, 0);
         let values = header + ARRAY.header_values_offset as u64;
         let length = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_length_offset as i32);
         (Backing { record: record_address, header, values, length }, capacity)
