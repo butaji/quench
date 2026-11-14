@@ -1321,6 +1321,8 @@ enum ActivationKind {
     /// A Wasm activation keeps its caller's memory for the return and its requested
     /// register payload for guest-stack accounting, excluding admission padding.
     Wasm { memory: MemoryView, frame_storage_bytes: usize },
+    /// A Wasm export JavaScript called (`wasm_exports`): it keeps the caller's environment.
+    WasmExport { frame_storage_bytes: usize, caller_env: Value },
 }
 
 impl Activation {
@@ -1328,7 +1330,7 @@ impl Activation {
     #[inline] fn script(&self) -> Option<&ScriptActivation> {
         match &self.kind {
             ActivationKind::Script(script) => Some(script),
-            ActivationKind::Wasm { .. } => None,
+            ActivationKind::Wasm { .. } | ActivationKind::WasmExport { .. } => None,
         }
     }
 
@@ -1336,7 +1338,7 @@ impl Activation {
     /// whose view carries the context (`MemoryView::script`).
     fn caller_memory<H: Host>(&self, cx: *mut LaneContext<H>) -> MemoryView {
         match self.kind {
-            ActivationKind::Script(_) => MemoryView::script(cx),
+            ActivationKind::Script(_) | ActivationKind::WasmExport { .. } => MemoryView::script(cx),
             ActivationKind::Wasm { memory, .. } => memory,
         }
     }
@@ -1344,7 +1346,7 @@ impl Activation {
     #[inline] fn frame_storage_bytes(&self) -> usize {
         match self.kind {
             ActivationKind::Script(_) => 0,
-            ActivationKind::Wasm { frame_storage_bytes, .. } => frame_storage_bytes,
+            ActivationKind::Wasm { frame_storage_bytes, .. } | ActivationKind::WasmExport { frame_storage_bytes, .. } => frame_storage_bytes,
         }
     }
 }
@@ -1402,6 +1404,8 @@ impl ActivationState {
             if let Some(script) = activation.script() {
                 current.this = script.caller_this;
                 current.env = script.caller_env;
+            } else if let ActivationKind::WasmExport { caller_env, .. } = activation.kind {
+                current.env = caller_env;
             }
             current.program = activation.caller_program;
         }
@@ -1833,6 +1837,8 @@ pub(super) struct LaneStack {
     body_boundary: Option<usize>,
     /// The frames the boundary's caller activations became, once a materialization made them.
     boundary_frames: Option<usize>,
+    /// The Wasm exports JavaScript calls (`wasm_exports`).
+    wasm_exports: wasm_exports::ExportTargets,
 }
 
 /// A generation no lane runs under: an empty target entry never matches.
@@ -1864,6 +1870,7 @@ impl Default for LaneStack {
             native_boundary: None,
             body_boundary: None,
             boundary_frames: None,
+            wasm_exports: Default::default(),
         }
     }
 }
@@ -11304,15 +11311,10 @@ impl<H: Host> Vm<H> {
                     // takes the guest-call guard its push would have.
                     crate::stack::GuestCallGuard::enter().ok()
                 }
-                ActivationKind::Wasm { .. } => {
+                ActivationKind::Wasm { .. } | ActivationKind::WasmExport { .. } => {
                     // The lane reserved this payload while it was frameless; its materialized
                     // frame holds the same weighted guard until the call returns.
-                    Some(self.push_wasm_frame_with_registers(
-                        code,
-                        caller,
-                        activation.function,
-                        window,
-                    ))
+                    Some(self.push_wasm_frame_with_registers(code, caller, activation.function, window, state.env))
                 }
             };
             if !to_native {
@@ -13046,6 +13048,9 @@ script_handler! {
         if native == Native::ReflectGet {
             sibling!(reflect_get_call_handler::<H>(), r, ip, Carried::script(cx))
         }
+        if native == Native::WasmExportedFunction {
+            sibling!(wasm_exports::call_export_handler::<H>(), r, ip, Carried::script(cx))
+        }
         resume!(cx, lane_native_call_value(cx, r, ip, i, native))
     }
 }
@@ -13208,6 +13213,7 @@ fn lane_native_value<H: Host>(
 mod named_keys;
 mod denoted;
 mod wasm_calls;
+mod wasm_exports;
 mod i64_operators;
 use i64_operators::i64_operator_handler;
 mod capture_update_calls;
@@ -16425,6 +16431,9 @@ lane_handler! {
     fn lane_return_general<>(cx, r, ip, i, view) {
         let value = r.get(i.a);
         if let Some(resumed) = lane_complete_cross_activation(cx, value) {
+            resume!(cx, resumed)
+        }
+        if let Some(resumed) = wasm_exports::lane_complete_export(cx, value) {
             resume!(cx, resumed)
         }
         if let Some(resumed) = lane_complete_returning_chain(cx, value) {

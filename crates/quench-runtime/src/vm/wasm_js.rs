@@ -1268,7 +1268,7 @@ impl<H: Host> Vm<H> {
     /// activations become frames first), as V8 captures the stack at the throw; made where a
     /// handler takes it, its stack would name only the handler's frame. It stays a trap
     /// (`JsError::wasm_trap`), which no Wasm handler catches.
-    fn trap_raised_in_javascript(&mut self, p: &ResidualProgram, mut error: JsError) -> JsError {
+    pub(super) fn trap_raised_in_javascript(&mut self, p: &ResidualProgram, mut error: JsError) -> JsError {
         let Some(trap) = error.wasm_trap().filter(|_| error.thrown_value().is_none()) else {
             return error;
         };

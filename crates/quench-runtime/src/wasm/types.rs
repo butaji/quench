@@ -487,3 +487,12 @@ impl Equivalence<'_> {
             }
     }
 }
+
+impl crate::WasmSignature {
+    /// Whether every parameter and the one result are `i32`, which JavaScript's integers are as
+    /// they are (`Vm::encode_wasm_value`).
+    pub(crate) fn is_i32_call(&self) -> bool {
+        let i32 = |ty: &crate::WasmType| matches!(ty, crate::WasmType::I32);
+        self.params.iter().all(i32) && matches!(self.results.as_slice(), [result] if i32(result))
+    }
+}

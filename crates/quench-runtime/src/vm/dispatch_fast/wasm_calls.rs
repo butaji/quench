@@ -169,7 +169,7 @@ lane_handler! {
     /// callee. Validation proved the callee's type. Any other callee leaves for the general loop.
     fn lane_call_wasm_reference<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let running = (unsafe { (*cx).program }, vm.frames.last().map(|frame| frame.env));
+        let running = (unsafe { (*cx).program }, Some(wasm_exports::running_env(cx)));
         let callee = match vm.heap.function(r.get(i.b)) {
             Some(FunctionRecord { kind: FunctionKind::User(program, function), env, .. })
                 if (*program, Some(*env)) == running => u16::try_from(*function).ok(),
@@ -242,7 +242,7 @@ fn lane_call_compiled<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, fu
     // runs, so before guest code could make the activations frames.
     let args = unsafe { lane_call_window(r, i) };
     let vm = unsafe { vm(cx) };
-    let (program, env) = (unsafe { (*cx).program }, vm.frames[unsafe { (*cx).frame }].env);
+    let (program, env) = (unsafe { (*cx).program }, wasm_exports::running_env(cx));
     let Some(called) = lane_in_place(cx, ip, |vm, _| vm.run_compiled(program, env, function, args).transpose()) else {
         return Some(Resumed::Exit(exit(ip)));
     };

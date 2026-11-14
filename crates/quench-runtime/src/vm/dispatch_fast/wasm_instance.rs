@@ -7,7 +7,7 @@ lane_handler! {
     /// resolves the memory view.
     pub(super) fn lane_instance_binding<MEMORY: bool>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let env = vm.frames[unsafe { (*cx).frame }].env;
+        let env = super::wasm_exports::running_env(cx);
         // An instance's bindings are its own, never shared with another environment.
         let Some(Cell::Environment { slots, .. }) = vm.heap.get(env) else {
             return exit(ip);
