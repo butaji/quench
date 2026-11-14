@@ -85,6 +85,18 @@ pub(super) unsafe fn bind_frame<H: Host>(
     native.dispatch.refresh_object_bases(vm);
 }
 
+/// The payload a region runs with: the lane's own, or one lent to it where `lend` names whether it
+/// keeps direct calls (`region_lend::lend`).
+///
+/// # Safety
+/// As `region_lend::lend`.
+unsafe fn payload_for<H: Host>(vm: &mut Vm<H>, dispatch: &mut JsStepDispatch, lend: Option<bool>) -> *mut JsStepDispatch {
+    match lend {
+        Some(direct_calls) => unsafe { region_lend::lend(vm, dispatch, direct_calls) },
+        None => &raw mut *dispatch,
+    }
+}
+
 /// Enters the region's body over the activation's dispatch and maps its exit. A region that calls
 /// callees by their entries (`lend`: whether the lane may make their activations) runs on the lane
 /// frame's payload, which is named to the lane's helpers for the run (`dispatch_fast::lane_region_payload`):
@@ -102,10 +114,7 @@ pub(super) unsafe fn enter<H: Host>(
     context.vm = std::ptr::from_mut(vm).cast();
     context.program = program;
     // SAFETY: the region runs on the lane's activation at the lane stack's top, and `reclaim` follows the run.
-    let payload: *mut JsStepDispatch = match lend {
-        Some(direct_calls) => unsafe { region_lend::lend(vm, &mut native.dispatch, direct_calls) },
-        None => &raw mut native.dispatch,
-    };
+    let payload = unsafe { payload_for(vm, &mut native.dispatch, lend) };
     context.adapter_payload = payload.cast();
     // The region's call rows reload its payload's heap bases after the callee ran (`lane_region_call`).
     // SAFETY: `lane_context` is the running lane's.

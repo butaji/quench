@@ -115,7 +115,6 @@ impl<H: Host> Vm<H> {
         let Some(region) = LoopRegion::of_function(code.clone(), self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let (ints, doubles) = observed(parameters);
         let callees = self.stitch_callees(program, function, &code, &direct(self));
-        let helpers = super::process_lane_helpers::<H>();
         let invalidation = Invalidation::default();
         // Where the VM and the program run specialized, the code holds Stable facts: its stores run in
         // place for the atoms no method cache names, and its prototype-held reads fold to their values.
@@ -140,7 +139,7 @@ impl<H: Host> Vm<H> {
         let speculated = widened(generic);
         let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: [&ints, &doubles], kinds: &[] };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
-        let Ok(built) = (unsafe { build_body(&region, &spec, &callees, helpers) }) else { return LaneBodyOutcome::Declined };
+        let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers::<H>()) }) else { return LaneBodyOutcome::Declined };
         self.publish_base_body(built, (function, body.registers), callees, (&code, invalidation), caller)
     }
 }
