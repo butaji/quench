@@ -256,9 +256,7 @@ impl Stage for StencilStage {
     fn pick(&mut self, cond: bool, then: bool, otherwise: bool) -> bool { if cond { then } else { otherwise } }
     #[inline(always)]
     fn number_truthy(&mut self, bits: u64) -> bool {
-        let number = f64::from_bits(bits);
-        // Neither zero (of either sign) nor NaN, which no other double equals.
-        number != 0.0 && number == number
+        crate::vm::operations::number_is_truthy(f64::from_bits(bits))
     }
     #[inline(always)]
     fn shape_in(&mut self, shape: u64, _shapes: &[u32]) -> bool {

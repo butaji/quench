@@ -83,6 +83,8 @@ pub(crate) trait MachineScalar: Machine {
     /// The `lane` constant whose bits are `bits`; a float lane reads them as its IEEE bits.
     fn raw_const(&mut self, lane: Lane, bits: i64) -> Self::Word;
     fn raw_binary(&mut self, operation: Binary, a: Self::Word, b: Self::Word) -> Self::Word;
+    /// A signed `Add`, `Sub` or `Mul` of two integers: its wrapped result and the flag that it overflowed.
+    fn raw_binary_overflow(&mut self, operation: Binary, a: Self::Word, b: Self::Word) -> (Self::Word, Self::Word);
     fn raw_compare(&mut self, relation: Relation, a: Self::Word, b: Self::Word) -> Self::Word;
     /// `raw_compare` against the immediate `bits` at `a`'s own width.
     fn raw_compare_imm(&mut self, relation: Relation, a: Self::Word, bits: i64) -> Self::Word;
@@ -118,10 +120,17 @@ pub(crate) trait MachineAccess: MachineScalar {
     }
     /// A call of the code at `target` on word `arguments`: its word.
     fn call_words(&mut self, target: Self::Word, arguments: &[Self::Word]) -> Self::Word;
+    /// A call of the code at `target` whose `signature` is its parameter lanes and its result lane.
+    fn call_lanes(&mut self, target: Self::Word, signature: (&[Lane], Lane), arguments: &[Self::Word]) -> Self::Word;
     /// A call of the leaf at address `leaf` on word `arguments`: its word.
     fn call_leaf(&mut self, leaf: usize, arguments: &[Self::Word]) -> Self::Word {
         let target = self.raw_const(Lane::I64, leaf as i64);
         self.call_words(target, arguments)
+    }
+    /// A call of the leaf at address `leaf` under `signature` (parameter lanes and result lane).
+    fn call_leaf_lanes(&mut self, leaf: usize, signature: (&[Lane], Lane), arguments: &[Self::Word]) -> Self::Word {
+        let target = self.raw_const(Lane::I64, leaf as i64);
+        self.call_lanes(target, signature, arguments)
     }
     /// A function the machine calls directly, linked where the code is placed.
     type Function: Copy;
