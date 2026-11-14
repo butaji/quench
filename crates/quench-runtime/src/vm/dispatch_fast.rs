@@ -18528,6 +18528,18 @@ const LANE_ENTRY_MIN_CALL_RUN: usize = 8;
 /// handler returns to the lane loop, which carries no accumulator.
 const ACCUMULATOR: bool = cfg!(quench_lane_tail_calls);
 
+/// The handler of a returning record of `kind` (`returning_kind`) in a view that has no leaf form.
+fn returning_handler<H: Host>(kind: u8) -> Handler {
+    match kind {
+        RETURNING_FIELD => lane_returning_field_first::<H, NOT_LEAF>,
+        RETURNING_UNARY => lane_returning::<H, RETURNING_UNARY, NOT_LEAF>,
+        RETURNING_BINARY => lane_returning::<H, RETURNING_BINARY, NOT_LEAF>,
+        RETURNING_OBJECT => lane_returning::<H, RETURNING_OBJECT, NOT_LEAF>,
+        RETURNING_OBJECT_LITERAL => lane_returning::<H, RETURNING_OBJECT_LITERAL, NOT_LEAF>,
+        _ => lane_returning::<H, RETURNING_LITERAL, NOT_LEAF>,
+    }
+}
+
 /// Derive a function's lane view from its bytecode and its program's
 /// constants.
 fn derive_lane_view<'live, H: Host>(
@@ -18682,17 +18694,7 @@ fn derive_lane_view<'live, H: Host>(
                     produces: false,
                 })
             } else if let Some(kind) = returning_kind(instruction) {
-                Some(LaneHandler {
-                    handler: match kind {
-                        RETURNING_FIELD => lane_returning_field_first::<H, NOT_LEAF> as Handler,
-                        RETURNING_UNARY => lane_returning::<H, RETURNING_UNARY, NOT_LEAF> as Handler,
-                        RETURNING_BINARY => lane_returning::<H, RETURNING_BINARY, NOT_LEAF> as Handler,
-                        RETURNING_OBJECT => lane_returning::<H, RETURNING_OBJECT, NOT_LEAF> as Handler,
-                        RETURNING_OBJECT_LITERAL => lane_returning::<H, RETURNING_OBJECT_LITERAL, NOT_LEAF> as Handler,
-                        _ => lane_returning::<H, RETURNING_LITERAL, NOT_LEAF> as Handler,
-                    },
-                    produces: false,
-                })
+                Some(LaneHandler { handler: returning_handler::<H>(kind), produces: false })
             } else if let Some(handler) = wasm.then(|| wasm_lane_handler::<H>(op)).flatten() {
                 handler
             } else {
@@ -18762,7 +18764,7 @@ fn derive_lane_view<'live, H: Host>(
             &exits,
             &produced,
         ),
-        None => Vec::new(),
+        None => Vec::default(),
     }
     .into_boxed_slice();
     for region in &vector_regions {
