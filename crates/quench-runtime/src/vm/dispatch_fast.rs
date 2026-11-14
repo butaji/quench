@@ -6855,6 +6855,22 @@ script_handler! {
     }
 }
 
+/// `lane_get_field_sink_own`'s first step past the record's hint: the site's primary own
+/// entry, whose hit becomes the hint. Out of line, so the hinted probe keeps its registers.
+///
+/// # Safety
+/// `cx` is the running lane's context and `ip` a nested sink record of it.
+#[inline(never)]
+unsafe fn lane_sink_first_refresh<H: Host>(cx: *mut LaneContext<H>, ip: Ip, base: Value) -> Option<Value> {
+    // SAFETY: the context's program outlives the lane run; a nested record names its site.
+    let code = unsafe { &*(*cx).code };
+    let site = unsafe { code.field_sites.get_unchecked((*ip).imm() as usize) };
+    let vm = unsafe { vm(cx) };
+    let value = vm.primary_own_field_hit(code, base, site.first.1)?;
+    set_field_hint(ip, vm.field_cache_entry(site.first.1));
+    Some(value)
+}
+
 script_handler! {
     /// `lane_get_field_sink` where every step hits its site's primary own entry: the
     /// nested read (`Vm::primary_own_field_hit`), then the store to `this`
@@ -6871,7 +6887,7 @@ script_handler! {
             None => Some(unsafe { lane_held_this(cx) }),
         };
         let value = base
-            .and_then(|base| vm.primary_own_field_hit(code, base, site.first.1))
+            .and_then(|base| vm.record_field_entry_hit(i.field_hint(), base).or_else(|| unsafe { lane_sink_first_refresh(cx, ip, base) }))
             .and_then(|value| match site.second {
                 Some((_, cache)) => vm.primary_own_field_hit(code, value, cache),
                 None => Some(value),
