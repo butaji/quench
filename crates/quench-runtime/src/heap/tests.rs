@@ -1739,31 +1739,80 @@ fn a_full_collection_sweeping_strings_on_a_worker_matches_the_serial_sweep() {
 
 #[test]
 fn concurrent_cycles_are_refused_until_every_gate_passes() {
-    use concurrent_mark::{CONCURRENT_CYCLE_MAX_LEGACY_CELLS, CycleRefusal};
+    use concurrent_mark::{CONCURRENT_CYCLE_MAX_LEGACY_CELLS, CycleMode, CycleRefusal};
     let mut heap = Heap::new();
     assert!(!heap.satb_active());
-    assert_eq!(heap.concurrent_cycle_refusal_with(false, false), Some(CycleRefusal::Disabled));
-    assert_eq!(heap.concurrent_cycle_refusal_with(true, true), Some(CycleRefusal::NativeCode));
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Off, false), Some(CycleRefusal::Disabled));
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, true), Some(CycleRefusal::NativeCode));
     // A new heap's pacing favors minor collections.
-    assert_eq!(heap.concurrent_cycle_refusal_with(true, false), Some(CycleRefusal::Generational));
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, false), Some(CycleRefusal::Generational));
     heap.pacing_state.favor_full_collections_for_test();
     let passing = if cfg!(feature = "profile-memory") { Some(CycleRefusal::ProfilingMemory) } else { None };
-    assert_eq!(heap.concurrent_cycle_refusal_with(true, false), passing);
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, false), passing);
     let cells: Vec<Value> = (0..=CONCURRENT_CYCLE_MAX_LEGACY_CELLS)
         .map(|_| heap.alloc_bigint(crate::bigint::JsBigInt::from(1_u8)))
         .collect();
-    assert_eq!(heap.concurrent_cycle_refusal_with(true, false), Some(CycleRefusal::LegacyCells));
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, false), Some(CycleRefusal::LegacyCells));
     drop(cells);
     heap.collect([]);
     heap.pacing_state.favor_full_collections_for_test();
-    assert_eq!(heap.concurrent_cycle_refusal_with(true, false), passing);
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, false), passing);
     // Weak cells hold their entries strongly through a cycle: they refuse none.
     let weak_ref = heap.alloc(Cell::WeakRef { object: Box::new(plain_object()), target: None });
-    assert_eq!(heap.concurrent_cycle_refusal_with(true, false), passing);
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, false), passing);
     assert!(heap.is_live(weak_ref));
     heap.reset();
     heap.pacing_state.favor_full_collections_for_test();
-    assert_eq!(heap.concurrent_cycle_refusal_with(true, false), passing);
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, false), passing);
+}
+
+#[test]
+fn adaptive_cycles_follow_the_measured_cost() {
+    use concurrent_mark::{CycleExtent, CycleMode, CycleRefusal};
+    if cfg!(feature = "profile-memory") {
+        return;
+    }
+    let mut heap = Heap::new();
+    heap.pacing_state.favor_full_collections_for_test();
+    let refusal = |heap: &Heap| heap.concurrent_cycle_refusal_with(CycleMode::Adaptive, false);
+    assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
+    heap.resident_at_full_start = 2000;
+    heap.resident_after_full = 1000;
+    // The first full collection has no interval or growth to weigh.
+    heap.judge_cycles(false, 10_000);
+    assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
+    // A long mark, a large share of the (short) time since the last full collection.
+    heap.judge_cycles(false, 10_000);
+    assert_eq!(refusal(&heap), None);
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, false), None);
+    // A short mark pauses too little.
+    heap.judge_cycles(false, 100);
+    assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
+    heap.judge_cycles(false, 10_000);
+    assert_eq!(refusal(&heap), None);
+    // A cycle that kept the occupancy's growth and ran half past its due point keeps cycles on.
+    heap.last_cycle_extent = CycleExtent { weight: 100, late_weight: 50, planned: true, ..CycleExtent::default() };
+    heap.judge_cycles(true, 500);
+    assert_eq!(refusal(&heap), None);
+    // One that ran mostly past its due point falls back for a full collection, then cycles are measured anew.
+    heap.last_cycle_extent = CycleExtent { weight: 100, late_weight: 51, planned: true, ..CycleExtent::default() };
+    heap.judge_cycles(true, 500);
+    assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
+    heap.judge_cycles(false, 10_000);
+    assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
+    heap.judge_cycles(false, 10_000);
+    assert_eq!(refusal(&heap), None);
+    // One whose interval grew past the stop-the-world interval's falls back for two.
+    heap.resident_at_full_start = 2300;
+    heap.last_cycle_extent = CycleExtent { weight: 100, late_weight: 0, planned: true, ..CycleExtent::default() };
+    heap.judge_cycles(true, 500);
+    assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
+    heap.resident_at_full_start = 2000;
+    heap.judge_cycles(false, 10_000);
+    heap.judge_cycles(false, 10_000);
+    assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
+    heap.judge_cycles(false, 10_000);
+    assert_eq!(refusal(&heap), None);
 }
 
 #[test]

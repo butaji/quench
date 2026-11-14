@@ -759,6 +759,9 @@ pub(crate) struct Heap {
     /// The allocation count at which the running or next cycle's remark is due: past it, the
     /// interval's budget is spent, and the mutator assists the marker.
     cycle_due_at: usize,
+    /// What decides whether the next full collection runs as a cycle when cycles are adaptive
+    /// (`concurrent_mark::CycleGate`).
+    cycle_gate: concurrent_mark::CycleGate,
     /// Marks on the parallel pool whatever the heap's size (`Heap::parallel_mark`), so unit
     /// tests reach the parallel path with small heaps.
     #[cfg(test)]
@@ -2096,6 +2099,7 @@ impl Heap {
         self.live_weight_after_full = 0;
         self.resident_at_full_start = 0;
         self.resident_after_full = 0;
+        self.cycle_gate = concurrent_mark::CycleGate::default();
         self.weight_between_fulls = 0;
         self.old_live = 0;
         self.collections = 0;
@@ -2352,6 +2356,9 @@ impl Heap {
         let full = self.start_collection(full);
         // `QUENCH_TRACE=gc` reports the mark, sweep, and record-sweep times.
         let trace_started = crate::trace::Channel::Gc.on().then(std::time::Instant::now);
+        // A full collection's mark time chooses between cycles and stopping the world
+        // (`Heap::judge_cycles`).
+        let full_started = full.then(std::time::Instant::now);
         // No reference to a small string's view outlives the shared borrow it came from.
         self.small_views.clear();
         let age = self.promotion_age();
@@ -2557,6 +2564,7 @@ impl Heap {
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let sweep_started = std::time::Instant::now();
         let trace_sweep_started = trace_started.map(|_| std::time::Instant::now());
+        let full_mark_micros = full_started.map_or(0, |started| started.elapsed().as_micros() as u64);
         // Property-arena owners are listed only for a full collection that compacts: the
         // lists hold an entry per live owner at the heap's peak. A compaction that this
         // sweep's releases make due waits for the next full collection.
@@ -2931,9 +2939,16 @@ impl Heap {
                 since_previous_full: if full { self.weight_between_fulls } else { 0 },
             },
         );
+        if full {
+            self.judge_cycles(premarked, full_mark_micros);
+        }
         if crate::trace::Channel::Gc.on() {
             let (mark_us, sweep_us) = trace_times;
-            let concurrent = if full { format!(" concurrent={:?}", self.concurrent_cycle_refusal()) } else { String::new() };
+            let concurrent = if full {
+                format!(" concurrent={:?} {}", self.concurrent_cycle_refusal(), self.cycle_gate)
+            } else {
+                String::new()
+            };
             let concurrent = if self.last_collection_premarked {
                 format!("{concurrent} {}", self.last_cycle_extent)
             } else {

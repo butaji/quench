@@ -3,8 +3,105 @@
 //! a consistent heap calls first (`finish_cycle_now`).
 //!
 //! A cycle runs only where every gate passes (`concurrent_cycle_refusal`), which includes
-//! `QUENCH_DEV=concurrent-gc`; marking runs in steps on the mutator thread at allocation polls.
+//! the mode (`CycleMode`) and, when cycles are adaptive, their measured cost (`CycleGate`);
+//! marking runs on a marker thread beside steps on the mutator at allocation polls.
 use super::*;
+
+/// How full collections that pass the static gates choose between a concurrent cycle and
+/// stopping the world: `QUENCH_DEV=concurrent-gc` (or `=on`) always runs cycles,
+/// `concurrent-gc=adaptive` runs them where they pay (`CycleGate`), `concurrent-gc=off` never.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CycleMode {
+    Off,
+    Adaptive,
+    Always,
+}
+
+/// The mode without `QUENCH_DEV=concurrent-gc`.
+const DEFAULT_CYCLE_MODE: CycleMode = CycleMode::Off;
+
+impl CycleMode {
+    /// The process's mode, from `QUENCH_DEV`.
+    pub(crate) fn current() -> Self {
+        static MODE: std::sync::OnceLock<CycleMode> = std::sync::OnceLock::new();
+        *MODE.get_or_init(|| {
+            let dev = crate::trace::Dev::ConcurrentGc;
+            if !dev.on() {
+                return DEFAULT_CYCLE_MODE;
+            }
+            match dev.value() {
+                None | Some("on") => CycleMode::Always,
+                Some("adaptive") => CycleMode::Adaptive,
+                Some("off") => CycleMode::Off,
+                Some(other) => {
+                    eprintln!("Quench: unknown concurrent-gc mode `{other}`; known: on,adaptive,off");
+                    DEFAULT_CYCLE_MODE
+                }
+            }
+        })
+    }
+}
+
+/// A stop-the-world full mark shorter than this pauses too little for a cycle to pay for its
+/// marker thread, barrier and floating garbage (V8's minimum heap size for concurrent marking,
+/// in time).
+const CYCLE_MIN_MARK_MICROS: u64 = 3_000;
+/// The share of the time between full collections, in thousandths, that their stop-the-world
+/// mark takes, below which cycles do not pay.
+const CYCLE_MIN_MARK_SHARE_PERMILLE: u64 = 50;
+/// A cycle that ran more than this share (one in N) of its allocation past its due point,
+/// every poll there assisting the marker, shows the interval too short for marking beside the
+/// mutator.
+const CYCLE_MAX_LATE_SHARE: usize = 2;
+/// A cycle interval whose occupancy grows, relative to what the full collection before it
+/// kept, past the stop-the-world interval's relative growth by more than this share (one in
+/// N) shows the floating garbage costing more than the cycle saves.
+const CYCLE_MAX_GROWTH_SHARE: usize = 4;
+/// Full collections a heap stops the world for after its cycles fell back, doubling with each
+/// fallback up to this shift.
+const CYCLE_MAX_BLOCK_SHIFT: u32 = 6;
+
+/// Whether cycles pay for this heap (`CycleMode::Adaptive`): a heap starts stopping the world,
+/// takes cycles once a stop-the-world full mark is long both in time and as a share of the
+/// time between full collections, and stops the world again (for a while that doubles each
+/// time) when a cycle shows it does not pay: it ran mostly past its due point, or its
+/// interval's occupancy grew past the stop-the-world interval's.
+#[derive(Debug, Default)]
+pub(super) struct CycleGate {
+    /// When the last full collection ended.
+    full_ended: Option<std::time::Instant>,
+    /// Whether the next full collection may run as a cycle.
+    cycles: bool,
+    /// The occupancy the last full collection kept, and how much the last stop-the-world
+    /// interval grew past what its predecessor kept, in thousandths of that.
+    kept: usize,
+    stw_growth: Option<usize>,
+    /// Stop-the-world full collections left before cycles may be taken again, and fallbacks.
+    blocked: u32,
+    fallbacks: u32,
+    /// The last full collection's measures, for the trace (`growth` as `stw_growth`).
+    mark_micros: u64,
+    interval_micros: u64,
+    growth: usize,
+}
+
+impl CycleGate {
+    /// The last full collection's mark time and the time since the one before, in
+    /// microseconds; an interval of zero when unknown.
+    fn last_mark_and_interval(&self) -> (u64, u64) {
+        (self.mark_micros, self.interval_micros)
+    }
+}
+
+impl std::fmt::Display for CycleGate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "gate_cycles={} full_mark_us={} full_interval_us={} growth={} stw_growth={:?} blocked={} fallbacks={}",
+            self.cycles, self.mark_micros, self.interval_micros, self.growth, self.stw_growth, self.blocked, self.fallbacks
+        )
+    }
+}
 
 /// Live legacy cells past which no cycle starts: the initial mark pushes every live cell's
 /// children in its pause, as cells pass no snapshot barrier.
@@ -29,6 +126,8 @@ pub(crate) enum CycleRefusal {
     LegacyCells,
     /// The memory profile attributes each record as the stop-the-world sweep frees it.
     ProfilingMemory,
+    /// Cycles are adaptive and this heap's measures say they do not pay (`CycleGate`).
+    NotPaying,
 }
 
 impl Heap {
@@ -36,14 +135,14 @@ impl Heap {
     /// every gate passes.
     pub(crate) fn concurrent_cycle_refusal(&self) -> Option<CycleRefusal> {
         self.concurrent_cycle_refusal_with(
-            crate::trace::Dev::ConcurrentGc.on(),
+            CycleMode::current(),
             crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::ANY),
         )
     }
 
     /// `concurrent_cycle_refusal` with the process-wide inputs given.
-    pub(super) fn concurrent_cycle_refusal_with(&self, enabled: bool, native_code: bool) -> Option<CycleRefusal> {
-        if !enabled {
+    pub(super) fn concurrent_cycle_refusal_with(&self, mode: CycleMode, native_code: bool) -> Option<CycleRefusal> {
+        if mode == CycleMode::Off {
             Some(CycleRefusal::Disabled)
         } else if native_code {
             Some(CycleRefusal::NativeCode)
@@ -55,9 +154,50 @@ impl Heap {
             Some(CycleRefusal::LegacyCells)
         } else if cfg!(feature = "profile-memory") {
             Some(CycleRefusal::ProfilingMemory)
+        } else if mode == CycleMode::Adaptive && !self.cycle_gate.cycles {
+            Some(CycleRefusal::NotPaying)
         } else {
             None
         }
+    }
+
+    /// Weighs a full collection that just ended for the gate (`CycleGate`): a stop-the-world
+    /// one by its mark time against the time since the last full collection, a cycle's remark
+    /// by its allocation past its due point and its interval's occupancy growth against the stop-the-world interval's.
+    pub(super) fn judge_cycles(&mut self, premarked: bool, mark_micros: u64) {
+        let now = std::time::Instant::now();
+        let gate = &mut self.cycle_gate;
+        let interval = gate.full_ended.map(|ended| (now - ended).as_micros() as u64);
+        gate.full_ended = Some(now);
+        let had_kept = gate.kept != 0;
+        gate.growth = self.resident_at_full_start.saturating_sub(gate.kept) * 1000 / gate.kept.max(1);
+        gate.kept = self.resident_after_full;
+        gate.mark_micros = mark_micros;
+        gate.interval_micros = interval.unwrap_or(0);
+        if premarked {
+            let extent = &self.last_cycle_extent;
+            let late = extent.late_weight.saturating_mul(CYCLE_MAX_LATE_SHARE) > extent.weight;
+            let grew = extent.planned && gate.stw_growth.is_some_and(|stw| gate.growth > stw + stw / CYCLE_MAX_GROWTH_SHARE);
+            if late || grew {
+                gate.cycles = false;
+                gate.blocked = 1 << gate.fallbacks.min(CYCLE_MAX_BLOCK_SHIFT);
+                gate.fallbacks += 1;
+            }
+            return;
+        }
+        if had_kept {
+            gate.stw_growth = Some(gate.growth);
+        }
+        if gate.blocked > 0 {
+            gate.blocked -= 1;
+            gate.cycles = false;
+            return;
+        }
+        gate.cycles = gate.stw_growth.is_some()
+            && interval.is_some_and(|interval| {
+                mark_micros >= CYCLE_MIN_MARK_MICROS
+                    && mark_micros * 1000 >= interval * CYCLE_MIN_MARK_SHARE_PERMILLE
+            });
     }
 
     /// Whether a concurrent cycle is marking: the snapshot barrier is on and allocation is
@@ -186,6 +326,7 @@ pub(super) struct ConcurrentCycle {
     /// Polls taken, and the allocation count at the start (`last_cycle_extent`).
     polls: u32,
     assists: u32,
+    planned: bool,
     started_at: usize,
     started: std::time::Instant,
     /// Holds the array backings freed during the cycle until it is dropped.
@@ -223,14 +364,19 @@ pub(super) struct CycleExtent {
     pub(super) marker_busy_micros: u64,
     /// Polls that assisted the marker (`MarkerThread::assist`).
     pub(super) assists: u32,
+    /// Allocation weight charged past the cycle's due point, where every poll assists.
+    pub(super) late_weight: usize,
+    /// Whether the cycle ran to a planned due point (`Heap::plan_cycle`): one the last full
+    /// collection's gates refused but a later one's passed runs with none.
+    pub(super) planned: bool,
 }
 
 impl std::fmt::Display for CycleExtent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "remark_after_polls={} cycle_weight={} cycle_us={} remark_values={} marker_marked={} marker_busy_us={} assists={}",
-            self.polls, self.weight, self.wall_micros, self.remark_values, self.marked, self.marker_busy_micros, self.assists
+            "remark_after_polls={} cycle_weight={} late_weight={} cycle_us={} remark_values={} marker_marked={} marker_busy_us={} assists={}",
+            self.polls, self.weight, self.late_weight, self.wall_micros, self.remark_values, self.marked, self.marker_busy_micros, self.assists
         )
     }
 }
@@ -325,6 +471,7 @@ impl Heap {
             poll_weight: (interval / CYCLE_POLLS_PER_INTERVAL).max(1),
             polls: 0,
             assists: 0,
+            planned: self.cycle_due_at != usize::MAX,
             started_at: self.allocated,
             started: std::time::Instant::now(),
             _quarantine: quarantine,
@@ -345,14 +492,22 @@ impl Heap {
     /// remark kept black (`premarked`), and it starts early by what cycles allocate, so the
     /// peak stays within the budget; the start is the next collection's trigger.
     pub(super) fn plan_cycle(&mut self, premarked: bool, threshold: usize) {
-        // Before any cycle's measure, the first runs past the plan without assists.
-        if self.cycle_weight_average == 0 || self.concurrent_cycle_refusal().is_some() {
+        if self.concurrent_cycle_refusal().is_some() {
             return;
         }
         let floating = if premarked { self.last_cycle_extent.weight } else { 0 };
         let budget = threshold.saturating_sub(floating);
+        // Before any cycle's measure, a cycle is taken to allocate twice what the interval
+        // allocates over the last stop-the-world mark's time (the marker marks at about the
+        // stop-the-world mark's wall rate), at most half the budget.
+        let weight = if self.cycle_weight_average != 0 {
+            self.cycle_weight_average
+        } else {
+            let (mark, interval) = self.cycle_gate.last_mark_and_interval();
+            (2 * threshold as u128 * mark as u128 / interval.max(1) as u128).min(budget as u128 / 2) as usize
+        };
         self.cycle_due_at = self.allocated.saturating_add(budget);
-        let start = budget.saturating_sub(self.cycle_weight_average).max(1);
+        let start = budget.saturating_sub(weight).max(1);
         self.collect_at.set(self.allocated.saturating_add(start));
     }
 
@@ -472,6 +627,8 @@ impl Heap {
             marked: self.last_cycle_extent.marked,
             marker_busy_micros: self.last_cycle_extent.marker_busy_micros,
             assists: cycle.assists,
+            late_weight: self.allocated.saturating_sub(self.cycle_due_at.max(cycle.started_at)),
+            planned: cycle.planned,
         };
         self.cycle_weight_average = if self.cycle_weight_average == 0 {
             self.last_cycle_extent.weight
