@@ -13,7 +13,7 @@
 //! program of its own (`Vm::call_first_chunk`).
 use super::*;
 use crate::bytecode::{ChunkDelta, TableLengths};
-use replay::{ConstantIndex, FunctionRecords, FunctionTable, constant_hashes, wrapped_function};
+use replay::{ConstantIndex, FunctionRecords, FunctionTable, constant_hashes, wrapped_arrow_function, wrapped_function};
 
 impl Engine {
     /// The chunk of stub `function` of `program`, compiled to follow `program`'s tables, or
@@ -33,28 +33,58 @@ impl Engine {
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
         let window = ChunkWindow { source, start: chunk.start, outer, line_starts, utf16_excess };
         let allocator = lazy_bodies::sized_arena(&chunk.text);
-        let mut parsed = lazy_bodies::parse(&allocator, &chunk.text, SourceType::script(), None, None, None, false);
+        let mut free_names = FreeNames::default();
+        let nested = replay.direct_stubs;
+        let mut parsed = parse_text(&allocator, &window, &chunk, span.start, nested.then_some(&mut free_names));
         let name = program.source_name.as_str();
-        let mut prototype_unobservable = chunk_analysis(&parsed, name)?;
+        let mut prototype_unobservable = chunk_analysis(&parsed, name, nested.then_some((&chunk.text, usize::from(!header.is_arrow))))?;
         let mut compiler = window.compiler(name, SpecializationMode::of(atom_prefix), atom_prefix, &mut parsed.program, Default::default(), &mut Default::default(), &mut prototype_unobservable);
         compiler.prototype_unobservable = prototype_unobservable;
         compiler.source_comments = parsed.program.comments.iter().map(|comment| comment.span).collect();
         compiler.source_type = SourceType::script();
+        compiler.first_call.free_names = free_names;
+        compiler.first_call.nested_allowed = nested;
+        compiler.first_call.direct = nested;
         compiler.follow(program, replay);
         let base = program.table_lengths();
-        let node = wrapped_function(&parsed.program)?;
-        let target = compiler.compile_chunk_function(node, header.parent?);
+        let target = if header.is_arrow {
+            compiler.compile_chunk_arrow(wrapped_arrow_function(&parsed.program)?, header.parent?)
+        } else {
+            compiler.compile_chunk_function(wrapped_function(&parsed.program)?, header.parent?)
+        };
         (target == base.functions as u32).then_some(())?;
         compiler.finish_chunk(base)
     }
 }
 
+/// The chunk's `text`, a function's source at `function_start` in the program's, parsed: whole,
+/// or with the bodies inside the function skimmed where they may compile on first call too
+/// (`free_names`, given for them).
+fn parse_text<'a>(
+    allocator: &'a oxc_allocator::Allocator,
+    window: &ChunkWindow<'_>,
+    chunk: &'a ChunkText<'_>,
+    function_start: u32,
+    free_names: Option<&mut FreeNames>,
+) -> oxc_parser::ParserReturn<'a> {
+    let Some(free_names) = free_names else {
+        return lazy_bodies::parse(allocator, &chunk.text, SourceType::script(), None, None, None, false);
+    };
+    let strict = window.outer.is_some_and(|(_, scopes)| scopes.strict());
+    lazy_bodies::parse_chunk(allocator, &chunk.text, function_start - chunk.start, chunk.start, strict, free_names)
+}
+
 /// What the analysis of the chunk's text, a function alone, finds: its private names, which
 /// a chunk appended to a program makes none of, and the function expressions whose `prototype`
-/// nothing observes. `None` where the text does not check alone.
-fn chunk_analysis(parsed: &oxc_parser::ParserReturn<'_>, name: &str) -> Option<Starts> {
-    if !chunk_parses_alone(parsed) {
+/// nothing observes. `None` where the text does not check alone. A text the load's skim decided
+/// (`skimmed`, with the `function` keywords its own function spells) has no early error left
+/// to find, and no private name or function expression to analyze unless it names one.
+fn chunk_analysis(parsed: &oxc_parser::ParserReturn<'_>, name: &str, skimmed: Option<(&str, usize)>) -> Option<Starts> {
+    if !chunk_parses_alone(parsed, skimmed.is_some()) {
         return None;
+    }
+    if skimmed.is_some_and(|(text, own)| !text.contains('#') && text.matches("function").count() <= own) {
+        return Some(Starts::default());
     }
     let semantic = semantic_stats::checked_semantic(&parsed.program, name).ok()?;
     let private_name_ids = private_name_ids(&semantic.semantic);
@@ -62,14 +92,15 @@ fn chunk_analysis(parsed: &oxc_parser::ParserReturn<'_>, name: &str) -> Option<S
     private_name_ids.is_empty().then_some(unobservable)
 }
 
-/// Whether the chunk's text, a function alone, parsed and checked as a script.
-fn chunk_parses_alone(parsed: &oxc_parser::ParserReturn<'_>) -> bool {
+/// Whether the chunk's text, a function alone, parsed and checked as a script; the early errors
+/// of the program's analysis are the load's where the load `skimmed` it.
+fn chunk_parses_alone(parsed: &oxc_parser::ParserReturn<'_>, skimmed: bool) -> bool {
     !parsed.stack_exhausted
         && parsed.diagnostics.is_empty()
         && stack::validate(&parsed.program).is_ok()
         && early::regexp_early_error(parsed).is_none()
         && annex_b_targets::invalid_parsed_target(parsed).is_none()
-        && early::program_early_errors(&parsed.program, false).1.is_empty()
+        && (skimmed || early::program_early_errors(&parsed.program, false).1.is_empty())
 }
 
 impl<'a> Compiler<'a> {
@@ -90,7 +121,7 @@ impl<'a> Compiler<'a> {
         self.literal_templates = SiteTable::delta(&program.literal_templates, base.literal_templates);
         self.superinstructions = SiteTable::delta(&program.superinstructions, base.superinstructions);
         self.cache_sites = base.sites;
-        self.name_shared_sites = NameSharedSites::Replay(&replay.name_shared_sites);
+        self.name_shared_sites = NameSharedSites::Chunk(&replay.name_shared_sites, &replay.chunk_name_sites);
     }
 
     /// `node`, the chunk's function, compiled as its stub's: a function of the stub's parent,
@@ -135,6 +166,7 @@ impl<'a> Compiler<'a> {
             object_sites: self.object_sites.into_vec(),
             regexp_literal_sites: self.regexp_literal_sites.into_vec(),
             literal_templates: self.literal_templates.into_vec(),
+            stubs: std::mem::take(&mut self.first_call.nested),
             sites: self.cache_sites,
         })
     }

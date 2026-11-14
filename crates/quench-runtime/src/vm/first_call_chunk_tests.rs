@@ -18,7 +18,7 @@ fn stub_constructed_by_super_keeps_the_derived_new_target() {
 }
 
 /// Runs `source` and returns the string its `globalThis.result` holds.
-fn result_of(source: &str) -> String {
+pub(super) fn result_of(source: &str) -> String {
     let program = Engine::specialize(source, "first-call-direct.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
     vm.execute(&program).unwrap();

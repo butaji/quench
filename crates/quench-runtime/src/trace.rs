@@ -131,5 +131,7 @@ setting! {
         WasmRootOnly = "wasm-root-only",
         /// Tiering starts at the selected root and promotes hot fallback callees.
         WasmRootFirst = "wasm-root-first",
+        /// Functions of a direct eval's source compile on first call.
+        DirectEvalStubs = "direct-eval-stubs",
     }
 }

@@ -11,8 +11,10 @@
 //! so its diagnostics are the eager ones.
 mod facts;
 pub(super) use facts::{BodyFacts, parse_collecting};
+mod arrow;
+pub(super) use arrow::is_released_arrow;
 mod reparse;
-pub(super) use reparse::{Nesting, reparse};
+pub(super) use reparse::{Nesting, parse_chunk, reparse};
 use oxc_allocator::Allocator;
 mod parse_arena;
 pub(super) use parse_arena::{arena, release_after, sized_arena};
@@ -205,6 +207,13 @@ pub(super) fn verify(name: &str, source: &str, program: &Program<'_>) {
         "lazy-bodies {verdict} source={name} candidates={} alone={alone} whole_ok={whole}",
         candidates.len()
     );
+}
+
+/// The starts of the functions compiled from their bodies parsed again, sorted.
+pub(super) fn sorted(mut starts: Vec<u32>) -> Box<[u32]> {
+    starts.sort_unstable();
+    starts.dedup();
+    starts.into_boxed_slice()
 }
 
 /// The name a stand-in body calls (see the module documentation).

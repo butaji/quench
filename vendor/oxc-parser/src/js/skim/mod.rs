@@ -37,6 +37,8 @@ const MAX_DEPTH: u32 = 160;
 /// The names a function reads from outside itself.
 pub(crate) struct Skimmed<'a> {
     pub(crate) free_names: Vec<&'a str>,
+    /// The parameters are plain names, so no default shares the function's scope.
+    pub(crate) names_exact: bool,
     /// The directives of the skimmed function's own body, as the start of each, the end of its
     /// string and the end of its statement; none has an escape.
     pub(crate) directives: Vec<(u32, u32, u32)>,
@@ -71,6 +73,24 @@ struct Flavor {
     is_async: bool,
 }
 
+/// What kind of function a skim starts from: the code around it decides what it may use.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LazyForm {
+    Plain,
+    /// An arrow function, which uses the `this`, `arguments`, `new.target` and `super` of the code
+    /// around it.
+    Arrow,
+}
+
+impl LazyForm {
+    fn ctx(self) -> FnCtx {
+        match self {
+            Self::Plain => FnCtx::PLAIN,
+            Self::Arrow => FnCtx::ARROW,
+        }
+    }
+}
+
 /// What the code of a function may use that the function around it decides.
 #[derive(Clone, Copy)]
 struct FnCtx {
@@ -84,10 +104,15 @@ struct FnCtx {
     is_async: bool,
     /// In the initializer of a class field, or an arrow inside one: `arguments` is not valid.
     field_init: bool,
+    /// In the skimmed arrow, or an arrow inside it, outside every function of its own: `this`,
+    /// `arguments`, `new.target` and `super` belong to the code around the arrow, which the
+    /// skim does not see, so none is decided.
+    lexical: bool,
 }
 
 impl FnCtx {
-    const PLAIN: Self = Self { super_property: false, super_call: false, generator: false, is_async: false, field_init: false };
+    const PLAIN: Self = Self { super_property: false, super_call: false, generator: false, is_async: false, field_init: false, lexical: false };
+    const ARROW: Self = Self { lexical: true, ..Self::PLAIN };
 
     fn function(flavor: Flavor) -> Self {
         Self { generator: flavor.generator, is_async: flavor.is_async, ..Self::PLAIN }
@@ -103,11 +128,17 @@ impl FnCtx {
 }
 
 impl<'a, C: Config> ParserImpl<'a, C> {
-    /// The names the function body at the current `{` reads from outside the function whose
-    /// simple `params` it has, when the body is decided valid; the parser then stands after
-    /// the closing `}`. Otherwise the parser may stand anywhere in the body: the caller rewinds.
-    pub(crate) fn skim_function_body(&mut self, params: &FormalParameters<'a>) -> Option<Skimmed<'a>> {
-        let names = self.simple_param_names(params)?;
+    /// The names the function at the current `{` reads from outside itself, when its body, and
+    /// its parameters where they are not plain names, are decided valid; the parser then
+    /// stands after the closing `}`. The parameters of such a function are read again from
+    /// `head`, where the parser stood at their `(`. Otherwise the parser may stand anywhere:
+    /// the caller rewinds.
+    pub(crate) fn skim_function_body(&mut self, params: &FormalParameters<'a>, form: LazyForm, head: Option<crate::cursor::ParserCheckpoint<'a>>) -> Option<Skimmed<'a>> {
+        let names = self.simple_param_names(params);
+        if names.is_none() {
+            let head = head.filter(|head| self.recorded_nothing_since(head))?;
+            self.rewind(head);
+        }
         let strict = self.strict;
         let mut skim = Skim {
             p: self,
@@ -119,17 +150,23 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             in_cover: false,
             no_in: false,
             last_ident: "",
-            ctx: FnCtx::PLAIN,
+            ctx: form.ctx(),
             directives: Vec::new(),
             directives_read: false,
         };
         skim.scopes.enter(true);
-        for name in names {
-            skim.scopes.declare_param(name)?;
+        let names_exact = names.is_some();
+        match names {
+            Some(names) => {
+                for name in names {
+                    skim.scopes.declare_param(name)?;
+                }
+                skim.function_body(true)?;
+            }
+            None => skim.function_from_head(form == LazyForm::Arrow)?,
         }
-        skim.function_body(true)?;
         skim.scopes.exit();
-        Some(Skimmed { free_names: std::mem::take(&mut skim.scopes.refs), directives: skim.directives })
+        Some(Skimmed { free_names: std::mem::take(&mut skim.scopes.refs), names_exact, directives: skim.directives })
     }
 
     /// The names of `params` when each is a plain identifier: no pattern, default, rest or

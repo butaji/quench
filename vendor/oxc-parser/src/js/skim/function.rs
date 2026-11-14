@@ -34,6 +34,9 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
         self.scopes.enter(true);
         if is_plain_identifier(self.kind()) {
             let name = self.identifier()?;
+            if is_restricted(name) {
+                return None;
+            }
             self.scopes.declare_name(name);
         }
         self.with_ctx(FnCtx::function(Flavor { generator, is_async }), Self::function_rest)?;
@@ -68,6 +71,19 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
         self.function_body(simple_params)?;
         self.scopes.exit();
         Some(())
+    }
+
+    /// `( parameters ) { ... }`, or `( parameters ) => { ... }` of an arrow, read from the head;
+    /// the function's scope is entered. A function nested in a parameter's default does not
+    /// give the function its directives.
+    pub(super) fn function_from_head(&mut self, arrow: bool) -> Seen {
+        self.directives_read = true;
+        let params = self.params()?;
+        if arrow && !self.arrow_follows() {
+            return None;
+        }
+        self.directives_read = false;
+        self.function_body(params.simple)
     }
 
     /// `( parameter, ... )`.

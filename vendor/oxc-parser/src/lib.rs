@@ -347,8 +347,14 @@ pub struct SkimmedBody<'s> {
     pub id: Option<&'s str>,
     /// The names the function reads from outside itself, sorted and without repeats.
     pub free_names: &'s [&'s str],
+    /// `free_names` is all the function reads from outside itself: not so where the defaults of
+    /// its parameters were read in its own scope.
+    pub names_exact: bool,
     /// The function lies in another function's body.
     pub in_function: bool,
+    /// An arrow function, whose `this`, `arguments`, `new.target` and `super` the body leaves
+    /// undecided: it uses none.
+    pub arrow: bool,
 }
 
 impl LazyBodySkim {

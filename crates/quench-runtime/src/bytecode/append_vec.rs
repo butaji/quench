@@ -82,6 +82,12 @@ impl<T> From<Vec<T>> for AppendVec<T> {
     }
 }
 
+impl<T> Default for AppendVec<T> {
+    fn default() -> Self {
+        Self(UnsafeCell::new(Vec::new()))
+    }
+}
+
 impl<T: Clone> Clone for AppendVec<T> {
     /// A copy with the capacity of the original, so the copy's functions append as well.
     fn clone(&self) -> Self {

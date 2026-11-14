@@ -77,8 +77,8 @@ print([Object.keys(partial).length, partial[149999], 150000 in partial, frozenEr
 #[test]
 fn packed_scope_names_iterate_as_given() {
     use crate::compile::first_call::nested::ScopeNames;
-    let names: ScopeNames = [("a", 1), ("", 2), ("é\u{1F600}", 3), ("longer", 4)].into_iter().collect();
+    let names: ScopeNames = [("a", 0, 1), ("", 1, 2), ("é\u{1F600}", 0, 3), ("longer", 2, 4)].into_iter().collect();
     assert_eq!(names.len(), 4);
-    assert_eq!(names.iter().collect::<Vec<_>>(), [("a", 1), ("", 2), ("é\u{1F600}", 3), ("longer", 4)]);
+    assert_eq!(names.iter().collect::<Vec<_>>(), [("a", 0, 1), ("", 1, 2), ("é\u{1F600}", 0, 3), ("longer", 2, 4)]);
     assert_eq!(ScopeNames::from_iter([]).iter().count(), 0);
 }

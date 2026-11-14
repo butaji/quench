@@ -14,6 +14,9 @@ pub(in crate::vm) type AtomBits = crate::bitset::BitSet;
 /// it (`readers`); the cache that first names the atom retires that code.
 #[derive(Default)]
 pub(in crate::vm) struct MethodCacheAtoms {
+    /// The method cache sites below this index may hold an entry: the room a program reserves
+    /// for its chunks lies past it until a chunk's site records one.
+    hot: usize,
     bits: AtomBits,
     /// Per atom, the sites whose entries may name it: every entry for the atom lies at a
     /// listed site, so invalidating the atom visits those sites alone.
@@ -43,10 +46,11 @@ impl MethodCacheAtoms {
         }
     }
 
-    /// Unnames every atom: no code held one named, so none retires.
+    /// Unnames every atom: no code held one named, so none retires. Every site is empty.
     pub(in crate::vm) fn clear(&mut self) {
         self.bits.clear();
         self.sites.clear();
+        self.hot = 0;
     }
 
     /// Lists `site` for `atom`, where an entry for it was recorded; `megamorphic` marks that
@@ -68,6 +72,16 @@ impl MethodCacheAtoms {
     /// The sites for `atom`, handed over for its entries to be dropped.
     pub(in crate::vm) fn take_sites(&mut self, atom: Atom) -> AtomSites {
         self.sites.get_mut(atom as usize).map(std::mem::take).unwrap_or_default()
+    }
+
+    /// A cache at `site` may hold an entry.
+    pub(in crate::vm) fn reach(&mut self, site: usize) {
+        self.hot = self.hot.max(site + 1);
+    }
+
+    /// The sites that may hold entries: those below it.
+    pub(in crate::vm) fn hot(&self) -> usize {
+        self.hot
     }
 
     /// The names now, for a lowering that folds them (`compiled::OnlineFacts`).

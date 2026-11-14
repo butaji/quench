@@ -866,6 +866,7 @@ impl<H: Host> Vm<H> {
         } else {
             self.retain_live_method_caches();
         }
+        self.prune_first_chunks();
         let heap = &self.heap;
         self.lane_stack.forget_dead_callees(|value| heap.is_live(value));
         // A hint names its prototype by record id, which an allocation may give another object

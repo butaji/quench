@@ -459,10 +459,44 @@ pub(crate) struct ProgramReplay {
     pub(super) functions: FxHashMap<u32, FunctionReplay>,
     /// The cache sites the load shared by name (`Compiler::name_shared_cache_site`).
     pub(super) name_shared_sites: super::NameSharedSiteMap,
+    /// The program's stubs include arrow functions, and its chunks skim the functions inside them.
+    pub(super) direct_stubs: bool,
+    /// The name-shared sites the program's chunks give out after its load's.
+    pub(super) chunk_name_sites: ChunkNameSites,
     /// In verifying builds, the records of released functions, which their replays must equal.
     #[cfg(feature = "verify-replay")]
     pub(super) released: FxHashMap<u32, crate::bytecode::Function>,
     pub(super) views: ReplayViews,
+}
+
+/// The name-shared cache sites (`NAME_SHARED_CACHE_SITES`) the chunks of one program gave out
+/// after its load's, by access and atom, so a name's loads share one site across chunks.
+pub(super) struct ChunkNameSites {
+    sites: std::cell::RefCell<super::NameSharedSiteMap>,
+    next: std::cell::Cell<u16>,
+}
+
+impl ChunkNameSites {
+    /// No site given out yet; the next is `next`, where the load stopped.
+    pub(super) fn new(next: u16) -> Self {
+        Self { sites: Default::default(), next: std::cell::Cell::new(next) }
+    }
+
+    /// The site of `atom`'s `access`, given out on first use; the shared uncached one once all
+    /// are given out.
+    pub(super) fn site(&self, access: super::NamedAccess, atom: u32) -> u16 {
+        let mut sites = self.sites.borrow_mut();
+        if let Some(&site) = sites.get(&(access, atom)) {
+            return site;
+        }
+        let site = self.next.get();
+        if site == crate::bytecode::SHARED_UNCACHED_SITE {
+            return site;
+        }
+        self.next.set(site + 1);
+        sites.insert((access, atom), site);
+        site
+    }
 }
 
 impl ProgramReplay {
@@ -517,11 +551,45 @@ impl super::atoms::AtomPrefix for ReplayAtoms<'_> {
 fn replay_wrapper(call: &ReplayCall, strict: bool) -> (&'static str, &'static str) {
     match call {
         ReplayCall::Plain(context) => plain_function_wrapper(context),
-        ReplayCall::ObjectMethod(_) => ("(async function*(){({", "})})"),
-        ReplayCall::ClassMethod(_) => ("(async function*(){(class{", "})})"),
-        ReplayCall::Arrow(_) if strict => ("(class extends Object{constructor(){(", ")}})"),
-        ReplayCall::Arrow(_) => ("({m(){(", ")}})"),
+        ReplayCall::ObjectMethod(_) => OBJECT_METHOD_WRAPPER,
+        ReplayCall::ClassMethod(_) => CLASS_METHOD_WRAPPER,
+        ReplayCall::Arrow(_) => arrow_wrapper(strict),
     }
+}
+
+/// The text around an object literal's method that parses it again, and around a class's.
+pub(super) const OBJECT_METHOD_WRAPPER: (&str, &str) = ("(async function*(){({", "})})");
+pub(super) const CLASS_METHOD_WRAPPER: (&str, &str) = ("(async function*(){(class{", "})})");
+
+/// The method of an object literal `replay_wrapper` placed in an async generator.
+pub(super) fn wrapped_object_method<'s, 'a>(
+    program: &'s oxc_ast::ast::Program<'a>,
+) -> Option<&'s oxc_ast::ast::Function<'a>> {
+    let Some(oxc_ast::ast::Expression::ObjectExpression(object)) = wrapped_method_holder(program) else { return None };
+    match object.properties.as_slice() {
+        [oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property)] => match &property.value {
+            oxc_ast::ast::Expression::FunctionExpression(function) => Some(function),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The method of a class `replay_wrapper` placed in an async generator.
+pub(super) fn wrapped_class_method<'s, 'a>(
+    program: &'s oxc_ast::ast::Program<'a>,
+) -> Option<&'s oxc_ast::ast::MethodDefinition<'a>> {
+    let Some(oxc_ast::ast::Expression::ClassExpression(class)) = wrapped_method_holder(program) else { return None };
+    match class.body.body.as_slice() {
+        [oxc_ast::ast::ClassElement::MethodDefinition(method)] => Some(method),
+        _ => None,
+    }
+}
+
+/// The text around an arrow function's source that parses it again where it keeps the `this`,
+/// `super` and `new.target` of the code around it.
+pub(super) fn arrow_wrapper(strict: bool) -> (&'static str, &'static str) {
+    if strict { ("(class extends Object{constructor(){(", ")}})") } else { ("({m(){(", ")}})") }
 }
 
 /// The text around a function declaration's or expression's source that parses it again as
@@ -586,6 +654,16 @@ pub(super) fn wrapped_function<'s, 'a>(
     }
 }
 
+/// The arrow function a first-call chunk's text is, parenthesized.
+pub(super) fn wrapped_arrow_function<'s, 'a>(
+    program: &'s oxc_ast::ast::Program<'a>,
+) -> Option<&'s oxc_ast::ast::ArrowFunctionExpression<'a>> {
+    match single_expression(program.body.as_slice())? {
+        oxc_ast::ast::Expression::ArrowFunctionExpression(arrow) => Some(arrow),
+        _ => None,
+    }
+}
+
 /// The class or object `replay_wrapper` placed a method's source in, inside an async
 /// generator.
 fn wrapped_method_holder<'s, 'a>(
@@ -600,7 +678,7 @@ fn wrapped_method_holder<'s, 'a>(
 }
 
 /// The arrow `replay_wrapper` placed in the body of a constructor or method.
-fn wrapped_arrow<'s, 'a>(
+pub(super) fn wrapped_arrow<'s, 'a>(
     program: &'s oxc_ast::ast::Program<'a>,
 ) -> Option<&'s oxc_ast::ast::ArrowFunctionExpression<'a>> {
     let method = match single_expression(&program.body)? {
@@ -761,30 +839,11 @@ pub(crate) fn recompile(
             compiler.compile_replayable_arrow(arrow, context.clone())
         }
         ReplayCall::ObjectMethod(context) => {
-            let function = match wrapped_method_holder(&parsed.program) {
-                Some(oxc_ast::ast::Expression::ObjectExpression(object)) => {
-                    match object.properties.as_slice() {
-                        [oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property)] => {
-                            match &property.value {
-                                oxc_ast::ast::Expression::FunctionExpression(function) => function,
-                                _ => return Err("the wrapped property holds no method".into()),
-                            }
-                        }
-                        _ => return Err("the wrapped object holds no property".into()),
-                    }
-                }
-                _ => return Err("the wrapped source holds no object".into()),
-            };
+            let function = wrapped_object_method(&parsed.program).ok_or("the wrapped source holds no method")?;
             compiler.compile_replayable_object_method(function, context.clone())
         }
         ReplayCall::ClassMethod(context) => {
-            let method = match wrapped_method_holder(&parsed.program) {
-                Some(oxc_ast::ast::Expression::ClassExpression(class)) => match class.body.body.as_slice() {
-                    [oxc_ast::ast::ClassElement::MethodDefinition(method)] => method,
-                    _ => return Err("the wrapped class holds no method".into()),
-                },
-                _ => return Err("the wrapped source holds no class".into()),
-            };
+            let method = wrapped_class_method(&parsed.program).ok_or("the wrapped source holds no method")?;
             compiler.compile_replayable_class_method(method, context.clone())
         }
     };

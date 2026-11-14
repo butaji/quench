@@ -310,6 +310,14 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
     }
 
+    /// Whether the parser has reported no error and kept no regular expression since `checkpoint`,
+    /// so rewinding to it loses nothing it has recorded.
+    pub(crate) fn recorded_nothing_since(&self, checkpoint: &ParserCheckpoint<'a>) -> bool {
+        self.errors.len() == checkpoint.errors_pos
+            && self.regexp_literals.len() == checkpoint.regexp_literals_pos
+            && self.fatal_error.is_none()
+    }
+
     pub(crate) fn checkpoint(&mut self) -> ParserCheckpoint<'a> {
         ParserCheckpoint {
             lexer: self.lexer.checkpoint(),

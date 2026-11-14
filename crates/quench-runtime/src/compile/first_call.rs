@@ -38,6 +38,8 @@ pub(super) enum ImplicitBody {
     Super,
     /// A first-call stub's.
     FirstCallStub,
+    /// An arrow function's first-call stub's: it has no `new.target` of its own.
+    FirstCallArrowStub,
 }
 
 /// Where a first-call chunk's function lies (`ParsedProgramShape::FirstCallChunk`): at `start`
@@ -103,7 +105,7 @@ impl<'a> ChunkWindow<'a> {
 }
 
 /// A stub's function text as its chunk compiles it, with where the function starts in the
-/// program's text. An anonymous function expression is no statement: it compiles
+/// program's text. An arrow function, or an anonymous function expression, is no statement: it compiles
 /// parenthesized, one character before its place, so the function itself starts where it did.
 pub(super) struct ChunkText<'a> {
     pub(super) text: std::borrow::Cow<'a, str>,
@@ -113,7 +115,8 @@ pub(super) struct ChunkText<'a> {
 impl<'a> ChunkText<'a> {
     pub(super) fn of(source: &'a crate::bytecode::ProgramSource, span: crate::bytecode::SourceSpan) -> Option<Self> {
         let snippet = source.text.get(span.start as usize..span.end as usize)?;
-        let anonymous = !snippet["function".len().min(snippet.len())..].trim_start().starts_with(|c: char| c == '_' || c == '$' || c.is_alphanumeric() || !c.is_ascii());
+        let anonymous = !snippet.starts_with("function")
+            || !snippet["function".len()..].trim_start().starts_with(|c: char| c == '_' || c == '$' || c.is_alphanumeric() || !c.is_ascii());
         Some(if anonymous && span.start > 0 {
             Self { text: std::borrow::Cow::Owned(format!("({snippet})")), start: span.start - 1 }
         } else {
@@ -215,14 +218,15 @@ pub(super) struct Stubs<'a> {
     /// Nested functions may compile as stubs: the source is an indirect eval's. Its lazily
     /// parsed bodies' call-only facts are deferred (`call_only::deferred`).
     pub(super) nested_allowed: bool,
+    /// The stubs include arrow functions, and the parser leaves the bodies it does not skim
+    /// whole (`FreeNameCheck`): a direct eval's source, and its chunks.
+    pub(super) direct: bool,
     /// The functions whose deferred call-only facts are found, by source range.
     pub(super) call_only_found: Vec<(u32, u32)>,
     /// The free names of the lazily parsed functions (`BodyFacts::check`).
     pub(super) free_names: FreeNames,
     /// The nested stubs by id, in order, with the scopes their chunks compile against.
     pub(super) nested: Vec<(u32, std::rc::Rc<FirstCallScopes>)>,
-    /// The scope levels named so far, by scope (`Compiler::scope_level`).
-    levels: FxHashMap<usize, (std::rc::Rc<capture_scope::CaptureScope>, nested::ScopeLevel)>,
     /// In a chunk, its stub's function start and the scopes it compiles against.
     pub(super) outer: Option<(u32, std::rc::Rc<FirstCallScopes>)>,
     /// The room the stubs' chunks may append to the program in.
@@ -234,7 +238,9 @@ impl Stubs<'_> {
     /// the source is an indirect eval's, whose captures `free_names` predict.
     pub(super) fn plan(&mut self, shape: ParsedProgramShape<'_>, replayable: bool, program: &Program<'_>, inherited_strict: bool, (free_names, call_only_found): (FreeNames, Vec<(u32, u32)>)) {
         self.roots = shape.first_call_roots(replayable, program, inherited_strict);
-        self.nested_allowed = shape.stubs_functions(replayable);
+        let stubbing = shape.stubbing(replayable, program.source_text.len());
+        self.nested_allowed = stubbing.functions;
+        self.direct = stubbing.arrows;
         self.free_names = free_names;
         self.call_only_found = call_only_found;
     }
@@ -255,7 +261,7 @@ impl Compiler<'_> {
         }
         if let Some(captures) = self.nested_stub_captures(function, &context) {
             let id = self.compile_first_call_stub(function, context.clone());
-            self.note_nested_stub(id, captures, &context);
+            self.note_nested_stub(id, captures);
             return id;
         }
         self.lazy_compiled.push(body);
@@ -301,11 +307,65 @@ impl Compiler<'_> {
     }
 }
 
+impl Compiler<'_> {
+    /// `arrow`, whose body was parsed lazily, compiled as its first-call stub: an arrow function
+    /// of its length and strictness, whose first call forwards to its chunk.
+    pub(super) fn compile_first_call_arrow_stub(&mut self, arrow: &oxc_ast::ast::ArrowFunctionExpression<'_>, context: &replay::ArrowContext) -> u32 {
+        self.first_call.room.add_stub(arrow.span.end - arrow.span.start);
+        let strict = context.inherited_strict
+            || matches!(&arrow.body, oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) if body.directives.iter().any(|directive| directive.directive == "use strict"));
+        let id = self.compile_function(
+            None,
+            &[STUB_ARGUMENTS.to_owned()],
+            FunctionBody::Statements(&[]),
+            &context.scopes,
+            context.parent,
+            FunctionOptions {
+                source_span: self.source_span(arrow.span),
+                rest_override: true,
+                implicit_body: Some(ImplicitBody::FirstCallArrowStub),
+                strict,
+                ..FunctionOptions::default()
+            },
+        );
+        if let Some(stub) = self.functions.get_mut(id) {
+            stub.length = Self::formal_length(&arrow.params) as u16;
+            stub.is_arrow = true;
+            stub.constructible = false;
+        }
+        id
+    }
+
+    /// The arrow function of a chunk's text, compiled as its stub's: of the stub's parent,
+    /// resolving the names the stub's scopes do not bind in the global environment.
+    pub(super) fn compile_chunk_arrow(&mut self, node: &oxc_ast::ast::ArrowFunctionExpression<'_>, parent: u32) -> u32 {
+        let context = replay::ArrowContext {
+            scopes: capture_scope::ScopeChain::new(Vec::new()),
+            parent: Some(parent),
+            super_static: false,
+            super_home: false,
+            super_home_atom: None,
+            inherited_strict: false,
+            class_initializer: false,
+            lexical_this_atom: None,
+            super_call_binds_this: false,
+            with_depth: 0,
+        };
+        self.compile_replayable_arrow(node, context)
+    }
+}
+
 impl FunctionCompiler<'_, '_> {
     /// `body`, which returns: a stub's calls its chunk with its arguments.
     pub(super) fn emit_implicit_body(&mut self, body: ImplicitBody) {
         match body {
             ImplicitBody::Super => self.emit_implicit_super(),
+            ImplicitBody::FirstCallArrowStub => {
+                let arguments = self.load_name(STUB_ARGUMENTS);
+                let result = self.reg();
+                self.emit(Op::CallFirstChunk, result, arguments, arguments, 0);
+                self.emit(Op::Return, result, 0, 0, 0);
+            }
             ImplicitBody::FirstCallStub => {
                 let arguments = self.load_name(STUB_ARGUMENTS);
                 let new_target = self.load_name(crate::bytecode::NEW_TARGET_BINDING);

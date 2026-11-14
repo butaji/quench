@@ -101,7 +101,7 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
         self.bump();
         if self.eat(Kind::Dot) {
             self.expect(Kind::Target)?;
-            return Some(Form::Other);
+            return (!self.ctx.lexical).then_some(Form::Other);
         }
         if self.kind() == Kind::New {
             self.deeper(Self::new_expression)?;
@@ -136,6 +136,7 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
         match kind {
             Kind::Async => self.async_primary(),
             _ if is_plain_identifier(kind) => self.identifier_reference(),
+            Kind::This if self.ctx.lexical => None,
             Kind::This | Kind::Null | Kind::True | Kind::False => {
                 self.bump();
                 Some(Form::Other)
@@ -177,7 +178,7 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
 
     fn identifier_reference(&mut self) -> Seen<Form> {
         let name = self.identifier()?;
-        if self.ctx.field_init && name == "arguments" {
+        if (self.ctx.field_init || self.ctx.lexical) && name == "arguments" {
             return None;
         }
         self.scopes.reference(name);

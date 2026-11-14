@@ -64,7 +64,7 @@ fn lazy_syntax_check_agrees_on_a_corpus() {
 /// semantic check of its tree does; `None` when a body failed its check.
 fn lazy_free_names(source: &str, skim: bool) -> Option<Vec<(u32, Vec<String>)>> {
     let allocator = super::arena(source);
-    let facts = std::cell::RefCell::new(super::BodyFacts::deferring(true));
+    let facts = std::cell::RefCell::new(super::BodyFacts::deferring(true, false));
     let mut check = |body: oxc_parser::LazyBody<'_, '_>| facts.borrow_mut().check(body, #[cfg(feature = "aot")] &[]);
     let mut skimmer = |body: oxc_parser::SkimmedBody<'_>| facts.borrow_mut().skim(body, source);
     // SAFETY: both live through the parse, which alone calls them.

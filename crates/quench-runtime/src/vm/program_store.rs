@@ -721,6 +721,9 @@ enum ProgramScope {
     /// A sloppy direct eval in a function's or module's scope: its variables
     /// belong to its caller's variable environment.
     Caller,
+    /// A first-call chunk of a function of code whose names resolve through its environments:
+    /// its own root declares nothing, and its by-name loads reach what its stub's do.
+    Enclosed,
 }
 
 #[derive(Clone, Copy)]
@@ -1168,6 +1171,14 @@ impl ProgramStore {
         })
     }
 
+    /// Program `id`, a first-call chunk of a function of program `of`, loads names where its
+    /// stub does: through environments, unless `of` runs in the global scope.
+    pub(super) fn inherit_scope(&mut self, id: ProgramId, of: ProgramId) {
+        if !self.runs_in_global_scope(of) {
+            self.set_scope(id, ProgramScope::Enclosed);
+        }
+    }
+
     pub(crate) fn mark_global_scope(&mut self, id: ProgramId) {
         self.set_scope(id, ProgramScope::Global);
     }
@@ -1181,7 +1192,7 @@ impl ProgramStore {
         self.entry(id).is_some_and(|entry| match entry.scope {
             ProgramScope::Own => entry.residual.kind == crate::bytecode::ProgramKind::Script,
             ProgramScope::Global | ProgramScope::GlobalVariables => true,
-            ProgramScope::Caller => false,
+            ProgramScope::Caller | ProgramScope::Enclosed => false,
         })
     }
 
@@ -1214,7 +1225,7 @@ impl ProgramStore {
         self.entry(id).is_some_and(|entry| match entry.scope {
             ProgramScope::Own => entry.residual.kind == crate::bytecode::ProgramKind::Script,
             ProgramScope::Global => true,
-            ProgramScope::GlobalVariables | ProgramScope::Caller => false,
+            ProgramScope::GlobalVariables | ProgramScope::Caller | ProgramScope::Enclosed => false,
         })
     }
 

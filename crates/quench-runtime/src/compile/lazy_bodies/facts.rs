@@ -18,6 +18,8 @@ pub(in crate::compile) struct BodyFacts {
     /// The functions may compile on first call: their call-only facts wait for the
     /// compilation that reads them (`call_only::deferred`), unless their load compiles them.
     pub(in crate::compile) call_only_deferred: bool,
+    /// Arrow functions' bodies may be taken (`first_call::Stubs::arrows`).
+    arrows: bool,
     /// The functions whose call-only facts are found, by source range.
     pub(in crate::compile) call_only_found: Vec<(u32, u32)>,
     next_private_id: u32,
@@ -30,9 +32,9 @@ pub(in crate::compile) struct BodyFacts {
 }
 
 impl BodyFacts {
-    /// No facts yet, the call-only ones `deferred` or not.
-    pub(in crate::compile) fn deferring(call_only_deferred: bool) -> Self {
-        Self { call_only_deferred, ..Self::default() }
+    /// No facts yet, the call-only ones `deferred` or not, arrow functions' bodies taken or not.
+    pub(in crate::compile) fn deferring(call_only_deferred: bool, arrows: bool) -> Self {
+        Self { call_only_deferred, arrows, ..Self::default() }
     }
 
     /// Checks one function the parser hands over before releasing its body
@@ -75,8 +77,8 @@ impl BodyFacts {
         if self.native_source_requests.is_some() {
             return false;
         }
-        let names = crate::compile::first_call::skimmed_free_names(&body, text);
-        if self.failed || body.in_function && names.is_none() || crate::compile::call_only::invoked_where_made(text, body.end) {
+        let names = crate::compile::first_call::skimmed_free_names(&body);
+        if self.failed || body.arrow && !self.arrows || body.in_function && names.is_none() || crate::compile::call_only::invoked_where_made(text, body.end) {
             return false;
         }
         if let Some(names) = names {
@@ -116,9 +118,10 @@ pub(in crate::compile) fn parse_collecting<'a>(
     #[cfg(feature = "aot")] global_script_calls: &[(String, String)],
 ) -> oxc_parser::ParserReturn<'a> {
     let skims = lazy && facts.borrow().call_only_deferred;
+    let direct = skims && facts.borrow().arrows;
     let mut check = |body: oxc_parser::LazyBody<'_, '_>| facts.borrow_mut().check(body, #[cfg(feature = "aot")] global_script_calls);
     let mut skim = |body: oxc_parser::SkimmedBody<'_>| facts.borrow_mut().skim(body, source);
     // SAFETY: `check` and `skim` live through the parse, which alone calls them.
-    let (check, skim) = unsafe { (lazy.then(|| oxc_parser::LazyBodyCheck::new(&mut check)), skims.then(|| oxc_parser::LazyBodySkim::new(&mut skim))) };
+    let (check, skim) = unsafe { ((lazy && !direct).then(|| oxc_parser::LazyBodyCheck::new(&mut check)), skims.then(|| oxc_parser::LazyBodySkim::new(&mut skim))) };
     super::parse(allocator, source, source_type, lazy.then_some(0), check, skim, inherited_strict)
 }

@@ -6,7 +6,7 @@
 use super::*;
 use crate::snapshot::{read_list, snapshot_enum, Reader, Snap, SnapshotError, SnapshotResult, Writer};
 
-snapshot_enum!(program_scope: ProgramScope { Own, Global, GlobalVariables, Caller });
+snapshot_enum!(program_scope: ProgramScope { Own, Global, GlobalVariables, Caller, Enclosed });
 
 impl ProgramStore {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {

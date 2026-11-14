@@ -4,6 +4,7 @@ use oxc_span::FileExtension;
 use oxc_syntax::precedence::Precedence;
 
 use super::{FunctionKind, Tristate};
+use crate::cursor::ParserCheckpoint;
 use crate::{Context, ParserConfig as Config, ParserImpl, diagnostics, lexer::Kind};
 
 struct ArrowFunctionHead<'a> {
@@ -12,6 +13,8 @@ struct ArrowFunctionHead<'a> {
     return_type: Option<ArenaBox<'a, TSTypeAnnotation<'a>>>,
     r#async: bool,
     start: u32,
+    /// Where the parser stood at the `(` of the parameters, when the body may parse lazily.
+    lazy_params: Option<ParserCheckpoint<'a>>,
 }
 
 impl<'a, C: Config> ParserImpl<'a, C> {
@@ -262,6 +265,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 return_type: None,
                 r#async,
                 start,
+                lazy_params: None,
             },
             allow_return_type_in_arrow_function,
         )
@@ -291,6 +295,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             ));
         }
 
+        let lazy_params = (!r#async && self.options.lazy_body_skim.is_some() && self.lazy_start(start)).then(|| self.checkpoint());
         let (this_param, params) = self.parse_formal_parameters(
             FunctionKind::Expression,
             FormalParameterKind::ArrowFormalParameters,
@@ -325,6 +330,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             return_type,
             r#async,
             start,
+            lazy_params,
         }
     }
 
@@ -344,15 +350,14 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             return_type,
             r#async,
             start,
+            lazy_params,
         } = arrow_function_head;
         let has_await = self.ctx.has_await();
         let has_yield = self.ctx.has_yield();
         self.ctx = self.ctx.and_await(r#async).and_yield(false);
 
         let body = if self.at(Kind::LCurly) {
-            ArrowFunctionBody::FunctionBody(
-                self.context_add(Context::In, Self::parse_function_body),
-            )
+            ArrowFunctionBody::FunctionBody(self.parse_arrow_block_body(start, &params, r#async, lazy_params))
         } else {
             // Remove TopLevel context for arrow function expression body
             let expr = self.context_remove(Context::TopLevel, |p| {

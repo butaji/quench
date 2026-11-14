@@ -21,7 +21,8 @@ impl<H: Host> Vm<H> {
     pub(super) fn clear_method_caches(&mut self, _reason: usize) {
         #[cfg(feature = "profile-aggregate")]
         self.snapshot_method_caches(_reason);
-        self.method_caches.fill([EMPTY_METHOD_CACHE; _]);
+        let hot = self.method_cache_atoms.hot();
+        self.method_caches[..hot].fill([EMPTY_METHOD_CACHE; _]);
         self.megamorphic_methods.clear();
         self.method_cache_atoms.clear();
     }
@@ -124,7 +125,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         let before = self.method_cache_entry_count();
         let heap = &self.heap;
-        for entries in &mut self.method_caches {
+        for entries in &mut self.method_caches[..self.method_cache_atoms.hot()] {
             let len = entries.len();
             retain_entries(heap, entries, len);
         }
@@ -177,6 +178,7 @@ impl<H: Host> Vm<H> {
             }
             return;
         }
+        self.method_cache_atoms.reach(site);
         let entries = &mut self.method_caches[site];
         if entries.iter().any(|entry| entry.records_same(&cache)) || entries[1].target.is_none() {
             let named = entries[0].atom == cache.atom || entries[1].atom == cache.atom;
