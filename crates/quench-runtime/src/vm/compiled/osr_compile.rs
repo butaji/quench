@@ -307,7 +307,7 @@ impl LoopPlanner<'_> {
             direct: &BTreeMap::new(), frame_captures: &[], isa: self.isa,
             entry_fields,
             plan: super::lane_region::RegionPlan {
-                coverage: super::lane_region::Coverage::Loop { header, backedge, poll: false },
+                coverage: super::lane_region::Coverage::Loop { header, backedge, poll: true },
                 completion: super::lane_region::Completion::Body, views: self.views,
             },
         }.specialize(self.program).ok().filter(|lowered| self.views == super::ElementViews::Dense || lowered.hoists_arrays)

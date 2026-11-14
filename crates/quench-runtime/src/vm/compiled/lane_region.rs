@@ -43,6 +43,7 @@ mod global_reads;
 mod stable;
 #[path = "lane_region/polls.rs"]
 mod polls;
+#[path = "lane_region/trips.rs"] mod trips;
 #[path = "lane_region/function_names.rs"] mod function_names;
 #[path = "lane_region/literals.rs"] mod literals;
 #[path = "lane_region/allocations.rs"] mod allocations;
@@ -83,6 +84,7 @@ use call_frames::{CallSite, Leave, ReturnSite, Site};
 #[path = "lane_region/element_rows.rs"] mod element_rows;
 #[path = "lane_region/fixed_arrays.rs"] mod fixed_arrays;
 #[cfg(test)] #[path = "lane_region/element_tests.rs"] mod element_tests;
+#[cfg(test)] #[path = "lane_region/loop_shape_tests.rs"] mod loop_shape_tests;
 use loop_arrays::{ArraySource, LoopArray};
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
@@ -462,6 +464,8 @@ struct Lowering<'a, 'f> {
     /// An entry-bound poll page, or the ordinary atomic termination flag.
     interrupt: ir::Value,
     fault_poll: bool,
+    /// A loop region's completed iterations, flushed to its entry record where it leaves (`trips.rs`).
+    trips: Option<Variable>,
     /// Callback completion edges can retire the native entry's interrupt ownership proof.
     reentries: smallvec::SmallVec<[ir::Block; INLINE_EFFECT_EDGES]>,
     polls: smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
@@ -1587,6 +1591,7 @@ pub(super) fn lower(
         int_captures,
         interrupt,
         fault_poll,
+        trips: None,
         reentries: smallvec::SmallVec::new(),
         polls: smallvec::SmallVec::new(),
         poll_latches: super::SecondaryMap::new(),
@@ -1776,6 +1781,7 @@ pub(super) fn lower(
         let block = lowering.builder.create_block();
         lowering.goto(block, &[]);
         lowering.builder.switch_to_block(block);
+        lowering.begin_trips();
         if !matches!(lowering.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))) {
             return None;
         }
@@ -1887,6 +1893,7 @@ pub(super) fn lower(
     lowering.leave_with(status, Some(word));
     lowering.builder.switch_to_block(leave);
     let results = lowering.builder.block_params(leave).to_vec();
+    lowering.flush_trips();
     lowering.leave(&results);
     // A lane body is a whole function body and must complete; so must an inlined unit, whose
     // callees rejoin it. A loop or range over the function's own code completes by its exits
@@ -3097,80 +3104,13 @@ impl Lowering<'_, '_> {
         self.leave_site().with(&mut self.builder, status, word);
     }
 
-    /// Count a taken execution of the region's backward edge in the loop entry record
-    /// (`LoopEntry::backedge_count`), which the loop tier's pricing reads.
-    /// A lane body (`Coverage::Prefix`) counts nothing.
-    fn count_backedge(&mut self) {
-        if !matches!(self.coverage, Coverage::Loop { .. }) { return; }
-        let offset = i32::try_from(std::mem::offset_of!(super::JsStepDispatch, loop_entry))
-            .expect("dispatch offset fits i32");
-        let payload = self.payload;
-        let entry = self.raw_load(Lane::I64, regions::dispatch(), payload, offset);
-        let zero = self.raw_compare_imm(Relation::Equal, entry, 0);
-        let (skip, count) = (self.builder.create_block(), self.builder.create_block());
-        self.branch_if(zero, (skip, &[]), (count, &[]));
-        self.builder.switch_to_block(count);
-        let word = self.raw_load(Lane::I64, regions::miss_counter(), entry, 0);
-        let next = self.raw_binary_imm(Binary::Add, word, 1);
-        self.store_word(regions::miss_counter(), next, entry, 0);
-        self.goto(skip, &[]);
-        self.builder.switch_to_block(skip);
-    }
-
-    fn interrupt_check(&mut self, state: &mut State, pc: u32) {
-        if self.fault_poll {
-            let interrupt = self.interrupt;
-            let proof = super::EmitProof::Safepoint { interrupt, miss: None, fault_poll: true };
-            self.step(state, frame::Edges::Value, crate::staged::Operation::Safepoint { proof });
-            return;
-        }
-        let interrupt = self.interrupt;
-        let exit = self.guard_exit(state, pc);
-        let proof = super::EmitProof::Safepoint { interrupt, miss: Some(exit), fault_poll: false };
-        self.step(state, frame::Edges::ValueGuarded { miss: exit }, crate::staged::Operation::Safepoint { proof });
-    }
-
-    fn emit_fault_poll(&mut self) {
-        frame::calls::safepoint_parts(&mut self.builder, &mut self.polls,
-            super::EmitProof::Safepoint { interrupt: self.interrupt, miss: None, fault_poll: true });
-    }
-
-    /// Joining edges must not move a guard, conversion or recovery across the
-    /// interrupt check. Only already-conforming SSA views may share this latch;
-    /// flag-based checks retain their exact-PC recovery on the original edge.
-    fn shared_backedge(&mut self, state: &State, target: usize) -> bool {
-        if !self.fault_poll || !self.shared_headers.contains(target) || !self.entered.contains(target) { return false; }
-        let Some(block) = self.blocks.get(target).copied().flatten() else { return false };
-        let Some(types) = self.facts.at(target) else { return false };
-        if !types.iter().copied().enumerate().all(|(index, ty)| {
-            if !self.is_live(target, index as Register) { return true; }
-            let fact = state.values[index];
-            fact.value.ty.is_subtype(ty) && if ty == Type::INT32 {
-                fact.value.representation == Representation::Int32
-            } else if ty == Type::NUMBER {
-                fact.value.representation == Representation::Float64
-            } else { fact.tagged.current() }
-        }) { return false; }
-        let latch = match self.poll_latches[block] {
-            Some(latch) => latch,
-            None => {
-                let latch = self.builder.create_block();
-                self.poll_latches[block] = Some(latch);
-                latch
-            }
-        };
-        self.finishes = true;
-        self.goto(latch, &[]);
-        true
-    }
-
     fn continue_branch(&mut self, state: &mut State, pc: usize, target: usize,
         taken_block: ir::Block, fall_block: ir::Block) {
         let back = target <= pc && target == self.coverage.entry();
         self.backedge |= back;
-        if back { self.count_backedge(); }
         let refinements = std::mem::take(&mut state.refinements);
         self.switch_to(taken_block, true);
+        if back { self.count_trip(); }
         let mut taken_state = state.clone();
         taken_state.narrow(crate::staged::Edge::Target, &refinements);
         self.continue_at(&mut taken_state, target);
