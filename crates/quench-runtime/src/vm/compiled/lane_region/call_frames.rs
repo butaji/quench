@@ -5,6 +5,9 @@
 //! blocks the lowering made for its exits.
 
 use super::*;
+use super::super::object_slots::emit;
+use crate::staged::flow::FlowStage;
+use crate::staged::machine::{Lane, MachineScalar, Relation};
 use super::frame::{Edges, EmitFrame, FRAME};
 use super::relocs::address;
 use super::super::entry_cell::{capture_word, EntryCell, LANE_BODY_NOT_ENTERED, RAISED_RUN};
@@ -23,8 +26,8 @@ pub(super) struct Leave {
 impl Leave {
     /// Leaves with `status`, and with `word` as the result word where a run publishes one.
     pub(super) fn with(self, builder: &mut FunctionBuilder<'_>, status: ir::Value, word: Option<ir::Value>) {
-        let word = word.unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
-        builder.ins().jump(self.block, &[status.into(), word.into()]);
+        let word = word.unwrap_or_else(|| emit(builder).raw_const(Lane::I64, 0));
+        emit(builder).jump(self.block, &[status, word]);
     }
 }
 
@@ -61,9 +64,9 @@ impl ReturnSite {
     /// Stops with the activation's completion: `value` in the result word, the record in the
     /// dispatch (`LANE_BODY_RETURNED`).
     pub(super) fn complete(self, builder: &mut FunctionBuilder<'_>, payload: ir::Value, value: ir::Value) {
-        let record = builder.ins().iconst(types::I64, i64::from(self.record));
-        builder.ins().store(regions::dispatch(), record, payload, field(std::mem::offset_of!(JsStepDispatch, returned_pc)));
-        let returned = builder.ins().iconst(types::I32, i64::from(LANE_BODY_RETURNED));
+        let record = emit(builder).raw_const(Lane::I64, i64::from(self.record));
+        emit(builder).store_u64(Region::Dispatch.mutable(), payload, field(std::mem::offset_of!(JsStepDispatch, returned_pc)), record);
+        let returned = emit(builder).raw_const(Lane::I32, i64::from(LANE_BODY_RETURNED));
         self.leave.with(builder, returned, Some(value));
     }
 }
@@ -203,8 +206,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let signature = stage.builder.import_signature(signature);
         let captures = address(self.helpers, stage.builder, RelocKind::CaptureWords, callee.target.function,
             capture_word(callee.capture_values, callee.capture_len, callee.capture_stores));
-        let entered = stage.builder.ins().call_indirect(signature, entry, &[call.context, this, captures, room.top]);
-        let (status, word) = (stage.builder.inst_results(entered)[0], stage.builder.inst_results(entered)[1]);
+        let (status, word) = stage.call_entry(signature, entry, &[call.context, this, captures, room.top]);
         Some(Entered { status, word, unfinished: stage.builder.create_block() })
     }
 
@@ -219,26 +221,26 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let helper = self.helper_block()?;
         self.pop_native(stage, room);
         stage.store_u64(FRAME, call.registers, register_offset(site.result), value);
-        stage.builder.ins().jump(call.completed, &[]);
+        stage.jump(call.completed, &[]);
         let (left, missed, threw, raised) = (stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block());
         for block in [left, missed, threw, raised] {
             stage.builder.set_cold_block(block);
         }
         stage.builder.switch_to_block(entered.unfinished);
-        let not_entered = stage.builder.ins().icmp_imm_u(IntCC::Equal, entered.status, i64::from(LANE_BODY_NOT_ENTERED));
-        stage.builder.ins().brif(not_entered, missed, &[], threw, &[]);
+        let not_entered = stage.raw_compare_imm(Relation::Equal, entered.status, i64::from(LANE_BODY_NOT_ENTERED));
+        stage.branch(not_entered, (missed, &[]), (threw, &[]));
         stage.builder.switch_to_block(missed);
         self.pop_native(stage, room);
-        stage.builder.ins().jump(helper, &[]);
+        stage.jump(helper, &[]);
         stage.builder.switch_to_block(threw);
-        let did_raise = stage.builder.ins().icmp_imm_u(IntCC::Equal, entered.status, i64::from(LANE_BODY_THREW));
-        stage.builder.ins().brif(did_raise, raised, &[], left, &[]);
+        let did_raise = stage.raw_compare_imm(Relation::Equal, entered.status, i64::from(LANE_BODY_THREW));
+        stage.branch(did_raise, (raised, &[]), (left, &[]));
         stage.builder.switch_to_block(raised);
         let counters = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, counters)));
         let counted = stage.add_imm(counters, RAISED_RUN);
         stage.store_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, counters)), counted);
         self.pop_native(stage, room);
-        stage.builder.ins().jump(call.raised, &[]);
+        stage.jump(call.raised, &[]);
         stage.builder.switch_to_block(left);
         call.leave.with(stage.builder, entered.status, Some(entered.word));
         Some(())
@@ -252,22 +254,22 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let call = self.call_site()?;
         let helper = self.helper_block()?;
         if direct.is_none() {
-            stage.builder.ins().jump(helper, &[]);
+            stage.jump(helper, &[]);
         }
         stage.builder.switch_to_block(helper);
         let which = if site.constructs() { LaneHelper::ConstructCall } else { LaneHelper::Call };
         let context = emit_js_payload_word(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
-        let record = stage.builder.ins().iconst(types::I64, i64::from(call.record));
+        let record = stage.raw_const(Lane::I64, i64::from(call.record));
         let address = self.helpers.address(&mut stage.builder, which);
         let status = emit_lane_helper_call(stage.builder, self.payload, address, &[context, record]);
-        let (done, other) = (stage.builder.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_COMPLETED as i64), stage.builder.create_block());
-        stage.builder.ins().brif(done, call.completed, &[], other, &[]);
+        let (done, other) = (stage.raw_compare_imm(Relation::Equal, status, LANE_CALL_COMPLETED as i64), stage.builder.create_block());
+        stage.branch(done, (call.completed, &[]), (other, &[]));
         stage.builder.switch_to_block(other);
-        let (missed, unmissed) = (stage.builder.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_MISSED as i64), stage.builder.create_block());
-        stage.builder.ins().brif(missed, call.missed, &[], unmissed, &[]);
+        let (missed, unmissed) = (stage.raw_compare_imm(Relation::Equal, status, LANE_CALL_MISSED as i64), stage.builder.create_block());
+        stage.branch(missed, (call.missed, &[]), (unmissed, &[]));
         stage.builder.switch_to_block(unmissed);
-        let raised = stage.builder.ins().icmp_imm_u(IntCC::Equal, status, LANE_CALL_RAISED as i64);
-        stage.builder.ins().brif(raised, call.raised, &[], call.stop, &[ir::BlockArg::Value(status)]);
+        let raised = stage.raw_compare_imm(Relation::Equal, status, LANE_CALL_RAISED as i64);
+        stage.branch(raised, (call.raised, &[]), (call.stop, &[status]));
         stage.builder.switch_to_block(call.completed);
         Some(stage.constant(0))
     }

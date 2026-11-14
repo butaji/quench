@@ -5242,6 +5242,10 @@ native_form Throw 1
 native_form Yield 1
 native_form YieldStar 1
 native_ir crates/quench-runtime/src/vm/compiled/eager.rs 29
+native_ir crates/quench-runtime/src/vm/compiled/emit_machine/flow.rs 4
+native_ir crates/quench-runtime/src/vm/compiled/emit_machine/memory.rs 6
+native_ir crates/quench-runtime/src/vm/compiled/emit_machine/scalar.rs 11
+native_ir crates/quench-runtime/src/vm/compiled/emit_machine/vector.rs 18
 native_ir crates/quench-runtime/src/vm/compiled/frameless.rs 86
 native_ir crates/quench-runtime/src/vm/compiled/general_store.rs 44
 native_ir crates/quench-runtime/src/vm/compiled/lane_region.rs 278
@@ -5257,8 +5261,6 @@ native_ir crates/quench-runtime/src/vm/compiled/lane_region/hoisted_reads.rs 1
 native_ir crates/quench-runtime/src/vm/compiled/lane_region/literals.rs 9
 native_ir crates/quench-runtime/src/vm/compiled/lane_region/native_calls.rs 18
 native_ir crates/quench-runtime/src/vm/compiled/lane_region/polls.rs 4
-native_ir crates/quench-runtime/src/vm/compiled/lane_region/stable.rs 1
 native_ir crates/quench-runtime/src/vm/compiled/lane_region/store_domains.rs 2
 native_ir crates/quench-runtime/src/vm/compiled/object_slots.rs 45
-native_ir crates/quench-runtime/src/vm/compiled/object_slots/emit.rs 42
 native_refusals 26

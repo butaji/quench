@@ -1,7 +1,15 @@
-//! The primitive set of a machine that executes operators: constants, integer and float
-//! arithmetic, comparison flags, select, conversions and the trap exit. Rules written over it
-//! (`staged::wasm`, `staged::wasm_float`) hold the semantics once; a machine only supplies
-//! the operators.
+//! The primitives of a machine a specializer emits for, one set for every backend. `Machine` names
+//! the word; `MachineScalar`, `MachineAccess`, `MachineFlow` and `MachineVector` are the
+//! operations a stage is composed from (constants, arithmetic by op row, typed memory, control
+//! transfer, vector views) and carry no layout or language meaning; `MachineStage` is the Wasm
+//! operator layer the interpreter (`ConcreteWasm`) and a specializer both run. Rules written over
+//! them (`staged::wasm`, `staged::wasm_float`) hold the semantics once; a machine only supplies
+//! the operators. The op rows are `machine/rows.rs`; `vm/compiled/emit_machine.rs` implements the
+//! traits as Cranelift instructions, the one place that builds them by hand.
+
+mod rows;
+
+pub(crate) use rows::{Binary, Extend, Lane, Relation, Unary};
 
 use super::wasm::Width;
 use super::wasm_memory::Access;
@@ -11,28 +19,32 @@ use crate::wasm::V128_BYTES;
 use crate::{WasmTrap, WasmType};
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
-use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
+use crate::wasm::integer::{I64BinaryOperator as IntegerBinary, I64UnaryOperator as IntegerUnary};
 
-/// The primitives of a machine that runs integer, float and conversion operators: what a stage
-/// computes without a trap. The interpreter runs them on machine words (`ConcreteWasm`), a
-/// specializer on its own values (`Emitter`, `vm/compiled/emit_machine.rs`).
-pub(crate) trait MachineStage {
-    /// A `width` integer; a comparison's flag is an `I32` word holding 0 or 1.
+/// What every machine has: a word, an integer or float of some `Lane`, or a vector. A comparison's
+/// flag is a word that holds 0 or 1.
+pub(crate) trait Machine {
     type Word: Copy;
+}
+
+/// The Wasm operator layer of a machine that runs integer, float and conversion operators: what a
+/// stage computes without a trap. The interpreter runs them on machine words (`ConcreteWasm`), a
+/// specializer composes them from its primitives (`Emitter`, `vm/compiled/emit_machine/scalar.rs`).
+pub(crate) trait MachineStage: Machine {
     /// What a trap leaves with: the trap for the interpreter; nothing for a specializer, whose
     /// code branches to the trap's exit.
     type Exit;
     fn constant(&mut self, width: Width, value: i64) -> Self::Word;
-    /// `operator` on `width` operands; a comparison yields a flag. A division's divisor is
-    /// nonzero, and a signed division's quotient fits (`integer_binary` has trapped otherwise).
+    /// `operator` on `width` operands; a comparison yields an `I32` flag word. A division's divisor
+    /// is nonzero, and a signed division's quotient fits (`integer_binary` has trapped otherwise).
     fn operate(
         &mut self,
-        operator: Binary,
+        operator: IntegerBinary,
         width: Width,
         left: Self::Word,
         right: Self::Word,
     ) -> Self::Word;
-    fn operate_unary(&mut self, operator: Unary, width: Width, value: Self::Word) -> Self::Word;
+    fn operate_unary(&mut self, operator: IntegerUnary, width: Width, value: Self::Word) -> Self::Word;
     /// A `float` operator on `float` operands; a comparison yields a flag. The extrema are the
     /// machine's (signed zeros ordered; a NaN operand's result is `float_binary`'s to replace).
     fn operate_float(
@@ -64,25 +76,51 @@ pub(crate) trait MachineStage {
     fn trap_when(&mut self, flag: Self::Word, trap: WasmTrap) -> Result<(), Self::Exit>;
 }
 
-/// A machine that addresses memory and calls leaves: loads and stores of a word, or of an
-/// `Access`'s bytes, at an address with the flags the caller proved (`Flags`), and a call of a
-/// leaf that takes and returns words. Open to extension: the rules over it name no layout.
-pub(crate) trait MachineAccess: MachineStage {
+/// The scalar primitives: constants, arithmetic, comparison, select and conversion by op row.
+pub(crate) trait MachineScalar: Machine {
+    /// The lane `value` holds.
+    fn raw_lane(&mut self, value: Self::Word) -> Lane;
+    /// The `lane` constant whose bits are `bits`; a float lane reads them as its IEEE bits.
+    fn raw_const(&mut self, lane: Lane, bits: i64) -> Self::Word;
+    fn raw_binary(&mut self, operation: Binary, a: Self::Word, b: Self::Word) -> Self::Word;
+    fn raw_compare(&mut self, relation: Relation, a: Self::Word, b: Self::Word) -> Self::Word;
+    /// `raw_compare` against the immediate `bits` at `a`'s own width.
+    fn raw_compare_imm(&mut self, relation: Relation, a: Self::Word, bits: i64) -> Self::Word;
+    fn raw_select(&mut self, cond: Self::Word, then: Self::Word, otherwise: Self::Word) -> Self::Word;
+    fn raw_unary(&mut self, operation: Unary, a: Self::Word) -> Self::Word;
+}
+
+/// A machine that addresses memory and calls code: loads and stores of a lane, or of an `Access`'s
+/// bytes, at an address with the flags the caller proved (`Flags`), and calls of code that takes
+/// and returns words. Open to extension: the rules over it name no layout.
+pub(crate) trait MachineAccess: MachineScalar {
     /// What an access carries beside its address: its alias region and whether it may trap.
     type Flags: Copy;
+    /// The `lane` `offset` bytes from `base`.
+    fn raw_load(&mut self, lane: Lane, flags: Self::Flags, base: Self::Word, offset: i32) -> Self::Word;
+    /// The `from` cell `offset` bytes from `base` extended into the lane `to`.
+    fn raw_load_extended(&mut self, from: Lane, extend: Extend, to: Lane, flags: Self::Flags, base: Self::Word, offset: i32) -> Self::Word;
+    /// A store of the low `lane` bits of `stored.0`; `stored.1` marks one no other thread observes, which
+    /// the backend may defer to an exit.
+    fn raw_store(&mut self, lane: Lane, flags: Self::Flags, stored: (Self::Word, bool), base: Self::Word, offset: i32);
     /// The `access` at `address`, narrow bytes extended as the access asks, in its type.
     fn load_access(&mut self, access: Access, flags: Self::Flags, address: Self::Word) -> Self::Word;
     /// The low bytes of `value` as `access` at `address`.
     fn store_access(&mut self, access: Access, flags: Self::Flags, address: Self::Word, value: Self::Word);
     /// The `width` word `offset` bytes from `base`.
-    fn load_word(&mut self, width: Width, flags: Self::Flags, base: Self::Word, offset: i32) -> Self::Word;
-    /// Stores `value`, a word of its own width, `offset` bytes from `base`.
-    fn store_word(&mut self, flags: Self::Flags, value: Self::Word, base: Self::Word, offset: i32);
+    fn load_word(&mut self, width: Width, flags: Self::Flags, base: Self::Word, offset: i32) -> Self::Word {
+        self.raw_load(width.into(), flags, base, offset)
+    }
+    /// Stores `value`, a word of its own lane, `offset` bytes from `base`.
+    fn store_word(&mut self, flags: Self::Flags, value: Self::Word, base: Self::Word, offset: i32) {
+        let lane = self.raw_lane(value);
+        self.raw_store(lane, flags, (value, false), base, offset);
+    }
     /// A call of the code at `target` on word `arguments`: its word.
     fn call_words(&mut self, target: Self::Word, arguments: &[Self::Word]) -> Self::Word;
     /// A call of the leaf at address `leaf` on word `arguments`: its word.
     fn call_leaf(&mut self, leaf: usize, arguments: &[Self::Word]) -> Self::Word {
-        let target = self.constant(Width::I64, leaf as i64);
+        let target = self.raw_const(Lane::I64, leaf as i64);
         self.call_words(target, arguments)
     }
     /// A function the machine calls directly, linked where the code is placed.
@@ -101,7 +139,7 @@ pub(crate) trait MachineAccess: MachineStage {
 
 /// A machine with blocks: the transfers between them, each carrying words as the target's
 /// parameters.
-pub(crate) trait MachineFlow: MachineStage {
+pub(crate) trait MachineFlow: MachineScalar {
     type Block: Copy;
     /// Continues at `block` with `arguments` as its parameters.
     fn goto(&mut self, block: Self::Block, arguments: &[Self::Word]);
@@ -121,8 +159,8 @@ pub(crate) trait MachineFlow: MachineStage {
 }
 
 /// A machine with vector registers: lane-wise operations by a (lane shape, operator) row, views
-/// of a vector's bits in a lane shape, constants, shuffles, and moves through memory and stack
-/// words. A vector is a `Word` of the machine.
+/// of a vector's bits in a lane shape, constants, shuffles, and moves through stack words. A
+/// vector is a `Word` of the machine, loaded and stored as the `Lane::V128`.
 pub(crate) trait MachineVector: MachineAccess {
     /// The row's operation on `left` (and `right`, a vector or a scalar shift count).
     fn lane_operation(&mut self, native: Native, left: Self::Word, right: Option<Self::Word>) -> Self::Word;
@@ -132,8 +170,6 @@ pub(crate) trait MachineVector: MachineAccess {
     fn vector_immediate(&mut self, bits: u128) -> Self::Word;
     /// The vector of the byte `lanes` selected from the concatenation of `left` and `right`.
     fn vector_shuffle_lanes(&mut self, lanes: [u8; V128_BYTES], left: Self::Word, right: Self::Word) -> Self::Word;
-    /// The vector at `address`.
-    fn load_vector(&mut self, flags: Self::Flags, address: Self::Word) -> Self::Word;
     /// An operand into the two words of `slot` at word position `at`: a vector whole, a scalar
     /// in the low word.
     fn spill_operand(&mut self, slot: Self::Slot, at: usize, value: Self::Word);

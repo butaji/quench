@@ -1,5 +1,5 @@
 //! The vector family of the specializer's machine: `MachineVector` as Cranelift vector
-//! instructions. A vector shift reduces its count modulo the lane width, as Wasm does.
+//! instructions; a vector loads and stores as `Lane::V128` (`MachineAccess`). A vector shift reduces its count modulo the lane width, as Wasm does.
 
 use super::super::{Emitter, Host, Kind, VECTOR_IR};
 use crate::WasmType;
@@ -96,10 +96,6 @@ impl<H: Host> MachineVector for Emitter<'_, '_, H> {
             .immediates
             .push(ir::ConstantData::from(lanes.to_vec()));
         self.body.core.builder.ins().shuffle(left, right, mask)
-    }
-
-    fn load_vector(&mut self, flags: MemFlagsData, address: ir::Value) -> ir::Value {
-        self.body.core.builder.ins().load(VECTOR_IR, flags, address, 0)
     }
 
     fn spill_operand(&mut self, slot: ir::StackSlot, at: usize, value: ir::Value) {

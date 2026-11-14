@@ -66,6 +66,7 @@ pub(super) mod tier_policy;
 mod stable_fact_tests;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
+mod emit_machine;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
 #[cfg(all(test, feature = "aot"))]

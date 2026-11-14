@@ -11,7 +11,7 @@ use super::{
 use crate::WasmType;
 use crate::bytecode::{Function, WideInstruction};
 use crate::staged::wasm_memory::{Access, check_access, effective_address};
-use crate::staged::machine::{MachineAccess, MachineStage, MachineVector};
+use crate::staged::machine::{Lane, MachineAccess, MachineStage, MachineVector};
 use crate::staged::wasm::Width;
 use crate::staged::wasm_simd::{Lanes, Native, Simd, WasmSimd, simd};
 use crate::wasm::integer::I64BinaryOperator as Binary;
@@ -166,7 +166,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             Simd::Load => {
                 let (host, flags) = self.vector_access(pc, c);
-                let value = self.load_vector(flags, host);
+                let value = self.raw_load(Lane::V128, flags, host, 0);
                 self.write_vector(a, value);
             }
             Simd::Store => {

@@ -2,7 +2,7 @@
 //! (`apply`), the order of a trap's checks on a probe stage, and the opcode table.
 
 use super::ConcreteWasm;
-use super::machine::MachineStage;
+use super::machine::{Machine, MachineStage};
 use super::wasm::{Width, binary_result, integer_binary, is_comparison};
 use super::wasm_float::{Float, Truncation};
 use super::wasm_operation::{Form, WasmOperation};
@@ -120,8 +120,11 @@ impl Probe {
     }
 }
 
-impl MachineStage for Probe {
+impl Machine for Probe {
     type Word = usize;
+}
+
+impl MachineStage for Probe {
     type Exit = WasmTrap;
 
     fn constant(&mut self, width: Width, value: i64) -> usize {

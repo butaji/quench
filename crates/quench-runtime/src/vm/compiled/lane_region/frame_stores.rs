@@ -4,7 +4,9 @@
 //! addresses it is proved under, bound before the run.
 
 use super::*;
-use crate::vm::compiled::regions;
+use super::super::object_slots::emit;
+use crate::staged::Region;
+use crate::staged::flow::FlowStage;
 use crate::staged::property::Owner;
 use crate::staged::{store, PropertyFrame, Stage};
 
@@ -35,13 +37,13 @@ impl EmitFrame<'_> {
         let (address, _) = emit_js_cached_field_slot(stage.builder, self.payload, object,
             site, false, slow, Some(binding), header, Some(packed));
         store::bound_full_store(stage, id, address, (value, fact), slow)?;
-        stage.builder.ins().jump(done, &[]);
+        stage.jump(done, &[]);
         stage.builder.switch_to_block(packed);
         store::bound_packed_store(stage, id, packed_address, (value, fact), slow)?;
-        stage.builder.ins().jump(done, &[]);
+        stage.jump(done, &[]);
         stage.builder.switch_to_block(slow);
         self.field_store_host(stage, object, atom, site, value, miss)?;
-        stage.builder.ins().jump(done, &[]);
+        stage.jump(done, &[]);
         stage.builder.switch_to_block(done);
         Some(())
     }
@@ -54,7 +56,7 @@ impl EmitFrame<'_> {
         #[cfg(test)] LOOP_SLOT_STORES.with(|count| count.set(count.get() + 1));
         let builder = &mut *stage.builder;
         let (packed, arena, done) = (builder.create_block(), builder.create_block(), builder.create_block());
-        builder.ins().brif(slot.header.inline, packed, &[], arena, &[]);
+        emit(builder).branch(slot.header.inline, (packed, &[]), (arena, &[]));
         builder.switch_to_block(packed);
         #[cfg(test)] if slot.packed_range.is_some() { PACKED_RANGE_SITE.with(|watched| {
             if let Some((expected, count)) = watched.get() && expected == site {
@@ -66,14 +68,14 @@ impl EmitFrame<'_> {
         // Ordinary JS own fields are not shared memory. Observation requires
         // a guest/host effect or poll; the backend must prove their absence
         // before deferring this numeric, barrier-free write to an exit.
-        let store = builder.ins().store(regions::payload(), narrow, slot.address, 0);
-        builder.func.private_stores.push(store);
-        builder.ins().jump(done, &[]);
+        let mut writer = emit(builder);
+        let narrow = writer.uextend32(narrow);
+        writer.store_private_u32(Region::Payload.mutable(), slot.address, 0, narrow);
+        emit(builder).jump(done, &[]);
         builder.switch_to_block(arena);
         // Verified integers neither widen an arena slot nor create a heap edge.
-        let store = builder.ins().store(regions::object_slots(), value, slot.address, 0);
-        builder.func.private_stores.push(store);
-        builder.ins().jump(done, &[]);
+        emit(builder).store_private_u64(Region::ObjectSlots.mutable(), slot.address, 0, value);
+        emit(builder).jump(done, &[]);
         builder.switch_to_block(done);
         Some(())
     }
