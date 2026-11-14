@@ -9,15 +9,11 @@ use std::sync::Mutex;
 
 /// What the model knows of one function at a decision point.
 pub(super) struct Observed {
-    /// Bytecodes of straight-line work per entry.
-    pub(super) length: u64,
-    /// Bytecodes per entry inside its loops (trip means times spans).
-    pub(super) loop_work: u64,
     /// Entries so far.
     pub(super) entries: u32,
-    /// Whether its loop already runs a region entered from the lane: the body then saves that
-    /// entry alone.
-    pub(super) region: bool,
+    /// Nanoseconds the function has been interpreted for: the time since its warm-up began,
+    /// which is how long it has run (`LaneView::interpreted_ns`).
+    pub(super) interpreted_ns: u64,
     /// IR instructions of the planned body.
     pub(super) ir: usize,
 }
@@ -65,15 +61,15 @@ pub(super) fn learned_ns_per_ir(priors: &Priors) -> u64 {
 }
 
 /// The net gain in ns of compiling `observed` into code that takes `share` per mille of the
-/// interpreter's time per bytecode, compiled at `compile_ns_per_ir`: each future entry
-/// (Lindy, `entries / remaining_divisor`) saves the interpreter's work less the share the body
-/// still takes and less its own entry crossing; the compile costs the wall share of its time.
+/// interpreter's time, compiled at `compile_ns_per_ir`. A function that has run for a time is
+/// expected to run on for as long (Lindy; the credible lower bound divides it by
+/// `remaining_divisor`): that time to come saves what the body does not take, less the
+/// entries to come crossing into it, less the wall share of the compile.
 pub(super) fn net_ns(priors: &Priors, share: u64, compile_ns_per_ir: u64, wall_permille: u64, observed: &Observed) -> i64 {
-    let per_entry = if observed.region { priors.region_entry_ns }
-        else { (observed.length + observed.loop_work) * priors.interpreter_ns * (PER_MILLE - share) / PER_MILLE };
-    let saved = per_entry.saturating_sub(priors.body_entry_ns) as i64;
-    let future = (u64::from(observed.entries) / priors.remaining_divisor) as i64;
-    future * saved - (observed.ir as u64 * compile_ns_per_ir * wall_permille / PER_MILLE) as i64
+    let saved = observed.interpreted_ns / priors.remaining_divisor * (PER_MILLE - share) / PER_MILLE;
+    let crossings = u64::from(observed.entries) / priors.remaining_divisor * priors.body_entry_ns;
+    let compile = observed.ir as u64 * compile_ns_per_ir * wall_permille / PER_MILLE;
+    saved as i64 - crossings as i64 - compile as i64
 }
 
 /// Whether the model admits the compile of `observed`; under `tier-stress` every eligible
@@ -87,8 +83,8 @@ pub(super) fn admits(tiers: &Tiers, observed: &Observed, diagnostics: bool) -> b
 
 /// The decision under `QUENCH_TRACE=js-jit`.
 fn shadow_log(priors: &Priors, observed: &Observed, net: i64) {
-    eprintln!("QUENCH_TIER_MODEL entries={} ir={} region={} compile_ns_per_ir={} net_ns={net} pick={}",
-        observed.entries, observed.ir, observed.region, learned_ns_per_ir(priors), if net > 0 { "u-jit" } else { "interp" });
+    eprintln!("QUENCH_TIER_MODEL entries={} interpreted_ns={} ir={} compile_ns_per_ir={} net_ns={net} pick={}",
+        observed.entries, observed.interpreted_ns, observed.ir, learned_ns_per_ir(priors), if net > 0 { "u-jit" } else { "interp" });
 }
 
 #[cfg(test)]
@@ -96,38 +92,36 @@ mod tests {
     use super::*;
     use super::super::tier_policy::TEST_PRIORS as PRIORS;
 
+    const LONG_RUN_NS: u64 = 1_000_000_000;
+    const LEAF_ENTRY_NS: u64 = 100;
 
-    fn observed(length: u64, loop_work: u64, entries: u32, region: bool, ir: usize) -> Observed { Observed { length, loop_work, entries, region, ir } }
+    fn observed(entries: u32, interpreted_ns: u64, ir: usize) -> Observed { Observed { entries, interpreted_ns, ir } }
     fn net(observed: &Observed) -> i64 { net_ns(&PRIORS, PRIORS.body_share, PRIORS.compile_ns_per_ir, PER_MILLE, observed) }
 
     #[test]
     fn a_short_leaf_never_repays_its_entry() {
-        // 40 bytecodes save 280 ns an entry, under the 330 ns crossing: no entry count pays.
-        assert!(net(&observed(40, 0, u32::MAX, false, 100)) < 0);
+        // An entry that runs 100 ns saves 70 ns, under the 330 ns crossing: no entry count pays.
+        let entries = 1_000_000;
+        assert!(net(&observed(entries, u64::from(entries) * LEAF_ENTRY_NS, 100)) < 0);
     }
 
     #[test]
-    fn a_long_body_pays_once_enough_entries_were_seen() {
-        let long = |entries| net(&observed(400, 0, entries, false, 1000));
-        // Saves 400*10*0.7 - 330 = 2470 ns an entry; the compile costs 3 ms.
-        assert!(long(4000) < 0 && long(8000) > 0);
+    fn a_function_that_has_run_long_repays_its_compile() {
+        // 3 ms of compile: a quarter of the time so far, 70% of it saved, pays past 17 ms.
+        let spent = |ns| net(&observed(400, ns, 1000));
+        assert!(spent(4_000_000) < 0 && spent(40_000_000) > 0);
     }
 
     #[test]
-    fn a_loop_body_counts_its_trip_work() {
-        assert!(net(&observed(20, 0, 4000, false, 200)) < 0);
-        assert!(net(&observed(20, 5000, 4000, false, 200)) > 0);
-    }
-
-    #[test]
-    fn a_region_function_saves_its_region_entry_alone() {
-        // 140 ns of region entry against the 330 ns body crossing: the body loses.
-        assert!(net(&observed(400, 400, u32::MAX, true, 10)) < 0);
+    fn the_time_so_far_prices_a_loop_body_whatever_its_entries() {
+        // A function entered 400 times that ran a second is worth compiling at any size of plan.
+        assert!(net(&observed(400, LONG_RUN_NS, 10_000)) > 0);
+        assert!(net(&observed(400, 0, 10)) < 0);
     }
 
     #[test]
     fn a_shared_core_charges_the_whole_compile() {
-        let work = observed(400, 0, 8000, false, 1000);
+        let work = observed(400, 40_000_000, 1000);
         assert!(net_ns(&PRIORS, PRIORS.body_share, PRIORS.compile_ns_per_ir, 100, &work) > net(&work));
     }
 

@@ -27,6 +27,9 @@ pub(super) struct LaneBodyHistory {
     demanded: bool,
     /// The timed runs of its current body and of the interpreter (`audit`).
     audit: audit::Audit,
+    /// When its body began warming, which prices what the interpreter has spent on it
+    /// (`LaneView::interpreted_ns`).
+    warm_started: Option<std::time::Instant>,
 }
 
 #[path = "lane_body_audit.rs"]
@@ -35,11 +38,13 @@ pub(super) use audit::{audit_nanos, Timed, Verdict};
 
 /// The entries and the milliseconds of warming past which a function specializes by its
 /// recurrence alone (`LaneView::recurrent`).
-const RECURRENT_ENTRIES: u16 = 16;
+const RECURRENT_ENTRIES: u32 = 16;
 /// The completed handler runs of a body per credit to the callees it calls natively: a callee's
 /// completions inside those runs are bounded by the caller's, so the credit lags by fewer than this.
 const NATIVE_CREDIT_RUNS: u64 = 64;
 const RECURRENT_TICKS: u32 = 256;
+/// The most times a dropped body doubles the warm-up of the next.
+const MAX_DOUBLINGS: u8 = 7;
 
 /// The warming entries every function has counted so far: a clock of the work the program does
 /// while its functions warm, which, unlike wall time, a rerun repeats.
@@ -154,20 +159,22 @@ impl LaneView {
     }
 
     /// The entries before its next body specializes: the warm-up, doubled per dropped body.
-    pub(super) fn warmup_entries(&self) -> u16 {
-        self.tiers.lane_body.warmup() << self.history.get().lifetimes.min(7)
+    pub(super) fn warmup_entries(&self) -> u32 {
+        u32::from(self.tiers.lane_body.warmup()) << self.history.get().lifetimes.min(MAX_DOUBLINGS)
     }
 
-    /// The bytecodes one entry runs inside its loops: each loop's iteration span times the mean
-    /// trip count its region's runs took (loops without a native run count one iteration).
-    pub(in crate::vm) fn loop_work(&self) -> u64 {
-        self.loops.iter().map(|site| site.span() * site.tier.borrow().mean_trip().unwrap_or(1)).sum()
+    /// The nanoseconds since its body began warming: the time the interpreter has spent on the
+    /// function (and on whatever ran between its entries), which a body would have run for
+    /// as long again.
+    pub(in crate::vm) fn interpreted_ns(&self) -> u64 {
+        self.history.get().warm_started.map_or(0, audit_nanos)
     }
 
-    /// Whether a closed loop of the function runs in a region that still enters native code:
-    /// its calls pay that region's entry, which the function's own body would not.
+    /// Whether a closed loop of the function runs in a region that has run natively and still
+    /// enters it: its calls pay that region's entry, which the function's own body would not.
+    /// A region that never ran (its compile was refused) makes none of the work native.
     pub(in crate::vm) fn enters_region(&self) -> bool {
-        self.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some() && site.enters())
+        self.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some() && site.enters() && site.native_region_runs.get() > 0)
     }
 
     /// Whether a function entered rarely, whose loops run no region that enters native code (its
@@ -176,7 +183,7 @@ impl LaneView {
     /// are hot) costs more than the many cheap entries the warm-up counts, and its callees'
     /// bodies run from the lane until it specializes and inlines them. Read every
     /// `RECURRENT_ENTRIES`th entry.
-    fn recurrent(&self, entries: u16) -> bool {
+    fn recurrent(&self, entries: u32) -> bool {
         entries >= RECURRENT_ENTRIES && entries % RECURRENT_ENTRIES == 0 && self.history.get().lifetimes == 0
             && warm_clock().wrapping_sub(self.warm_since.get()) >= RECURRENT_TICKS && !self.enters_region()
     }
@@ -184,7 +191,7 @@ impl LaneView {
     /// Whether `entries` is a count at which its function weighs a compile: the warm-up, then
     /// each doubling of it, so a function that has not paid for its compile yet looks again
     /// when it has done twice the work.
-    fn attempts_at(&self, entries: u16) -> bool {
+    fn attempts_at(&self, entries: u32) -> bool {
         let warmup = self.warmup_entries();
         entries % warmup == 0 && (entries / warmup).is_power_of_two()
     }
@@ -249,7 +256,7 @@ impl LaneView {
         if history.callee_recompiles >= self.tiers.lane_body.max_callee_recompiles { return; }
         self.history.set(LaneBodyHistory { callee_recompiles: history.callee_recompiles + 1, late_calls: 0, ..history });
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
-        let next = LaneBody::Unspecialized { entries: self.tiers.lane_body.warmup_entries - 1, recompiles: *recompiles, stuck: *stuck };
+        let next = LaneBody::Unspecialized { entries: u32::from(self.tiers.lane_body.warmup_entries) - 1, recompiles: *recompiles, stuck: *stuck };
         let body_state = body.tier_state();
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
         super::super::tier_machine::withdraw(&self.entry, body_state, TierEvent::Demote);
@@ -345,11 +352,14 @@ impl LaneView {
                 super::super::compiled::base_region::count(super::super::compiled::base_region::Event::BodyCompile);
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
-                (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| u32::from(entries) + 1), called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
+                (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| entries.saturating_add(1)), called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
             }
             LaneBody::Unspecialized { entries, recompiles, stuck } => {
                 let ticks = warm_ticks();
-                if entries == 0 { self.warm_since.set(ticks); }
+                if entries == 0 {
+                    self.warm_since.set(ticks);
+                    self.history.set(LaneBodyHistory { warm_started: Some(std::time::Instant::now()), ..self.history.get() });
+                }
                 *body = LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck };
                 return true;
             }
@@ -363,7 +373,7 @@ impl LaneView {
 
     /// The body a view's compile work came to (`LaneBodyOutcome`) makes of it; a compile in
     /// flight records the inlining its plan fits (`LaneBodyHistory::shrinks`).
-    fn body_after(&self, outcome: super::super::compiled::LaneBodyOutcome, entry: Handler, entries: u16, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
+    fn body_after(&self, outcome: super::super::compiled::LaneBodyOutcome, entry: Handler, entries: u32, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
         match outcome {
             super::super::compiled::LaneBodyOutcome::Compiling(pending) => {
                 self.history.set(LaneBodyHistory { shrinks: pending.shrinks(), ..self.history.get() });
@@ -413,7 +423,7 @@ impl LaneView {
         if let LaneBody::Unspecialized { entries, .. } = unsafe { &mut *self.tier_lane.get() }
             && self.history.get().lifetimes == 0 && !self.history.get().unpaid
         {
-            *entries = self.tiers.lane_body.warmup() - 1;
+            *entries = u32::from(self.tiers.lane_body.warmup()) - 1;
         }
     }
 }

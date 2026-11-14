@@ -83,11 +83,11 @@ pub(super) fn plan_key(unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug,
         .bytes().fold(FNV_OFFSET, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME))
 }
 
-/// Whether the tier model admits compiling `function`'s body for the `entries` it has made
-/// (`tier_model::admits`): the gate every lane-body compile request passes.
-pub(super) fn pays_compile(tiers: &Tiers, program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &super::super::dispatch_fast::LaneView, diagnostics: bool) -> bool {
-    let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
-    super::tier_model::admits(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region: caller.enters_region(), ir }, diagnostics)
+/// Whether the tier model admits compiling `caller`'s body for the `entries` it has made
+/// (`tier_model::admits`) and the interpreter time it has spent: the gate every lane-body
+/// compile request passes.
+pub(super) fn pays_compile(tiers: &Tiers, entries: u32, ir: usize, caller: &super::super::dispatch_fast::LaneView, diagnostics: bool) -> bool {
+    super::tier_model::admits(tiers, &super::tier_model::Observed { entries, interpreted_ns: caller.interpreted_ns(), ir }, diagnostics)
 }
 
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a

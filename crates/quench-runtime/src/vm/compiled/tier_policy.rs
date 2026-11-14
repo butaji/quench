@@ -136,9 +136,12 @@ pub(in crate::vm) struct LaneBody {
     /// threshold backs off, and `max_recompiles` bounds it.
     pub(in crate::vm) reoptimize_exits: u16,
     pub(in crate::vm) max_recompiles: u8,
-    /// The most compiles of one function's body, or of one of its loop entries: a request of
-    /// another plan past them is declined, so what each came to is the last that holds.
+    /// The most compiles of one function's body from its entry: a request of another plan past
+    /// them is declined, so what each came to is the last that holds.
     pub(in crate::vm) max_compiles: u8,
+    /// The same for each loop entry (OSR) of a function: its own budget, which the entry
+    /// compiles of the function do not draw on and which they do not exhaust.
+    pub(in crate::vm) max_osr_compiles: u8,
     /// The most bodies of one function lifecycle edges may discard before it runs in the lane
     /// for good: past them a compile costs more than its runs regain.
     pub(in crate::vm) max_lifetimes: u8,
@@ -334,6 +337,7 @@ const MEASURED: Tiers = Tiers {
         reoptimize_exits: 64,
         max_recompiles: 1,
         max_compiles: 3,
+        max_osr_compiles: 3,
         max_lifetimes: 8,
         max_callee_recompiles: 3,
         late_call_calls: 4096,
@@ -438,8 +442,6 @@ mod tests {
     fn the_tier_table_is_consistent() {
         let lane = &TierRows::PROCESS.table().lane_body;
         assert!(lane.warmup_entries > 0 && lane.base_entries > 0 && lane.base_entries <= lane.warmup_entries);
-        // The warm-up doubles per dropped body, at most seven times, and must not overflow.
-        assert!(u32::from(lane.warmup_entries) << 7 <= u32::from(u16::MAX));
         // The reoptimization threshold doubles per recompile and must not overflow its counter.
         assert!(u32::from(lane.reoptimize_exits) << lane.max_recompiles <= u32::from(u16::MAX));
         let looks = TierRows::PROCESS.table().js_function.promotion_looks;

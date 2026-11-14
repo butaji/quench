@@ -333,3 +333,36 @@ fn printed(source: &str, name: &str, mode: crate::ExecutionMode, lane_methods: b
     vm.execute(&program).unwrap();
     output.take()
 }
+
+/// The measured tier model prices a function's compile against the time the interpreter has
+/// spent in it, so an n-body step (nested loops, entered often, a few microseconds each) that
+/// has run a short while compiles to a u-jit body, whatever its entry count.
+#[test]
+fn a_loop_function_that_has_run_long_compiles_under_the_measured_model() {
+    let source = r#"(function () {
+      const bodies = Array.from({ length: 5 }, (_, k) => ({ x: k, y: 2 * k, vx: 0, vy: 0, m: 1 + k }));
+      function step(bodies, dt) {
+        for (let i = 0; i < 5; i++) {
+          const a = bodies[i];
+          for (let j = i + 1; j < 5; j++) {
+            const b = bodies[j];
+            const dx = a.x - b.x, dy = a.y - b.y;
+            const d2 = dx * dx + dy * dy + 0.01;
+            const mag = dt / (d2 * Math.sqrt(d2));
+            a.vx -= dx * b.m * mag; a.vy -= dy * b.m * mag;
+            b.vx += dx * a.m * mag; b.vy += dy * a.m * mag;
+          }
+        }
+        for (let i = 0; i < 5; i++) { const body = bodies[i]; body.x += dt * body.vx; body.y += dt * body.vy; }
+      }
+      for (let n = 0; n < 30000; n++) step(bodies, 0.01);
+      globalThis.answer = bodies[0].x;
+    })();"#;
+    let program = Engine::specialize(source, "lane-loop-nbody.js").unwrap();
+    let mut vm = Vm::with_tier_rows(TestHost::default(), super::compiled::tier_policy::TierRows::Measured);
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_lane_methods();
+    crate::jit_mode::with_mode(crate::JitMode::UltraOnly, || vm.execute(&program)).unwrap();
+    assert!(vm.tier_events().count(crate::vm::tier_events::Event::Published) > 0, "the step runs as a lane body: {:?}", vm.tier_events());
+}

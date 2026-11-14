@@ -857,7 +857,7 @@ enum LaneBody {
     /// Counting its entries toward specialization; `recompiles` bodies before it left too
     /// often for their feedback (`LaneView::note_lane_body_end`), the last of them, where
     /// `stuck`, at those few leaves only.
-    Unspecialized { entries: u16, recompiles: u8, stuck: LaneLeaves },
+    Unspecialized { entries: u32, recompiles: u8, stuck: LaneLeaves },
     /// Its body's code compiling on the code generator's thread; the function runs in the
     /// lane meanwhile, and looks for the code (`Vm::lane_body_work`) at entries spaced twice
     /// as far apart after each of its `looks`, up to `TIERS.lane_body.compile_poll_interval`:
@@ -900,7 +900,7 @@ impl LaneView {
     /// Its body's state, the entries it counted, and whether the tier claimed its prologue and
     /// is still warming, for the diagnostics report of a view that never compiled
     /// (`QUENCH_LANE_STATE`).
-    pub(super) fn lane_body_detail(&self) -> (&'static str, Option<u16>, bool, bool) {
+    pub(super) fn lane_body_detail(&self) -> (&'static str, Option<u32>, bool, bool) {
         // SAFETY: as `lane_body`.
         let entries = match unsafe { &*self.tier_lane.get() } {
             LaneBody::Unspecialized { entries, .. } => Some(*entries),

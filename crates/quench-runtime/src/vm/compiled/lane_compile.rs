@@ -271,8 +271,9 @@ impl<H: Host> Vm<H> {
         bind_callees(&plan.direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget, arrays));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
-        if let Some(entries) = observed && !pays_compile(plan.tiers, program, function, entries, native.dfg.num_insts(), caller, self.programs.js_jit_diagnostics_enabled()) { return Err(Unstarted::Unpaid); }
-        if !self.programs.admit_lane_compile(&key, plan.tiers.lane_body.max_compiles) { plan_miss(self, Miss::PlanCompileBound); return Err(Unstarted::Declined); }
+        if let Some(entries) = observed && !pays_compile(plan.tiers, entries, native.dfg.num_insts(), caller, self.programs.js_jit_diagnostics_enabled()) { return Err(Unstarted::Unpaid); }
+        let bound = if entry.is_some() { plan.tiers.lane_body.max_osr_compiles } else { plan.tiers.lane_body.max_compiles };
+        if !self.programs.admit_lane_compile(&key, bound) { plan_miss(self, Miss::PlanCompileBound); return Err(Unstarted::Declined); }
         let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
         watch.hold_roots(plan.lowered.region.stable.roots.clone(), &mut self.heap);
         let watcher: Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();
