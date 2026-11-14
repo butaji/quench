@@ -1500,6 +1500,9 @@ impl Default for DisplacedInline {
 
 const EXTRAS_TAG: u64 = 0x7fff_0000_0000_0000;
 const EXTRAS_TAG_MASK: u64 = 0xffff_0000_0000_0000;
+/// The storage position of an object without property values (`ValueVec::new`): the only
+/// one an array without extras has, as its payload word holds its element backing instead.
+const EMPTY_POSITION: u32 = ValueVec::new().into_parts().0 & VALUE_VEC_START_BITS;
 
 /// Storage forms whose complete layout is in the ordinary object's record.
 /// This is an observation until a native receiver guard establishes it.
@@ -1610,9 +1613,10 @@ impl ArrayObject {
 
     pub(crate) fn new(mut object: Object, elements: impl Into<super::ArrayElements>) -> Self {
         let elements = elements.into();
+        // Read as a plain object until its storage takes the array form below.
+        object.meta &= !OBJECT_ARRAY;
         // Array objects keep named properties in the arena; a fresh object has none inline.
         let current = object.properties();
-        object.meta |= OBJECT_ARRAY;
         if current.has_inline_property_storage() {
             debug_assert!(
                 object
@@ -1624,6 +1628,11 @@ impl ArrayObject {
             properties.preserve_integrity_from(current);
             object.initialize_properties(properties);
         }
+        // An array without extras holds no property store (`set_storage_position`).
+        if object.extras_pointer().is_none() && object.array_store_needs_extras(object.payload as u32) {
+            object.extras_mut();
+        }
+        object.meta |= OBJECT_ARRAY;
         Self { object, elements }
     }
 
@@ -1805,6 +1814,9 @@ struct ObjectExtras {
     watch: super::dependencies::Watch,
     /// A global object's table of the values code read from it by name (`global_values`).
     global_values: Option<Box<global_values::GlobalValues>>,
+    /// An array's element backing, displaced from its payload word (`ArrayObject`); empty for
+    /// any other object. Last, so the fields native code reads keep their offsets.
+    elements: super::ArrayElements,
 }
 /// How structured serialization treats an object (HTML [[Serializable]] and
 /// [[Transferable]] host objects).
@@ -2096,16 +2108,30 @@ impl Object {
     fn storage_position(&self) -> u32 {
         match self.extras() {
             Some(extras) => extras.arena_start,
-            None => self.payload as u32,
+            None => {
+                debug_assert!(self.meta & OBJECT_ARRAY == 0 || self.payload == u64::from(EMPTY_POSITION));
+                self.payload as u32
+            }
         }
     }
 
     #[inline]
     fn set_storage_position(&mut self, position: u32) {
-        match self.extras_mut_existing() {
-            Some(extras) => extras.arena_start = position,
-            None => self.payload = u64::from(position),
+        if let Some(extras) = self.extras_mut_existing() {
+            extras.arena_start = position;
+        } else if self.meta & OBJECT_ARRAY != 0 && self.array_store_needs_extras(position) {
+            self.extras_mut().arena_start = position;
+        } else {
+            self.payload = u64::from(position);
         }
+    }
+
+    /// Whether an array's property store at `position`, under its current auxiliary word,
+    /// holds anything: an array keeps its payload word for its elements, so such a store,
+    /// or dictionary storage, lives behind extras.
+    #[inline(always)]
+    fn array_store_needs_extras(&self, position: u32) -> bool {
+        position != EMPTY_POSITION || self.auxiliary & crate::value_vec::DICTIONARY_STORAGE != 0
     }
 
     fn tag_extras(extras: Box<ObjectExtras>) -> u64 {
