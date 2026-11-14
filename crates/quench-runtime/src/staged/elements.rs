@@ -171,6 +171,13 @@ pub(crate) unsafe fn concrete_replace_element(values: *mut crate::Value, index: 
     // SAFETY: the caller's contract.
     let address = unsafe { values.add(index) };
     let old = unsafe { address.read() };
+    // A value of the old one's kind (both int32, or both others) leaves the count as it is,
+    // exact or unknown, so only the element is written: a double over a double (V8-v7
+    // NavierStokes) skips the count's load, recount and store.
+    if other(&mut stage, value.to_bits()) == other(&mut stage, old.to_bits()) {
+        replace_uncounted_element(&mut stage, address as u64, value.to_bits());
+        return;
+    }
     replace_element(&mut stage, values as u64, address as u64, old.to_bits(), value.to_bits());
 }
 
