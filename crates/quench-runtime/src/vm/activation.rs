@@ -51,6 +51,13 @@ pub(crate) enum JobResume {
 }
 
 impl JobResume {
+    /// The value the resumed `await` or `yield` is sent: `undefined` for a throw, which sends none.
+    pub(crate) fn sent(&self) -> Value {
+        match self {
+            Self::Sends(sent) => *sent,
+            Self::Throws(_) => Value::UNDEFINED,
+        }
+    }
     /// The heap value it carries, which the run keeps alive.
     pub(crate) fn value(&self) -> Option<Value> {
         match self {

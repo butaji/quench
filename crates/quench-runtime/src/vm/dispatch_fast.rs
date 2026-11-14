@@ -8238,7 +8238,6 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
         {
             return outcome;
         }
-        let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, body)).unwrap_or_default();
         let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|function, header| lane_unit_trips(cx, function, header), &|callee| lane_callee_captures(cx, callee), &direct, work, None);
         if diagnostics && let super::compiled::LaneBodyOutcome::Published(method) = &outcome {
             if let Some(method) = method.lease() { own.body_stats.compiled(function, &method.inlined); }
@@ -15441,6 +15440,24 @@ fn lane_body_left<H: Host>(
     (lane_frames_resumed(cx, r, (own, Some(method)), exit), feedback)
 }
 
+/// The activation a leave resumes in: the one the leaving body ran in for a native call's callee, else
+/// the innermost frame a native-frame advance made the running one, where there is one.
+fn lane_resumed_activation<'a, H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    (own, root): (&'a LaneView, Option<&'a super::compiled::LaneMethod>),
+    callee: bool,
+) -> (Registers, &'a LaneView, Option<&'a super::compiled::LaneMethod>) {
+    if callee {
+        return (r, own, root);
+    }
+    match native_frames::advance_into_frames(cx) {
+        // SAFETY: the advance made the innermost frame the running activation.
+        Some((own, method)) => (unsafe { (*cx).registers }, own, Some(method)),
+        None => (r, own, root),
+    }
+}
+
 /// Where the lane continues after native code of the activation with registers `r`, a body of
 /// `root`'s or a region's, left with `exit`: in the innermost of the native frames it left inside, which
 /// the lane links and continues in first (`native_frames::advance_into_frames`; a leave into a callee's
@@ -15453,14 +15470,8 @@ fn lane_frames_resumed<H: Host>(
     (own, root): (&LaneView, Option<&super::compiled::LaneMethod>),
     exit: super::compiled::LaneExit,
 ) -> LaneBodyLeft {
-    let (r, own, method) = match exit {
-        super::compiled::LaneExit::Callee => (r, own, root),
-        _ => match native_frames::advance_into_frames(cx) {
-            // SAFETY: the advance made the innermost frame the running activation.
-            Some((own, method)) => (unsafe { (*cx).registers }, own, Some(method)),
-            None => (r, own, root),
-        },
-    };
+    let callee = matches!(exit, super::compiled::LaneExit::Callee);
+    let (r, own, method) = lane_resumed_activation(cx, r, (own, root), callee);
     // SAFETY: the running activation's records start at the context's base.
     let base = unsafe { (*cx).base };
     match exit.resumed() {

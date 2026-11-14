@@ -66,6 +66,27 @@ pub(super) struct LaneStart<'a> {
     pub(super) floor: *const std::sync::atomic::AtomicUsize,
 }
 
+/// The lane start of `job`'s run over `window`, whose root is the job: its function's dispatch class
+/// decides whether the lane constructs script callees.
+fn job_start<'a>(code: &'a ResidualProgram, job: JobRoot, window: &JobWindow, (pending, executing): (*mut Vec<PendingGeneralCall>, *mut ExecutingProgram), floor: *const std::sync::atomic::AtomicUsize) -> LaneStart<'a> {
+    LaneStart {
+        code,
+        program: window.entry.program,
+        root: LaneRoot::Job(job),
+        registers: Registers(window.registers),
+        base: window.base,
+        this: window.entry.this,
+        pending,
+        executing,
+        inline_calls: true,
+        script_calls: true,
+        script_constructs: code
+            .function_get(window.entry.function as usize)
+            .is_some_and(|function| function.dispatch == crate::bytecode::DispatchClass::General),
+        floor,
+    }
+}
+
 /// How a job's lane run ended (`Vm::run_lane_job`).
 pub(in crate::vm) enum JobEnd {
     /// The activation returned the value: its owner is finished.
@@ -268,33 +289,14 @@ impl<H: Host> Vm<H> {
     /// is the program of its function, the active one, and the realm is the one that resumed
     /// it, starting over an empty lane stack (`Vm::nested_lane_run`). `resume` back, changing nothing, where the lane does not admit it (`admit_job`).
     pub(in crate::vm) fn run_lane_job(&mut self, code: &ResidualProgram, job: JobRoot, resume: JobResume) -> Result<JobEnd, JobResume> {
-        let sent = match &resume {
-            JobResume::Sends(sent) => *sent,
-            JobResume::Throws(_) => Value::UNDEFINED,
-        };
-        let Some(window) = self.admit_job(code, job, sent) else {
+        let Some(window) = self.admit_job(code, job, resume.sent()) else {
             return Err(resume);
         };
         let mut pending = self.pending_call_stacks.pop().unwrap_or_default();
         let mut executing = ExecutingProgram { id: window.entry.program, retained: None };
         let caller_registers = self.active_registers;
         let entered = self.enter_lane_floor(code, window.entry.program);
-        let start = LaneStart {
-            code,
-            program: window.entry.program,
-            root: LaneRoot::Job(job),
-            registers: Registers(window.registers),
-            base: window.base,
-            this: window.entry.this,
-            pending: &raw mut pending,
-            executing: &raw mut executing,
-            inline_calls: true,
-            script_calls: true,
-            script_constructs: code
-                .function_get(window.entry.function as usize)
-                .is_some_and(|function| function.dispatch == crate::bytecode::DispatchClass::General),
-            floor: entered.cell,
-        };
+        let start = job_start(code, job, &window, (&raw mut pending, &raw mut executing), entered.cell);
         let mut context = self.lane_context(start);
         let ip = self.drive_lane(&mut context, entered, |cx| match resume {
             JobResume::Sends(_) => window.enter(cx),

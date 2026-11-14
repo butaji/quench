@@ -17,6 +17,26 @@ pub(super) fn drop_environment_caches<H: Host>(cx: *mut LaneContext<H>) {
     }
 }
 
+/// The running function, the home a handler's scopes and binding live in, and whether the running
+/// function keeps its locals in its record: the innermost activation's, else the frame's.
+fn handler_home<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>) -> (u32, HandlerHome, bool) {
+    match vm.lane_stack.activations.last().copied() {
+        Some(activation) => {
+            let home = HandlerHome::Window(WindowHome {
+                depth: vm.lane_stack.activations.len() - 1,
+                program: unsafe { (*cx).program },
+                function: activation.function,
+                window: activation.window_ptr(),
+            });
+            (activation.function, home, activation.script().is_some_and(|script| script.environment))
+        }
+        None => {
+            let frame = unsafe { (*cx).frame() };
+            (vm.frames[frame].function, HandlerHome::Frame(frame), true)
+        }
+    }
+}
+
 /// The entry of the handler covering record `call_pc` of the running function, for the thrown
 /// `value`: the `with` scopes past the handler's unwound and, for a binding in a local, the local
 /// stored where the running function keeps it (`Vm::bind_thrown_value`), a captured one getting a
@@ -35,21 +55,7 @@ pub(in crate::vm) unsafe extern "C" fn lane_handler_edge<H: Host>(
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let (function, home, keeps_locals) = match vm.lane_stack.activations.last().copied() {
-        Some(activation) => {
-            let home = HandlerHome::Window(WindowHome {
-                depth: vm.lane_stack.activations.len() - 1,
-                program: unsafe { (*cx).program },
-                function: activation.function,
-                window: activation.window_ptr(),
-            });
-            (activation.function, home, activation.script().is_some_and(|script| script.environment))
-        }
-        None => {
-            let frame = unsafe { (*cx).frame() };
-            (vm.frames[frame].function, HandlerHome::Frame(frame), true)
-        }
-    };
+    let (function, home, keeps_locals) = handler_home(cx, vm);
     let handler = code
         .function(function as usize)
         .handler_at(call_pc)

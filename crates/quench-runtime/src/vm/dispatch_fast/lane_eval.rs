@@ -69,6 +69,23 @@ fn promote_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, parame
     Some(EvalWindow { record, entries })
 }
 
+/// Hands `record` back after a direct eval ran over it: the receiver the eval replaced, the binding
+/// site and the `with` scopes it left, and the window's locals, whose stores went through the record.
+///
+/// # Safety
+/// `record` and `entries` are the window `promote_window` made.
+unsafe fn settle_eval_record(record: *mut FrameRecord, previous_this: Option<Value>, entries: *mut Value) {
+    // SAFETY: the caller's contract.
+    unsafe {
+        if let Some(this) = previous_this {
+            (*record).replace_this(this);
+        }
+        (*record).binding_site_pc = None;
+        (*record).with_objects.clear();
+        (*record).push_window_locals(entries);
+    }
+}
+
 /// The value of the direct eval the call record `i` at `ip` of the innermost window activation
 /// makes, which runs above the activation with the record as its caller (`Vm::eval_callers`).
 /// A raised error is stashed in `Vm::lane_raised` for the frames the general path makes to raise,
@@ -94,15 +111,8 @@ fn direct_eval_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip,
     let result = vm.nested_lane_run(innermost, |vm| vm.call_value(code, callee, receiver, args));
     vm.eval_callers.pop();
     (vm.direct_eval, vm.parameter_eval) = previous;
-    // SAFETY: as above; the eval's stores to the locals went through the record.
-    unsafe {
-        if let Some(this) = previous_this {
-            (*record).replace_this(this);
-        }
-        (*record).binding_site_pc = None;
-        (*record).with_objects.clear();
-        (*record).push_window_locals(entries);
-    }
+    // SAFETY: as above.
+    unsafe { settle_eval_record(record, previous_this, entries) };
     note_allocation(vm);
     match result {
         Ok(value) => Some(value),

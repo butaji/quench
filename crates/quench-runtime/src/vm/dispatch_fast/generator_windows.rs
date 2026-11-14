@@ -146,10 +146,7 @@ fn lane_resume_generator<H: Host>(
     let (frame, environment) = vm.generator_window_frame(generator, code)?;
     let (program, function, env, captured) = (frame.program, frame.function, frame.env, frame.captured);
     let (this, pc, size) = (frame.this(), frame.pc, frame.registers.len());
-    let depth = vm.lane_stack.activations.len();
-    if depth >= vm.lane_stack.activation_limit.get() {
-        return None;
-    }
+    let depth = Some(vm.lane_stack.activations.len()).filter(|&depth| depth < vm.lane_stack.activation_limit.get())?;
     let view = vm.lane_view_any(program, function)?;
     let (parent, locals) = window_environments(vm, view, env, captured, environment)?;
     let capture = vm.target_capture(code, program, parent);
@@ -159,14 +156,7 @@ fn lane_resume_generator<H: Host>(
     }
     // SAFETY: the record keeps the frame, and so its registers, until the activation ends.
     let (prefix, window) = unsafe { ((*frame).prefix(), (*frame).registers.as_mut_ptr()) };
-    let activation = generator_activation(cx, r, ip, GeneratorWindow { prefix, function, generator, completion, environment, record: frame });
-    // SAFETY: the limit check above leaves room for the activation, and the frame's loops and
-    // scope chain resume as the new activation's (`LaneStack::iterators`, `LaneStack::with_objects`).
-    unsafe {
-        vm.lane_stack.push_generator_activation(activation);
-        vm.lane_stack.restore_iterators(depth, &mut (*frame).active_iterators);
-        vm.lane_stack.restore_with_objects(depth, &mut (*frame).with_objects);
-    }
+    push_generator_window(cx, vm, (r, ip, depth), GeneratorWindow { prefix, function, generator, completion, environment, record: frame });
     let entry = PreparedEntry { view, env: parent, capture, this, registers: size, passed: 0, argc: 0, keeps: false, size, program, function };
     // SAFETY: the window holds the suspended registers, which nothing else writes while it runs,
     // and `pc` is where the frame resumes in its function's view.
@@ -199,6 +189,20 @@ struct GeneratorWindow {
     completion: Completion,
     environment: bool,
     record: *mut FrameRecord,
+}
+
+/// Pushes `window`'s activation as the lane's innermost, at `depth` below the call record at `ip` of
+/// the running function with registers `r`, and resumes the frame's loops and scope chain as its own.
+fn push_generator_window<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, (r, ip, depth): (Registers, Ip, usize), window: GeneratorWindow) {
+    let frame = window.record;
+    let activation = generator_activation(cx, r, ip, window);
+    // SAFETY: the caller's limit check leaves room for the activation, and the frame's loops and
+    // scope chain resume as the new activation's (`LaneStack::iterators`, `LaneStack::with_objects`).
+    unsafe {
+        vm.lane_stack.push_generator_activation(activation);
+        vm.lane_stack.restore_iterators(depth, &mut (*frame).active_iterators);
+        vm.lane_stack.restore_with_objects(depth, &mut (*frame).with_objects);
+    }
 }
 
 /// The activation of `window`'s generator for the call record at `ip`, made by the running
