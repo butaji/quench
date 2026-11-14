@@ -1,5 +1,7 @@
 use super::*;
 
+mod imports;
+
 impl<H: Host> Vm<H> {
     pub(crate) fn wasm_value_matches_type(
         &self,
@@ -129,169 +131,11 @@ impl<H: Host> Vm<H> {
         if imports.len() != module.imports().len() {
             return Err(JsError::wasm_link("Wasm import count mismatch"));
         }
-        let tables = module
-            .tables
-            .iter()
-            .map(|table| {
-                let crate::WasmTableInitializer::Import(name) = &table.initializer else {
-                    return Ok(None);
-                };
-                let value = self
-                    .root_value(imports[name.index as usize])
-                    .ok_or_else(|| JsError::wasm_link("invalid Wasm table import root"))?;
-                let Some(Cell::WasmTable {
-                    elements,
-                    element_type,
-                    declarations,
-                    table64,
-                    ..
-                }) = self.heap.get(value)
-                else {
-                    return Err(JsError::wasm_link(
-                        "Wasm table import has wrong external kind",
-                    ));
-                };
-                if *table64 != table.ty.table64
-                    || !declarations.reference_subtype(
-                        *element_type,
-                        &module.signatures.declarations,
-                        table.ty.element_type,
-                    )
-                    || !module.signatures.declarations.reference_subtype(
-                        table.ty.element_type,
-                        declarations,
-                        *element_type,
-                    )
-                    || !crate::wasm::import_limits_match(
-                        elements.len() as u64,
-                        elements.maximum,
-                        table.ty.initial,
-                        table.ty.maximum,
-                    )
-                {
-                    return Err(JsError::wasm_link("incompatible import type"));
-                }
-                Ok(Some(value))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let memories = module
-            .memories
-            .iter()
-            .map(|memory| {
-                let Some(name) = &memory.import else {
-                    return Ok(None);
-                };
-                let value = self
-                    .root_value(imports[name.index as usize])
-                    .ok_or_else(|| JsError::wasm_link("invalid Wasm memory import root"))?;
-                let Some(Cell::WasmMemory { bytes, header, .. }) = self.heap.get(value) else {
-                    return Err(JsError::wasm_link(
-                        "Wasm memory import has wrong external kind",
-                    ));
-                };
-                let ty = &header.ty;
-                if ty.shared != memory.ty.shared
-                    || ty.index_type() != memory.ty.index_type()
-                    || ty.page_size() != memory.ty.page_size()
-                    || !crate::wasm::import_limits_match(
-                        (bytes.len() / ty.page_size() as usize) as u64,
-                        ty.maximum,
-                        memory.ty.initial,
-                        memory.ty.maximum,
-                    )
-                {
-                    return Err(JsError::wasm_link("incompatible import type"));
-                }
-                Ok(Some(value))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let imported_globals = module
-            .globals
-            .iter()
-            .map(|global| {
-                let crate::WasmGlobalInitializer::Import { ty, name } = &global.initial else {
-                    return Ok(None);
-                };
-                let value = self
-                    .root_value(imports[name.index as usize])
-                    .ok_or_else(|| JsError::wasm_link("invalid Wasm global import root"))?;
-                match self.heap.get(value) {
-                    Some(Cell::WasmGlobal {
-                        ty: actual,
-                        header,
-                        mutable,
-                        ..
-                    }) if let declarations = &header.declarations
-                        && *mutable == global.mutable
-                        && (if *mutable {
-                            declarations.value_subtype(
-                                *actual,
-                                &module.signatures.declarations,
-                                *ty,
-                            ) && module.signatures.declarations.value_subtype(
-                                *ty,
-                                declarations,
-                                *actual,
-                            )
-                        } else {
-                            declarations.value_subtype(
-                                *actual,
-                                &module.signatures.declarations,
-                                *ty,
-                            )
-                        }) =>
-                    {
-                        Ok(Some(value))
-                    }
-                    _ => Err(JsError::wasm_link("incompatible import type")),
-                }
-            })
-            .collect::<Result<Vec<_>, JsError>>()?;
-        let functions = module
-            .signatures
-            .imports()
-            .iter()
-            .enumerate()
-            .map(|(index, import)| {
-                let name = &import.name;
-                let value = self
-                    .root_value(imports[name.index as usize])
-                    .ok_or_else(|| JsError::wasm_link("invalid Wasm function import root"))?;
-                let expected = module
-                    .signatures
-                    .function_type_index(index)
-                    .ok_or_else(|| JsError::validation("invalid Wasm import type index".into()))?;
-                if self.wasm_callable_matches(value, &module.signatures, expected, import.exact)
-                    != Some(true)
-                {
-                    return Err(JsError::wasm_link("incompatible import type"));
-                }
-                Ok(value)
-            })
-            .collect::<Result<Vec<_>, JsError>>()?;
-        let tags = module
-            .tags
-            .iter()
-            .map(|tag| {
-                let Some(name) = &tag.import else {
-                    return Ok(None);
-                };
-                let value = self
-                    .root_value(imports[name.index as usize])
-                    .ok_or_else(|| JsError::wasm_link("invalid Wasm tag import root"))?;
-                let Some(Cell::WasmTag { declarations, ty, .. }) = self.heap.get(value) else {
-                    return Err(JsError::wasm_link("incompatible import type"));
-                };
-                if !declarations.equivalent(
-                    *ty as usize,
-                    &module.signatures.declarations,
-                    tag.ty as usize,
-                ) {
-                    return Err(JsError::wasm_link("incompatible import type"));
-                }
-                Ok(Some(value))
-            })
-            .collect::<Result<Vec<_>, JsError>>()?;
+        let tables = self.link_wasm_table_imports(module, imports)?;
+        let memories = self.link_wasm_memory_imports(module, imports)?;
+        let imported_globals = self.link_wasm_global_imports(module, imports)?;
+        let functions = self.link_wasm_function_imports(module, imports)?;
+        let tags = self.link_wasm_tag_imports(module, imports)?;
         let id = self.register_wasm_program(module)?;
         // A host-driven sequence of instantiations need not enter dispatch.
         // Collect only before constructing the new, not-yet-rooted bindings.
@@ -475,13 +319,9 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    fn initialize_wasm_references(
-        &mut self,
-        module: &crate::WasmModule,
-        environment: Value,
-    ) -> Result<(), JsError> {
-        let table_base = module.globals.len() + module.memories.len() + module.data.len();
-        let element_base = table_base + module.tables.len();
+    /// Fills each table that has a reference initializer with its value, the tables' slots in
+    /// `environment` starting at `table_base`.
+    fn fill_wasm_reference_tables(&mut self, module: &crate::WasmModule, environment: Value, table_base: usize) -> Result<(), JsError> {
         for (index, definition) in module.tables.iter().enumerate() {
             let crate::WasmTableInitializer::Reference(initializer) = &definition.initializer
             else {
@@ -498,6 +338,12 @@ impl<H: Host> Vm<H> {
             };
             elements.fill(0..elements.len(), initial, target);
         }
+        Ok(())
+    }
+
+    /// Materializes each element segment's references into an elements cell, the segments' slots in
+    /// `environment` starting at `element_base`.
+    fn allocate_wasm_element_segments(&mut self, module: &crate::WasmModule, environment: Value, element_base: usize) -> Result<(), JsError> {
         for (index, segment) in module.elements.iter().enumerate() {
             let mut values = Vec::new();
             values
@@ -514,6 +360,18 @@ impl<H: Host> Vm<H> {
                 .environment_slot_mut(environment, element_base + index)
                 .unwrap() = elements;
         }
+        Ok(())
+    }
+
+    fn initialize_wasm_references(
+        &mut self,
+        module: &crate::WasmModule,
+        environment: Value,
+    ) -> Result<(), JsError> {
+        let table_base = module.globals.len() + module.memories.len() + module.data.len();
+        let element_base = table_base + module.tables.len();
+        self.fill_wasm_reference_tables(module, environment, table_base)?;
+        self.allocate_wasm_element_segments(module, environment, element_base)?;
         for (index, segment) in module.elements.iter().enumerate() {
             if matches!(segment.mode, crate::WasmElementMode::Passive) {
                 continue;
