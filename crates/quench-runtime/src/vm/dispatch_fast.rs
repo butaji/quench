@@ -17171,7 +17171,7 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
 /// `value`: that activation's caller resumes with it, as the run's completion one activation
 /// at a time (`lane_complete_plain_chain`) makes it. `None`, which changes nothing, for a run
 /// another completion ends; the general completions take it.
-#[inline(never)]
+#[inline(always)]
 fn lane_return_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
     let stack = &mut vm.lane_stack;
