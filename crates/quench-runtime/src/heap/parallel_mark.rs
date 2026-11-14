@@ -24,7 +24,7 @@ use super::{
     ArrayObject, AwaitState, Cell, CellKind, EnvironmentTrace, FunctionRecord, GcTraceKind, Heap,
     IteratorRecord, MarkBits, Object, ParallelObjectRootTrace, PromiseCell, SlotArena, SparseElements,
     PARALLEL_MARK_MAX_THREADS, PARALLEL_MARK_SPLIT_THRESHOLD, PARALLEL_MARK_STACK_SIZE_BYTES, mark_bits,
-    mark_word_if_new, weak,
+    mark_word_if_new, weak, PushedProtos,
 };
 use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
@@ -219,7 +219,7 @@ impl<'heap> ParallelMarkView<'heap> {
         batch: &mut ParallelMarkBatch,
         parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
         trace_kind: GcTraceKind,
-        last_proto: &mut Value,
+        last_proto: &mut PushedProtos,
     ) {
         let deferred_roots = &mut batch.object_roots;
         let mut object_roots = |kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
@@ -380,7 +380,7 @@ impl<'scope> ParallelRound<'scope> {
         {
             batch.max_worklist = work.len();
         }
-        let mut last_proto = Value::UNDEFINED;
+        let mut last_proto = PushedProtos::default();
         while let Some(value) = work.pop() {
             #[cfg(feature = "profile-aggregate")]
             {

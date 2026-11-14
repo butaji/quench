@@ -2298,7 +2298,7 @@ impl Heap {
             if !full {
                 let properties = &self.properties;
                 let remembered = &self.remembered;
-                let mut last_proto = Value::UNDEFINED;
+                let mut last_proto = PushedProtos::default();
                 for index in remembered.iter().copied() {
                     let value = Value::heap(index);
                     if let Some(cell) = self.get(value) {
@@ -3055,7 +3055,7 @@ impl Heap {
         environments: &mut EnvironmentTrace<'_>,
     ) {
         let Some(parallel) = parallel else {
-            let mut last_proto = Value::UNDEFINED;
+            let mut last_proto = PushedProtos::default();
             self.drain_work::<false>(work, object_roots, ephemerons, trace_kind, environments, &mut last_proto, 0);
             return;
         };
@@ -3076,7 +3076,7 @@ impl Heap {
         trace_kind: GcTraceKind,
         environments: &mut EnvironmentTrace<'_>,
     ) {
-        let mut last_proto = Value::UNDEFINED;
+        let mut last_proto = PushedProtos::default();
         let mut left_to_collector = Vec::new();
         while self.drain_work::<true>(
             work,
@@ -3116,7 +3116,7 @@ impl Heap {
         ephemerons: &mut weak::EphemeronWork,
         trace_kind: GcTraceKind,
         environments: &mut EnvironmentTrace<'_>,
-        last_proto: &mut Value,
+        last_proto: &mut PushedProtos,
         round_minimum: usize,
     ) -> bool {
         loop {
@@ -3154,7 +3154,7 @@ impl Heap {
         ephemerons: &mut weak::EphemeronWork,
         trace_kind: GcTraceKind,
         environments: &mut EnvironmentTrace<'_>,
-        last_proto: &mut Value,
+        last_proto: &mut PushedProtos,
     ) {
         if let Some(record_id) = value.direct_object_index() {
             if !self.object_records.mark(record_id) {
@@ -3921,7 +3921,7 @@ impl Heap {
         self.memory_profile.object_slots_changed(object, slots);
     }
     /// Push the values `object` keeps alive. Objects that share a prototype push it once:
-    /// `last_proto`, the prototype pushed last in this walk, is already on the work list or
+    /// `last_proto`, the prototypes pushed last in this walk, are already on the work list or
     /// marked, so a second push would only be popped again.
     #[inline(always)]
     fn object_children(
@@ -3931,14 +3931,11 @@ impl Heap {
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
-        last_proto: &mut Value,
+        last_proto: &mut PushedProtos,
     ) {
         let proto = object.proto();
-        if proto != *last_proto {
-            *last_proto = proto;
-            if proto.is_heap() {
-                work.push(proto);
-            }
+        if proto.is_heap() && last_proto.first_push(proto) {
+            work.push(proto);
         }
         object_roots(trace_kind, owner, object.shape(), object.was_used_as_prototype(), work);
         object.visit_extras_roots(|value| work.push(value));
@@ -3960,7 +3957,7 @@ impl Heap {
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
-        last_proto: &mut Value,
+        last_proto: &mut PushedProtos,
     ) {
         let mut object = |object: &Object| {
             Self::object_children(
@@ -4164,7 +4161,7 @@ impl Heap {
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
-        last_proto: &mut Value,
+        last_proto: &mut PushedProtos,
     ) {
         Self::object_children(
             owner,
@@ -4269,7 +4266,7 @@ impl Heap {
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         trace_kind: GcTraceKind,
-        last_proto: &mut Value,
+        last_proto: &mut PushedProtos,
     ) {
         Self::object_children(
             owner,
@@ -4565,3 +4562,27 @@ unsafe fn store_extended_slot(data: &mut Object, properties: &mut ValueArena, sl
 
 #[cfg(test)]
 mod offset_order_tests;
+
+/// The prototypes a mark walk pushed last (`Heap::object_children`): two, as a walk of plain
+/// objects alternates between theirs and their arrays' (V8-v7 Splay's leaves: one entry
+/// missed about twice per leaf, a third of the pops of a full collection).
+#[derive(Clone, Copy)]
+pub(crate) struct PushedProtos([Value; 2]);
+
+impl Default for PushedProtos {
+    fn default() -> Self {
+        Self([Value::UNDEFINED; 2])
+    }
+}
+
+impl PushedProtos {
+    /// Whether `proto` is not one of the two pushed last; it then becomes the newest.
+    #[inline(always)]
+    pub(crate) fn first_push(&mut self, proto: Value) -> bool {
+        if proto == self.0[0] || proto == self.0[1] {
+            return false;
+        }
+        self.0 = [proto, self.0[0]];
+        true
+    }
+}
