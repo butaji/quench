@@ -8,6 +8,7 @@ use crate::snapshot::{read_list, Reader, SnapshotError, SnapshotResult, Writer};
 
 impl Heap {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
+        debug_assert!(!self.satb_active(), "a snapshot is written of a heap no cycle is marking (`finish_cycle_now`)");
         self.write_out_all_strings();
         if !self.abandoned_contexts.is_empty() {
             return Err(SnapshotError::unsupported("host contexts awaiting release"));
@@ -61,6 +62,7 @@ impl Heap {
         for index in 0..slots {
             let cell = if reader.bool()? { Some(Cell::read_snapshot(reader)?) } else { None };
             let live = cell.is_some();
+            heap.weak_cells_made |= cell.as_ref().is_some_and(Cell::has_weak_entries);
             heap.slots.push(Slot { cell });
             let (word, bit) = slot_bit(index);
             if word == heap.marks.len() {

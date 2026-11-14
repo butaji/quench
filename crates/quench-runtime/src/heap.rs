@@ -23,6 +23,7 @@ pub(crate) use dependencies::{
 mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
+mod concurrent_mark;
 mod environment_trace;
 pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, EnvironmentTrace};
 mod external;
@@ -712,6 +713,11 @@ pub(crate) struct Heap {
     gc_profile: GcProfile,
     #[cfg(feature = "profile-memory")]
     memory_profile: memory_profile::MemoryProfile,
+    /// Whether a concurrent cycle is marking (`concurrent_mark`): never set yet.
+    satb_active: bool,
+    /// Whether any weak collection, weak reference or finalization registry was made since the
+    /// heap began: such a heap runs no concurrent cycle (`CycleRefusal::WeakCells`).
+    weak_cells_made: bool,
     /// Marks on the parallel pool whatever the heap's size (`Heap::parallel_mark`), so unit
     /// tests reach the parallel path with small heaps.
     #[cfg(test)]
@@ -1695,6 +1701,7 @@ impl Heap {
         }
         if weak {
             self.young_weak.push(index);
+            self.weak_cells_made = true;
         }
         #[cfg(feature = "profile-memory")]
         self.profile_allocation(Value::heap(index));
@@ -1738,6 +1745,7 @@ impl Heap {
         }
         if weak {
             self.young_weak.push(index as u32);
+            self.weak_cells_made = true;
         }
         Value::heap(index as u32)
     }
@@ -2006,6 +2014,8 @@ impl Heap {
         }
     }
     pub(crate) fn reset(&mut self) {
+        self.finish_cycle_now();
+        self.weak_cells_made = false;
         self.slots.clear();
         self.object_records = ObjectRecordSpace::default();
         self.array_records = ArrayRecordSpace::default();
@@ -2843,7 +2853,8 @@ impl Heap {
         );
         if crate::trace::Channel::Gc.on() {
             let (mark_us, sweep_us) = trace_times;
-            eprintln!("gc full={full} mark_us={mark_us} sweep_us={sweep_us} records_us={trace_records_us} resident_start={} resident_kept={} weight_between_fulls={} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.resident_at_full_start, self.resident_after_full, self.weight_between_fulls, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state);
+            let concurrent = if full { format!(" concurrent={:?}", self.concurrent_cycle_refusal()) } else { String::new() };
+            eprintln!("gc full={full}{concurrent} mark_us={mark_us} sweep_us={sweep_us} records_us={trace_records_us} resident_start={} resident_kept={} weight_between_fulls={} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.resident_at_full_start, self.resident_after_full, self.weight_between_fulls, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state);
         }
         self.live_weight_after_previous = live_weight;
         self.set_young_budget(next.threshold);

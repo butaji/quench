@@ -1736,3 +1736,35 @@ fn a_full_collection_sweeping_strings_on_a_worker_matches_the_serial_sweep() {
     };
     assert_eq!(run(true), run(false));
 }
+
+#[test]
+fn concurrent_cycles_are_refused_until_every_gate_passes() {
+    use concurrent_mark::{CONCURRENT_CYCLE_MAX_LEGACY_CELLS, CycleRefusal};
+    let mut heap = Heap::new();
+    assert!(!heap.satb_active());
+    assert_eq!(heap.concurrent_cycle_refusal_with(false, false), Some(CycleRefusal::Disabled));
+    assert_eq!(heap.concurrent_cycle_refusal_with(true, true), Some(CycleRefusal::NativeCode));
+    // A new heap's pacing favors minor collections.
+    assert_eq!(heap.concurrent_cycle_refusal_with(true, false), Some(CycleRefusal::Generational));
+    heap.pacing_state.favor_full_collections_for_test();
+    let passing = if cfg!(feature = "profile-memory") { Some(CycleRefusal::ProfilingMemory) } else { None };
+    assert_eq!(heap.concurrent_cycle_refusal_with(true, false), passing);
+    let cells: Vec<Value> = (0..=CONCURRENT_CYCLE_MAX_LEGACY_CELLS)
+        .map(|_| heap.alloc_bigint(crate::bigint::JsBigInt::from(1_u8)))
+        .collect();
+    assert_eq!(heap.concurrent_cycle_refusal_with(true, false), Some(CycleRefusal::LegacyCells));
+    drop(cells);
+    heap.collect([]);
+    heap.pacing_state.favor_full_collections_for_test();
+    assert_eq!(heap.concurrent_cycle_refusal_with(true, false), passing);
+    let weak_ref = heap.alloc(Cell::WeakRef { object: Box::new(plain_object()), target: None });
+    assert_eq!(heap.concurrent_cycle_refusal_with(true, false), Some(CycleRefusal::WeakCells));
+    // The heap remembers weak cells it made, even once they die.
+    heap.collect([]);
+    assert!(!heap.is_live(weak_ref));
+    heap.pacing_state.favor_full_collections_for_test();
+    assert_eq!(heap.concurrent_cycle_refusal_with(true, false), Some(CycleRefusal::WeakCells));
+    heap.reset();
+    heap.pacing_state.favor_full_collections_for_test();
+    assert_eq!(heap.concurrent_cycle_refusal_with(true, false), passing);
+}

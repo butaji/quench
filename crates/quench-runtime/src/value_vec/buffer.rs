@@ -50,6 +50,14 @@ pub(crate) const NATIVE_PROPERTY_BUFFER_LAYOUT: NativePropertyBufferLayout = Nat
 unsafe impl Send for PropertyBuffer {}
 unsafe impl Sync for PropertyBuffer {}
 
+impl PropertyBuffer {
+    /// Whether the values never move to another allocation: none is made yet, or they live in
+    /// the fixed reservation, which growth extends in place and compaction rewrites in place.
+    pub(super) fn stays_in_place(&self) -> bool {
+        !matches!(self.allocation, Allocation::Heap)
+    }
+}
+
 impl Default for PropertyBuffer {
     fn default() -> Self {
         Self {

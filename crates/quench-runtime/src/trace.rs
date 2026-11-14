@@ -133,5 +133,8 @@ setting! {
         WasmRootOnly = "wasm-root-only",
         /// Tiering starts at the selected root and promotes hot fallback callees.
         WasmRootFirst = "wasm-root-first",
+        /// Full collections that pass the concurrent-cycle gates (`Heap::concurrent_cycle_refusal`)
+        /// may mark concurrently with the mutator.
+        ConcurrentGc = "concurrent-gc",
     }
 }

@@ -323,6 +323,7 @@ impl<H: Host> Vm<H> {
     /// to validate root ownership and weak/finalization ordering without
     /// reaching into heap internals.
     pub(crate) fn collect_now(&mut self, program: &ResidualProgram) {
+        self.heap.finish_cycle_now();
         self.collect_slow(program, true);
     }
 

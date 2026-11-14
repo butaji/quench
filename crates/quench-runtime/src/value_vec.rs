@@ -316,6 +316,11 @@ impl ValueArena {
         (self.values.as_ptr(), self.values.len())
     }
 
+    /// Whether the property values never move to another allocation (`PropertyBuffer::stays_in_place`).
+    pub(crate) fn values_stay_in_place(&self) -> bool {
+        self.values.stays_in_place()
+    }
+
     /// The arena as a snapshot keeps it (`crate::snapshot`): storage positions name places in
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
