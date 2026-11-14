@@ -5260,5 +5260,5 @@ native_ir crates/quench-runtime/src/vm/compiled/lane_region/polls.rs 4
 native_ir crates/quench-runtime/src/vm/compiled/lane_region/stable.rs 1
 native_ir crates/quench-runtime/src/vm/compiled/lane_region/store_domains.rs 2
 native_ir crates/quench-runtime/src/vm/compiled/object_slots.rs 45
-native_ir crates/quench-runtime/src/vm/compiled/object_slots/emit.rs 42
+native_ir crates/quench-runtime/src/vm/compiled/object_slots/emit.rs 1
 native_refusals 26
