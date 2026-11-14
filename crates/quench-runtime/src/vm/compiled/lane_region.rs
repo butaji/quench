@@ -1074,18 +1074,26 @@ fn int32_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideI
 /// Whether `instruction` can change no heap value natively: anything else it would do (a
 /// non-Number operand, a missed cache) leaves the body first.
 fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> bool {
-    match instruction.op() {
-        _ if instruction.op().traits().has(Traits::FRAME_ONLY) => true,
-        opcode if opcode.is_load_const() => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
-        opcode if opcode.is_inc_dec() => instruction.numeric_local_target().is_none(),
-        opcode if opcode.is_load_capture() => instruction.result_flags() == 0 && instruction.capture_depth() == 0,
-        opcode if opcode.is_get_field() => !instruction.writes_current_this() && !instruction.returns_from_frame(),
+    reads_slot(constants, instruction).unwrap_or_else(|| match instruction.op() {
         // ToNumeric of a Number is the Number; any other operand leaves (`Lowering::instruction`). A
         // dense element is read natively, any other leaving (`emit_dense_element_read`); a null or
         // undefined operand leaves before any effect (`staged::require_object_coercible`).
         opcode if opcode.is_to_numeric() || opcode.is_get_index() || opcode.is_require_object_coercible() => !instruction.returns_from_frame(),
         _ => instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
-    }
+    })
+}
+
+/// Whether `instruction` reads only a frame slot, a constant, a capture or a field, where it is
+/// one; `None` for the other instructions.
+fn reads_slot(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> Option<bool> {
+    Some(match instruction.op() {
+        _ if instruction.op().traits().has(Traits::FRAME_ONLY) => true,
+        opcode if opcode.is_load_const() => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
+        opcode if opcode.is_inc_dec() => instruction.numeric_local_target().is_none(),
+        opcode if opcode.is_load_capture() => instruction.result_flags() == 0 && instruction.capture_depth() == 0,
+        opcode if opcode.is_get_field() => !instruction.writes_current_this() && !instruction.returns_from_frame(),
+        _ => return None,
+    })
 }
 
 /// Whether `instruction` is a store natively: of its atom, into a slot the object already

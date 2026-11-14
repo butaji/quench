@@ -129,16 +129,21 @@ pub(super) fn catch_edges(program: &ResidualProgram, function: &Function, unit: 
     }
     let admission = Admission { program, function, unit, region: matches!(coverage, Coverage::Loop { .. }), scoped: !function.own_names_resolve_statically(program) };
     for (pc, instruction) in unit.instructions.iter().enumerate() {
-        if !raising_instruction(*instruction, unit.registers)
-            || !coverage.lowered(pc) || !is_own_record(unit, pc) { continue; }
-        let Some(handler) = function.handler_at(pc as u32) else { continue };
-        let target = handler.target as usize;
-        let Some(bind) = admission.bind(handler) else { continue };
-        if target > pc && target < unit.instructions.len() && coverage.lowered(target) && is_own_record(unit, target) {
-            catches.insert(pc, Catch { target, bind });
+        if raising_instruction(*instruction, unit.registers) && let Some(catch) = catch_at(&admission, unit, coverage, pc) {
+            catches.insert(pc, catch);
         }
     }
     catches
+}
+
+/// The native catch of the raising instruction at unit PC `pc`, where its handler is admitted and
+/// lies after it inside the lowered range.
+fn catch_at(admission: &Admission, unit: &Unit, coverage: Coverage, pc: usize) -> Option<Catch> {
+    if !coverage.lowered(pc) || !is_own_record(unit, pc) { return None; }
+    let handler = admission.function.handler_at(pc as u32)?;
+    let target = handler.target as usize;
+    let bind = admission.bind(handler)?;
+    (target > pc && target < unit.instructions.len() && coverage.lowered(target) && is_own_record(unit, target)).then_some(Catch { target, bind })
 }
 
 impl Lowering<'_, '_> {
