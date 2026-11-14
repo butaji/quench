@@ -105,26 +105,33 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 impl<const ACC: u8> crate::staged::GlobalFrame<Concrete> for LaneFrame<ACC> {}
 
 impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
+    #[inline(always)]
     fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
         let register = operand.register_index().expect("a staged numeric operand is a register");
         u64::from(Value::from_bits(self.read(stage, register)).as_int().expect("a proved int operand") as u32)
     }
 
+    #[inline(always)]
     fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
         let register = operand.register_index().expect("a staged numeric operand is a register");
         Value::from_bits(self.read(stage, register)).as_number().expect("a proved Number operand").to_bits()
     }
 
+    #[inline(always)]
     fn prove_number(&mut self, stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
         Value::from_bits(self.read(stage, register)).as_number().map(|_| ())
     }
 
+    #[inline(always)]
     fn int_result(&mut self, _stage: &mut Concrete, word: u64) -> u64 {
         Value::integer(word as u32 as i32).to_bits()
     }
 
+    #[inline(always)]
     fn miss(&self) {}
+    #[inline(always)]
     fn int_fact(&self) {}
+    #[inline(always)]
     fn number_fact(&self) {}
 }
 

@@ -337,6 +337,7 @@ macro_rules! wrapping_int32_arithmetic {
 crate::vm::operations::number_arithmetic_rows!(wrapping_int32_arithmetic);
 
 impl NumericStage for super::Concrete {
+    #[inline(always)]
     fn relation(&mut self, relation: NumberRelation, domain: Domain,
         left: u64, right: u64) -> bool {
         match domain {
@@ -345,13 +346,16 @@ impl NumericStage for super::Concrete {
                 f64::from_bits(left), f64::from_bits(right)),
         }
     }
+    #[inline(always)]
     fn float_arithmetic(&mut self, operation: NumberArithmetic, left: u64, right: u64) -> u64 {
         operation.apply(&mut NumberF64Stage,
             f64::from_bits(left), f64::from_bits(right)).to_bits()
     }
+    #[inline(always)]
     fn float_negate(&mut self, value: u64) -> u64 {
         (-f64::from_bits(value)).to_bits()
     }
+    #[inline(always)]
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: u64, right: u64) -> (u64, bool) {
         let (left, right) = (int32(left), int32(right));
@@ -360,30 +364,45 @@ impl NumericStage for super::Concrete {
         let result = checked.unwrap_or_else(|| operation.apply(&mut WrappingInt32Stage, left, right));
         (u64::from(result as u32), overflowed)
     }
+    #[inline(always)]
     fn float_remainder(&mut self, left: u64, right: u64) -> u64 {
         crate::vm::operations::number_remainder(f64::from_bits(left), f64::from_bits(right)).to_bits()
     }
+    #[inline(always)]
     fn int_remainder(&mut self, left: u64, right: u64) -> u64 {
         u64::from(int32(left).wrapping_rem(int32(right)) as u32)
     }
+    #[inline(always)]
     fn float_unary(&mut self, operation: super::math::FloatUnary, value: u64) -> u64 {
         super::math::float_unary(operation, f64::from_bits(value)).to_bits()
     }
+    #[inline(always)]
     fn float_extreme(&mut self, maximum: bool, left: u64, right: u64) -> u64 {
         super::math::float_extreme(maximum, f64::from_bits(left), f64::from_bits(right)).to_bits()
     }
+    #[inline(always)]
     fn int_multiply(&mut self, left: u64, right: u64) -> u64 {
         u64::from(super::math::int_multiply(int32(left), int32(right)) as u32)
     }
+    #[inline(always)]
     fn i32_constant(&mut self, value: i32) -> u64 { u64::from(value as u32) }
+    #[inline(always)]
     fn f64_constant(&mut self, value: f64) -> u64 { value.to_bits() }
+    #[inline(always)]
     fn narrow(&mut self, value: u64) -> u64 { u64::from(value as u32) }
+    #[inline(always)]
     fn i32_to_f64(&mut self, value: u64) -> u64 { f64::from(int32(value)).to_bits() }
+    #[inline(always)]
     fn i32_is_zero(&mut self, value: u64) -> bool { int32(value) == 0 }
+    #[inline(always)]
     fn i32_is_negative(&mut self, value: u64) -> bool { int32(value) < 0 }
+    #[inline(always)]
     fn both(&mut self, a: bool, b: bool) -> bool { a && b }
+    #[inline(always)]
     fn either(&mut self, a: bool, b: bool) -> bool { a || b }
+    #[inline(always)]
     fn cond_word(&mut self, cond: bool) -> u64 { u64::from(cond) }
+    #[inline(always)]
     fn guard_false(&mut self, cond: bool, _miss: ()) -> Option<()> { (!cond).then_some(()) }
 }
 
