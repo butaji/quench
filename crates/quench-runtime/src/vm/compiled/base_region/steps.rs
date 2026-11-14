@@ -113,9 +113,9 @@ impl Step {
 /// begin `Wasm`). A Wasm function has its own compiler (`dispatch_wasm`, the Wasm tiers), which
 /// owns the linear memory, tables and typed registers these opcodes read, so a function holding
 /// one is not a b-jit body (`covers`), and a loop region holding one leaves at it.
-const EXCLUDED: [bool; Op::COUNT] = {
+const EXCLUDED: [u64; Op::COUNT.div_ceil(WORD)] = {
     const PREFIX: &[u8] = b"Wasm";
-    let mut table = [false; Op::COUNT];
+    let mut table = [0; Op::COUNT.div_ceil(WORD)];
     let mut index = 0;
     while index < Op::COUNT {
         let name = Op::NAMES[index].as_bytes();
@@ -125,7 +125,7 @@ const EXCLUDED: [bool; Op::COUNT] = {
             named = name[at] == PREFIX[at];
             at += 1;
         }
-        table[index] = named;
+        table[index / WORD] |= (named as u64) << (index % WORD);
         index += 1;
     }
     table
@@ -133,7 +133,7 @@ const EXCLUDED: [bool; Op::COUNT] = {
 
 /// Whether the b-jit compiles a function of these instructions: none is an excluded opcode.
 pub(in crate::vm::compiled) fn covers(code: &[WideInstruction]) -> bool {
-    code.iter().all(|instruction| !EXCLUDED[instruction.op() as usize])
+    code.iter().all(|instruction| EXCLUDED[instruction.op() as usize / WORD] >> (instruction.op() as usize % WORD) & 1 == 0)
 }
 
 /// The most registers a step the helper makes writes: its result, and the `this` a name call

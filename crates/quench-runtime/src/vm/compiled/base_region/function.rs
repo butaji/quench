@@ -148,11 +148,11 @@ fn call(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstru
 /// The facts the rows of the instructions that are no planned call decode by: a body's read the heap
 /// by its tables; a region's read its entry record, but for what a call row it keeps may change
 /// (`Facts::Entry::calls`: a call stitched in changes nothing), and what its stores stale.
-fn decode_facts(region: &LoopRegion, sites: &Sites, calls: &BTreeMap<u32, Vec<What>>) -> Facts {
+fn decode_facts(region: &LoopRegion, sites: &Sites, calls: &[Option<Vec<What>>]) -> Facts {
     if sites.ending == Ending::Body {
         return Facts::Site;
     }
-    let kept = calls.values().flatten().any(|what| matches!(what, What::Row(row) if matches!(row.step, Some(Step::Call(_)))));
+    let kept = calls.iter().flatten().flatten().any(|what| matches!(what, What::Row(row) if matches!(row.step, Some(Step::Call(_)))));
     let stores = region.instructions().iter().any(|instruction| stores_field(sites.known, *instruction) || stores_name(*instruction));
     Facts::Entry { dense: sites.dense && !kept, writes: stores || kept, calls: kept }
 }
@@ -179,13 +179,14 @@ fn cover(region: &LoopRegion, pc: u32, sites: &Sites, instruction: WideInstructi
 }
 
 /// Which rows control reaches from row 0; an error where one falls off the program's end.
-fn reachable(span: &Span, decoded: &[Decoded]) -> Result<Vec<bool>, String> {
+fn reachable(span: &Span, decoded: &[Decoded]) -> Result<Bits, String> {
     let count = decoded.len();
-    let (mut reached, mut pending) = (vec![false; count], vec![0]);
+    let (mut reached, mut pending) = (Bits::default(), vec![0]);
     while let Some(k) = pending.pop() {
-        if std::mem::replace(&mut reached[k], true) {
+        if reached.contains(k) {
             continue;
         }
+        reached.insert(k);
         for next in decoded[k].successors(k, count, span) {
             match next {
                 Next::Row(row) => pending.push(row),
@@ -386,14 +387,14 @@ fn row_kinds(region: &LoopRegion, origins: &[Origin], kinds: &[OperandKinds]) ->
 fn parts(region: &LoopRegion, sites: &mut Sites, helpers: LaneHelpers) -> Vec<Part> {
     let at = |k: usize| region.header + k as u32;
     let planned: Vec<(usize, WideInstruction)> = region.instructions().iter().copied().enumerate().filter(|(_, instruction)| sites.plans(*instruction, helpers)).collect();
-    let mut calls = BTreeMap::new();
+    let mut calls: Vec<Option<Vec<What>>> = region.instructions().iter().map(|_| None).collect();
     for (k, instruction) in planned {
-        calls.insert(at(k), call(region, at(k), sites, instruction));
+        calls[k] = Some(call(region, at(k), sites, instruction));
     }
     let facts = decode_facts(region, sites, &calls);
     let mut parts: Vec<Part> = region.instructions().iter().enumerate().flat_map(|(k, instruction)| {
         let pc = at(k);
-        let whats = calls.remove(&pc).unwrap_or_else(|| vec![cover(region, pc, sites, *instruction, (facts, helpers))]);
+        let whats = calls[k].take().unwrap_or_else(|| vec![cover(region, pc, sites, *instruction, (facts, helpers))]);
         whats.into_iter().map(move |what| Part { pc, what })
     }).collect();
     if sites.ending == Ending::Region {
@@ -411,20 +412,19 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     if ending == Ending::Body && stitched.rows[0].step == Some(Step::Leave) {
         return Err("first instruction leaves".to_string());
     }
-    let unreached = |row: Decoded, reached: &bool| if *reached { row } else { Decoded::step(Step::Leave, None) };
-    let rows: Vec<Decoded> = stitched.rows.into_iter().zip(&reached).map(|(row, reached)| unreached(row, reached)).collect();
+    let rows: Vec<Decoded> = stitched.rows.into_iter().enumerate().map(|(k, row)| if reached.contains(k) { row } else { Decoded::step(Step::Leave, None) }).collect();
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
     let (reprs, homes, webs, decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), spec.seen);
     let invalidation = spec.known.invalidation.filter(|_| decoded.iter().any(Decoded::holds_stable) && decoded.iter().any(Decoded::makes_calls));
     let realm = (!stitched.frames.is_empty()).then_some(spec.realm).or_else(|| held_realm(&decoded));
     let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm };
-    let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), reached[k], k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
+    let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
     let (code, resumes) = link(&layout, &planned)?;
     residuals::report_rows(&layout, region.header, &decoded, &planned, code.len());
-    let exits = decoded.iter().enumerate().filter(|(k, row)| reached[*k] && leaves(&layout, row)).count();
+    let exits = decoded.iter().enumerate().filter(|(k, row)| reached.contains(*k) && leaves(&layout, row)).count();
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
-    let covered = reached.iter().filter(|reached| **reached).count() - exits;
+    let covered = reached.count() - exits;
     let bare = realm.is_none() && decoded.iter().all(|row| row.heap.is_none() && !row.makes_calls() && !row.step.is_some_and(Step::reads_payload));
     let records = planned.iter_mut().filter_map(|row| row.owned.take()).collect();
     let (atoms, holders) = (held_atoms(&decoded), held_holders(&decoded));

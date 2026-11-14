@@ -37,8 +37,12 @@ impl Bits {
         self.0[member / WORD] |= 1 << (member % WORD);
     }
 
-    fn contains(&self, member: usize) -> bool {
+    pub(super) fn contains(&self, member: usize) -> bool {
         self.0.get(member / WORD).is_some_and(|word| word >> (member % WORD) & 1 != 0)
+    }
+
+    pub(super) fn count(&self) -> usize {
+        self.0.iter().map(|word| word.count_ones() as usize).sum()
     }
 }
 
