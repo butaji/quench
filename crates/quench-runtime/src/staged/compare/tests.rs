@@ -174,6 +174,15 @@ fn an_operator_no_relation_names_is_left_to_the_tier() {
     assert!(frame.calls.is_empty());
 }
 
+/// Whether the language's equality holds of `left` and `right`, for a pair their words decide;
+/// `None` for any other pair.
+fn equality_the_words_decide(left: Value, right: Value, strict: bool) -> Option<bool> {
+    let nullish_pair = !strict && [left, right].iter().all(|value| value.is_null() || value.is_undefined());
+    let same = left == right && left.as_number().is_none_or(|number| !number.is_nan());
+    let decided = left == right || (left.as_int().is_some() && right.as_int().is_some()) || nullish_pair;
+    decided.then_some(same || nullish_pair)
+}
+
 /// Every operator of the equality family over pairs the words decide: the jump takes the edge
 /// the language's own equality names, and the VM is never asked.
 #[test]
@@ -182,11 +191,7 @@ fn an_equality_the_words_decide_jumps_without_the_vm() {
     for (strict, negated) in [(false, false), (false, true), (true, false), (true, true)] {
         for (left, right) in values.iter().flat_map(|left| values.iter().map(move |right| (*left, *right))) {
             let mut frame = Probe::of(&[left, right]);
-            let nullish_pair = !strict && [left, right].iter().all(|value| value.is_null() || value.is_undefined());
-            let same = left == right && left.as_number().is_none_or(|number| !number.is_nan());
-            let decided = left == right || (left.as_int().is_some() && right.as_int().is_some()) || nullish_pair;
-            if !decided { continue; }
-            let equal = same || nullish_pair;
+            let Some(equal) = equality_the_words_decide(left, right, strict) else { continue };
             let step = run(&mut frame, Comparison::Equality { strict, negated }, true);
             let holds = equal != negated;
             assert!(matches!(step, Step::Control(edge) if edge == if holds { Edge::Following } else { Edge::Target }),

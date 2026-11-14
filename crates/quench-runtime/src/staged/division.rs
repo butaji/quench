@@ -123,6 +123,17 @@ impl<W, P> Operation<W, P> {
             Self::FieldGetHost { .. } => SmallVec::from_slice(&[("object", VALUE), ("atom", BYTECODE), ("site", SITE)]),
             Self::FieldAdd { .. } => SmallVec::from_slice(&[("object", VALUE), ("atom", BYTECODE), ("site", SITE),
                 ("value", VALUE)]),
+            Self::LoadName { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("atom", BYTECODE),
+                ("site", SITE), ("receiver", REGISTER), ("proof", PROOF)]),
+            Self::FieldStoreMiss { .. } => SmallVec::from_slice(&[("object", VALUE), ("atom", BYTECODE),
+                ("site", SITE), ("value", VALUE), ("proof", PROOF)]),
+            _ => self.keyed_operand_times(),
+        }
+    }
+
+    /// The keyed operations' operands (`heap_operand_times`): a delete and the element accesses.
+    fn keyed_operand_times(&self) -> OperandTimes {
+        match self {
             Self::Delete { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("base", REGISTER), ("key", REGISTER),
                 ("strict", BYTECODE)]),
             Self::IndexGetHost { .. } => SmallVec::from_slice(&[("base", VALUE), ("key", VALUE)]),
@@ -131,15 +142,11 @@ impl<W, P> Operation<W, P> {
             Self::IndexWrite { .. } => SmallVec::from_slice(&[("index", VALUE), ("value", VALUE), ("proof", PROOF)]),
             Self::IndexSetHelper { .. } => SmallVec::from_slice(&[("base", VALUE), ("key", VALUE),
                 ("value", VALUE), ("proof", PROOF)]),
-            Self::LoadName { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("atom", BYTECODE),
-                ("site", SITE), ("receiver", REGISTER), ("proof", PROOF)]),
-            Self::FieldStoreMiss { .. } => SmallVec::from_slice(&[("object", VALUE), ("atom", BYTECODE),
-                ("site", SITE), ("value", VALUE), ("proof", PROOF)]),
             _ => self.make_operand_times(),
         }
     }
 
-    /// The allocation and safepoint operations' operands (`heap_operand_times`).
+    /// The allocation and safepoint operations' operands (`keyed_operand_times`).
     fn make_operand_times(&self) -> OperandTimes {
         match self {
             Self::Allocate { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("allocation", BYTECODE),
