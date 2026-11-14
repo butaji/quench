@@ -76,14 +76,6 @@ pub(super) fn note_compile(took: std::time::Duration, ir: usize) {
     with_compiles(|cost| cost.record(&TIERS.priors, took.as_nanos() as u64, ir));
 }
 
-/// Clears what the model learned, so a test's tiers are decided by that test's compiles: the
-/// model is the process's, and a debug build's thousands of compiles would price every later
-/// test's decisions.
-#[cfg(test)]
-pub(super) fn reset_for_tests() {
-    *COMPILES.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = CompileCost { ns: 0.0, ir: 0.0 };
-}
-
 pub(super) fn learned_ns_per_ir() -> u64 {
     with_compiles(|cost| cost.ns_per_ir(&TIERS.priors))
 }

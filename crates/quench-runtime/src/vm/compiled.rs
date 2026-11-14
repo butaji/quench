@@ -89,8 +89,6 @@ pub(super) use lane_body_abi::lane_body_signature;
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;
 #[path = "compiled/tier_model.rs"] mod tier_model;
-#[cfg(test)]
-pub(super) fn tier_model_reset_for_tests() { tier_model::reset_for_tests() }
 #[path = "compiled/loop_model.rs"] pub(in crate::vm) mod loop_model;
 pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]

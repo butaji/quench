@@ -9,9 +9,6 @@ impl<H: Host> Vm<H> {
         host: H,
         execution_interrupt: crate::ExecutionInterrupt,
     ) -> Self {
-        // A test's tier decisions are its own compiles': the model is process-wide.
-        #[cfg(test)]
-        super::compiled::tier_model_reset_for_tests();
         Self {
             host,
             native_microtask_running: false,
