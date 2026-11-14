@@ -105,7 +105,7 @@ script_handler! {
     pub(super) fn lane_get_field_getter_hinted<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let value = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }
-            .and_then(|base| vm.holder_hint_hit(i.call_link.get(), i.imm(), base));
+            .and_then(|base| vm.getter_hint_hit(i.call_link.get(), i.imm(), base));
         let Some(value) = value else {
             sibling!(lane_get_field_getter_refresh::<H>, r, ip, Carried::script(cx))
         };
@@ -122,6 +122,7 @@ script_handler! {
     fn lane_get_field_getter_refresh<>(cx, r, ip, i, view) {
         let base = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) };
         let Some(value) = base.and_then(|base| unsafe { lane_hold_getter_hint(cx, ip, i, base) }) else {
+            requicken::<H>(ip, lane_get_field_getter::<H>);
             sibling!(lane_get_field_getter::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
@@ -140,17 +141,32 @@ unsafe fn lane_hold_getter_hint<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &La
     let site = vm.field_cache_index(i.c);
     let getter = vm.cached_field_getter(base, i.imm(), site)?;
     let value = unsafe { lane_getter_answer(cx, getter, base) }?;
-    let slot = lane_getter_field_slot(cx, getter, base).filter(|_| {
-        !vm.is_private_name(i.imm()) && !holds_loop_site(ip) && vm.cached_accessor_on_prototype(base, i.imm(), site)
-    });
-    let held = slot.is_some_and(|slot| {
-        set_prototype_hint(ip, |owned| vm.hold_getter_hint(owned, i.imm(), base, slot, NO_CALL_LINK));
-        vm.holder_hint_hit(i.call_link.get(), i.imm(), base).is_some()
-    });
-    if !held {
+    let slot = lane_getter_field_slot(cx, getter, base)
+        .filter(|_| !vm.is_private_name(i.imm()) && vm.cached_accessor_on_prototype(base, i.imm(), site));
+    if !slot.is_some_and(|slot| set_getter_hint(vm, ip, i.imm(), base, slot)) {
         requicken::<H>(ip, lane_get_field_getter::<H>);
     }
     Some(value)
+}
+
+/// The `FieldOperand::shape` of a record whose hint is a getter's own-field return
+/// (`Vm::getter_hint_hit`), as `HOLDER_HINT` no object's exact shape.
+const GETTER_HINT: u32 = super::super::NO_FIELD_RECEIVER - 3;
+
+/// Makes the own field `slot` of `base`, which the record's getter returns, the hint of the
+/// `GetField` record at `ip`, in place of the one it holds; whether the record holds it.
+fn set_getter_hint<H: Host>(vm: &mut Vm<H>, ip: Ip, atom: Atom, base: Value, slot: u16) -> bool {
+    if holds_loop_site(ip) {
+        return false;
+    }
+    // SAFETY: `ip` is a `GetField` record of a live view.
+    let i = unsafe { &*ip };
+    let owned = (unsafe { i.operand.field.shape } == GETTER_HINT).then(|| i.call_link.get());
+    let Some(index) = vm.hold_getter_hint(owned, atom, base, slot, NO_CALL_LINK) else {
+        return false;
+    };
+    set_record_hint(ip, GETTER_HINT, index);
+    true
 }
 
 /// The own slot of `base` that `getter`, a frameless read body, returns (`return this.field`),

@@ -869,11 +869,7 @@ impl<H: Host> Vm<H> {
         self.prune_first_chunks();
         let heap = &self.heap;
         self.lane_stack.forget_dead_callees(|value| heap.is_live(value));
-        // A hint names its prototype by record id, which an allocation may give another object
-        // once this one is swept.
-        for hint in self.holder_hints.iter_mut().filter(|hint| !heap.is_live(hint.holder)) {
-            hint.watch.retire();
-        }
+        self.holder_hints.retire_dead(|holder| heap.is_live(holder));
         self.realm.jobs.extend(
             finalization_jobs
                 .into_iter()

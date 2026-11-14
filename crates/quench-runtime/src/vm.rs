@@ -1,6 +1,6 @@
 #[cfg(feature = "native-execution")]
 mod native_operands;
-mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use holder_hints::{HintAnswer, HolderHint};
+mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use holder_hints::PrototypeHints;
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
 #[cfg(feature = "aot")]
@@ -2044,7 +2044,7 @@ pub(crate) struct Vm<H> {
     /// record its own, by index (`Vm::holder_hint_hit`). A hint names its prototype by record
     /// id, so a collection that sweeps that prototype drops the hint's value, and one that
     /// renumbers shapes every hint.
-    holder_hints: Vec<HolderHint>,
+    holder_hints: PrototypeHints,
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
     prototype_atom: Atom,
