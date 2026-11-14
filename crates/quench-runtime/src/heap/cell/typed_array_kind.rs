@@ -75,6 +75,7 @@ impl TypedArrayKind {
         matches!(self, Self::Int32 | Self::BigInt64)
     }
 
+    #[inline(always)]
     pub(crate) const fn width(self) -> usize {
         TYPED_ARRAYS[self as usize].width
     }
