@@ -9,6 +9,7 @@
 use super::region::Region;
 use super::{NumericStage, Stage};
 use crate::heap::TypedArrayKind;
+use crate::typed_ir::{IntRange, Type};
 
 /// A typed array's elements as an access reads them, once proved: the first element's address
 /// and the element count (below 2^31, so an int32 index below zero is no index), in one width,
@@ -40,11 +41,38 @@ impl NativeKind {
     pub(crate) fn new(kind: TypedArrayKind) -> Option<Self> {
         ELEMENTS.into_iter().find(|native| native.kind == kind)
     }
+
+    /// The type of an element read of this kind: an integer element's range (an int32 type for
+    /// the kinds of at most 32 bits, a signed one's or an unsigned one's), a float element's Number.
+    pub(crate) fn element_type(self) -> Type {
+        match self.element {
+            Element::Integer(integer) => Type::int(integer.range(self.kind.width())),
+            Element::Float32 | Element::Float64 => Type::NUMBER,
+        }
+    }
+
+    /// Whether every element of this kind is an int32 (`typed_read_integer` reads it as one).
+    pub(crate) fn is_int32(self) -> bool { self.element_type().is_int32() }
 }
 
 /// The integer elements, by the load that makes their int32 word and the store of its low bytes.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Integer { Unsigned8, Clamped8, Signed8, Unsigned16, Signed16, Signed32, Unsigned32 }
+
+impl Integer {
+    fn signed(self) -> bool { matches!(self, Self::Signed8 | Self::Signed16 | Self::Signed32) }
+
+    /// The range of an element of `width` bytes.
+    fn range(self, width: usize) -> IntRange {
+        let bits = width as u32 * u8::BITS;
+        if self.signed() {
+            let half = 1_i64 << (bits - 1);
+            IntRange { min: -half, max: half - 1 }
+        } else {
+            IntRange { min: 0, max: (1_i64 << bits) - 1 }
+        }
+    }
+}
 
 /// What a kind's element is: an integer, or a binary32 or binary64 float.
 #[derive(Clone, Copy)]
@@ -177,6 +205,20 @@ pub(crate) fn typed_read<S: NumericStage>(stage: &mut S, view: TypedView<S::Word
         Some(load_number(stage, native.element, address))
     };
     by_kind(stage, view.kind, &access, miss)
+}
+
+/// The int32 word at element `index` of `view`, where the view's kind is fixed and its elements
+/// are int32s (`NativeKind::is_int32`): the load itself, with no Number made of it. Past the
+/// elements leaves at `miss`; any other view reads no such word (`None`, nothing emitted).
+#[inline(always)]
+pub(crate) fn typed_read_integer<S: Stage>(stage: &mut S, view: TypedView<S::Word>, index: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    let ViewKind::Static(native @ NativeKind { kind, element: Element::Integer(integer) }) = view.kind else { return None };
+    if !native.is_int32() { return None; }
+    let in_bounds = stage.ult(index, view.length);
+    stage.guard(in_bounds, miss)?;
+    let address = element_address(stage, view.values, index, kind);
+    Some(load_integer(stage, integer, address))
 }
 
 /// Stores the Number `number` at element `index` of `view`: past the elements, of a kind

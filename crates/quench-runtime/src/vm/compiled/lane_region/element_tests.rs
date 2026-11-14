@@ -119,3 +119,18 @@ fn a_float64_sum_loop_has_no_kind_dispatch_in_its_body_and_checks_the_kind_once_
     let dynamic = region_over(SUM, false, false, ElementViews::Typed(None));
     assert!(dispatch(&dynamic) >= kinds.len(), "a view of no site kind dispatches on the record's in the loop: {dynamic}");
 }
+
+/// The conversions between a Number and an integer in `body`.
+fn conversions(function: &ir::Function, body: &[ir::Inst]) -> usize {
+    body.iter().filter(|&&inst| matches!(function.dfg.insts[inst].opcode(),
+        ir::Opcode::FcvtFromSint | ir::Opcode::FcvtToSint | ir::Opcode::FcvtToSintSat
+            | ir::Opcode::FcvtFromUint | ir::Opcode::FcvtToUint | ir::Opcode::FcvtToUintSat)).count()
+}
+
+#[test]
+fn a_uint8_load_is_an_int32_word_that_no_conversion_touches() {
+    use crate::heap::TypedArrayKind as Kind;
+    let crc = "function crc(d) { var c = 0; for (var i = 0; i < 100; i++) { c = (c ^ d[i]) & 255; } return c; }";
+    let bytes = region_over(crc, false, false, ElementViews::Typed(Some(Kind::Uint8)));
+    assert_eq!(conversions(&bytes, &loop_body(&bytes)), 0, "a byte is read as the int32 it is: {bytes}");
+}

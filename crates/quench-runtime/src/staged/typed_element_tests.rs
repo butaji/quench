@@ -3,14 +3,14 @@
 //! the view proof over the native record a published typed array has, per kind.
 
 use super::element_rows::ElementView;
-use super::typed_elements::{typed_read, NativeKind, TypedView, ViewKind};
+use super::typed_elements::{typed_read, typed_read_integer, NativeKind, TypedView, ViewKind};
 use super::typed_view::{concrete_typed_read, concrete_typed_view, prove_typed_view, TypedRecords, ViewAccess};
 use super::test_words::{READ, WRITE};
 use super::*;
 use crate::bytecode::Operand;
 use crate::heap::TypedArrayKind as Kind;
 use crate::heap::{BufferBytes, BufferViewObject, Cell, Heap, Object, ViewLength};
-use crate::typed_ir::Type;
+use crate::typed_ir::{IntRange, Type};
 use crate::Value;
 
 /// A frame holding a typed view over `bytes`: register 0 is the array, 1 the int32 key, 2 the
@@ -240,4 +240,39 @@ fn the_frameless_arms_are_the_proof_and_the_row() {
     let bytes = pattern(Kind::Int16);
     assert_eq!(concrete_typed_read(view, 1), Some(read(Kind::Int16, &bytes[2..]).to_bits()));
     assert_eq!(concrete_typed_read(view, 3), None, "past the elements");
+}
+
+#[test]
+fn an_integer_kinds_element_reads_as_its_int32_word_inside_its_range_and_other_kinds_decline() {
+    for kind in KINDS {
+        let (mut heap, bytes) = (Heap::new(), pattern(kind));
+        let array = typed_array(&mut heap, kind, bytes.clone());
+        let native = NativeKind::new(kind).expect("a native kind");
+        let view = proved(&mut heap, array, ViewAccess { kind: Some(native), writable: false }).expect("a published view of the kind proves");
+        for index in 0..3 {
+            let number = read(kind, &bytes[index as usize * kind.width()..]);
+            let word = typed_read_integer(&mut Concrete::new(std::ptr::null()), view, index, ());
+            assert_eq!(word.is_some(), native.is_int32(), "{kind:?}");
+            if let Some(word) = word { assert_eq!(f64::from(word as u32 as i32), number, "{kind:?}[{index}]"); }
+            if let Some(range) = native.element_type().int_range() {
+                assert!(range.contains(IntRange::singleton(number as i64)), "{kind:?}[{index}] = {number} in {range:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn element_types_are_the_kinds_exact_integer_ranges_and_numbers_for_floats() {
+    let type_of = |kind| NativeKind::new(kind).expect("a native kind").element_type();
+    let range = |min, max| Type::int(IntRange { min, max });
+    assert_eq!(type_of(Kind::Uint8), range(0, 255));
+    assert_eq!(type_of(Kind::Uint8Clamped), range(0, 255));
+    assert_eq!(type_of(Kind::Int8), range(-128, 127));
+    assert_eq!(type_of(Kind::Uint16), range(0, 65535));
+    assert_eq!(type_of(Kind::Int16), range(-32768, 32767));
+    assert_eq!(type_of(Kind::Int32), Type::INT32);
+    assert_eq!(type_of(Kind::Uint32), range(0, i64::from(u32::MAX)));
+    assert!(!type_of(Kind::Uint32).is_int32() && type_of(Kind::Uint32).is_subtype(Type::NUMBER));
+    assert_eq!(type_of(Kind::Float32), Type::NUMBER);
+    assert_eq!(type_of(Kind::Float64), Type::NUMBER);
 }

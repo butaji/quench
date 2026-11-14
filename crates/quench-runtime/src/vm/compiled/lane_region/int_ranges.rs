@@ -9,7 +9,7 @@
 //! growing instead of assuming one and checking it on the back edge.
 
 use super::*;
-use super::super::facts::{self, Model, Seeds, Text};
+use super::super::facts::{self, Model, Observed, ObservedRead, Seeds, Text};
 
 /// The facts one analysis proves, by unit PC.
 pub(super) struct IntRanges {
@@ -31,12 +31,28 @@ impl IntRanges {
 }
 
 impl Lowering<'_, '_> {
+    /// The element reads the entry observed to yield Numbers (`observed`), and the reads of a
+    /// hoisted typed array of a fixed kind, each of which yields a Number of the kind's element
+    /// type: an integer kind's range, a typed-array load being its elements' own integers.
+    fn element_reads(&self, instructions: &[WideInstruction]) -> Vec<ObservedRead> {
+        let typed: Vec<ObservedRead> = instructions.iter().enumerate().filter(|(_, instruction)| instruction.op().is_get_index())
+            .filter_map(|(pc, instruction)| {
+                let array = self.loop_array(pc, instruction.operand_b().register_index())?;
+                Some(ObservedRead { pc, ty: array.views.observed_kind().and_then(NativeKind::new)?.element_type() })
+            }).collect();
+        let mut reads: Vec<ObservedRead> = self.observed.0.iter().filter(|read| typed.iter().all(|seed| seed.pc != read.pc))
+            .copied().chain(typed.iter().copied()).collect();
+        reads.sort_by_key(|read| read.pc);
+        reads
+    }
+
     /// The proofs of the unit entered at `entry` with the checked inputs `initial`.
     pub(super) fn prove_ranges(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
         leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) -> IntRanges {
         let dense = |pc: usize| self.dense_loop_access(pc);
         let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
-        let seeds = Seeds { contracts: self.facts.contracts(), observed: self.observed, entering: &self.entering, model: Some(model) };
+        let reads = self.element_reads(instructions);
+        let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model) };
         let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
             native_calls: self.native_calls };
         let mut proved = IntRanges::new(instructions.len());

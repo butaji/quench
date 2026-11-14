@@ -96,3 +96,11 @@ fn an_osr_entered_loop_takes_its_counters_sign_from_the_entry() {
     let guarded = bounds_tests(&lowered_entered(source, "run", Some(IntRange::NON_NEGATIVE)));
     assert_eq!(guarded + 1, unknown, "a non-negative entering `i` under `i < a.length` needs no bounds guard");
 }
+
+#[test]
+fn a_counter_below_a_proved_int32_bound_has_no_overflow_exit() {
+    let loop_below = |bound: &str| lowered(&format!(
+        "function run(n){{{bound}let s=0;for(let i=0;i<n;i++){{s=i;}}return s;}}"), "run");
+    assert_eq!(overflow_branches(&loop_below("n=n|0;")), 0, "i < n with n an int32 keeps i + 1 inside int32");
+    assert!(overflow_branches(&loop_below("")) > 0, "a bound that is no int32 proves nothing");
+}

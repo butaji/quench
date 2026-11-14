@@ -4,8 +4,8 @@
 //! over the frame's proofs of the array (`frame_elements`), with the exit, the join and the
 //! views a store retires left to this lowering.
 use super::*;
-use crate::staged::typed_elements::TypedView;
-use crate::staged::{Operation, Step};
+use crate::staged::typed_elements::{typed_read_integer, TypedView};
+use crate::staged::{Operation, Stage, Step};
 
 impl Lowering<'_, '_> {
     /// The row of `instruction` where it is an element access whose operands this unit holds.
@@ -39,6 +39,8 @@ impl Lowering<'_, '_> {
     fn element_read(&mut self, state: &mut State, pc: usize, (destination, base, key): (Register, Register, crate::bytecode::Operand)) -> bool {
         let exit = self.guard_exit(state, pc as u32);
         let array = self.loop_array(pc, Some(base));
+        if let Some(array) = array.filter(|array| self.reads_int32(*array))
+            && self.integer_element_read(state, (destination, key), array, exit) { return true; }
         // An element read as a Number (`number_reads`) needs no hole test of its own: a hole is a NaN
         // pattern, which the Number proof's one NaN test sends to the tag check that leaves.
         let packed = self.observed.at(pc).is_some();
@@ -56,6 +58,29 @@ impl Lowering<'_, '_> {
             Some(_) => { self.number(state, destination, exit); }
             None => {}
         }
+        true
+    }
+
+    /// Whether `array` is a hoisted typed array of a fixed kind whose elements are all int32s.
+    fn reads_int32(&self, array: LoopArray) -> bool {
+        array.views.observed_kind().and_then(NativeKind::new).is_some_and(NativeKind::is_int32)
+    }
+
+    /// An element read of a hoisted typed array of an int32 kind (`reads_int32`) into `destination`
+    /// as the int32 word it is: no Number is made of it and converted back. `false` where the
+    /// access is not one, with nothing emitted.
+    fn integer_element_read(&mut self, state: &mut State, (destination, key): (Register, crate::bytecode::Operand),
+        array: LoopArray, exit: ir::Block) -> bool {
+        let Some(index) = self.operand_int(state, key, exit) else { return false };
+        let frame_elements::Held::Typed(view) = self.held_array(array, (false, false)) else { return false };
+        let word = {
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            let index = stage.uextend32(index);
+            typed_read_integer(&mut stage, view, index, exit)
+        };
+        let Some(word) = word else { return false };
+        let int = if self.raw_lane(word) == Lane::I64 { self.raw_unary(Unary::Narrow(Lane::I32), word) } else { word };
+        self.set_int(state, destination, int);
         true
     }
 

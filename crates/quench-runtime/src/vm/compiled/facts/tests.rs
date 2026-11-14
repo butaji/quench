@@ -1,4 +1,5 @@
 use super::*;
+use crate::typed_ir::IntRange;
 
 #[test]
 fn native_call_retires_conditional_shapes_in_cfg_facts() {
@@ -120,17 +121,19 @@ fn zero_register_blocks_keep_reachability_without_allocating_type_rows() {
 }
 
 /// The unit PCs of `source`'s first function whose int32 arithmetic or step the run proves
-/// overflow-free, and the PCs of all its arithmetic and steps.
-fn overflow_proofs(source: &str) -> (Vec<usize>, Vec<usize>) {
+/// overflow-free, and the PCs of all its arithmetic and steps, entered with register 0 typed
+/// `input` and guarded to the `entering` ranges.
+fn overflow_proofs_entered(source: &str, input: Type, entering: &[(Register, IntRange)]) -> (Vec<usize>, Vec<usize>) {
     use crate::vm::operations::NumberArithmetic;
     let program = crate::Engine::specialize(source, "ranges.js").unwrap();
     let function = program.function(1);
     let instructions: Vec<_> = function.instructions().collect();
     let leaders = super::super::lane_region::leaders(&instructions);
-    let initial = vec![Type::ANY; usize::from(function.registers)];
+    let mut initial = vec![Type::ANY; usize::from(function.registers)];
+    initial[0] = input;
     let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants,
         written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: false };
-    let seeds = Seeds::observing(Observed::NONE);
+    let seeds = Seeds { entering, ..Seeds::observing(Observed::NONE) };
     let mut free = Vec::new();
     analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
         if point.overflow_free(&program.constants, instructions[pc]) { free.push(pc); }
@@ -141,6 +144,8 @@ fn overflow_proofs(source: &str) -> (Vec<usize>, Vec<usize>) {
         .map(|(pc, _)| pc).collect();
     (free, steps)
 }
+
+fn overflow_proofs(source: &str) -> (Vec<usize>, Vec<usize>) { overflow_proofs_entered(source, Type::ANY, &[]) }
 
 #[test]
 fn a_counted_loops_induction_variable_and_sum_are_overflow_free() {
@@ -154,4 +159,47 @@ fn an_unbounded_counter_widens_to_a_fixpoint_and_keeps_its_overflow_exit() {
     let (free, steps) = overflow_proofs("function run(n){let i=0;while(n){i=i+1;}return i;}");
     assert!(!steps.is_empty());
     assert!(steps.iter().all(|pc| !free.contains(pc)), "{free:?} of {steps:?}");
+}
+
+#[test]
+fn a_counter_below_a_proved_int32_bound_never_overflows_and_one_below_a_number_may() {
+    let (free, steps) = overflow_proofs("function run(n){n=n|0;let s=0;for(let i=0;i<n;i++){s=i;}return s;}");
+    assert!(!steps.is_empty() && steps.iter().all(|pc| free.contains(pc)), "{free:?} of {steps:?}");
+    let (free, steps) = overflow_proofs("function run(n){let s=0;for(let i=0;i<n;i++){s=i;}return s;}");
+    assert!(!steps.is_empty() && steps.iter().all(|pc| !free.contains(pc)), "{free:?} of {steps:?}");
+}
+
+#[test]
+fn an_entry_guarded_range_seeds_its_input_and_an_unguarded_int32_proves_nothing() {
+    let source = "function run(k){return k-1;}";
+    let (free, steps) = overflow_proofs_entered(source, Type::INT32, &[(0, IntRange::NON_NEGATIVE)]);
+    assert!(!steps.is_empty() && steps.iter().all(|pc| free.contains(pc)), "{free:?} of {steps:?}");
+    let (free, _) = overflow_proofs_entered(source, Type::INT32, &[]);
+    assert!(free.is_empty(), "{free:?}");
+}
+
+#[test]
+fn a_seeded_typed_array_load_types_its_register_with_the_kinds_range() {
+    use crate::heap::TypedArrayKind as Kind;
+    let program = crate::Engine::specialize(
+        "function run(d){let c=0;for(let i=0;i<100;i++){c=(c^d[i])&255;}return c;}", "typed.js").unwrap();
+    let function = program.function(1);
+    let instructions: Vec<_> = function.instructions().collect();
+    let leaders = super::super::lane_region::leaders(&instructions);
+    let byte = crate::staged::typed_elements::NativeKind::new(Kind::Uint8).unwrap().element_type();
+    let reads: Vec<ObservedRead> = instructions.iter().enumerate().filter(|(_, instruction)| instruction.op().is_get_index())
+        .map(|(pc, _)| ObservedRead { pc, ty: byte }).collect();
+    assert!(!reads.is_empty());
+    let initial = vec![Type::ANY; usize::from(function.registers)];
+    let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants,
+        written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: false };
+    let seeds = Seeds { observed: Observed(&reads), ..Seeds::observing(Observed::NONE) };
+    let mut loaded = Vec::new();
+    analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
+        for read in reads.iter().filter(|read| read.pc + 1 == pc) {
+            loaded.push(point.types[usize::from(instructions[read.pc].result_register())]);
+        }
+    });
+    assert!(!loaded.is_empty() && loaded.iter().all(|ty| *ty == byte), "{loaded:?}");
+    assert_eq!(byte.machine(), Type::INT32, "an int32 representation, not a Float64 one");
 }
