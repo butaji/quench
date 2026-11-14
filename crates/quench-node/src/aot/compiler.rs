@@ -317,4 +317,20 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
+    #[test]
+    fn graph_requires_dynamic_source_for_reflective_forms_only() {
+        let directory = std::env::temp_dir().join(format!("quench-reflective-demands-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        for (source, requires) in [
+            ("eval('1');", true), ("new Function('return 1');", true), ("const F = value.constructor; F(text);", true),
+            ("const key = text(); value[key];", true), ("const o = { a: 1 }; o.a + o['b'] + [1][0];", false),
+        ] {
+            let entry = directory.join("entry.cjs");
+            fs::write(&entry, source).unwrap();
+            let graph = SourceManifest::default().add_module_graph(&entry).unwrap();
+            assert_eq!(graph.requires_dynamic_source, requires, "{source}");
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
 }
