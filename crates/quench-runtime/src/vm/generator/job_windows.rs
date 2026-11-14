@@ -86,19 +86,7 @@ impl<H: Host> Vm<H> {
     ) {
         let completion = Completion::Await(value);
         match job.kind {
-            SuspendKind::AsyncFunction => {
-                let (mut continuation, realm, promise) = self
-                    .heap
-                    .await_state_mut(job.object)
-                    .and_then(AwaitState::take_running)
-                    .expect("a running async function's state keeps its continuation");
-                self.park_frame(&mut continuation.frame, pc, depth);
-                continuation.completion = completion;
-                continuation.resume_register = Some(destination);
-                if let Some(state) = self.heap.await_state_mut(job.object) {
-                    *state = AwaitState::arm(AwaitKind::AsyncFunction(continuation), realm, promise);
-                }
-            }
+            SuspendKind::AsyncFunction => self.suspend_async_function_job(job, (pc, destination, depth), completion),
             SuspendKind::AsyncGenerator => {
                 let continuation = self.park_generator_job(job, pc, destination, completion, depth);
                 if let Some(record) = self.generator_record_mut(job.object) {
@@ -111,6 +99,22 @@ impl<H: Host> Vm<H> {
                     record.suspend(continuation);
                 }
             }
+        }
+    }
+
+    /// Parks the frame of a windowed async function `job`, awaiting at `pc` with its result going to
+    /// `destination`, and arms its await state again.
+    fn suspend_async_function_job(&mut self, job: JobRoot, (pc, destination, depth): (usize, crate::bytecode::Register, usize), completion: Completion) {
+        let (mut continuation, realm, promise) = self
+            .heap
+            .await_state_mut(job.object)
+            .and_then(AwaitState::take_running)
+            .expect("a running async function's state keeps its continuation");
+        self.park_frame(&mut continuation.frame, pc, depth);
+        continuation.completion = completion;
+        continuation.resume_register = Some(destination);
+        if let Some(state) = self.heap.await_state_mut(job.object) {
+            *state = AwaitState::arm(AwaitKind::AsyncFunction(continuation), realm, promise);
         }
     }
 

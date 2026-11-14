@@ -4,6 +4,7 @@ pub(super) use super::shape_lookup::derive_shape_lookup_index;
 pub(super) use super::field_cache::FieldCacheProbe;
 use crate::value::HeapReference;
 mod mru_chain;
+mod shape_edits;
 pub(super) use mru_chain::MRU_CHAIN_END;
 use mru_chain::record_mru_entry;
 /// The slot word of a stored field entry: the slot in the low half, a store class in byte 2
@@ -997,27 +998,7 @@ impl<H: Host> Vm<H> {
         self.heap.property_set(object, slot, value);
     }
     pub(super) fn invalidate_field_caches(&mut self) {
-        match &mut self.field_cache_writes {
-            Some(sites) => {
-                for &site in sites.iter() {
-                    let site = site as usize;
-                    self.field_caches.set(site, EMPTY_CACHE);
-                    self.field_add_indices.set(site, NO_FIELD_ADD_SET);
-                    self.megamorphic_field_indices.set(site, NO_MEGAMORPHIC_FIELD);
-                    self.inherited_field_indices.set(site, NO_INHERITED_FIELD);
-                    self.accessor_field_indices.set(site, NO_ACCESSOR_FIELD);
-                }
-                sites.clear();
-            }
-            None => {
-                self.field_caches.reset();
-                self.field_add_indices.reset();
-                self.megamorphic_field_indices.reset();
-                self.inherited_field_indices.reset();
-                self.accessor_field_indices.reset();
-                self.field_cache_writes = Some(Vec::new());
-            }
-        }
+        self.reset_field_cache_tables();
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
         self.array_iteration_shape = None;
@@ -1046,6 +1027,31 @@ impl<H: Host> Vm<H> {
         self.regexp_last_index_layouts.clear();
         self.regexp_builtin_layouts.clear();
         self.regexp_symbol_layouts.clear();
+    }
+    /// Empties the per-site cache tables: the sites written since the last reset where they were
+    /// tracked, else every site, which starts the tracking (`field_cache_writes`).
+    fn reset_field_cache_tables(&mut self) {
+        match &mut self.field_cache_writes {
+            Some(sites) => {
+                for &site in sites.iter() {
+                    let site = site as usize;
+                    self.field_caches.set(site, EMPTY_CACHE);
+                    self.field_add_indices.set(site, NO_FIELD_ADD_SET);
+                    self.megamorphic_field_indices.set(site, NO_MEGAMORPHIC_FIELD);
+                    self.inherited_field_indices.set(site, NO_INHERITED_FIELD);
+                    self.accessor_field_indices.set(site, NO_ACCESSOR_FIELD);
+                }
+                sites.clear();
+            }
+            None => {
+                self.field_caches.reset();
+                self.field_add_indices.reset();
+                self.megamorphic_field_indices.reset();
+                self.inherited_field_indices.reset();
+                self.accessor_field_indices.reset();
+                self.field_cache_writes = Some(Vec::new());
+            }
+        }
     }
     /// Notes that `site`'s per-site cache entries change (`field_cache_writes`).
     pub(super) fn note_field_cache_write(&mut self, site: usize) {
@@ -2215,17 +2221,21 @@ impl<H: Host> Vm<H> {
         let value = match cache.answer {
             InheritedFieldAnswer::Absent => Value::UNDEFINED,
             InheritedFieldAnswer::Slot(_) if cache.constant_watch.as_ref().is_some_and(|watch| watch.is_published()) => cache.constant,
-            InheritedFieldAnswer::Slot(slot) => {
-                let holder = self.heap.object_record(cache.proved_holder)?;
-                // SAFETY: the proof keeps the holder and its recorded shape.
-                let value = unsafe { self.heap.property_get_shaped(holder, usize::from(slot)) }?;
-                let watch = crate::heap::watch_prototype_values(holder.exact_shape());
-                let cache = self.heap.dependencies_mut().inherited_mut(index);
-                (cache.constant, cache.constant_watch) = (value, watch);
-                value
-            }
+            InheritedFieldAnswer::Slot(slot) => self.hold_inherited_constant(index, (cache.proved_holder, slot))?,
         };
         self.profile.field_cache_hit(0, depth);
+        Some(value)
+    }
+
+    /// The value the proved holder's `slot` holds, which becomes inherited entry `index`'s constant
+    /// under a watch on the holder's prototype values.
+    fn hold_inherited_constant(&mut self, index: u32, (proved_holder, slot): (Value, u16)) -> Option<Value> {
+        let holder = self.heap.object_record(proved_holder)?;
+        // SAFETY: the proof keeps the holder and its recorded shape.
+        let value = unsafe { self.heap.property_get_shaped(holder, usize::from(slot)) }?;
+        let watch = crate::heap::watch_prototype_values(holder.exact_shape());
+        let cache = self.heap.dependencies_mut().inherited_mut(index);
+        (cache.constant, cache.constant_watch) = (value, watch);
         Some(value)
     }
 
@@ -4774,128 +4784,6 @@ impl<H: Host> Vm<H> {
                 .get_unchecked(table_index as usize)
                 .get(receiver, holder)
         }
-    }
-    pub(super) fn transition_shape(&mut self, shape: u32, atom: Atom) -> u32 {
-        self.transition_property_shape(shape, PropertyKey::string(atom))
-    }
-    pub(super) fn transition_property_shape(&mut self, shape: u32, key: PropertyKey) -> u32 {
-        self.transition_data_property_shape(shape, key, DEFAULT_DATA_ATTRIBUTES)
-    }
-    /// Out of line and of plain values: a lane construct that inlined it would otherwise pass
-    /// the transition it builds by its stack address, a temporary the construct's common path
-    /// then does not hold.
-    #[inline(never)]
-    pub(super) fn transition_data_property_shape(
-        &mut self,
-        shape: u32,
-        key: PropertyKey,
-        attributes: DataAttributes,
-    ) -> u32 {
-        debug_assert!(
-            self.walked_property_shape_slot(shape, key).is_none(),
-            "a shape gains only keys it lacks"
-        );
-        let transition = ShapeTransition::Add {
-            key,
-            slot: u32::try_from(self.shapes[shape as usize].storage_len())
-                .expect("object property index exceeds u32"),
-            attributes,
-        };
-        self.append_cached_shape_transition(shape, transition)
-    }
-    pub(super) fn append_cached_shape_transition(
-        &mut self,
-        shape: u32,
-        transition: ShapeTransition,
-    ) -> u32 {
-        if let Some(next) = self.owned_dictionary_edit(shape, transition) {
-            return next;
-        }
-        let key = transition.cache_key();
-        if let Some(key) = key {
-            let last = self.shapes[shape as usize].last_child.get();
-            let next = if last != NO_LAST_CHILD
-                && super::shape_transitions::is_transition(&self.shapes, last, shape, key)
-            {
-                Some(last)
-            } else {
-                self.transitions.get(&self.shapes, shape, key)
-            };
-            if let Some(next) = next {
-                self.shapes[shape as usize].last_child.set(next);
-                self.profile.shape_transition(true);
-                self.carry_lookup_index(shape, next);
-                return next;
-            }
-        }
-        if key.is_some() || matches!(transition, ShapeTransition::Add { .. }) {
-            self.profile.shape_transition(false);
-        }
-        let storage_len = self.shapes[shape as usize].storage_len();
-        let next_storage_len = match transition {
-            ShapeTransition::Add { .. } => storage_len
-                .checked_add(1)
-                .filter(|length| u32::try_from(*length).is_ok())
-                .expect("object property storage exhausted"),
-            ShapeTransition::Descriptor { .. } | ShapeTransition::Delete { .. } | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured | ShapeTransition::Constructed { .. } => storage_len,
-            ShapeTransition::Root
-            | ShapeTransition::Vacant
-            | ShapeTransition::Dictionary { .. } => {
-                unreachable!("cached shape transitions are adds, deletions, descriptors or metadata")
-            }
-        };
-        self.append_transition_shape(shape, key, transition, next_storage_len)
-    }
-    /// The shape an object of `shape` had before `shape` added `key` at `slot`, its last slot,
-    /// when deleting `key` can return the object to it: a plain add from an ordinary shape,
-    /// then only redefinitions of that slot (an accessor is added as data, then given its
-    /// descriptor).
-    fn shape_before_last_add(&self, shape: u32, key: PropertyKey, slot: usize) -> Option<u32> {
-        let mut added_shape = shape;
-        while let ShapeTransition::Descriptor { slot: redefined, .. } = self.shapes[added_shape as usize].transition {
-            let parent = self.shapes[added_shape as usize].parent;
-            if redefined as usize != slot || self.shapes[parent as usize].storage_len() != self.shapes[added_shape as usize].storage_len() {
-                return None;
-            }
-            added_shape = parent;
-        }
-        let ShapeTransition::Add { key: added, slot: added_slot, .. } = self.shapes[added_shape as usize].transition else {
-            return None;
-        };
-        let parent = self.shapes[added_shape as usize].parent;
-        (added == key && added_slot as usize == slot && self.shape_appends_one_slot(parent, added_shape))
-            .then_some(parent)
-    }
-
-    pub(super) fn delete_shape_property(&mut self, object: Value, key: PropertyKey) {
-        let Some(shape) = self.object_data(object).map(Object::shape) else { return };
-        let Some(slot) = self.property_shape_slot(shape, key) else {
-            return;
-        };
-        if let Some(parent) = self.shape_before_last_add(shape, key, slot) {
-            // The object returns to the shape it had before adding `key`: transient keys added
-            // and deleted in turn (an object used as a stack of entries) fork no shapes.
-            let data = self.object_data(object).expect("object survived property deletion");
-            let kept = self.shapes[parent as usize].storage_len();
-            if !crate::value_vec::ValueArena::drops_last_in_place(data.properties(), kept + 1) {
-                // The shorter length names a smaller arena range, so the values move to one;
-                // the object owns the same edges, which its write barrier already logged.
-                let values = (0..kept)
-                    .map(|index| self.heap.property_get(data, index).unwrap_or(Value::DELETED))
-                    .collect::<Vec<_>>();
-                self.heap.initialize_object_properties(object, parent, &values);
-            }
-            self.heap.set_object_shape(object, parent);
-            self.reconfigure_function_name(object, key);
-            self.invalidate_method_caches_for_key(key);
-            return;
-        }
-        let next_id =
-            self.append_cached_shape_transition(shape, ShapeTransition::Delete { key, slot: slot as u32 });
-        self.heap.set_object_shape(object, next_id);
-        self.pack_owned_dictionary(object, next_id);
-        self.reconfigure_function_name(object, key);
-        self.invalidate_method_caches_for_key(key);
     }
 }
 

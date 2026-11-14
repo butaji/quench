@@ -210,15 +210,7 @@ unsafe fn lane_body_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u
         let this = vm.current_this(frame).unwrap_or(Value::DELETED);
         vm.publish_body_receiver(this);
     }
-    // SAFETY: as above; the dropped caches are derived again where the lane next needs them.
-    unsafe {
-        (*cx).capture = std::ptr::null();
-        (*cx).outer = NO_OUTER_WALK;
-        (*cx).frame_storage = NO_FRAME_STORAGE;
-    }
-    match branched {
-        Some(true) => LANE_CALL_BRANCHED,
-        Some(false) => LANE_CALL_COMPLETED,
-        None => LANE_CALL_MISSED,
-    }
+    // The dropped caches are derived again where the lane next needs them.
+    handler_edges::drop_environment_caches(cx);
+    branched.map_or(LANE_CALL_MISSED, |branched| if branched { LANE_CALL_BRANCHED } else { LANE_CALL_COMPLETED })
 }

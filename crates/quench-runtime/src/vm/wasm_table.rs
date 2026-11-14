@@ -5,13 +5,13 @@ pub(super) fn table_range(
     length: u64,
     available: usize,
 ) -> Result<std::ops::Range<usize>, JsError> {
-    crate::wasm::memory::checked_range(
-        start,
-        usize::try_from(length)
-            .map_err(|_| JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsTable))?,
-        available,
-    )
-    .map_err(|_| JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsTable))
+    crate::wasm::memory::checked_range(start, usize::try_from(length).map_err(|_| out_of_bounds_table())?, available)
+        .map_err(|_| out_of_bounds_table())
+}
+
+/// The trap of a table access outside its elements.
+fn out_of_bounds_table() -> JsError {
+    JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsTable)
 }
 
 impl<H: Host> Vm<H> {
@@ -166,12 +166,9 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn wasm_table_get(&self, table: Value, index: u64) -> Result<Value, JsError> {
         self.wasm_table_elements(table)?
-            .get(
-                usize::try_from(index)
-                    .map_err(|_| JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsTable))?,
-            )
+            .get(usize::try_from(index).map_err(|_| out_of_bounds_table())?)
             .copied()
-            .ok_or_else(|| JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsTable))
+            .ok_or_else(out_of_bounds_table)
     }
 
     pub(super) fn wasm_table_fill(

@@ -1397,6 +1397,11 @@ impl<H: Host> Vm<H> {
                 return Err(error);
             }
         };
+        self.generator_step_of(generator, frame, outcome)
+    }
+
+    /// The step of `generator` whose popped `frame` ended with `outcome`.
+    fn generator_step_of(&mut self, generator: Value, frame: Box<Frame>, outcome: FrameOutcome) -> Result<GeneratorStep, JsError> {
         match outcome {
             FrameOutcome::Yield { value, destination, delegated_result, frame: None } => {
                 Ok(self.park_generator_frame(generator, frame, (value, destination), delegated_result))

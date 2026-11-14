@@ -8,6 +8,7 @@ use std::task::Poll;
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
 use cranelift_codegen::isa::TargetIsa;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use quench_regexp::backtrack::CAPTURE_REGISTERS;
 use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativeGuard, NativeInst, NativePlan, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
 
 mod assertions;
@@ -28,8 +29,6 @@ const SECOND_OPERAND: i32 = 2 * WORD;
 const PARAMETERS: usize = 6;
 /// An address of register `n` is `n << REGISTER_SHIFT` bytes on.
 const REGISTER_SHIFT: i64 = 3;
-/// A capture's two registers.
-const CAPTURE_REGISTERS: u32 = 2;
 /// The bits of a mask word, and the mask of a shift within one.
 const WORD_BITS: i64 = 64;
 const WORD_SHIFT_MASK: i64 = WORD_BITS - 1;

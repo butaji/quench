@@ -396,6 +396,47 @@ impl<H: Host> Vm<H> {
         JsError::thrown(object, text)
     }
 
+    /// `WebAssembly.Module.exports(module)`: a descriptor array of the module's exports.
+    fn wasm_module_export_descriptors(&mut self, p: &ResidualProgram, module: Value) -> Result<Value, JsError> {
+        let module = self.wasm_module_of(p, module)?;
+        let descriptors = module
+            .exports()
+            .iter()
+            .map(|export| (export.name.clone(), export.kind))
+            .collect::<Vec<_>>();
+        let mut values = Vec::with_capacity(descriptors.len());
+        for (name, kind) in descriptors {
+            values.push(
+                self.wasm_descriptor(p, &[("name", &name), ("kind", crate::WasmExternKind::from(kind).name())])?,
+            );
+        }
+        Ok(self.new_array(values))
+    }
+
+    /// `WebAssembly.Module.customSections(module, sectionName)`: a buffer per custom section of that name.
+    fn wasm_module_custom_sections(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
+        let arg = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);
+        let module = self.wasm_module_of(p, arg(0))?;
+        // `sectionName` is a required DOMString.
+        let Some(&name) = args.get(1) else {
+            return Err(self.type_error(
+                p,
+                "WebAssembly.Module.customSections(): Argument 1 must be a string".into(),
+            ));
+        };
+        let name = self.to_string(p, name)?;
+        let sections = module
+            .custom_sections_named(&name)
+            .map(<[u8]>::to_vec)
+            .collect::<Vec<_>>();
+        let mut values = Vec::with_capacity(sections.len());
+        for bytes in sections {
+            let length = bytes.len();
+            values.push(self.new_array_buffer_cell(bytes.into(), false, length, false, false));
+        }
+        Ok(self.new_array(values))
+    }
+
     pub(super) fn call_wasm_js_native(
         &mut self,
         p: &ResidualProgram,
@@ -420,42 +461,8 @@ impl<H: Host> Vm<H> {
                 let result = self.wasm_instantiate_source(p, arg(0), arg(1));
                 self.settled_promise(p, result)
             }
-            Native::WasmModuleExports => {
-                let module = self.wasm_module_of(p, arg(0))?;
-                let descriptors = module
-                    .exports()
-                    .iter()
-                    .map(|export| (export.name.clone(), export.kind))
-                    .collect::<Vec<_>>();
-                let mut values = Vec::with_capacity(descriptors.len());
-                for (name, kind) in descriptors {
-                    values.push(
-                        self.wasm_descriptor(p, &[("name", &name), ("kind", crate::WasmExternKind::from(kind).name())])?,
-                    );
-                }
-                Ok(self.new_array(values))
-            }
-            Native::WasmModuleCustomSections => {
-                let module = self.wasm_module_of(p, arg(0))?;
-                // `sectionName` is a required DOMString.
-                if args.len() < 2 {
-                    return Err(self.type_error(
-                        p,
-                        "WebAssembly.Module.customSections(): Argument 1 must be a string".into(),
-                    ));
-                }
-                let name = self.to_string(p, arg(1))?;
-                let sections = module
-                    .custom_sections_named(&name)
-                    .map(<[u8]>::to_vec)
-                    .collect::<Vec<_>>();
-                let mut values = Vec::with_capacity(sections.len());
-                for bytes in sections {
-                    let length = bytes.len();
-                    values.push(self.new_array_buffer_cell(bytes.into(), false, length, false, false));
-                }
-                Ok(self.new_array(values))
-            }
+            Native::WasmModuleExports => self.wasm_module_export_descriptors(p, arg(0)),
+            Native::WasmModuleCustomSections => self.wasm_module_custom_sections(p, args),
             Native::WasmModuleImports => {
                 let module = self.wasm_module_of(p, arg(0))?;
                 let descriptors = module

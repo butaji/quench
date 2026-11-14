@@ -80,9 +80,7 @@ fn leave<H: Host>(cx: *mut LaneContext<H>, resume: Ip, acc: Value) -> u64 {
 pub(super) fn finish<H: Host>(cx: *mut LaneContext<H>, depth: usize, resume: Ip, acc: Value, constructs: bool) -> u64 {
     let (plain, nested) = if constructs { (Completion::Constructs, Completion::ConstructsToBody) } else { (Completion::Plain, Completion::ReturnsToBody) };
     let Ok(_stack) = crate::stack::StackGuard::enter() else { return leave(cx, resume, acc) };
-    if left_lane(resume) || !recomplete(cx, depth, plain, nested) {
-        return leave(cx, resume, acc);
-    }
+    if left_lane(resume) || !recomplete(cx, depth, plain, nested) { return leave(cx, resume, acc); }
     let left = run_nested(cx, resume, acc);
     recomplete(cx, depth, nested, plain);
     ended(cx, left)
@@ -124,9 +122,7 @@ pub(super) fn finish_array_iteration<H: Host>(cx: *mut LaneContext<H>, resume: I
 /// for the innermost activation of a plain call or construction of this function whose call
 /// keeps its result; any other entry runs its body untimed.
 pub(super) fn audited<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u32, start: Ip, timed: Option<Timed>) -> Result<(), Ip> {
-    if timed != Some(Timed::Interpreter) {
-        return Ok(());
-    }
+    if timed != Some(Timed::Interpreter) { return Ok(()); }
     let vm = unsafe { vm(cx) };
     let Some(depth) = vm.lane_stack.activations.len().checked_sub(1) else { return Ok(()) };
     let top = &vm.lane_stack.activations[depth];
@@ -137,9 +133,7 @@ pub(super) fn audited<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function
     };
     let call = top.call;
     // SAFETY: the call record belongs to the caller's live view.
-    if top.function != function || unsafe { (*call).a } & crate::bytecode::RETURN_REGISTER != 0 {
-        return Ok(());
-    }
+    if top.function != function || unsafe { (*call).a } & crate::bytecode::RETURN_REGISTER != 0 { return Ok(()); }
     let started = std::time::Instant::now();
     if finish(cx, depth, start, Value::UNDEFINED, constructs) == LANE_CALL_COMPLETED {
         own.audit_record(Timed::Interpreter, audit_nanos(started));

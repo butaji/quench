@@ -149,6 +149,11 @@ pub(super) fn field_probe(
     });
 }
 
+/// `record_detail` of a description formatted here, where the census pays for it, not at the exit.
+pub(super) fn record_detail_args(detail: std::fmt::Arguments<'_>) {
+    record_detail(std::fmt::format(detail));
+}
+
 /// Counts one exit by a description of its operands (operator and value kinds).
 pub(super) fn record_detail(detail: String) {
     let mut details = DETAILS.lock().expect("lane exit details");

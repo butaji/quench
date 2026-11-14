@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::heap::ArrayElements;
-use crate::staged::iteration::{FOR_IN_CURSOR, FOR_IN_KEYS, FOR_IN_NO_MEMO, FOR_IN_OBJECT, concrete_for_in_next};
+use crate::staged::iteration::{FOR_IN_CURSOR, FOR_IN_EPOCH, FOR_IN_KEYS, FOR_IN_NO_MEMO, FOR_IN_OBJECT, FOR_IN_SHAPE, FOR_IN_STATE_LEN, concrete_for_in_next};
 use crate::vm::enumerable_key_memo::EnumerableSlots;
 
 /// What for-in keeps between loops: the last key snapshot (`ForInOwnKeys`), and the state of
@@ -76,9 +76,13 @@ impl<H: Host> Vm<H> {
     /// and none after it runs out of keys (`Vm::for_in_next`), so a state spared then whose record
     /// no collection has passed since is taken over instead of allocating one.
     fn for_in_state(&mut self, object: Value, keys: Value) -> Value {
-        let memo = self.for_in.own_keys.as_ref().filter(|listed| listed.keys == keys)
-            .map_or([Value::from_bits(FOR_IN_NO_MEMO); 2], |listed| [Value::from_bits(u64::from(listed.shape)), Value::from_bits(listed.epoch)]);
-        let elements = [object, keys, Value::integer(0), memo[0], memo[1]];
+        let (shape, listed_epoch) = self.for_in.own_keys.as_ref().filter(|listed| listed.keys == keys)
+            .map_or((FOR_IN_NO_MEMO, FOR_IN_NO_MEMO), |listed| (u64::from(listed.shape), listed.epoch));
+        let mut elements = [Value::integer(0); FOR_IN_STATE_LEN];
+        elements[FOR_IN_OBJECT] = object;
+        elements[FOR_IN_KEYS] = keys;
+        elements[FOR_IN_SHAPE] = Value::from_bits(shape);
+        elements[FOR_IN_EPOCH] = Value::from_bits(listed_epoch);
         let epoch = self.heap.collection_epoch();
         if let Some((state, _)) = self.for_in.spare_state.take().filter(|&(_, spared)| spared == epoch) {
             let values = self.heap.array_mut(state).expect("spared for-in state").elements_mut().make_mut();

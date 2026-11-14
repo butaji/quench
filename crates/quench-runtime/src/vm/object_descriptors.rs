@@ -320,10 +320,7 @@ impl<H: Host> Vm<H> {
         if invalid_kind || invalid_attributes {
             return Ok(false);
         }
-        if self
-            .typed_array_length(target)
-            .is_none_or(|length| index >= length)
-        {
+        if self.typed_array_length(target).is_none_or(|length| index >= length) {
             return Ok(false);
         }
         if let Some(value) = descriptor.value

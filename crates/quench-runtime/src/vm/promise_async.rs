@@ -98,38 +98,46 @@ impl<H: Host> Vm<H> {
                     return Ok(promise);
                 }
             };
-            match outcome {
-                super::FrameOutcome::Complete(value)
-                | super::FrameOutcome::ConstructComplete { value, .. } => {
-                    vm.promise_resolve_value(p, promise, value)?
-                }
-                super::FrameOutcome::Await {
-                    value,
-                    destination,
-                    frame: Some(frame),
-                } => {
-                    let continuation = vm.suspend_activation(
-                        frame,
-                        Completion::Await(value),
-                        Some(destination),
-                        promise,
-                    );
-                    vm.enqueue_async_resume(p, AwaitKind::function(continuation), promise, value)?;
-                }
-                super::FrameOutcome::Await { frame: None, .. } => {
-                    return Err(JsError("async frame lost at suspension".into()));
-                }
-                super::FrameOutcome::Yield { .. } => {
-                    return Err(JsError("yield is not valid in an async function".into()));
-                }
-                super::FrameOutcome::ParameterInitializationComplete => {
-                    return Err(JsError(
-                        "unexpected generator parameter initialization boundary".into(),
-                    ));
-                }
-            }
+            vm.settle_async_call(p, promise, outcome)?;
             Ok(promise)
         })
+    }
+
+    /// Settles `promise`, the result of an async call, by the outcome of its first run: a return
+    /// resolves it, an await suspends the frame into a continuation resumed when the awaited value
+    /// settles.
+    fn settle_async_call(&mut self, p: &ResidualProgram, promise: Value, outcome: super::FrameOutcome) -> Result<(), JsError> {
+        match outcome {
+            super::FrameOutcome::Complete(value)
+            | super::FrameOutcome::ConstructComplete { value, .. } => {
+                self.promise_resolve_value(p, promise, value)?
+            }
+            super::FrameOutcome::Await {
+                value,
+                destination,
+                frame: Some(frame),
+            } => {
+                let continuation = self.suspend_activation(
+                    frame,
+                    Completion::Await(value),
+                    Some(destination),
+                    promise,
+                );
+                self.enqueue_async_resume(p, AwaitKind::function(continuation), promise, value)?;
+            }
+            super::FrameOutcome::Await { frame: None, .. } => {
+                return Err(JsError("async frame lost at suspension".into()));
+            }
+            super::FrameOutcome::Yield { .. } => {
+                return Err(JsError("yield is not valid in an async function".into()));
+            }
+            super::FrameOutcome::ParameterInitializationComplete => {
+                return Err(JsError(
+                    "unexpected generator parameter initialization boundary".into(),
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Starts the body of an async root, a module with a top-level `await`, as a job over its

@@ -6,6 +6,7 @@
 //! the shapes of the objects alone do not decide, or that no `with` object or dynamic binding of
 //! the activation answers, leaves the instruction to the general path before any effect.
 use super::*;
+use super::with_scopes::WithChain;
 use super::super::activation::FrameRecord;
 use super::super::caller_view::CallerView;
 use crate::bytecode::Atom;
@@ -29,7 +30,7 @@ pub(super) struct WindowScope {
     pub(super) site: Option<u32>,
     /// The `with` objects of the activation's scope chain (`LaneStack::with_chain`), outermost
     /// first, which no `with` statement has entered while none is (`Vm::with_scope_entered`).
-    pub(super) chain: Vec<Value>,
+    pub(super) chain: WithChain,
 }
 
 /// The scope of the innermost activation, when it is an environment window: registers `r` and
@@ -53,7 +54,7 @@ pub(super) fn window_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
         captured,
         record: script.record,
         site: at_site.then_some(pc as u32 + 1),
-        chain: if vm.with_scope_entered { vm.lane_stack.with_chain(depth).collect() } else { Vec::new() },
+        chain: if vm.with_scope_entered { WithChain::from_iter(vm.lane_stack.with_chain(depth)) } else { WithChain::new() },
     })
 }
 
@@ -256,7 +257,7 @@ fn lane_scoped_closure_value<H: Host>(
     // SAFETY: the running window activation's entries start at `registers`, and its
     // environment's parent is the context's.
     let environment = unsafe {
-        window_environment(vm, code, r.0.add(usize::from(registers)), scope.function, (*cx).env, scope.program, (*cx).this, bindings)
+        window_environment(vm, code, r.0.add(usize::from(registers)), scope.function, (*cx).env, scope.program, (*cx).this, Some(bindings))
     };
     let site = scope.site.filter(|pc| vm.site_has_bindings(scope.program, scope.function, *pc));
     let value = vm

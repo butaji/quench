@@ -112,7 +112,7 @@ fn set<S: Stage>(stage: &mut S, register: u32, value: usize) {
 }
 
 /// A capture's registers: its start, then its end.
-const CAPTURE_REGISTERS: u32 = 2;
+pub const CAPTURE_REGISTERS: u32 = 2;
 
 #[inline(always)]
 fn start_register(capture: u32) -> u32 {

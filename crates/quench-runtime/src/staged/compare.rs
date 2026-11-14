@@ -36,10 +36,10 @@ impl Nullish {
 }
 
 /// The `instanceof` operator.
-const INSTANCEOF_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::Instanceof as u32;
+pub(crate) const INSTANCEOF_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::Instanceof as u32;
 
 /// The `in` operator.
-const IN_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::In as u32;
+pub(crate) const IN_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::In as u32;
 
 /// What a `CompareJump` compares.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

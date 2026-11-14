@@ -129,7 +129,7 @@ impl<'a> BodyCall<'a> {
         match self.site.arguments {
             // SAFETY: the window is registers of the running function.
             Arguments::Window { first, count } => Values::Window(unsafe { std::slice::from_raw_parts(self.registers.0.add(usize::from(first)), usize::from(count)) }),
-            Arguments::List(_) => Values::Gathered(self.list.iter().map(|&register| self.registers.get(register)).collect()),
+            Arguments::List(_) => Values::Gathered(Gathered::from_iter(self.list.iter().map(|&register| self.registers.get(register)))),
         }
     }
 

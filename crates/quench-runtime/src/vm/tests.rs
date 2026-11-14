@@ -20764,6 +20764,41 @@ fn lane_bodies_call_natively_and_match_the_interpreter_across_callee_exits() {
     assert_eq!(answers[0], answers[1]);
 }
 
+const LANE_METHOD_SITES_SOURCE: &str = r#"(function () {
+  const MASK = 65535;
+  function Cell(id) { this.id = id; this.sum = 0; this.peer = null; }
+  Cell.prototype.add = function (a, b) { this.sum = (this.sum + a * 3 + b) & MASK; return this.sum; };
+  Cell.prototype.pair = function (a, b) { return (this.add(b, a) + this.add(a, b)) & MASK; };
+  Cell.prototype.far = function (p, q, r) { return (p - q + r * 2) & MASK; };
+  Cell.prototype.drive = function (n, other) {
+    let total = 0;
+    for (let i = 0; i < n; i++) {
+      const x = i & 255, y = (i * 7) & 127, z = (i * 3) & 63;
+      total = (total + this.pair(x, y) + this.add(z, x) + this.add(y, z)) & MASK;
+      total = (total + other.add(x, y) + other.far(z, y, x) + this.far(x, x, z)) & MASK;
+    }
+    return total;
+  };
+  let sum = 0;
+  const cell = new Cell(1), other = new Cell(2);
+  for (let round = 0; round < 400; round++) {
+    sum = (sum + cell.drive(48, other) + cell.add(round, sum & 7)) & MASK;
+  }
+  globalThis.answer = sum + cell.sum + other.sum;
+})();"#;
+
+/// Asserts that the lane body of `drive`, run in `vm`, never left at a method call.
+#[cfg(not(quench_profiled))]
+fn assert_drive_leaves_no_method_call(vm: &Vm<TestHost>, program: &crate::ResidualProgram, drive: usize) {
+    let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(drive)
+        .and_then(super::program_store::derived_lane_view).unwrap();
+    let op_at = |function: u32, pc: u32| program.function(function as usize).instructions().nth(pc as usize)
+        .map(|instruction| format!("{:?}", instruction.op()));
+    if let Some(report) = view.body_stats.report(0, view.lane_body_state(), &op_at) {
+        assert!(!report.contains("CallMethod") && !report.contains("CallThisMethod"), "no leave at a method call: {report}");
+    }
+}
+
 /// Lane bodies call through every form of a call record (`dispatch_fast::BodyCall`): a method site
 /// (`this.add(z, x)`, whose receiver is `this`, and `cell.add(...)`'s register) whose argument
 /// registers are the site's own list, not a window, in an order no window has, and a call whose
@@ -20771,29 +20806,7 @@ fn lane_bodies_call_natively_and_match_the_interpreter_across_callee_exits() {
 /// body at a method call.
 #[test]
 fn lane_bodies_call_method_sites_with_listed_arguments_like_the_interpreter() {
-    let source = r#"(function () {
-      const MASK = 65535;
-      function Cell(id) { this.id = id; this.sum = 0; this.peer = null; }
-      Cell.prototype.add = function (a, b) { this.sum = (this.sum + a * 3 + b) & MASK; return this.sum; };
-      Cell.prototype.pair = function (a, b) { return (this.add(b, a) + this.add(a, b)) & MASK; };
-      Cell.prototype.far = function (p, q, r) { return (p - q + r * 2) & MASK; };
-      Cell.prototype.drive = function (n, other) {
-        let total = 0;
-        for (let i = 0; i < n; i++) {
-          const x = i & 255, y = (i * 7) & 127, z = (i * 3) & 63;
-          total = (total + this.pair(x, y) + this.add(z, x) + this.add(y, z)) & MASK;
-          total = (total + other.add(x, y) + other.far(z, y, x) + this.far(x, x, z)) & MASK;
-        }
-        return total;
-      };
-      let sum = 0;
-      const cell = new Cell(1), other = new Cell(2);
-      for (let round = 0; round < 400; round++) {
-        sum = (sum + cell.drive(48, other) + cell.add(round, sum & 7)) & MASK;
-      }
-      globalThis.answer = sum + cell.sum + other.sum;
-    })();"#;
-    let program = Engine::specialize(source, "lane-body-method-sites.js").unwrap();
+    let program = Engine::specialize(LANE_METHOD_SITES_SOURCE, "lane-body-method-sites.js").unwrap();
     #[cfg(not(quench_profiled))]
     let drive = program.functions.iter().position(|body|
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "drive")).unwrap();
@@ -20813,15 +20826,7 @@ fn lane_bodies_call_method_sites_with_listed_arguments_like_the_interpreter() {
             let after = super::compiled::LANE_METHODS_COMPILED.load(std::sync::atomic::Ordering::Relaxed);
             assert!(after > before, "a method making method calls runs as a lane body");
             #[cfg(not(quench_profiled))]
-            {
-                let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(drive)
-                    .and_then(super::program_store::derived_lane_view).unwrap();
-                let op_at = |function: u32, pc: u32| program.function(function as usize).instructions().nth(pc as usize)
-                    .map(|instruction| format!("{:?}", instruction.op()));
-                if let Some(report) = view.body_stats.report(0, view.lane_body_state(), &op_at) {
-                    assert!(!report.contains("CallMethod") && !report.contains("CallThisMethod"), "no leave at a method call: {report}");
-                }
-            }
+            assert_drive_leaves_no_method_call(&vm, &program, drive);
         }
     }
     assert!(answers[0].is_some());
