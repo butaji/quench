@@ -282,14 +282,14 @@ pub(crate) const JS_STEP_LANE_FRAMES_END: usize = 312;
 pub(crate) const ACTIVATION_BYTES: usize = 128;
 pub(crate) const ACTIVATION_KIND_OFFSET: usize = 72;
 /// The entry cell's run counters, and the unit a raised run adds (`entry_cell::RAISED_RUN`).
-pub(crate) const CELL_COUNTERS_AT: usize = 56;
+pub(crate) const CELL_COUNTERS_AT: usize = crate::staged::call::ENTRY_CELL.counters_offset as usize;
 pub(crate) const RAISED_RUN: u64 = 1 << 32;
 
 /// The entry cell's entry, recovery and body words (`EntryCell`), and the recovery space's
 /// values and activations (`LaneRecoverySpace`).
-pub(crate) const CELL_ENTRY_AT: usize = 0;
-pub(crate) const CELL_RECOVERY_AT: usize = 8;
-pub(crate) const CELL_BODY_AT: usize = 16;
+pub(crate) const CELL_ENTRY_AT: usize = crate::staged::call::ENTRY_CELL.entry_offset as usize;
+pub(crate) const CELL_RECOVERY_AT: usize = crate::staged::call::ENTRY_CELL.recovery_offset as usize;
+pub(crate) const CELL_BODY_AT: usize = crate::staged::call::ENTRY_CELL.body_offset as usize;
 pub(crate) const RECOVERY_VALUES_AT: usize = 0;
 pub(crate) const RECOVERY_ACTIVATIONS_AT: usize = 8;
 

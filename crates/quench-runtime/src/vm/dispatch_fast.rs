@@ -11673,6 +11673,8 @@ impl<H: Host> Vm<H> {
             // A class constructor's calls throw on the general path, so they take a
             // frame; only its constructions activate frameless (`lane_script_construct`).
             let entry = body_entry(body, &code.constants);
+            // SAFETY: the program store keeps a derived view alive with its program.
+            unsafe { &*view }.entry.set_facts(crate::staged::call::CellFacts::of_function(body.registers, body.params, entry == CallEntry::Activates && !environment));
             TargetBody {
                 entry,
                 constructs,
@@ -15552,7 +15554,6 @@ fn lane_enter_cell_body<H: Host>(
     this: Value,
 ) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    if vm.programs.js_jit_diagnostics_enabled() { return None; }
     // SAFETY: the program store keeps a derived view alive with its program.
     let own = unsafe { &*target.view };
     let method = own.cell_method()?;

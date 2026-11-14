@@ -11,25 +11,24 @@ pub(in crate::vm) const LANE_BODY_NOT_ENTERED: u32 = RETURN_STATUS_BASE - 2;
 /// body is published or it retired) and the body's own recovery space, which it is stored in
 /// once, per function, at a stable address (`LaneView::entry_cell`).
 ///
-/// One 64-byte line, whose offsets are the designed cell's (`staged::call::ENTRY_CELL`): `entry` 0,
-/// `validity` 24, `view` 32, `env` 40, `capture` 48, `counters` 56. `recovery` and `body` sit at 8
-/// and 16 until `recovery` is derived from `body`, when `body` moves to 8 and `facts` takes 16.
-/// Writers: `entry`, `recovery` and `body` by `publish`/`withdraw`; `counters` only on cold paths
-/// (completion evidence); nothing yet reads or writes the other words.
+/// One 64-byte line whose every offset is the designed cell's (`staged::call::ENTRY_CELL`, asserted
+/// below): `entry` 0, `body` 8, `facts` 16, `validity` 24, `recovery` 32, `counters` 40.
+/// Writers: `entry`, `recovery` and `body` by `publish`/`withdraw`; `facts` once per function
+/// (`set_facts`); `counters` only on cold paths (completion evidence).
 #[repr(C, align(64))]
 pub(in crate::vm) struct EntryCell {
     pub(in crate::vm) entry: std::cell::Cell<usize>,
-    /// The address of the published body's `LaneMethod::recovery_space` (`NO_RECOVERY` for the stub).
-    pub(in crate::vm) recovery: std::cell::Cell<usize>,
     /// The address of the published body (`LaneMethod`), which the view keeps until it drops
     /// (`LaneView::pinned`): a leave inside a call through the cell recovers through it.
     pub(in crate::vm) body: std::cell::Cell<usize>,
+    /// The function's registers, room, parameters and entry kind (`CellFacts`), which a native
+    /// call's admission reads.
+    pub(in crate::vm) facts: std::cell::Cell<u64>,
     /// What the body's native callers compare to admit a call (the layout epoch the body was
     /// published under).
     pub(in crate::vm) validity: std::cell::Cell<u64>,
-    pub(in crate::vm) view: std::cell::Cell<usize>,
-    pub(in crate::vm) env: std::cell::Cell<usize>,
-    pub(in crate::vm) capture: std::cell::Cell<usize>,
+    /// The address of the published body's `LaneMethod::recovery_space` (`NO_RECOVERY` for the stub).
+    pub(in crate::vm) recovery: std::cell::Cell<usize>,
     /// Leaves (low half) and completions (high half) of this function's body since it
     /// specialized (`EVIDENCE`): the one home of its run statistics, written only on paths that
     /// already do work (a handler's run end, a leave's materialization), never by a call or a return.
@@ -40,10 +39,10 @@ const _: () = {
     use crate::staged::call::ENTRY_CELL;
     assert!(std::mem::size_of::<EntryCell>() == 64);
     assert!(std::mem::offset_of!(EntryCell, entry) as i32 == ENTRY_CELL.entry_offset);
+    assert!(std::mem::offset_of!(EntryCell, body) as i32 == ENTRY_CELL.body_offset);
+    assert!(std::mem::offset_of!(EntryCell, facts) as i32 == ENTRY_CELL.facts_offset);
     assert!(std::mem::offset_of!(EntryCell, validity) as i32 == ENTRY_CELL.validity_offset);
-    assert!(std::mem::offset_of!(EntryCell, view) as i32 == ENTRY_CELL.view_offset);
-    assert!(std::mem::offset_of!(EntryCell, env) as i32 == ENTRY_CELL.env_offset);
-    assert!(std::mem::offset_of!(EntryCell, capture) as i32 == ENTRY_CELL.capture_offset);
+    assert!(std::mem::offset_of!(EntryCell, recovery) as i32 == ENTRY_CELL.recovery_offset);
     assert!(std::mem::offset_of!(EntryCell, counters) as i32 == ENTRY_CELL.counters_offset);
 };
 
@@ -79,7 +78,7 @@ impl EntryCell {
     pub(in crate::vm) fn stub() -> usize { lane_entry_stub as BodyEntry as usize }
 
     pub(in crate::vm) fn new() -> Self {
-        Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default(), validity: Default::default(), view: Default::default(), env: Default::default(), capture: Default::default(), counters: Default::default() }
+        Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default() }
     }
 
     /// Publishes `method`'s entry and recovery space; it takes the cell back when it retires.
@@ -90,6 +89,9 @@ impl EntryCell {
         self.entry.set(body.entry_address());
         method.on_retire(&self.entry, body.entry_address(), Self::stub());
     }
+
+    /// Records the function's facts, which its native callers admit a call by.
+    pub(in crate::vm) fn set_facts(&self, facts: crate::staged::call::CellFacts) { self.facts.set(facts.word()) }
 
     /// Starts the statistics of a newly specialized body.
     pub(in crate::vm) fn reset_evidence(&self) { self.counters.set(0) }
