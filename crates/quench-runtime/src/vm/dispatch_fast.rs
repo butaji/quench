@@ -8283,12 +8283,12 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     unsafe { (*ip.cast_mut()).operand = LaneOperand { jump: site.jump }; }
     requicken::<H>(ip, lane_jump_always::<H, true>);
     // The site kept the update before the jump from fusing with it (`install_loop_sites`
-    // runs before `specialize_update_jumps`): the plain jump takes that fusion now.
+    // runs before `specialize_update_jumps`): the plain jump takes the loader's fusion now.
     if site.backedge > site.header {
-        // SAFETY: the record before the backedge is the loop body's, in the same view.
+        // SAFETY: the record before the backedge is the loop body's, in the same view as the jump and the header.
         let update = unsafe { ip.sub(1) };
-        if let Some(decrement) = update_direction::<H>(unsafe { (*update).handler }) {
-            requicken::<H>(update, update_jump::<H>(decrement, true));
+        if let Some(fused) = update_fusion::<H>(unsafe { &*update }, unsafe { &*ip }, || Some(unsafe { &*header })) {
+            requicken::<H>(update, fused);
         }
     }
 }
@@ -20458,28 +20458,33 @@ fn specialize_array_literals<H: Host>(decoded: &[WideInstruction], records: &mut
     }
 }
 
-/// Gives each `IncDec` that an unconditional jump follows the fused update and jump
-/// (`lane_inc_dec_jump`), or, when the jump goes back to the loop's forward integer register
-/// test, the update, jump and test (`lane_inc_dec_loop`). The jump and test records stay, for
-/// a jump that enters them and for the update's own slow path.
+/// Gives each `IncDec` that an unconditional jump follows the fusion `update_fusion` makes of it. The
+/// jump and test records stay, for a jump that enters them and for the update's own slow path.
 fn specialize_update_jumps<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
-    let jumps = [lane_jump_always::<H, false> as Handler as *const (), lane_jump_always::<H, true> as Handler as *const ()];
     for pc in 0..records.len().saturating_sub(1) {
-        let (Some(decrement), Some(backward)) = (
-            update_direction::<H>(records[pc].handler),
-            jumps.iter().position(|&jump| jump == records[pc + 1].handler),
-        ) else {
-            continue;
-        };
-        let fused = update_jump::<H>(decrement, backward == 1);
-        let test = decoded[pc + 1].imm() as usize;
-        let looped = (backward == 1)
-            .then(|| records.get(test))
-            .flatten()
-            .filter(|test| test.handler == relation_jump_handler::<H, false>(u32::from(test.a), false) as *const ())
-            .map(|test| update_loop_handler::<H>(u32::from(test.a), decrement, test.b == records[pc].a));
-        records[pc].handler = looped.unwrap_or(fused) as *const ();
+        let fused = update_fusion::<H>(&records[pc], &records[pc + 1], || records.get(decoded[pc + 1].imm() as usize));
+        if let Some(fused) = fused {
+            records[pc].handler = fused as *const ();
+        }
     }
+}
+
+/// The handler of the `IncDec` record `update` that the record `jump` follows, where `jump` is an unconditional
+/// jump: the fused update and jump (`lane_inc_dec_jump`), or, when the jump goes back to the loop's forward integer
+/// register test (`test`, read only then), the update, jump and test (`lane_inc_dec_loop`). `None` for any other
+/// pair. The loader (`specialize_update_jumps`) and a loop site that retires (`lane_loop_retire`) fuse by it, so a
+/// declined loop runs what the interpreter's own does.
+fn update_fusion<'a, H: Host>(update: &LaneInstruction, jump: &LaneInstruction, test: impl FnOnce() -> Option<&'a LaneInstruction>) -> Option<Handler> {
+    let decrement = update_direction::<H>(update.handler)?;
+    let backward = match jump.handler {
+        plain if plain == lane_jump_always::<H, true> as Handler as *const () => true,
+        plain if plain == lane_jump_always::<H, false> as Handler as *const () => false,
+        _ => return None,
+    };
+    let looped = test().filter(|_| backward)
+        .filter(|test| test.handler == relation_jump_handler::<H, false>(u32::from(test.a), false) as *const ())
+        .map(|test| update_loop_handler::<H>(u32::from(test.a), decrement, test.b == update.a));
+    Some(looped.unwrap_or_else(|| update_jump::<H>(decrement, backward)))
 }
 
 /// Whether a record running `handler`, an `IncDec`'s own (`lane_inc_dec`), decrements;
@@ -21922,6 +21927,8 @@ fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
 mod instruction_set_tests;
 #[cfg(test)]
 mod call_site_history_tests;
+#[cfg(test)]
+mod update_fusion_tests;
 mod on_demand_metadata;
 use on_demand_metadata::{lane_completes_return, lane_note_late_call};
 
