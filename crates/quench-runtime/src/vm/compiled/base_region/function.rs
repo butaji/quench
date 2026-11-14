@@ -449,7 +449,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let bare = realm.is_none() && decoded.iter().all(|row| row.heap.is_none() && !row.makes_calls() && !row.step.is_some_and(Step::reads_payload));
     let records = planned.iter_mut().filter_map(|row| row.owned.take()).collect();
     let (atoms, holders) = (held_atoms(&decoded), held_holders(&decoded));
-    Ok(Body { code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter()), atoms, holders,
+    Ok(Body { code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region))), atoms, holders,
         instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,
         layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes, scratch })
 }

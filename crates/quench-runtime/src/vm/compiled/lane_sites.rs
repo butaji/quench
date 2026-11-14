@@ -86,10 +86,14 @@ impl<H: Host> Vm<H> {
     }
 
     /// The `StoreName`s of `unit` (not a declaration's) of a global lexical binding that is assignable and that no code holds the value of
-    /// (`Vm::global_lexical_slot`), each with the binding's word, which its row writes live.
+    /// (`Vm::global_lexical_slot`), each with the binding's word, which its row writes live; a binding not `Mutable` yet is held
+    /// (`GlobalRead::Held`) until its writes make it so.
     fn lexical_stores(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> Vec<(usize, GlobalRead)> {
         let sites = self.global_store_sites(program, function, unit);
-        sites.into_iter().filter(|(_, _, store)| *store).filter_map(|(pc, atom, _)| Some((pc, GlobalRead::Lexical(self.global_lexical_slot(atom, true)?)))).collect()
+        sites.into_iter().filter(|(_, _, store)| *store).filter_map(|(pc, atom, _)| {
+            let live = self.global_lexical_slot(atom, true).map(GlobalRead::Lexical);
+            Some((pc, live.or_else(|| self.held_lexical(atom).map(GlobalRead::Held))?))
+        }).collect()
     }
 
     /// Whether a by-name load of `atom` in `function` reads the global scope as the lane's own load does

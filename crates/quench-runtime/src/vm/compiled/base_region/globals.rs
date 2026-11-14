@@ -23,7 +23,7 @@
 
 use super::*;
 use crate::code_dependencies::SlotDependency;
-use crate::heap::GlobalLayoutFact;
+use crate::heap::{GlobalFact, GlobalLayoutFact};
 use crate::typed_ir::Type;
 use crate::vm::global_facts::{GlobalRead, GlobalSlot, LexicalSlot};
 use quench_bjit::{padded_holes, HOLES};
@@ -203,6 +203,13 @@ pub(super) fn held_realm(decoded: &[Decoded]) -> Option<RealmProof> {
     decoded.iter().find_map(|row| {
         row.global.map(|access| proof(access.slot.global, access.slot.realm_offset)).or_else(|| row.lexical.map(|slot| proof(slot.global, slot.realm_offset)))
     })
+}
+
+/// The global lexical cells the region's stores run through the VM for while they are not `Mutable` (`GlobalRead::Held`): the
+/// write that makes one so retires the code, whose next compile stores the word live.
+pub(super) fn held_stores(known: Known, region: &LoopRegion) -> impl Iterator<Item = GlobalFact> {
+    let table = known.globals.into_iter().flat_map(|table| table.range(region.header as usize..=region.backedge as usize));
+    table.filter_map(|(_, read)| if let GlobalRead::Held(fact) = read { Some(*fact) } else { None })
 }
 
 /// The global objects whose layout the rows hold (a Stable fact): a change of one retires the code.

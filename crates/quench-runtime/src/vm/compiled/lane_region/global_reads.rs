@@ -38,7 +38,7 @@ impl Lowering<'_, '_> {
             GlobalRead::Frozen { value, ty } => (GlobalBinding::Frozen { value, ty }, None),
             GlobalRead::Lexical(slot) => (GlobalBinding::Lexical { address: slot.address as u64 }, None),
             GlobalRead::Slot(slot) if slot.dependency.is_some() => (GlobalBinding::Typed { ty: slot.ty }, None),
-            GlobalRead::Slot(_) | GlobalRead::Dynamic | GlobalRead::NativeMember { .. } => (GlobalBinding::Dynamic, None),
+            GlobalRead::Slot(_) | GlobalRead::Held(_) | GlobalRead::Dynamic | GlobalRead::NativeMember { .. } => (GlobalBinding::Dynamic, None),
         };
         if self.division().folds(binding.time()) { (binding, held) } else { (GlobalBinding::Dynamic, None) }
     }
