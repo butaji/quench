@@ -482,6 +482,7 @@ pub(super) fn immediate_typeof_index(value: Value) -> Option<usize> {
     immediate_value_type(value).map(typeof_name_index)
 }
 
+#[inline]
 fn immediate_value_type(value: Value) -> Option<crate::ValueType> {
     use crate::ValueType as T;
     Some(if value.is_undefined() || value.is_deleted() {

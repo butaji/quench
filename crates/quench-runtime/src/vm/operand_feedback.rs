@@ -50,6 +50,7 @@ impl OperandKinds {
     /// The kinds that make a Number site's int32 step fail.
     const WIDER_NUMBER: Self = Self(Self::DOUBLE.0 | Self::WIDENED.0);
 
+    #[inline]
     pub(crate) const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
     }

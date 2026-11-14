@@ -1916,6 +1916,7 @@ impl Object {
         }
     }
 
+    #[inline]
     fn encode_other_proto(proto: Value) -> u32 {
         match proto.heap_reference() {
             Some(HeapReference::LegacySlot(index)) => {
@@ -2605,6 +2606,7 @@ impl Object {
         properties.set_extensible(value);
         self.meta = (self.meta & !VALUE_VEC_INTEGRITY_BITS) | properties.into_parts().0;
     }
+    #[inline]
     pub(crate) fn is_frozen(&self) -> bool {
         self.properties().is_frozen()
     }
@@ -2616,6 +2618,7 @@ impl Object {
         properties.set_frozen(value);
         self.meta = (self.meta & !VALUE_VEC_INTEGRITY_BITS) | properties.into_parts().0;
     }
+    #[inline]
     pub(crate) fn arguments_map(&self) -> Option<&[u16]> {
         self.extras()?.arguments_map.as_deref()
     }
@@ -2873,6 +2876,7 @@ pub(crate) enum EnvironmentSlotState {
 }
 
 impl EnvironmentSlot {
+    #[inline]
     pub(crate) fn owned(value: Value) -> Self {
         debug_assert!(value.shared_environment_owner().is_none());
         Self(value)

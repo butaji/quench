@@ -201,6 +201,7 @@ impl ValueVec {
         }
     }
 
+    #[inline]
     pub(crate) fn is_frozen(self) -> bool {
         self.start & FROZEN != 0
     }

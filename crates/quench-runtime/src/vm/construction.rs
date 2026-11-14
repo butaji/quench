@@ -34,6 +34,7 @@ pub(super) struct ClosureTemplate {
 
 /// The closure template slot of a program's function: functions of different programs share
 /// ids, so the program is mixed in by a multiplicative hash (the 32-bit golden ratio).
+#[inline]
 fn closure_template_index(program: ProgramId, function: u32) -> usize {
     const PROGRAM_MIX: u32 = 0x9E37_79B9;
     (function ^ program.raw().wrapping_mul(PROGRAM_MIX)) as usize & (CLOSURE_TEMPLATES - 1)
@@ -47,6 +48,7 @@ const FINISHED_CLOSURE_NAMED_SLOTS: usize = 2;
 const FINISHED_CLOSURE_SLOTS: usize = FINISHED_CLOSURE_NAMED_SLOTS + 1;
 
 /// Whether a closure's own properties fit its inline slots.
+#[inline]
 fn finished_closure_fits(prototype: Option<Value>) -> bool {
     FINISHED_CLOSURE_NAMED_SLOTS + usize::from(prototype.is_some())
         <= crate::value_vec::INLINE_PROPERTY_COUNT

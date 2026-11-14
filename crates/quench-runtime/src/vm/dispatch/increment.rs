@@ -3,6 +3,7 @@
 use crate::value::Value;
 
 /// The `++`/`--` step: one, negated for a decrement.
+#[inline]
 fn increment_delta(is_decrement: bool) -> f64 {
     if is_decrement { -1.0 } else { 1.0 }
 }

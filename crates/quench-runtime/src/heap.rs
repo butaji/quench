@@ -2036,6 +2036,7 @@ impl Heap {
         self.reclaimable_program_bytes_after_full = bytes;
     }
     /// Every collection may be minor, so the legacy young list and barrier are always kept.
+    #[inline]
     fn tracks_young_cells(&self) -> bool {
         true
     }

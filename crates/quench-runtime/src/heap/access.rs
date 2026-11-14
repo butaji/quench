@@ -610,6 +610,7 @@ impl Heap {
     /// `Value`. The heap must remain alive, and the reader must finish before any VM safepoint;
     /// it must resolve the record's current backing for each access because array mutation can
     /// replace that backing.
+    #[inline]
     pub(crate) fn array_record_base(&self) -> Option<*const ArrayObject> {
         self.array_records.base_ptr()
     }

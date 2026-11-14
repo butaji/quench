@@ -64,6 +64,7 @@ impl ConstructedShape {
         constructed: u32::MAX,
     };
 
+    #[inline]
     fn cache_index(&self) -> usize {
         // Heap handles differ in their low payload bits; the shape separates one
         // constructor's bases.
