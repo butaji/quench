@@ -5,7 +5,7 @@
 //! blocks the lowering made for its exits.
 
 use super::*;
-use super::frame::{Edges, EmitFrame};
+use super::frame::{Edges, EmitFrame, FRAME};
 use super::relocs::address;
 use super::super::entry_cell::{capture_word, EntryCell, LANE_BODY_NOT_ENTERED, RAISED_RUN};
 use super::super::super::dispatch_fast::{LaneRecoverySpace, KIND_NATIVE, KIND_OFFSET};
@@ -75,11 +75,9 @@ pub(super) enum Site<'a> {
     Return(ReturnSite),
 }
 
-/// The alias regions a call's words live in: the dispatch's stacks, the callee's entry cell and
-/// the caller's register file.
-const DISPATCH: Access = Region::Dispatch.mutable();
+/// The alias region of the callee's entry cell, which a call's words live in beside the dispatch's
+/// stacks and the caller's register file.
 const ENTRY_CELL: Access = Region::EntryCell.mutable();
-const FRAME: Access = Region::Frame.mutable();
 
 /// A dispatch or cell field's offset as the loads take it.
 fn field(offset: usize) -> i32 {

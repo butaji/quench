@@ -8,6 +8,9 @@ use crate::vm::compiled::regions;
 pub(in crate::vm) use operands::{operand_int, operand_number, operand_to_int32, register_int_value, register_number_value};
 use truthiness::register_truthiness;
 
+/// The lane's register file.
+pub(super) const FRAME: crate::staged::Access = crate::staged::Region::Frame.mutable();
+
 /// The control edges a `step` transfers to, and the exit a value's cell truthiness leaves at.
 #[derive(Clone, Copy)]
 pub(super) enum Edges {

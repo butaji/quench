@@ -1,7 +1,7 @@
 //! A staged row's slow case on the lane frame: the VM's own operation, called in place through
 //! the lane's helper (`Frame::vm_step`).
 
-use super::{Edges, EmitFrame};
+use super::{Edges, EmitFrame, FRAME};
 use super::super::{emit_js_guard, emit_js_payload_word, emit_js_property_values, emit_lane_helper_call, emit_unlogged_property_store_guard,
     register_offset, CheckedObject, Emit, JsStepDispatch, LaneHelper, ObjectRecord, LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_MISSED};
 use super::super::super::object_slots::inline_storage;
@@ -13,8 +13,6 @@ use crate::Value;
 use cranelift_codegen::ir;
 use crate::staged::{flow::FlowStage, region::Region, Access, Stage};
 
-/// The lane's register file.
-const FRAME: Access = Region::Frame.mutable();
 /// The property values a global store writes.
 const OBJECT_SLOTS: Access = Region::ObjectSlots.mutable();
 

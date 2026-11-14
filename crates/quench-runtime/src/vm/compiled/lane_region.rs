@@ -96,6 +96,8 @@ use polls::retain_closed_polls;
 pub(crate) use stable::StableFacts;
 use crate::typed_ir::IntRange;
 
+/// The call context, step dispatch and result words a lane body or trampoline reads and writes.
+pub(super) const DISPATCH: crate::staged::Access = crate::staged::Region::Dispatch.mutable();
 pub(super) const LANE_REGION_NAMESPACE: u32 = u32::from_be_bytes(*b"QLRG");
 /// Inline scratch capacity for the small field-site sets typical of native units;
 /// larger units spill normally, without a semantic or compilation limit.
