@@ -113,6 +113,16 @@ impl JsString {
         unsafe { *(&*string as *const Self).cast::<u8>().add(super::native_string::TAG_OFFSET as usize) }
     }
 
+    /// Whether the string record at `string` holds parts, by its tag byte read atomically.
+    ///
+    /// # Safety
+    /// `string` points to an initialized record that stays allocated during the call.
+    #[inline(always)]
+    pub(crate) unsafe fn concurrent_has_parts(string: *const Self, parts_tag: u8) -> bool {
+        // SAFETY: the caller's contract; the tag is the record's first byte.
+        unsafe { std::sync::atomic::AtomicU8::from_ptr(string.cast::<u8>().cast_mut()).load(std::sync::atomic::Ordering::Relaxed) == parts_tag }
+    }
+
     /// Visits the part ids of the string record at `string` for a concurrent marker, read with
     /// relaxed atomic loads while the mutator may write it out; possibly a torn read, so the
     /// ids may be another state's bytes. `parts_tag` is `JsString::parts_tag()`.

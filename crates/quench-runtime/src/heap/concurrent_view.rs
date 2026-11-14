@@ -32,6 +32,7 @@ pub(super) struct ConcurrentMarkView {
     arrays: ConcurrentRecordMarks<ArrayObject>,
     functions: ConcurrentRecordMarks<FunctionRecord>,
     strings: ConcurrentRecordMarks<JsString>,
+    small: ConcurrentRecordMarks<small_strings::SmallParts>,
     v128s: ConcurrentRecordMarks<[u8; crate::wasm::V128_BYTES]>,
     properties: *const Value,
     properties_len: usize,
@@ -55,6 +56,7 @@ impl ConcurrentMarkView {
             arrays: heap.array_records.concurrent_marks(),
             functions: heap.function_records.concurrent_marks(),
             strings: heap.string_records.concurrent_marks(),
+            small: heap.small_strings.concurrent_marks(),
             v128s: heap.v128_records.concurrent_marks(),
             properties,
             properties_len,
@@ -63,22 +65,64 @@ impl ConcurrentMarkView {
         }
     }
 
-    /// Pushes the values of the arena run `(start, len)`.
+    /// Takes `child`, a value a marked record holds: a string is marked where it is found,
+    /// as the stop-the-world mark marks leaf strings (`string_parts::mark_leaf_string_if_new`),
+    /// with its flat parts; anything else, and a string of parts of parts, goes to `work`.
     #[inline(always)]
-    fn run_values(&self, (start, len): (usize, usize), work: &mut Vec<Value>) {
+    fn child(&self, child: Value, work: &mut Vec<Value>, marked: &mut usize) {
+        match child.direct_string_index() {
+            Some(id) => self.leaf_string(id, work, marked),
+            None => work.push(child),
+        }
+    }
+
+    /// Marks the string `id` and its parts (`child`).
+    #[inline(always)]
+    fn leaf_string(&self, id: u32, work: &mut Vec<Value>, marked: &mut usize) {
+        if let Some(local) = small_strings::small_string_local(id) {
+            if self.small.unmarked(local) && self.small.mark_if_new(local) {
+                *marked += 1;
+                // SAFETY: an unmarked id below the frontier names an initialized record.
+                unsafe { small_strings::concurrent_small_parts(self.small.record(local), |part| self.flat_part(part, work, marked)) };
+            }
+        } else {
+            self.flat_part(id, work, marked);
+        }
+    }
+
+    /// Marks the string record `id` when it holds no parts; else leaves it to `work`.
+    #[inline(always)]
+    fn flat_part(&self, id: u32, work: &mut Vec<Value>, marked: &mut usize) {
+        if small_strings::small_string_local(id).is_some() {
+            return work.push(Value::direct_string(id));
+        }
+        if !self.strings.unmarked(id) {
+            return;
+        }
+        // SAFETY: as above.
+        if unsafe { JsString::concurrent_has_parts(self.strings.record(id), self.parts_tag) } {
+            work.push(Value::direct_string(id));
+        } else if self.strings.mark_if_new(id) {
+            *marked += 1;
+        }
+    }
+
+    /// Takes the values of the arena run `(start, len)` (`child`).
+    #[inline(always)]
+    fn run_values(&self, (start, len): (usize, usize), work: &mut Vec<Value>, marked: &mut usize) {
         for index in start..start + len {
             // SAFETY: the run lies inside the snapshot's arena length (`Object::concurrent_run`).
             let bits = unsafe { AtomicU64::from_ptr(self.properties.add(index).cast::<u64>().cast_mut()) }.load(Ordering::Relaxed);
             let value = Value::from_bits(bits);
             if value.is_heap() && !value.is_deleted() {
-                work.push(value);
+                self.child(value, work, marked);
             }
         }
     }
 
-    /// Marks `value` if this view may and it is new, pushing what it keeps alive; a value the
-    /// marker cannot read goes to `deferred`, unmarked.
-    pub(super) fn mark_value(&self, value: Value, work: &mut Vec<Value>, deferred: &mut Vec<Value>) {
+    /// Marks `value` if this view may and it is new, taking what it keeps alive; a value the
+    /// marker cannot read goes to `deferred`, unmarked. Counts the marks it sets in `marked`.
+    pub(super) fn mark_value(&self, value: Value, work: &mut Vec<Value>, deferred: &mut Vec<Value>, marked: &mut usize) {
         let Some(reference) = value.heap_reference() else { return };
         match reference {
             HeapReference::ObjectRecord(id) => {
@@ -91,8 +135,9 @@ impl ConcurrentMarkView {
                     return deferred.push(value);
                 };
                 if self.objects.mark_if_new(id) {
-                    object.concurrent_inline_children(work);
-                    self.run_values(run, work);
+                    *marked += 1;
+                    object.concurrent_inline_children(|child| self.child(child, work, marked));
+                    self.run_values(run, work, marked);
                 }
             }
             HeapReference::ArrayRecord(id) => {
@@ -105,11 +150,12 @@ impl ConcurrentMarkView {
                     return deferred.push(value);
                 };
                 if self.arrays.mark_if_new(id) {
-                    object.concurrent_inline_children(work);
-                    self.run_values(run, work);
+                    *marked += 1;
+                    object.concurrent_inline_children(|child| self.child(child, work, marked));
+                    self.run_values(run, work, marked);
                     // SAFETY: without extras the payload word is a backing's header pointer,
                     // readable through the cycle's quarantine.
-                    unsafe { array_elements::concurrent_heap_values(object.concurrent_elements_word(), work) };
+                    unsafe { array_elements::concurrent_heap_values(object.concurrent_elements_word(), |child| self.child(child, work, marked)) };
                 }
             }
             HeapReference::FunctionRecord(id) => {
@@ -130,20 +176,24 @@ impl ConcurrentMarkView {
                     return deferred.push(value);
                 };
                 if self.functions.mark_if_new(id) {
-                    object.concurrent_inline_children(work);
-                    self.run_values(run, work);
+                    *marked += 1;
+                    object.concurrent_inline_children(|child| self.child(child, work, marked));
+                    self.run_values(run, work, marked);
                     work.extend([realm, env].into_iter().filter(|value| value.is_heap()));
                 }
             }
             HeapReference::StringRecord(id) => {
-                if self.strings.unmarked(id) && self.strings.mark_if_new(id) {
+                if small_strings::small_string_local(id).is_some() {
+                    self.leaf_string(id, work, marked);
+                } else if self.strings.unmarked(id) && self.strings.mark_if_new(id) {
+                    *marked += 1;
                     // SAFETY: as above.
-                    unsafe { JsString::concurrent_parts(self.strings.record(id), self.parts_tag, |part| work.push(Value::direct_string(part))) };
+                    unsafe { JsString::concurrent_parts(self.strings.record(id), self.parts_tag, |part| self.flat_part(part, work, marked)) };
                 }
             }
             HeapReference::V128Record(id) => {
-                if self.v128s.unmarked(id) {
-                    self.v128s.mark_if_new(id);
+                if self.v128s.unmarked(id) && self.v128s.mark_if_new(id) {
+                    *marked += 1;
                 }
             }
             HeapReference::LegacySlot(_)
@@ -177,6 +227,12 @@ struct MarkerShared {
     handoff: Mutex<Handoff>,
     wake: Condvar,
     stop: AtomicBool,
+    /// Whether the mutator assists (`MarkerThread::assist`): the marker then shares half of a
+    /// large stack through the inbox.
+    assist: AtomicBool,
+    /// Marks set by the marker and assists, and the marker's busy time.
+    marked: AtomicU64,
+    busy_nanos: AtomicU64,
 }
 
 /// The marker thread of a running cycle. Dropping it stops and joins the thread.
@@ -193,6 +249,9 @@ impl MarkerThread {
             handoff: Mutex::new(Handoff { inbox: work, ..Handoff::default() }),
             wake: Condvar::new(),
             stop: AtomicBool::new(false),
+            assist: AtomicBool::new(false),
+            marked: AtomicU64::new(0),
+            busy_nanos: AtomicU64::new(0),
         });
         let marker = Arc::clone(&shared);
         let thread = std::thread::Builder::new()
@@ -228,6 +287,31 @@ impl MarkerThread {
         quiet
     }
 
+    /// Marks up to `budget` values of the marker's inbox on the mutator, through the same
+    /// view and atomic marks, when allocation outran the cycle: what they reach goes back to
+    /// the inbox, and what the view cannot read to `deferred`. From now on the marker shares
+    /// half of a large stack through the inbox, so an assist finds work.
+    pub(super) fn assist(&self, budget: usize, deferred: &mut Vec<Value>) {
+        self.shared.assist.store(true, Ordering::Relaxed);
+        let mut work = {
+            let mut handoff = self.shared.handoff.lock().expect("marker handoff poisoned");
+            let keep = handoff.inbox.len().saturating_sub(budget);
+            handoff.inbox.split_off(keep)
+        };
+        let mut marked = 0;
+        for _ in 0..budget {
+            let Some(value) = work.pop() else { break };
+            self.shared.view.mark_value(value, &mut work, deferred, &mut marked);
+        }
+        self.shared.marked.fetch_add(marked as u64, Ordering::Relaxed);
+        self.send(&mut work);
+    }
+
+    /// Marks set and the marker's busy time so far, in nanoseconds.
+    pub(super) fn stats(&self) -> (u64, u64) {
+        (self.shared.marked.load(Ordering::Relaxed), self.shared.busy_nanos.load(Ordering::Relaxed))
+    }
+
     /// Stops and joins the marker: every value it held or was sent, and what it deferred.
     pub(super) fn stop(mut self) -> Vec<Value> {
         self.stop_and_join()
@@ -260,12 +344,21 @@ impl Drop for MarkerThread {
 fn marker_loop(shared: &MarkerShared) -> Vec<Value> {
     let mut work = Vec::new();
     let mut deferred = Vec::new();
+    let mut marked = 0;
+    let mut busy_since = std::time::Instant::now();
+    let publish = |marked: &mut usize, busy_since: std::time::Instant| {
+        shared.marked.fetch_add(*marked as u64, Ordering::Relaxed);
+        shared.busy_nanos.fetch_add(busy_since.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        *marked = 0;
+    };
     loop {
         if shared.stop.load(Ordering::Acquire) {
+            publish(&mut marked, busy_since);
             work.append(&mut deferred);
             return work;
         }
         if work.is_empty() {
+            publish(&mut marked, busy_since);
             let mut handoff = shared.handoff.lock().expect("marker handoff poisoned");
             handoff.deferred.append(&mut deferred);
             loop {
@@ -275,6 +368,7 @@ fn marker_loop(shared: &MarkerShared) -> Vec<Value> {
                 if !handoff.inbox.is_empty() {
                     std::mem::swap(&mut work, &mut handoff.inbox);
                     handoff.idle = false;
+                    busy_since = std::time::Instant::now();
                     break;
                 }
                 handoff.idle = true;
@@ -283,10 +377,15 @@ fn marker_loop(shared: &MarkerShared) -> Vec<Value> {
         }
         for _ in 0..MARKER_CHUNK {
             let Some(value) = work.pop() else { break };
-            shared.view.mark_value(value, &mut work, &mut deferred);
+            shared.view.mark_value(value, &mut work, &mut deferred, &mut marked);
         }
-        if deferred.len() >= MARKER_DEFERRED_PUBLISH {
-            shared.handoff.lock().expect("marker handoff poisoned").deferred.append(&mut deferred);
+        let share = shared.assist.load(Ordering::Relaxed) && work.len() > 2 * MARKER_CHUNK;
+        if deferred.len() >= MARKER_DEFERRED_PUBLISH || share {
+            let mut handoff = shared.handoff.lock().expect("marker handoff poisoned");
+            handoff.deferred.append(&mut deferred);
+            if share && handoff.inbox.is_empty() {
+                handoff.inbox = work.split_off(work.len() / 2);
+            }
         }
     }
 }

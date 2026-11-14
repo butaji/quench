@@ -185,6 +185,7 @@ pub(super) struct ConcurrentCycle {
     poll_weight: usize,
     /// Polls taken, and the allocation count at the start (`last_cycle_extent`).
     polls: u32,
+    assists: u32,
     started_at: usize,
     started: std::time::Instant,
     /// Holds the array backings freed during the cycle until it is dropped.
@@ -208,10 +209,40 @@ impl Drop for BackingQuarantine {
     }
 }
 
+/// What the last cycle took, for pacing and the trace (`QUENCH_TRACE=gc`).
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct CycleExtent {
+    pub(super) polls: u32,
+    /// Allocation weight charged during the cycle: what its remark keeps black.
+    pub(super) weight: usize,
+    pub(super) wall_micros: u128,
+    /// Values left for the remark to mark.
+    pub(super) remark_values: usize,
+    /// Marks the marker thread and assists set, and the marker's busy time.
+    pub(super) marked: u64,
+    pub(super) marker_busy_micros: u64,
+    /// Polls that assisted the marker (`MarkerThread::assist`).
+    pub(super) assists: u32,
+}
+
+impl std::fmt::Display for CycleExtent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "remark_after_polls={} cycle_weight={} cycle_us={} remark_values={} marker_marked={} marker_busy_us={} assists={}",
+            self.polls, self.weight, self.wall_micros, self.remark_values, self.marked, self.marker_busy_micros, self.assists
+        )
+    }
+}
+
 /// Polls a cycle takes to mark the live set, at most: the mutator marks a share of it at each,
 /// so the cycle ends within about `1 / CYCLE_POLLS_PER_LIVE_SET`'s worth of the interval since
 /// the last full collection, past whatever the barrier adds.
 const CYCLE_POLLS_PER_LIVE_SET: usize = 8;
+/// An assist marks this share of a poll's step (`ConcurrentCycle::step_values`): past its
+/// budget the mutator polls four times as often, so it marks a quarter of the live set over
+/// what would have been sixteen ordinary polls, the marker doing the rest beside it.
+const CYCLE_ASSIST_SHARE: usize = 16;
 /// Polls a cycle spreads over the allocation one full collection interval charges.
 const CYCLE_POLLS_PER_INTERVAL: usize = 128;
 
@@ -293,6 +324,7 @@ impl Heap {
             step_values: (live / CYCLE_POLLS_PER_LIVE_SET).max(1024),
             poll_weight: (interval / CYCLE_POLLS_PER_INTERVAL).max(1),
             polls: 0,
+            assists: 0,
             started_at: self.allocated,
             started: std::time::Instant::now(),
             _quarantine: quarantine,
@@ -303,7 +335,25 @@ impl Heap {
     /// Makes `should_collect` answer at the cycle's next poll.
     fn arm_cycle_poll(&mut self) {
         let weight = self.cycle.as_ref().map_or(0, |cycle| cycle.poll_weight);
-        self.collect_at = self.allocated.saturating_add(weight);
+        // Past the budget, polls (each an assist) come four times as often.
+        let weight = if self.allocated >= self.cycle_due_at { weight / 4 } else { weight };
+        self.collect_at.set(self.allocated.saturating_add(weight.max(1)));
+    }
+
+    /// Plans the cycle a full collection's `threshold` (its interval's garbage budget, from
+    /// now) makes due: its remark is due once the budget is spent, counting what the last
+    /// remark kept black (`premarked`), and it starts early by what cycles allocate, so the
+    /// peak stays within the budget; the start is the next collection's trigger.
+    pub(super) fn plan_cycle(&mut self, premarked: bool, threshold: usize) {
+        // Before any cycle's measure, the first runs past the plan without assists.
+        if self.cycle_weight_average == 0 || self.concurrent_cycle_refusal().is_some() {
+            return;
+        }
+        let floating = if premarked { self.last_cycle_extent.weight } else { 0 };
+        let budget = threshold.saturating_sub(floating);
+        self.cycle_due_at = self.allocated.saturating_add(budget);
+        let start = budget.saturating_sub(self.cycle_weight_average).max(1);
+        self.collect_at.set(self.allocated.saturating_add(start));
     }
 
     /// Whether an incremental cycle is running (`begin_cycle`).
@@ -357,6 +407,12 @@ impl Heap {
     fn share_marking(&mut self, marker: &concurrent_view::MarkerThread, cycle: &mut ConcurrentCycle) -> bool {
         let mut for_marker = self.take_satb_values();
         for_marker.append(self.satb_shaded.get_mut());
+        if self.allocated >= self.cycle_due_at {
+            // The interval's budget is spent: the mutator marks a step's share itself rather
+            // than let the heap grow past it.
+            cycle.assists += 1;
+            marker.assist((cycle.step_values / CYCLE_ASSIST_SHARE).max(1), &mut cycle.work);
+        }
         let quiet = marker.take_deferred(&mut cycle.work);
         if quiet && cycle.work.is_empty() {
             // The marker drained what it was given: the remark marks what the mutator wrote
@@ -399,13 +455,29 @@ impl Heap {
         };
         // The marker stops first: the rest is marked here, serially.
         if let Some(marker) = cycle.marker.take() {
+            let (marked, busy) = marker.stats();
+            self.last_cycle_extent.marked = marked;
+            self.last_cycle_extent.marker_busy_micros = busy / 1000;
             let mut left = marker.stop();
             cycle.work.append(&mut left);
         }
         let remark_values = cycle.work.len() + self.satb_shaded.get_mut().len()
             + self.record_families_mut().iter_mut().map(|(family, _)| family.satb_values_len()).sum::<usize>();
         let cycle = self.cycle.as_ref().expect("a running cycle");
-        self.last_cycle_extent = (cycle.polls, self.allocated - cycle.started_at, cycle.started.elapsed().as_micros(), remark_values);
+        self.last_cycle_extent = CycleExtent {
+            polls: cycle.polls,
+            weight: self.allocated - cycle.started_at,
+            wall_micros: cycle.started.elapsed().as_micros(),
+            remark_values,
+            marked: self.last_cycle_extent.marked,
+            marker_busy_micros: self.last_cycle_extent.marker_busy_micros,
+            assists: cycle.assists,
+        };
+        self.cycle_weight_average = if self.cycle_weight_average == 0 {
+            self.last_cycle_extent.weight
+        } else {
+            (self.cycle_weight_average + self.last_cycle_extent.weight) / 2
+        };
         while !self.mark_step(usize::MAX) {}
         self.cycle = None;
         self.set_satb(false);

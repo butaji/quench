@@ -2064,13 +2064,17 @@ impl Object {
 
     /// The prototype and inline values of an object `concurrent_run` accepted.
     #[inline(always)]
-    pub(super) fn concurrent_inline_children(&self, work: &mut Vec<Value>) {
+    pub(super) fn concurrent_inline_children(&self, mut visit: impl FnMut(Value)) {
         let proto = self.proto();
         if proto.is_heap() {
-            work.push(proto);
+            visit(proto);
         }
         if self.meta & OBJECT_INLINE_STORAGE != 0 {
-            work.extend(Self::unpack_inline(self.payload).into_iter().filter(|value| value.is_heap() && !value.is_deleted()));
+            for value in Self::unpack_inline(self.payload) {
+                if value.is_heap() && !value.is_deleted() {
+                    visit(value);
+                }
+            }
         }
     }
 

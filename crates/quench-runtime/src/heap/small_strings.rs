@@ -147,6 +147,25 @@ impl SmallParts {
     }
 }
 
+/// Visits the string parts of the small string record at `record` for a concurrent marker,
+/// read with relaxed atomic loads while the mutator may write its text out; possibly a torn
+/// read, whose ids the marker bounds as any value's.
+///
+/// # Safety
+/// `record` points to an initialized record that stays allocated during the call.
+pub(super) unsafe fn concurrent_small_parts(record: *const SmallParts, visit: impl FnMut(u32)) {
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::Relaxed};
+    // SAFETY: the caller's contract; each field is aligned for its atomic.
+    let copy = unsafe {
+        ManuallyDrop::new(SmallParts {
+            head: AtomicU32::from_ptr(std::ptr::addr_of!((*record).head).cast_mut()).load(Relaxed),
+            tail: AtomicU32::from_ptr(std::ptr::addr_of!((*record).tail).cast_mut()).load(Relaxed),
+            extra: AtomicU64::from_ptr(std::ptr::addr_of!((*record).extra).cast_mut()).load(Relaxed),
+        })
+    };
+    copy.for_each_text(visit);
+}
+
 /// A string's existing flat units (`Heap::flat_text`): borrowed from its record, or a small
 /// string's shared text.
 pub(crate) enum FlatText<'a> {

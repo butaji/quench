@@ -752,7 +752,13 @@ pub(crate) struct Heap {
     last_collection_premarked: bool,
     /// The last finished cycle's polls, the allocation weight and wall time it ran over, and
     /// the values its remark marked, for the trace.
-    last_cycle_extent: (u32, usize, u128, usize),
+    last_cycle_extent: concurrent_mark::CycleExtent,
+    /// The cycles' allocation weight, averaged (`CycleExtent::weight`): how early the next
+    /// starts.
+    cycle_weight_average: usize,
+    /// The allocation count at which the running or next cycle's remark is due: past it, the
+    /// interval's budget is spent, and the mutator assists the marker.
+    cycle_due_at: usize,
     /// Marks on the parallel pool whatever the heap's size (`Heap::parallel_mark`), so unit
     /// tests reach the parallel path with small heaps.
     #[cfg(test)]
@@ -2875,7 +2881,7 @@ impl Heap {
         // next cycle frees: pacing sizes the next interval from the snapshot's live set, the
         // marks less the cycle's allocation weight, at most half of them.
         let (live, live_weight, black_share) = if premarked {
-            let black = self.last_cycle_extent.1.min(live_weight / 2);
+            let black = self.last_cycle_extent.weight.min(live_weight / 2);
             let records = (black as u128 * live as u128 / live_weight.max(1) as u128) as usize;
             (live - records, live_weight - black, (black, live_weight))
         } else {
@@ -2929,10 +2935,7 @@ impl Heap {
             let (mark_us, sweep_us) = trace_times;
             let concurrent = if full { format!(" concurrent={:?}", self.concurrent_cycle_refusal()) } else { String::new() };
             let concurrent = if self.last_collection_premarked {
-                format!(
-                    "{concurrent} remark_after_polls={} cycle_weight={} cycle_us={} remark_values={}",
-                    self.last_cycle_extent.0, self.last_cycle_extent.1, self.last_cycle_extent.2, self.last_cycle_extent.3
-                )
+                format!("{concurrent} {}", self.last_cycle_extent)
             } else {
                 concurrent
             };
@@ -2941,11 +2944,9 @@ impl Heap {
         self.live_weight_after_previous = live_weight;
         self.set_young_budget(next.threshold);
         self.full_due = next.full;
-        if premarked && next.full {
-            // Cycles keep running: the next starts early by what this one allocated, so its
-            // remark lands near the planned full collection.
-            let early = self.last_cycle_extent.1.min(next.threshold / 2);
-            self.collect_at -= early;
+        self.cycle_due_at = usize::MAX;
+        if next.full {
+            self.plan_cycle(premarked, next.threshold);
         }
         #[cfg(feature = "profile-aggregate")]
         {

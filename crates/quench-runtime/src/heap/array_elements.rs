@@ -104,7 +104,7 @@ unsafe fn release(start: *mut u8, layout: Layout) {
 /// # Safety
 /// `raw` was a backing's header pointer at some point during the quarantine
 /// (`begin_quarantine`) or before it, and its array record is not freed.
-pub(crate) unsafe fn concurrent_heap_values(raw: u64, work: &mut Vec<Value>) {
+pub(crate) unsafe fn concurrent_heap_values(raw: u64, mut visit: impl FnMut(Value)) {
     use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::Relaxed};
     let header = raw as usize as *mut Header;
     // SAFETY: a header pointer stays readable through the quarantine, and no header moves
@@ -119,7 +119,7 @@ pub(crate) unsafe fn concurrent_heap_values(raw: u64, work: &mut Vec<Value>) {
         for index in 0..len {
             let value = Value::from_bits(AtomicU64::from_ptr(values.add(index)).load(Relaxed));
             if value.is_heap() {
-                work.push(value);
+                visit(value);
             }
         }
     }
