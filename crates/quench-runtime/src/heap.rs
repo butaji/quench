@@ -2871,6 +2871,16 @@ impl Heap {
         // Live weight in the units allocation is charged in: one per cell or record plus
         // its payload.
         let live_weight = live + self.payload_bytes / payload_unit();
+        // A remark keeps everything its cycle allocated (black), garbage or not, which the
+        // next cycle frees: pacing sizes the next interval from the snapshot's live set, the
+        // marks less the cycle's allocation weight, at most half of them.
+        let (live, live_weight, black_share) = if premarked {
+            let black = self.last_cycle_extent.1.min(live_weight / 2);
+            let records = (black as u128 * live as u128 / live_weight.max(1) as u128) as usize;
+            (live - records, live_weight - black, (black, live_weight))
+        } else {
+            (live, live_weight, (0, 1))
+        };
         let allocated = self.allocated_since_collection();
         self.allocated_at_collection = self.allocated;
         self.external_since_collection = 0;
@@ -2887,7 +2897,8 @@ impl Heap {
         if full {
             self.live_after_full = live;
             self.live_weight_after_full = live_weight;
-            self.resident_after_full = self.occupied_resident_bytes();
+            let resident = self.occupied_resident_bytes();
+            self.resident_after_full = resident - (resident as u128 * black_share.0 as u128 / black_share.1 as u128) as usize;
         }
         if trims_environments && closure_reads.is_some() {
             self.live_at_environment_trim = Some(live);
@@ -2930,6 +2941,12 @@ impl Heap {
         self.live_weight_after_previous = live_weight;
         self.set_young_budget(next.threshold);
         self.full_due = next.full;
+        if premarked && next.full {
+            // Cycles keep running: the next starts early by what this one allocated, so its
+            // remark lands near the planned full collection.
+            let early = self.last_cycle_extent.1.min(next.threshold / 2);
+            self.collect_at -= early;
+        }
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.allocations_between_collections_total +=
