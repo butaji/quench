@@ -35,7 +35,7 @@ const INTEGER_CONDITIONS: [(Relation, IntCC); 10] = [
 ];
 
 /// The machine condition of each float relation.
-const FLOAT_CONDITIONS: [(Relation, FloatCC); 7] = [
+const FLOAT_CONDITIONS: [(Relation, FloatCC); 8] = [
     (Relation::FloatEqual, FloatCC::Equal),
     (Relation::FloatNotEqual, FloatCC::NotEqual),
     (Relation::FloatLess, FloatCC::LessThan),
@@ -43,6 +43,7 @@ const FLOAT_CONDITIONS: [(Relation, FloatCC); 7] = [
     (Relation::FloatGreater, FloatCC::GreaterThan),
     (Relation::FloatGreaterEqual, FloatCC::GreaterThanOrEqual),
     (Relation::FloatUnordered, FloatCC::Unordered),
+    (Relation::FloatUnorderedEqual, FloatCC::UnorderedOrEqual),
 ];
 
 /// The relation of each Wasm integer comparison operator.
@@ -178,6 +179,17 @@ fn float_binary(builder: &mut FunctionBuilder<'_>, operation: Binary, a: ir::Val
     }
 }
 
+/// The wrapped result of a signed integer row and whether it overflowed.
+fn overflowing(builder: &mut FunctionBuilder<'_>, operation: Binary, a: ir::Value, b: ir::Value) -> (ir::Value, ir::Value) {
+    let ins = builder.ins();
+    match operation {
+        Binary::Add => ins.sadd_overflow(a, b),
+        Binary::Sub => ins.ssub_overflow(a, b),
+        Binary::Mul => ins.smul_overflow(a, b),
+        _ => unreachable!("a row with no overflow flag"),
+    }
+}
+
 fn compare(builder: &mut FunctionBuilder<'_>, relation: Relation, a: ir::Value, b: ir::Value) -> ir::Value {
     let ins = builder.ins();
     match row(&FLOAT_CONDITIONS, relation) {
@@ -240,6 +252,9 @@ impl<'b, B: Builds<'b>> MachineScalar for B {
     fn raw_const(&mut self, lane: Lane, bits: i64) -> ir::Value { constant(self.function_builder(), lane, bits) }
     fn raw_binary(&mut self, operation: Binary, a: ir::Value, b: ir::Value) -> ir::Value {
         binary(self.function_builder(), operation, a, b)
+    }
+    fn raw_binary_overflow(&mut self, operation: Binary, a: ir::Value, b: ir::Value) -> (ir::Value, ir::Value) {
+        overflowing(self.function_builder(), operation, a, b)
     }
     fn raw_compare(&mut self, relation: Relation, a: ir::Value, b: ir::Value) -> ir::Value {
         compare(self.function_builder(), relation, a, b)

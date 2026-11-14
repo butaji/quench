@@ -47,6 +47,7 @@ impl<'b, B: Builds<'b>> MachineAccess for B {
     type Function = ir::FuncRef;
     type Signature = ir::SigRef;
     type Slot = ir::StackSlot;
+    type Symbol = ir::GlobalValue;
 
     fn raw_load(&mut self, lane: Lane, flags: MemFlagsData, base: ir::Value, offset: i32) -> ir::Value {
         self.function_builder().ins().load(machine_type(lane), flags, base, offset)
@@ -69,6 +70,14 @@ impl<'b, B: Builds<'b>> MachineAccess for B {
         if private { builder.func.private_stores.push(store); }
     }
 
+    fn raw_atomic_load(&mut self, lane: Lane, flags: MemFlagsData, base: ir::Value) -> ir::Value {
+        self.function_builder().ins().atomic_load(machine_type(lane), flags, base)
+    }
+
+    fn stack_pointer(&mut self) -> ir::Value {
+        self.function_builder().ins().get_stack_pointer(types::I64)
+    }
+
     fn load_access(&mut self, access: Access, flags: MemFlagsData, address: ir::Value) -> ir::Value {
         let kind = Kind::of(access.ty).expect("a scalar access");
         let (cell, result) = (cell_lane(access.bytes), lane_of(kind.ir()));
@@ -85,10 +94,15 @@ impl<'b, B: Builds<'b>> MachineAccess for B {
     }
 
     fn call_words(&mut self, target: ir::Value, arguments: &[ir::Value]) -> ir::Value {
+        let parameters = vec![Lane::I64; arguments.len()];
+        self.call_lanes(target, (&parameters[..], Lane::I64), arguments)
+    }
+
+    fn call_lanes(&mut self, target: ir::Value, (parameters, result): (&[Lane], Lane), arguments: &[ir::Value]) -> ir::Value {
         let builder = self.function_builder();
         let mut signature = Signature::new(builder.func.signature.call_conv);
-        signature.params.extend(arguments.iter().map(|_| AbiParam::new(types::I64)));
-        signature.returns.push(AbiParam::new(types::I64));
+        signature.params.extend(parameters.iter().map(|lane| AbiParam::new(machine_type(*lane))));
+        signature.returns.push(AbiParam::new(machine_type(result)));
         let signature = builder.import_signature(signature);
         self.call_signature(signature, target, arguments)[0]
     }
@@ -99,8 +113,16 @@ impl<'b, B: Builds<'b>> MachineAccess for B {
         builder.inst_results(call).to_vec()
     }
 
+    fn symbol_address(&mut self, symbol: ir::GlobalValue) -> ir::Value {
+        self.function_builder().ins().symbol_value(types::I64, symbol)
+    }
+
     fn slot_address(&mut self, slot: ir::StackSlot, offset: i32) -> ir::Value {
         self.function_builder().ins().stack_addr(types::I64, slot, offset)
+    }
+
+    fn slot_store(&mut self, slot: ir::StackSlot, lane: Lane, value: ir::Value, offset: i32) {
+        self.function_builder().ins().stack_store(machine_type(lane), value, slot, offset);
     }
 
     fn call_signature(&mut self, signature: ir::SigRef, target: ir::Value, arguments: &[ir::Value]) -> Vec<ir::Value> {

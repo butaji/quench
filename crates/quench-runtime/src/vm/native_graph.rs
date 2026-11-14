@@ -5,10 +5,11 @@ use super::native_object::{
     NativeFunctionAddress,
 };
 use super::native_operands::NativeJsOperands;
-use super::specialize::{CallThreaded, CallThreadedExtension, Continuation, InstructionSite, Specializer};
+use super::specialize::{CallThreaded, CallThreadedExtension, InstructionSite, Specializer};
+use crate::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
 use crate::bytecode::{Function, Op, OPCODE_COUNT, ProgramKind, ResidualProgram, opcode_name};
 use cranelift_codegen::{
-    ir::{self, InstBuilder, MemFlagsData, condcodes::IntCC, types},
+    ir::{self, MemFlagsData},
     isa::TargetIsa,
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -16,14 +17,14 @@ use std::{num::NonZeroUsize, ops::Range};
 
 #[path = "native_graph/object_parts.rs"]
 mod object_parts;
+#[path = "native_graph/dispatch.rs"]
+mod dispatch;
+pub(super) use dispatch::{lower_body, lower_region_dispatch, region_call_arguments};
 use object_parts::{entry_table_data, import_operations, lower_lane_bodies, lower_object_entry, lower_object_regions};
 
 // Bounds the working CFG, not the source function. Large unpartitioned native
 // graphs exhausted 14 GiB on a 50 KiB input; callers may choose any nonzero budget.
 const DEFAULT_REGION_INSTRUCTION_BUDGET: NonZeroUsize = NonZeroUsize::new(1024).unwrap();
-const NATIVE_JS_REGION_EXIT: u32 = super::compiled::NATIVE_JS_INVALID_PC + 1;
-// The shared entry ABI's memory-base word is unused by JavaScript bodies.
-const REGION_START_PC_PARAMETER: usize = 1;
 /// The image's ABI header import is its first function symbol.
 const ABI_SYMBOL_INDEX: u32 = 0;
 /// Data records an image publishes between its functions' operands and the fallback tables: the narrow table, then the atom table.
@@ -374,24 +375,15 @@ impl<'a> ObjectOperations<'a> {
             })
         });
         let base = *self.operand_base.get_or_insert_with(|| {
-            let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
-                NATIVE_DATA_NAMESPACE, self.function_id,
-            ));
-            builder.create_global_value(ir::GlobalValueData::Symbol {
-                name: ir::ExternalName::user(name),
-                offset: ir::immediates::Imm64::new(0),
-                colocated: false,
-                tls: false,
-            })
+            super::jit_backend::declare_symbol(builder.func, NATIVE_DATA_NAMESPACE, self.function_id)
         });
-        let address = builder.ins().symbol_value(self.isa.pointer_type(), base);
+        let address = builder.symbol_address(base);
         // Both callers bound the instruction count, so this offset is host-addressable.
         let offset = i64::try_from(pc * std::mem::size_of::<NativeJsOperands>())
             .expect("host addressable operand offset");
-        let address = builder.ins().iadd_imm_s(address, offset);
-        let pc = builder.ins().iconst(types::I64, pc as i64);
-        let call = builder.ins().call(entry, &[context, pc, address, result]);
-        builder.inst_results(call)[0]
+        let address = builder.raw_binary_imm(Binary::Add, address, offset);
+        let pc = builder.raw_const(Lane::I64, pc as i64);
+        builder.call_function(entry, &[context, pc, address, result])[0]
     }
 }
 
@@ -414,294 +406,48 @@ fn object_fallback_table(
     })
 }
 
+/// `function_id`'s definition under `signature`.
+fn native_function(function_id: u32, signature: ir::Signature) -> ir::Function {
+    ir::Function::with_name_signature(ir::UserFuncName::user(NATIVE_FUNCTION_NAMESPACE, function_id), signature)
+}
+
+/// Starts the entry block of a native function: its parameters.
+fn enter_native_entry(builder: &mut FunctionBuilder<'_>) -> Vec<ir::Value> {
+    let entry = builder.new_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.enter_open(entry);
+    builder.block_params(entry).to_vec()
+}
+
 /// One exact semantic operation for a guarded native path's fallback.
 fn lower_object_fallback(
     function: &Function, function_id: u32, table: u32, isa: &dyn TargetIsa,
 ) -> Result<ir::Function, String> {
     let count = u32::try_from(function.code.len()).map_err(|_| "native instruction count exceeds u32")?;
-    let mut native = ir::Function::with_name_signature(
-        ir::UserFuncName::user(NATIVE_FUNCTION_NAMESPACE, function_id),
-        super::compiled::native_js_operation_signature(isa),
-    );
+    let mut native = native_function(function_id, super::compiled::native_js_operation_signature(isa));
     let mut context = FunctionBuilderContext::new();
     let mut builder = FunctionBuilder::new(&mut native, &mut context);
-    let entry = builder.create_block();
-    builder.append_block_params_for_function_params(entry);
-    builder.switch_to_block(entry);
-    let params = builder.block_params(entry).to_vec();
+    let params = enter_native_entry(&mut builder);
     let pc = params[1];
-    let valid_pc = builder.create_block();
-    let invalid = builder.create_block();
-    let valid = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, pc, i64::from(count));
-    builder.ins().brif(valid, valid_pc, &[], invalid, &[]);
-    builder.switch_to_block(valid_pc);
-    let symbol = |builder: &mut FunctionBuilder<'_>, index| {
-        let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
-            NATIVE_DATA_NAMESPACE, index,
-        ));
-        let value = builder.create_global_value(ir::GlobalValueData::Symbol {
-            name: ir::ExternalName::user(name), offset: ir::immediates::Imm64::new(0),
-            colocated: false, tls: false,
-        });
-        builder.ins().symbol_value(isa.pointer_type(), value)
-    };
-    let table_base = symbol(&mut builder, table);
-    let table_offset = builder.ins().imul_imm_u(pc, i64::from(isa.pointer_bytes()));
-    let entry_address = builder.ins().iadd(table_base, table_offset);
-    let entry = builder.ins().load(isa.pointer_type(), MemFlagsData::trusted(), entry_address, 0);
-    let operands_base = symbol(&mut builder, function_id);
-    let operands_offset = builder.ins().imul_imm_u(pc, std::mem::size_of::<NativeJsOperands>() as i64);
-    let operands = builder.ins().iadd(operands_base, operands_offset);
+    let valid_pc = builder.new_block();
+    let invalid = builder.new_block();
+    let valid = builder.raw_compare_imm(Relation::UnsignedLess, pc, i64::from(count));
+    builder.branch_if(valid, (valid_pc, &[]), (invalid, &[]));
+    builder.enter(valid_pc);
+    let table_base = super::jit_backend::symbol_address(&mut builder, NATIVE_DATA_NAMESPACE, table);
+    let table_offset = builder.raw_binary_imm(Binary::Mul, pc, i64::from(isa.pointer_bytes()));
+    let entry_address = builder.raw_binary(Binary::Add, table_base, table_offset);
+    let entry = builder.raw_load(Lane::I64, MemFlagsData::trusted(), entry_address, 0);
+    let operands_base = super::jit_backend::symbol_address(&mut builder, NATIVE_DATA_NAMESPACE, function_id);
+    let operands_offset = builder.raw_binary_imm(Binary::Mul, pc, std::mem::size_of::<NativeJsOperands>() as i64);
+    let operands = builder.raw_binary(Binary::Add, operands_base, operands_offset);
     let signature = builder.import_signature(super::compiled::native_js_operation_signature(isa));
-    let call = builder.ins().call_indirect(signature, entry, &[params[0], pc, operands, params[3]]);
-    let status = builder.inst_results(call)[0];
-    builder.ins().return_(&[status]);
-    builder.switch_to_block(invalid);
-    let status = builder.ins().iconst(types::I64, i64::from(super::compiled::NATIVE_JS_STOPPED));
-    builder.ins().return_(&[status]);
-    builder.seal_all_blocks();
-    builder.finalize(isa.frontend_config());
-    Ok(native)
-}
-
-/// Bindings choose linker symbols or live JIT addresses; the graph and semantic
-/// continuation protocol are identical in both publication modes.
-pub(super) fn lower_body(
-    sites: &[InstructionSite],
-    function_id: u32,
-    isa: &dyn TargetIsa,
-    region: Option<Range<usize>>,
-    mut operation: impl FnMut(&mut FunctionBuilder<'_>, &InstructionSite, ir::Value, ir::Value) -> ir::Value,
-) -> Result<ir::Function, String> {
-    u32::try_from(sites.len()).map_err(|_| "native instruction count exceeds u32")?;
-    let is_region = region.is_some();
-    let range = region.unwrap_or(0..sites.len());
-    if range.start > range.end || range.end > sites.len() {
-        return Err("invalid native region bounds".into());
-    }
-    let count =
-        u32::try_from(range.len()).map_err(|_| "native region instruction count exceeds u32")?;
-    let mut native = ir::Function::with_name_signature(
-        ir::UserFuncName::user(NATIVE_FUNCTION_NAMESPACE, function_id),
-        super::compiled::native_entry_signature(isa.pointer_type(), isa.default_call_conv()),
-    );
-    let mut builder_context = FunctionBuilderContext::new();
-    let mut builder = FunctionBuilder::new(&mut native, &mut builder_context);
-    let entry = builder.create_block();
-    builder.append_block_params_for_function_params(entry);
-    builder.switch_to_block(entry);
-    let context = builder.block_params(entry)[0];
-    let result = builder.block_params(entry)[4];
-    let start_pc = if is_region {
-        builder.block_params(entry)[REGION_START_PC_PARAMETER]
-    } else {
-        super::compiled::native_js_start_pc(&mut builder, context)
-    };
-    let resume = builder.create_block();
-    let pc = builder.append_block_param(resume, types::I64);
-    let select = builder.create_block();
-    let selector = builder.append_block_param(select, types::I32);
-    let invalid = builder.create_block();
-    let invalid_pc = builder.append_block_param(invalid, types::I64);
-    let stopped = builder.create_block();
-    let blocks: Vec<_> = (0..count).map(|_| builder.create_block()).collect();
-    builder.ins().jump(resume, &[ir::BlockArg::Value(start_pc)]);
-
-    for (offset, block) in blocks.iter().copied().enumerate() {
-        let site = &sites[range.start + offset];
-        builder.switch_to_block(block);
-        if let Continuation::Static(target) = site.continuation {
-            match target.checked_sub(range.start).and_then(|offset| blocks.get(offset)) {
-                Some(block) => {
-                    builder.ins().jump(*block, &[]);
-                }
-                None => {
-                    let target = builder.ins().iconst(types::I64, target as i64);
-                    builder.ins().jump(resume, &[ir::BlockArg::Value(target)]);
-                }
-            }
-            continue;
-        }
-        let status = operation(&mut builder, site, context, result);
-        let continued = builder.ins().icmp_imm_u(IntCC::Equal, status, 0);
-        let successor = builder.create_block();
-        builder.ins().brif(continued, successor, &[], stopped, &[]);
-        builder.switch_to_block(successor);
-        let next = builder
-            .ins()
-            .load(types::I64, MemFlagsData::trusted(), result, 0);
-        if site.continuation == Continuation::Fallthrough
-            && let Some(block) = blocks.get(offset + 1)
-        {
-            let fallthrough = builder
-                .ins()
-                .icmp_imm_u(IntCC::Equal, next, (site.pc + 1) as i64);
-            builder.ins().brif(
-                fallthrough,
-                *block,
-                &[],
-                resume,
-                &[ir::BlockArg::Value(next)],
-            );
-        } else {
-            builder.ins().jump(resume, &[ir::BlockArg::Value(next)]);
-        }
-    }
-    builder.switch_to_block(resume);
-    // Check the full PC before narrowing it for br_table. A high word must not
-    // alias a valid instruction and replay guest effects.
-    let offset = builder.ins().iadd_imm_s(pc, -(range.start as i64));
-    let in_range = builder
-        .ins()
-        .icmp_imm_u(IntCC::UnsignedLessThan, offset, i64::from(count));
-    let index = builder.ins().ireduce(types::I32, offset);
-    builder.ins().brif(
-        in_range,
-        select,
-        &[ir::BlockArg::Value(index)],
-        invalid,
-        &[ir::BlockArg::Value(pc)],
-    );
-    builder.switch_to_block(select);
-    let default = builder
-        .func
-        .dfg
-        .block_call(invalid, &[ir::BlockArg::Value(pc)]);
-    let cases: Vec<_> = blocks
-        .iter()
-        .map(|block| builder.func.dfg.block_call(*block, &[]))
-        .collect();
-    let table = builder.create_jump_table(ir::JumpTableData::new(default, &cases));
-    builder.ins().br_table(selector, table);
-    builder.switch_to_block(invalid);
-    builder
-        .ins()
-        .store(MemFlagsData::trusted(), invalid_pc, result, 0);
-    let status = builder.ins().iconst(
-        types::I32,
-        i64::from(if is_region {
-            NATIVE_JS_REGION_EXIT
-        } else {
-            super::compiled::NATIVE_JS_INVALID_PC
-        }),
-    );
-    builder.ins().return_(&[status]);
-    builder.switch_to_block(stopped);
-    let status = builder
-        .ins()
-        .iconst(types::I32, i64::from(super::compiled::NATIVE_JS_STOPPED));
-    builder.ins().return_(&[status]);
-    builder.seal_all_blocks();
-    builder.finalize(isa.frontend_config());
-    Ok(native)
-}
-
-/// Private regions reuse the native ABI, carrying their starting PC in its
-/// otherwise unused memory-base word. Guest arguments remain in the VM frame.
-pub(super) fn region_call_arguments(
-    builder: &mut FunctionBuilder<'_>,
-    isa: &dyn TargetIsa,
-    context: ir::Value,
-    pc: ir::Value,
-    result: ir::Value,
-) -> [ir::Value; 5] {
-    let length = builder.ins().iconst(types::I64, 0);
-    let arguments = builder.ins().iconst(isa.pointer_type(), 0);
-    [context, pc, length, arguments, result]
-}
-
-pub(super) fn lower_region_dispatch(
-    function_id: u32,
-    instruction_count: usize,
-    width: usize,
-    region_count: usize,
-    isa: &dyn TargetIsa,
-    mut call: impl FnMut(&mut FunctionBuilder<'_>, usize, ir::Value, ir::Value, ir::Value) -> ir::Value,
-) -> Result<ir::Function, String> {
-    let count =
-        u32::try_from(instruction_count).map_err(|_| "native instruction count exceeds u32")?;
-    if width == 0 || instruction_count.div_ceil(width) != region_count {
-        return Err("invalid native region plan".into());
-    }
-    let mut native = ir::Function::with_name_signature(
-        ir::UserFuncName::user(NATIVE_FUNCTION_NAMESPACE, function_id),
-        super::compiled::native_entry_signature(isa.pointer_type(), isa.default_call_conv()),
-    );
-    let mut context_builder = FunctionBuilderContext::new();
-    let mut builder = FunctionBuilder::new(&mut native, &mut context_builder);
-    let entry = builder.create_block();
-    builder.append_block_params_for_function_params(entry);
-    builder.switch_to_block(entry);
-    let context = builder.block_params(entry)[0];
-    let result = builder.block_params(entry)[4];
-    let start = super::compiled::native_js_start_pc(&mut builder, context);
-    let resume = builder.create_block();
-    let pc = builder.append_block_param(resume, types::I64);
-    let select = builder.create_block();
-    let selector = builder.append_block_param(select, types::I32);
-    let invalid = builder.create_block();
-    let invalid_pc = builder.append_block_param(invalid, types::I64);
-    let stopped = builder.create_block();
-    let status = builder.append_block_param(stopped, types::I32);
-    let blocks: Vec<_> = (0..region_count).map(|_| builder.create_block()).collect();
-    builder.ins().jump(resume, &[ir::BlockArg::Value(start)]);
-    for (index, block) in blocks.iter().copied().enumerate() {
-        builder.switch_to_block(block);
-        let status = call(&mut builder, index, context, pc, result);
-        let continued =
-            builder
-                .ins()
-                .icmp_imm_u(IntCC::Equal, status, i64::from(NATIVE_JS_REGION_EXIT));
-        let next = builder.create_block();
-        builder.ins().brif(
-            continued,
-            next,
-            &[],
-            stopped,
-            &[ir::BlockArg::Value(status)],
-        );
-        builder.switch_to_block(next);
-        let next_pc = builder
-            .ins()
-            .load(types::I64, MemFlagsData::trusted(), result, 0);
-        builder.ins().jump(resume, &[ir::BlockArg::Value(next_pc)]);
-    }
-    builder.switch_to_block(resume);
-    let in_range = builder
-        .ins()
-        .icmp_imm_u(IntCC::UnsignedLessThan, pc, i64::from(count));
-    let divisor = builder.ins().iconst(types::I64, width as i64);
-    let region = builder.ins().udiv(pc, divisor);
-    let index = builder.ins().ireduce(types::I32, region);
-    builder.ins().brif(
-        in_range,
-        select,
-        &[ir::BlockArg::Value(index)],
-        invalid,
-        &[ir::BlockArg::Value(pc)],
-    );
-    builder.switch_to_block(select);
-    let default = builder
-        .func
-        .dfg
-        .block_call(invalid, &[ir::BlockArg::Value(pc)]);
-    let cases: Vec<_> = blocks
-        .iter()
-        .map(|block| builder.func.dfg.block_call(*block, &[]))
-        .collect();
-    let table = builder.create_jump_table(ir::JumpTableData::new(default, &cases));
-    builder.ins().br_table(selector, table);
-    builder.switch_to_block(invalid);
-    builder
-        .ins()
-        .store(MemFlagsData::trusted(), invalid_pc, result, 0);
-    let invalid_status = builder
-        .ins()
-        .iconst(types::I32, i64::from(super::compiled::NATIVE_JS_INVALID_PC));
-    builder.ins().return_(&[invalid_status]);
-    builder.switch_to_block(stopped);
-    builder.ins().return_(&[status]);
-    builder.seal_all_blocks();
+    let status = builder.call_signature(signature, entry, &[params[0], pc, operands, params[3]])[0];
+    builder.leave(&[status]);
+    builder.enter(invalid);
+    let status = builder.raw_const(Lane::I64, i64::from(super::compiled::NATIVE_JS_STOPPED));
+    builder.leave(&[status]);
+    builder.seal_all();
     builder.finalize(isa.frontend_config());
     Ok(native)
 }

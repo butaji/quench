@@ -86,7 +86,7 @@ impl Lowering<'_, '_> {
                     Representation::Tagged => self.builder.use_var(self.registers.tagged[index]),
                     _ => super::number_domains::box_unboxed(&mut self.builder, &mut self.registers, representation, index),
                 };
-                self.frame_store(bits, self.registers_base, register_offset(index as Register));
+                self.store_word(regions::frame(), bits, self.registers_base, register_offset(index as Register));
             }
         }
     }
@@ -101,7 +101,7 @@ impl Lowering<'_, '_> {
             for register in inlined.base..inlined.base + inlined.registers {
                 if !self.is_live(pc, register) { continue; }
                 let bits = self.builder.use_var(self.registers.tagged[usize::from(register)]);
-                self.frame_store(bits, scratch, register_offset(register - self.unit.caller_registers));
+                self.store_word(regions::frame(), bits, scratch, register_offset(register - self.unit.caller_registers));
             }
         }
     }

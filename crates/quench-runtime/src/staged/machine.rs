@@ -1,5 +1,5 @@
 //! The primitives of a machine a specializer emits for, one set for every backend. `Machine` names
-//! the word; `MachineScalar`, `MachineAccess`, `MachineFlow` and `MachineVector` are the
+//! the word; `MachineScalar`, `MachineAccess`, `MachineFlow`, `MachineTail` and `MachineVector` are the
 //! operations a stage is composed from (constants, arithmetic by op row, typed memory, control
 //! transfer, vector views) and carry no layout or language meaning; `MachineStage` is the Wasm
 //! operator layer the interpreter (`ConcreteWasm`) and a specializer both run. Rules written over
@@ -83,9 +83,17 @@ pub(crate) trait MachineScalar: Machine {
     /// The `lane` constant whose bits are `bits`; a float lane reads them as its IEEE bits.
     fn raw_const(&mut self, lane: Lane, bits: i64) -> Self::Word;
     fn raw_binary(&mut self, operation: Binary, a: Self::Word, b: Self::Word) -> Self::Word;
+    /// A signed `Add`, `Sub` or `Mul` of two integers: its wrapped result and the flag that it overflowed.
+    fn raw_binary_overflow(&mut self, operation: Binary, a: Self::Word, b: Self::Word) -> (Self::Word, Self::Word);
     fn raw_compare(&mut self, relation: Relation, a: Self::Word, b: Self::Word) -> Self::Word;
     /// `raw_compare` against the immediate `bits` at `a`'s own width.
     fn raw_compare_imm(&mut self, relation: Relation, a: Self::Word, bits: i64) -> Self::Word;
+    /// `raw_binary` with the immediate `bits` at `a`'s own lane.
+    fn raw_binary_imm(&mut self, operation: Binary, a: Self::Word, bits: i64) -> Self::Word {
+        let lane = self.raw_lane(a);
+        let b = self.raw_const(lane, bits);
+        self.raw_binary(operation, a, b)
+    }
     fn raw_select(&mut self, cond: Self::Word, then: Self::Word, otherwise: Self::Word) -> Self::Word;
     fn raw_unary(&mut self, operation: Unary, a: Self::Word) -> Self::Word;
 }
@@ -107,6 +115,10 @@ pub(crate) trait MachineAccess: MachineScalar {
     fn load_access(&mut self, access: Access, flags: Self::Flags, address: Self::Word) -> Self::Word;
     /// The low bytes of `value` as `access` at `address`.
     fn store_access(&mut self, access: Access, flags: Self::Flags, address: Self::Word, value: Self::Word);
+    /// An atomic load of the `lane` that `base` addresses: neither merged nor dropped.
+    fn raw_atomic_load(&mut self, lane: Lane, flags: Self::Flags, base: Self::Word) -> Self::Word;
+    /// The stack pointer.
+    fn stack_pointer(&mut self) -> Self::Word;
     /// The `width` word `offset` bytes from `base`.
     fn load_word(&mut self, width: Width, flags: Self::Flags, base: Self::Word, offset: i32) -> Self::Word {
         self.raw_load(width.into(), flags, base, offset)
@@ -118,10 +130,17 @@ pub(crate) trait MachineAccess: MachineScalar {
     }
     /// A call of the code at `target` on word `arguments`: its word.
     fn call_words(&mut self, target: Self::Word, arguments: &[Self::Word]) -> Self::Word;
+    /// A call of the code at `target` whose `signature` is its parameter lanes and its result lane.
+    fn call_lanes(&mut self, target: Self::Word, signature: (&[Lane], Lane), arguments: &[Self::Word]) -> Self::Word;
     /// A call of the leaf at address `leaf` on word `arguments`: its word.
     fn call_leaf(&mut self, leaf: usize, arguments: &[Self::Word]) -> Self::Word {
         let target = self.raw_const(Lane::I64, leaf as i64);
         self.call_words(target, arguments)
+    }
+    /// A call of the leaf at address `leaf` under `signature` (parameter lanes and result lane).
+    fn call_leaf_lanes(&mut self, leaf: usize, signature: (&[Lane], Lane), arguments: &[Self::Word]) -> Self::Word {
+        let target = self.raw_const(Lane::I64, leaf as i64);
+        self.call_lanes(target, signature, arguments)
     }
     /// A function the machine calls directly, linked where the code is placed.
     type Function: Copy;
@@ -129,10 +148,16 @@ pub(crate) trait MachineAccess: MachineScalar {
     fn call_function(&mut self, target: Self::Function, arguments: &[Self::Word]) -> Vec<Self::Word>;
     /// What a call's signature is: its parameter and result machine types.
     type Signature: Copy;
+    /// A linked symbol whose address a caller reads.
+    type Symbol: Copy;
+    /// The address of `symbol`.
+    fn symbol_address(&mut self, symbol: Self::Symbol) -> Self::Word;
     /// A stack slot a caller spills words into.
     type Slot: Copy;
     /// The address `offset` bytes into `slot`.
     fn slot_address(&mut self, slot: Self::Slot, offset: i32) -> Self::Word;
+    /// The low `lane` bits of `value` into `slot`, `offset` bytes in.
+    fn slot_store(&mut self, slot: Self::Slot, lane: Lane, value: Self::Word, offset: i32);
     /// A call of the code at `target` under `signature`: all of its results.
     fn call_signature(&mut self, signature: Self::Signature, target: Self::Word, arguments: &[Self::Word]) -> Vec<Self::Word>;
 }
@@ -141,6 +166,14 @@ pub(crate) trait MachineAccess: MachineScalar {
 /// parameters.
 pub(crate) trait MachineFlow: MachineScalar {
     type Block: Copy;
+    /// A block with no parameters, not yet entered.
+    fn new_block(&mut self) -> Self::Block;
+    /// Continues building at `block`, whose every predecessor has been built.
+    fn enter(&mut self, block: Self::Block);
+    /// Continues building at `block`, which may still gain predecessors until `seal_all`.
+    fn enter_open(&mut self, block: Self::Block);
+    /// Declares that every block built has all its predecessors.
+    fn seal_all(&mut self);
     /// Continues at `block` with `arguments` as its parameters.
     fn goto(&mut self, block: Self::Block, arguments: &[Self::Word]);
     /// What a jump table is: the targets a selector indexes, the last being the default.
@@ -149,6 +182,10 @@ pub(crate) trait MachineFlow: MachineScalar {
     fn dispatch(&mut self, selector: Self::Word, table: Self::Table);
     /// Leaves the function with `values`.
     fn leave(&mut self, values: &[Self::Word]);
+    /// A parameter of `lane` added to `block`: the word it holds once `block` is entered.
+    fn block_parameter(&mut self, block: Self::Block, lane: Lane) -> Self::Word;
+    /// The jump table of `cases`, which a selector indexes, past which it takes `default` with its arguments.
+    fn jump_table(&mut self, cases: &[Self::Block], default: (Self::Block, &[Self::Word])) -> Self::Table;
     /// Continues at `then` where `flag` is nonzero, else at `otherwise`, each with its arguments.
     fn branch_if(
         &mut self,
@@ -156,6 +193,13 @@ pub(crate) trait MachineFlow: MachineScalar {
         then: (Self::Block, &[Self::Word]),
         otherwise: (Self::Block, &[Self::Word]),
     );
+}
+
+/// A machine that continues in the code it calls, so the call is the end of the function: a tail
+/// call of `target`, or of the code at an address under a `signature`, on `arguments`.
+pub(crate) trait MachineTail: MachineAccess + MachineFlow {
+    fn tail_call(&mut self, target: Self::Function, arguments: &[Self::Word]);
+    fn tail_call_indirect(&mut self, signature: Self::Signature, target: Self::Word, arguments: &[Self::Word]);
 }
 
 /// A machine with vector registers: lane-wise operations by a (lane shape, operator) row, views

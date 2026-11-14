@@ -14,7 +14,7 @@ mod scalar;
 mod vector;
 
 use super::object_slots::Emit;
-use super::{Emitter, Host, VECTOR_IR};
+use super::{Body, Emitter, Host, RegionCore, VECTOR_IR};
 use crate::staged::machine::{Lane, Machine};
 use cranelift_codegen::ir::{self, types};
 use cranelift_frontend::FunctionBuilder;
@@ -23,6 +23,26 @@ use cranelift_frontend::FunctionBuilder;
 /// written over.
 pub(in crate::vm::compiled) trait Builds<'b> {
     fn function_builder(&mut self) -> &mut FunctionBuilder<'b>;
+}
+
+/// A bare builder is a backend: the emitters of a function that no tier owns (a stencil, a
+/// regexp search, a dispatch shell) compose the primitives on the function builder itself.
+impl<'b> Builds<'b> for FunctionBuilder<'b> {
+    fn function_builder(&mut self) -> &mut FunctionBuilder<'b> {
+        self
+    }
+}
+
+impl<'b> Builds<'b> for RegionCore<'b> {
+    fn function_builder(&mut self) -> &mut FunctionBuilder<'b> {
+        &mut self.builder
+    }
+}
+
+impl<'b> Builds<'b> for Body<'b> {
+    fn function_builder(&mut self) -> &mut FunctionBuilder<'b> {
+        &mut self.core.builder
+    }
 }
 
 impl<'b> Builds<'b> for Emit<'_, 'b> {
@@ -56,7 +76,7 @@ fn machine_type(lane: Lane) -> ir::Type {
 
 /// The lane of a Cranelift type; a type that is none of the narrow, float or vector ones is the
 /// 64-bit word.
-fn lane_of(ty: ir::Type) -> Lane {
+pub(in crate::vm) fn lane_of(ty: ir::Type) -> Lane {
     match ty {
         types::I8 => Lane::I8,
         types::I16 => Lane::I16,

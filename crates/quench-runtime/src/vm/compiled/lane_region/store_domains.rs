@@ -31,8 +31,8 @@ impl Lowering<'_, '_> {
         }
         for (shape, slot, domain) in store_domains(instructions, |site| super::site_loads(self.fields, site).map(Vec::as_slice)) {
             let exit = *miss.get_or_insert_with(|| self.builder.create_block());
-            let shape = self.builder.ins().iconst(types::I64, i64::from(shape));
-            let slot = self.builder.ins().iconst(types::I64, i64::from(slot));
+            let shape = self.raw_const(Lane::I64, i64::from(shape));
+            let slot = self.raw_const(Lane::I64, i64::from(slot));
             self.admit_slot_writes(shape, slot, domain, exit);
         }
     }

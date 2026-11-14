@@ -10,7 +10,6 @@
 //! (`frame::register_tagged`), which costs a box and never reads garbage.
 
 use super::*;
-use crate::bytecode::Traits;
 use crate::compile::liveness::transfer;
 use std::num::NonZeroUsize;
 
@@ -50,7 +49,7 @@ fn read_demand(instruction: WideInstruction) -> Demand {
 /// Whether the lane writes the live caller registers back to its frame at `instruction`, for
 /// the helper of a call, a construction or a value step to read.
 fn homes_registers(instruction: WideInstruction) -> bool {
-    instruction.op().traits().has(Traits::LANE_RESULT_STEP)
+    instruction.op().steps_with_result()
         || matches!(instruction.op().class(), Class::Call | Class::Construct)
 }
 

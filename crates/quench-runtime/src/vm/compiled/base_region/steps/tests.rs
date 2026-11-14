@@ -1,5 +1,4 @@
 use super::*;
-use crate::bytecode::Traits;
 
 fn instruction(op: Op) -> WideInstruction {
     WideInstruction::new(op, 1, 2, 3, 0)
@@ -25,7 +24,7 @@ fn every_opcode_is_lowered() {
         let op = Op::from_index(index).expect("an opcode");
         let step = lowering(instruction(op), known(&program), process);
         counts[usize::from(step.runs_helper())] += 1;
-        if op.traits().has(Traits::LANE_IN_PLACE) && instruction(op).written_registers().count() <= 1 {
+        if op.steps_in_lane() && instruction(op).written_registers().count() <= 1 {
             assert!(step.runs_helper(), "{op:?}");
         }
     }
@@ -108,7 +107,7 @@ fn lane_fixtures_use_the_generic_helper_only_for_residual_opcodes() {
                 let instruction = crate::vm::dispatch_fast::decoded_instruction(function, *packed);
                 let row = decode_step(0, instruction, known(&program), (process, false));
                 if row.step == Some(Step::Helper) {
-                    assert!(RESIDUAL.contains(&instruction.op()) || !instruction.op().traits().has(Traits::LANE_IN_PLACE), "{path:?}: {:?} takes the generic helper", instruction.op());
+                    assert!(RESIDUAL.contains(&instruction.op()) || !instruction.op().steps_in_lane(), "{path:?}: {:?} takes the generic helper", instruction.op());
                     assert_eq!(row.target.is_some(), instruction.op().control_flow_layout().jumps(), "{:?}", instruction.op());
                 }
             }

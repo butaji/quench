@@ -15,7 +15,7 @@ impl Lowering<'_, '_> {
     pub(super) fn absent_receiver(&mut self) -> LaneReceiver {
         let receiver = LaneReceiver { object: self.builder.declare_var(types::I64), shape: self.builder.declare_var(types::I32),
             inline: self.builder.declare_var(types::I8), properties: self.builder.declare_var(types::I64) };
-        let (zero, none, outside) = (self.word_const(0), self.int_const(types::I32, i64::from(super::super::NO_FIELD_RECEIVER)), self.int_const(types::I8, 0));
+        let (zero, none, outside) = (self.raw_const(Lane::I64, 0), self.raw_const(Lane::I32, i64::from(super::super::NO_FIELD_RECEIVER)), self.raw_const(Lane::I8, 0));
         for (variable, value) in [(receiver.object, zero), (receiver.properties, zero), (receiver.shape, none), (receiver.inline, outside)] {
             self.builder.def_var(variable, value);
         }
@@ -65,7 +65,7 @@ impl Lowering<'_, '_> {
         let destination = instruction.result_register();
         self.set_tagged(state, destination, value);
         if ty == Type::INT32 {
-            let int = self.ins().ireduce(types::I32, value);
+            let int = self.raw_unary(Unary::Narrow(Lane::I32), value);
             self.define_int_view(state, destination, value, int);
         }
     }

@@ -49,6 +49,7 @@ pub(crate) enum Relation {
     SignedLess, SignedLessEqual, SignedGreater, SignedGreaterEqual,
     UnsignedLess, UnsignedLessEqual, UnsignedGreater, UnsignedGreaterEqual,
     FloatEqual, FloatNotEqual, FloatLess, FloatLessEqual, FloatGreater, FloatGreaterEqual, FloatUnordered,
+    FloatUnorderedEqual,
 }
 
 impl Relation {

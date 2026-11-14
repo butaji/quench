@@ -33,16 +33,14 @@ use crate::bytecode::{Class, Traits,
 use crate::staged::wasm_call::Call as WasmCall;
 use crate::staged::wasm_flow::Flow;
 use crate::staged::wasm_step::Step;
-use crate::staged::machine::MachineStage;
+use crate::staged::machine::{MachineAccess as _, MachineFlow as _, MachineScalar as _, MachineStage};
+use crate::staged::Stage as _;
 use crate::staged::wasm::{Width, integer_binary};
 use crate::staged::wasm_operation::{Form, Operand as Right, WasmOperation};
 use crate::staged::ConcreteWasm;
-use cranelift_codegen::ir::{
-    self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName,
-    condcodes::{FloatCC, IntCC},
-    immediates::{Ieee32, Ieee64},
-    types,
-};
+use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName, types};
+#[cfg(test)]
+use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_codegen::entity::{SecondaryMap, packed_option::PackedOption};
 use std::ops::{Deref, DerefMut};
@@ -67,7 +65,7 @@ mod stable_fact_tests;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
 #[path = "compiled/emit_machine.rs"]
-mod emit_machine;
+pub(super) mod emit_machine;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
 #[cfg(all(test, feature = "aot"))]
@@ -222,267 +220,6 @@ pub(super) use osr_loop::{
 
 pub(super) use crate::staged::Domain as NumberRelationDomain;
 
-/// Emit a Number relation using the same relation dispatch as the interpreter.
-/// The domain selects its Cranelift condition codes; the operation mapping is shared.
-pub(super) fn emit_number_relation(
-    builder: &mut FunctionBuilder<'_>,
-    relation: super::operations::NumberRelation,
-    left: ir::Value,
-    right: ir::Value,
-    domain: NumberRelationDomain,
-) -> ir::Value {
-    struct Emit<'a, 'f> {
-        builder: &'a mut FunctionBuilder<'f>,
-        domain: NumberRelationDomain,
-    }
-
-    impl crate::vm::operations::NumberRelationStage<ir::Value> for Emit<'_, '_> {
-        type Output = ir::Value;
-
-        fn equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            match self.domain {
-                NumberRelationDomain::Int32 => self.builder.ins().icmp(IntCC::Equal, left, right),
-                NumberRelationDomain::Float64 => {
-                    self.builder.ins().fcmp(FloatCC::Equal, left, right)
-                }
-            }
-        }
-        fn not_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            match self.domain {
-                NumberRelationDomain::Int32 => self.builder.ins().icmp(IntCC::NotEqual, left, right),
-                NumberRelationDomain::Float64 => {
-                    self.builder.ins().fcmp(FloatCC::NotEqual, left, right)
-                }
-            }
-        }
-        fn less_than(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            match self.domain {
-                NumberRelationDomain::Int32 => {
-                    self.builder.ins().icmp(IntCC::SignedLessThan, left, right)
-                }
-                NumberRelationDomain::Float64 => {
-                    self.builder.ins().fcmp(FloatCC::LessThan, left, right)
-                }
-            }
-        }
-        fn less_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            match self.domain {
-                NumberRelationDomain::Int32 => self
-                    .builder
-                    .ins()
-                    .icmp(IntCC::SignedLessThanOrEqual, left, right),
-                NumberRelationDomain::Float64 => self
-                    .builder
-                    .ins()
-                    .fcmp(FloatCC::LessThanOrEqual, left, right),
-            }
-        }
-        fn greater_than(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            match self.domain {
-                NumberRelationDomain::Int32 => self
-                    .builder
-                    .ins()
-                    .icmp(IntCC::SignedGreaterThan, left, right),
-                NumberRelationDomain::Float64 => {
-                    self.builder.ins().fcmp(FloatCC::GreaterThan, left, right)
-                }
-            }
-        }
-        fn greater_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            match self.domain {
-                NumberRelationDomain::Int32 => self
-                    .builder
-                    .ins()
-                    .icmp(IntCC::SignedGreaterThanOrEqual, left, right),
-                NumberRelationDomain::Float64 => self
-                    .builder
-                    .ins()
-                    .fcmp(FloatCC::GreaterThanOrEqual, left, right),
-            }
-        }
-    }
-
-    relation.apply(&mut Emit { builder, domain }, left, right)
-}
-
-/// A Number relation named by its operator, through the shared operator table.
-pub(super) fn emit_number_relation_operator(builder: &mut FunctionBuilder<'_>, operator: u32,
-    left: ir::Value, right: ir::Value, domain: NumberRelationDomain) -> Option<ir::Value> {
-    let relation = crate::vm::operations::NumberRelation::from_operator(operator)?;
-    Some(emit_number_relation(builder, relation, left, right, domain))
-}
-
-/// Native primitive view; callers retain operands for float fallback or exact-PC recovery.
-struct EmitArithmetic<'a, 'f, const CHECKED: bool> {
-    builder: &'a mut FunctionBuilder<'f>,
-}
-
-macro_rules! emit_arithmetic_stages {
-    ($($operation:ident => $operator:ident, $method:ident, $instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
-        impl super::operations::NumberArithmeticStage<ir::Value> for EmitArithmetic<'_, '_, false> {
-            type Output = ir::Value;
-            $(fn $method(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-                self.builder.ins().$float(left, right)
-            })+
-        }
-        impl super::operations::NumberArithmeticStage<ir::Value> for EmitArithmetic<'_, '_, true> {
-            type Output = (ir::Value, ir::Value);
-            $(fn $method(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-                emit_arithmetic_stages!(@checked self, left, right, $overflow)
-            })+
-        }
-    };
-    (@checked $stage:ident, $left:ident, $right:ident, None) => {
-        { let _ = ($left, $right); unreachable!("division has a Float64 result") }
-    };
-    (@checked $stage:ident, $left:ident, $right:ident, $opcode:ident) => {
-        $stage.builder.ins().$opcode($left, $right)
-    };
-}
-super::operations::number_arithmetic_rows!(emit_arithmetic_stages);
-
-/// The low-word view is selected only after the shared operation proves that
-/// projecting the Number result commutes with wrapping signed-int32 arithmetic.
-struct EmitWord32Arithmetic<'a, 'f> { builder: &'a mut FunctionBuilder<'f> }
-
-macro_rules! emit_word32_arithmetic_stages {
-    ($($operation:ident => $operator:ident, $method:ident, $instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
-        impl super::operations::NumberArithmeticStage<ir::Value> for EmitWord32Arithmetic<'_, '_> {
-            type Output = ir::Value;
-            $(fn $method(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-                emit_word32_arithmetic_stages!(@emit self, left, right, $symbol)
-            })+
-        }
-    };
-    (@emit $stage:ident, $left:ident, $right:ident, +) => { $stage.builder.ins().iadd($left, $right) };
-    (@emit $stage:ident, $left:ident, $right:ident, -) => { $stage.builder.ins().isub($left, $right) };
-    (@emit $stage:ident, $left:ident, $right:ident, *) => { $stage.builder.ins().imul($left, $right) };
-    (@emit $stage:ident, $left:ident, $right:ident, /) => {
-        { let _ = ($left, $right); unreachable!("division has no wrapping Word32 projection") }
-    };
-}
-super::operations::number_arithmetic_rows!(emit_word32_arithmetic_stages);
-
-pub(super) fn emit_number_arithmetic_operation(
-    builder: &mut FunctionBuilder<'_>,
-    operation: super::operations::NumberArithmetic,
-    left: ir::Value,
-    right: ir::Value,
-) -> ir::Value {
-    operation.apply(&mut EmitArithmetic::<false> { builder }, left, right)
-}
-
-/// `operation` of two int32 values: its wrapping result and its overflow flag.
-pub(super) fn emit_checked_int32_arithmetic(builder: &mut FunctionBuilder<'_>,
-    operation: super::operations::NumberArithmetic, left: ir::Value, right: ir::Value,
-) -> (ir::Value, ir::Value) {
-    operation.apply(&mut EmitArithmetic::<true> { builder }, left, right)
-}
-
-/// The shared Number remainder denotation, after the caller's Number guards.
-/// Native entries use the host calling convention. This pure scalar helper cannot
-/// enter the VM or collect, so it does not introduce an effect/recovery boundary.
-pub(super) fn emit_number_remainder(
-    builder: &mut FunctionBuilder<'_>,
-    pointer: ir::Type,
-    left: ir::Value,
-    right: ir::Value,
-) -> ir::Value {
-    let mut signature = Signature::new(builder.func.signature.call_conv);
-    signature.params.extend([AbiParam::new(types::F64), AbiParam::new(types::F64)]);
-    signature.returns.push(AbiParam::new(types::F64));
-    let signature = builder.import_signature(signature);
-    let address = super::operations::number_remainder as *const () as usize as i64;
-    let target = builder.ins().iconst(pointer, address);
-    let call = builder.ins().call_indirect(signature, target, &[left, right]);
-    builder.inst_results(call)[0]
-}
-
-pub(super) fn emit_number_bitwise_bits(
-    builder: &mut FunctionBuilder<'_>,
-    operation: crate::vm::operations::NumberBitwise,
-    left: ir::Value,
-    right: ir::Value,
-) -> ir::Value {
-    struct Emit<'a, 'f> {
-        builder: &'a mut FunctionBuilder<'f>,
-    }
-
-    impl crate::vm::operations::NumberBitwiseStage<ir::Value> for Emit<'_, '_> {
-        type Output = ir::Value;
-
-        fn and(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().band(left, right)
-        }
-        fn or(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().bor(left, right)
-        }
-        fn xor(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().bxor(left, right)
-        }
-        fn shift_left(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            let shift = self.builder.ins().band_imm_u(right, 31);
-            self.builder.ins().ishl(left, shift)
-        }
-        fn shift_right(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            let shift = self.builder.ins().band_imm_u(right, 31);
-            self.builder.ins().sshr(left, shift)
-        }
-        fn shift_right_unsigned(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            let shift = self.builder.ins().band_imm_u(right, 31);
-            self.builder.ins().ushr(left, shift)
-        }
-    }
-
-    operation.apply(&mut Emit { builder }, left, right)
-}
-
-pub(super) fn emit_number_bitwise_operation(
-    builder: &mut FunctionBuilder<'_>,
-    operation: crate::vm::operations::NumberBitwise,
-    left: ir::Value,
-    right: ir::Value,
-) -> ir::Value {
-    let bits = emit_number_bitwise_bits(builder, operation, left, right);
-    if operation == crate::vm::operations::NumberBitwise::ShiftRightUnsigned {
-        let unsigned = builder.ins().uextend(types::I64, bits);
-        builder.ins().fcvt_from_uint(types::F64, unsigned)
-    } else {
-        builder.ins().fcvt_from_sint(types::F64, bits)
-    }
-}
-
-/// Emit JavaScript ToBoolean for a Number after the caller has proved its value is numeric.
-fn emit_number_truthiness(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
-    struct Emit<'a, 'f> {
-        builder: &'a mut FunctionBuilder<'f>,
-    }
-
-    impl crate::vm::operations::NumberTruthinessStage<ir::Value> for Emit<'_, '_> {
-        type Predicate = ir::Value;
-
-        fn zero(&mut self) -> ir::Value {
-            self.builder
-                .ins()
-                .f64const(Ieee64::with_bits(0.0_f64.to_bits()))
-        }
-
-        fn equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Predicate {
-            self.builder.ins().fcmp(FloatCC::Equal, left, right)
-        }
-
-        fn not_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Predicate {
-            self.builder.ins().fcmp(FloatCC::NotEqual, left, right)
-        }
-
-        fn and(&mut self, left: Self::Predicate, right: Self::Predicate) -> Self::Predicate {
-            self.builder.ins().band(left, right)
-        }
-    }
-
-    crate::vm::operations::number_truthiness(&mut Emit { builder }, number)
-}
-
 /// The most records a native function body covers.
 const MAX_NATIVE_RECORDS: usize = 2048;
 /// Return statuses encode the returning record's PC without colliding with the shared
@@ -494,20 +231,23 @@ const _: () = assert!(RETURN_STATUS_BASE > TERMINATED_STATUS as u32);
 /// Compute ToBoolean for values whose truthiness is encoded without a heap
 /// lookup. Strings, BigInts, and objects take the VM path at the same PC.
 fn emit_js_tagged_truthiness(builder: &mut FunctionBuilder<'_>, bits: ir::Value, fallback: ir::Block) -> ir::Value {
-    let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut object_slots::emit(builder), bits);
-    let decided = builder.ins().icmp_imm_u(IntCC::Equal, undecided, 0);
-    emit_js_guard(builder, decided, fallback);
+    use crate::staged::machine::Relation;
+    let mut stage = object_slots::emit(builder);
+    let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut stage, bits);
+    let decided = stage.raw_compare_imm(Relation::Equal, undecided, 0);
+    stage.guard(decided, fallback);
     truthy
 }
 
 /// Decode an already-proved Number without repeating its semantic type check.
 fn emit_known_number(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::Value {
-    let tag = builder.ins().band_imm_u(bits, crate::value::ValueLayout::TAG_MASK as i64);
-    let integer = builder.ins().icmp_imm_u(IntCC::Equal, tag, crate::value::ValueLayout::INT_TAG as i64);
-    let payload = builder.ins().ireduce(types::I32, bits);
-    let int = builder.ins().fcvt_from_sint(types::F64, payload);
-    let double = builder.ins().bitcast(types::F64, MemFlagsData::new(), bits);
-    builder.ins().select(integer, int, double)
+    use crate::staged::machine::{Lane, Unary};
+    let mut stage = object_slots::emit(builder);
+    let integer = crate::staged::value::is_int(&mut stage, bits);
+    let payload = stage.raw_unary(Unary::Narrow(Lane::I32), bits);
+    let int = stage.raw_unary(Unary::FromSigned(Lane::F64), payload);
+    let double = stage.raw_unary(Unary::Bitcast(Lane::F64), bits);
+    stage.raw_select(integer, int, double)
 }
 
 /// Unbox a tagged JavaScript Number, branching to the current instruction's
@@ -518,60 +258,29 @@ fn emit_js_tagged_number(
     bits: ir::Value,
     fallback: ir::Block,
 ) -> ir::Value {
-    let number = builder
-        .ins()
-        .bitcast(types::F64, ir::MemFlagsData::new(), bits);
-    let unordered = builder.ins().fcmp(FloatCC::Unordered, number, number);
+    use crate::staged::machine::{Lane, Relation, Unary};
     let nan = builder.create_block();
     let tagged = builder.create_block();
     let integer_block = builder.create_block();
     let join = builder.create_block();
     builder.append_block_param(join, types::F64);
-    builder.ins().brif(
-        unordered,
-        nan,
-        &[],
-        join,
-        &[ir::BlockArg::Value(number)],
-    );
+    let mut stage = object_slots::emit(builder);
+    let number = stage.raw_unary(Unary::Bitcast(Lane::F64), bits);
+    let unordered = stage.raw_compare(Relation::FloatUnordered, number, number);
+    stage.branch_if(unordered, (nan, &[]), (join, &[number]));
 
-    builder.switch_to_block(nan);
-    let field = builder
-        .ins()
-        .ushr_imm_u(bits, i64::from(crate::value::ValueLayout::TAG_SHIFT));
-    let offset = builder.ins().iadd_imm_s(
-        field,
-        -(crate::value::ValueLayout::FIRST_TAG_FIELD as i64),
-    );
-    let is_tagged = builder.ins().icmp_imm_u(
-        IntCC::UnsignedLessThanOrEqual,
-        offset,
-        crate::value::ValueLayout::TAG_FIELD_SPAN as i64,
-    );
-    builder.ins().brif(
-        is_tagged,
-        tagged,
-        &[],
-        join,
-        &[ir::BlockArg::Value(number)],
-    );
+    stage.builder.switch_to_block(nan);
+    let double = crate::staged::value::is_double(&mut stage, bits);
+    stage.branch_if(double, (join, &[number]), (tagged, &[]));
 
-    builder.switch_to_block(tagged);
-    let int_field = (crate::value::ValueLayout::INT_TAG
-        >> crate::value::ValueLayout::TAG_SHIFT) as i64;
-    let is_integer_tag = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, field, int_field);
-    builder
-        .ins()
-        .brif(is_integer_tag, integer_block, &[], fallback, &[]);
+    stage.builder.switch_to_block(tagged);
+    let integer = crate::staged::value::is_int(&mut stage, bits);
+    stage.branch_if(integer, (integer_block, &[]), (fallback, &[]));
 
-    builder.switch_to_block(integer_block);
-    let integer = builder.ins().ireduce(types::I32, bits);
-    let integer = builder.ins().fcvt_from_sint(types::F64, integer);
-    builder
-        .ins()
-        .jump(join, &[ir::BlockArg::Value(integer)]);
+    stage.builder.switch_to_block(integer_block);
+    let low = stage.raw_unary(Unary::Narrow(Lane::I32), bits);
+    let int = stage.raw_unary(Unary::FromSigned(Lane::F64), low);
+    stage.goto(join, &[int]);
     builder.seal_block(nan);
     builder.seal_block(tagged);
     builder.seal_block(integer_block);
@@ -583,11 +292,13 @@ fn emit_js_tagged_number(
 /// An exact int32 projection of a Number, including its zero sign. The predicate
 /// rejects fractions, nonfinite values, saturation and -0 before the view is used.
 fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> (ir::Value, ir::Value) {
-    let integer = builder.ins().fcvt_to_sint_sat(types::I32, number);
-    let round_trip = builder.ins().fcvt_from_sint(types::F64, integer);
-    let bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
-    let round_trip_bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), round_trip);
-    let exact = builder.ins().icmp(IntCC::Equal, bits, round_trip_bits);
+    use crate::staged::machine::{Lane, Relation, Unary};
+    let mut stage = object_slots::emit(builder);
+    let integer = stage.raw_unary(Unary::ToSignedSaturating(Lane::I32), number);
+    let round_trip = stage.raw_unary(Unary::FromSigned(Lane::F64), integer);
+    let bits = stage.raw_unary(Unary::Bitcast(Lane::I64), number);
+    let round_trip_bits = stage.raw_unary(Unary::Bitcast(Lane::I64), round_trip);
+    let exact = stage.raw_compare(Relation::Equal, bits, round_trip_bits);
     (integer, exact)
 }
 
@@ -595,46 +306,46 @@ fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> 
 /// representations. A double with a fraction is its own bits, after one compare
 /// with its truncation; a whole, signed-zero or NaN result takes the cold encoding.
 pub(super) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+    use crate::staged::machine::{Binary, Lane, Relation, Unary};
     let (cold, join) = (builder.create_block(), builder.create_block());
     builder.set_cold_block(cold);
     let result = builder.append_block_param(join, types::I64);
-    let bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
-    let truncated = builder.ins().trunc(number);
-    let whole_or_nan = builder.ins().fcmp(FloatCC::UnorderedOrEqual, truncated, number);
-    builder.ins().brif(whole_or_nan, cold, &[], join, &[ir::BlockArg::Value(bits)]);
-    builder.switch_to_block(cold);
-    builder.seal_block(cold);
-    let (integer, is_integer) = emit_js_exact_int32(builder, number);
-    let integer_bits = builder.ins().uextend(types::I64, integer);
-    let integer_bits = builder
-        .ins()
-        .bor_imm_u(integer_bits, crate::value::ValueLayout::INT_TAG as i64);
-    let encoded = builder.ins().select(is_integer, integer_bits, bits);
-    let is_nan = builder.ins().fcmp(FloatCC::Unordered, number, number);
-    let canonical_nan = builder.ins().iconst(
-        types::I64,
-        crate::value::ValueLayout::CANONICAL_NAN as i64,
-    );
-    let encoded = builder.ins().select(is_nan, canonical_nan, encoded);
-    builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
+    let mut stage = object_slots::emit(builder);
+    let bits = stage.raw_unary(Unary::Bitcast(Lane::I64), number);
+    let truncated = stage.raw_unary(Unary::Truncate, number);
+    let whole_or_nan = stage.raw_compare(Relation::FloatUnorderedEqual, truncated, number);
+    stage.branch_if(whole_or_nan, (cold, &[]), (join, &[bits]));
+    stage.builder.switch_to_block(cold);
+    stage.builder.seal_block(cold);
+    let (integer, is_integer) = emit_js_exact_int32(stage.builder, number);
+    let integer_bits = stage.raw_unary(Unary::ZeroExtend(Lane::I64), integer);
+    let int_tag = stage.raw_const(Lane::I64, crate::value::ValueLayout::INT_TAG as i64);
+    let integer_bits = stage.raw_binary(Binary::Or, integer_bits, int_tag);
+    let encoded = stage.raw_select(is_integer, integer_bits, bits);
+    let is_nan = stage.raw_compare(Relation::FloatUnordered, number, number);
+    let canonical_nan = stage.raw_const(Lane::I64, crate::value::ValueLayout::CANONICAL_NAN as i64);
+    let encoded = stage.raw_select(is_nan, canonical_nan, encoded);
+    stage.goto(join, &[encoded]);
     builder.switch_to_block(join);
     builder.seal_block(join);
     result
 }
 
-/// Continue native code only when one guard holds. All failures share the exact-PC
-/// VM fallback emitted after the direct path.
 /// The ToInt32 of `number`, natively below 2^63 in magnitude; beyond, infinities and NaN
 /// leave through `exit` (`EXACT_I64_TRUNCATION_LIMIT`).
 pub(super) fn emit_number_to_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value, exit: ir::Block) -> ir::Value {
-    let magnitude = builder.ins().fabs(number);
-    let bound = builder.ins().f64const(crate::value::EXACT_I64_TRUNCATION_LIMIT);
-    let exact = builder.ins().fcmp(FloatCC::LessThan, magnitude, bound);
-    emit_js_guard(builder, exact, exit);
-    let wide = builder.ins().fcvt_to_sint_sat(types::I64, number);
-    builder.ins().ireduce(types::I32, wide)
+    use crate::staged::machine::{Lane, Relation, Unary};
+    let mut stage = object_slots::emit(builder);
+    let magnitude = stage.raw_unary(Unary::FloatAbsolute, number);
+    let bound = stage.raw_const(Lane::F64, crate::value::EXACT_I64_TRUNCATION_LIMIT.to_bits() as i64);
+    let exact = stage.raw_compare(Relation::FloatLess, magnitude, bound);
+    stage.guard(exact, exit);
+    let wide = stage.raw_unary(Unary::ToSignedSaturating(Lane::I64), number);
+    stage.raw_unary(Unary::Narrow(Lane::I32), wide)
 }
 
+/// Continue native code only when one guard holds. All failures share the exact-PC
+/// VM fallback emitted after the direct path.
 fn emit_js_guard(
     builder: &mut FunctionBuilder<'_>,
     condition: ir::Value,
@@ -646,69 +357,16 @@ fn emit_js_guard(
     let taken = if forced_miss::next() { fallback } else { passed };
     #[cfg(not(test))]
     let taken = passed;
-    builder.ins().brif(condition, taken, &[], fallback, &[]);
+    object_slots::emit(builder).branch_if(condition, (taken, &[]), (fallback, &[]));
     builder.switch_to_block(passed);
     builder.seal_block(passed);
 }
 
-/// The record of the direct array `base`, tagged; any other value leaves through `fallback`.
-fn emit_array_record(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value, fallback: ir::Block) -> ir::Value {
-
-    let is_array = crate::staged::value::is_direct_array(&mut object_slots::emit(builder), base);
-    emit_js_guard(builder, is_array, fallback);
-
-    // A direct array's index names a live record of the reservation.
-    let record_id = builder.ins().ireduce(types::I32, base);
-    let record_id = builder.ins().uextend(types::I64, record_id);
-
-    let record_base_address = builder.ins().iadd_imm_s(
-        payload,
-        i64::try_from(std::mem::offset_of!(JsStepDispatch, array_record_base))
-            .expect("JS dispatch offset fits i64"),
-    );
-    let record_base = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        record_base_address,
-        0,
-    );
-    let base_is_present = builder
-        .ins()
-        .icmp_imm_u(IntCC::NotEqual, record_base, 0);
-    emit_js_guard(builder, base_is_present, fallback);
-    emit_array_record_address(builder, record_base, record_id)
-}
-
-/// Where record `record_id` (an `i64`) of the array reservation at `record_base` lives.
-fn emit_array_record_address(builder: &mut FunctionBuilder<'_>, record_base: ir::Value, record_id: ir::Value) -> ir::Value {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    let record_size = i64::try_from(ARRAY.record_size).expect("array record size fits i64");
-    let record_offset = builder.ins().imul_imm_u(record_id, record_size);
-    builder.ins().iadd(record_base, record_offset)
-}
-
-/// Whether the array record's object part holds extras: indexed descriptors, an arguments
-/// map, sparse elements or a prototype watch, any of which an element access must consult.
-fn emit_array_extras(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir::Value {
-    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
-    let object_payload = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        record,
-        i32::try_from(ARRAY.object_offset + OBJECT.payload_offset).expect("array payload offset fits i32"),
-    );
-    crate::staged::object::has_extras(&mut object_slots::emit(builder), object_payload)
-}
-
-/// The backing header of an array record.
-fn emit_array_header(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir::Value {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        record,
-        i32::try_from(ARRAY.elements_offset + ARRAY.elements_header_offset).expect("array header offset fits i32"),
-    )
+/// The array record reservation's base in the dispatch payload: fixed until the arrays change.
+fn emit_array_record_base(stage: &mut object_slots::Emit<'_, '_>, payload: ir::Value) -> ir::Value {
+    use crate::staged::machine::Lane;
+    stage.raw_load(Lane::I64, MemFlagsData::trusted(), payload,
+        std::mem::offset_of!(JsStepDispatch, array_record_base) as i32)
 }
 
 /// The `length` of the direct array `base`, tagged, as an int32: its dense elements' count,
@@ -721,22 +379,12 @@ pub(super) fn emit_array_length_read(
     base: ir::Value,
     fallback: ir::Block,
 ) -> ir::Value {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-
-    let record = emit_array_record(builder, payload, base, fallback);
-    let extras = emit_array_extras(builder, record);
-    let ordinary = builder.ins().icmp_imm_u(IntCC::Equal, extras, 0);
-    emit_js_guard(builder, ordinary, fallback);
-    let header = emit_array_header(builder, record);
-    let length = builder.ins().load(
-        types::I32,
-        MemFlagsData::trusted(),
-        header,
-        i32::try_from(ARRAY.header_length_offset).expect("array length offset fits i32"),
-    );
-    let int32 = builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, length, 0);
-    emit_js_guard(builder, int32, fallback);
-    length
+    use crate::staged::machine::{Lane, Unary};
+    let mut stage = object_slots::emit(builder);
+    let record_base = emit_array_record_base(&mut stage, payload);
+    let length = crate::staged::elements::array_length(&mut stage, record_base, base, fallback)
+        .expect("the emit stage continues past its guards");
+    stage.raw_unary(Unary::Narrow(Lane::I32), length)
 }
 
 /// A dense own array's elements as one access proved them: the backing's first value and
@@ -775,9 +423,9 @@ pub(super) fn emit_dense_array_view(
     writable: bool,
     fallback: ir::Block,
 ) -> DenseArrayView {
-    let record_base = builder.ins().load(types::I64, MemFlagsData::trusted(), payload,
-        std::mem::offset_of!(JsStepDispatch, array_record_base) as i32);
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
+    use crate::staged::machine::{Lane, Unary};
+    let mut stage = object_slots::emit(builder);
+    let record_base = emit_array_record_base(&mut stage, payload);
     let backing = crate::staged::elements::array_backing(&mut stage, record_base, base, fallback)
         .expect("the emit stage continues past its guards");
     let crate::staged::elements::Backing { values, length, .. } = backing;
@@ -786,7 +434,7 @@ pub(super) fn emit_dense_array_view(
             .expect("the emit stage continues past its guards");
     }
     // The view's length is an `i32`, the width an int32 index has.
-    let length = builder.ins().ireduce(types::I32, length);
+    let length = stage.raw_unary(Unary::Narrow(Lane::I32), length);
     DenseArrayView { values, length, writable, uncounted: false }
 }
 
@@ -794,15 +442,12 @@ pub(super) fn emit_dense_array_view(
 /// proved, after a helper that may have grown its backing: the array, its record and its
 /// writability stay what the view proved, so only the backing is read again.
 pub(super) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    let record_id = builder.ins().ireduce(types::I32, base);
-    let record_id = builder.ins().uextend(types::I64, record_id);
-    let record_base = builder.ins().load(types::I64, MemFlagsData::trusted(), payload,
-        std::mem::offset_of!(JsStepDispatch, array_record_base) as i32);
-    let record = emit_array_record_address(builder, record_base, record_id);
-    let header = emit_array_header(builder, record);
-    let length = builder.ins().load(types::I32, MemFlagsData::trusted(), header, ARRAY.header_length_offset as i32);
-    (builder.ins().iadd_imm_s(header, ARRAY.header_values_offset as i64), length)
+    use crate::staged::machine::{Lane, Unary};
+    let mut stage = object_slots::emit(builder);
+    let record_base = emit_array_record_base(&mut stage, payload);
+    let record = crate::staged::elements::array_record(&mut stage, record_base, base);
+    let crate::staged::elements::Backing { values, length, .. } = crate::staged::elements::record_backing(&mut stage, record);
+    (values, stage.raw_unary(Unary::Narrow(Lane::I32), length))
 }
 
 /// The address of `view`'s present element `index` (an int32) and its value; an index past
@@ -850,8 +495,7 @@ pub(super) fn emit_dense_element_replace(
 /// counts the values again.
 pub(super) fn emit_dense_array_uncounted(builder: &mut FunctionBuilder<'_>, view: DenseArrayView) {
     debug_assert!(view.writable, "only a writable view's backing is this array's own");
-    let unknown = builder.ins().iconst(types::I32, i64::from(crate::heap::OTHERS_UNKNOWN));
-    builder.ins().store(MemFlagsData::trusted(), unknown, view.values, crate::heap::OTHERS_FROM_VALUES);
+    crate::staged::elements::uncount_backing(&mut object_slots::emit(builder), view.values);
 }
 
 /// Flat field input bound once for a no-GC, layout-preserving region. Values
@@ -883,30 +527,23 @@ impl FieldArena {
     #[cfg(feature = "aot")]
     fn bind(self, builder: &mut FunctionBuilder<'_>, slot: ir::Value) -> Self {
         let Self::Unbound { values, length } = self else { return self; };
-        let fits = builder.ins().icmp(IntCC::UnsignedLessThan, slot, length);
-        let difference = builder.ins().isub(length, slot);
-        let zero = builder.ins().iconst(types::I64, 0);
-        let remaining = builder.ins().select(fits, difference, zero);
-        let offset = builder.ins().imul_imm_u(slot, crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64);
-        let base = builder.ins().iadd(values, offset);
+        let (base, remaining) = crate::staged::object::bind_arena_slot(&mut object_slots::emit(builder), values, length, slot);
         Self::BoundSlot { base, remaining }
     }
 
     fn address(self, builder: &mut FunctionBuilder<'_>, storage: ir::Value,
         slot: FieldSlot, fallback: ir::Block) -> ir::Value
     {
-        let (base, position, length) = match self {
+        let (values, length, position) = match self {
             Self::Unbound { values, length } => {
                 let slot = slot.read(builder);
-                (values, builder.ins().iadd(storage, slot), length)
+                (values, length, object_slots::emit(builder).add(storage, slot))
             }
             #[cfg(feature = "aot")]
-            Self::BoundSlot { base, remaining } => (base, storage, remaining),
+            Self::BoundSlot { base, remaining } => (base, remaining, storage),
         };
-        let in_arena = builder.ins().icmp(IntCC::UnsignedLessThan, position, length);
-        emit_js_guard(builder, in_arena, fallback);
-        let offset = builder.ins().imul_imm_u(position, crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64);
-        builder.ins().iadd(base, offset)
+        crate::staged::object::arena_slot_address(&mut object_slots::emit(builder), values, length, position, fallback)
+            .expect("the emit stage continues past its guards")
     }
 }
 
@@ -924,13 +561,7 @@ impl FieldSlot {
         match self {
             #[cfg(feature = "aot")]
             Self::Bound(value) => value,
-            Self::Row(row) => {
-                use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
-                let stored = builder.ins().load(types::I32, MemFlagsData::trusted(), row, CACHE.slot_offset as i32);
-                let slot = builder.ins().bxor_imm_u(stored, i64::from(CACHE.slot_complement));
-                let slot = builder.ins().band_imm_u(slot, i64::from(u16::MAX));
-                builder.ins().uextend(types::I64, slot)
-            }
+            Self::Row(row) => crate::staged::entry::entry_slot(&mut object_slots::emit(builder), row),
         }
     }
 }
@@ -938,24 +569,26 @@ impl FieldSlot {
 fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
     site: u16, miss: ir::Block, table: Option<object_slots::CheckedObjectTable>) -> FieldSlotBinding
 {
+    use crate::staged::machine::{Binary, Lane, Relation};
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
     let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_entries));
     let records = table.map(|table| table.base()).unwrap_or_else(||
         emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base)));
     let (values, length) = emit_js_property_values(builder, payload);
+    let mut stage = object_slots::emit(builder);
     // ObjectHeader owns record-base admission, including reused region proofs.
     for base in [entries, values] {
-        let present = builder.ins().icmp_imm_u(IntCC::NotEqual, base, 0);
-        emit_js_guard(builder, present, miss);
+        let present = stage.raw_compare_imm(Relation::NotEqual, base, 0);
+        stage.guard(present, miss);
     }
-    let entry = builder.ins().iadd_imm_s(entries,
-        i64::try_from(usize::from(site) * CACHE.entry_size).expect("field entry offset"));
-    let word = |builder: &mut FunctionBuilder<'_>, offset: usize, complement: u32| {
-        let stored = builder.ins().load(types::I32, MemFlagsData::trusted(), entry, offset as i32);
-        builder.ins().bxor_imm_u(stored, i64::from(complement))
+    let entry = stage.add_imm(entries, (usize::from(site) * CACHE.entry_size) as u64);
+    let mut word = |offset: usize, complement: u32| {
+        let stored = stage.raw_load(Lane::I32, MemFlagsData::trusted(), entry, offset as i32);
+        let complement = stage.raw_const(Lane::I32, i64::from(complement));
+        stage.raw_binary(Binary::Xor, stored, complement)
     };
-    let receiver = word(builder, CACHE.receiver_offset, CACHE.receiver_complement);
-    let holder = word(builder, CACHE.holder_offset, CACHE.holder_complement);
+    let receiver = word(CACHE.receiver_offset, CACHE.receiver_complement);
+    let holder = word(CACHE.holder_offset, CACHE.holder_complement);
     FieldSlotBinding { receiver, holder, slot: FieldSlot::Row(entry), records,
         arena: FieldArena::Unbound { values, length }, writes: None, admitted: None }
 }
@@ -975,15 +608,17 @@ fn emit_js_cached_field_slot(
     packed_slot: Option<ir::Block>,
 ) -> (ir::Value, ir::Value) {
     use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+    use crate::staged::machine::{Binary, Lane, Relation};
+    use crate::staged::object::{extras_pointer, has_extras, inline_storage, object_record_at, plain_payload, proto_link, proto_object_record_id};
+    use crate::staged::region::Region;
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 
     let base = receiver;
-    let record_id = builder.ins().ireduce(types::I32, base);
-    let record_id = builder.ins().uextend(types::I64, record_id);
+    let record_id = crate::staged::value::direct_object_id(&mut object_slots::emit(builder), base);
 
     let binding = binding.unwrap_or_else(|| emit_js_field_binding(builder, payload, site, fallback, None));
     let FieldSlotBinding { holder, receiver: receiver_shape, slot, records, arena, .. } = binding;
-    let own = builder.ins().icmp_imm_u(IntCC::Equal, holder, i64::from(CACHE.own_holder));
+    let own = object_slots::emit(builder).raw_compare_imm(Relation::Equal, holder, i64::from(CACHE.own_holder));
     if !allow_holder {
         emit_js_guard(builder, own, fallback);
     }
@@ -991,7 +626,7 @@ fn emit_js_cached_field_slot(
     let object_slots::ObjectHeader { record, shape, inline, address: object } = header
         .unwrap_or_else(|| object_slots::ObjectHeader::prove(builder, base, records, None, fallback));
     // The exact shape includes dictionary storage, which cannot match an own-data row.
-    let same_shape = builder.ins().icmp(IntCC::Equal, shape, receiver_shape);
+    let same_shape = object_slots::emit(builder).raw_compare(Relation::Equal, shape, receiver_shape);
     emit_js_guard(builder, same_shape, fallback);
     // A holder read uses only the receiver's shape and prototype link. Its own
     // property representation is unrelated to the holder's slot address.
@@ -999,38 +634,36 @@ fn emit_js_cached_field_slot(
         if let Some(packed_slot) = packed_slot {
             let packed = builder.create_block();
             let arena = builder.create_block();
-            builder.ins().brif(inline, packed, &[], arena, &[]);
+            object_slots::emit(builder).branch_if(inline, (packed, &[]), (arena, &[]));
             builder.switch_to_block(packed);
-            let storage = builder.ins().load(types::I64, MemFlagsData::trusted(), object,
-                OBJECT.payload_offset as i32);
-            let plain = crate::staged::object::plain_payload(&mut object_slots::emit(builder), storage);
-            emit_js_guard(builder, plain, fallback);
-            let slot = slot.read(builder);
-            let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, slot,
-                OBJECT.inline_property_count as i64);
-            emit_js_guard(builder, fits, fallback);
-            let offset = builder.ins().imul_imm_u(slot, std::mem::size_of::<u32>() as i64);
-            let address = record.offset_address(builder, offset);
-            let address = builder.ins().iadd_imm_s(address, OBJECT.payload_offset as i64);
-            builder.ins().jump(packed_slot, &[ir::BlockArg::Value(address)]);
+            let mut stage = object_slots::emit(builder);
+            let storage = stage.raw_load(Lane::I64, MemFlagsData::trusted(), object, OBJECT.payload_offset as i32);
+            let plain = plain_payload(&mut stage, storage);
+            stage.guard(plain, fallback);
+            let slot = slot.read(stage.builder);
+            let fits = stage.raw_compare_imm(Relation::UnsignedLess, slot, OBJECT.inline_property_count as i64);
+            stage.guard(fits, fallback);
+            let stride = stage.raw_const(Lane::I64, size_of::<u32>() as i64);
+            let offset = stage.raw_binary(Binary::Mul, slot, stride);
+            let address = record.offset_address(stage.builder, offset);
+            let payload_offset = stage.raw_const(Lane::I64, OBJECT.payload_offset as i64);
+            let address = stage.raw_binary(Binary::Add, address, payload_offset);
+            stage.goto(packed_slot, &[address]);
             builder.seal_block(packed);
             builder.seal_block(arena);
             builder.switch_to_block(arena);
         }
+        let mut stage = object_slots::emit(builder);
         if packed_slot.is_none() {
-            let arena_storage = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-            emit_js_guard(builder, arena_storage, fallback);
+            let arena_storage = stage.raw_compare_imm(Relation::Equal, inline, 0);
+            stage.guard(arena_storage, fallback);
         }
         // Plain storage has the arena start alone in the payload's lower half.
-        let storage = builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            object,
-            i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
-        );
-        let upper = builder.ins().ushr_imm_u(storage, i64::from(u32::BITS));
-        let plain = builder.ins().icmp_imm_u(IntCC::Equal, upper, 0);
-        emit_js_guard(builder, plain, fallback);
+        let storage = stage.raw_load(Lane::I64, MemFlagsData::trusted(), object, OBJECT.payload_offset as i32);
+        let half = stage.raw_const(Lane::I64, i64::from(u32::BITS));
+        let upper = stage.raw_binary(Binary::ShiftRightUnsigned, storage, half);
+        let plain = stage.raw_compare_imm(Relation::Equal, upper, 0);
+        stage.guard(plain, fallback);
         storage
     };
     let address = if allow_holder {
@@ -1038,54 +671,46 @@ fn emit_js_cached_field_slot(
         let holder_block = builder.create_block();
         let join = builder.create_block();
         builder.append_block_param(join, types::I64);
-        builder.ins().brif(own, own_block, &[], holder_block, &[]);
+        object_slots::emit(builder).branch_if(own, (own_block, &[]), (holder_block, &[]));
         builder.switch_to_block(own_block);
         let storage = own_storage(builder);
         let address = arena.address(builder, storage, slot, fallback);
-        builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
+        object_slots::emit(builder).goto(join, &[address]);
 
         builder.switch_to_block(holder_block);
         let mut stage = object_slots::emit(builder);
-        let link = crate::staged::object::proto_link(&mut stage, object);
-        let id = crate::staged::object::proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
-        let prototype = crate::staged::object::object_record_at(&mut stage, records, id);
-        let proto_shape = builder.ins().load(
-            types::I32, MemFlagsData::trusted(), prototype,
-            i32::try_from(OBJECT.auxiliary_offset).expect("auxiliary offset fits i32"),
-        );
-        let same_holder = builder.ins().icmp(IntCC::Equal, proto_shape, holder);
-        emit_js_guard(builder, same_holder, fallback);
-        let inline = object_slots::inline_storage(builder, prototype);
-        let proto_storage = builder.ins().load(
-            types::I64, MemFlagsData::trusted(), prototype,
-            i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
-        );
-        let extras = crate::staged::object::has_extras(&mut object_slots::emit(builder), proto_storage);
-        emit_js_guard(builder, extras, fallback);
-        let extras_pointer = crate::staged::object::extras_pointer(&mut object_slots::emit(builder), proto_storage);
-        let present = builder.ins().icmp_imm_u(IntCC::NotEqual, extras_pointer, 0);
-        emit_js_guard(builder, present, fallback);
-        let displaced = builder.create_block();
-        let in_arena = builder.create_block();
-        builder.ins().brif(inline, displaced, &[], in_arena, &[]);
-        builder.switch_to_block(displaced);
-        let index = slot.read(builder);
-        let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, index, OBJECT.inline_property_count as i64);
-        emit_js_guard(builder, fits, fallback);
+        let link = proto_link(&mut stage, object);
+        let id = proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
+        let prototype = object_record_at(&mut stage, records, id);
+        let proto_shape = stage.raw_load(Lane::I32, MemFlagsData::trusted(), prototype, OBJECT.auxiliary_offset as i32);
+        let same_holder = stage.raw_compare(Relation::Equal, proto_shape, holder);
+        stage.guard(same_holder, fallback);
+        let inline = inline_storage(&mut stage, prototype);
+        let proto_storage = stage.raw_load(Lane::I64, MemFlagsData::trusted(), prototype, OBJECT.payload_offset as i32);
+        let extras = has_extras(&mut stage, proto_storage);
+        stage.guard(extras, fallback);
+        let extras_pointer = extras_pointer(&mut stage, proto_storage);
+        let present = stage.raw_compare_imm(Relation::NotEqual, extras_pointer, 0);
+        stage.guard(present, fallback);
+        let displaced = stage.builder.create_block();
+        let in_arena = stage.builder.create_block();
+        stage.branch_if(inline, (displaced, &[]), (in_arena, &[]));
+        stage.builder.switch_to_block(displaced);
+        let index = slot.read(stage.builder);
+        let fits = stage.raw_compare_imm(Relation::UnsignedLess, index, OBJECT.inline_property_count as i64);
+        stage.guard(fits, fallback);
         // Exact holder shape admits the data slot. Extras hold full Values;
         // keep this projection inside the same no-GC access as the live prototype.
-        let offset = builder.ins().imul_imm_u(index, OBJECT.property_value_size as i64);
-        let address = builder.ins().iadd(extras_pointer, offset);
-        let address = builder.ins().iadd_imm_s(address, OBJECT.extras_inline_values_offset as i64);
-        builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
-        builder.switch_to_block(in_arena);
-        let start = builder.ins().load(
-            types::I32, MemFlagsData::trusted(), extras_pointer,
-            i32::try_from(OBJECT.extras_arena_start_offset).expect("extras offset fits i32"),
-        );
-        let start = builder.ins().uextend(types::I64, start);
-        let address = arena.address(builder, start, slot, fallback);
-        builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
+        let stride = stage.raw_const(Lane::I64, OBJECT.property_value_size as i64);
+        let offset = stage.raw_binary(Binary::Mul, index, stride);
+        let address = stage.raw_binary(Binary::Add, extras_pointer, offset);
+        let values_at = stage.raw_const(Lane::I64, OBJECT.extras_inline_values_offset as i64);
+        let address = stage.raw_binary(Binary::Add, address, values_at);
+        stage.goto(join, &[address]);
+        stage.builder.switch_to_block(in_arena);
+        let start = stage.load_u32(Region::Payload.mutable(), extras_pointer, OBJECT.extras_arena_start_offset as i32);
+        let address = arena.address(stage.builder, start, slot, fallback);
+        stage.goto(join, &[address]);
         builder.seal_block(own_block);
         builder.seal_block(holder_block);
         builder.seal_block(join);
@@ -1100,34 +725,33 @@ fn emit_js_cached_field_slot(
 
 /// A word of the running dispatch's payload (`JsStepDispatch`).
 fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
+    use crate::staged::region::Region;
     let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
-    builder.ins().load(types::I64, regions::dispatch(), payload, offset)
+    object_slots::emit(builder).load_u64(Region::Dispatch.mutable(), payload, offset)
 }
 
 /// A record reservation's base in the dispatch payload (`JsStepDispatch::object_record_base`,
 /// `function_record_base`): fixed for a whole native run, so the load merges and hoists.
 fn emit_js_record_base(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
+    use crate::staged::region::Region;
     let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
-    builder.ins().load(types::I64, regions::record_base(), payload, offset)
+    object_slots::emit(builder).load_u64(Region::RecordBases.readonly(), payload, offset)
 }
 
 fn emit_js_property_values(builder: &mut FunctionBuilder<'_>, payload: ir::Value) -> (ir::Value, ir::Value) {
-    let header = builder.ins().load(types::I64, invariant(), payload,
+    use crate::staged::{machine::Lane, region::Region};
+    let mut stage = object_slots::emit(builder);
+    let header = stage.raw_load(Lane::I64, invariant(), payload,
         std::mem::offset_of!(JsStepDispatch, property_buffer) as i32);
     let layout = crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT;
-    let values = builder.ins().load(types::I64, regions::heap_meta(), header, layout.base as i32);
-    let length = builder.ins().load(types::I64, regions::heap_meta(), header, layout.length as i32);
+    let values = stage.load_u64(Region::HeapMeta.mutable(), header, layout.base as i32);
+    let length = stage.load_u64(Region::HeapMeta.mutable(), header, layout.length as i32);
     (values, length)
 }
 
 /// Call a lane helper (`LaneHelpers`) with the payload's VM and residual first.
 fn emit_lane_call(builder: &mut FunctionBuilder<'_>, helper: ir::Value, arguments: &[ir::Value]) -> ir::Value {
-    let mut signature = Signature::new(builder.func.signature.call_conv);
-    signature.params.extend(arguments.iter().map(|_| AbiParam::new(types::I64)));
-    signature.returns.push(AbiParam::new(types::I64));
-    let signature = builder.import_signature(signature);
-    let call = builder.ins().call_indirect(signature, helper, arguments);
-    builder.inst_results(call)[0]
+    object_slots::emit(builder).call_words(helper, arguments)
 }
 
 fn emit_lane_helper_call(
@@ -1145,69 +769,27 @@ fn emit_lane_helper_call(
 }
 
 /// The shared RecordSpace::store_logs test: an immediate or unmarked owner
-/// needs no barrier. Verified Numbers are immediate and discharge the test at
+/// needs no barrier log. Verified Numbers are immediate and discharge the test at
 /// compilation. Otherwise the caller must perform the logged store.
 fn emit_unlogged_property_store_guard(
     builder: &mut FunctionBuilder<'_>, space: crate::staged::RecordSpace, payload: ir::Value, record_id: ir::Value,
     value: ir::Value, fallback: ir::Block,
 ) {
-    use crate::value::ValueLayout;
-    let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
-    let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
+    use crate::staged::barrier::{unlogged_store, MarkList};
     // A marked owner would be logged by RecordSpace::store_logs; otherwise the
     // barrier is a no-op. Marks and block bases are refreshed after each callout.
-    let heap_value = builder.create_block();
-    let write = builder.create_block();
-    builder.ins().brif(immediate, write, &[], heap_value, &[]);
-    builder.switch_to_block(heap_value);
-    use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-    let (blocks_at, count_at) = match space {
-        crate::staged::RecordSpace::Object => (
-            std::mem::offset_of!(JsStepDispatch, object_mark_blocks),
-            std::mem::offset_of!(JsStepDispatch, object_mark_block_count),
-        ),
-        crate::staged::RecordSpace::Function => (
-            std::mem::offset_of!(JsStepDispatch, function_mark_blocks),
-            std::mem::offset_of!(JsStepDispatch, function_mark_block_count),
-        ),
+    let list = match space {
+        crate::staged::RecordSpace::Object => MarkList {
+            blocks: std::mem::offset_of!(JsStepDispatch, object_mark_blocks),
+            count: std::mem::offset_of!(JsStepDispatch, object_mark_block_count),
+        },
+        crate::staged::RecordSpace::Function => MarkList {
+            blocks: std::mem::offset_of!(JsStepDispatch, function_mark_blocks),
+            count: std::mem::offset_of!(JsStepDispatch, function_mark_block_count),
+        },
     };
-    let blocks = emit_js_payload_word(builder, payload, blocks_at);
-    let count = emit_js_payload_word(builder, payload, count_at);
-    let block = builder.ins().ushr_imm_u(
-        record_id, i64::from(OBJECT.mark_records_per_block.trailing_zeros()),
-    );
-    let block_live = builder.ins().icmp(IntCC::UnsignedLessThan, block, count);
-    emit_js_guard(builder, block_live, fallback);
-    let block_offset = builder.ins().imul_imm_u(
-        block, i64::try_from(OBJECT.mark_block_size).expect("mark block size fits i64"),
-    );
-    let block_address = builder.ins().iadd(blocks, block_offset);
-    let within = builder.ins().band_imm_u(
-        record_id, i64::try_from(OBJECT.mark_records_per_block - 1).expect("block mask fits i64"),
-    );
-    let word_index = builder.ins().ushr_imm_u(
-        within, i64::from(OBJECT.mark_word_bits.trailing_zeros()),
-    );
-    let word_offset = builder.ins().imul_imm_u(
-        word_index, i64::try_from(std::mem::size_of::<u64>()).expect("word size fits i64"),
-    );
-    let word_address = builder.ins().iadd(block_address, word_offset);
-    let marks = builder.ins().load(
-        types::I64, MemFlagsData::trusted(), word_address,
-        i32::try_from(OBJECT.mark_offset).expect("mark offset fits i32"),
-    );
-    let bit_index = builder.ins().band_imm_u(
-        within, i64::try_from(OBJECT.mark_word_bits - 1).expect("word mask fits i64"),
-    );
-    let one = builder.ins().iconst(types::I64, 1);
-    let mask = builder.ins().ishl(one, bit_index);
-    let marked = builder.ins().band(marks, mask);
-    let unmarked = builder.ins().icmp_imm_u(IntCC::Equal, marked, 0);
-    emit_js_guard(builder, unmarked, fallback);
-    builder.ins().jump(write, &[]);
-    builder.seal_block(heap_value);
-    builder.seal_block(write);
-    builder.switch_to_block(write);
+    unlogged_store(&mut object_slots::emit(builder), (regions::dispatch(), MemFlagsData::trusted()), payload, list,
+        (record_id, value), |stage, condition| emit_js_guard(stage.builder, condition, fallback));
 }
 
 /// What a lane body knows of its receiver from entry on: the record, exact shape and
@@ -1225,18 +807,15 @@ struct LaneReceiver {
 /// Encode a proved tagged int32; widening remains the shared store's responsibility.
 fn emit_narrow_integer_write(builder: &mut FunctionBuilder<'_>, value: ir::Value,
     fallback: ir::Block, range: Option<typed_ir::IntRange>) -> ir::Value {
-    use crate::value::NarrowLayout as NARROW;
-    let int = builder.ins().ireduce(types::I32, value);
+    use crate::staged::store::{integer_code, integer_fits};
+    let mut stage = object_slots::emit(builder);
     if range.is_some_and(|range| typed_ir::IntRange::packed().contains(range)) {
         #[cfg(test)] PACKED_RANGE_PROOFS.with(|count| count.set(count.get() + 1));
     } else {
-        let half_range = 1_i64 << (NARROW::INTEGER_BITS - 1);
-        let biased = builder.ins().iadd_imm_s(int, half_range);
-        let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, biased, half_range << 1);
-        emit_js_guard(builder, fits, fallback);
+        let fits = integer_fits(&mut stage, value);
+        stage.guard(fits, fallback);
     }
-    let shifted = builder.ins().ishl_imm_u(int, i64::from(NARROW::CODE_SHIFT));
-    builder.ins().bor_imm_u(shifted, i64::from(NARROW::INTEGER_FLAG))
+    integer_code(&mut stage, value)
 }
 
 /// Binding time changes the table address, never the packed-value semantics.
@@ -1247,33 +826,41 @@ enum NarrowTable {
     Linked(u32),
 }
 
+/// The linked data symbol `symbol` as a global value of `builder`'s function.
+#[cfg(feature = "aot")]
+fn linked_data_symbol(builder: &mut FunctionBuilder<'_>, symbol: u32) -> ir::GlobalValue {
+    let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
+        super::native_object::NATIVE_DATA_NAMESPACE, symbol));
+    builder.create_global_value(ir::GlobalValueData::Symbol {
+        name: ir::ExternalName::user(name), offset: 0.into(), colocated: false, tls: false,
+    })
+}
+
 /// `staged::object::decode_narrow_through`'s residual for the 32-bit narrow word `narrow`,
 /// passed to `join`.
 fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
     table: NarrowTable, join: ir::Block)
 {
+    use crate::staged::machine::{Lane, Unary};
     let table = match table {
-        NarrowTable::Process => builder.ins().iconst(types::I64, crate::value::NarrowLayout::upper_words() as i64),
+        NarrowTable::Process => object_slots::emit(builder).constant(crate::value::NarrowLayout::upper_words() as u64),
         #[cfg(feature = "aot")]
         NarrowTable::Linked(symbol) => {
-            let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
-                super::native_object::NATIVE_DATA_NAMESPACE, symbol));
-            let global = builder.create_global_value(ir::GlobalValueData::Symbol {
-                name: ir::ExternalName::user(name), offset: 0.into(), colocated: false, tls: false,
-            });
-            builder.ins().symbol_value(types::I64, global)
+            let global = linked_data_symbol(builder, symbol);
+            object_slots::emit(builder).symbol_address(global)
         }
     };
-    let narrow = builder.ins().uextend(types::I64, narrow);
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
+    let mut stage = object_slots::emit(builder);
+    let narrow = stage.raw_unary(Unary::ZeroExtend(Lane::I64), narrow);
     let encoded = crate::staged::object::decode_narrow_through(&mut stage, narrow, table);
-    builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
+    stage.goto(join, &[encoded]);
 }
 
 /// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape
 /// where the receiver is no direct object or the heap bases are absent, which no folded
 /// field matches.
 fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, this: ir::Value) -> LaneReceiver {
+    use crate::staged::machine::{Binary, Lane, Relation, Unary};
     let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
     let receiver = LaneReceiver {
         object: builder.declare_var(types::I64),
@@ -1284,34 +871,33 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
     let (properties, _) = emit_js_property_values(builder, payload);
     builder.def_var(receiver.properties, properties);
-    let none = builder.ins().iconst(types::I32, i64::from(super::NO_FIELD_RECEIVER));
-    let null = builder.ins().iconst(types::I64, 0);
-    builder.def_var(receiver.shape, none);
-    let outside = builder.ins().iconst(types::I8, 0);
-    builder.def_var(receiver.inline, outside);
-    builder.def_var(receiver.object, null);
-    let found = builder.create_block();
-    let done = builder.create_block();
-    let object = crate::staged::value::is_direct_object(&mut object_slots::emit(builder), this);
-    let record_id = builder.ins().ireduce(types::I32, this);
-    let in_range = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, record_id, layout.record_capacity as i64);
-    let has_records = builder.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
-    let has_properties = builder.ins().icmp_imm_u(IntCC::NotEqual, properties, 0);
-    let ok = builder.ins().band(object, in_range);
-    let ok = builder.ins().band(ok, has_records);
-    let ok = builder.ins().band(ok, has_properties);
-    builder.ins().brif(ok, found, &[], done, &[]);
-    builder.switch_to_block(found);
-    let record_id = builder.ins().uextend(types::I64, record_id);
-    let offset = builder.ins().imul_imm_u(record_id, layout.record_size as i64);
-    let address = builder.ins().iadd(records, offset);
+    let (found, done) = (builder.create_block(), builder.create_block());
+    let mut stage = object_slots::emit(builder);
+    let none = stage.raw_const(Lane::I32, i64::from(super::NO_FIELD_RECEIVER));
+    let null = stage.raw_const(Lane::I64, 0);
+    let outside = stage.raw_const(Lane::I8, 0);
+    stage.builder.def_var(receiver.shape, none);
+    stage.builder.def_var(receiver.inline, outside);
+    stage.builder.def_var(receiver.object, null);
+    let object = crate::staged::value::is_direct_object(&mut stage, this);
+    let record_id = stage.raw_unary(Unary::Narrow(Lane::I32), this);
+    let in_range = stage.raw_compare_imm(Relation::UnsignedLess, record_id, layout.record_capacity as i64);
+    let has_records = stage.raw_compare_imm(Relation::NotEqual, records, 0);
+    let has_properties = stage.raw_compare_imm(Relation::NotEqual, properties, 0);
+    let ok = stage.raw_binary(Binary::And, object, in_range);
+    let ok = stage.raw_binary(Binary::And, ok, has_records);
+    let ok = stage.raw_binary(Binary::And, ok, has_properties);
+    stage.branch_if(ok, (found, &[]), (done, &[]));
+    stage.builder.switch_to_block(found);
+    let record_id = stage.raw_unary(Unary::ZeroExtend(Lane::I64), record_id);
+    let address = crate::staged::object::object_record_at(&mut stage, records, record_id);
     // The exact shape carries the dictionary bit, so a dictionary never matches.
-    let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.auxiliary_offset as i32);
-    let inline = object_slots::inline_storage(builder, address);
-    builder.def_var(receiver.object, address);
-    builder.def_var(receiver.shape, shape);
-    builder.def_var(receiver.inline, inline);
-    builder.ins().jump(done, &[]);
+    let shape = stage.raw_load(Lane::I32, MemFlagsData::trusted(), address, layout.auxiliary_offset as i32);
+    let inline = crate::staged::object::inline_storage(&mut stage, address);
+    stage.builder.def_var(receiver.object, address);
+    stage.builder.def_var(receiver.shape, shape);
+    stage.builder.def_var(receiver.inline, inline);
+    stage.goto(done, &[]);
     builder.switch_to_block(done);
     receiver
 }
@@ -1515,17 +1101,16 @@ impl LaneHelpers {
     /// symbols after its narrow table) the loader's namespace check proves to hold the id.
     pub(super) fn atom_word(self, builder: &mut FunctionBuilder<'_>, atom: u32) -> ir::Value {
         match self {
-            Self::Process(_) => builder.ins().iconst(types::I64, i64::from(atom)),
+            Self::Process(_) => object_slots::emit(builder).constant(u64::from(atom)),
             Self::Numeric | Self::Ahead => lane_region::atom_symbol(builder, atom),
             #[cfg(feature = "aot")]
             Self::Linked(_, narrow) | Self::Bound(_, narrow) => {
-                let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
-                    super::native_object::NATIVE_DATA_NAMESPACE, narrow + NATIVE_ATOM_TABLE_OFFSET));
-                let table = builder.create_global_value(ir::GlobalValueData::Symbol {
-                    name: ir::ExternalName::user(name), offset: 0.into(), colocated: false, tls: false });
-                let base = builder.ins().symbol_value(types::I64, table);
-                let word = builder.ins().load(types::I32, invariant(), base, (atom as usize * std::mem::size_of::<u32>()) as i32);
-                builder.ins().uextend(types::I64, word)
+                use crate::staged::machine::{Lane, Unary};
+                let table = linked_data_symbol(builder, narrow + NATIVE_ATOM_TABLE_OFFSET);
+                let mut stage = object_slots::emit(builder);
+                let base = stage.symbol_address(table);
+                let word = stage.raw_load(Lane::I32, invariant(), base, (atom as usize * std::mem::size_of::<u32>()) as i32);
+                stage.raw_unary(Unary::ZeroExtend(Lane::I64), word)
             }
         }
     }
@@ -1534,7 +1119,12 @@ impl LaneHelpers {
     /// bodies costs raytrace compile Ir +17.5%, run-only +0.6%).
     fn address(self, builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
         if self.names_symbols() { return lane_region::helper_symbol(builder, helper); }
-        self.table_address(builder.ins(), helper)
+        let mut stage = object_slots::emit(builder);
+        match self.table_address(helper) {
+            HelperAddress::Embedded(address) => stage.raw_const(crate::staged::machine::Lane::I64, address),
+            HelperAddress::Loaded { table, offset } =>
+                stage.raw_load(crate::staged::machine::Lane::I64, invariant(), table, offset),
+        }
     }
 
     /// Whether helpers are symbols a loader resolves, not table entries.
@@ -1542,21 +1132,26 @@ impl LaneHelpers {
         matches!(self, Self::Numeric | Self::Ahead)
     }
 
-    /// The address of `helper` in this process's table, embedded, or loaded from the bound one.
-    fn table_address<'f>(self, builder: impl ir::InstBuilder<'f>, helper: LaneHelper) -> ir::Value {
+    /// Where the address of `helper` in this process's table is: embedded, or loaded from the bound one.
+    fn table_address(self, helper: LaneHelper) -> HelperAddress {
         match self {
             Self::Numeric => unreachable!("a frameless Number region names its helper by symbol"),
             Self::Ahead => unreachable!("an ahead region names its helper by symbol"),
-            Self::Process(addresses) => builder.iconst(types::I64, addresses[helper as usize] as i64),
+            Self::Process(addresses) => HelperAddress::Embedded(addresses[helper as usize] as i64),
             #[cfg(feature = "aot")]
-            Self::Bound(table, _) => {
-                builder.load(types::I64, invariant(), table,
-                    (helper as usize * std::mem::size_of::<usize>()) as i32)
-            },
+            Self::Bound(table, _) => HelperAddress::Loaded {
+                table, offset: (helper as usize * std::mem::size_of::<usize>()) as i32 },
             #[cfg(feature = "aot")]
             Self::Linked(..) => unreachable!("linked helpers bind at region entry"),
         }
     }
+}
+
+/// Where a helper's address is: a constant, or an entry of the table a region bound.
+#[derive(Clone, Copy)]
+enum HelperAddress {
+    Embedded(i64),
+    Loaded { table: ir::Value, offset: i32 },
 }
 
 /// Immutable host-specific helper addresses, resolved by the running image.
@@ -1762,6 +1357,14 @@ impl Kind {
         match self {
             Self::I32 => crate::WasmType::I32,
             Self::I64 => crate::WasmType::I64,
+        }
+    }
+
+    fn lane(self) -> crate::staged::machine::Lane {
+        use crate::staged::machine::Lane;
+        match self {
+            Self::I32 => Lane::I32,
+            Self::I64 => Lane::I64,
         }
     }
 }
@@ -4951,15 +4554,13 @@ fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction
 
 #[cfg(feature = "aot")]
 pub(super) fn native_js_start_pc(builder: &mut FunctionBuilder<'_>, context: ir::Value) -> ir::Value {
-    let pointer = builder.func.signature.params[0].value_type;
-    let payload = builder.ins().load(
-        pointer, MemFlagsData::trusted(), context,
-        std::mem::offset_of!(CallContext, adapter_payload) as i32,
-    );
-    builder.ins().load(
-        types::I64, MemFlagsData::trusted(), payload,
-        std::mem::offset_of!(JsStepDispatch, start_pc) as i32,
-    )
+    use crate::staged::machine::Lane;
+    let pointer = emit_machine::lane_of(builder.func.signature.params[0].value_type);
+    let mut stage = object_slots::emit(builder);
+    let payload = stage.raw_load(pointer, MemFlagsData::trusted(), context,
+        std::mem::offset_of!(CallContext, adapter_payload) as i32);
+    stage.raw_load(Lane::I64, MemFlagsData::trusted(), payload,
+        std::mem::offset_of!(JsStepDispatch, start_pc) as i32)
 }
 
 /// Execute one compile-time-selected semantic operation and return its exact
@@ -6279,7 +5880,7 @@ fn dispatch_path(instructions: &[WideInstruction], plan: &Plan, start: usize) ->
 fn native_interrupt_pointer(builder: &mut FunctionBuilder<'_>, context: ir::Value, fault_poll: bool) -> ir::Value {
     let offset = if fault_poll { std::mem::offset_of!(CallContext, poll_start) as i32 }
         else { CONTEXT_INTERRUPT };
-    builder.ins().load(types::I64, invariant(), context, offset)
+    object_slots::emit(builder).raw_load(crate::staged::machine::Lane::I64, invariant(), context, offset)
 }
 
 /// The common native region core: builder, call context, interrupt check and its
@@ -6312,15 +5913,11 @@ impl<'b> RegionCore<'b> {
     /// Read the call context's interrupt flag. A JS region uses the result to
     /// take its exact-PC callout; scalar regions use it for termination exits.
     fn interrupt_requested(&mut self) -> ir::Value {
+        use crate::staged::machine::{Lane, Relation};
         let context = self.context;
         let pointer = native_interrupt_pointer(&mut self.builder, context, false);
-        let requested = self
-            .builder
-            .ins()
-            .atomic_load(types::I8, MemFlagsData::trusted(), pointer);
-        self.builder
-            .ins()
-            .icmp_imm_u(IntCC::NotEqual, requested, 0)
+        let requested = self.raw_atomic_load(Lane::I8, MemFlagsData::trusted(), pointer);
+        self.raw_compare_imm(Relation::NotEqual, requested, 0)
     }
 
     /// Checks for a termination request: a read of the poll page, which faults once one is
@@ -6330,9 +5927,7 @@ impl<'b> RegionCore<'b> {
         if let Some(poll) = self.poll {
             // The read faults once termination is requested, and the fault resumes as the
             // termination (`guard_fault`). Atomic, so it is neither merged nor dropped.
-            self.builder
-                .ins()
-                .atomic_load(types::I8, MemFlagsData::trusted(), poll);
+            self.raw_atomic_load(crate::staged::machine::Lane::I8, MemFlagsData::trusted(), poll);
             return;
         }
         let stop = self.interrupt_requested();
@@ -6345,7 +5940,7 @@ impl<'b> RegionCore<'b> {
             }
         };
         let next = self.builder.create_block();
-        self.builder.ins().brif(stop, termination, &[], next, &[]);
+        self.branch_if(stop, (termination, &[]), (next, &[]));
         self.builder.switch_to_block(next);
         self.builder.seal_block(next);
     }
@@ -6421,12 +6016,13 @@ impl<'b> Body<'b> {
 
     /// The register's value viewed as `ty`.
     fn read(&mut self, register: u16, ty: crate::WasmType) -> ir::Value {
+        use crate::staged::machine::{Lane, Unary};
         let variable = self.views(register)[view(ty)];
         let stored = self.builder.use_var(variable);
         if ty != crate::WasmType::I32 || self.int32_extension == Int32Extension::Sign {
             return stored;
         }
-        let value = self.builder.ins().ireduce(types::I32, stored);
+        let value = self.raw_unary(Unary::Narrow(Lane::I32), stored);
         self.extended[value] = stored.into();
         value
     }
@@ -6434,11 +6030,12 @@ impl<'b> Body<'b> {
     /// `value`, an i32, extended to 64 bits as `extension` does: the i32 view it was read
     /// from, if the view holds it so.
     fn extend(&mut self, value: ir::Value, extension: Int32Extension) -> ir::Value {
+        use crate::staged::machine::{Lane, Unary};
         match self.extended[value].expand() {
             Some(wide) if extension == self.int32_extension => wide,
             _ => match extension {
-                Int32Extension::Zero => self.builder.ins().uextend(types::I64, value),
-                Int32Extension::Sign => self.builder.ins().sextend(types::I64, value),
+                Int32Extension::Zero => self.raw_unary(Unary::ZeroExtend(Lane::I64), value),
+                Int32Extension::Sign => self.raw_unary(Unary::SignExtend(Lane::I64), value),
             },
         }
     }
@@ -6458,11 +6055,9 @@ impl<'b> Body<'b> {
 
     /// Define the register as `value` of type `ty`, in both views of its bits.
     fn write(&mut self, register: u16, ty: crate::WasmType, value: ir::Value) {
+        use crate::staged::machine::Unary;
         let other = counterpart(ty);
-        let converted = self
-            .builder
-            .ins()
-            .bitcast(scalar_ir(other), MemFlagsData::new(), value);
+        let converted = self.raw_unary(Unary::Bitcast(emit_machine::lane_of(scalar_ir(other))), value);
         let stored = self.view_value(ty, value);
         let converted = self.view_value(other, converted);
         let variables = self.views(register);
@@ -6577,22 +6172,15 @@ impl<H: Host> Emitter<'_, '_, H> {
 
     /// Define the register as the constant `bits` of width `kind`.
     fn write_constant(&mut self, register: u16, kind: Kind, bits: i64) {
+        use crate::staged::machine::Lane;
         self.known.retain(|(known, _)| *known != register);
         if kind == Kind::I32 && self.selectors.contains(&register) {
             self.known.push((register, bits as i32));
         }
         let (integer, float) = match kind {
             // The i32 view holds the constant zero-extended (`view_ir`).
-            Kind::I32 => (
-                self.body.core.builder
-                    .ins()
-                    .iconst(types::I64, i64::from(bits as u32)),
-                self.body.core.builder.ins().f32const(Ieee32::with_bits(bits as u32)),
-            ),
-            Kind::I64 => (
-                self.body.core.builder.ins().iconst(types::I64, bits),
-                self.body.core.builder.ins().f64const(Ieee64::with_bits(bits as u64)),
-            ),
+            Kind::I32 => (self.raw_const(Lane::I64, i64::from(bits as u32)), self.raw_const(Lane::F32, bits)),
+            Kind::I64 => (self.raw_const(Lane::I64, bits), self.raw_const(Lane::F64, bits)),
         };
         let float_type = counterpart(kind.integer());
         let variables = self.body.views(register);
@@ -6629,7 +6217,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     fn trap_if(&mut self, condition: ir::Value, trap: crate::WasmTrap) {
         let trap = self.trap_block(trap);
         let next = self.body.core.builder.create_block();
-        self.body.core.builder.ins().brif(condition, trap, &[], next, &[]);
+        self.branch_if(condition, (trap, &[]), (next, &[]));
         self.body.core.builder.switch_to_block(next);
         self.body.core.builder.seal_block(next);
     }
@@ -6639,39 +6227,37 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     fn finish_traps(&mut self) {
+        use crate::staged::machine::Lane;
         if let Some(block) = self.body.termination_block {
             self.body.core.builder.switch_to_block(block);
-            let status = self.body.core.builder.ins().iconst(types::I64, TERMINATED_STATUS);
+            let status = self.raw_const(Lane::I64, TERMINATED_STATUS);
             let mut values = vec![status];
             if let Some(ty) = self.plan.result {
                 let kind = Kind::of(ty).expect("planned");
-                values.push(self.body.core.builder.ins().iconst(kind.ir(), 0));
+                values.push(self.raw_const(kind.lane(), 0));
             }
-            self.body.core.builder.ins().return_(&values);
+            self.leave(&values);
         }
         for (index, block) in self.trap_blocks.into_iter().enumerate() {
             let Some(block) = block else { continue };
             self.body.core.builder.switch_to_block(block);
-            let status = self.body.core.builder.ins().iconst(types::I64, index as i64 + 1);
+            let status = self.raw_const(Lane::I64, index as i64 + 1);
             let mut values = vec![status];
             if let Some(ty) = self.plan.result {
                 let kind = Kind::of(ty).expect("planned");
-                values.push(self.body.core.builder.ins().iconst(kind.ir(), 0));
+                values.push(self.raw_const(kind.lane(), 0));
             }
-            self.body.core.builder.ins().return_(&values);
+            self.leave(&values);
         }
     }
 
     /// The address of the native slot of the global bound at `slot`: the instance's global area
     /// holds it, indexed by the binding.
     fn global_address(&mut self, slot: u32) -> ir::Value {
-        let table = self
-            .body.core.builder
-            .ins()
-            .load(types::I64, invariant(), self.body.core.context, CONTEXT_GLOBALS);
-        self.body.core.builder
-            .ins()
-            .load(types::I64, invariant(), table, (slot as usize * size_of::<*mut u64>()) as i32)
+        use crate::staged::machine::Lane;
+        let context = self.body.core.context;
+        let table = self.raw_load(Lane::I64, invariant(), context, CONTEXT_GLOBALS);
+        self.raw_load(Lane::I64, invariant(), table, (slot as usize * size_of::<*mut u64>()) as i32)
     }
 
     /// The binding the `b` register of instruction `pc` holds.
@@ -6688,18 +6274,14 @@ impl<H: Host> Emitter<'_, '_, H> {
         let unwound = self.body.core.builder.create_block();
         self.body.core.builder.set_cold_block(unwound);
         let next = self.body.core.builder.create_block();
-        self.body.core.builder.ins().brif(status, unwound, &[], next, &[]);
+        self.branch_if(status, (unwound, &[]), (next, &[]));
         self.body.core.builder.switch_to_block(unwound);
         self.body.core.builder.seal_block(unwound);
         let mut values = vec![status];
         if let Some(ty) = self.plan.result {
-            values.push(
-                self.body.core.builder
-                    .ins()
-                    .iconst(Kind::of(ty).expect("planned").ir(), 0),
-            );
+            values.push(self.raw_const(Kind::of(ty).expect("planned").lane(), 0));
         }
-        self.body.core.builder.ins().return_(&values);
+        self.leave(&values);
         self.body.core.builder.switch_to_block(next);
         self.body.core.builder.seal_block(next);
     }
@@ -6750,6 +6332,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         signature: &crate::WasmSignature,
         instruction: WideInstruction,
     ) {
+        use crate::staged::machine::{Lane, Unary};
         let word = types::I64.bytes();
         let signature = signature.clone();
         let words = signature.params.len() + 1;
@@ -6763,23 +6346,15 @@ impl<H: Host> Emitter<'_, '_, H> {
             let kind = Kind::of(*ty).expect("planned");
             let value = self.read(window.base + offset as u16, kind);
             let value = match kind {
-                Kind::I32 => self.body.core.builder.ins().uextend(types::I64, value),
+                Kind::I32 => self.raw_unary(Unary::ZeroExtend(Lane::I64), value),
                 Kind::I64 => value,
             };
-            let address =
-                self.body.core.builder
-                    .ins()
-                    .stack_addr(types::I64, slot, (offset as u32 * word) as i32);
-            self.body.core.builder
-                .ins()
-                .store(MemFlagsData::trusted(), value, address, 0);
+            let address = self.slot_address(slot, (offset as u32 * word) as i32);
+            self.raw_store(Lane::I64, MemFlagsData::trusted(), (value, false), address, 0);
         }
         let result_offset = (signature.params.len() as u32 * word) as i32;
-        let args = self.body.core.builder.ins().stack_addr(types::I64, slot, 0);
-        let out = self
-            .body.core.builder
-            .ins()
-            .stack_addr(types::I64, slot, result_offset);
+        let args = self.slot_address(slot, 0);
+        let out = self.slot_address(slot, result_offset);
         let callout_signature = match self.callout_signature {
             Some(signature) => signature,
             None => {
@@ -6793,28 +6368,18 @@ impl<H: Host> Emitter<'_, '_, H> {
                 callout
             }
         };
-        let target =
-            self.body.core.builder
-                .ins()
-                .load(types::I64, invariant(), self.body.core.context, CONTEXT_CALLOUT);
-        let function = self.body.core.builder.ins().iconst(types::I64, i64::from(function));
-        let call = self.body.core.builder.ins().call_indirect(
-            callout_signature,
-            target,
-            &[self.body.core.context, function, args, out],
-        );
-        let status = self.body.core.builder.inst_results(call)[0];
+        let context = self.body.core.context;
+        let target = self.raw_load(Lane::I64, invariant(), context, CONTEXT_CALLOUT);
+        let function = self.raw_const(Lane::I64, i64::from(function));
+        let status = self.call_signature(callout_signature, target, &[context, function, args, out])[0];
         self.propagate(status);
         let destination = instruction.result_register();
         match signature.results.first() {
             Some(ty) => {
                 let kind = Kind::of(*ty).expect("planned");
-                let bits = self
-                    .body.core.builder
-                    .ins()
-                    .load(types::I64, MemFlagsData::trusted(), out, 0);
+                let bits = self.raw_load(Lane::I64, MemFlagsData::trusted(), out, 0);
                 let value = match kind {
-                    Kind::I32 => self.body.core.builder.ins().ireduce(types::I32, bits),
+                    Kind::I32 => self.raw_unary(Unary::Narrow(Lane::I32), bits),
                     Kind::I64 => bits,
                 };
                 self.write(destination, kind, value);
@@ -6838,7 +6403,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             block = self.body.core.builder.create_block();
             self.pending.push((block, thread));
         }
-        self.body.core.builder.ins().jump(block, &[]);
+        self.goto(block, &[]);
     }
 
     /// A conditional transfer from `pc`. It checks for an interrupt when
@@ -6857,13 +6422,13 @@ impl<H: Host> Emitter<'_, '_, H> {
         let taken = self.edge(target);
         let next = self.edge(fallthrough);
         if target >= fallthrough {
-            self.body.core.builder.ins().brif(condition, taken, &[], next, &[]);
+            self.branch_if(condition, (taken, &[]), (next, &[]));
             return;
         }
         let exit = self.body.core.builder.create_block();
-        self.body.core.builder.ins().brif(condition, taken, &[], exit, &[]);
+        self.branch_if(condition, (taken, &[]), (exit, &[]));
         self.body.core.builder.switch_to_block(exit);
-        self.body.core.builder.ins().jump(next, &[]);
+        self.goto(next, &[]);
     }
 
     /// Whether an edge from `pc` to `target` checks for an interrupt: a back edge does, except
@@ -6994,7 +6559,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             return;
         };
         let target = self.block(target);
-        self.body.core.builder.ins().jump(target, &[]);
+        self.goto(target, &[]);
     }
 
     /// Emit the instruction at `pc`; returns whether control falls through.
@@ -7202,6 +6767,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             UserFuncName::User(function_name(index)),
             internal_signature(memory, &plan.params, plan.result, call_conv),
         );
+        use crate::staged::machine::{Lane, Relation};
         let mut builder_context = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
         let entry = builder.create_block();
@@ -7214,7 +6780,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         // A constant base folds into each access's addressing mode and
         // frees the register a parameter would occupy.
         let base = match fixed_base {
-            Some(fixed) => builder.ins().iconst(types::I64, i64::from(fixed)),
+            Some(fixed) => object_slots::emit(&mut builder).raw_const(crate::staged::machine::Lane::I64, i64::from(fixed)),
             None => passed.next().expect("a passed base"),
         };
         let length = memory
@@ -7295,16 +6861,9 @@ impl<'a, H: Host> Analysis<'a, H> {
             );
         }
         // Each activation checks the stack it may still use.
-        let stack_pointer = emitter.body.core.builder.ins().get_stack_pointer(types::I64);
-        let limit =
-            emitter
-                .body.core.builder
-                .ins()
-                .load(types::I64, invariant(), context, CONTEXT_STACK_LIMIT);
-        let exhausted = emitter
-            .body.core.builder
-            .ins()
-            .icmp(IntCC::UnsignedLessThan, stack_pointer, limit);
+        let stack_pointer = emitter.stack_pointer();
+        let limit = emitter.raw_load(Lane::I64, invariant(), context, CONTEXT_STACK_LIMIT);
+        let exhausted = emitter.raw_compare(Relation::UnsignedLess, stack_pointer, limit);
         emitter.trap_if(exhausted, crate::WasmTrap::CallStackExhausted);
         emitter.known.clear();
         emitter.jump(0, true);
@@ -7342,7 +6901,7 @@ impl<'a, H: Host> Analysis<'a, H> {
                 emitter.known.clear();
                 let block = emitter.block(pc);
                 if open {
-                    emitter.body.core.builder.ins().jump(block, &[]);
+                    emitter.goto(block, &[]);
                 }
                 emitter.body.core.builder.switch_to_block(block);
             }
@@ -7356,7 +6915,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             // now so falling into it stays explicit.
             if open && emitter.blocks.get(pc + 1).is_some_and(Option::is_some) {
                 let next = emitter.block(pc + 1);
-                emitter.body.core.builder.ins().jump(next, &[]);
+                emitter.goto(next, &[]);
                 open = false;
             }
         }
@@ -7387,6 +6946,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         plan: &Plan,
         memory: MemoryArguments,
     ) -> ir::Function {
+        use crate::staged::machine::{Lane, Unary};
         let call_conv = isa.default_call_conv();
         let signature = native_entry_signature(isa.pointer_type(), call_conv);
         let mut func = ir::Function::with_name_signature(
@@ -7407,53 +6967,40 @@ impl<'a, H: Host> Analysis<'a, H> {
             parameters[3],
             parameters[4],
         );
-        let context = if builder.func.dfg.value_type(context) == types::I64 {
-            context
-        } else {
-            builder.ins().uextend(types::I64, context)
-        };
-        let mut call_args = vec![context];
-        call_args.extend(memory.select(base, length));
-        for (offset, ty) in plan.params.iter().enumerate() {
-            let raw = builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                args,
-                (offset * 8) as i32,
-            );
-            call_args.push(match Kind::of(*ty).expect("planned") {
-                Kind::I32 => builder.ins().ireduce(types::I32, raw),
-                Kind::I64 => raw,
-            });
-        }
         let target_signature = builder.import_signature(internal_signature(
             memory,
             &plan.params,
             plan.result,
             call_conv,
         ));
-        let table = builder
-            .ins()
-            .load(types::I64, MemFlagsData::trusted(), context, CONTEXT_TABLE);
-        let target = builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            table,
-            (index * 8) as i32,
-        );
-        let call = builder
-            .ins()
-            .call_indirect(target_signature, target, &call_args);
-        let results = builder.inst_results(call).to_vec();
+        let wide_context = builder.func.dfg.value_type(context) == types::I64;
+        let mut stage = object_slots::emit(&mut builder);
+        let context = if wide_context {
+            context
+        } else {
+            stage.raw_unary(Unary::ZeroExtend(Lane::I64), context)
+        };
+        let mut call_args = vec![context];
+        call_args.extend(memory.select(base, length));
+        for (offset, ty) in plan.params.iter().enumerate() {
+            let raw = stage.raw_load(Lane::I64, MemFlagsData::trusted(), args, (offset * 8) as i32);
+            call_args.push(match Kind::of(*ty).expect("planned") {
+                Kind::I32 => stage.raw_unary(Unary::Narrow(Lane::I32), raw),
+                Kind::I64 => raw,
+            });
+        }
+        let table = stage.raw_load(Lane::I64, MemFlagsData::trusted(), context, CONTEXT_TABLE);
+        let target = stage.raw_load(Lane::I64, MemFlagsData::trusted(), table, (index * 8) as i32);
+        let results = stage.call_signature(target_signature, target, &call_args);
         if let Some(ty) = plan.result {
             let value = match Kind::of(ty).expect("planned") {
-                Kind::I32 => builder.ins().uextend(types::I64, results[1]),
+                Kind::I32 => stage.raw_unary(Unary::ZeroExtend(Lane::I64), results[1]),
                 Kind::I64 => results[1],
             };
-            builder.ins().store(MemFlagsData::trusted(), value, out, 0);
+            stage.raw_store(Lane::I64, MemFlagsData::trusted(), (value, false), out, 0);
         }
-        let status = builder.ins().ireduce(types::I32, results[0]);
-        builder.ins().return_(&[status]);
+        let status = stage.raw_unary(Unary::Narrow(Lane::I32), results[0]);
+        stage.leave(&[status]);
         builder.finalize(isa.frontend_config());
         func
     }

@@ -43,7 +43,7 @@ pub(super) fn window_record(function: &Function, instruction: WideInstruction) -
         | Class::StoreEnvLocal | Class::InitializeTdz => instruction.local_slot() as u32,
         // A function's Annex B store to its `var` binding is a store to the slot
         // (`Function::window_reads_locals`).
-        _ if op == Op::StoreVarBinding && function.parent.is_some() => instruction.local_slot() as u32,
+        Class::StoreVarBinding if function.parent.is_some() => instruction.local_slot() as u32,
         _ => return WindowRecord::Keeps,
     })
 }

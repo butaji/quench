@@ -7,18 +7,18 @@ impl Lowering<'_, '_> {
     /// `Value::DELETED` where the payload binds none.
     pub(super) fn fixed_this(&mut self) -> ir::Value {
         let slot = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, fixed_this_slot));
-        let present = self.builder.ins().icmp_imm_u(IntCC::NotEqual, slot, 0);
+        let present = self.raw_compare_imm(Relation::NotEqual, slot, 0);
         let bound = self.builder.create_block();
         let absent = self.builder.create_block();
         let join = self.builder.create_block();
         let bits = self.builder.append_block_param(join, types::I64);
-        self.builder.ins().brif(present, bound, &[], absent, &[]);
+        self.branch_if(present, (bound, &[]), (absent, &[]));
         self.builder.switch_to_block(bound);
-        let value = self.builder.ins().load(types::I64, regions::frame(), slot, 0);
-        self.builder.ins().jump(join, &[ir::BlockArg::Value(value)]);
+        let value = self.raw_load(Lane::I64, regions::frame(), slot, 0);
+        self.goto(join, &[value]);
         self.builder.switch_to_block(absent);
-        let deleted = self.builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
-        self.builder.ins().jump(join, &[ir::BlockArg::Value(deleted)]);
+        let deleted = self.raw_const(Lane::I64, Value::DELETED.to_bits() as i64);
+        self.goto(join, &[deleted]);
         self.builder.switch_to_block(join);
         bits
     }

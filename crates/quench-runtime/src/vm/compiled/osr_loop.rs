@@ -636,8 +636,7 @@ fn tagged_operand(instruction: WideInstruction, constants: &[Value]) -> Result<O
 /// capture, a cached field, a global binding, an element, a fresh allocation or a comparison.
 fn carries_boxed(instruction: WideInstruction) -> bool {
     let op = instruction.op();
-    op.is_load_capture() || op.is_get_field() || op.is_get_index() || op.is_load_name() || op.allocates()
-        || (op.is_binary() && number_comparison(instruction).is_some())
+    op.boxes_result() || op.allocates() || (op.is_binary() && number_comparison(instruction).is_some())
 }
 
 /// The registers of an ordinary call at `offset` that stay boxed: its callee and the arguments
@@ -913,7 +912,7 @@ fn object_reads(instruction: WideInstruction) -> Option<Register> {
 fn array_read(instruction: WideInstruction) -> Option<Register> {
     match instruction.op() {
         opcode if opcode.is_get_index() => instruction.operand_b().register_index(),
-        opcode if opcode.is_set_index() || opcode.is_require_object_coercible() => Some(instruction.register_b()),
+        opcode if opcode.is_indexed_access() => Some(instruction.register_b()),
         _ => None,
     }
 }

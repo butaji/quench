@@ -196,8 +196,8 @@ pub(in crate::vm) fn fast_rows(op: crate::bytecode::Op) -> u64 {
 }
 
 #[cfg(test)]
-fn note_fast(op: crate::bytecode::Op) {
-    FAST_ROWS[op as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+fn note_fast(op: u16) {
+    FAST_ROWS[usize::from(op)].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// The direct-cell call sites the stitcher inlined (`call_plan::plan_call`), counted whether or not

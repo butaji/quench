@@ -36,7 +36,7 @@ impl Lowering<'_, '_> {
         };
         self.define(state, destination, value, RegisterFact::definition(ty, Representation::Tagged));
         if ty == Type::INT32 {
-            let int = if representation == Representation::Int32 { raw } else { self.ins().ireduce(types::I32, value) };
+            let int = if representation == Representation::Int32 { raw } else { self.raw_unary(Unary::Narrow(Lane::I32), value) };
             self.define_int_view(state, destination, value, int);
         }
         self.native += 1;

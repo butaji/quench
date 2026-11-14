@@ -188,7 +188,7 @@ impl Lowering<'_, '_> {
         let value = self.tagged(state, instruction.register_a());
         self.home_written(state, pc);
         let raise_site = super::super::raise_site(self.function_id, record) as i64;
-        let site = self.int_const(types::I64, raise_site);
+        let site = self.raw_const(Lane::I64, raise_site);
         self.helper_call(LaneHelper::Raise, &[value, site]);
         self.stop_with(LANE_BODY_THREW, record, None);
         Some(false)
@@ -222,11 +222,11 @@ impl Lowering<'_, '_> {
             Bind::Register(register) => self.set_tagged(state, register, value),
             Bind::Local(slot) => {
                 let address = super::frame::local_slot_address(&mut self.builder, self.payload, slot);
-                self.frame_store(value, address, 0);
+                self.store_word(regions::frame(), value, address, 0);
             }
             Bind::Frame(register) => {
                 let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
-                let record = self.int_const(types::I64, pc as i64);
+                let record = self.raw_const(Lane::I64, pc as i64);
                 self.helper_call(LaneHelper::HandlerEdge, &[context, record, value]);
                 self.allocated(state);
                 if let Some(register) = register { self.set_tagged(state, register, value); }
@@ -239,11 +239,11 @@ impl Lowering<'_, '_> {
     /// the lane's completion or raise resumes at.
     pub(super) fn stop_with(&mut self, status: u32, record: u32, value: Option<ir::Value>) {
         self.finishes = true;
-        let record = self.int_const(types::I64, i64::from(record));
+        let record = self.raw_const(Lane::I64, i64::from(record));
         let payload = self.payload;
         emit(&mut self.builder).store_u64(Region::Dispatch.mutable(), payload,
             i32::try_from(std::mem::offset_of!(JsStepDispatch, returned_pc)).expect("dispatch offset fits i32"), record);
-        let status = self.int_const(types::I32, i64::from(status));
+        let status = self.raw_const(Lane::I32, i64::from(status));
         self.leave_with(status, value);
     }
 }

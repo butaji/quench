@@ -26,7 +26,7 @@ impl Lowering<'_, '_> {
             let exit = self.guard_exit(state, pc as u32);
             self.read_invalidation(state, exit);
             let address = self.reloc(RelocKind::ConstantPool, index as u32, (base + index * std::mem::size_of::<Value>()) as u64);
-            let value = self.ins().load(types::I64, regions::constant(), address, 0);
+            let value = self.raw_load(Lane::I64, regions::constant(), address, 0);
             self.define(state, instruction.result_register(), value,
                 RegisterFact::definition(super::super::facts::constant_type(constant), Representation::Tagged));
             return Some(true);
@@ -53,9 +53,9 @@ impl Lowering<'_, '_> {
         let left = self.operand_tagged(state, instruction.operand_b())?;
         let right = self.operand_tagged(state, instruction.operand_c())?;
         let exit = self.guard_exit(state, pc as u32);
-        let (payload, operator) = (self.payload, self.ins().iconst(types::I64, i64::from(instruction.binary_operator())));
+        let (payload, operator) = (self.payload, self.raw_const(Lane::I64, i64::from(instruction.binary_operator())));
         let value = self.helper_call(LaneHelper::Binary, &[payload, operator, left, right]);
-        let made = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+        let made = self.raw_compare_imm(Relation::NotEqual, value, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, made, exit);
         self.allocated(state);
         self.define(state, instruction.result_register(), value, RegisterFact::definition(ty, Representation::Tagged));
@@ -85,9 +85,9 @@ impl Lowering<'_, '_> {
         let Some(name) = [(crate::ValueType::String, "string"), (crate::ValueType::BigInt, "bigint")].into_iter()
             .find(|(kind, _)| ty != Type::NEVER && ty.is_subtype(Type::language(*kind))).map(|(_, name)| name) else { return false };
         let bits = self.tagged(state, register);
-        let index = self.ins().iconst(types::I64, crate::bytecode::typeof_name_index(name).expect("a typeof name") as i64);
+        let index = self.raw_const(Lane::I64, crate::bytecode::typeof_name_index(name).expect("a typeof name") as i64);
         let named = self.helper_call(LaneHelper::TypeofIs, &[bits, index]);
-        let holds = self.ins().icmp_imm_u(IntCC::NotEqual, named, 0);
+        let holds = self.raw_compare_imm(Relation::NotEqual, named, 0);
         emit_js_guard(&mut self.builder, holds, exit);
         self.define(state, register, bits, RegisterFact::definition(ty, Representation::Tagged));
         true

@@ -316,75 +316,90 @@ fn own_capture_store(instruction: WideInstruction) -> bool {
     instruction.capture_depth() == 0 && !instruction.returns_from_frame() && !instruction.writes_current_this() && instruction.numeric_local_target().is_none()
 }
 
-/// The row of a depth-0 capture access: a read, or a store, which the row makes where the run's
-/// slots admit every direct store (`JS_STEP_CAPTURE_STORES`). Where it does not, the slot holds a marker (a loop's
-/// snapshot of a stored slot) or the binding is a root one (a global `var`'s shared slot, which the activation's dense
-/// view omits), a body has the interpreter's step behind the row (`Step::Fast`) and a loop region leaves into it.
-fn capture_row(facts: Facts, instruction: WideInstruction) -> Option<Decoded> {
-    let arm = |heap, result, value| match facts {
+/// The row of a depth-0 capture access `heap` over `result` and `value`: a read, or a store, which the row
+/// makes where the run's slots admit every direct store (`JS_STEP_CAPTURE_STORES`). Where they do not, the slot
+/// holds a marker (a loop's snapshot of a stored slot) or the binding is a root one (a global `var`'s shared
+/// slot, which the activation's dense view omits), a body has the interpreter's step behind the row
+/// (`Step::Fast`) and a loop region leaves into it.
+fn capture_arm(facts: Facts, heap: Heap, result: Option<Register>, value: Option<Source>) -> Decoded {
+    match facts {
         Facts::Site => Decoded { a: value, ..Decoded::step(Step::Fast(heap), result) },
         Facts::Entry { .. } => Decoded::heap(heap, result, value, None),
-    };
-    match instruction.op().class() {
-        Class::LoadCapture if instruction.capture_depth() == 0 && !matches!(facts, Facts::Entry { calls: true, .. }) => {
-            Some(arm(Heap::Capture(instruction.capture_slot()), Some(instruction.result_register()), None))
-        }
-        Class::StoreCapture if own_capture_store(instruction) => {
-            Some(arm(Heap::CaptureSet(instruction.capture_slot()), None, Some(Source::Register(instruction.register_a()))))
-        }
-        _ => None,
     }
 }
 
-/// The row of a dense element read or store, or of the proof that a base is an array.
-fn array_row(region: &LoopRegion, facts: Facts, instruction: WideInstruction) -> Option<Decoded> {
-    let register = |register| Some(Source::Register(register));
-    match instruction.op().class() {
-        Class::GetIndex if !instruction.returns_from_frame() => {
-            let base = instruction.operand_b().register_index()?;
-            let index = source(&|index| region.number_constant(index), instruction.operand_c()).ok()?;
-            let row = Decoded::heap(Heap::Index, Some(instruction.result_register()), register(base), Some(index));
-            Some(Decoded { hole: entry_array(region, facts, base), ..row })
-        }
-        Class::SetIndex => {
-            let value = register(instruction.register_a());
-            let row = Decoded::heap(Heap::Store, None, value, register(instruction.register_c()));
-            Some(Decoded { base: Some(instruction.register_b()), hole: entry_array(region, facts, instruction.register_b()), ..row })
-        }
-        Class::RequireObjectCoercible => Some(Decoded::heap(Heap::Array, None, register(instruction.register_b()), None)),
-        _ => None,
-    }
+/// The row of a depth-0 capture read, which a loop region that makes calls leaves for the captures its entry copied.
+fn capture_load_row(facts: Facts, instruction: WideInstruction) -> Option<Decoded> {
+    (instruction.capture_depth() == 0 && !matches!(facts, Facts::Entry { calls: true, .. }))
+        .then(|| capture_arm(facts, Heap::Capture(instruction.capture_slot()), Some(instruction.result_register()), None))
 }
 
-/// The row of the activation's `this` and its local slots, which every run reads live.
-fn activation_row(instruction: WideInstruction) -> Option<Decoded> {
-    let register = |register| Some(Source::Register(register));
-    match instruction.op().class() {
-        Class::LoadThis if !instruction.writes_current_this() => Some(Decoded::heap(Heap::This, Some(instruction.result_register()), None, None)),
-        Class::LoadLocalPlain => {
-            let slot = u16::try_from(instruction.local_slot()).ok()?;
-            Some(Decoded::heap(Heap::LoadLocal(slot), Some(instruction.result_register()), None, None))
-        }
-        // A store that also defines a register (`optional_register_b`) is the interpreter's.
-        Class::StoreLocalPlain if instruction.optional_register_b().is_none() => {
-            let slot = u16::try_from(instruction.local_slot()).ok()?;
-            Some(Decoded::heap(Heap::StoreLocal(slot), None, register(instruction.register_a()), None))
-        }
-        _ => None,
-    }
+/// The row of a depth-0 capture store.
+fn capture_store_row(facts: Facts, instruction: WideInstruction) -> Option<Decoded> {
+    own_capture_store(instruction).then(|| {
+        capture_arm(facts, Heap::CaptureSet(instruction.capture_slot()), None, Some(Source::Register(instruction.register_a())))
+    })
 }
 
-/// The heap instructions: a capture, a dense element read or store, a recorded or cached field
-/// read or store, the proof that a base is an array, the activation's `this` and its local slots, and
-/// a global name's access (`globals`).
+/// The row of a dense element read.
+fn index_read_row(region: &LoopRegion, facts: Facts, instruction: WideInstruction) -> Option<Decoded> {
+    if instruction.returns_from_frame() {
+        return None;
+    }
+    let base = instruction.operand_b().register_index()?;
+    let index = source(&|index| region.number_constant(index), instruction.operand_c()).ok()?;
+    let row = Decoded::heap(Heap::Index, Some(instruction.result_register()), Some(Source::Register(base)), Some(index));
+    Some(Decoded { hole: entry_array(region, facts, base), ..row })
+}
+
+/// The row of a dense element store.
+fn index_write_row(region: &LoopRegion, facts: Facts, instruction: WideInstruction) -> Decoded {
+    let (value, key) = (Some(Source::Register(instruction.register_a())), Some(Source::Register(instruction.register_c())));
+    let row = Decoded::heap(Heap::Store, None, value, key);
+    Decoded { base: Some(instruction.register_b()), hole: entry_array(region, facts, instruction.register_b()), ..row }
+}
+
+/// The row of the activation's `this`, which every run reads live.
+fn this_row(instruction: WideInstruction) -> Option<Decoded> {
+    (!instruction.writes_current_this()).then(|| Decoded::heap(Heap::This, Some(instruction.result_register()), None, None))
+}
+
+/// The row of a local slot's read, which every run reads live.
+fn load_local_row(instruction: WideInstruction) -> Option<Decoded> {
+    let slot = u16::try_from(instruction.local_slot()).ok()?;
+    Some(Decoded::heap(Heap::LoadLocal(slot), Some(instruction.result_register()), None, None))
+}
+
+/// The row of a local slot's store; a store that also defines a register (`optional_register_b`) is the
+/// interpreter's.
+fn store_local_row(instruction: WideInstruction) -> Option<Decoded> {
+    let slot = u16::try_from(instruction.local_slot()).ok().filter(|_| instruction.optional_register_b().is_none())?;
+    Some(Decoded::heap(Heap::StoreLocal(slot), None, Some(Source::Register(instruction.register_a())), None))
+}
+
+/// The heap instructions: a capture, a dense element read or store, the proof that a base is an
+/// array, the activation's `this` and its local slots, and the named ones (`named_row`).
 pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     match instruction.op().class() {
-        Class::LoadCapture | Class::StoreCapture => capture_row(facts, instruction),
-        Class::GetIndex | Class::SetIndex | Class::RequireObjectCoercible => array_row(region, facts, instruction),
+        Class::LoadCapture => capture_load_row(facts, instruction),
+        Class::StoreCapture => capture_store_row(facts, instruction),
+        Class::GetIndex => index_read_row(region, facts, instruction),
+        Class::SetIndex => Some(index_write_row(region, facts, instruction)),
+        Class::RequireObjectCoercible => Some(Decoded::heap(Heap::Array, None, Some(Source::Register(instruction.register_b())), None)),
+        Class::LoadThis => this_row(instruction),
+        Class::LoadLocalPlain => load_local_row(instruction),
+        Class::StoreLocalPlain => store_local_row(instruction),
+        _ => named_row(region, facts, known, pc, instruction),
+    }
+}
+
+/// The heap instructions that name a field or a global: a recorded or cached field read or store, a
+/// membership test, and a global name's access (`globals`).
+fn named_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+    match instruction.op().class() {
         Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
-        Class::LoadThis | Class::LoadLocalPlain | Class::StoreLocalPlain => activation_row(instruction),
         Class::Binary => membership_row(known, pc, instruction, instruction.result_register()),
-        Class::LoadName | Class::LoadNameCall | Class::LoadNameTypeof | Class::StoreName => global_row(known, pc, instruction),
+        _ if instruction.op().traits().has(crate::bytecode::Traits::GLOBAL_NAME_ACCESS) => global_row(known, pc, instruction),
         _ if instruction.op().is_field_store() => field_store_row(known, instruction),
         _ => None,
     }

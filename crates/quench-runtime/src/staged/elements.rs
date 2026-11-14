@@ -109,22 +109,35 @@ pub(crate) struct Backing<W> {
 
 /// The backing of the direct array `base` among the array records at `record_base`: `None`
 /// (leaving at `miss`) for any other value, or before the first array record exists
-/// (`record_base` zero). The record's address is its index, `base`'s low half, times the
-/// record size past `record_base`; the backing's header is one load, its length another.
+/// (`record_base` zero).
 #[inline(always)]
 pub(crate) fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<Backing<S::Word>> {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let is_array = super::value::is_direct_array(stage, base);
     stage.guard(is_array, miss)?;
-    let index = stage.and_imm(base, u64::from(u32::MAX));
     let present = stage.ne_imm(record_base, 0u32);
     stage.guard(present, miss)?;
-    let offset = stage.mul_imm(index, ARRAY.record_size as u64);
-    let record = stage.add(record_base, offset);
+    let record = array_record(stage, record_base, base);
+    Some(record_backing(stage, record))
+}
+
+/// The record of the direct array `base`, which the caller proved one, among the array records at
+/// `record_base`, which it proved present: the record's address is its index, `base`'s low half,
+/// times the record size past `record_base`.
+#[inline(always)]
+pub(crate) fn array_record<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word) -> S::Word {
+    let index = stage.and_imm(base, u64::from(u32::MAX));
+    let offset = stage.mul_imm(index, crate::heap::NATIVE_ARRAY_LAYOUT.record_size as u64);
+    stage.add(record_base, offset)
+}
+
+/// The backing of the array record `record`: its header is one load, its length another.
+#[inline(always)]
+pub(crate) fn record_backing<S: Stage>(stage: &mut S, record: S::Word) -> Backing<S::Word> {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let header = stage.load_u64(Region::Records.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
     let length = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_length_offset as i32);
     let values = stage.add_imm(header, ARRAY.header_values_offset as u64);
-    Some(Backing { record, header, values, length })
+    Backing { record, header, values, length }
 }
 
 /// `backing` as an in-place replacement needs it: its elements owned by this array alone, the
@@ -186,6 +199,14 @@ pub(crate) fn replace_element<S: Stage>(stage: &mut S, values: S::Word, address:
     let others = recount(stage, others, added, removed);
     stage.store_u32(Region::Elements.mutable(), values, crate::heap::OTHERS_FROM_VALUES, others);
     stage.store_u64(Region::Elements.mutable(), address, 0, value);
+}
+
+/// Marks the backing at `values` as counting no others (`OTHERS_UNKNOWN`), so stores through a
+/// view of it need not keep the count (`replace_uncounted_element`).
+#[inline(always)]
+pub(crate) fn uncount_backing<S: Stage>(stage: &mut S, values: S::Word) {
+    let unknown = stage.constant(u64::from(crate::heap::OTHERS_UNKNOWN));
+    stage.store_u32(Region::Elements.mutable(), values, crate::heap::OTHERS_FROM_VALUES, unknown);
 }
 
 /// `replace_element` on a backing whose count is `OTHERS_UNKNOWN`: the count stays unknown
