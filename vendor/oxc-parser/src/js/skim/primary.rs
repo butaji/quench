@@ -134,6 +134,7 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
     pub(super) fn primary(&mut self) -> Seen<Form> {
         let kind = self.kind();
         match kind {
+            Kind::Async => self.async_primary(),
             _ if is_plain_identifier(kind) => self.identifier_reference(),
             Kind::This | Kind::Null | Kind::True | Kind::False => {
                 self.bump();
@@ -146,14 +147,39 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
             Kind::LParen => self.parenthesized(),
             Kind::LBrack => self.deeper(Self::array_literal),
             Kind::LCurly => self.deeper(Self::object_literal),
-            Kind::Function => self.deeper(Self::function_expression),
+            Kind::Function => self.deeper(|this| this.function_expression(false)),
             Kind::Class => self.deeper(Self::class_expression),
             _ => None,
         }
     }
 
+    /// `async function ...`, or `async` as a name.
+    fn async_primary(&mut self) -> Seen<Form> {
+        if self.async_function_ahead() {
+            self.bump();
+            return self.deeper(|this| this.function_expression(true));
+        }
+        if self.p.cur_token().escaped() {
+            return None;
+        }
+        let name = self.p.cur_src();
+        self.bump();
+        self.scopes.reference(name);
+        self.last_ident = name;
+        Some(Form::Ident)
+    }
+
+    /// `async` is followed by `function` on its line.
+    pub(super) fn async_function_ahead(&mut self) -> bool {
+        let next = self.p.lexer.peek_token();
+        self.kind() == Kind::Async && next.kind() == Kind::Function && !next.is_on_new_line()
+    }
+
     fn identifier_reference(&mut self) -> Seen<Form> {
         let name = self.identifier()?;
+        if self.ctx.field_init && name == "arguments" {
+            return None;
+        }
         self.scopes.reference(name);
         self.last_ident = name;
         Some(Form::Ident)

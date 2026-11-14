@@ -1,7 +1,7 @@
 //! Functions inside a skimmed body: declarations, expressions, methods and arrows.
 use super::binding::DeclKind;
 use super::expr::Form;
-use super::{FnCtx, Seen, Skim, is_plain_identifier, is_restricted};
+use super::{Flavor, FnCtx, Seen, Skim, is_plain_identifier, is_restricted};
 use crate::{ParserConfig as Config, lexer::Kind};
 
 /// What a parameter list came to.
@@ -15,7 +15,7 @@ pub(super) struct ParamList {
 
 impl<'a, C: Config> Skim<'_, 'a, C> {
     /// `function name(...) { ... }`, its name declared where it stands.
-    pub(super) fn function_declaration(&mut self) -> Seen {
+    pub(super) fn function_declaration(&mut self, is_async: bool) -> Seen {
         self.bump();
         let generator = self.eat(Kind::Star);
         let name = self.identifier()?;
@@ -24,11 +24,11 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
         }
         self.scopes.declare_function(name)?;
         self.scopes.enter(true);
-        self.with_ctx(FnCtx::function(generator), Self::function_rest)
+        self.with_ctx(FnCtx::function(Flavor { generator, is_async }), Self::function_rest)
     }
 
     /// `function name?(...) { ... }`, its name bound inside itself.
-    pub(super) fn function_expression(&mut self) -> Seen<Form> {
+    pub(super) fn function_expression(&mut self, is_async: bool) -> Seen<Form> {
         self.bump();
         let generator = self.eat(Kind::Star);
         self.scopes.enter(true);
@@ -36,28 +36,20 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
             let name = self.identifier()?;
             self.scopes.declare_name(name);
         }
-        self.with_ctx(FnCtx::function(generator), Self::function_rest)?;
+        self.with_ctx(FnCtx::function(Flavor { generator, is_async }), Self::function_rest)?;
         Some(Form::Other)
     }
 
     /// A method: `(...) { ... }` after its key; `super(...)` is valid in a derived constructor.
-    pub(super) fn method(&mut self, super_call: bool, generator: bool) -> Seen {
+    pub(super) fn method(&mut self, super_call: bool, flavor: Flavor) -> Seen {
         self.scopes.enter(true);
-        self.with_ctx(FnCtx::method(super_call, generator), Self::function_rest)
-    }
-
-    /// `get key() { ... }` or `set key(value) { ... }`, at the keyword.
-    pub(super) fn accessor(&mut self) -> Seen {
-        let setter = self.kind() == Kind::Set;
-        self.bump();
-        self.property_key()?;
-        self.accessor_rest(setter)
+        self.with_ctx(FnCtx::method(super_call, flavor), Self::function_rest)
     }
 
     /// The parameters and the body of an accessor: none for a getter, one for a setter.
     pub(super) fn accessor_rest(&mut self, setter: bool) -> Seen {
         self.scopes.enter(true);
-        self.with_ctx(FnCtx::method(false, false), |this| {
+        self.with_ctx(FnCtx::method(false, Flavor::default()), |this| {
             let params = this.params()?;
             if params.rest || params.count != usize::from(setter) {
                 return None;
@@ -80,7 +72,7 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
 
     /// `( parameter, ... )`.
     pub(super) fn params(&mut self) -> Seen<ParamList> {
-        let ctx = FnCtx { generator: false, ..self.ctx };
+        let ctx = FnCtx { generator: false, is_async: false, ..self.ctx };
         self.with_ctx(ctx, Self::param_list)
     }
 
@@ -144,9 +136,47 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
         Some(())
     }
 
+    /// `async (parameters) => body` or `async name => body`, at `async`; otherwise the parse is
+    /// as it was.
+    pub(super) fn async_arrow(&mut self) -> Seen<bool> {
+        let next = self.p.lexer.peek_token();
+        if next.is_on_new_line() {
+            return Some(false);
+        }
+        match next.kind() {
+            Kind::LParen => self.async_parenthesized_arrow(),
+            kind if is_plain_identifier(kind) => self.async_identifier_arrow(),
+            _ => Some(false),
+        }
+    }
+
+    fn async_parenthesized_arrow(&mut self) -> Seen<bool> {
+        let checkpoint = self.p.checkpoint();
+        self.bump();
+        if self.try_arrow(true)? {
+            return Some(true);
+        }
+        self.p.rewind(checkpoint);
+        Some(false)
+    }
+
+    /// `async name => body`: nothing but an arrow may follow the name.
+    fn async_identifier_arrow(&mut self) -> Seen<bool> {
+        self.bump();
+        let name = self.identifier()?;
+        if is_restricted(name) || self.kind() != Kind::Arrow || self.newline() {
+            return None;
+        }
+        self.bump();
+        self.scopes.enter(true);
+        self.scopes.declare_param(name)?;
+        self.arrow_body(true, true)?;
+        Some(true)
+    }
+
     /// An arrow function starting at `(`, when the parenthesized text is its parameters and
     /// `=>` follows; otherwise the parse is as it was.
-    pub(super) fn try_arrow(&mut self) -> Seen<bool> {
+    pub(super) fn try_arrow(&mut self, is_async: bool) -> Seen<bool> {
         let checkpoint = self.p.checkpoint();
         let mark = self.scopes.mark();
         let pending = self.pending_cover;
@@ -154,7 +184,7 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
         if let Some(params) = self.params()
             && self.arrow_follows()
         {
-            self.arrow_body(params.simple)?;
+            self.arrow_body(params.simple, is_async)?;
             return Some(true);
         }
         self.p.rewind(checkpoint);
@@ -181,13 +211,13 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
         self.scopes.enter(true);
         self.scopes.declare_param(name)?;
         self.bump();
-        self.arrow_body(true)?;
+        self.arrow_body(true, false)?;
         Some(Form::Arrow)
     }
 
     /// The body of the arrow whose scope is entered: a block, or an assignment expression.
-    fn arrow_body(&mut self, simple_params: bool) -> Seen {
-        let ctx = FnCtx { generator: false, ..self.ctx };
+    fn arrow_body(&mut self, simple_params: bool, is_async: bool) -> Seen {
+        let ctx = FnCtx { generator: false, is_async, ..self.ctx };
         self.with_ctx(ctx, |this| this.arrow_body_in(simple_params))
     }
 

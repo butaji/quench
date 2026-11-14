@@ -71,30 +71,47 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
             let target = form.is_simple_target() && !self.is_restricted_name(form);
             return Some(Property { pattern: target, rest: true, proto: false });
         }
-        if self.eat(Kind::Star) {
-            self.property_key()?;
-            return self.method(false, true).map(|()| Property::method());
-        }
+        let prefix = self.member_prefix();
         let token = self.p.cur_token();
         let name = self.p.cur_src();
         let plain = is_plain_identifier(token.kind()) && !token.escaped();
-        if matches!(token.kind(), Kind::Get | Kind::Set) && self.accessor_follows() {
-            self.accessor()?;
+        self.property_key()?;
+        if let Some(setter) = prefix.accessor {
+            self.accessor_rest(setter)?;
             return Some(Property::method());
         }
-        self.property_key()?;
         match self.kind() {
+            Kind::LParen => self.method(false, prefix.flavor).map(|()| Property::method()),
+            _ if prefix.modified() => None,
             Kind::Colon => self.keyed_property(name, token.kind() == Kind::LBrack),
-            Kind::LParen => self.method(false, false).map(|()| Property::method()),
             _ if plain => self.shorthand_property(name),
             _ => None,
         }
     }
 
-    /// `get` or `set` is an accessor's keyword when a property name follows it.
-    pub(super) fn accessor_follows(&mut self) -> bool {
-        let next = self.p.lexer.peek_token().kind();
-        !matches!(next, Kind::Colon | Kind::LParen | Kind::Comma | Kind::RCurly | Kind::Eq)
+    /// What precedes a member's key: `async`, `*`, `get` or `set`, each a modifier only where a
+    /// name follows it on the line.
+    pub(super) fn member_prefix(&mut self) -> Prefix {
+        let mut prefix = Prefix::default();
+        if self.kind() == Kind::Async && self.modifier_follows(true) {
+            self.bump();
+            prefix.flavor.is_async = true;
+        }
+        if self.eat(Kind::Star) {
+            prefix.flavor.generator = true;
+        } else if !prefix.flavor.is_async && matches!(self.kind(), Kind::Get | Kind::Set) && self.modifier_follows(false) {
+            prefix.accessor = Some(self.kind() == Kind::Set);
+            self.bump();
+        }
+        prefix
+    }
+
+    /// The token after the current one starts the member's name rather than ending a member
+    /// named like the modifier: it may not be on a new line when `same_line`.
+    fn modifier_follows(&mut self, same_line: bool) -> bool {
+        let next = self.p.lexer.peek_token();
+        !(same_line && next.is_on_new_line())
+            && !matches!(next.kind(), Kind::Colon | Kind::LParen | Kind::Comma | Kind::RCurly | Kind::Eq | Kind::Semicolon)
     }
 
     /// `key: value`: a computed key is never `__proto__`.
@@ -116,6 +133,21 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
             self.pending_cover += 1;
         }
         Some(Property { pattern: true, rest: false, proto: false })
+    }
+}
+
+/// What a member's key is preceded by.
+#[derive(Default)]
+pub(super) struct Prefix {
+    pub(super) flavor: super::Flavor,
+    /// `get` (false) or `set` (true).
+    pub(super) accessor: Option<bool>,
+}
+
+impl Prefix {
+    /// The member is a generator or `async`.
+    pub(super) fn modified(&self) -> bool {
+        self.flavor.generator || self.flavor.is_async
     }
 }
 

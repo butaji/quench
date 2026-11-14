@@ -9,6 +9,7 @@ pub(super) enum DeclKind {
     Let,
     Const,
     Param,
+    Catch,
 }
 
 /// What the declarators of a declaration came to.
@@ -63,6 +64,7 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
             DeclKind::Var => self.scopes.declare_var(name),
             DeclKind::Let | DeclKind::Const => self.scopes.declare_lexical(name),
             DeclKind::Param => self.scopes.declare_param(name),
+            DeclKind::Catch => self.scopes.declare_catch(name),
         }
     }
 

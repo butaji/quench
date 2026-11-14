@@ -98,7 +98,7 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
     fn assignment_of(&mut self) -> Seen<Form> {
         let in_cover = std::mem::take(&mut self.in_cover);
         let pending = self.pending_cover;
-        if self.kind() == Kind::LParen && self.try_arrow()? {
+        if self.kind() == Kind::LParen && self.try_arrow(false)? || self.kind() == Kind::Async && self.async_arrow()? {
             return Some(Form::Arrow);
         }
         if self.kind() == Kind::Yield && self.ctx.generator {
@@ -177,6 +177,11 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
                 Some(Form::Unary)
             }
             Kind::Delete => self.delete(),
+            Kind::Await if self.ctx.is_async => {
+                self.bump();
+                self.deeper(Self::unary)?;
+                Some(Form::Unary)
+            }
             Kind::Plus2 | Kind::Minus2 => {
                 self.bump();
                 let operand = self.deeper(Self::unary)?;

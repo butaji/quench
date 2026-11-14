@@ -16,7 +16,13 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
     /// A statement or a declaration.
     fn statement_item(&mut self) -> Seen {
         match self.kind() {
-            Kind::Function => self.deeper(Self::function_declaration),
+            Kind::Function => self.deeper(|this| this.function_declaration(false)),
+            Kind::Async if self.async_function_ahead() => {
+                self.deeper(|this| {
+                    this.bump();
+                    this.function_declaration(true)
+                })
+            }
             Kind::Class => self.deeper(Self::class_declaration),
             Kind::Const => self.deeper(|this| this.declaration_statement(DeclKind::Const)),
             Kind::Let => self.let_declaration(),
@@ -64,6 +70,7 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
             Kind::Try => self.try_statement(),
             Kind::Switch => self.switch_statement(),
             Kind::Function | Kind::Class | Kind::Let | Kind::Import | Kind::Export | Kind::With => None,
+            Kind::Async if self.async_function_ahead() => None,
             _ => self.expression_statement(run),
         }
     }
@@ -167,8 +174,7 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
         self.bump();
         self.scopes.enter(false);
         if self.eat(Kind::LParen) {
-            let name = self.identifier()?;
-            self.scopes.declare_catch(name)?;
+            self.binding_target(DeclKind::Catch)?;
             self.expect(Kind::RParen)?;
         }
         self.expect(Kind::LCurly)?;

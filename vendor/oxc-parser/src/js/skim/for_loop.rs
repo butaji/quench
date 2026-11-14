@@ -18,11 +18,18 @@ enum Head {
 impl<'a, C: Config> Skim<'_, 'a, C> {
     pub(super) fn for_statement(&mut self) -> Seen {
         self.bump();
+        let awaiting = self.kind() == Kind::Await && self.ctx.is_async;
+        if awaiting {
+            self.bump();
+        }
         self.expect(Kind::LParen)?;
         self.scopes.enter(false);
         let no_in = std::mem::replace(&mut self.no_in, true);
         let head = self.for_head();
         self.no_in = no_in;
+        if awaiting && head != Some(Head::Of) {
+            return None;
+        }
         match head? {
             Head::Classic => self.classic_rest()?,
             Head::In => {

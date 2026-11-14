@@ -5,10 +5,10 @@
 //! function needs. Declarations and references are tracked as in a pre-parser: each scope
 //! knows its names, each reference is settled when its scope closes.
 //!
-//! Not decided here, so always parsed whole: classes, `async`, generators, `super`, private
-//! names, `with`, `import`/`export`, `let`/`yield`/`await`/`static`... as identifiers, a
-//! `"use strict"` prologue, duplicate declarations of any kind in one scope that a sloppy
-//! program may repeat, and legacy octal literals and escapes.
+//! Not decided here, so always parsed whole: private names, `with`, `import`/`export`, class
+//! static blocks, `let`/`yield`/`await`/`static`... as identifiers outside their own contexts,
+//! a `"use strict"` prologue with a non-simple parameter list, duplicate declarations in one
+//! scope that a sloppy program may repeat, and legacy octal literals and escapes.
 use crate::{ParserConfig as Config, ParserImpl, lexer::Kind};
 use oxc_ast::ast::FormalParameters;
 use oxc_span::GetSpan;
@@ -64,6 +64,13 @@ struct Skim<'p, 'a, C: Config> {
     directives_read: bool,
 }
 
+/// Whether a function is a generator, and whether it is `async`.
+#[derive(Clone, Copy, Default)]
+struct Flavor {
+    generator: bool,
+    is_async: bool,
+}
+
 /// What the code of a function may use that the function around it decides.
 #[derive(Clone, Copy)]
 struct FnCtx {
@@ -73,17 +80,25 @@ struct FnCtx {
     super_call: bool,
     /// `yield` is an operator: in a generator.
     generator: bool,
+    /// `await` is an operator: in an `async` function.
+    is_async: bool,
+    /// In the initializer of a class field, or an arrow inside one: `arguments` is not valid.
+    field_init: bool,
 }
 
 impl FnCtx {
-    const PLAIN: Self = Self { super_property: false, super_call: false, generator: false };
+    const PLAIN: Self = Self { super_property: false, super_call: false, generator: false, is_async: false, field_init: false };
 
-    fn function(generator: bool) -> Self {
-        Self { generator, ..Self::PLAIN }
+    fn function(flavor: Flavor) -> Self {
+        Self { generator: flavor.generator, is_async: flavor.is_async, ..Self::PLAIN }
     }
 
-    fn method(super_call: bool, generator: bool) -> Self {
-        Self { super_property: true, super_call, generator }
+    fn method(super_call: bool, flavor: Flavor) -> Self {
+        Self { super_property: true, super_call, ..Self::function(flavor) }
+    }
+
+    fn field() -> Self {
+        Self { super_property: true, field_init: true, ..Self::PLAIN }
     }
 }
 
@@ -143,9 +158,9 @@ fn is_restricted(name: &str) -> bool {
 }
 
 /// Whether `kind` is an identifier that is valid as a name in any code: not reserved, not
-/// reserved in strict code, not `async`.
+/// reserved in strict code.
 fn is_plain_identifier(kind: Kind) -> bool {
-    kind.is_identifier() && !kind.is_strict_mode_contextual_keyword() && kind != Kind::Async
+    kind.is_identifier() && !kind.is_strict_mode_contextual_keyword()
 }
 
 impl<'a, C: Config> Skim<'_, 'a, C> {

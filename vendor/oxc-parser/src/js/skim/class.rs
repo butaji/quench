@@ -1,7 +1,7 @@
 //! Classes of a skimmed body: methods, accessors and static members; not fields, static
 //! blocks, private names, generators or `async` methods.
 use super::expr::Form;
-use super::{Seen, Skim, is_plain_identifier, is_restricted};
+use super::{FnCtx, Seen, Skim, is_plain_identifier, is_restricted};
 use crate::{ParserConfig as Config, lexer::Kind};
 
 impl<'a, C: Config> Skim<'_, 'a, C> {
@@ -64,15 +64,10 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
         is_static
     }
 
-    /// A method or an accessor; `constructed` says whether a constructor was read.
+    /// A method, an accessor or a field; `constructed` says whether a constructor was read.
     fn class_member(&mut self, derived: bool, constructed: &mut bool) -> Seen {
         let is_static = self.static_modifier();
-        let generator = self.eat(Kind::Star);
-        let first = self.kind();
-        let accessor = !generator && matches!(first, Kind::Get | Kind::Set) && self.accessor_follows();
-        if accessor {
-            self.bump();
-        }
+        let prefix = self.member_prefix();
         let token = self.p.cur_token();
         let key = self.p.cur_src();
         if token.kind() == Kind::Str && key.contains('\\') {
@@ -80,18 +75,29 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
         }
         let special = self.special_key(token.kind(), key);
         self.property_key()?;
-        if is_static && special == Some("prototype") || accessor && special == Some("constructor") && !is_static {
+        if is_static && special == Some("prototype") {
             return None;
         }
         let constructor = special == Some("constructor") && !is_static;
-        if constructor && (generator || std::mem::replace(constructed, true)) {
+        if constructor && (prefix.accessor.is_some() || prefix.modified() || std::mem::replace(constructed, true)) {
             return None;
         }
-        if accessor {
-            return self.accessor_rest(first == Kind::Set);
+        if let Some(setter) = prefix.accessor {
+            return self.accessor_rest(setter);
         }
-        (self.kind() == Kind::LParen).then_some(())?;
-        self.method(constructor && derived, generator)
+        if self.kind() == Kind::LParen {
+            return self.method(constructor && derived, prefix.flavor);
+        }
+        (!prefix.modified() && special != Some("constructor")).then_some(())?;
+        self.field()
+    }
+
+    /// A field's initializer is code of a method of its own, and the field ends its line.
+    fn field(&mut self) -> Seen {
+        if self.eat(Kind::Eq) {
+            self.with_ctx(FnCtx::field(), |this| this.nested(Self::assignment).map(|_| ()))?;
+        }
+        self.semicolon()
     }
 
     /// The names a class member's key may not take: `constructor` and `prototype`, written
