@@ -2126,6 +2126,15 @@ impl Object {
     /// record's own-field hint holds (`Vm::form_hint`), so that one compare proves the exact
     /// shape, no dictionary, no exotic access and where the values live. Every cache records
     /// `exact_shape`, which leaves the form out.
+    /// The header's two words as one (`meta` low, the auxiliary word high): an equal guard
+    /// word proves the exact shape and storage form (`hint_shape`), the prototype, the kind
+    /// and the integrity together, in one compare of adjacent words.
+    #[inline(always)]
+    pub(crate) fn guard_word(&self) -> u64 {
+        const { assert!(NATIVE_OBJECT_AUXILIARY_OFFSET == NATIVE_OBJECT_META_OFFSET + 4) };
+        u64::from(self.meta) | u64::from(self.auxiliary) << u32::BITS
+    }
+
     #[inline(always)]
     pub(crate) fn hint_shape(&self) -> u32 {
         debug_assert_eq!(self.auxiliary & crate::value_vec::STORAGE_FORM, self.storage_form());

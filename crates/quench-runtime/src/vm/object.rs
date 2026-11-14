@@ -2268,7 +2268,7 @@ impl<H: Host> Vm<H> {
         let hint = self.holder_hints.get(usize::from(index))?;
         // SAFETY: the hint's watch is live as long as the hint.
         (hint.atom == atom).then(|| unsafe {
-            crate::staged::holder::concrete_holder_read(receiver, hint.receiver, hint.prototype.bits(), std::rc::Rc::as_ptr(&hint.watch), hint.value)
+            crate::staged::holder::concrete_holder_read(receiver, hint.guard, std::rc::Rc::as_ptr(&hint.watch), hint.value)
         })?
     }
 
@@ -2315,25 +2315,27 @@ impl<H: Host> Vm<H> {
     /// another receiver.
     pub(super) fn hold_holder_hint(&mut self, owned: Option<u16>, atom: Atom, object: Value, value: Value, limit: u16) -> Option<u16> {
         let receiver = self.hinted_receiver(object)?;
-        // The whole word, storage form included, which `holder_read` compares.
-        let (shape, prototype) = (receiver.hint_shape(), receiver.proto());
-        self.hold_prototype_hint(owned, atom, shape, prototype, value, limit)
+        // Both header words, storage form and prototype link included, which `holder_read`
+        // compares.
+        let (guard, prototype) = (receiver.guard_word(), receiver.proto());
+        self.hold_prototype_hint(owned, atom, guard, prototype, value, limit)
     }
 
     /// Makes `value`, which `String.prototype` answered for a string primitive's read of
     /// `atom`, a record's hint (`hold_prototype_hint`).
     pub(super) fn hold_string_hint(&mut self, owned: Option<u16>, atom: Atom, value: Value, limit: u16) -> Option<u16> {
-        self.hold_prototype_hint(owned, atom, NO_FIELD_RECEIVER, self.string_proto, value, limit)
+        // No object's auxiliary word is `NO_FIELD_RECEIVER`, so no object matches the guard.
+        self.hold_prototype_hint(owned, atom, u64::from(NO_FIELD_RECEIVER) << u32::BITS, self.string_proto, value, limit)
     }
 
     /// Makes `value`, which `prototype` answered for a read of `atom` from a receiver of
     /// exact shape `receiver`, a record's hint: in place of `owned`, the hint the record
     /// holds, else as a new one; its index, `None` once the indices reach `limit`. The
     /// prototype is marked first, so a change to its values retires the hint's watch.
-    fn hold_prototype_hint(&mut self, owned: Option<u16>, atom: Atom, receiver: u32, prototype: Value, value: Value, limit: u16) -> Option<u16> {
+    fn hold_prototype_hint(&mut self, owned: Option<u16>, atom: Atom, guard: u64, prototype: Value, value: Value, limit: u16) -> Option<u16> {
         self.heap.mark_prototype(prototype);
         let watch = crate::heap::watch_prototype_values(self.heap.object(prototype)?.exact_shape())?;
-        let hint = super::HolderHint { receiver, atom, prototype: crate::heap::ProtoLink::of(prototype), holder: prototype, value, watch };
+        let hint = super::HolderHint { guard, atom, holder: prototype, value, watch };
         if let Some(index) = owned.filter(|&index| usize::from(index) < self.holder_hints.len()) {
             self.holder_hints[usize::from(index)] = hint;
             return Some(index);
