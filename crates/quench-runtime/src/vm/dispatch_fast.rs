@@ -14642,9 +14642,9 @@ script_handler! {
         if let Some((argc, function)) = unsafe { lane_keeping_activation(cx) }
             && let Some(index) = r.get(i.b).as_int().and_then(|index| u16::try_from(index).ok()).filter(|index| *index < argc)
         {
-            // SAFETY: the context's program outlives the lane run.
-            let registers = unsafe { &*(*cx).code }.function(function as usize).registers;
-            r.set(i.a, r.get(registers + index));
+            // The record carries the running function's register count (`derive_lane_view`).
+            let _ = function;
+            r.set(i.a, r.get(i.c + index));
             next!(cx, r, following(ip), view)
         }
         sibling!(lane_argument_get_general::<H>, r, ip, view)
@@ -19040,13 +19040,19 @@ fn derive_lane_view<'live, H: Host>(
             accumulator_registers.push(
                 carried.filter(|_| selected.is_some() && acc != ACC_NONE).unwrap_or(NO_ACCUMULATOR),
             );
+            let handler = selected.map_or(lane_exit::<H> as Handler, |selected| selected.handler) as *const ();
             LaneInstruction {
-                handler: selected.map_or(lane_exit::<H> as Handler, |selected| selected.handler)
-                    as *const (),
+                handler,
                 operand: operand.unwrap_or(LaneOperand { imm: 0 }),
                 a: instruction.a(),
                 b: instruction.b(),
-                c: instruction.c(),
+                // A kept argument read finds the values after the function's registers, whose
+                // count its unused field carries (`lane_argument_get`).
+                c: if handler == lane_argument_get::<H> as Handler as *const () {
+                    function.registers as u16
+                } else {
+                    instruction.c()
+                },
                 call_link: std::cell::Cell::new(NO_CALL_LINK),
             }
         })
