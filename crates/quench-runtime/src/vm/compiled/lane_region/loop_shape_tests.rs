@@ -62,3 +62,26 @@ fn a_counted_sum_loop_has_one_latch_carrying_only_what_it_writes() {
         && function.layout.block_insts(block).any(|inst| !function.dfg.insts[inst].opcode().is_terminator())).count();
     assert!(hot <= HOT_LOOP_BLOCKS, "{hot} hot blocks in the loop: {function}");
 }
+
+/// Every value some instruction of `function` reads.
+fn read_values(function: &ir::Function) -> BTreeSet<ir::Value> {
+    function.layout.blocks().flat_map(|block| function.layout.block_insts(block))
+        .flat_map(|inst| function.dfg.inst_values(inst)).map(|value| function.dfg.resolve_aliases(value)).collect()
+}
+
+#[test]
+fn a_counted_sum_loop_stores_no_counter_and_polls_by_fault() {
+    if !super::super::FAULT_POLL_SUPPORTED { return; }
+    let (function, _) = sum_loop();
+    let shape = Shape::of(&function);
+    let body: Vec<ir::Inst> = shape.blocks.iter().flat_map(|&block| function.layout.block_insts(block)).collect();
+    assert!(body.iter().all(|&inst| !function.dfg.insts[inst].opcode().can_store()),
+        "the trip count is a register, flushed where the run leaves: {function}");
+    let read = read_values(&function);
+    let polls: Vec<ir::Inst> = body.iter().copied().filter(|&inst| function.dfg.insts[inst].opcode() == ir::Opcode::AtomicLoad).collect();
+    assert!(!polls.is_empty(), "the loop polls: {function}");
+    for poll in polls {
+        let byte = function.dfg.resolve_aliases(function.dfg.first_result(poll));
+        assert!(!read.contains(&byte), "a poll by fault reads no flag byte: {poll}: {function}");
+    }
+}
