@@ -57,7 +57,8 @@ impl RegisterMasks {
 
     /// Whether `register` is live at `pc`, for a windowed mask at its own window; `None` when
     /// the mask has no per-pc entry there (a collection then scans it conservatively).
-    #[inline] pub(crate) fn live_at(&self, pc: usize, register: usize) -> Option<bool> {
+    #[cfg(test)]
+    pub(crate) fn live_at(&self, pc: usize, register: usize) -> Option<bool> {
         match self {
             Self::Narrow(masks) => masks.get(pc).map(|&mask| register < u64::BITS as usize && mask & (1 << register) != 0),
             Self::Half(masks) => masks.get(pc).map(|&mask| register < u128::BITS as usize && mask & (1 << register) != 0),
@@ -69,25 +70,29 @@ impl RegisterMasks {
     }
 
     /// Appends to `roots` the values of `registers` live at `pc` (`live_at`), each one with no
-    /// mask entry there conservatively: a narrow mask is read once and its set bits walked,
-    /// where a collection's root scan asked every register in turn.
+    /// mask entry there conservatively: each 64 registers' mask word is read once and its set
+    /// bits walked, where a collection's root scan asked every register in turn.
     pub(crate) fn extend_live(&self, pc: usize, registers: &[crate::Value], roots: &mut Vec<crate::Value>) {
-        if let Self::Narrow(masks) = self {
-            let Some(&mask) = masks.get(pc) else {
-                roots.extend_from_slice(registers);
-                return;
-            };
-            let mut mask = if registers.len() < u64::BITS as usize { mask & ((1u64 << registers.len()) - 1) } else { mask };
-            roots.reserve(mask.count_ones() as usize);
-            while mask != 0 {
-                roots.push(registers[mask.trailing_zeros() as usize]);
-                mask &= mask - 1;
+        const WORD: usize = u64::BITS as usize;
+        let per_set = RegisterSet::BITS as usize / WORD;
+        for chunk in 0..registers.len().div_ceil(WORD) {
+            let word = match self {
+                Self::Narrow(masks) => masks.get(pc).map(|&mask| if chunk == 0 { mask } else { 0 }),
+                Self::Half(masks) => masks.get(pc).map(|&mask| if chunk < 2 { (mask >> (WORD * chunk)) as u64 } else { 0 }),
+                Self::Wide(masks) => masks.get(pc).map(|set| set.word(chunk)),
+                Self::Windowed { windows, masks } => {
+                    masks.get(pc * usize::from(*windows) + chunk / per_set).map(|set| set.word(chunk % per_set))
+                }
             }
-            return;
+            .unwrap_or(u64::MAX);
+            let base = chunk * WORD;
+            let count = (registers.len() - base).min(WORD);
+            let mut word = if count < WORD { word & ((1u64 << count) - 1) } else { word };
+            while word != 0 {
+                roots.push(registers[base + word.trailing_zeros() as usize]);
+                word &= word - 1;
+            }
         }
-        roots.extend(
-            registers.iter().enumerate().filter(|(register, _)| self.live_at(pc, *register).unwrap_or(true)).map(|(_, value)| *value),
-        );
     }
 
     /// Whether the mask holds more than one register window.
