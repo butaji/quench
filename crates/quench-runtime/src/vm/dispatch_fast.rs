@@ -11735,22 +11735,7 @@ impl<H: Host> Vm<H> {
             initializes: shape.initializes && !environment && !settles && !cross && !body.rest,
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
-            entry: if settles {
-                CallEntry::Settles
-            } else if body.is_class_constructor {
-                shape.entry
-            } else if environment {
-                CallEntry::Environment
-            } else if body.rest {
-                CallEntry::Gathers
-            } else if plan.keeps_arguments {
-                CallEntry::Keeps
-            } else if cross {
-                CallEntry::Activates
-            } else {
-                // Leaf-ness is the view's, fixed with its returns (`TargetBody::leaf`).
-                shape.leaf.map_or(shape.entry, CallEntry::leaf)
-            },
+            entry: target_entry(body, &plan, &shape, (settles, environment, cross)),
             capture,
             forwarded_method: match (plan.forwards_arguments && shape.constructs)
                 .then(|| body.forwarded_this_method(&code.constants))
@@ -13252,17 +13237,23 @@ fn lane_native_value<H: Host>(
         }
         // Neither a string method nor a pure native: the promise shortcut, else the native.
         Native::PromiseThen | Native::PromiseCatch | Native::PromiseResolve => {
-            // SAFETY: the context's program outlives the lane run.
-            let code = unsafe { &*(*cx).code };
-            if let Some(value) = lane_promise_native(vm, code, native, callee, receiver, args) {
-                note_allocation(vm);
-                return Some(value);
-            }
-            return lane_call_native(cx, ip, native, callee, receiver, args);
+            return lane_promise_native_call(cx, ip, native, callee, receiver, args);
         }
         _ => {}
     }
     lane_string_or_native_call(cx, ip, native, callee, receiver, args)
+}
+
+/// The value of a promise native call: the lane's shortcut where it makes one, else the native.
+fn lane_promise_native_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, native: Native, callee: Value, receiver: Value, args: &[Value]) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    if let Some(value) = lane_promise_native(vm, code, native, callee, receiver, args) {
+        note_allocation(vm);
+        return Some(value);
+    }
+    lane_call_native(cx, ip, native, callee, receiver, args)
 }
 
 mod named_keys;
@@ -15330,6 +15321,12 @@ fn lane_body_inlined_activation<H: Host>(
     }
     // SAFETY: the innermost activation's view holds a record for each of its function's PCs.
     let resume = unsafe { records.add(pc as usize) };
+    (registers, resume, lane_carried_at(cx, view, registers, pc))
+}
+
+/// What an activation carries into the record at `pc` of its function's `view`: the script
+/// state, and the accumulator where the record reads one.
+fn lane_carried_at<H: Host>(cx: *mut LaneContext<H>, view: *const LaneView, registers: Registers, pc: u32) -> Carried {
     let mut carried = Carried::script(cx);
     // SAFETY: a resolved target's view outlives the lane run.
     if let Some(&register) = unsafe { &*view }.accumulator_registers.get(pc as usize)
@@ -15337,7 +15334,7 @@ fn lane_body_inlined_activation<H: Host>(
     {
         carried.acc = Slot::of(registers.get(register));
     }
-    (registers, resume, carried)
+    carried
 }
 
 /// A lane body's call at `call_pc` of the running activation (`lane_region`'s `Call`): the
@@ -16435,15 +16432,26 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
         unsafe { (*cx).memory = MemoryView::script(cx) };
     }
     debug_assert!(unsafe { (*cx).memory.bytes } == cx.cast::<u8>(), "a JavaScript run carries its context");
+    unsafe { lane_resume_caller(cx, (caller_registers, caller_base), (this, env, capture)) };
+    caller_registers.set(destination, value);
+    Some((caller_registers, following(call)))
+}
+
+/// Makes the caller's registers, record base, receiver, environment and capture the running ones
+/// again after its callee's activation returned.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+unsafe fn lane_resume_caller<H: Host>(cx: *mut LaneContext<H>, (registers, base): (Registers, Ip), (this, env, capture): (Value, Value, *const usize)) {
+    // SAFETY: the caller's contract.
     unsafe {
-        (*cx).registers = caller_registers;
-        (*cx).base = caller_base;
+        (*cx).registers = registers;
+        (*cx).base = base;
         (*cx).this = this;
         (*cx).env = env;
         (*cx).capture = capture;
     }
-    caller_registers.set(destination, value);
-    Some((caller_registers, following(call)))
 }
 
 /// Whether a call record that returns its callee's completion runs in the lane: from an
@@ -16628,9 +16636,7 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
     // `then` read here is the one its resolution uses.
     let mut then = Value::UNDEFINED;
     if settling(vm.lane_stack.activations.last()?) {
-        let Some(read) = lane_settled_then(vm, value) else {
-            return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
-        };
+        let Some(read) = lane_settled_then(vm, value) else { return Some(Resumed::Exit(lane_frame_return(vm, ip, value))) };
         then = read;
     }
     let mut activation = vm.lane_stack.pop_activation()?;
