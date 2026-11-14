@@ -70,3 +70,20 @@ fn a_function_redefined_after_its_site_cached_it_calls_the_new_one() {
         assert!(global(&mut vm, name) == Value::integer(expected), "{name}");
     }
 }
+
+#[test]
+fn a_hit_tests_one_scope_word_for_the_generation_and_the_program() {
+    let program = crate::Engine::specialize(SOURCE, "scope-word.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let callee = global(&mut vm, "add");
+    vm.lane_stack.enter_generation((11, Value::UNDEFINED));
+    let scope = |vm: &Vm<TestHost>| (vm.lane_stack.scope & SCOPE_GENERATION_MASK, vm.lane_stack.scope >> SCOPE_PROGRAM_SHIFT);
+    assert_eq!(scope(&vm), (u64::from(vm.lane_stack.generation), u64::from(vm.active_program.raw())));
+    let target = vm.resolve_script_call_target(&program, callee).unwrap();
+    assert_eq!(target.scope(), vm.lane_stack.scope, "a target names the scope it was resolved in");
+    assert!(vm.script_call_entry(callee).is_some());
+    vm.lane_stack.enter_generation((12, Value::UNDEFINED));
+    assert_eq!(scope(&vm).0, u64::from(vm.lane_stack.generation));
+    assert!(vm.script_call_entry(callee).is_none(), "another generation is another scope");
+}

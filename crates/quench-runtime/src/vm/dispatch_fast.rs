@@ -1589,6 +1589,26 @@ impl ScriptCallTarget {
 /// line; its wrap clears every entry, so no stale one can match a reused number.
 type ScriptGeneration = u32;
 
+/// `LaneStack::scope` and `ScriptCallTarget::scope`: the generation in the low word, the program
+/// the target serves (or the lane runs) in the high one, so one compare decides both.
+const SCOPE_GENERATION_MASK: u64 = ScriptGeneration::MAX as u64;
+const SCOPE_PROGRAM_SHIFT: u32 = ScriptGeneration::BITS;
+
+impl ScriptCallTarget {
+    /// The generation and program it was resolved for, as `LaneStack::scope` holds the run's: its
+    /// two adjacent fields read as one word.
+    #[inline(always)]
+    fn scope(&self) -> u64 {
+        const { assert!(cfg!(target_endian = "little")) };
+        const { assert!(std::mem::offset_of!(ScriptCallTarget, program) == std::mem::offset_of!(ScriptCallTarget, generation) + 4) };
+        const { assert!(std::mem::size_of::<ProgramId>() == 4 && std::mem::size_of::<ScriptGeneration>() == 4) };
+        // SAFETY: the fields lie within `self`, which the assertions place side by side.
+        unsafe {
+            std::ptr::from_ref(self).cast::<u8>().add(std::mem::offset_of!(ScriptCallTarget, generation)).cast::<u64>().read_unaligned()
+        }
+    }
+}
+
 /// The rest values a gathering activation collects inline before its array is made.
 const GATHERED_INLINE_VALUES: usize = 8;
 
@@ -1828,6 +1848,9 @@ pub(super) struct LaneStack {
     /// changes: a target resolved under another generation is stale. Lane runs move between
     /// programs far more often than either changes, so each target names its program instead.
     generation: ScriptGeneration,
+    /// `generation` and the executing program, packed as a target's `scope` is: a cached call tests
+    /// the target's against it once. Kept by `enter_generation` and `enter_scope_program`.
+    scope: u64,
     /// The epoch and realm `generation` names.
     generation_key: (u64, Value),
     /// The boundary below a deferred native's callback while it runs (`NativeBoundary`).
@@ -1870,6 +1893,7 @@ impl Default for LaneStack {
             forwarded_methods: Vec::new(),
             activation_limit: std::cell::Cell::new(0),
             generation: NO_SCRIPT_GENERATION,
+            scope: u64::from(NO_SCRIPT_GENERATION),
             generation_key: (0, Value::UNDEFINED),
             native_boundary: None,
             body_boundary: None,
@@ -2037,7 +2061,14 @@ impl LaneStack {
                 self.generation = NO_SCRIPT_GENERATION + 1;
             }
             self.generation_key = key;
+            self.scope = self.scope & !SCOPE_GENERATION_MASK | u64::from(self.generation);
         }
+    }
+
+    /// The executing program becomes `program` (`Vm::activate_program`).
+    #[inline(always)]
+    pub(super) fn enter_scope_program(&mut self, program: ProgramId) {
+        self.scope = self.scope & SCOPE_GENERATION_MASK | u64::from(program.raw()) << SCOPE_PROGRAM_SHIFT;
     }
 }
 
@@ -11423,6 +11454,13 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `callee` when a target may be resolved and cached for it: a heap cell, and no `with` scope
+    /// entered (`note_with_scope_entered`), which no cached target proves absent any longer.
+    #[inline(always)]
+    fn cacheable_callee(&self, callee: Value) -> Option<()> {
+        (callee.heap_index().is_some() && !self.with_scope_entered).then_some(())
+    }
+
     /// Enter a `with` scope's first mark (`Vm::with_scope_entered`), the end of every cached
     /// target's proof that none was.
     pub(super) fn note_with_scope_entered(&mut self) {
@@ -11436,9 +11474,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn script_call_holds(&self, index: usize, callee: Value) -> bool {
         self.lane_stack.script_targets.entries.get(index).is_some_and(|cached| {
-            cached.callee == callee
-                && cached.generation == self.lane_stack.generation
-                && cached.program == self.active_program
+            cached.callee == callee && cached.scope() == self.lane_stack.scope
         })
     }
 
@@ -11532,10 +11568,7 @@ impl<H: Host> Vm<H> {
     /// take a frame without resolving it again.
     #[inline(never)]
     fn resolve_script_call_target(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
-        callee.heap_index()?;
-        if self.with_scope_entered {
-            return None;
-        }
+        self.cacheable_callee(callee)?;
         let (program, function, env) = self.same_realm_user_target(callee)?;
         // Only plain closures' functions are known (`remember_target`): a hit needs no class or admission.
         if program == self.active_program && let Some(known) = self.lane_stack.function_target(program, function, false) {
