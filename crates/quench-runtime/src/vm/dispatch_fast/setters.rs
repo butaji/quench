@@ -22,18 +22,24 @@ fn met_setter(site: usize) -> bool {
     SETTER_SITES.with_borrow(|sites| sites.get(word).is_some_and(|bits| bits & bit != 0))
 }
 
-/// The setter a store of `atom` to `object` calls, found as the general store finds it
+/// The setter a store of `atom` to `object` calls at the store site `site`: the site's cached
+/// accessor entry (`Vm::cached_field_accessor`), else the one the general store finds
 /// (`Vm::set_field_uncached`): an ordinary object's own or inherited accessor, with no proxy
-/// up its chain to mediate an inherited one. `None` for any other store, a private name's
-/// among them.
-fn stored_setter<H: Host>(vm: &Vm<H>, object: Value, atom: crate::bytecode::Atom) -> Option<Value> {
+/// up its chain to mediate an inherited one, which the site then caches. `None` for any other
+/// store, a private name's among them.
+fn stored_setter<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::Atom, site: usize) -> Option<Value> {
+    if let Some((_, setter)) = vm.cached_field_accessor(object, atom, site) {
+        return setter;
+    }
     if !vm.is_object_like(object) || vm.is_wasm_gc_object(object) || vm.proxy_parts(object).is_some() || vm.is_private_name(atom) {
         return None;
     }
     if vm.own_property(object, atom).is_none() && vm.prototype_chain_contains_proxy(object) {
         return None;
     }
-    vm.property_accessor(object, atom)?.setter
+    let setter = vm.property_accessor(object, atom)?.setter;
+    vm.record_accessor_field_cache(object, atom, site, true);
+    setter
 }
 
 /// A store of the record `i` (at `ip`) to `object` that meets a setter of the running
@@ -44,10 +50,11 @@ fn stored_setter<H: Host>(vm: &Vm<H>, object: Value, atom: crate::bytecode::Atom
 /// the call.
 pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction, object: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    if !met_setter(vm.field_cache_index(i.c)) {
+    let site = vm.field_cache_index(i.c);
+    if !met_setter(site) {
         return None;
     }
-    let setter = stored_setter(vm, object, i.imm())?;
+    let setter = stored_setter(vm, object, i.imm(), site)?;
     let target = lane_script_target(cx, setter).filter(|target| !target.forwards())?;
     let this = lane_call_this(vm, &target, object)?;
     // SAFETY: the record's value register is one of the running function's.

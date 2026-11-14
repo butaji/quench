@@ -71,3 +71,65 @@ print(run(8) + ":" + cnt);
 "#;
     assert_eq!(printed(source, "setter_frame.js"), ["8:8"]);
 }
+
+/// A store's setter is cached at its site under the receiver's shape, prototype and the
+/// prototype layout epoch (`Vm::cached_field_accessor`): a receiver that gains a field, an own
+/// property that shadows the setter, a prototype whose accessor is redefined or deleted or
+/// gains a getter-only form, an accessor defined after data stores, `Object.setPrototypeOf`
+/// moving the receiver or its prototype, a pair redefined in its slot, a proxy inserted up the
+/// chain and a frozen receiver each leave the store Node's (the same program prints the same
+/// line under Node 24).
+#[test]
+fn cached_setter_stores_follow_invalidation_like_node() {
+    const CACHED: &str = r#"const out = [];
+const log = (...a) => out.push(a.join(","));
+class A { constructor(){ this.f = 0; } get v(){ return this.f; } set v(x){ this.f = x + 1; } }
+function store(o, n) { for (let i = 0; i < n; i++) o.v = i; return o.f; }
+const a = new A(); log(store(a, 3000));
+// shape transition after cached store: receiver gains a field
+a.extra = 1; log(store(a, 300));
+// own data property shadows the setter
+const b = new A(); store(b, 3000); Object.defineProperty(b, "v", { value: 5, writable: true, configurable: true }); log(store(b, 10), b.v);
+// prototype mutation: setter replaced by another accessor
+store(new A(), 3000);
+Object.defineProperty(A.prototype, "v", { set(x){ this.f = -x; }, get(){ return 0; }, configurable: true });
+log(store(new A(), 5));
+// setter removed from prototype: plain data store
+const c = new A(); store(c, 3000);
+delete A.prototype.v; log(store(c, 4), c.v, Object.keys(c).join());
+// getter-only accessor defined later on the prototype, sloppy no-op and strict throw
+Object.defineProperty(A.prototype, "v", { get(){ return 42; }, configurable: true });
+log(store(c, 4) + ":" + c.v);
+function strictStore(o){ "use strict"; try { for (let i = 0; i < 3; i++) o.v = i; } catch (e) { return e.constructor.name; } }
+log(strictStore(new A()));
+// accessor defined later, after the site cached a data-property store
+class B {} const bs = [new B(), new B()];
+function setX(o, n){ for (let i = 0; i < n; i++) o.x = i; return o.x; }
+log(setX(bs[0], 3000));
+Object.defineProperty(B.prototype, "x", { set(v){ this._x = v * 2; }, get(){ return this._x; }, configurable: true });
+log(setX(bs[1], 5), Object.keys(bs[1]).join());
+// Object.setPrototypeOf moves a receiver between a setter and no setter
+const p1 = { set s(v){ this.a = "p1" + v; } }, p2 = { set s(v){ this.a = "p2" + v; } }, p3 = {};
+const r = Object.create(p1);
+function setS(o, n){ for (let i = 0; i < n; i++) o.s = i; return o.a; }
+log(setS(r, 3000)); Object.setPrototypeOf(r, p2); log(setS(r, 5)); Object.setPrototypeOf(r, p3); log(setS(r, 5), Object.keys(r).join());
+Object.setPrototypeOf(p3, p1); log(setS(r, 5));
+// setter on prototype redefined to a different function on the same shape (pair slot)
+const q = { set z(v){ this.w = 1; }, get z(){ return 0; } }; const qc = Object.create(q);
+function setZ(o, n){ for (let i = 0; i < n; i++) o.z = i; return o.w; }
+log(setZ(qc, 3000)); Object.defineProperty(q, "z", { set(v){ this.w = 2; }, get(){ return 0; } }); log(setZ(qc, 5));
+// a proxy inserted up the chain mid-loop
+const traps = [];
+const prx = new Proxy({}, { set(t, k, v, rcv){ traps.push(k); return Reflect.set(t, k, v, rcv); } });
+const base = { set y(v){ this.yy = v; } }; const leaf = Object.create(base);
+function setY(o, n){ for (let i = 0; i < n; i++) o.y = i; return o.yy; }
+log(setY(leaf, 3000)); Object.setPrototypeOf(base, prx); delete base.y; log(setY(leaf, 3), traps.join());
+// frozen receiver
+const fz = Object.create({ set k(v){ this.kk = v; } }); function setK(o, n){ for (let i = 0; i < n; i++) o.k = i; return o.kk; }
+log(setK(fz, 3000)); Object.freeze(fz); log(setK(fz, 3));
+// symbol-keyed setter
+const sym = Symbol("s"); const so = { set [sym](v){ this.t = v; } }; function setSym(o, n){ for (let i = 0; i < n; i++) o[sym] = i; return o.t; } log(setSym(so, 3000));
+print(out.join("|"));
+"#;
+    assert_eq!(printed(CACHED, "setter_cache.js"), ["3000|300|3000,9|-4|-2999,3,f,v|-2999:3|TypeError|2999|8,_x|p12999|p24|p24,a,s|p24|1|2|2999|2999,y|2999|2999|2999"]);
+}
