@@ -1577,7 +1577,12 @@ impl<H: Host> Vm<H> {
     /// auxiliary words: `None` where either differs, storage form included.
     #[inline(always)]
     pub(super) fn record_field_formed_hit(&self, cache: FieldCache, object: Value) -> Option<Value> {
-        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        self.record_field_formed_hit_in(cache, self.heap.object_record_by_id(object.direct_object_index()?))
+    }
+
+    /// `record_field_formed_hit` of a direct object's record.
+    #[inline(always)]
+    pub(super) fn record_field_formed_hit_in(&self, cache: FieldCache, receiver: &crate::heap::Object) -> Option<Value> {
         if cache.holder == NO_FIELD_HOLDER {
             return self.own_field_hint_hit(cache, receiver);
         }

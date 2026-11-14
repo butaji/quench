@@ -17261,24 +17261,28 @@ impl MemoLeaf {
     /// `LeafRead::run` of the read this memo records, of the step `shape` names (a constant
     /// where it inlines); `None` for a memo of another step.
     #[inline(always)]
-    fn run<H: Host>(&self, shape: u8, vm: &Vm<H>, arguments: ReadArguments, this: Value) -> Option<Value> {
-        let base = |base: u16| lane_read_base(crate::bytecode::FieldBase(base), arguments, this);
+    fn run<H: Host>(
+        &self,
+        shape: u8,
+        vm: &Vm<H>,
+        arguments: ReadArguments,
+        this: Value,
+        this_record: Option<&crate::heap::Object>,
+    ) -> Option<Value> {
         match *self {
-            Self::Field { base: field_base, field } if shape == MEMO_FIELD => {
-                vm.record_field_formed_hit(field, base(field_base)?)
-            }
+            Self::Field { base: field_base, field } if shape == MEMO_FIELD => memo_first_step(vm, field, field_base, arguments, this, this_record),
             Self::Element { base: field_base, field, index } if shape == MEMO_ELEMENT => {
-                let array = vm.record_field_formed_hit(field, base(field_base)?)?;
+                let array = memo_first_step(vm, field, field_base, arguments, this, this_record)?;
                 vm.direct_dense_element(array, arguments.get(index)?)
             }
             Self::Length { base: field_base, field } if shape == MEMO_LENGTH => {
-                let array = vm.record_field_formed_hit(field, base(field_base)?)?;
+                let array = memo_first_step(vm, field, field_base, arguments, this, this_record)?;
                 vm.array_length_field(array, vm.length_atom)
             }
             Self::Nested { base: field_base, field, second } if shape == MEMO_NESTED => {
                 #[cfg(feature = "profile-field-primitives")]
                 vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::MemoPairAttempt);
-                let object = vm.record_field_formed_hit(field, base(field_base)?)?;
+                let object = memo_first_step(vm, field, field_base, arguments, this, this_record)?;
                 #[cfg(feature = "profile-field-primitives")]
                 vm.profile.field_primitives.hit(crate::profile::field_primitives::Path::MemoPairFirstHit);
                 let value = vm.record_field_formed_hit(second, object);
@@ -17288,6 +17292,24 @@ impl MemoLeaf {
             }
             _ => None,
         }
+    }
+}
+
+/// A memo leaf's first step (`MemoLeaf::run`): `field` of the object `base` names, read
+/// from `this`'s record where the caller holds it (a forwarding body's receiver, already
+/// proven a direct object).
+#[inline(always)]
+fn memo_first_step<H: Host>(
+    vm: &Vm<H>,
+    field: super::FieldCache,
+    base: u16,
+    arguments: ReadArguments,
+    this: Value,
+    this_record: Option<&crate::heap::Object>,
+) -> Option<Value> {
+    match this_record {
+        Some(record) if base == crate::bytecode::FieldBase::THIS.0 => vm.record_field_formed_hit_in(field, record),
+        _ => vm.record_field_formed_hit(field, lane_read_base(crate::bytecode::FieldBase(base), arguments, this)?),
     }
 }
 
@@ -17305,9 +17327,8 @@ enum MemoRead {
         method_field: super::FieldCache,
         /// The forwarding body's parameters, which it passes on in order.
         params: u16,
-        /// The method the reads found, a `CallEntry::reads` target, and its binding.
+        /// The method the reads found, a `CallEntry::reads` target, whose `this` is not lexical.
         method: Value,
-        method_this: ThisBinding,
         read: MemoLeaf,
     },
 }
@@ -17449,7 +17470,6 @@ fn lane_memoize_read<H: Host>(
             method_field: receiver.map_or(method_field, |receiver| vm.formed_entry(method_field, receiver)),
             params: target.params,
             method,
-            method_this: inner.this_binding,
             read,
         }
     } else {
@@ -17518,18 +17538,21 @@ unsafe fn lane_memo_read<H: Host, const SHAPE: u8>(
     };
     let leaf = SHAPE & !MEMO_FORWARD;
     match &held.read {
-        MemoRead::Leaf(read) if SHAPE & MEMO_FORWARD == 0 => read.run(leaf, vm, arguments, this),
-        MemoRead::Forward { base, field, method_field, params, method, method_this, read }
+        MemoRead::Leaf(read) if SHAPE & MEMO_FORWARD == 0 => read.run(leaf, vm, arguments, this, None),
+        MemoRead::Forward { base, field, method_field, params, method, read }
             if SHAPE & MEMO_FORWARD != 0 =>
         {
             let base = lane_read_base(crate::bytecode::FieldBase(*base), arguments, this)?;
             let receiver = vm.record_field_formed_hit(*field, base)?;
-            if vm.record_field_formed_hit(*method_field, receiver)? != *method {
+            let record = vm.heap.object_record_by_id(receiver.direct_object_index()?);
+            if vm.record_field_formed_hit_in(*method_field, record)? != *method {
                 return None;
             }
-            let method_this = lane_receiver_this(vm, *method_this, receiver)?;
+            // A memo's method binds no lexical `this` (`lane_memoize_read`), so the receiver, a
+            // direct object, is its `this` (`lane_receiver_this`), and a step on `this` reads
+            // its record.
             // The call passes the parameters in order, so its argument `k` is parameter `k`.
-            read.run(leaf, vm, arguments.within(*params), method_this)
+            read.run(leaf, vm, arguments.within(*params), receiver, Some(record))
         }
         _ => None,
     }
