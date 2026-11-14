@@ -13,7 +13,9 @@ use super::{emit_js_payload_word, emit_lane_helper_call, JsStepDispatch};
 use super::{Host, JsNativeStep, ResidualProgram, Vm};
 use crate::vm::compiled::regions;
 use crate::Value;
-use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder};
+use cranelift_codegen::ir::{self, types};
+use super::object_slots::emit;
+use crate::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
 use cranelift_frontend::FunctionBuilder;
 
 #[path = "frameless/admission.rs"] mod admission;
@@ -129,35 +131,35 @@ pub(super) fn emit_admitted_captures(builder: &mut FunctionBuilder<'_>, payload:
     declined: ir::Block) -> (ir::Value, ir::Value) {
     let cache = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, call_cache));
     let bound = builder.create_block();
-    builder.ins().brif(cache, super::forced_or(bound, declined), &[], declined, &[]);
+    emit(builder).branch_if(cache, (super::forced_or(bound, declined), &[]), (declined, &[]));
     builder.switch_to_block(bound);
     let entry = emit_entry(builder, payload, callee, declined);
     let word = |field: usize| i32::try_from(field).expect("entry field offset fits i32");
-    (builder.ins().load(types::I64, regions::heap_meta(), entry, word(std::mem::offset_of!(CallEntry, capture_values))),
-        builder.ins().load(types::I64, regions::heap_meta(), entry, word(std::mem::offset_of!(CallEntry, capture_len))))
+    (emit(builder).raw_load(Lane::I64, regions::heap_meta(), entry, word(std::mem::offset_of!(CallEntry, capture_values))),
+        emit(builder).raw_load(Lane::I64, regions::heap_meta(), entry, word(std::mem::offset_of!(CallEntry, capture_len))))
 }
 
 /// The cache entry admitting `callee` in this epoch, asking `general_frameless_admit` on a
 /// miss; `framed` where it declines.
 fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir::Value, framed: ir::Block) -> ir::Value {
     let cache = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, call_cache));
-    let slot = builder.ins().band_imm_u(callee, (CACHE_ENTRIES - 1) as i64);
-    let offset = builder.ins().imul_imm_u(slot, size_of::<CallEntry>() as i64);
-    let cached = builder.ins().iadd(cache, offset);
-    let named = builder.ins().load(types::I64, regions::heap_meta(), cached, std::mem::offset_of!(CallEntry, callee) as i32);
-    let epoch = builder.ins().load(types::I64, regions::heap_meta(), cached, std::mem::offset_of!(CallEntry, epoch) as i32);
+    let slot = emit(builder).raw_binary_imm(Binary::And, callee, (CACHE_ENTRIES - 1) as i64);
+    let offset = emit(builder).raw_binary_imm(Binary::Mul, slot, size_of::<CallEntry>() as i64);
+    let cached = emit(builder).raw_binary(Binary::Add, cache, offset);
+    let named = emit(builder).raw_load(Lane::I64, regions::heap_meta(), cached, std::mem::offset_of!(CallEntry, callee) as i32);
+    let epoch = emit(builder).raw_load(Lane::I64, regions::heap_meta(), cached, std::mem::offset_of!(CallEntry, epoch) as i32);
     let current = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, epoch));
-    let same = builder.ins().icmp(IntCC::Equal, named, callee);
-    let fresh = builder.ins().icmp(IntCC::Equal, epoch, current);
-    let hit = builder.ins().band(same, fresh);
+    let same = emit(builder).raw_compare(Relation::Equal, named, callee);
+    let fresh = emit(builder).raw_compare(Relation::Equal, epoch, current);
+    let hit = emit(builder).raw_binary(Binary::And, same, fresh);
     let (found, admit) = (builder.create_block(), builder.create_block());
     let entry = builder.append_block_param(found, types::I64);
-    builder.ins().brif(hit, found, &[ir::BlockArg::Value(cached)], admit, &[]);
+    emit(builder).branch_if(hit, (found, &[cached]), (admit, &[]));
     builder.switch_to_block(admit);
     let helper = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, frameless));
     let admitted = emit_lane_helper_call(builder, payload, helper, &[payload, callee]);
-    let some = builder.ins().icmp_imm_u(IntCC::NotEqual, admitted, 0);
-    builder.ins().brif(some, found, &[ir::BlockArg::Value(admitted)], framed, &[]);
+    let some = emit(builder).raw_compare_imm(Relation::NotEqual, admitted, 0);
+    emit(builder).branch_if(some, (found, &[admitted]), (framed, &[]));
     builder.switch_to_block(found);
     entry
 }

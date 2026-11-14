@@ -38,11 +38,9 @@ use crate::staged::Stage as _;
 use crate::staged::wasm::{Width, integer_binary};
 use crate::staged::wasm_operation::{Form, Operand as Right, WasmOperation};
 use crate::staged::ConcreteWasm;
-use cranelift_codegen::ir::{
-    self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName,
-    condcodes::{FloatCC, IntCC},
-    types,
-};
+use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName, types};
+#[cfg(test)]
+use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_codegen::entity::{SecondaryMap, packed_option::PackedOption};
 use std::ops::{Deref, DerefMut};

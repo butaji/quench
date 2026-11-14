@@ -9,7 +9,9 @@ use super::super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 use crate::bytecode::Atom;
 use crate::vm::compiled::regions;
 use crate::Value;
-use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder};
+use cranelift_codegen::ir::{self, types};
+use super::object_slots::emit;
+use crate::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
 use cranelift_frontend::FunctionBuilder;
 
 /// The value classes a store proof names: each one `ValueArena::note_slot_value` joins alike
@@ -57,17 +59,16 @@ pub(super) fn emit_atom_unnamed(builder: &mut FunctionBuilder<'_>, payload: ir::
     let word_index = atom / u64::BITS;
     let words = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, method_cache_atoms));
     let words_len = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, method_cache_atom_words));
-    let covered = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, words_len, i64::from(word_index));
+    let covered = emit(builder).raw_compare_imm(Relation::UnsignedGreater, words_len, i64::from(word_index));
     let (present, join) = (builder.create_block(), builder.create_block());
     let free = builder.append_block_param(join, types::I8);
-    let one = builder.ins().iconst(types::I8, 1);
-    builder.ins().brif(covered, present, &[], join, &[ir::BlockArg::Value(one)]);
+    let one = emit(builder).raw_const(Lane::I8, 1);
+    emit(builder).branch_if(covered, (present, &[]), (join, &[one]));
     builder.switch_to_block(present);
-    let word = builder.ins().load(types::I64, regions::heap_meta(), words,
-        i32::try_from(word_index as usize * size_of::<u64>()).expect("atom word offset fits i32"));
-    let named = builder.ins().band_imm_u(word, (1_u64 << (atom % u64::BITS)) as i64);
-    let unnamed = builder.ins().icmp_imm_u(IntCC::Equal, named, 0);
-    builder.ins().jump(join, &[ir::BlockArg::Value(unnamed)]);
+    let word = emit(builder).raw_load(Lane::I64, regions::heap_meta(), words, i32::try_from(word_index as usize * size_of::<u64>()).expect("atom word offset fits i32"));
+    let named = emit(builder).raw_binary_imm(Binary::And, word, (1_u64 << (atom % u64::BITS)) as i64);
+    let unnamed = emit(builder).raw_compare_imm(Relation::Equal, named, 0);
+    emit(builder).goto(join, &[unnamed]);
     builder.switch_to_block(join);
     free
 }
