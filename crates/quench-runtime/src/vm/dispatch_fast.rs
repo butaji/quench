@@ -13880,14 +13880,25 @@ fn lane_call_keeping_activation<H: Host>(
         return Err(Some(exit(ip)));
     }
     let vm = unsafe { vm(cx) };
-    let Some(target) = lane_script_target(cx, r.get(i.b)) else {
+    let callee = r.get(i.b);
+    // The site's linked entry, as `lane_script_call_environment` reads it, copied before the
+    // activation allocates; any other callee takes the general lookup.
+    let linked = if lane_constructing(vm, callee) {
+        None
+    } else {
+        // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything else runs.
+        vm.linked_script_call_entry(callee, &i.call_link)
+            .map(|target| unsafe { *target })
+            .filter(lane_admits_activation)
+    };
+    let Some(target) = linked.or_else(|| lane_script_target(cx, callee)) else {
         return Err(None);
     };
     if !target.forwards() {
         return Err(None);
     }
     #[cfg(feature = "profile-lane-exits")]
-    profile_script_call_target(cx, ip, r.get(i.b), &target);
+    profile_script_call_target(cx, ip, callee, &target);
     let receiver = r.get(i.c);
     let Some(this) = lane_call_this(vm, &target, receiver) else {
         return Err(Some(exit(ip)));
