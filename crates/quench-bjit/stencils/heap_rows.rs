@@ -23,42 +23,19 @@
 //! Every failed proof leaves through exit 0 with nothing written, so the interpreter runs the
 //! instruction.
 
-use crate::layout::{
-    CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_EPOCH, JS_STEP_EMPTY_STRING, JS_STEP_ENV_STORAGE, JS_STEP_FIELD_ENTRIES, JS_STEP_FUNCTION_RECORD_BASE, JS_STEP_LOOP_ENTRY,
-    JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_STRING_RECORD_BASE, JS_STEP_VM, PROPERTY_BUFFER_BASE,
-};
+use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_LOOP_ENTRY, JS_STEP_STRING_RECORD_BASE};
 use crate::ic_rows;
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of, number_word};
 use crate::words::{hole, hole64};
-use crate::places::{DEST, LEFT, Places, Rep, tagged_place};
+use crate::places::{DEST, LEFT, Places};
 use crate::stage::StencilStage;
-use crate::value::ValueLayout;
-use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-use crate::staged::object::{self, Form, Layout, Slots};
-use crate::staged::region::Region;
-use crate::staged::{Frame, RecordSpace, Stage, Step, add, elements, entry, environment, iteration, load_this, naming, read_initialized_local, read_local, string_length, value, write_initialized_local, write_local};
-
-pub(crate) use crate::codes::{
-    ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAIN_SECOND_AT, CONSTANT_ROW, ENV_DEFINE_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM,
-    SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW,
-    STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, STORE_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, INSTANCEOF_ROW, APPEND_ROW,
-    ADD_AFTER_AT, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_LINK_AT, ADD_LINK_BITS, ADD_OBJECT_AT, ADD_PACKED_ROW, ADD_SLOT_BITS, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW,
-    THIS_ADD_PACKED_ROW, FOR_IN_ROW, NAME_ARENA_ROW, NAME_EITHER_ROW, NAME_FUNCTION_AT,
-    IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_INT_ROW, IC_SET_ROW,
-};
+use crate::staged::{Step, elements, entry, load_this, read_initialized_local, read_local, string_length, value, write_initialized_local, write_local};
+use crate::codes::{ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CONSTANT_ROW, ENV_DEFINE_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LOAD_LOCAL_ROW, MEM, SITE_ROW, SITE_STORE_ROW, STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_ROW, LIVE_ROW, REALM_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, INSTANCEOF_ROW, APPEND_ROW, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, FOR_IN_ROW, NAME_ARENA_ROW, NAME_EITHER_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_INT_ROW, IC_SET_ROW};
+use crate::{environment_rows, key_rows, name_rows, site_rows};
 
 unsafe extern "C" {
     static HOLE_V0: u8;
     static HOLE_V1: u8;
-}
-
-macro_rules! need {
-    ($s:expr, $e:expr) => {
-        match $e {
-            Some(v) => v,
-            None => return Out::Exit($s),
-        }
-    };
 }
 
 #[inline(always)]
@@ -100,184 +77,12 @@ fn backing<const ENTRY: bool, const H: u8, const WRITABLE: bool>(s: &S, payload:
 }
 
 #[inline(always)]
-fn stage_site(stage: &mut StencilStage) -> u64 {
+pub(crate) fn stage_site(stage: &mut StencilStage) -> u64 {
     stage.site(0)
 }
 
 /// The hole holding the site table an element access reads its shape facts from.
 const ELEMENT_SITES: u8 = 3;
-
-/// The depth-0 capture slot (holes 1 and 2) into the destination; a hit continues at TAKEN, as every row that may
-/// have a helper step behind it does (`hop`).
-#[inline(always)]
-fn capture_row<const D: u8>(s: S, payload: usize) -> Out {
-    let mut stage = StencilStage::from_hole(HOLE_A);
-    let values = word_at(payload, JS_STEP_CAPTURE_VALUES);
-    let len = word_at(payload, JS_STEP_CAPTURE_LEN);
-    let word = need!(s, environment::dense_capture(&mut stage, values, len, 0, ()));
-    hop(deliver::<D>(s, word))
-}
-
-/// A store of the value operand (hole 0) into the same capture slot (holes 1 and 2), where the
-/// run's slots admit every direct store (`environment::dense_capture_store`); a hit continues at TAKEN.
-#[inline(always)]
-fn capture_set_row<const A: u8>(s: S, payload: usize) -> Out {
-    let mut stage = StencilStage::from_hole(HOLE_A);
-    let slots = (word_at(payload, JS_STEP_CAPTURE_VALUES), word_at(payload, JS_STEP_CAPTURE_LEN), word_at(payload, JS_STEP_CAPTURE_STORES));
-    need!(s, environment::dense_capture_store(&mut stage, slots, 0, tagged_place::<A, 0>(&s), ()));
-    Out::Taken(s)
-}
-
-/// The slot (holes 1 and 2) of the environment window's storage the payload names, into the destination: the
-/// storage's own dense run, whether the window holds its locals in place or an environment's slots
-/// (`environment::environment_slot`). A hit continues at TAKEN, as a capture row does.
-#[inline(always)]
-fn env_row<const D: u8>(s: S, payload: usize) -> Out {
-    let mut stage = StencilStage::from_hole(HOLE_A);
-    let word = need!(s, environment::environment_slot(&mut stage, word_at(payload, JS_STEP_ENV_STORAGE), 0, ()));
-    hop(deliver::<D>(s, word))
-}
-
-/// A store of the value operand (hole 0) into the same slot of an initialized binding. Its caller proved the value
-/// no heap reference (`base_region::steps::plan_fast`), so the environment's write barrier has nothing to record.
-#[inline(always)]
-fn env_set_row<const A: u8>(s: S, payload: usize) -> Out {
-    let mut stage = StencilStage::from_hole(HOLE_A);
-    need!(s, environment::environment_slot_store(&mut stage, word_at(payload, JS_STEP_ENV_STORAGE), 0, tagged_place::<A, 0>(&s), ()));
-    Out::Taken(s)
-}
-
-/// A definition of the value operand (hole 0) into the same slot, whatever initialized or uninitialized binding it holds.
-#[inline(always)]
-fn env_define_row<const A: u8>(s: S, payload: usize) -> Out {
-    let mut stage = StencilStage::from_hole(HOLE_A);
-    need!(s, environment::environment_slot_define(&mut stage, word_at(payload, JS_STEP_ENV_STORAGE), 0, tagged_place::<A, 0>(&s), ()));
-    Out::Taken(s)
-}
-
-#[inline(always)]
-fn field_row<const D: u8>(s: S, payload: usize) -> Out {
-    let mut stage = StencilStage::from_hole(HOLE_A);
-    let record = word_at(payload, JS_STEP_LOOP_ENTRY);
-    let offset = stage_site(&mut stage);
-    deliver::<D>(s, entry::entry_word(&mut stage, record, offset))
-}
-
-/// A field read through the site's cache entry (`entry::site_read`), or with `CHAIN` through two
-/// (`entry::site_chain`, whose first and second entry offsets are hole 2's low and high halves):
-/// `object` is the receiver the row names.
-#[inline(always)]
-fn site_row<const D: u8, const CHAIN: bool>(s: S, payload: usize, object: u64) -> Out {
-    let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
-    let mut stage = StencilStage::with_values(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE));
-    let tables = (word_at(payload, JS_STEP_FIELD_ENTRIES), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
-    let word = if CHAIN {
-        let offsets = hole64::<HOLE_B>();
-        entry::site_chain(&mut stage, tables, object, (offsets & u64::from(u32::MAX), offsets >> CHAIN_SECOND_AT), ())
-    } else {
-        let offset = stage_site(&mut stage);
-        entry::site_read(&mut stage, tables, object, offset, ())
-    };
-    deliver::<D>(s, need!(s, word))
-}
-
-/// A store of the value operand (hole 1) through the site's cache entry (hole 2) into the object
-/// `object` names (`entry::site_store`): a leave writes nothing.
-#[inline(always)]
-fn site_store_row<const A: u8>(s: S, payload: usize, object: u64) -> Out {
-    let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
-    let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
-    let tables = (word_at(payload, JS_STEP_FIELD_ENTRIES), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
-    let offset = stage_site(&mut stage);
-    need!(s, entry::site_store(&mut stage, tables, object, offset, tagged_place::<A, HOLE_A>(&s), ()));
-    Out::Next(s)
-}
-
-/// The object register a site row names: its frame offset sits above the destination's in hole 0.
-#[inline(always)]
-fn register_object(s: &S) -> u64 {
-    word_at(s.frame, (hole64::<0>() >> SITE_OBJECT_AT) as usize)
-}
-
-/// A prototype-held field folded to its value (hole 2): `object` is a direct object of the exact shape in
-/// hole 1's low half whose prototype link is its high half (`entry::held_receiver`), else the row leaves.
-#[inline(always)]
-fn held_row<const D: u8>(s: S, payload: usize, object: u64) -> Out {
-    let mut stage = StencilStage::from_hole(HOLE_B);
-    let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
-    let receiver = hole64::<HOLE_A>();
-    need!(s, entry::held_receiver(&mut stage, records, object, (receiver & u64::from(u32::MAX), receiver >> HELD_LINK_AT), ()));
-    deliver::<D>(s, hole64::<HOLE_B>())
-}
-
-/// Continues while the invalidation word at the address in hole 1 is zero: a Stable fact the code holds
-/// changed where it is set (`code_dependencies::Invalidation`).
-#[inline(always)]
-fn live_row(s: S) -> Out {
-    if word_at(hole64::<HOLE_A>() as usize, 0) == 0 { Out::Next(s) } else { Out::Exit(s) }
-}
-
-/// Continues while the active realm's global object (the word at hole 1's byte offset in the VM the
-/// payload names) is the one in hole 2, which the code folded facts of (`Vm::realm_globals_offset`);
-/// else the taken successor, the entry's failure.
-#[inline(always)]
-fn realm_row(s: S, payload: usize) -> Out {
-    if word_at(word_at(payload, JS_STEP_VM) as usize, hole::<HOLE_A>()) == hole64::<HOLE_B>() { Out::Next(s) } else { Out::Taken(s) }
-}
-
-/// The values of the global object's shape a row's layout proof counts: the one slot the row names,
-/// which the stage's per-site byte offset selects. The shape itself is held by a dependency (the
-/// global layout fact), so the row proves only the record's representation.
-const GLOBAL_SLOT_COUNT: usize = 1;
-
-/// The layout of the global object `id` names in the record table at the payload: `None` where the
-/// table is absent or the object's values are not behind its extras in the arena.
-#[inline(always)]
-fn global_layout(stage: &mut StencilStage, payload: usize, id: u64) -> Option<Layout<u64, bool>> {
-    let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE) as u64;
-    if records == 0 {
-        return None;
-    }
-    let record = object::object_record_at(stage, records, id);
-    let inline = object::inline_storage(stage, record);
-    object::arena_extras_layout(stage, record, inline, GLOBAL_SLOT_COUNT, ())
-}
-
-/// The global object's slot (hole 2: its byte offset) read into the destination.
-#[inline(always)]
-fn global_read_row<const D: u8>(s: S, payload: usize) -> Out {
-    let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
-    let mut stage = StencilStage::with_values(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE));
-    let layout = need!(s, global_layout(&mut stage, payload, hole::<HOLE_A>() as u64));
-    deliver::<D>(s, object::read_slot(&mut stage, layout, 0))
-}
-
-/// The first operand stored to the global object's slot (hole 0: the record id), through the store
-/// gate where `GATED`: a value that may be a heap reference joins the barrier's log, and a store
-/// the property arena observes (`slots_tracked`) is the VM's.
-#[inline(always)]
-fn global_store_row<const A: u8, const GATED: bool>(s: S, payload: usize) -> Out {
-    let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
-    let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
-    let id = hole::<0>() as u64;
-    let value = tagged_place::<A, HOLE_A>(&s);
-    let layout = need!(s, global_layout(&mut stage, payload, id));
-    let Slots::Flat(base) = layout.slots else { return Out::Exit(s) };
-    if GATED {
-        let open = stage.store_gate(RecordSpace::Object, id, value);
-        need!(s, stage.guard(open, ()));
-    }
-    let offset = stage.site(0);
-    let address = stage.add_imm(base, offset);
-    stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value);
-    Out::Next(s)
-}
-
-/// The destination takes the word of hole 1.
-#[inline(always)]
-fn constant_row<const D: u8>(s: S) -> Out {
-    deliver::<D>(s, hole64::<HOLE_A>())
-}
 
 /// The `length` of the array or string word at hole 1 (`string_length::length_of`).
 #[inline(always)]
@@ -297,7 +102,7 @@ fn finish<const D: u8, const A: u8>(frame: Places<D, A, MEM>, done: bool) -> Out
 /// A row's hit continues at TAKEN, past the helper step laid out after it where it is a fast arm; a miss
 /// leaves as it did.
 #[inline(always)]
-fn hop(out: Out) -> Out {
+pub(crate) fn hop(out: Out) -> Out {
     match out {
         Out::Next(s) => Out::Taken(s),
         left => left,
@@ -307,103 +112,8 @@ fn hop(out: Out) -> Out {
 /// A fast arm's row: where its proof held and its places fit it continues at TAKEN, past the
 /// helper step laid out after it, else it leaves into that step.
 #[inline(always)]
-fn finish_fast<const D: u8, const A: u8>(frame: Places<D, A, MEM>, done: bool) -> Out {
+pub(crate) fn finish_fast<const D: u8, const A: u8>(frame: Places<D, A, MEM>, done: bool) -> Out {
     hop(finish(frame, done))
-}
-
-/// `RequireIteratorResult`'s fast arm: the operand (hole 1) is a direct object or array record
-/// (`iteration::require_iterator_result`).
-#[inline(always)]
-fn object_row(s: S) -> Out {
-    let mut frame = Places::<MEM, MEM, MEM>::new(s);
-    let done = matches!(iteration::require_iterator_result(&mut StencilStage::from_hole(0), &mut frame, LEFT, ()), Step::Value(_));
-    finish_fast(frame, done)
-}
-
-/// `ToPropertyKey`'s fast arm: a direct string operand (hole 1) is copied to the destination
-/// (hole 0, `iteration::to_property_key`).
-#[inline(always)]
-fn key_row(s: S) -> Out {
-    let mut frame = Places::<MEM, MEM, MEM>::new(s);
-    let done = matches!(iteration::to_property_key(&mut StencilStage::from_hole(0), &mut frame, DEST, LEFT, ()), Step::Value(_));
-    finish_fast(frame, done)
-}
-
-/// The tag-decided `typeof` index of the operand (hole 1) as an int in the destination (hole 0), or a
-/// heap value, which leaves (`value::immediate_typeof_index`).
-#[inline(always)]
-fn typeof_index_row(s: S) -> Out {
-    let mut frame = Places::<MEM, MEM, MEM>::new(s);
-    let mut stage = StencilStage::from_hole(0);
-    let word = frame.tagged(&mut stage, LEFT);
-    let done = value::immediate_typeof_index(&mut stage, word, ()).map(|index| {
-        let boxed = stage.or_imm(index, ValueLayout::INT_TAG);
-        frame.write(&mut stage, DEST, boxed, Rep::Tagged);
-    }).is_some();
-    finish_fast(frame, done)
-}
-
-/// The `typeof` result string of the operand (hole 1) from the table at hole 2, in the destination (hole 0), or a
-/// heap value, which leaves (`value::immediate_typeof_string`).
-#[inline(always)]
-fn typeof_string_row(s: S) -> Out {
-    let mut frame = Places::<MEM, MEM, MEM>::new(s);
-    let mut stage = StencilStage::from_hole(0);
-    let word = frame.tagged(&mut stage, LEFT);
-    let done = value::immediate_typeof_string(&mut stage, word, hole64::<HOLE_B>(), ()).map(|name| frame.write(&mut stage, DEST, name, Rep::Tagged)).is_some();
-    finish_fast(frame, done)
-}
-
-/// The fast arm of `instanceof` of a held constructor: the value operand (the frame offset above the destination's in
-/// hole 0) walked along its prototype chain for the link above `HELD_LINK_AT` in hole 1 (`object::instanceof_by_words`),
-/// where the constructor operand (the frame offset in hole 1's low half) holds exactly the identity of hole 2. The boolean
-/// is written to the destination (hole 0), or the row leaves into the helper step.
-#[inline(always)]
-fn instanceof_row(s: S, payload: usize) -> Out {
-    let (value, constructor) = (hole64::<0>() >> SITE_OBJECT_AT, hole64::<HOLE_A>());
-    let mut frame = Places::<MEM, MEM, MEM>::new(s);
-    let mut stage = StencilStage::from_hole(0);
-    let held = word_at(frame.s.frame, (constructor & u64::from(u32::MAX)) as usize) == hole64::<HOLE_B>();
-    let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
-    let words = (word_at(frame.s.frame, value as usize), constructor >> HELD_LINK_AT);
-    let done = held && object::instanceof_by_words(&mut stage, records, words.0, words.1, ()).map(|holds| {
-        let (boolean, fact) = frame.boolean(&mut stage, holds);
-        frame.write(&mut stage, DEST, boolean, fact);
-    }).is_some();
-    finish_fast(frame, done)
-}
-
-/// Whether the tag-decided `typeof` index of the operand (hole 1) is the name at index hole 2 (or is
-/// not, where `NEGATED`), as a boolean in the destination (hole 0).
-#[inline(always)]
-fn typeof_is_row<const NEGATED: bool>(s: S) -> Out {
-    let mut frame = Places::<MEM, MEM, MEM>::new(s);
-    let mut stage = StencilStage::from_hole(HOLE_B);
-    let word = frame.tagged(&mut stage, LEFT);
-    let done = value::immediate_typeof_index(&mut stage, word, ()).map(|index| {
-        let tested = stage.site(0);
-        let named = stage.eq_imm(index, tested);
-        let holds = if NEGATED { stage.not(named) } else { named };
-        let (boolean, fact) = frame.boolean(&mut stage, holds);
-        frame.write(&mut stage, DEST, boolean, fact);
-    }).is_some();
-    finish_fast(frame, done)
-}
-
-/// `ForInNext`'s fast arm: the for-in state (hole 1) yields its next key to the destination (hole 0)
-/// where the state's memo proves the snapshot current (`iteration::for_in_next`), which moves the state's
-/// cursor; a hit continues at TAKEN.
-#[inline(always)]
-fn for_in_row(s: S, payload: usize) -> Out {
-    let mut frame = Places::<MEM, MEM, MEM>::new(s);
-    let mut stage = StencilStage::from_hole(0);
-    let state = frame.tagged(&mut stage, LEFT);
-    let tables = (word_at(payload, JS_STEP_ARRAY_RECORD_BASE), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
-    let key = iteration::for_in_next(&mut stage, tables, state, word_at(payload, JS_STEP_EPOCH), ());
-    if let Some(key) = key {
-        frame.write(&mut stage, DEST, key, Rep::Tagged);
-    }
-    finish_fast(frame, key.is_some())
 }
 
 /// The activation's `this` into the destination (`staged::load_this`).
@@ -494,99 +204,43 @@ fn append_row<const A: u8>(s: S, payload: usize) -> Out {
     Out::Taken(s)
 }
 
-/// The add row of `form`: the value operand (hole 1) is added to `object` by the transition hole 0
-/// (before-shape below `ADD_AFTER_AT`, after-shape above) and hole 2 (slot, and with `CHAINED` the
-/// prototype link the receiver must have) name (`add::site_add`); a hit continues at TAKEN.
 #[inline(always)]
-fn add_row<const A: u8, const CHAINED: bool>(s: S, payload: usize, form: Form, object: impl FnOnce(u64) -> u64) -> Out {
-    let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
-    let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
-    let (shapes, site) = (hole64::<0>(), hole64::<HOLE_B>());
-    let edge = add::Edge { before: shapes & u64::from(u32::MAX), after: shapes >> ADD_AFTER_AT, slot: site & ((1 << ADD_SLOT_BITS) - 1) };
-    let link = CHAINED.then(|| (site >> ADD_LINK_AT) & ((1 << ADD_LINK_BITS) - 1));
-    let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
-    need!(s, add::site_add(&mut stage, records, object(site >> ADD_OBJECT_AT), (edge, link), form, tagged_place::<A, HOLE_A>(&s), ()));
-    Out::Taken(s)
+fn register_row<const KIND: u8, const D: u8, const A: u8>(s: S) -> Out {
+    match KIND {
+        IDENTITY_ROW => identity_row(s),
+        THIS_ROW => this_row::<D>(s),
+        LOAD_LOCAL_ROW => load_local_row::<D>(s),
+        STORE_LOCAL_ROW => store_local_row::<A>(s),
+        LOAD_CHECKED_ROW => load_checked_row::<D>(s),
+        _ => store_checked_row::<A>(s),
+    }
 }
 
-/// The add row of `form` to the object register whose frame offset hole 2 carries.
 #[inline(always)]
-fn register_add_row<const A: u8, const CHAINED: bool>(s: S, payload: usize, form: Form) -> Out {
-    let frame = s.frame;
-    add_row::<A, CHAINED>(s, payload, form, |offset| word_at(frame, offset as usize))
-}
-
-/// The add row of `form` to the activation's receiver, which the payload holds.
-#[inline(always)]
-fn this_add_row<const A: u8, const CHAINED: bool>(s: S, payload: usize, form: Form) -> Out {
-    add_row::<A, CHAINED>(s, payload, form, |_| word_at(payload, JS_STEP_RECEIVER))
-}
-
-/// The naming row of `form`: the function in the frame slot hole 2 names takes the name word hole 1 holds
-/// in the slot hole 2 carries, along the shapes hole 0 carries (`naming::site_name`); a hit continues at TAKEN.
-#[inline(always)]
-fn name_row(s: S, payload: usize, form: Form) -> Out {
-    let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
-    let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
-    let (shapes, site) = (hole64::<0>(), hole64::<HOLE_B>());
-    let edge = add::Edge { before: shapes & u64::from(u32::MAX), after: shapes >> ADD_AFTER_AT, slot: site & ((1 << ADD_SLOT_BITS) - 1) };
-    let records = word_at(payload, JS_STEP_FUNCTION_RECORD_BASE);
-    let function = word_at(s.frame, (site >> NAME_FUNCTION_AT) as usize);
-    let empty = word_at(payload, JS_STEP_EMPTY_STRING);
-    need!(s, naming::site_name(&mut stage, records, function, (edge, empty), form, hole64::<HOLE_A>(), ()));
-    Out::Taken(s)
+fn element_row<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, const B: u8>(s: S, payload: usize) -> Out {
+    match KIND {
+        ARRAY_ROW => array_row(s),
+        LENGTH_ROW => length_row::<D>(s, payload),
+        INDEX_ROW => index_row::<ENTRY, D, B>(s, payload),
+        APPEND_ROW => append_row::<A>(s, payload),
+        _ => store_row::<ENTRY, A, B>(s, payload),
+    }
 }
 
 #[inline(always)]
 pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, const B: u8>(s: S) -> Out {
     let payload = payload(&s);
     match KIND {
-        CAPTURE_ROW => capture_row::<D>(s, payload),
-        CAPTURE_SET_ROW => capture_set_row::<A>(s, payload),
-        ENV_ROW => env_row::<D>(s, payload),
-        ENV_SET_ROW => env_set_row::<A>(s, payload),
-        ENV_DEFINE_ROW => env_define_row::<A>(s, payload),
-        INSTANCEOF_ROW => instanceof_row(s, payload),
-        FIELD_ROW => field_row::<D>(s, payload),
-        SITE_ROW => site_row::<D, ENTRY>(s, payload, register_object(&s)),
-        SITE_STORE_ROW => site_store_row::<A>(s, payload, word_at(s.frame, hole::<0>())),
-        THIS_SITE_ROW => site_row::<D, ENTRY>(s, payload, word_at(payload, JS_STEP_RECEIVER)),
-        THIS_STORE_ROW => site_store_row::<A>(s, payload, word_at(payload, JS_STEP_RECEIVER)),
-        HELD_ROW => held_row::<D>(s, payload, if ENTRY { word_at(payload, JS_STEP_RECEIVER) } else { register_object(&s) }),
-        LIVE_ROW => live_row(s),
-        REALM_ROW => realm_row(s, payload),
-        GLOBAL_READ_ROW => global_read_row::<D>(s, payload),
-        GLOBAL_STORE_ROW => global_store_row::<A, ENTRY>(s, payload),
-        CONSTANT_ROW => constant_row::<D>(s),
-        REALM_ROW => realm_row(s, payload),
-        ARRAY_ROW => array_row(s),
-        OBJECT_ROW => object_row(s),
-        KEY_ROW => key_row(s),
-        TYPEOF_INDEX_ROW => typeof_index_row(s),
-        TYPEOF_STRING_ROW => typeof_string_row(s),
-        TYPEOF_IS_ROW => typeof_is_row::<false>(s),
-        TYPEOF_ISNOT_ROW => typeof_is_row::<true>(s),
-        OBJECT_ROW => object_row(s),
-        KEY_ROW => key_row(s),
-        FOR_IN_ROW => for_in_row(s, payload),
-        APPEND_ROW => append_row::<A>(s, payload),
-        ADD_PACKED_ROW => register_add_row::<A, ENTRY>(s, payload, Form::Packed),
-        ADD_ARENA_ROW => register_add_row::<A, ENTRY>(s, payload, Form::Arena),
-        ADD_EITHER_ROW => register_add_row::<A, ENTRY>(s, payload, Form::Either),
-        THIS_ADD_PACKED_ROW => this_add_row::<A, ENTRY>(s, payload, Form::Packed),
-        THIS_ADD_ARENA_ROW => this_add_row::<A, ENTRY>(s, payload, Form::Arena),
-        THIS_ADD_EITHER_ROW => this_add_row::<A, ENTRY>(s, payload, Form::Either),
-        NAME_EITHER_ROW => name_row(s, payload, Form::Either),
-        NAME_ARENA_ROW => name_row(s, payload, Form::Arena),
-        IDENTITY_ROW => identity_row(s),
-        THIS_ROW => this_row::<D>(s),
-        LOAD_LOCAL_ROW => load_local_row::<D>(s),
-        STORE_LOCAL_ROW => store_local_row::<A>(s),
-        LOAD_CHECKED_ROW => load_checked_row::<D>(s),
-        STORE_CHECKED_ROW => store_checked_row::<A>(s),
-        LENGTH_ROW => length_row::<D>(s, payload),
-        INDEX_ROW => index_row::<ENTRY, D, B>(s, payload),
+        CAPTURE_ROW | CAPTURE_SET_ROW | ENV_ROW | ENV_SET_ROW | ENV_DEFINE_ROW | GLOBAL_READ_ROW | GLOBAL_STORE_ROW =>
+            environment_rows::run::<KIND, ENTRY, D, A>(s, payload),
+        FIELD_ROW | SITE_ROW | SITE_STORE_ROW | THIS_SITE_ROW | THIS_STORE_ROW | HELD_ROW | LIVE_ROW | REALM_ROW | CONSTANT_ROW =>
+            site_rows::run::<KIND, ENTRY, D, A>(s, payload),
+        OBJECT_ROW | KEY_ROW | TYPEOF_INDEX_ROW | TYPEOF_STRING_ROW | TYPEOF_IS_ROW | TYPEOF_ISNOT_ROW | INSTANCEOF_ROW | FOR_IN_ROW =>
+            key_rows::run::<KIND>(s, payload),
+        ADD_PACKED_ROW | ADD_ARENA_ROW | ADD_EITHER_ROW | THIS_ADD_PACKED_ROW | THIS_ADD_ARENA_ROW | THIS_ADD_EITHER_ROW
+            | NAME_EITHER_ROW | NAME_ARENA_ROW => name_rows::run::<KIND, ENTRY, A>(s, payload),
+        IDENTITY_ROW | THIS_ROW | LOAD_LOCAL_ROW | STORE_LOCAL_ROW | LOAD_CHECKED_ROW | STORE_CHECKED_ROW => register_row::<KIND, D, A>(s),
         IC_GET_ROW | IC_GET_HOLDER_ROW | IC_SET_ROW | IC_SET_INT_ROW => ic_rows::run::<KIND, ENTRY, D, A>(s),
-        _ => store_row::<ENTRY, A, B>(s, payload),
+        _ => element_row::<KIND, ENTRY, D, A, B>(s, payload),
     }
 }
