@@ -239,6 +239,7 @@ impl<H: Host> Vm<H> {
             return Err(SnapshotError::unsupported("a runtime native source resolver"));
         }
         let Self {
+            typed_views: _,
             native_microtask_running,
             unobserved_jobs_entered: _,
             host,

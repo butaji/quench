@@ -21700,6 +21700,39 @@ fn lane_raw_sums_of_element_reads_store_canonical_numbers() {
 }
 
 #[test]
+fn lane_typed_view_cache_follows_detach_resize_sharing_and_slot_reuse() {
+    // Typed element records read through a view's cached element address
+    // (`TypedViewCache`); a transfer, a resize, another view of the buffer, a copy and new
+    // views in reused slots each end the entry, so every read is the general read's.
+    let source = r#"
+function rd(a,k){return a[k];} function wr(a,k,v){a[k]=v;}
+var h=0; function mix(v){ h = (h*31 + (v|0)) >>> 0; }
+for (var r=0;r<200;r++){
+  var a=new Float64Array(4); for(var i=0;i<4;i++) wr(a,i,i+0.5); var t=a.buffer.transfer(); mix(rd(a,0)===undefined); wr(a,0,9); mix(new Float64Array(t)[0]*2);
+  var g=new ArrayBuffer(16,{maxByteLength:64}); var f=new Int32Array(g,0,4); for(var i=0;i<4;i++) wr(f,i,i*7); g.resize(8); mix(rd(f,1)===undefined); wr(f,1,5); g.resize(32); mix(rd(f,1)); mix(rd(f,3));
+  var b=new ArrayBuffer(16); var u8=new Uint8Array(b), u32=new Uint32Array(b); for(var i=0;i<4;i++) wr(u32,i,0x01020304*(i+1)); mix(rd(u8,5)); wr(u8,0,255); mix(rd(u32,0));
+  var s=u8.slice(0,4); wr(s,0,1); mix(rd(u8,0));
+  var x=(r&1)? new Uint8Array(8): new Float32Array(8); wr(x,r&7,r+0.25); mix(rd(x,r&7)*4);
+  var p=new Int16Array([1,2,3,4,5,6]); rd(p,0); p.copyWithin(0,3); mix(rd(p,0));
+}
+globalThis.answer = h;
+    "#;
+    let program = Engine::specialize(source, "lane-typed-view-cache.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(1069654188.0); 2]);
+}
+
+#[test]
 fn lane_outer_captures_read_like_the_interpreter() {
     // A lane body reads a capture of an outer scope by the lane's own lookup, so a
     // reassigned `var`, a `let` and a widened value read as the interpreter's.

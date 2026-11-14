@@ -1805,6 +1805,8 @@ const DEFAULT_PROPERTY_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     setter: None,
 };
 pub(crate) struct Vm<H> {
+    /// Typed array views' element addresses by view (`typed_array_access::TypedViewCache`).
+    typed_views: typed_array_access::TypedViewCache,
     /// VM-wide running-job admission for native microtask checkpoints.
     native_microtask_running: bool,
     /// Whether the innermost running job queue has entered the host's context for unobserved

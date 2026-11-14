@@ -12,8 +12,43 @@ use std::rc::Rc;
 use std::sync::{Arc, MutexGuard};
 
 /// One word, so an ArrayBuffer cell stays within the heap's cell size.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct BufferBytes(Rc<BufferStore>);
+
+thread_local! {
+    /// The typed array view epoch (`view_epoch`): it changes whenever a typed array's
+    /// element bytes may have moved, been unshared or detached, or a slot a view occupied may
+    /// hold another cell, so a view's element address and length cached at one epoch
+    /// (`Vm::typed_cached_element`) hold while the epoch is unchanged. One per thread, as each
+    /// heap is.
+    static VIEW_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The current typed array view epoch (`VIEW_EPOCH`).
+#[inline(always)]
+pub(crate) fn view_epoch() -> u64 {
+    VIEW_EPOCH.with(std::cell::Cell::get)
+}
+
+/// Ends the current typed array view epoch: every store made, dropped, cloned or written
+/// other than in place (`BufferBytes::lane_mut`), and every sweep that frees slots.
+#[inline]
+pub(crate) fn bump_view_epoch() {
+    VIEW_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
+}
+
+impl Default for BufferBytes {
+    fn default() -> Self {
+        bump_view_epoch();
+        Self(Rc::default())
+    }
+}
+
+impl Drop for BufferBytes {
+    fn drop(&mut self) {
+        bump_view_epoch();
+    }
+}
 
 /// The largest alignment an embedder observes of a pinned store: the widest typed array
 /// element, which the offsets it computes align views to.
@@ -34,6 +69,8 @@ enum BufferStore {
 
 impl Clone for BufferBytes {
     fn clone(&self) -> Self {
+        // A second handle makes the store shared: no view writes it in place after this.
+        bump_view_epoch();
         if matches!(*self.0, BufferStore::AddressPinned(_)) {
             Self::from(self.to_vec())
         } else {
@@ -156,6 +193,7 @@ impl BufferBytes {
 
     /// Preserve this fixed allocation when future cell snapshots are cloned.
     pub(crate) fn pin_address(&mut self) -> usize {
+        bump_view_epoch();
         let store = Rc::make_mut(&mut self.0);
         match store {
             BufferStore::Owned(bytes) => {
@@ -184,6 +222,7 @@ impl BufferBytes {
 
     /// The bytes for writing; an owned store is unshared from other cells first.
     pub(crate) fn make_mut(&mut self) -> BufferWrite<'_> {
+        bump_view_epoch();
         let store = Rc::make_mut(&mut self.0);
         if let BufferStore::Shared(bytes) = store {
             *store = BufferStore::Owned(bytes.to_vec());
@@ -202,6 +241,7 @@ impl BufferBytes {
     /// Another handle on these bytes, for reading them while a different buffer is written:
     /// only for stores that any write copies first, so no write can reach the bytes it reads.
     pub(crate) fn unaliased_handle(&self) -> Option<Self> {
+        bump_view_epoch();
         matches!(*self.0, BufferStore::Owned(_) | BufferStore::Shared(_)).then(|| Self(self.0.clone()))
     }
     pub(crate) fn from_shared(backing: Arc<SharedBacking>) -> Self {
@@ -262,8 +302,8 @@ impl BufferBytes {
     }
 
     /// The bytes as one owned vector, without a copy when this is their only owner.
-    pub(crate) fn into_vec(self) -> Vec<u8> {
-        match Rc::try_unwrap(self.0) {
+    pub(crate) fn into_vec(mut self) -> Vec<u8> {
+        match Rc::try_unwrap(std::mem::take(&mut self.0)) {
             Ok(BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes)) => bytes,
             Ok(store) => Self(Rc::new(store)).to_vec(),
             Err(shared) => Self(shared).to_vec(),
@@ -272,6 +312,7 @@ impl BufferBytes {
 
     /// The owned bytes for resizing. Views are never resizable buffers.
     pub(crate) fn owned_mut(&mut self) -> &mut Vec<u8> {
+        bump_view_epoch();
         let store = Rc::make_mut(&mut self.0);
         if let BufferStore::Shared(bytes) = store {
             *store = BufferStore::Owned(bytes.to_vec());

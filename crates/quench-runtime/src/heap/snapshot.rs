@@ -82,6 +82,7 @@ impl Heap {
                     heap.free_slabs.push(slab as u32);
                 }
                 heap.free_by_slab[slab].insert(index % SLOTS_PER_SLAB);
+                super::buffer_bytes::bump_view_epoch();
                 heap.free_slots += 1;
             }
         }

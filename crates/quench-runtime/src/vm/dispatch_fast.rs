@@ -5041,8 +5041,8 @@ script_handler! {
     /// array's element at an integer index, or `undefined` past its end, is the whole read;
     /// any other read takes the generic order (`lane_get_index_registers`).
     fn lane_get_index_typed<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { vm(cx) }).typed_element_quick::<{ super::typed_array_access::ANY_TYPED_KIND }>(r.get(i.b), r.get(i.c)) else {
-            sibling!(lane_get_index_typed_full::<H>, r, ip, view)
+        let Some(value) = (unsafe { vm(cx) }).typed_cached_element::<{ super::typed_array_access::ANY_TYPED_KIND }>(r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_get_index_typed_fill::<H, { super::typed_array_access::ANY_TYPED_KIND }>, r, ip, view)
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
@@ -5054,7 +5054,27 @@ script_handler! {
     /// whose element access is compiled for it. Any other read makes the site any-kind
     /// (`lane_get_index_typed`) and runs there.
     fn lane_get_index_typed_kind<KIND: usize>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { vm(cx) }).typed_element_quick::<KIND>(r.get(i.b), r.get(i.c)) else {
+        let Some(value) = (unsafe { vm(cx) }).typed_cached_element::<KIND>(r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_get_index_typed_fill::<H, KIND>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// A typed read whose view has no current cached entry (`Vm::typed_cached_element`):
+    /// the entry made (`Vm::fill_typed_view`) and the read through the view's cells; any
+    /// other read takes the general typed read, or makes a one-kind site any-kind.
+    #[inline(never)]
+    fn lane_get_index_typed_fill<KIND: usize>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let (base, key) = (r.get(i.b), r.get(i.c));
+        vm.fill_typed_view(base);
+        let Some(value) = vm.typed_element_quick::<KIND>(base, key) else {
+            if KIND == super::typed_array_access::ANY_TYPED_KIND {
+                sibling!(lane_get_index_typed_full::<H>, r, ip, view)
+            }
             sibling!(lane_get_index_typed_mixed::<H>, r, ip, view)
         };
         r.set(i.a, value);
@@ -5310,8 +5330,8 @@ script_handler! {
     /// index of one is the whole store, as the generic order reaches it once every array and
     /// symbol path declines a typed array; any other store takes the generic order.
     fn lane_set_index_typed<>(cx, r, ip, i, view) {
-        if !(unsafe { vm(cx) }).typed_set_quick::<{ super::typed_array_access::ANY_TYPED_KIND }>(r.get(i.b), r.get(i.c), r.get(i.a)) {
-            sibling!(lane_set_index_typed_full::<H>, r, ip, view)
+        if !(unsafe { vm(cx) }).typed_cached_store::<{ super::typed_array_access::ANY_TYPED_KIND }>(r.get(i.b), r.get(i.c), r.get(i.a)) {
+            sibling!(lane_set_index_typed_fill::<H, { super::typed_array_access::ANY_TYPED_KIND }>, r, ip, view)
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -5321,7 +5341,24 @@ script_handler! {
     /// `lane_set_index_typed` at a site that has stored into typed arrays of one kind only,
     /// `KIND` (as `lane_get_index_typed_kind`).
     fn lane_set_index_typed_kind<KIND: usize>(cx, r, ip, i, view) {
-        if !(unsafe { vm(cx) }).typed_set_quick::<KIND>(r.get(i.b), r.get(i.c), r.get(i.a)) {
+        if !(unsafe { vm(cx) }).typed_cached_store::<KIND>(r.get(i.b), r.get(i.c), r.get(i.a)) {
+            sibling!(lane_set_index_typed_fill::<H, KIND>, r, ip, view)
+        }
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// A typed store whose view has no current cached entry (as `lane_get_index_typed_fill`).
+    #[inline(never)]
+    fn lane_set_index_typed_fill<KIND: usize>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let (base, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
+        vm.fill_typed_view(base);
+        if !vm.typed_set_quick::<KIND>(base, key, value) {
+            if KIND == super::typed_array_access::ANY_TYPED_KIND {
+                sibling!(lane_set_index_typed_full::<H>, r, ip, view)
+            }
             sibling!(lane_set_index_typed_mixed::<H>, r, ip, view)
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))

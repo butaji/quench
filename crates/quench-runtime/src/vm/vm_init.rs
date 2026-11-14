@@ -11,6 +11,7 @@ impl<H: Host> Vm<H> {
     ) -> Self {
         Self {
             host,
+            typed_views: Default::default(),
             native_microtask_running: false,
             unobserved_jobs_entered: false,
             specialized: true,

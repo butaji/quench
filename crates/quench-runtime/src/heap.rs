@@ -53,7 +53,7 @@ mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
 pub(crate) use cell::*;
-pub(crate) use buffer_bytes::{BufferBytes,BufferRead};
+pub(crate) use buffer_bytes::{BufferBytes,BufferRead,view_epoch};
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
 use records::{
@@ -2082,6 +2082,7 @@ impl Heap {
         self.free_by_slab.clear();
         self.free_slabs.clear();
         self.free_slots = 0;
+        buffer_bytes::bump_view_epoch();
         self.external_bytes = 0;
         self.external_since_collection = 0;
         self.external_collection_budget = self.pacing().minimum_external_budget;
@@ -3035,6 +3036,8 @@ impl Heap {
                     }
                     slab_free.merge(&free_slots);
                     self.free_slots += freed_cells;
+                    // A freed slot may next hold another cell (`view_epoch`).
+                    buffer_bytes::bump_view_epoch();
                     for properties in released_properties {
                         self.properties.release(properties);
                     }
@@ -3140,6 +3143,8 @@ impl Heap {
             };
             // Lists the slots `bits` names in the heap's word `word` of slots as free.
             let mut free_word = |word: usize, bits: u64| {
+                // A freed slot may next hold another cell (`view_epoch`).
+                buffer_bytes::bump_view_epoch();
                 let slab = word / FREE_SLOT_WORDS;
                 let slab_free = &mut free_by_slab[slab];
                 if slab_free.is_empty() {
