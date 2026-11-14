@@ -3621,18 +3621,19 @@ impl Heap {
         arrays.get(&array).map(|elements| elements.length)
     }
     /// The write barrier for an edge stored outside `owner`'s own storage (sparse elements,
-    /// owner-attached VM tables): `owner` is logged as if it had been written.
+    /// owner-attached VM tables): `owner` is logged as if it had been written, or, while a
+    /// concurrent cycle marks, a record owner is snapshotted (`RecordSpace::barrier`).
     pub(crate) fn write_barrier(&mut self, owner: Value) {
         match owner.heap_reference() {
-            Some(HeapReference::ObjectRecord(record_id)) => self.object_records.remember(record_id),
-            Some(HeapReference::ArrayRecord(record_id)) => self.array_records.remember(record_id),
+            Some(HeapReference::ObjectRecord(record_id)) => self.object_records.barrier(record_id, &self.properties),
+            Some(HeapReference::ArrayRecord(record_id)) => self.array_records.barrier(record_id, &self.properties),
             Some(HeapReference::FunctionRecord(record_id)) => {
-                self.function_records.remember(record_id)
+                self.function_records.barrier(record_id, &self.properties)
             }
-            Some(HeapReference::PromiseRecord(record_id)) => self.promise_records.remember(record_id),
-            Some(HeapReference::AwaitRecord(record_id)) => self.await_records.remember(record_id),
+            Some(HeapReference::PromiseRecord(record_id)) => self.promise_records.barrier(record_id, &self.properties),
+            Some(HeapReference::AwaitRecord(record_id)) => self.await_records.barrier(record_id, &self.properties),
             Some(HeapReference::IteratorRecord(record_id)) => {
-                self.iterator_records.remember(record_id)
+                self.iterator_records.barrier(record_id, &self.properties)
             }
             Some(HeapReference::LegacySlot(index)) => self.remember(index as usize),
             // Strings and vectors are immutable and hold no edges, so nothing is ever stored
@@ -3824,6 +3825,10 @@ impl Heap {
         slot: usize,
         writes: crate::typed_ir::Type,
     ) -> Option<*mut Value> {
+        // A raw writer passes no snapshot barrier, so none is handed out while a cycle marks.
+        if self.satb_active {
+            return None;
+        }
         let data = self.object(object)?;
         let vector = data.properties();
         let shape = data.shape();
@@ -3950,7 +3955,7 @@ impl Heap {
         // SAFETY: the caller proves the record live; `&mut self` is exclusive.
         let data = unsafe {
             if LOGS {
-                self.object_records.get_live_mut_storing(record_id, value)
+                self.object_records.get_live_mut_storing(record_id, value, &self.properties)
             } else {
                 self.object_records.get_live_mut_unbarriered(record_id)
             }
@@ -4004,7 +4009,7 @@ impl Heap {
                 ..
             } = &mut *self;
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-            let data = unsafe { object_records.get_live_mut_storing(record_id, value) };
+            let data = unsafe { object_records.get_live_mut_storing(record_id, value, properties) };
             let slot = properties.len(data.properties());
             append_property(data, properties, slot, value, shape);
             slot
@@ -4029,7 +4034,7 @@ impl Heap {
         };
         let Self { object_records, properties, .. } = &mut *self;
         // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-        let data = unsafe { object_records.get_live_mut_storing(record_id, value) };
+        let data = unsafe { object_records.get_live_mut_storing(record_id, value, properties) };
         debug_assert_eq!(slot, properties.len(data.properties()));
         append_property(data, properties, slot, value, shape);
         #[cfg(feature = "profile-memory")]

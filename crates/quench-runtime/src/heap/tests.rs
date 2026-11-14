@@ -1768,3 +1768,52 @@ fn concurrent_cycles_are_refused_until_every_gate_passes() {
     heap.pacing_state.favor_full_collections_for_test();
     assert_eq!(heap.concurrent_cycle_refusal_with(true, false), passing);
 }
+
+#[test]
+fn the_snapshot_barrier_copies_an_old_record_once_before_its_first_write() {
+    let mut heap = Heap::new();
+    heap.register_property_shape(1, 2, None);
+    heap.register_property_shape(2, 4, None);
+    let [a, b, c] = [(); 3].map(|_| heap.alloc_object(plain_object()));
+    let owner = heap.alloc_object_pair(Value::NULL, 1, a, b);
+    // Past the inline values: the children live in an arena run.
+    let run_owner = heap.alloc_object_with_properties(Value::NULL, 2, &[a, b, c, Value::NULL]);
+    assert!(heap.object(run_owner).unwrap().inline_properties().is_none());
+    heap.collect([owner, run_owner, c]);
+    let owner_id = owner.direct_object_index().unwrap();
+    let sorted = |mut values: Vec<Value>| {
+        values.retain(|value| value.is_heap());
+        values.sort_by_key(|value| value.to_bits());
+        values
+    };
+    heap.set_satb(true);
+    assert!(heap.satb_active());
+    // Every store takes the barriered path, a store of no reference too.
+    assert!(!heap.store_unlogged(owner_id, Value::NULL));
+    assert!(unsafe { heap.flat_property_mut_ptr_unchecked(run_owner, 0, crate::typed_ir::Type::ANY) }.is_none());
+    let fresh = heap.alloc_object_pair(Value::NULL, 1, a, b);
+    // Deleting an edge snapshots the old owner's children as they were.
+    heap.property_set(owner, 0, Value::NULL);
+    assert_eq!(sorted(heap.take_satb_values()), sorted(vec![a, b]));
+    // Its later writes, and writes to a record newer than the cycle, copy nothing.
+    heap.property_set(owner, 1, c);
+    heap.property_set(fresh, 0, c);
+    assert!(heap.take_satb_values().is_empty());
+    heap.property_set(run_owner, 2, Value::NULL);
+    assert_eq!(sorted(heap.take_satb_values()), sorted(vec![a, b, c]));
+    heap.write_barrier(run_owner);
+    assert!(heap.take_satb_values().is_empty());
+    // The generational barrier is off: the owner keeps its mark and nothing is logged.
+    assert!(heap.object_records.is_marked(owner_id));
+    assert_eq!(heap.object_records.remembered_count(), 0);
+    heap.set_satb(false);
+    heap.property_set(owner, 0, a);
+    assert_eq!(heap.object_records.remembered_count(), 1);
+    assert!(heap.take_satb_values().is_empty());
+    // A later cycle snapshots the owner again: the snapshotted bits were forgotten.
+    heap.collect([owner, run_owner]);
+    heap.set_satb(true);
+    heap.property_set(owner, 1, Value::NULL);
+    assert_eq!(sorted(heap.take_satb_values()), sorted(vec![a, c]));
+    heap.set_satb(false);
+}

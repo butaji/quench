@@ -289,7 +289,7 @@ impl Heap {
     pub(crate) fn iterator_mut(&mut self, value: Value) -> Option<&mut IteratorRecord> {
         if let Some(record_id) = value.direct_iterator_index() {
             // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.iterator_records.get_live_mut(record_id) });
+            return Some(unsafe { self.iterator_records.get_live_mut(record_id, &self.properties) });
         }
         match self.get_mut(value)? {
             Cell::Iterator(iterator) => Some(iterator),
@@ -337,7 +337,7 @@ impl Heap {
     pub(crate) fn await_state_mut(&mut self, value: Value) -> Option<&mut AwaitState> {
         if let Some(record_id) = value.direct_await_index() {
             // SAFETY: direct-await Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.await_records.get_live_mut(record_id) });
+            return Some(unsafe { self.await_records.get_live_mut(record_id, &self.properties) });
         }
         match self.get_mut(value)? {
             Cell::AwaitState(state) => Some(state),
@@ -349,7 +349,7 @@ impl Heap {
     pub(crate) fn promise_mut(&mut self, value: Value) -> Option<&mut PromiseCell> {
         if let Some(record_id) = value.direct_promise_index() {
             // SAFETY: direct-promise Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.promise_records.get_live_mut(record_id) });
+            return Some(unsafe { self.promise_records.get_live_mut(record_id, &self.properties) });
         }
         match self.get_mut(value)? {
             Cell::Promise(promise) => Some(promise),
@@ -374,7 +374,7 @@ impl Heap {
     pub(crate) fn function_mut(&mut self, value: Value) -> Option<&mut FunctionRecord> {
         if let Some(record_id) = value.direct_function_index() {
             // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.function_records.get_live_mut(record_id) });
+            return Some(unsafe { self.function_records.get_live_mut(record_id, &self.properties) });
         }
         match self.get_mut(value)? {
             Cell::Function(function) => Some(function),
@@ -390,23 +390,23 @@ impl Heap {
     pub(crate) fn object_mut(&mut self, value: Value) -> Option<&mut Object> {
         if let Some(record_id) = value.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.object_records.get_live_mut(record_id) });
+            return Some(unsafe { self.object_records.get_live_mut(record_id, &self.properties) });
         }
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.array_records.get_live_mut(record_id) });
+            return Some(unsafe { self.array_records.get_live_mut(record_id, &self.properties) });
         }
         if let Some(record_id) = value.direct_function_index() {
             // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
-            return Some(&mut unsafe { self.function_records.get_live_mut(record_id) }.object);
+            return Some(&mut unsafe { self.function_records.get_live_mut(record_id, &self.properties) }.object);
         }
         if let Some(record_id) = value.direct_promise_index() {
             // SAFETY: direct-promise Values name live records; `&mut self` is exclusive.
-            return Some(&mut unsafe { self.promise_records.get_live_mut(record_id) }.object);
+            return Some(&mut unsafe { self.promise_records.get_live_mut(record_id, &self.properties) }.object);
         }
         if let Some(record_id) = value.direct_iterator_index() {
             // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
-            return Some(&mut unsafe { self.iterator_records.get_live_mut(record_id) }.object);
+            return Some(&mut unsafe { self.iterator_records.get_live_mut(record_id, &self.properties) }.object);
         }
         self.get_mut(value)?.object_mut()
     }
@@ -417,28 +417,28 @@ impl Heap {
     pub(crate) fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut Object> {
         if let Some(record_id) = value.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.object_records.get_live_mut_storing(record_id, stored) });
+            return Some(unsafe { self.object_records.get_live_mut_storing(record_id, stored, &self.properties) });
         }
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.array_records.get_live_mut_storing(record_id, stored) });
+            return Some(unsafe { self.array_records.get_live_mut_storing(record_id, stored, &self.properties) });
         }
         if let Some(record_id) = value.direct_function_index() {
             // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
             return Some(
-                &mut unsafe { self.function_records.get_live_mut_storing(record_id, stored) }.object,
+                &mut unsafe { self.function_records.get_live_mut_storing(record_id, stored, &self.properties) }.object,
             );
         }
         if let Some(record_id) = value.direct_promise_index() {
             // SAFETY: direct-promise Values name live records; `&mut self` is exclusive.
             return Some(
-                &mut unsafe { self.promise_records.get_live_mut_storing(record_id, stored) }.object,
+                &mut unsafe { self.promise_records.get_live_mut_storing(record_id, stored, &self.properties) }.object,
             );
         }
         if let Some(record_id) = value.direct_iterator_index() {
             // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
             return Some(
-                &mut unsafe { self.iterator_records.get_live_mut_storing(record_id, stored) }
+                &mut unsafe { self.iterator_records.get_live_mut_storing(record_id, stored, &self.properties) }
                     .object,
             );
         }
@@ -481,7 +481,7 @@ impl Heap {
     ) -> Option<&mut ArrayObject> {
         let record_id = value.direct_array_index()?;
         // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
-        Some(unsafe { self.array_records.get_live_mut_storing(record_id, stored) })
+        Some(unsafe { self.array_records.get_live_mut_storing(record_id, stored, &self.properties) })
     }
 
     /// `record_array_store_mut` for a store the write barrier passes without logging, else
@@ -533,23 +533,23 @@ impl Heap {
         let object: &mut Object = match reference {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             HeapReference::ObjectRecord(record_id) => unsafe {
-                object_records.get_live_mut(record_id)
+                object_records.get_live_mut(record_id, properties)
             },
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
             HeapReference::ArrayRecord(record_id) => unsafe {
-                array_records.get_live_mut(record_id)
+                array_records.get_live_mut(record_id, properties)
             },
             // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
             HeapReference::FunctionRecord(record_id) => {
-                &mut unsafe { function_records.get_live_mut(record_id) }.object
+                &mut unsafe { function_records.get_live_mut(record_id, properties) }.object
             }
             // SAFETY: direct-promise Values name live records; `&mut self` is exclusive.
             HeapReference::PromiseRecord(record_id) => {
-                &mut unsafe { promise_records.get_live_mut(record_id) }.object
+                &mut unsafe { promise_records.get_live_mut(record_id, properties) }.object
             }
             // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
             HeapReference::IteratorRecord(record_id) => {
-                &mut unsafe { iterator_records.get_live_mut(record_id) }.object
+                &mut unsafe { iterator_records.get_live_mut(record_id, properties) }.object
             }
             HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) => {
                 return None;
@@ -667,7 +667,7 @@ impl Heap {
     pub(crate) fn record_array_mut(&mut self, value: Value) -> Option<&mut ArrayObject> {
         let record_id = value.direct_array_index()?;
         // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
-        Some(unsafe { self.array_records.get_live_mut(record_id) })
+        Some(unsafe { self.array_records.get_live_mut(record_id, &self.properties) })
     }
 
     pub(crate) fn array_mut(&mut self, value: Value) -> Option<&mut ArrayObject> {
@@ -790,7 +790,7 @@ impl Heap {
     pub(crate) fn object_record_mut(&mut self, value: Value) -> Option<&mut Object> {
         let record_id = value.direct_object_index()?;
         // SAFETY: direct-object Values name live records and `&mut self` is exclusive.
-        Some(unsafe { self.object_records.get_live_mut(record_id) })
+        Some(unsafe { self.object_records.get_live_mut(record_id, &self.properties) })
     }
 
     pub(crate) fn is_live(&self, value: Value) -> bool {

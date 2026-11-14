@@ -157,6 +157,10 @@ impl Heap {
         let Some(record_id) = base.direct_array_index() else {
             return false;
         };
+        // Proven storage is written past the snapshot barrier: none is proven while a cycle marks.
+        if self.satb_active {
+            return false;
+        }
         // SAFETY: direct-array Values name live records; `&mut self` is exclusive; proving
         // writes nothing into the record, so no barrier applies.
         let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
