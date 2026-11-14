@@ -669,7 +669,6 @@ complexity crates/quench-runtime/src/vm/compiled/osr_loop.rs::webs 20
 complexity crates/quench-runtime/src/vm/compiled/static_loops.rs::constants 20
 complexity crates/quench-runtime/src/vm/compiled/static_loops.rs::scalar 17
 complexity crates/quench-runtime/src/vm/compiled/static_loops.rs::specialize 16
-complexity crates/quench-runtime/src/vm/construction.rs::Vm<H>::closure_in_realm 35
 complexity crates/quench-runtime/src/vm/construction.rs::Vm<H>::construct_native_with_new_target 59
 complexity crates/quench-runtime/src/vm/construction.rs::Vm<H>::construct_value_with_new_target 35
 complexity crates/quench-runtime/src/vm/construction.rs::Vm<H>::inline_construct_target 14
@@ -698,8 +697,6 @@ complexity crates/quench-runtime/src/vm/dispatch_fast.rs::handler_for 19
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::install_loop_sites 17
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_environment 15
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_keeping 21
-complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_call 12
-complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_construct 20
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_fits 12
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_complete_activation 17
 complexity crates/quench-runtime/src/vm/dispatch_fast.rs::lane_construct_keeping_activation 15
@@ -739,7 +736,6 @@ complexity crates/quench-runtime/src/vm/error.rs::Vm<H>::create_realm_global 13
 complexity crates/quench-runtime/src/vm/error.rs::Vm<H>::function_native 15
 complexity crates/quench-runtime/src/vm/error.rs::Vm<H>::thrown_value_for 20
 complexity crates/quench-runtime/src/vm/error/stack_capture.rs::Vm<H>::captured_stack_data 16
-complexity crates/quench-runtime/src/vm/eval.rs::Vm<H>::direct_eval_private_names 12
 complexity crates/quench-runtime/src/vm/eval.rs::Vm<H>::eval_global_script_with_cache 14
 complexity crates/quench-runtime/src/vm/eval.rs::Vm<H>::eval_native_in_realm 11
 complexity crates/quench-runtime/src/vm/eval.rs::Vm<H>::prepare_embedding_specialized_script_retaining 12
@@ -750,9 +746,7 @@ complexity crates/quench-runtime/src/vm/fdlibm_math.rs::atan2 17
 complexity crates/quench-runtime/src/vm/gc.rs::Vm<H>::collect_slow 23
 complexity crates/quench-runtime/src/vm/generator.rs::Vm<H>::async_generator_delegate 15
 complexity crates/quench-runtime/src/vm/generator.rs::Vm<H>::async_generator_delegate_fulfilled 12
-complexity crates/quench-runtime/src/vm/generator.rs::Vm<H>::async_generator_next_with_promise 13
 complexity crates/quench-runtime/src/vm/generator.rs::Vm<H>::call_generator 16
-complexity crates/quench-runtime/src/vm/generator.rs::Vm<H>::resume_generator_step 22
 complexity crates/quench-runtime/src/vm/generator.rs::Vm<H>::throw_into_yield_star 13
 complexity crates/quench-runtime/src/vm/index.rs::Vm<H>::absent_array_element 14
 complexity crates/quench-runtime/src/vm/index.rs::Vm<H>::get_index 12
@@ -830,7 +824,6 @@ complexity crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::number 2
 complexity crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::value 21
 complexity crates/quench-runtime/src/vm/json.rs::JsonSyntax::positioned_message 14
 complexity crates/quench-runtime/src/vm/json.rs::Vm<H>::json_serialize_value 23
-complexity crates/quench-runtime/src/vm/method_cache.rs::Vm<H>::call_method_site_safe 13
 complexity crates/quench-runtime/src/vm/native_object.rs::emit_native_module 28
 complexity crates/quench-runtime/src/vm/native_stencil.rs::StencilExtension<H>::finish 15
 complexity crates/quench-runtime/src/vm/number.rs::Vm<H>::number_exponential 15
@@ -860,7 +853,6 @@ complexity crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::typed_arra
 complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::get_property_with_receiver 64
 complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::get_symbol_property_with_receiver 12
 complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::plain_property_lookup 13
-complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::private_name_home 18
 complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::prove_symbol_load 17
 complexity crates/quench-runtime/src/vm/object_get.rs::Vm<H>::proxy_set_mode 20
 complexity crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::delete_property_key 21
@@ -905,7 +897,6 @@ complexity crates/quench-runtime/src/vm/promise.rs::Vm<H>::resolve_module_import
 complexity crates/quench-runtime/src/vm/promise.rs::Vm<H>::resolve_static_module_export 23
 complexity crates/quench-runtime/src/vm/promise.rs::Vm<H>::resolve_static_module_graph 17
 complexity crates/quench-runtime/src/vm/promise.rs::Vm<H>::validate_dynamic_import_options 14
-complexity crates/quench-runtime/src/vm/promise_async.rs::Vm<H>::resume_async_continuation_in_program 20
 complexity crates/quench-runtime/src/vm/promise_jobs.rs::Vm<H>::perform_promise_aggregate 15
 complexity crates/quench-runtime/src/vm/promise_jobs.rs::Vm<H>::promise_aggregate_job 12
 complexity crates/quench-runtime/src/vm/property_definition.rs::Vm<H>::define_ordinary_own_property 19
@@ -920,10 +911,6 @@ complexity crates/quench-runtime/src/vm/regexp.rs::escape_regexp_source 15
 complexity crates/quench-runtime/src/vm/regexp.rs::regexp_parser_source 12
 complexity crates/quench-runtime/src/vm/relational.rs::Vm<H>::has_property_key 22
 complexity crates/quench-runtime/src/vm/relational.rs::Vm<H>::ordinary_instanceof_walk 13
-complexity crates/quench-runtime/src/vm/relational.rs::Vm<H>::plain_in 11
-complexity crates/quench-runtime/src/vm/relational.rs::Vm<H>::steady_instanceof 14
-complexity crates/quench-runtime/src/vm/snapshot.rs::ShapeTransition::unsnap 11
-complexity crates/quench-runtime/src/vm/snapshot.rs::Vm<H>::write_snapshot 19
 complexity crates/quench-runtime/src/vm/string.rs::Vm<H>::string_basic_native 20
 complexity crates/quench-runtime/src/vm/string.rs::Vm<H>::string_replace_native 14
 complexity crates/quench-runtime/src/vm/string_extra.rs::number_to_radix 16
@@ -1404,7 +1391,6 @@ file-lines crates/quench-runtime/src/vm/atomics.rs 909
 file-lines crates/quench-runtime/src/vm/builtins.rs 1448
 file-lines crates/quench-runtime/src/vm/call_printer.rs 624
 file-lines crates/quench-runtime/src/vm/closure_retention_tests.rs 552
-file-lines crates/quench-runtime/src/vm/coercion.rs 510
 file-lines crates/quench-runtime/src/vm/collections.rs 1470
 file-lines crates/quench-runtime/src/vm/compiled.rs 19000
 file-lines crates/quench-runtime/src/vm/compiled/lane_region.rs 5120
@@ -1454,7 +1440,6 @@ file-lines crates/quench-runtime/src/vm/primitive_bench.rs 655
 file-lines crates/quench-runtime/src/vm/primitives.rs 671
 file-lines crates/quench-runtime/src/vm/program_store.rs 4026
 file-lines crates/quench-runtime/src/vm/promise.rs 5473
-file-lines crates/quench-runtime/src/vm/promise_async.rs 538
 file-lines crates/quench-runtime/src/vm/promise_jobs.rs 660
 file-lines crates/quench-runtime/src/vm/regexp.rs 3424
 file-lines crates/quench-runtime/src/vm/relational.rs 638
@@ -2845,7 +2830,6 @@ function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::tagged_registe
 function-lines crates/quench-runtime/src/vm/compiled/osr_loop.rs::webs 103
 function-lines crates/quench-runtime/src/vm/compiled/static_loops.rs::constants 61
 function-lines crates/quench-runtime/src/vm/compiled/static_loops.rs::scalar 42
-function-lines crates/quench-runtime/src/vm/construction.rs::Vm<H>::closure_in_realm 215
 function-lines crates/quench-runtime/src/vm/construction.rs::Vm<H>::construct_native_with_new_target 172
 function-lines crates/quench-runtime/src/vm/construction.rs::Vm<H>::construct_value_with_new_target 169
 function-lines crates/quench-runtime/src/vm/construction.rs::Vm<H>::function_realm 41
@@ -2878,7 +2862,6 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::materialize
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 213
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::run_fast_lane 116
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::derive_lane_view 1132
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::direct_callers_subscribe_to_callee_slot_dependencies 58
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::fill_window 55
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::forwarded_resolution 50
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::handler_for 55
@@ -2887,10 +2870,7 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate 50
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_environment 135
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_getter 57
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_activate_keeping 147
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_activate 62
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_construct 68
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_inlined_activation 69
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_body_left 52
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_native_out 56
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_call_read 42
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_complete_activation 73
@@ -2915,7 +2895,6 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_passed_frame_
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_promise_native 52
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_push_frame_call 138
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_read_capture_value 42
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_resume_generator_frame 44
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_return_from 47
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_return_script_frame 68
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_site_targets 48
@@ -2934,11 +2913,9 @@ function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::activate_p
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::bind_activation_arguments 45
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::cache_arguments_object_template 55
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::complete_user_frame 47
-function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::exception_handler_target 42
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::initialize_arguments_object 89
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::iteration_environment 66
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::prepare_user_tail 71
-function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::promote_frame_environment 51
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::push_wasm_frame 59
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::push_wasm_frame_with_registers 41
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::run_frame_from_lane 48
@@ -2991,8 +2968,6 @@ function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::install_realm_defau
 function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::source_call_site_record 57
 function-lines crates/quench-runtime/src/vm/error.rs::Vm<H>::thrown_value_for 49
 function-lines crates/quench-runtime/src/vm/error/stack_capture.rs::Vm<H>::captured_stack_data 98
-function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::capture_binding_environment 52
-function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::direct_eval_private_names 41
 function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::eval_global_script_with_cache 87
 function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::eval_native_in_realm 58
 function-lines crates/quench-runtime/src/vm/eval.rs::Vm<H>::eval_script_source 63
@@ -3021,7 +2996,6 @@ function-lines crates/quench-runtime/src/vm/generator.rs::Vm<H>::generator_retur
 function-lines crates/quench-runtime/src/vm/generator.rs::Vm<H>::generator_throw 44
 function-lines crates/quench-runtime/src/vm/generator.rs::Vm<H>::prepare_generator_return 75
 function-lines crates/quench-runtime/src/vm/generator.rs::Vm<H>::resume_async_generator_queue 43
-function-lines crates/quench-runtime/src/vm/generator.rs::Vm<H>::resume_generator_step 124
 function-lines crates/quench-runtime/src/vm/generator.rs::Vm<H>::return_from_async_from_sync 56
 function-lines crates/quench-runtime/src/vm/generator.rs::Vm<H>::return_from_yield_star 42
 function-lines crates/quench-runtime/src/vm/generator.rs::Vm<H>::throw_into_yield_star 54
@@ -3164,7 +3138,6 @@ function-lines crates/quench-runtime/src/vm/number.rs::Vm<H>::number_exponential
 function-lines crates/quench-runtime/src/vm/number.rs::Vm<H>::number_format 57
 function-lines crates/quench-runtime/src/vm/number.rs::math_unary_operation 56
 function-lines crates/quench-runtime/src/vm/number.rs::parse_float 56
-function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::append_cached_shape_transition 43
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::append_shape 63
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::cached_field_store_hit 44
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::cached_inherited_field_value 77
@@ -3173,7 +3146,6 @@ function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::field_miss_data_va
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::field_site_report 52
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::get_field_uncached 81
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::inherited_field 61
-function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::invalidate_field_caches 50
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::literal_template 52
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::polymorphic_field_entries_hit 78
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::prove_index_free_chain 41
@@ -3199,7 +3171,6 @@ function-lines crates/quench-runtime/src/vm/object_descriptors.rs::Vm<H>::to_pro
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::get_property_with_receiver 223
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::get_symbol_property_with_receiver 60
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::plain_property_lookup 41
-function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::private_name_home 104
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::prove_symbol_load 69
 function-lines crates/quench-runtime/src/vm/object_get.rs::Vm<H>::proxy_set_mode 114
 function-lines crates/quench-runtime/src/vm/object_integrity.rs::Vm<H>::delete_property_key 104
@@ -3269,7 +3240,6 @@ function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::js_j
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::reclaim_unreferenced 136
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::record_js_jit_call_site 68
 function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::record_js_jit_counter_entry 119
-function-lines crates/quench-runtime/src/vm/program_store.rs::ProgramStore::report_js_jit 338
 function-lines crates/quench-runtime/src/vm/program_store/snapshot.rs::ProgramEntry::read_snapshot 69
 function-lines crates/quench-runtime/src/vm/program_store/snapshot.rs::ProgramEntry::write_snapshot 94
 function-lines crates/quench-runtime/src/vm/promise.rs::StaticModuleLinks::add 49
@@ -3312,9 +3282,6 @@ function-lines crates/quench-runtime/src/vm/promise.rs::Vm<H>::validate_static_m
 function-lines crates/quench-runtime/src/vm/promise.rs::same_static_module_binding 44
 function-lines crates/quench-runtime/src/vm/promise_aggregate.rs::Vm<H>::enqueue_aggregate_input 55
 function-lines crates/quench-runtime/src/vm/promise_async.rs::Vm<H>::attach_await_reactions 58
-function-lines crates/quench-runtime/src/vm/promise_async.rs::Vm<H>::call_user_maybe_async 62
-function-lines crates/quench-runtime/src/vm/promise_async.rs::Vm<H>::resume_async_continuation 44
-function-lines crates/quench-runtime/src/vm/promise_async.rs::Vm<H>::resume_async_continuation_in_program 143
 function-lines crates/quench-runtime/src/vm/promise_async.rs::Vm<H>::try_settling_call 46
 function-lines crates/quench-runtime/src/vm/promise_jobs.rs::Vm<H>::perform_promise_aggregate 140
 function-lines crates/quench-runtime/src/vm/promise_jobs.rs::Vm<H>::promise_aggregate 60
@@ -3352,7 +3319,6 @@ function-lines crates/quench-runtime/src/vm/regexp.rs::regexp_parser_source 55
 function-lines crates/quench-runtime/src/vm/relational.rs::Vm<H>::has_property_key 94
 function-lines crates/quench-runtime/src/vm/relational.rs::Vm<H>::ordinary_has_instance 56
 function-lines crates/quench-runtime/src/vm/relational.rs::Vm<H>::ordinary_instanceof_walk 51
-function-lines crates/quench-runtime/src/vm/relational.rs::Vm<H>::steady_instanceof 49
 function-lines crates/quench-runtime/src/vm/shadow_realm.rs::Vm<H>::call_shadow_wrapped_function 58
 function-lines crates/quench-runtime/src/vm/shadow_realm.rs::Vm<H>::construct_shadow_realm 48
 function-lines crates/quench-runtime/src/vm/shadow_realm.rs::Vm<H>::install_shadow_realm_for_realm 53
@@ -3717,7 +3683,6 @@ function-lines crates/quench-runtime/src/vm/vm_init.rs::Vm<H>::new_with_executio
 function-lines crates/quench-runtime/src/vm/wasm.rs::Vm<H>::decode_wasm_value_in 64
 function-lines crates/quench-runtime/src/vm/wasm.rs::Vm<H>::evaluate_wasm_initializer 146
 function-lines crates/quench-runtime/src/vm/wasm.rs::Vm<H>::execute_wasm_in_environment 69
-function-lines crates/quench-runtime/src/vm/wasm.rs::Vm<H>::initialize_wasm_references 56
 function-lines crates/quench-runtime/src/vm/wasm.rs::Vm<H>::instantiate_wasm_module_with_imports 263
 function-lines crates/quench-runtime/src/vm/wasm.rs::Vm<H>::wasm_copy_bytes 57
 function-lines crates/quench-runtime/src/vm/wasm.rs::Vm<H>::wasm_reference_valid_in 70
@@ -3728,7 +3693,6 @@ function-lines crates/quench-runtime/src/vm/wasm.rs::tests::compiled_wasm_indire
 function-lines crates/quench-runtime/src/vm/wasm.rs::tests::compiled_wasm_indirect_call_propagates_nested_callout_error 79
 function-lines crates/quench-runtime/src/vm/wasm.rs::tests::compiled_wasm_indirect_call_refreshes_guarded_memory_after_growth 146
 function-lines crates/quench-runtime/src/vm/wasm.rs::tests::compiled_wasm_indirect_call_reuses_artifact_local_native_target 155
-function-lines crates/quench-runtime/src/vm/wasm.rs::tests::compiled_wasm_indirect_call_site_keeps_a_certificate_per_target 81
 function-lines crates/quench-runtime/src/vm/wasm.rs::tests::compiled_wasm_indirect_call_spills_large_signature_arguments 85
 function-lines crates/quench-runtime/src/vm/wasm.rs::tests::compiled_wasm_indirect_call_uses_foreign_instance_memory 106
 function-lines crates/quench-runtime/src/vm/wasm.rs::tests::compiled_wasm_indirect_call_with_no_result_uses_compiled_callee 73
@@ -3971,7 +3935,6 @@ hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::LaneView::osr_diagnosti
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::ScriptTargets::with_len 2
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::materialize_lane_activations 3
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::resolve_script_call_target 2
-hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::Vm<H>::run_fast_lane 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::derive_lane_view 16
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::frame_entry_census 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::install_loop_sites 9
@@ -3991,7 +3954,6 @@ hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_site_targets 5
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_unit_targets 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_environment_window 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_proved_arrays 2
-hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::window_environment 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast/list_calls.rs::lane_apply_activation 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast/list_calls.rs::lane_list_activation 2
 hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::activation_arguments_object 1
@@ -4013,11 +3975,8 @@ hot-alloc crates/quench-runtime/src/vm/method_cache.rs::Vm<H>::snapshot_method_c
 hot-alloc crates/quench-runtime/src/vm/method_cache.rs::Vm<H>::snapshot_method_caches_for_atom 1
 hot-alloc crates/quench-runtime/src/vm/method_cache.rs::Vm<H>::snapshot_shadowed_method_caches 1
 hot-alloc crates/quench-runtime/src/vm/object_get.rs::Vm<H>::get_property_with_receiver 1
-hot-alloc crates/quench-runtime/src/vm/object_get.rs::Vm<H>::initialize_private_field 2
 hot-alloc crates/quench-runtime/src/vm/object_get.rs::Vm<H>::nullish_property_error 2
-hot-alloc crates/quench-runtime/src/vm/object_get.rs::Vm<H>::private_name_home 3
 hot-alloc crates/quench-runtime/src/vm/object_get.rs::Vm<H>::proxy_set_mode 1
-hot-alloc crates/quench-runtime/src/vm/object_get.rs::Vm<H>::undeclared_private_read_error 3
 hot-alloc crates/quench-runtime/src/vm/operations.rs::Vm<H>::call_argument_list 1
 hot-alloc crates/quench-runtime/src/vm/operations.rs::Vm<H>::call_native_dispatch 1
 hot-alloc crates/quench-runtime/src/vm/operations.rs::Vm<H>::call_native_table 2
@@ -4041,7 +4000,6 @@ hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::may_loop 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::memory_register 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::proved_handler 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::single_register 1
-hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_array_literals 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_environment_window 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_int32_truncations 1
 hot-scan crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_load_branch_pairs 1
@@ -4066,9 +4024,7 @@ hot-scan crates/quench-runtime/src/vm/environment.rs::Vm<H>::store_global_var_bi
 hot-scan crates/quench-runtime/src/vm/environment.rs::Vm<H>::store_own_dynamic_binding 1
 hot-scan crates/quench-runtime/src/vm/environment.rs::Vm<H>::store_resolved_name 1
 hot-scan crates/quench-runtime/src/vm/environment.rs::Vm<H>::with_objects_before_binding 2
-hot-scan crates/quench-runtime/src/vm/method_cache.rs::Vm<H>::call_method_site_safe 3
 hot-scan crates/quench-runtime/src/vm/method_cache.rs::Vm<H>::record_method_cache 3
-hot-scan crates/quench-runtime/src/vm/object_get.rs::Vm<H>::private_name_home 3
 hot-scan crates/quench-runtime/src/vm/operations.rs::Vm<H>::create_list_from_array_like 1
 hot-scan crates/quench-runtime/src/vm/shape_transitions.rs::ShapeTransitionIndex::get 1
 magic crates/quench-alloc/src/lib.rs::reserve_region 1
@@ -5145,7 +5101,6 @@ magic crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_read_string 
 magic crates/quench-runtime/src/vm/value_serializer.rs::put_zigzag 1
 magic crates/quench-runtime/src/vm/vm_init.rs::Vm<H>::new_with_execution_interrupt 2
 magic crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::call_wasm_js_import 1
-magic crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::call_wasm_js_native 1
 magic crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::emscripten_memcpy_view_capture 1
 magic crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::try_emscripten_memcpy_same_memory 2
 magic crates/quench-runtime/src/vm/wasm_js.rs::Vm<H>::try_emscripten_memcpy_same_memory_raw 1
