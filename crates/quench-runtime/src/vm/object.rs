@@ -2215,17 +2215,21 @@ impl<H: Host> Vm<H> {
         let value = match cache.answer {
             InheritedFieldAnswer::Absent => Value::UNDEFINED,
             InheritedFieldAnswer::Slot(_) if cache.constant_watch.as_ref().is_some_and(|watch| watch.is_published()) => cache.constant,
-            InheritedFieldAnswer::Slot(slot) => {
-                let holder = self.heap.object_record(cache.proved_holder)?;
-                // SAFETY: the proof keeps the holder and its recorded shape.
-                let value = unsafe { self.heap.property_get_shaped(holder, usize::from(slot)) }?;
-                let watch = crate::heap::watch_prototype_values(holder.exact_shape());
-                let cache = self.heap.dependencies_mut().inherited_mut(index);
-                (cache.constant, cache.constant_watch) = (value, watch);
-                value
-            }
+            InheritedFieldAnswer::Slot(slot) => self.hold_inherited_constant(index, (cache.proved_holder, slot))?,
         };
         self.profile.field_cache_hit(0, depth);
+        Some(value)
+    }
+
+    /// The value the proved holder's `slot` holds, which becomes inherited entry `index`'s constant
+    /// under a watch on the holder's prototype values.
+    fn hold_inherited_constant(&mut self, index: u32, (proved_holder, slot): (Value, u16)) -> Option<Value> {
+        let holder = self.heap.object_record(proved_holder)?;
+        // SAFETY: the proof keeps the holder and its recorded shape.
+        let value = unsafe { self.heap.property_get_shaped(holder, usize::from(slot)) }?;
+        let watch = crate::heap::watch_prototype_values(holder.exact_shape());
+        let cache = self.heap.dependencies_mut().inherited_mut(index);
+        (cache.constant, cache.constant_watch) = (value, watch);
         Some(value)
     }
 
