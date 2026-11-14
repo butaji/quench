@@ -2,7 +2,7 @@
 //! leaves to, read from the instruction's own targets.
 
 use super::ConcreteWasm;
-use super::wasm::WasmStage;
+use super::machine::MachineStage;
 use super::wasm_flow::{Flow, Leave};
 use super::wasm_step::Step;
 use crate::WasmTrap;

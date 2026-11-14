@@ -6,7 +6,8 @@
 //! and the tests of the tier's instance primitives run.
 
 use super::ConcreteWasm;
-use super::wasm::{WasmStage, Width};
+use super::machine::{Machine, MachineStage};
+use super::wasm::Width;
 use super::wasm_call::WasmTable;
 use super::wasm_float::{Float, Truncation};
 use super::wasm_instance::{Storage, WasmInstance};
@@ -56,8 +57,11 @@ macro_rules! delegated {
 /// The scalar primitives of a stage over an instance.
 macro_rules! scalar_stage {
     ($($stage:ty),+) => {$(
-        impl WasmStage for $stage {
+        impl Machine for $stage {
             type Word = u64;
+        }
+
+        impl MachineStage for $stage {
             type Exit = WasmTrap;
 
             delegated! {

@@ -20,6 +20,7 @@ use crate::typed_ir::Type;
 mod concrete;
 pub(crate) mod numeric;
 pub(crate) mod flow;
+pub(crate) mod machine;
 mod heap;
 mod global;
 #[cfg_attr(not(test), allow(dead_code))] // the division is data the specializers will ask; today only its tests do
@@ -88,6 +89,7 @@ mod generic;
 pub(crate) use steps::step;
 pub(crate) mod effects;
 pub(crate) mod region;
+pub(crate) mod machine;
 pub(crate) mod wasm;
 pub(crate) mod wasm_float;
 mod wasm_concrete;

@@ -5,7 +5,8 @@ use super::{WasmTrap, WasmValue};
 
 use super::numeric::{NumericResult, selectors};
 use crate::staged::ConcreteWasm;
-use crate::staged::wasm::{WasmStage, Width, binary_result, integer_binary, unary_result};
+use crate::staged::machine::MachineStage;
+use crate::staged::wasm::{Width, binary_result, integer_binary, unary_result};
 
 macro_rules! binary_family {
     ($enum:ident, $signed:ty, $unsigned:ty, $variant:ident,

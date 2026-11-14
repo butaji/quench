@@ -9,8 +9,10 @@ use super::{
 };
 use crate::WasmSignature;
 use crate::bytecode::{Function, WideInstruction};
+use crate::staged::machine::{MachineAccess, MachineStage};
+use crate::staged::wasm::Width;
 use crate::staged::wasm_call::Call;
-use cranelift_codegen::ir::{self, InstBuilder, types};
+use cranelift_codegen::ir;
 
 impl<H: Host> Emitter<'_, '_, H> {
     /// Lowers a call step.
@@ -37,14 +39,13 @@ impl<H: Host> Emitter<'_, '_, H> {
         };
         let arguments = self.known_arguments(instruction, plan);
         let target = self.known_target(callee, plan);
-        let call = self.body.core.builder.ins().call(target, &arguments);
-        let results = self.body.core.builder.inst_results(call).to_vec();
+        let results = self.call_function(target, &arguments);
         self.propagate(results[0]);
         let destination = instruction.result_register();
         match plan.result {
             Some(ty) => self.write(destination, Kind::of(ty).expect("planned"), results[1]),
             None => {
-                let zero = self.body.core.builder.ins().iconst(types::I32, 0);
+                let zero = self.constant(Width::I32, 0);
                 self.write(destination, Kind::I32, zero);
             }
         }

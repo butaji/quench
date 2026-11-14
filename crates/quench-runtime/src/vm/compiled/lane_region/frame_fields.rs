@@ -6,7 +6,9 @@
 //! registers'.
 
 use super::*;
-use crate::vm::compiled::regions;
+use super::super::object_slots::emit;
+use crate::staged::flow::FlowStage;
+use crate::staged::{Region, Stage};
 use super::field_plans::LanePlans;
 use super::frame::calls;
 use crate::staged::ic::Reached;
@@ -222,12 +224,12 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         stage.builder.set_cold_block(general);
         let before = self.state.clone();
         match fast(stage, self, general) {
-            Some(()) => { stage.builder.ins().jump(done, &[]); }
-            None => { stage.builder.ins().jump(general, &[]); }
+            Some(()) => { stage.jump(done, &[]); }
+            None => { stage.jump(general, &[]); }
         }
         stage.builder.switch_to_block(general);
         slow(stage, self, miss)?;
-        stage.builder.ins().jump(done, &[]);
+        stage.jump(done, &[]);
         stage.builder.switch_to_block(done);
         self.retire_fast_proofs(owner, &before);
         Some(())
@@ -251,10 +253,10 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         let result = builder.append_block_param(done, types::I64);
         let (address, _) = emit_js_cached_field_slot(builder, self.payload, object,
             site, true, slow, Some(binding), header, Some(packed));
-        let value = builder.ins().load(types::I64, regions::object_slots(), address, 0);
-        builder.ins().jump(done, &[ir::BlockArg::Value(value)]);
+        let value = emit(builder).load_u64(Region::ObjectSlots.mutable(), address, 0);
+        emit(builder).jump(done, &[value]);
         builder.switch_to_block(packed);
-        let narrow = builder.ins().load(types::I32, regions::payload(), packed_address, 0);
+        let narrow = emit(builder).load_i32(Region::Payload.mutable(), packed_address, 0);
         let table = match self.helpers {
             #[cfg(feature = "aot")]
             LaneHelpers::Bound(_, symbol) => NarrowTable::Linked(symbol),
@@ -263,7 +265,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         emit_narrow_read(builder, narrow, table, done);
         builder.switch_to_block(slow);
         let value = self.field_get_host(stage, object, atom, site, miss)?;
-        stage.builder.ins().jump(done, &[ir::BlockArg::Value(value)]);
+        stage.jump(done, &[value]);
         stage.builder.switch_to_block(done);
         Some(result)
     }
@@ -282,15 +284,15 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         let value = stage.builder.append_block_param(join, types::I64);
         let before = self.state.clone();
         match fast(stage, self, generic) {
-            Some(read) => { stage.builder.ins().jump(join, &[ir::BlockArg::Value(read)]); }
-            None => { stage.builder.ins().jump(generic, &[]); }
+            Some(read) => { stage.jump(join, &[read]); }
+            None => { stage.jump(generic, &[]); }
         }
         stage.builder.switch_to_block(generic);
         let mut dominating = before.clone();
         std::mem::swap(&mut *self.state, &mut dominating);
         let probed = self.field_probe(stage, owner, object, atom, site, miss);
         std::mem::swap(&mut *self.state, &mut dominating);
-        stage.builder.ins().jump(join, &[ir::BlockArg::Value(probed?)]);
+        stage.jump(join, &[probed?]);
         stage.builder.switch_to_block(join);
         self.retire_fast_proofs(owner, &before);
         Some(value)
@@ -302,5 +304,5 @@ pub(super) fn entry_record_word(builder: &mut FunctionBuilder<'_>, payload: ir::
     let entry = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, loop_entry));
     let offset = i32::try_from(usize::try_from(word).expect("entry word fits usize")
         * std::mem::size_of::<u64>()).expect("entry word offset fits i32");
-    builder.ins().load(types::I64, crate::vm::compiled::regions::loop_entry(), entry, offset)
+    emit(builder).load_u64(Region::LoopEntry.readonly(), entry, offset)
 }

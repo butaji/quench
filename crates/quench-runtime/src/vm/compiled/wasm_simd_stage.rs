@@ -11,49 +11,26 @@ use super::{
 use crate::WasmType;
 use crate::bytecode::{Function, WideInstruction};
 use crate::staged::wasm_memory::{Access, check_access, effective_address};
-use crate::staged::wasm_simd::{Lanes, Native, NativeOp, Simd, WasmSimd, simd};
+use crate::staged::machine::{Lane, MachineAccess, MachineStage, MachineVector};
+use crate::staged::wasm::Width;
+use crate::staged::wasm_simd::{Lanes, Native, Simd, WasmSimd, simd};
+use crate::wasm::integer::I64BinaryOperator as Binary;
 use crate::wasm::V128_BYTES;
 use crate::wasm::simd::SimdKernel;
-use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, Signature, types};
+use cranelift_codegen::ir::{self, AbiParam, MemFlagsData, Signature, types};
 use cranelift_frontend::Variable;
-
-/// The machine type a vector is viewed as for a lane-wise operation: the lanes' integer type
-/// repeated to fill the vector.
-fn lane_type(lanes: Lanes) -> ir::Type {
-    let width = lanes.width();
-    match lanes {
-        Lanes::Bits => VECTOR_IR,
-        _ => ir::Type::int(width as u16)
-            .and_then(|lane| lane.by(u128::BITS / width))
-            .expect("a vector of lanes"),
-    }
-}
 
 impl<H: Host> WasmSimd for Emitter<'_, '_, H> {
     type Value = ir::Value;
 
-    /// One Cranelift instruction with exactly the row's semantics: a vector shift reduces its
-    /// count modulo the lane width, as Wasm does.
+    /// One machine instruction with exactly the row's semantics.
     fn vector_native(
         &mut self,
         native: Native,
         left: ir::Value,
         right: Option<ir::Value>,
     ) -> ir::Value {
-        let ty = lane_type(native.lanes);
-        let left = self.lanes(ty, left);
-        match (native.op, right) {
-            (NativeOp::Not, _) => self.body.core.builder.ins().bnot(left),
-            (
-                NativeOp::ShiftLeft | NativeOp::ShiftRightUnsigned | NativeOp::ShiftRightSigned,
-                Some(count),
-            ) => self.lane_shift(native.op, left, count),
-            (op, Some(right)) => {
-                let right = self.lanes(ty, right);
-                self.lane_binary(op, left, right)
-            }
-            (op, None) => unreachable!("{op:?} takes a second operand"),
-        }
+        self.lane_operation(native, left, right)
     }
 
     /// The operator's own kernel (`SimdKernel::apply_bits`), which the interpreter runs too:
@@ -66,31 +43,19 @@ impl<H: Host> WasmSimd for Emitter<'_, '_, H> {
     ) -> ir::Value {
         let (kernel, lane) = SimdKernel::of(selector).expect("an admitted selector");
         let slot = self.kernel_words();
-        self.store_operand(slot, SIMD_KERNEL_LEFT, left);
+        self.spill_operand(slot, SIMD_KERNEL_LEFT, left);
         if let Some(right) = right {
-            self.store_operand(slot, SIMD_KERNEL_RIGHT, right);
+            self.spill_operand(slot, SIMD_KERNEL_RIGHT, right);
         }
         let mut signature = Signature::new(self.call_conv);
         signature.params.push(AbiParam::new(types::I64));
         signature.params.push(AbiParam::new(types::I64));
         let signature = self.body.core.builder.import_signature(signature);
-        let target = self.body.core.builder.ins().iconst(
-            types::I64,
-            compiled_simd_kernel as *const () as usize as i64,
-        );
-        let selector = self
-            .body
-            .core
-            .builder
-            .ins()
-            .iconst(types::I64, i64::from(selector));
-        let words = self.body.core.builder.ins().stack_addr(types::I64, slot, 0);
-        self.body
-            .core
-            .builder
-            .ins()
-            .call_indirect(signature, target, &[selector, words]);
-        self.load_result(slot, kernel.result_type(lane))
+        let target = self.constant(Width::I64, compiled_simd_kernel as *const () as usize as i64);
+        let selector = self.constant(Width::I64, i64::from(selector));
+        let words = self.slot_address(slot, 0);
+        self.call_signature(signature, target, &[selector, words]);
+        self.reload_result(slot, SIMD_KERNEL_RESULT, kernel.result_type(lane))
     }
 
     fn vector_shuffle(
@@ -99,15 +64,7 @@ impl<H: Host> WasmSimd for Emitter<'_, '_, H> {
         left: ir::Value,
         right: ir::Value,
     ) -> ir::Value {
-        let mask = self
-            .body
-            .core
-            .builder
-            .func
-            .dfg
-            .immediates
-            .push(ir::ConstantData::from(lanes.to_vec()));
-        self.body.core.builder.ins().shuffle(left, right, mask)
+        self.vector_shuffle_lanes(lanes, left, right)
     }
 }
 
@@ -133,57 +90,10 @@ impl<H: Host> Emitter<'_, '_, H> {
 
     /// Define `register` as the vector `value`, of any lane shape.
     pub(super) fn write_vector(&mut self, register: u16, value: ir::Value) {
-        let value = self.lanes(VECTOR_IR, value);
+        let value = self.vector_view(Lanes::Bits, value);
         let variable = self.vector(register);
         self.known.retain(|(known, _)| *known != register);
         self.body.core.builder.def_var(variable, value);
-    }
-
-    /// `value`, a vector, viewed with the lane shape `ty`: the same bits.
-    fn lanes(&mut self, ty: ir::Type, value: ir::Value) -> ir::Value {
-        if self.body.core.builder.func.dfg.value_type(value) == ty {
-            return value;
-        }
-        let flags = MemFlagsData::new().with_endianness(ir::Endianness::Little);
-        self.body.core.builder.ins().bitcast(ty, flags, value)
-    }
-
-    pub(super) fn vector_constant(&mut self, bits: u128) -> ir::Value {
-        let constant = self
-            .body
-            .core
-            .builder
-            .func
-            .dfg
-            .constants
-            .insert(ir::ConstantData::from(bits.to_le_bytes().to_vec()));
-        self.body.core.builder.ins().vconst(VECTOR_IR, constant)
-    }
-
-    fn lane_shift(&mut self, op: NativeOp, left: ir::Value, count: ir::Value) -> ir::Value {
-        let ins = self.body.core.builder.ins();
-        match op {
-            NativeOp::ShiftLeft => ins.ishl(left, count),
-            NativeOp::ShiftRightUnsigned => ins.ushr(left, count),
-            _ => ins.sshr(left, count),
-        }
-    }
-
-    fn lane_binary(&mut self, op: NativeOp, left: ir::Value, right: ir::Value) -> ir::Value {
-        let ins = self.body.core.builder.ins();
-        match op {
-            NativeOp::And => ins.band(left, right),
-            NativeOp::Or => ins.bor(left, right),
-            NativeOp::Xor => ins.bxor(left, right),
-            NativeOp::AndNot => ins.band_not(left, right),
-            NativeOp::Add => ins.iadd(left, right),
-            NativeOp::Subtract => ins.isub(left, right),
-            _ => {
-                let builder = &mut self.body.core.builder;
-                let (left, right) = (builder.ins().uwiden_low(left), builder.ins().uwiden_low(right));
-                builder.ins().imul(left, right)
-            }
-        }
     }
 
     /// The stack slot of the kernel callout's words, made at the first callout.
@@ -205,52 +115,6 @@ impl<H: Host> Emitter<'_, '_, H> {
         slot
     }
 
-    /// An operand into the two words at position `at`: a vector whole, a scalar in the low word.
-    fn store_operand(&mut self, slot: ir::StackSlot, at: usize, value: ir::Value) {
-        let word = types::I64.bytes();
-        let offset = (at as u32 * word) as i32;
-        let ty = self.body.core.builder.func.dfg.value_type(value);
-        let (low, high) = if ty.is_vector() {
-            let value = self.lanes(types::I64X2, value);
-            let builder = &mut self.body.core.builder;
-            (
-                builder.ins().extractlane(value, 0),
-                builder.ins().extractlane(value, 1),
-            )
-        } else {
-            let builder = &mut self.body.core.builder;
-            let low = if ty == types::I32 {
-                builder.ins().uextend(types::I64, value)
-            } else {
-                value
-            };
-            (low, builder.ins().iconst(types::I64, 0))
-        };
-        let builder = &mut self.body.core.builder;
-        builder.ins().stack_store(types::I64, low, slot, offset);
-        builder
-            .ins()
-            .stack_store(types::I64, high, slot, offset + word as i32);
-    }
-
-    /// The kernel's result of type `ty`, from the result words.
-    fn load_result(&mut self, slot: ir::StackSlot, ty: WasmType) -> ir::Value {
-        let result = (SIMD_KERNEL_RESULT as u32 * types::I64.bytes()) as i32;
-        let builder = &mut self.body.core.builder;
-        if ty == WasmType::V128 {
-            return builder
-                .ins()
-                .stack_load(types::I64, VECTOR_IR, slot, result);
-        }
-        let value = builder
-            .ins()
-            .stack_load(types::I64, types::I64, slot, result);
-        match Kind::of(ty).expect("planned") {
-            Kind::I32 => builder.ins().ireduce(types::I32, value),
-            Kind::I64 => value,
-        }
-    }
-
     /// An operand of type `ty` in `register`: a vector, or a scalar in its integer view.
     fn simd_operand(&mut self, register: u16, ty: WasmType) -> ir::Value {
         match ty {
@@ -266,7 +130,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let index = self.read(register, Kind::I64);
         let proven = self.plan.operand(pc) == Slot::Memory32Address;
         infallible(check_access(self, Access::VECTOR, index, 0, proven));
-        let host = self.body.core.builder.ins().iadd(self.base, index);
+        let host = self.operate(Binary::Add, Width::I64, self.base, index);
         if !(self.guarded && proven) {
             return (host, self.flags(Region::LinearMemory));
         }
@@ -302,13 +166,13 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             Simd::Load => {
                 let (host, flags) = self.vector_access(pc, c);
-                let value = self.body.core.builder.ins().load(VECTOR_IR, flags, host, 0);
+                let value = self.raw_load(Lane::V128, flags, host, 0);
                 self.write_vector(a, value);
             }
             Simd::Store => {
                 let (host, flags) = self.vector_access(pc, c);
                 let value = self.read_vector(a);
-                self.body.core.builder.ins().store(flags, value, host, 0);
+                self.store_word(flags, value, host, 0);
             }
         }
     }

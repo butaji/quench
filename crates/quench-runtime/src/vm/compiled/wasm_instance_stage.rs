@@ -3,14 +3,17 @@
 
 use super::{Analysis, AnalysisState, Emitter, Host, Kind, Region, Slot};
 use crate::bytecode::{Function, WideInstruction};
+use crate::staged::machine::{MachineAccess, MachineStage, MachineVector};
+use crate::staged::wasm::Width;
 use crate::staged::wasm_instance::{Instance, Storage, WasmInstance};
-use cranelift_codegen::ir::{self, InstBuilder, types};
+use crate::wasm::conversion::ScalarConversionOperator as Conversion;
+use cranelift_codegen::ir;
 
-/// The machine type of a word held as `storage`.
-const fn storage_type(storage: Storage) -> ir::Type {
+/// The width of a word held as `storage`.
+const fn storage_width(storage: Storage) -> Width {
     match storage {
-        Storage::Bits32 => types::I32,
-        Storage::Bits64 | Storage::Handle => types::I64,
+        Storage::Bits32 => Width::I32,
+        Storage::Bits64 | Storage::Handle => Width::I64,
     }
 }
 
@@ -20,23 +23,19 @@ impl<H: Host> WasmInstance for Emitter<'_, '_, H> {
     fn global_load(&mut self, slot: u32, storage: Storage) -> ir::Value {
         let address = self.global_address(slot);
         let flags = self.flags(Region::Globals);
-        self.body
-            .core
-            .builder
-            .ins()
-            .load(storage_type(storage), flags, address, 0)
+        self.load_word(storage_width(storage), flags, address, 0)
     }
 
     /// A 32-bit payload is stored zero-extended, as the slot holds it (`Storage::narrow`).
     fn global_store(&mut self, slot: u32, storage: Storage, value: ir::Value) {
         let word = match storage {
-            Storage::Bits32 => self.body.core.builder.ins().uextend(types::I64, value),
+            Storage::Bits32 => self.convert(Conversion::ExtendI32Unsigned, value),
             Storage::Bits64 => value,
             Storage::Handle => unreachable!("the analysis admits scalar globals only"),
         };
         let address = self.global_address(slot);
         let flags = self.flags(Region::Globals);
-        self.body.core.builder.ins().store(flags, word, address, 0);
+        self.store_word(flags, word, address, 0);
     }
 }
 
@@ -98,7 +97,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             .expect("planned");
         if let Some(bits) = self.analysis.constant_vector(constant) {
             for register in registers {
-                let value = self.vector_constant(bits);
+                let value = self.vector_immediate(bits);
                 self.write_vector(register, value);
             }
             return;

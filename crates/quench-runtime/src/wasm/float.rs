@@ -3,7 +3,7 @@
 use super::WasmValue;
 use super::numeric::{NumericResult, selectors};
 use crate::staged::ConcreteWasm;
-use crate::staged::wasm::WasmStage;
+use crate::staged::machine::MachineStage;
 use crate::staged::wasm_float::{Float, float_binary, is_float_comparison};
 
 macro_rules! binary_family {
