@@ -10,8 +10,10 @@ impl Heap {
         debug_assert!(self.prototype_flagged(prototype));
         self.properties.note_plan_values(header.shape(), &values[..len]);
         let object = if len <= INLINE_PROPERTY_COUNT {
-            let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
-            inline[..len].copy_from_slice(&values[..len]);
+            // A fixed-length select per slot: a copy of `len` values was a `memcpy` call,
+            // which gave every planned construct a frame.
+            let inline: [Value; INLINE_PROPERTY_COUNT] =
+                std::array::from_fn(|slot| if slot < len { values.get(slot).copied().unwrap_or(Value::UNDEFINED) } else { Value::UNDEFINED });
             Object::from_inline_header(header, inline)
         } else if cfg!(feature = "profile-aggregate") {
             None
