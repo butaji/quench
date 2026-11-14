@@ -461,12 +461,13 @@ struct ParallelSweepResult {
 
 /// The string family's sweep in a full collection, run on a mark-pool worker while the
 /// collector sweeps the other families (`collect_with_object_roots`). It touches only the
-/// string records and `StringAtoms`, which no other family's sweep reads. A dead string that
+/// string records, the small strings and `StringAtoms`, which no other family's sweep reads. A dead string that
 /// shares an `Rc` is handed back for the collector thread to drop after the join, as
 /// `StoppedCellDrop` hands back cells: another family's dead record may drop a clone of the
 /// same `Rc` at the same time.
 struct StoppedStringSweep<'a> {
     records: &'a mut StringRecordSpace,
+    small: &'a mut small_strings::SmallStringSpace,
     atoms: &'a mut string_atoms::StringAtoms,
     full: bool,
     age: PromotionAge,
@@ -481,11 +482,14 @@ struct StringSweepOutput {
     dead_bytes: usize,
     /// Dead strings sharing an `Rc`, for the collector thread to drop.
     rc_strings: Vec<JsString>,
+    /// Dead small strings holding a written text, for the collector thread to drop.
+    rc_small: Vec<SmallParts>,
 }
 
-// SAFETY: the job holds exclusive borrows of the string records and atoms, which no other
+// SAFETY: the job holds exclusive borrows of the string records, small strings and atoms, which no other
 // code reads until the scope joins, with the mutator stopped. On a worker it drops only
-// strings whose drop writes no reference count (`JsString::drop_is_local`) and reads the
+// strings whose drop writes no reference count (`JsString::drop_is_local`,
+// `SmallParts::drop_is_local`) and reads the
 // others' units without cloning them, so no count is written off the collector thread.
 unsafe impl Send for StoppedStringSweep<'_> {}
 // SAFETY: as above; `rc_strings` is only moved across the join, never touched on the worker
@@ -508,7 +512,17 @@ impl StoppedStringSweep<'_> {
                 }
             }
         });
-        (out.live, out.freed) = (live, freed);
+        // Small strings share no atom or record with them; their texts are payload as well.
+        let (small_live, small_freed) = self.small.sweep(self.full, self.age, self.full, |record| match record {
+            RecordSweep::Keep(_, parts) => out.live_bytes += parts.text_bytes(),
+            RecordSweep::Dead(_, parts) => {
+                out.dead_bytes += parts.text_bytes();
+                if on_worker && !parts.drop_is_local() {
+                    out.rc_small.push(parts);
+                }
+            }
+        });
+        (out.live, out.freed) = (live + small_live, freed + small_freed);
         out
     }
 }
@@ -2588,11 +2602,13 @@ impl Heap {
             let string_worker = (full
                 && !cfg!(feature = "profile-memory")
                 && (self.parallel_mark_forced()
-                    || self.string_records.live_count() >= PARALLEL_MARK_MINIMUM_CELLS / 4))
+                    || self.string_records.live_count() + self.small_strings.live_count()
+                        >= PARALLEL_MARK_MINIMUM_CELLS / 4))
                 .then(parallel_mark::parallel_mark_pool)
                 .flatten();
             let strings = StoppedStringSweep {
                 records: &mut self.string_records,
+                small: &mut self.small_strings,
                 atoms: &mut self.string_atoms,
                 full,
                 age,
@@ -2733,15 +2749,6 @@ impl Heap {
                         self.sparse_arrays = None;
                     }
                 }
-                // Small strings sweep here, beside the worker's string records: they share
-                // nothing with them (no atom, no record) and their texts drop on this thread.
-                let small = small_strings::sweep(
-                    &mut self.small_strings,
-                    payload_bytes,
-                    live_payload_bytes,
-                    full,
-                    age,
-                );
                 (
                     (object_live, object_freed),
                     (function_live, function_freed),
@@ -2750,7 +2757,6 @@ impl Heap {
                     (v128_live, v128_freed),
                     (iterator_live, iterator_freed),
                     (array_live, array_freed),
-                    small,
                 )
             };
             let (
@@ -2761,7 +2767,6 @@ impl Heap {
                 (v128_live, v128_freed),
                 (iterator_live, iterator_freed),
                 (array_live, array_freed),
-                (small_live, small_freed),
             ) = match string_worker {
                 Some(pool) => pool.in_place_scope(|scope| {
                     let out = &mut string_out;
@@ -2775,9 +2780,10 @@ impl Heap {
             };
             // The strings that share an `Rc` die on the collector thread.
             drop(std::mem::take(&mut string_out.rc_strings));
+            drop(std::mem::take(&mut string_out.rc_small));
             self.payload_bytes = self.payload_bytes.saturating_sub(string_out.dead_bytes);
             *live_payload_bytes += string_out.live_bytes;
-            let (string_live, string_freed) = (string_out.live + small_live, string_out.freed + small_freed);
+            let (string_live, string_freed) = (string_out.live, string_out.freed);
             live += object_live
                 + array_live
                 + function_live

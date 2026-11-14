@@ -86,6 +86,12 @@ impl SmallParts {
         self.head & WRITTEN != 0
     }
 
+    /// Whether dropping it writes no reference count: it holds no text yet (a written
+    /// text's `Rc` may have been cloned out through a view).
+    pub(super) fn drop_is_local(&self) -> bool {
+        !self.is_written()
+    }
+
     /// Its text's storage, once made, still owned by the record.
     #[inline(always)]
     fn text(&self) -> Option<ManuallyDrop<Rc<str>>> {
@@ -468,19 +474,4 @@ impl Heap {
             if Some(position) == at { number.as_slice() } else { piece }
         }))
     }
-}
-
-/// Sweeps the small strings as the string records are swept: a dead one's text is dropped with
-/// it and released from the payload ledger; a full sweep counts each live text's.
-pub(super) fn sweep(
-    small: &mut SmallStringSpace,
-    payload_bytes: &mut usize,
-    live_payload_bytes: &mut usize,
-    full: bool,
-    age: PromotionAge,
-) -> (usize, usize) {
-    small.sweep(full, age, full, |record| match record {
-        RecordSweep::Keep(_, parts) => *live_payload_bytes += parts.text_bytes(),
-        RecordSweep::Dead(_, parts) => *payload_bytes = payload_bytes.saturating_sub(parts.text_bytes()),
-    })
 }
