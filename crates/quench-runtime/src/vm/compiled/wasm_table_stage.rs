@@ -16,12 +16,13 @@ use super::{
 };
 use crate::bytecode::WideInstruction;
 use crate::heap::{TableTarget, TableWords};
-use crate::staged::machine::{MachineAccess, MachineStage};
+use crate::staged::machine::{MachineAccess, MachineFlow, MachineStage};
 use crate::staged::wasm::Width;
+use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::staged::wasm_call::{WasmTable, indirect_target};
 use crate::wasm::CanonicalSignature;
 use crate::wasm::integer::I64BinaryOperator as Binary;
-use cranelift_codegen::ir::{self, BlockArg, InstBuilder, MemFlagsData, condcodes::IntCC, types};
+use cranelift_codegen::ir::{self, MemFlagsData, types};
 
 /// The table an indirect target is being emitted for: the address of its published words, its
 /// binding and the type the call expects.
@@ -59,21 +60,27 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.indirect.expect("an indirect target is being emitted")
     }
 
+    /// Makes `block` the current one: the code that follows is its own.
+    fn enter(&mut self, block: ir::Block) {
+        self.body.core.builder.switch_to_block(block);
+        self.body.core.builder.seal_block(block);
+    }
+
     /// The address of the published words of the table at binding `table`: the instance's table
     /// area holds them, indexed by the binding.
     fn table_words(&mut self, table: u32) -> ir::Value {
-        let builder = &mut self.body.core.builder;
-        let array = builder.ins().load(types::I64, invariant(), self.body.core.context, CONTEXT_TABLE_WORDS);
+        let context = self.body.core.context;
+        let array = self.load_word(Width::I64, invariant(), context, CONTEXT_TABLE_WORDS);
         let offset = (table as usize * size_of::<*const TableWords>()) as i32;
-        builder.ins().load(types::I64, invariant(), array, offset)
+        self.load_word(Width::I64, invariant(), array, offset)
     }
 
     /// The address of the row of element `index`.
     fn table_row(&mut self, words: ir::Value, index: ir::Value) -> ir::Value {
-        let builder = &mut self.body.core.builder;
-        let base = builder.ins().load(types::I64, MemFlagsData::trusted(), words, TableWords::BASE);
-        let offset = builder.ins().imul_imm_u(index, TableTarget::SIZE);
-        builder.ins().iadd(base, offset)
+        let base = self.load_word(Width::I64, MemFlagsData::trusted(), words, TableWords::BASE);
+        let size = self.constant(Width::I64, TableTarget::SIZE as i64);
+        let offset = self.operate(Binary::Multiply, Width::I64, index, size);
+        self.operate(Binary::Add, Width::I64, base, offset)
     }
 
     /// Lowers the target of an indirect call: the staged rule over the table, whose result,
@@ -85,7 +92,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let words = self.table_words(table);
         self.indirect = Some(IndirectSite { words, table, signature_index });
         let index = self.read(instruction.c(), Kind::I32);
-        let index = self.body.core.builder.ins().uextend(types::I64, index);
+        let index = self.convert(Conversion::ExtendI32Unsigned, index);
         let row = infallible(indirect_target(self, index, expected));
         self.indirect = None;
         self.write(instruction.a(), Kind::I64, row);
@@ -96,20 +103,14 @@ impl<H: Host> WasmTable for Emitter<'_, '_, H> {
     fn table_range_exceeds(&mut self, index: ir::Value, extent: ir::Value) -> ir::Value {
         let end = self.operate(Binary::Add, Width::I64, index, extent);
         let words = self.site().words;
-        let length = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            words,
-            TableWords::LENGTH,
-        );
+        let length = self.load_word(Width::I64, MemFlagsData::trusted(), words, TableWords::LENGTH);
         self.operate(Binary::GreaterUnsigned, Width::I64, end, length)
     }
 
     fn element_signature(&mut self, index: ir::Value) -> ir::Value {
         let row = self.table_row(self.site().words, index);
-        let builder = &mut self.body.core.builder;
-        let id = builder.ins().load(types::I32, MemFlagsData::trusted(), row, TableTarget::SIGNATURE);
-        builder.ins().uextend(types::I64, id)
+        let id = self.load_word(Width::I32, MemFlagsData::trusted(), row, TableTarget::SIGNATURE);
+        self.convert(Conversion::ExtendI32Unsigned, id)
     }
 
     /// The reference of an element, for the call that follows, is its row: the table keeps it.
@@ -126,25 +127,21 @@ impl<H: Host> WasmTable for Emitter<'_, '_, H> {
     ) -> ir::Value {
         let equal = self.operate(Binary::Equal, Width::I64, signature, expected);
         let site = self.site();
-        let (table, expected_type) = (i64::from(site.table), i64::from(site.signature_index));
         let context = self.body.core.context;
         let builder = &mut self.body.core.builder;
         let (relate, join) = (builder.create_block(), builder.create_block());
         builder.append_block_param(join, types::I32);
-        builder.ins().brif(equal, join, &[BlockArg::Value(equal)], relate, &[]);
-        builder.set_cold_block(relate);
-        builder.switch_to_block(relate);
-        builder.seal_block(relate);
-        let table = builder.ins().iconst(types::I64, table);
-        let expected_type = builder.ins().iconst(types::I64, expected_type);
+        self.branch_if(equal, (join, &[equal]), (relate, &[]));
+        self.body.core.builder.set_cold_block(relate);
+        self.enter(relate);
+        let table = self.constant(Width::I64, i64::from(site.table));
+        let expected_type = self.constant(Width::I64, i64::from(site.signature_index));
         let target = compiled_table_accepts::<H> as *const () as usize;
         let related = self.call_leaf(target, &[context, table, reference, expected_type]);
-        let builder = &mut self.body.core.builder;
-        let related = builder.ins().ireduce(types::I32, related);
-        builder.ins().jump(join, &[BlockArg::Value(related)]);
-        builder.switch_to_block(join);
-        builder.seal_block(join);
-        builder.block_params(join)[0]
+        let related = self.convert(Conversion::WrapI64, related);
+        self.goto(join, &[related]);
+        self.enter(join);
+        self.body.core.builder.block_params(join)[0]
     }
 }
 
@@ -175,16 +172,12 @@ impl<H: Host> Emitter<'_, '_, H> {
         let (slow, done) = (builder.create_block(), builder.create_block());
         builder.append_block_param(done, types::I64);
         self.native_calls(words, row, expected, &signature, (args, out), (slow, done));
-        let builder = &mut self.body.core.builder;
-        builder.switch_to_block(slow);
-        builder.set_cold_block(slow);
-        builder.seal_block(slow);
+        self.body.core.builder.set_cold_block(slow);
+        self.enter(slow);
         let status = self.call_through_vm(pc, table, signature_index, row, (args, out));
-        let builder = &mut self.body.core.builder;
-        builder.ins().jump(done, &[BlockArg::Value(status)]);
-        builder.switch_to_block(done);
-        builder.seal_block(done);
-        let status = builder.block_params(done)[0];
+        self.goto(done, &[status]);
+        self.enter(done);
+        let status = self.body.core.builder.block_params(done)[0];
         self.propagate(status);
         self.take_result(instruction, &signature, out);
     }
@@ -203,26 +196,23 @@ impl<H: Host> Emitter<'_, '_, H> {
     ) {
         let address = self.table_row(words, row);
         let context = self.body.core.context;
-        let builder = &mut self.body.core.builder;
         let flags = MemFlagsData::trusted();
-        let id = builder.ins().load(types::I32, flags, address, TableTarget::SIGNATURE);
-        let same_signature = builder.ins().icmp_imm_u(IntCC::Equal, id, expected.word() as i64);
-        let (resolve, local, foreign) = (builder.create_block(), builder.create_block(), builder.create_block());
-        builder.ins().brif(same_signature, resolve, &[], slow, &[]);
-        builder.switch_to_block(resolve);
-        builder.seal_block(resolve);
-        let instance = builder.ins().load(types::I64, flags, address, TableTarget::INSTANCE);
-        let entry = builder.ins().load(types::I32, flags, address, TableTarget::ENTRY);
-        let entry = builder.ins().uextend(types::I64, entry);
-        let running = builder.ins().load(types::I64, invariant(), context, CONTEXT_INSTANCE);
-        let mine = builder.ins().icmp(IntCC::Equal, instance, running);
-        builder.ins().brif(mine, local, &[], foreign, &[]);
-        builder.switch_to_block(local);
-        builder.seal_block(local);
-        self.local_call(entry, signature, buffers, (slow, done));
+        let id = self.load_word(Width::I32, flags, address, TableTarget::SIGNATURE);
+        let wanted = self.constant(Width::I32, expected.word() as i64);
+        let same_signature = self.operate(Binary::Equal, Width::I32, id, wanted);
         let builder = &mut self.body.core.builder;
-        builder.switch_to_block(foreign);
-        builder.seal_block(foreign);
+        let (resolve, local, foreign) = (builder.create_block(), builder.create_block(), builder.create_block());
+        self.branch_if(same_signature, (resolve, &[]), (slow, &[]));
+        self.enter(resolve);
+        let instance = self.load_word(Width::I64, flags, address, TableTarget::INSTANCE);
+        let entry = self.load_word(Width::I32, flags, address, TableTarget::ENTRY);
+        let entry = self.convert(Conversion::ExtendI32Unsigned, entry);
+        let running = self.load_word(Width::I64, invariant(), context, CONTEXT_INSTANCE);
+        let mine = self.operate(Binary::Equal, Width::I64, instance, running);
+        self.branch_if(mine, (local, &[]), (foreign, &[]));
+        self.enter(local);
+        self.local_call(entry, signature, buffers, (slow, done));
+        self.enter(foreign);
         self.foreign_call(instance, entry, signature, buffers, (slow, done));
     }
 
@@ -236,24 +226,24 @@ impl<H: Host> Emitter<'_, '_, H> {
         (slow, done): (ir::Block, ir::Block),
     ) {
         let context = self.body.core.context;
-        let table = self.body.core.builder.ins().load(types::I64, invariant(), context, CONTEXT_TABLE);
+        let table = self.load_word(Width::I64, invariant(), context, CONTEXT_TABLE);
         let body = self.entry_body(table, entry, slow);
         let status = self.call_body(body, signature, buffers, (self.base, self.length));
-        self.body.core.builder.ins().jump(done, &[BlockArg::Value(status)]);
+        self.goto(done, &[status]);
     }
 
     /// The body at index `entry` of the code table at `table`; a function without one leaves
     /// for `slow`.
     pub(super) fn entry_body(&mut self, table: ir::Value, entry: ir::Value, slow: ir::Block) -> ir::Value {
-        let builder = &mut self.body.core.builder;
-        let offset = builder.ins().imul_imm_u(entry, size_of::<usize>() as i64);
-        let slot = builder.ins().iadd(table, offset);
-        let body = builder.ins().load(types::I64, MemFlagsData::trusted(), slot, 0);
-        let compiled = builder.ins().icmp_imm_u(IntCC::NotEqual, body, 0);
-        let enter = builder.create_block();
-        builder.ins().brif(compiled, enter, &[], slow, &[]);
-        builder.switch_to_block(enter);
-        builder.seal_block(enter);
+        let size = self.constant(Width::I64, size_of::<usize>() as i64);
+        let offset = self.operate(Binary::Multiply, Width::I64, entry, size);
+        let slot = self.operate(Binary::Add, Width::I64, table, offset);
+        let body = self.load_word(Width::I64, MemFlagsData::trusted(), slot, 0);
+        let none = self.constant(Width::I64, 0);
+        let compiled = self.operate(Binary::NotEqual, Width::I64, body, none);
+        let enter = self.body.core.builder.create_block();
+        self.branch_if(compiled, (enter, &[]), (slow, &[]));
+        self.enter(enter);
         body
     }
 
@@ -274,20 +264,19 @@ impl<H: Host> Emitter<'_, '_, H> {
         for (offset, ty) in signature.params.iter().enumerate() {
             let raw = self.load_word_at(args, offset);
             arguments.push(match Kind::of(*ty).expect("planned") {
-                Kind::I32 => self.body.core.builder.ins().ireduce(types::I32, raw),
+                Kind::I32 => self.convert(Conversion::WrapI64, raw),
                 Kind::I64 => raw,
             });
         }
         let callee = internal_signature(self.memory, &signature.params, signature.results.first().copied(), self.call_conv);
         let callee = self.body.core.builder.import_signature(callee);
-        let call = self.body.core.builder.ins().call_indirect(callee, body, &arguments);
-        let results = self.body.core.builder.inst_results(call).to_vec();
+        let results = self.call_signature(callee, body, &arguments);
         if let Some(result) = signature.results.first() {
             let value = match Kind::of(*result).expect("planned") {
-                Kind::I32 => self.body.core.builder.ins().uextend(types::I64, results[1]),
+                Kind::I32 => self.convert(Conversion::ExtendI32Unsigned, results[1]),
                 Kind::I64 => results[1],
             };
-            self.body.core.builder.ins().store(MemFlagsData::trusted(), value, out, 0);
+            self.store_word(MemFlagsData::trusted(), value, out, 0);
         }
         results[0]
     }
@@ -308,9 +297,7 @@ impl<H: Host> Emitter<'_, '_, H> {
 
     /// The word `offset` words from `address`.
     fn load_word_at(&mut self, address: ir::Value, offset: usize) -> ir::Value {
-        let builder = &mut self.body.core.builder;
-        let at = (offset * WORD) as i32;
-        builder.ins().load(types::I64, MemFlagsData::trusted(), address, at)
+        self.load_word(Width::I64, MemFlagsData::trusted(), address, (offset * WORD) as i32)
     }
 
     /// Stores the call window's arguments, a word each, in a slot with one word more for the
@@ -326,15 +313,15 @@ impl<H: Host> Emitter<'_, '_, H> {
             let kind = Kind::of(*ty).expect("planned");
             let value = self.read(window.base + offset as u16, kind);
             let value = match kind {
-                Kind::I32 => self.body.core.builder.ins().uextend(types::I64, value),
+                Kind::I32 => self.convert(Conversion::ExtendI32Unsigned, value),
                 Kind::I64 => value,
             };
-            let address = self.body.core.builder.ins().stack_addr(types::I64, slot, (offset * WORD) as i32);
-            self.body.core.builder.ins().store(MemFlagsData::trusted(), value, address, 0);
+            let address = self.slot_address(slot, (offset * WORD) as i32);
+            self.store_word(MemFlagsData::trusted(), value, address, 0);
         }
         let result = (signature.params.len() * WORD) as i32;
-        let args = self.body.core.builder.ins().stack_addr(types::I64, slot, 0);
-        let out = self.body.core.builder.ins().stack_addr(types::I64, slot, result);
+        let args = self.slot_address(slot, 0);
+        let out = self.slot_address(slot, result);
         (args, out)
     }
 
@@ -360,18 +347,11 @@ impl<H: Host> Emitter<'_, '_, H> {
             CONTEXT_CALL_REFERENCE
         };
         let context = self.body.core.context;
-        let builder = &mut self.body.core.builder;
-        let target = builder.ins().load(types::I64, invariant(), context, offset);
-        let table = builder.ins().iconst(types::I64, i64::from(table));
-        let signature_index = builder.ins().iconst(types::I64, i64::from(signature_index));
-        let site = builder.ins().iconst(types::I64, site as i64);
-        let words = [context, table, row, signature_index, site, args, out];
-        let mut callout = ir::Signature::new(self.call_conv);
-        callout.params = words.iter().map(|_| ir::AbiParam::new(types::I64)).collect();
-        callout.returns.push(ir::AbiParam::new(types::I64));
-        let callout = self.body.core.builder.import_signature(callout);
-        let call = self.body.core.builder.ins().call_indirect(callout, target, &words);
-        self.body.core.builder.inst_results(call)[0]
+        let target = self.load_word(Width::I64, invariant(), context, offset);
+        let table = self.constant(Width::I64, i64::from(table));
+        let signature_index = self.constant(Width::I64, i64::from(signature_index));
+        let site = self.constant(Width::I64, site as i64);
+        self.call_words(target, &[context, table, row, signature_index, site, args, out])
     }
 
     /// Writes the call's result, the word `out` holds, to the call's register.
@@ -389,7 +369,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let kind = Kind::of(*ty).expect("planned");
         let bits = self.load_word_at(out, 0);
         let value = match kind {
-            Kind::I32 => self.body.core.builder.ins().ireduce(types::I32, bits),
+            Kind::I32 => self.convert(Conversion::WrapI64, bits),
             Kind::I64 => bits,
         };
         self.write(destination, kind, value);

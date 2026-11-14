@@ -76,6 +76,34 @@ pub(crate) trait MachineAccess: MachineStage {
     fn load_word(&mut self, width: Width, flags: Self::Flags, base: Self::Word, offset: i32) -> Self::Word;
     /// Stores `value`, a word of its own width, `offset` bytes from `base`.
     fn store_word(&mut self, flags: Self::Flags, value: Self::Word, base: Self::Word, offset: i32);
+    /// A call of the code at `target` on word `arguments`: its word.
+    fn call_words(&mut self, target: Self::Word, arguments: &[Self::Word]) -> Self::Word;
     /// A call of the leaf at address `leaf` on word `arguments`: its word.
-    fn call_leaf(&mut self, leaf: usize, arguments: &[Self::Word]) -> Self::Word;
+    fn call_leaf(&mut self, leaf: usize, arguments: &[Self::Word]) -> Self::Word {
+        let target = self.constant(Width::I64, leaf as i64);
+        self.call_words(target, arguments)
+    }
+    /// What a call's signature is: its parameter and result machine types.
+    type Signature: Copy;
+    /// A stack slot a caller spills words into.
+    type Slot: Copy;
+    /// The address `offset` bytes into `slot`.
+    fn slot_address(&mut self, slot: Self::Slot, offset: i32) -> Self::Word;
+    /// A call of the code at `target` under `signature`: all of its results.
+    fn call_signature(&mut self, signature: Self::Signature, target: Self::Word, arguments: &[Self::Word]) -> Vec<Self::Word>;
+}
+
+/// A machine with blocks: the transfers between them, each carrying words as the target's
+/// parameters.
+pub(crate) trait MachineFlow: MachineStage {
+    type Block: Copy;
+    /// Continues at `block` with `arguments` as its parameters.
+    fn goto(&mut self, block: Self::Block, arguments: &[Self::Word]);
+    /// Continues at `then` where `flag` is nonzero, else at `otherwise`, each with its arguments.
+    fn branch_if(
+        &mut self,
+        flag: Self::Word,
+        then: (Self::Block, &[Self::Word]),
+        otherwise: (Self::Block, &[Self::Word]),
+    );
 }

@@ -4,7 +4,7 @@
 //! operator is on the machine.
 
 use super::{Emitter, Host, Kind, scalar_ir};
-use crate::staged::machine::{MachineAccess, MachineStage};
+use crate::staged::machine::{MachineAccess, MachineFlow, MachineStage};
 use crate::staged::wasm_memory::Access;
 use crate::staged::wasm::Width;
 use crate::staged::wasm_float::{Float, Truncation};
@@ -387,15 +387,43 @@ impl<H: Host> MachineAccess for Emitter<'_, '_, H> {
         self.body.core.builder.ins().store(flags, value, base, offset);
     }
 
-    fn call_leaf(&mut self, leaf: usize, arguments: &[ir::Value]) -> ir::Value {
+    fn call_words(&mut self, target: ir::Value, arguments: &[ir::Value]) -> ir::Value {
         let mut signature = Signature::new(self.call_conv);
         for _ in arguments {
             signature.params.push(AbiParam::new(types::I64));
         }
         signature.returns.push(AbiParam::new(types::I64));
         let signature = self.body.core.builder.import_signature(signature);
-        let target = self.constant(Width::I64, leaf as i64);
-        let call = self.body.core.builder.ins().call_indirect(signature, target, arguments);
-        self.body.core.builder.inst_results(call)[0]
+        self.call_signature(signature, target, arguments)[0]
     }
+
+    type Signature = ir::SigRef;
+    type Slot = ir::StackSlot;
+
+    fn slot_address(&mut self, slot: ir::StackSlot, offset: i32) -> ir::Value {
+        self.body.core.builder.ins().stack_addr(types::I64, slot, offset)
+    }
+
+    fn call_signature(&mut self, signature: ir::SigRef, target: ir::Value, arguments: &[ir::Value]) -> Vec<ir::Value> {
+        let call = self.body.core.builder.ins().call_indirect(signature, target, arguments);
+        self.body.core.builder.inst_results(call).to_vec()
+    }
+}
+
+impl<H: Host> MachineFlow for Emitter<'_, '_, H> {
+    type Block = ir::Block;
+
+    fn goto(&mut self, block: ir::Block, arguments: &[ir::Value]) {
+        self.body.core.builder.ins().jump(block, &block_args(arguments));
+    }
+
+    fn branch_if(&mut self, flag: ir::Value, then: (ir::Block, &[ir::Value]), otherwise: (ir::Block, &[ir::Value])) {
+        let (taken, other) = (block_args(then.1), block_args(otherwise.1));
+        self.body.core.builder.ins().brif(flag, then.0, &taken, otherwise.0, &other);
+    }
+}
+
+/// The arguments of a block call.
+fn block_args(values: &[ir::Value]) -> Vec<ir::BlockArg> {
+    values.iter().copied().map(ir::BlockArg::Value).collect()
 }
