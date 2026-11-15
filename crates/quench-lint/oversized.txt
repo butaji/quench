@@ -1386,7 +1386,7 @@ file-lines crates/quench-runtime/src/vm/dispatch_frame.rs 2873
 file-lines crates/quench-runtime/src/vm/dispatch_wasm.rs 638
 file-lines crates/quench-runtime/src/vm/disposal.rs 1002
 file-lines crates/quench-runtime/src/vm/embedding.rs 1899
-file-lines crates/quench-runtime/src/vm/environment.rs 2512
+file-lines crates/quench-runtime/src/vm/environment.rs 2511
 file-lines crates/quench-runtime/src/vm/error.rs 2684
 file-lines crates/quench-runtime/src/vm/eval.rs 1289
 file-lines crates/quench-runtime/src/vm/gc.rs 1295
@@ -5131,9 +5131,5 @@ native_form StringCaseIndex 1
 native_form SuperConstArrayObject2 1
 native_form Yield 1
 native_form YieldStar 1
-native_ir crates/quench-runtime/src/vm/compiled/emit_machine/flow.rs 4
-native_ir crates/quench-runtime/src/vm/compiled/emit_machine/memory.rs 6
-native_ir crates/quench-runtime/src/vm/compiled/emit_machine/scalar.rs 11
-native_ir crates/quench-runtime/src/vm/compiled/emit_machine/vector.rs 18
 native_ir crates/quench-runtime/src/vm/compiled/lane_region/polls.rs 4
-native_refusals 26
+native_refusals 25

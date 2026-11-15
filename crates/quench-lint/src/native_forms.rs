@@ -16,7 +16,9 @@
 //!   tests) builds by hand (`.ins()`), the volume of operation meaning written beside the
 //!   handler it mirrors rather than derived from the staged operation (`staged/`). Each is a
 //!   hand lowering to move into the operation table or replace by a call of the shared slow
-//!   path.
+//!   path. `vm/compiled/emit_machine/` is the one sanctioned home of Cranelift instructions:
+//!   it is the Machine primitive backend the derived layers emit through, so its `.ins()` are
+//!   not counted; the measure is hand IR outside it.
 //!
 //! All join the shrink-only measures in `oversized.txt`; a lowering or a refusal that goes
 //! away shrinks them, one that appears fails.
@@ -36,6 +38,8 @@ const LANE_LOWERING: &str = "vm/compiled/lane_region";
 /// Where the JIT builds native code by hand: the directory of its files, and the file beside it.
 const JIT_DIRECTORY: &str = "vm/compiled/";
 const JIT_ROOT: &str = "vm/compiled.rs";
+/// The Machine primitive backend, the sanctioned home of the instruction builder.
+const MACHINE_HOME: &str = "vm/compiled/emit_machine/";
 /// The decoder of the allocation rows the lane lowers (`lane_region/allocations.rs`).
 const ALLOCATION: &str = "staged/allocation.rs";
 const REFUSALS: &str = "vm/lane_body_stats.rs";
@@ -128,7 +132,7 @@ impl Facts {
 /// test paths.
 fn hand_built(file: &str, path: &PathBuf, measures: &mut Measures) {
     let jit = file.contains(JIT_DIRECTORY) || file.ends_with(JIT_ROOT);
-    if !jit || crate::in_test_path(file) { return; }
+    if !jit || file.contains(MACHINE_HOME) || crate::in_test_path(file) { return; }
     let Some(syntax) = fs::read_to_string(path).ok().and_then(|source| syn::parse_file(&source).ok()) else { return };
     let mut built = Built(0);
     built.visit_file(&syntax);

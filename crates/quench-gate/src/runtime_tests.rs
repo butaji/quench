@@ -1,30 +1,47 @@
-//! Running a filtered selection of the `quench-runtime` library tests, which must pass and
-//! must have matched at least one test: a filter that selects nothing proves nothing.
+//! Running a filtered selection of the `quench-runtime` library tests, which must have matched
+//! at least one test: a filter that selects nothing proves nothing.
 
 use crate::{config::Config, process};
 
 const PACKAGE: &str = "quench-runtime";
-const PASSED_PREFIX: &str = "test result: ok. ";
+const TEST_PREFIX: &str = "test ";
+const RESULT_SEPARATOR: &str = " ... ";
+const PASSED: &str = "ok";
+const FAILED: &str = "FAILED";
 
-/// The tests the cargo test output reports as passed.
-fn passed(output: &str) -> usize {
-    output
-        .lines()
-        .filter_map(|line| line.strip_prefix(PASSED_PREFIX))
-        .filter_map(|summary| summary.split_whitespace().next()?.parse::<usize>().ok())
-        .sum()
+/// What one run of the selected tests reported, by test name.
+pub struct Tally {
+    pub passed: Vec<String>,
+    pub failed: Vec<String>,
+    /// The end of the run's output, for a report.
+    pub excerpt: String,
 }
 
-/// Runs the library tests whose names contain any of `filters`; returns how many passed.
-pub fn run(config: &Config, filters: &[String]) -> Result<usize, String> {
+/// The tests the cargo test output reports under `outcome`.
+fn named(output: &str, outcome: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter_map(|line| line.strip_prefix(TEST_PREFIX)?.split_once(RESULT_SEPARATOR))
+        .filter(|(_, result)| *result == outcome)
+        .map(|(name, _)| name.to_owned())
+        .collect()
+}
+
+/// Runs the library tests whose names contain any of `filters`. A run that matched no test, or
+/// whose build failed, is an error; test failures are the caller's to judge.
+pub fn tally(config: &Config, filters: &[String]) -> Result<Tally, String> {
     let mut command = config.cargo("test");
     command.args(["-p", PACKAGE, "--lib", "--"]).args(filters);
     let finished = process::run(&mut command)?;
-    if !finished.success {
-        return Err(finished.excerpt());
+    let (passed, failed) = (named(&finished.stdout, PASSED), named(&finished.stdout, FAILED));
+    if passed.is_empty() && failed.is_empty() {
+        return Err(if finished.success { format!("no {PACKAGE} test matched {filters:?}") } else { finished.excerpt() });
     }
-    match passed(&finished.stdout) {
-        0 => Err(format!("no {PACKAGE} test matched {filters:?}")),
-        count => Ok(count),
-    }
+    Ok(Tally { passed, failed, excerpt: finished.excerpt() })
+}
+
+/// Runs the selection, every test of which must pass; returns how many did.
+pub fn run(config: &Config, filters: &[String]) -> Result<usize, String> {
+    let tally = tally(config, filters)?;
+    if tally.failed.is_empty() { Ok(tally.passed.len()) } else { Err(tally.excerpt) }
 }
