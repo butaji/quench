@@ -354,6 +354,8 @@ struct LoopRead {
     /// replace this receiver or change its shape. Never inferred from feedback.
     receiver: Option<(Register, Type)>,
     header: Option<ObjectHeader>,
+    /// The word an induction value (`representation` `Int64`) advances by at each step of its counter.
+    step: Option<Variable>,
 }
 
 #[derive(Clone, Copy)]
@@ -2451,6 +2453,7 @@ impl Lowering<'_, '_> {
     fn instruction(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         if self.consumed.contains(pc) { return true; }
         self.left_here = self.generic.contains(&pc);
+        self.advance_inductions(pc);
         if self.unit.markers.contains(&pc) || !retains_array_views(&self.program.constants, instruction) {
             state.proofs.arrays.clear();
         }
@@ -3507,7 +3510,7 @@ impl Lowering<'_, '_> {
                     self.loop_stores.insert(store, LoopStore { header: object_header, address, packed_range });
                 }
             }
-            let read = LoopRead { value: variable, ty, representation, receiver, header: object_header };
+            let read = LoopRead { value: variable, ty, representation, receiver, header: object_header, step: None };
             if let Some(index) = field {
                 for pc in &self.loop_fields[index].reads { self.hoisted.insert(*pc, read); }
             } else { self.hoisted.insert(pc, read); }

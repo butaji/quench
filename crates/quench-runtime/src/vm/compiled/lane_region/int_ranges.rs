@@ -11,7 +11,7 @@
 
 use super::*;
 use super::super::facts::{self, Model, Observed, ObservedRead, Point, Seeds, Text};
-use super::loop_versions::{Hoist, Nest, Resolved, Shape, Version};
+use super::loop_versions::{Hoist, Induction, Nest, Resolved, Shape, Version};
 
 /// The facts one analysis proves, by unit PC.
 pub(super) struct IntRanges {
@@ -22,6 +22,8 @@ pub(super) struct IntRanges {
     versioned: Vec<Version>,
     /// The pure integer operations a loop's entry evaluates once (`Lowering::hoist_pure`), by PC (ascending).
     hoisted: Vec<Hoist>,
+    /// The products of a counter a loop's entry holds and advances (`Lowering::start_inductions`).
+    inductions: Vec<Induction>,
     /// The arithmetic whose result leaves int32 within `IntRange::WORD`, by PC (ascending), with its range.
     index_ranges: Vec<(usize, IntRange)>,
     /// The products no consumer reads the sign of a zero of, by PC (ascending).
@@ -33,7 +35,7 @@ pub(super) struct IntRanges {
 impl IntRanges {
     pub(super) fn new(instructions: usize) -> Self {
         Self { overflow_free: CompoundBitSet::with_capacity(instructions), in_bounds: CompoundBitSet::with_capacity(instructions),
-            versioned: Vec::new(), hoisted: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions) }
+            versioned: Vec::new(), hoisted: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions) }
     }
 
     /// Whether the product at `pc` may keep the int32 zero for a negative one: no operands make a
@@ -64,14 +66,21 @@ impl IntRanges {
     /// The pure integer operations hoisted to a loop's entry, by PC.
     pub(super) fn hoisted(&self) -> &[Hoist] { &self.hoisted }
 
-    /// Keeps what a loop's entry proves of an access: its proof and the sum of its index bounded by it
-    /// (an index below its array's length, which every layout stores in 32 bits).
+    /// The products an entry holds and advances.
+    pub(super) fn inductions(&self) -> &[Induction] { &self.inductions }
+
+    /// Keeps what a loop's entry proves of an access: its proof, the sum of its index bounded by it
+    /// (an index below its array's length, which every layout stores in 32 bits), and its product's
+    /// induction.
     fn keep(&mut self, resolved: Resolved) {
         self.versioned.push(resolved.version);
         let known = IntRange { min: 0, max: crate::bytecode::MAX_ARRAY_LENGTH as i64 };
         if let Some(found) = resolved.add.and_then(|add| self.index_ranges.binary_search_by_key(&add, |(at, _)| *at).ok()) {
             let range = &mut self.index_ranges[found].1;
             *range = range.intersect(known).unwrap_or(known);
+        }
+        if let Some(induction) = resolved.induction.filter(|induction| self.inductions.iter().all(|held| held.multiply != induction.multiply)) {
+            self.inductions.push(induction);
         }
     }
 }
@@ -148,7 +157,7 @@ impl Lowering<'_, '_> {
         let hoists = proved.hoisted.clone();
         let nest = Nest { hoists: &hoists, ..nest };
         for shape in &seen.shapes {
-            if let Some(resolved) = self.resolve(nest, model, shape) { proved.keep(resolved); }
+            if let Some(resolved) = self.resolve((nest, &*proved), model, shape) { proved.keep(resolved); }
         }
         proved.versioned.sort_by_key(|version| version.pc);
     }

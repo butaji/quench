@@ -3,9 +3,10 @@
 //! invariant but the counter.
 
 use super::super::*;
-use super::{Hoist, Reach, Term, Version};
+use super::{Hoist, Induction, Reach, Term, Version};
 use super::super::super::facts::{IndexProof, Model, Point};
 use super::super::super::operations::NumberArithmetic;
+use super::super::int_ranges::IntRanges;
 
 /// The unit's instructions, the loops of it the region lowers whole, and the operations hoisted out of them.
 #[derive(Clone, Copy)]
@@ -44,10 +45,12 @@ pub(in super::super) struct Shape {
     scale: Option<(Operand, usize)>,
 }
 
-/// An access proved by the entry of a loop: that proof and the addition it bounds the sum of.
+/// An access proved by the entry of a loop: that proof, the addition it bounds the sum of, and the
+/// product it makes an induction of.
 pub(in super::super) struct Resolved {
     pub(in super::super) version: Version,
     pub(in super::super) add: Option<usize>,
+    pub(in super::super) induction: Option<Induction>,
 }
 
 /// The counter an operand of an index's sum counts: its bound and the scale it is multiplied by.
@@ -131,13 +134,15 @@ impl Lowering<'_, '_> {
 
     /// The proof of `shape` by the entry of the outermost loop it can be made in, where its array's
     /// view is hoisted a register's.
-    pub(in super::super) fn resolve(&self, nest: Nest<'_>, model: &Model<'_>, shape: &Shape) -> Option<Resolved> {
+    pub(in super::super) fn resolve(&self, (nest, ranges): (Nest<'_>, &IntRanges), model: &Model<'_>, shape: &Shape) -> Option<Resolved> {
         let array = self.loop_array(shape.pc, Some(shape.array)).filter(|array| matches!(array.source, ArraySource::Register(_)))?;
         let base = match (shape.base, shape.add) { (Some(operand), Some(add)) => Some(self.term(nest, add, operand, true)?), _ => None };
         let scale = match shape.scale { Some((operand, multiply)) => Some(self.term(nest, multiply, operand, false)?), None => None };
         let header = self.checking_loop((nest, model), shape, array, [base, scale])?;
+        let induction = shape.scale.zip(scale)
+            .and_then(|((_, multiply), scale)| self.induction(nest, ranges, shape.counter, (multiply, scale)));
         Some(Resolved { version: Version { pc: shape.pc, header, reach: Reach { bound: shape.bound, low: shape.low, base, scale } },
-            add: shape.add })
+            add: shape.add, induction })
     }
 
     /// The term `operand` read at `at` is: a constant, the word of the hoisted operation that last wrote its
@@ -166,6 +171,27 @@ impl Lowering<'_, '_> {
             && nest.unwritten(span, &registers) && registers.iter().all(|register| self.int32_at(span.0, *register))
             && !(span.0..=span.1).any(|at| model.disturbs_lengths(at, nest.instructions[at])))
             .map(|(header, _)| header)
+    }
+
+    /// The induction of the product at `multiply` of `counter` and `scale`, where `counter` only steps by
+    /// one in the innermost loop that writes it and the product is an index word no hoist already holds.
+    fn induction(&self, nest: Nest<'_>, ranges: &IntRanges, counter: Register, (multiply, scale): (usize, Term)) -> Option<Induction> {
+        let indexed = ranges.index_range(multiply).is_some() && !nest.hoists.iter().any(|hoist| hoist.pc == multiply)
+            && self.demand_from(multiply + 1, usize::from(nest.instructions[multiply].result_register())).index_only();
+        let span = nest.around(multiply).into_iter().rev().find(|&span| !nest.unwritten(span, &[counter]))?;
+        let steps = nest.instructions[span.0..=span.1].iter().filter(|instruction| instruction.written_registers().any(|written| written == counter))
+            .all(|instruction| self.steps_by_one(*instruction, counter));
+        (indexed && steps && self.int32_at(span.0, counter) && scale.register().is_none_or(|register| nest.unwritten(span, &[register])))
+            .then_some(Induction { multiply, counter, scale, span })
+    }
+
+    /// Whether `instruction` is `counter++`.
+    fn steps_by_one(&self, instruction: WideInstruction, counter: Register) -> bool {
+        use crate::staged::{DecodeContext, NumberOperation, Operation};
+        instruction.result_flags() == 0
+            && matches!(Operation::<ir::Value, EmitProof>::decode(instruction, DecodeContext::of(self.program)),
+                Some(Operation::Number(NumberOperation::IncDec { destination, source, decrement: false, .. }))
+                    if destination == counter && source == counter)
     }
 
     /// Whether the register holds an int32 on entry to the block led by `header`.

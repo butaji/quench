@@ -53,7 +53,7 @@ impl Lowering<'_, '_> {
             let value = self.builder.declare_var(types::I64);
             self.builder.def_var(value, word);
             self.hoisted.insert(pc, LoopRead { value, ty: Type::int(super::super::index_math::held(range)),
-                representation: Representation::Int64, receiver: None, header: None });
+                representation: Representation::Int64, receiver: None, header: None, step: None });
         }
     }
 }

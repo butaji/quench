@@ -1,6 +1,6 @@
 //! What a loop's entering edge establishes once for its body, over the facts rows (`IntRanges`):
-//! the pure integer operations its operands leave invariant (`hoists`) and the bounds of its accesses
-//! (below).
+//! the pure integer operations its operands leave invariant (`hoists`), the bounds of its accesses
+//! (below), and the products of its counters it advances by a step instead (`inductions`).
 //!
 //! Bounds by versioning: an element access in a counted loop whose index is `base + counter * scale`
 //! for a `counter` below a bound the loop never writes (`i < n`), and a base and scale it never
@@ -24,6 +24,7 @@ use crate::staged::Stage;
 
 #[path = "loop_versions/plan.rs"] mod plan;
 #[path = "loop_versions/hoists.rs"] mod hoists;
+#[path = "loop_versions/inductions.rs"] mod inductions;
 pub(super) use plan::{Nest, Resolved, Shape};
 
 /// A loop-invariant integer an index is made of, held as a 64-bit word on its checking loop's
@@ -72,6 +73,16 @@ pub(super) struct Hoist {
     pub(super) header: usize,
 }
 
+/// The product at `multiply` of `counter` and `scale`, which the entry of the loop `span` holds as a
+/// word that advances by `scale` at each step of the counter (every write of it in the loop).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Induction {
+    pub(super) multiply: usize,
+    pub(super) counter: Register,
+    pub(super) scale: Term,
+    pub(super) span: (usize, usize),
+}
+
 impl Lowering<'_, '_> {
     /// The reads `header`'s loop repeats unchanged, made on its entry edge from `state`: a guard that
     /// fails there leaves at the header, before the loop runs. Its pure integer operations come first,
@@ -83,6 +94,7 @@ impl Lowering<'_, '_> {
         self.hoist_reads(state, header);
         self.hoist_arrays(state, header, true);
         self.version_loops(state, header);
+        self.start_inductions(state, header);
     }
 
     /// The comparison of each reach of the versioned accesses of the loop at `header` with the length

@@ -174,9 +174,6 @@ fn matmul_indices_are_computed_in_integer_words_with_no_conversion_in_the_loop()
     let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
     let body = loop_body(&function);
     assert_eq!(conversions(&function, &body), 0, "an index is no Number that converts to an integer and back: {function}");
-    let products = wide_operations(&function, &body, ir::Opcode::Imul, |function, operands|
-        operands.iter().all(|operand| is_sign_extension(function, *operand)));
-    assert_eq!(products, 1, "`k * n` multiplies int32s in 64-bit words, and `i * n` once, on the entering edge: {function}");
     let sums = wide_operations(&function, &body, ir::Opcode::Iadd, |function, operands|
         operands.iter().any(|operand| is_sign_extension(function, *operand)));
     assert!(sums >= 2, "each index adds its int32 to a 64-bit product: {function}");
@@ -272,15 +269,15 @@ fn before_loops(function: &ir::Function) -> Vec<ir::Inst> {
 }
 
 #[test]
-fn matmul_k_loop_compares_no_index_with_a_length_and_the_entry_compares_each_reach() {
+fn matmul_k_loop_multiplies_nothing_and_compares_no_index_with_a_length() {
     use crate::heap::TypedArrayKind as Kind;
     let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
     let body = loop_body(&function);
     let products = wide_operations(&function, &body, ir::Opcode::Imul, |_, _| true);
-    assert_eq!(products, 1, "`i * n` is evaluated on the entering edge: only `k * n` is left: {function}");
+    assert_eq!(products, 0, "`i * n` is evaluated on the entering edge and `k * n` advances by `n`: {function}");
     assert_eq!(bounds_compares(&function, &body), 0, "both accesses carry the entry's proof: {function}");
     let entry = before_loops(&function);
-    assert!(wide_operations(&function, &entry, ir::Opcode::Imul, |_, _| true) >= 1, "the entry holds `i * n`: {function}");
+    assert!(wide_operations(&function, &entry, ir::Opcode::Imul, |_, _| true) >= 2, "the entry holds `i * n` and the start of `k * n`: {function}");
     assert!(version_compares(&function, &entry) >= 2, "the entry compares the reach of each access with its length: {function}");
 }
 
