@@ -3375,10 +3375,12 @@ impl<H: Host> Vm<H> {
         }
         // A shape holds every own name of an ordinary object, every named own property of a
         // direct array (whose elements and virtual length the caller's shape lookup excludes),
-        // and every own name `function_links_answer` admits of a function.
+        // every own name `function_links_answer` admits of a function, and every own name of
+        // a collection, date, regexp, promise or iterator (`ordinary_builtin_object`).
         let shape_holds_own = self.heap.ordinary_object(object).is_some()
             || self.heap.array(object).is_some()
-            || self.heap.function(object).is_some() && self.function_links_answer(atom);
+            || self.heap.function(object).is_some() && self.function_links_answer(atom)
+            || self.heap.ordinary_builtin_object(object).is_some();
         let (cache, value) = self.inherited_field(receiver, shape_holds_own, atom)?;
         #[cfg(feature = "profile-lane-exits")]
         self.record_field_probe_path(site, atom, 5);
