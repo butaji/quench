@@ -3044,7 +3044,14 @@ impl<H: Host> Vm<H> {
         if let Some(matcher) = meta.matcher.0.get() {
             return Ok(Rc::clone(matcher));
         }
-        let matcher = Rc::new(Self::compile_regexp(&meta.source, &meta.flags.text(), PatternValidity::EarlyChecked)?);
+        let matcher = match LAZY_MATCHERS.with_borrow(|matchers| matchers.find(&meta.source, meta.flags)) {
+            Some(matcher) => matcher,
+            None => {
+                let matcher = Rc::new(Self::compile_regexp(&meta.source, &meta.flags.text(), PatternValidity::EarlyChecked)?);
+                LAZY_MATCHERS.with_borrow_mut(|matchers| matchers.insert(&meta.source, meta.flags, &matcher));
+                matcher
+            }
+        };
         Ok(Rc::clone(meta.matcher.0.get_or_init(|| matcher)))
     }
 
@@ -3381,6 +3388,37 @@ pub(super) const REGEXP_FLAG_ACCESSORS: &[(&str, Native, char)] = &[
 /// Upper bound on cached compiled matchers. Compiled automata are the largest per-RegExp
 /// allocation, so the cache is capped; reaching the cap drops every entry and recompiles on demand.
 const REGEXP_MATCHER_CACHE_LIMIT: usize = 64;
+
+thread_local! {
+    /// The matchers of RegExps that compile on first match (literals, snapshot patterns), by
+    /// pattern and flags, held weakly: a program evaluated again (a module loaded per test, a
+    /// bundle re-run) creates new literal sites whose patterns would each compile again while
+    /// the previous evaluation's RegExps still hold theirs. JetStream 3 prismjs-startup-es6
+    /// (2026-11-15) compiled its ~115 patterns once per iteration, 574 compiles holding ~1 MB of
+    /// programs at peak. A weak entry keeps nothing alive; a matcher no RegExp holds compiles again.
+    static LAZY_MATCHERS: std::cell::RefCell<LazyMatchers> = std::cell::RefCell::default();
+}
+
+#[derive(Default)]
+struct LazyMatchers {
+    by_pattern: rustc_hash::FxHashMap<(JsString, u8), std::rc::Weak<quench_regexp::Regex>>,
+    /// Entries at the last sweep of dead ones; the next sweep waits for twice as many.
+    swept: usize,
+}
+
+impl LazyMatchers {
+    fn find(&self, source: &JsString, flags: RegExpFlags) -> Option<Rc<quench_regexp::Regex>> {
+        self.by_pattern.get(&(source.clone(), flags.0))?.upgrade()
+    }
+
+    fn insert(&mut self, source: &JsString, flags: RegExpFlags, matcher: &Rc<quench_regexp::Regex>) {
+        if self.by_pattern.len() >= 2 * self.swept.max(64) {
+            self.by_pattern.retain(|_, matcher| matcher.strong_count() > 0);
+            self.swept = self.by_pattern.len();
+        }
+        self.by_pattern.insert((source.clone(), flags.0), Rc::downgrade(matcher));
+    }
+}
 
 #[derive(Default)]
 pub(super) struct RegExpMatcherCache {
