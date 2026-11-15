@@ -3135,6 +3135,56 @@ fn lane_chained_await<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Resumed {
     }
 }
 
+/// The return of the lane's own frame with `value` where that frame is the slot of a chained
+/// reaction run, with no activation, call or leaf above it: the reaction settles and the
+/// queue's next job's activation continues here (`Vm::lane_chain_reaction_complete`), with no
+/// exit to the job loop. `None` for any other return.
+#[inline(never)]
+fn lane_chain_reaction_return<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context and the run's pending calls and executing program outlive the run.
+    let frame = unsafe { (*cx).frame };
+    if vm.await_chain.is_none_or(|chain| chain.frame != frame)
+        || !vm.lane_stack.activations.is_empty()
+        || !unsafe { (*cx).leaf.call }.is_null()
+        || !unsafe { &*(*cx).pending }.is_empty()
+        || unsafe { (*(*cx).executing).id != (*cx).program }
+        || vm.lane_raised.is_some()
+        || vm.lane_returned.is_some()
+    {
+        return None;
+    }
+    // SAFETY: the context's program outlives the run.
+    let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
+    let function = vm.frames[frame].function;
+    // SAFETY: the table lives as long as its program entry.
+    let lane = unsafe { &*(*cx).views }
+        .get(function as usize)
+        .and_then(super::program_store::derived_lane_view)
+        .map_or(std::ptr::null(), std::ptr::from_ref);
+    match vm.lane_chain_reaction_complete(code, program, frame, lane, value)? {
+        Ok(true) => Some(lane_enter_script_frame(cx, frame)),
+        Ok(false) => {
+            vm.lane_chain_ended = true;
+            Some(Resumed::Exit(exit(ip)))
+        }
+        Err(error) => {
+            vm.lane_chain_error = Some(error);
+            Some(Resumed::Exit(exit(ip)))
+        }
+    }
+}
+
+/// `lane_frame_return` of the frame's call record at `call` returning `value`, where a chained
+/// reaction's frame continues with the queue's next job instead (`lane_chain_reaction_return`).
+#[inline(always)]
+fn lane_frame_return_or_chain<H: Host>(cx: *mut LaneContext<H>, call: Ip, value: Value) -> Resumed {
+    if let Some(resumed) = lane_chain_reaction_return(cx, call, value) {
+        return resumed;
+    }
+    Resumed::Exit(lane_frame_return(unsafe { vm(cx) }, call, value))
+}
+
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
 mod loop_body;
@@ -4610,6 +4660,9 @@ fn lane_complete_array_step<H: Host>(cx: *mut LaneContext<H>, value: Value) -> O
 #[inline(never)]
 fn lane_return_value_other<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Resumed {
     if let Some(resumed) = lane_complete_returning(cx, ip, value) {
+        return resumed;
+    }
+    if let Some(resumed) = lane_chain_reaction_return(cx, ip, value) {
         return resumed;
     }
     if !unsafe { (*cx).inline_calls } && unsafe { (*cx).script_calls } {
@@ -15467,7 +15520,6 @@ fn lane_native_complete<H: Host>(
     i: &LaneInstruction,
     value: Option<Value>,
 ) -> Resumed {
-    let vm = unsafe { vm(cx) };
     let Some(value) = value else {
         return Resumed::Exit(exit(ip));
     };
@@ -15479,7 +15531,7 @@ fn lane_native_complete<H: Host>(
             if unsafe { !(*cx).inline_calls && (*cx).script_calls } {
                 return Resumed::Exit(lane_return_script_frame(cx, ip, value, true));
             }
-            return Resumed::Exit(lane_frame_return(vm, ip, value));
+            return lane_frame_return_or_chain(cx, ip, value);
         };
         return resumed;
     }
@@ -18986,7 +19038,7 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
         // The call returns its callee's completion: its caller completes in turn, an
         // activation here or the frame in the general loop, which the exit hands it to.
         if lane_caller_returns_in_frame(vm, value, &mut then) {
-            return Some(Resumed::Exit(lane_frame_return(vm, activation.call, value)));
+            return Some(lane_frame_return_or_chain(cx, activation.call, value));
         }
         activation = vm.lane_stack.pop_activation().expect("the caller activation is the innermost");
     }

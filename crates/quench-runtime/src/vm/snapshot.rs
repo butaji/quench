@@ -246,6 +246,7 @@ impl<H: Host> Vm<H> {
             chain_await_jobs: _,
             await_chain: _,
             lane_chain_error: _,
+            lane_chain_ended: _,
             host,
             specialized,
             heap,

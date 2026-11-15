@@ -1870,6 +1870,9 @@ pub(crate) struct Vm<H> {
     /// The failure of an await the lane chained in place (`Vm::lane_chain_await`), which
     /// the lane run's frame loop raises.
     lane_chain_error: Option<JsError>,
+    /// Whether a reaction the lane chained in place ended the chain in its slot
+    /// (`Vm::lane_chain_reaction_complete`), which the lane run's frame loop completes.
+    lane_chain_ended: bool,
     pub(crate) host: H,
     specialized: bool,
     heap: Heap,

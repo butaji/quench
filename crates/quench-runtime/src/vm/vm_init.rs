@@ -17,6 +17,7 @@ impl<H: Host> Vm<H> {
             chain_await_jobs: false,
             await_chain: None,
             lane_chain_error: None,
+            lane_chain_ended: false,
             specialized: true,
             heap: Heap::new(),
             realm: Realm {
