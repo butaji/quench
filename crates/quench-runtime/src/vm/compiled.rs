@@ -3999,10 +3999,10 @@ impl CompiledOsrRegion {
         #[cfg(test)]
         LANE_OSR_RUNS.with(|count| count.set(count.get() + 1));
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
-        unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, self.crossing == Crossing::General, |native, vm| {
+        unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
             osr_lane::bind_loop(native, vm, region, entry, (frame, lane_context));
             let _captures = osr_lane::bind_captures::<H>(native, region, entry, lane_context);
-            osr_lane::bind_frame(native, vm, (program, function, frame), registers);
+            osr_lane::bind_frame(native, vm, (program, function, lane_context), registers);
             osr_lane::enter(native, vm, region, program, (code, resume), registers, interrupt)
         }) }.unwrap_or(LoopOutcome::Terminated)
     }
@@ -5102,11 +5102,21 @@ struct JsNativeActivation {
 impl JsNativeActivation {
     /// Construct and consume one owned activation in the entry's scope. The
     /// large dispatch does not cross an optional aggregate-return boundary.
+    #[cfg(feature = "native-execution")]
     #[inline(always)]
     fn with<H: Host, R>(vm: &mut Vm<H>, program_id: ProgramId, frame: usize, start_pc: usize,
         allow_inline_calls: bool, views: bool, run: impl FnOnce(&mut Self, &mut Vm<H>) -> R) -> Option<R> {
+        let function = vm.frames[frame].function;
+        Self::with_function(vm, program_id, (frame, function), start_pc, allow_inline_calls, views, run)
+    }
+
+    /// `with` for `function` of `program_id`, which runs above VM frame `frame`: a frameless
+    /// activation's function is not its frame's, and may not be of the frame's program.
+    #[inline(always)]
+    fn with_function<H: Host, R>(vm: &mut Vm<H>, program_id: ProgramId, (frame, function): (usize, u32), start_pc: usize,
+        allow_inline_calls: bool, views: bool, run: impl FnOnce(&mut Self, &mut Vm<H>) -> R) -> Option<R> {
         let program = vm.programs.get(program_id)?;
-        let body = program.function_get(vm.frames[frame].function as usize)? as *const _;
+        let body = program.function_get(function as usize)? as *const _;
         let activation = &mut vm.frames[frame];
         let mut native = Self { dispatch: JsStepDispatch {
             program_id, frame, allow_inline_calls, start_pc,
