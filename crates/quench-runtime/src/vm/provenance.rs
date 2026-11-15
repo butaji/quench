@@ -93,13 +93,12 @@ pub(super) fn metadata_transitions(shapes: &[Shape], shape: u32) -> impl Iterato
 }
 
 pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option<(Value, bool)>, bool) {
-    let (mut function, mut constructed, mut reconfigured) = (None, None, false);
+    let (mut function, mut constructed) = (None, None);
     let mut current = Some(shape);
     while let Some(id) = current {
         let shape = &shapes[id as usize];
         match shape.transition {
             ShapeTransition::FunctionName { name } if function.is_none() => function = Some(name),
-            ShapeTransition::FunctionNameReconfigured => reconfigured = true,
             ShapeTransition::Constructed {
                 constructor,
                 new_target_is_base,
@@ -108,17 +107,11 @@ pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option
         }
         current = shape.parent();
     }
-    (function, constructed, reconfigured)
+    (function, constructed, shapes[shape as usize].facts.name_reconfigured())
 }
 
 pub(super) fn shape_function_length_reconfigured(shapes: &[Shape], shape: u32) -> bool {
-    let mut current = Some(shape);
-    while let Some(id) = current {
-        let shape = &shapes[id as usize];
-        if matches!(shape.transition, ShapeTransition::FunctionLengthReconfigured) { return true; }
-        current = shape.parent();
-    }
-    false
+    shapes[shape as usize].facts.length_reconfigured()
 }
 
 impl<H: Host> Vm<H> {
@@ -246,10 +239,8 @@ impl<H: Host> Vm<H> {
             if self.proxy_parts(object).is_some() { return; }
             if self.own_property(object, atom).is_some() {
                 if self.heap.is_function_value(object) {
-                    let (original, _, reconfigured) = shape_names(&self.shapes, data.shape());
-                    let default = original.is_some() && if name { !reconfigured }
-                        else { !shape_function_length_reconfigured(&self.shapes, data.shape()) };
-                    if default {
+                    let facts = self.shapes[data.shape() as usize].facts;
+                    if facts.function_named() && !if name { facts.name_reconfigured() } else { facts.length_reconfigured() } {
                         let mut current = receiver;
                         while let Some(data) = self.object_data(current) {
                             if self.proxy_parts(current).is_some() || data.prototype_lookup_ready() { break; }
