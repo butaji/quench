@@ -577,6 +577,12 @@ impl<H: Host> Vm<H> {
         {
             return Ok(kept);
         }
+        // A compilation the host may keep runs from its kept form after it (`kept_script`
+        // below), so its parse, analysis, code generation and encoding are scratch: their large
+        // blocks come from the scratch arena, whose pages go back as one span once the program
+        // is kept, instead of leaving holes among the run's long-lived tables in the thread's
+        // malloc arena.
+        let scratch = cache_key.is_some().then(ScratchPhase::begin);
         // A program keeping only static text cannot compile its functions again from it. One
         // the host's compile cache keeps encodes each record its load releases.
         let compiled = crate::Engine::specialize_host_script(
@@ -622,6 +628,8 @@ impl<H: Host> Vm<H> {
             // NavierStokes 4708 -> 4172 KiB, RayTrace 3332 -> 3016, Crypto 3480 -> 3292,
             // RegExp 6228 -> 6028; a whole cold typescript-eslint run's CPU unchanged).
             if let Some(kept) = self.kept_script(source, name, goal, origin) {
+                drop(residual);
+                drop(scratch);
                 return Ok(kept);
             }
         }
@@ -633,6 +641,7 @@ impl<H: Host> Vm<H> {
         if !retain_profile_records {
             residual.release_replayable_records();
         }
+        drop(scratch);
         Ok(crate::PreparedScript { program: Rc::new(residual), #[cfg(feature = "native-execution")] native: None })
     }
 
@@ -1316,5 +1325,24 @@ mod tests {
         assert!(!only_trivia("\u{0085}"));
         assert!(!only_trivia("/* unterminated"));
         assert!(!only_trivia("1"));
+    }
+}
+
+/// A compilation's scratch phase (`prepare_embedding_specialized_script_retaining`): while it
+/// lives the thread's large blocks come from the scratch arena (`quench_alloc::adopt_scratch_thread`),
+/// and when it ends the arena's free pages go back (`quench_alloc::release_scratch_phase`).
+struct ScratchPhase;
+
+impl ScratchPhase {
+    fn begin() -> Self {
+        quench_alloc::adopt_scratch_thread();
+        Self
+    }
+}
+
+impl Drop for ScratchPhase {
+    fn drop(&mut self) {
+        quench_alloc::leave_scratch_thread();
+        quench_alloc::release_scratch_phase();
     }
 }

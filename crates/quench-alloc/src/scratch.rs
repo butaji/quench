@@ -99,6 +99,12 @@ pub fn adopt() {
     let _ = ADOPTED.try_with(|adopted| adopted.set(true));
 }
 
+/// Ends the calling thread's adoption: its later large blocks come from the system allocator
+/// again, and blocks it took stay the arena's until freed.
+pub fn leave() {
+    let _ = ADOPTED.try_with(|adopted| adopted.set(false));
+}
+
 /// Whether `layout` is served from the arena on this thread.
 pub(crate) fn applies(layout: Layout) -> bool {
     layout.size() > MAX_SMALL_BYTES
@@ -155,6 +161,16 @@ pub(crate) fn free(block: *mut u8, layout: Layout) {
 /// Returns the arena's pages to the system. With no live block the arena resets and its used
 /// span goes in one call; otherwise only the free blocks of the largest classes go.
 pub fn release() {
+    release_from(PARTIAL_RELEASE_SHIFT);
+}
+
+/// `release`, returning every free block of a page or more while blocks stay live: a phase
+/// that ends (`leave`) with a few of its blocks kept returns the rest of its pages.
+pub fn release_phase() {
+    release_from(12);
+}
+
+fn release_from(partial_release_shift: u32) {
     let mut arena = lock();
     let base = BASE.load(Ordering::Relaxed);
     if base == 0 || arena.used == 0 {
@@ -167,7 +183,7 @@ pub fn release() {
         arena.used = 0;
         return;
     }
-    for class in (PARTIAL_RELEASE_SHIFT - MIN_SHIFT) as usize..CLASSES {
+    for class in (partial_release_shift.max(MIN_SHIFT) - MIN_SHIFT) as usize..CLASSES {
         let bytes = 1usize << (class as u32 + MIN_SHIFT);
         let mut block = arena.free[class];
         while block != 0 {

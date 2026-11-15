@@ -29,7 +29,7 @@
 
 mod large;
 mod scratch;
-pub use scratch::{adopt as adopt_scratch_thread, release as release_scratch};
+pub use scratch::{adopt as adopt_scratch_thread, leave as leave_scratch_thread, release as release_scratch, release_phase as release_scratch_phase};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::{Cell, UnsafeCell};
 use std::ptr;
