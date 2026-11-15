@@ -8239,6 +8239,9 @@ fn lane_cached_field_at<H: Host>(
     };
     match probe {
         super::object::FieldCacheProbe::Hit(value) => Some(value),
+        // A proxy's handler answers its reads (`lane_getter_activation` runs the trap): no
+        // getter entry or data lookup below holds one.
+        super::object::FieldCacheProbe::Ineligible if unsafe { vm(cx) }.proxy_parts(object).is_some() => None,
         // An accessor's entry answers before the data lookups, which would walk the chain to
         // reach the same accessor and decline it.
         probe => unsafe { lane_getter_read(cx, object, atom, site) }.or_else(|| {
