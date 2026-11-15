@@ -9528,7 +9528,7 @@ script_handler! {
 macro_rules! lane_at_header {
     ($cx:expr, $r:expr, $header:expr, $site:expr) => {{
         let held = $site.header_handler.get();
-        if held.is_null() {
+        if held.is_null() || held == RETIRED_HEADER {
             next!($cx, $r, $header, Carried::script($cx))
         }
         // SAFETY: the site holds the record's handler, which has the shared signature.
@@ -9658,6 +9658,8 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
 /// Gives `site` its `header` record (`LoopSite::hookable`) once its region has code: the
 /// record runs `lane_loop_header`, and the site keeps the record's own handler.
 fn lane_loop_hold_header<H: Host>(header: Ip, site: &LoopSite) {
+    // A retired site (`RETIRED_HEADER`) never holds its header again: its jump record is a plain
+    // jump and the header's `call_link` a field hint, so `lane_header_site` would read garbage.
     if !site.hookable || !site.header_handler.get().is_null() || !site.tier.borrow().is_published() {
         return;
     }
@@ -9765,6 +9767,9 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     // A header record the site holds gets its own handler back.
     let header = unsafe { ip.byte_offset(site.jump) };
     lane_loop_release_header(header, site);
+    // A run of this site still on the stack (a native attempt that retired it) must not hold
+    // the header again on its way out (`lane_loop_hold_header`).
+    site.header_handler.set(RETIRED_HEADER);
     // No site holds the header from now on, so its record, which linked this site alone, takes
     // field hints again (`holds_loop_site`).
     if site.hookable { unsafe { (*header).call_link.set(NO_CALL_LINK) }; }
@@ -9782,9 +9787,13 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
 }
 
 /// Restore the semantic header at the event that replaces its native owner.
+/// `LoopSite::header_handler` of a retired site (`lane_loop_retire`): no record, so the site
+/// never holds its header again.
+const RETIRED_HEADER: *const () = std::ptr::without_provenance(1);
+
 fn lane_loop_release_header(header: Ip, site: &LoopSite) {
     let held = site.header_handler.replace(std::ptr::null());
-    if !held.is_null() {
+    if !held.is_null() && held != RETIRED_HEADER {
         // SAFETY: the validated site owns this record on the running view's thread.
         unsafe { (*header.cast_mut()).handler = held; }
     }
