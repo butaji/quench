@@ -182,6 +182,7 @@ fn release_read_only_pages_weighed(weighed: bool) {
 /// earley-boyer's CPU time fell 8% with no peak-RSS change on earley-boyer, raytrace or splay
 /// (V8-v7, JIT, x86_64, 2026-11-12; ~5,700 of its ~7,500 `madvise` calls).
 pub fn release_at_collection(returns_pages: bool) {
+    release_before_first_collection();
     if returns_pages {
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         release_read_only_pages();
@@ -191,6 +192,19 @@ pub fn release_at_collection(returns_pages: bool) {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     if !released_within(RUN_CODE_RELEASE_INTERVAL) {
         release_read_only_pages_weighed(false);
+    }
+}
+
+/// The run's first collection, young or full: the code its warm-up ran once (first calls'
+/// set-up, lane derivations, the harness's set-up) leaves before the collector's code joins
+/// the run's at the heap's first peak, whatever the pace says.
+pub fn release_before_first_collection() {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        static FIRST: std::sync::Once = std::sync::Once::new();
+        if CODE_STAYS_RESIDENT.load(std::sync::atomic::Ordering::Relaxed) {
+            FIRST.call_once(|| release_read_only_pages_weighed(false));
+        }
     }
 }
 
@@ -877,11 +891,11 @@ pub fn around_output<R>(output: impl FnOnce() -> R) -> R {
     let collections = COLLECTIONS.load(Relaxed);
     let releases = COLLECTIONS_AT_OUTPUT_RELEASE.swap(collections, Relaxed) != collections;
     if releases {
-        release_read_only_pages();
+        release_read_only_pages_now();
     }
     let result = output();
     if releases {
-        release_read_only_pages();
+        release_read_only_pages_now();
     }
     result
 }

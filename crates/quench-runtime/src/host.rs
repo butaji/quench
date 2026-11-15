@@ -151,6 +151,9 @@ pub trait Host {
     /// (`MemoryPolicy::returns_pages_at_collections`).
     fn at_collection_boundary(&mut self, _policy: crate::MemoryPolicy) {}
 
+    /// A young collection is about to run (a full one's start is `at_collection_boundary`).
+    fn before_collection(&mut self) {}
+
     /// Weak targets have been cleared and VM cleanup has finished. Release native resources
     /// owned by collected values before execution resumes, without running guest code.
     fn after_collection(_context: &mut crate::CollectionContext<'_, Self>) where Self: Sized {}

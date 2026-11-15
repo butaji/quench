@@ -2437,6 +2437,10 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::note_collection();
     }
 
+    fn before_collection(&mut self) {
+        crate::host::resident_pages::release_before_first_collection();
+    }
+
     fn after_collection(context: &mut quench_runtime::CollectionContext<'_, Self>) {
         #[cfg(quench_openssl_provider)]
         crate::modules::crypto_hash_shared_vm::prune(context);
