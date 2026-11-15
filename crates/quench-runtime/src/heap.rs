@@ -759,6 +759,10 @@ pub(crate) struct Heap {
     /// promotion and compaction: only the interpreter reads one in place, so only a run without
     /// native tiers (`Heap::set_narrow_runs`) makes them.
     narrow_runs: bool,
+    /// Whether a function record took a young run since the last collection
+    /// (`finished_run_object`): only then does a minor sweep visit live functions to list
+    /// their young survivors (`YoungOwner::Function`).
+    young_function_runs: bool,
     /// Values the cycle's weak reads handed out (`Heap::shade`), for its mark: a value read
     /// through a weak reference may be one its snapshot does not reach.
     satb_shaded: std::cell::RefCell<Vec<Value>>,
@@ -1591,6 +1595,25 @@ impl Heap {
         self.insert_admitted_object_record(object)
     }
 
+    /// An object of the run header `header` (`InlineObjectHeader::of_run`) over a new young
+    /// run of the first `len` of `values` (the rest `undefined`), for a function record
+    /// (`YoungOwner::Function`), not yet allocated; `None` when the nursery has no run for it.
+    #[inline(always)]
+    pub(crate) fn finished_run_object<const N: usize>(
+        &mut self,
+        header: InlineObjectHeader,
+        values: &[Value; N],
+        len: usize,
+    ) -> Option<Object> {
+        self.properties.assert_shape_length(header.shape(), len);
+        if cfg!(feature = "profile-aggregate") {
+            return None;
+        }
+        let start = self.properties.young_run_padded(values, len)?;
+        self.young_function_runs = true;
+        Some(Object::from_run_header(header, start))
+    }
+
     /// `property_set` of slot `slot` of `object`, an object record allocated with inline
     /// storage since the last allocation that could collect, whose slot holds `undefined`:
     /// the barrier and the slot's recorded representation as for any store, and the narrow
@@ -1638,8 +1661,7 @@ impl Heap {
                 value
             }
             Err(mut object) => {
-                // A young run's owner is a direct object record (`ValueArena::young_run_padded`):
-                // an object that takes a legacy slot takes an ordinary run first.
+                // A young run's owner is a record (`YoungOwner`): an object that takes a legacy slot takes an ordinary run first.
                 if self.properties.holds_young_run(object.properties()) {
                     let storage = self.properties.duplicate(object.properties());
                     object.replace_property_storage(storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], &mut self.properties);
@@ -1691,10 +1713,15 @@ impl Heap {
                 self.profile_allocation(value);
                 value
             }
-            Err(function) => self.alloc_in_slot(
-                Cell::Function(Box::new(function)),
-                self.tracks_young_cells(),
-            ),
+            Err(mut function) => {
+                // A young run's owner is a record (`YoungOwner`): a function that takes a
+                // legacy slot takes an ordinary run first.
+                if self.properties.holds_young_run(function.object.properties()) {
+                    let storage = self.properties.duplicate(function.object.properties());
+                    function.object.replace_property_storage(storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], &mut self.properties);
+                }
+                self.alloc_in_slot(Cell::Function(Box::new(function)), self.tracks_young_cells())
+            }
         }
     }
 
@@ -2043,14 +2070,17 @@ impl Heap {
             }
         }
     }
-    /// Moves the surviving young runs of `owners`, live direct objects, out of the nursery's
-    /// young range, in the order of their starts, and ends the young cycle
-    /// (`ValueArena::finish_young_cycle`).
-    fn evacuate_young_runs(&mut self, mut owners: Vec<(usize, RecordId)>) {
+    /// Moves the surviving young runs of `owners`, live direct objects and functions
+    /// (`YoungOwner`), out of the nursery's young range, in the order of their starts, and
+    /// ends the young cycle (`ValueArena::finish_young_cycle`).
+    fn evacuate_young_runs(&mut self, mut owners: Vec<(usize, YoungOwner)>) {
         owners.sort_unstable_by_key(|&(start, _)| start);
-        for (_, record_id) in owners {
+        for (_, owner) in owners {
             // SAFETY: the owners were listed from records the sweep kept.
-            let object = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
+            let object = match owner {
+                YoungOwner::Object(record_id) => unsafe { self.object_records.get_live_mut_unbarriered(record_id) },
+                YoungOwner::Function(record_id) => &mut unsafe { self.function_records.get_live_mut_unbarriered(record_id) }.object,
+            };
             let mut vector = object.properties();
             // A promoted plain object's values may take a narrow run, as at compaction.
             let narrows = self.narrow_runs && !object.has_extras();
@@ -2722,7 +2752,7 @@ impl Heap {
         }
         // The direct objects whose young runs survive, by start (`ValueArena::evacuate_young`),
         // where no compaction moves every run.
-        let mut young_owners: Vec<(usize, RecordId)> = Vec::new();
+        let mut young_owners: Vec<(usize, YoungOwner)> = Vec::new();
         // The arrays whose young runs of elements survive, copied out before the young
         // objects' runs move or compaction moves every run.
         let mut young_arrays: Vec<RecordId> = Vec::new();
@@ -2773,7 +2803,7 @@ impl Heap {
             let payload_bytes = &mut self.payload_bytes;
             let live_payload_bytes = &mut live_payload_bytes;
             let mut sweep_rest = || {
-                // Every young run's owner is a direct object (`ValueArena::young_run_padded`), so
+                // Every young run's owner is a direct object or function (`YoungOwner`), so
                 // their sweep shows its survivors, minor or full, and lists those it keeps.
                 // A dead object's storage is released in place; one without extras, which its drop
                 // would free, is then forgotten.
@@ -2791,26 +2821,31 @@ impl Heap {
                                 Value::direct_object(record_id),
                             ));
                         } else if young_runs.hold(object.properties()) {
-                            note_young_owner(&mut young_owners, object.properties().start_offset(), record_id);
+                            note_young_owner(&mut young_owners, object.properties().start_offset(), YoungOwner::Object(record_id));
                         }
                     }
                     // Released in place: dropping it frees its extras.
                     RecordSweep::Dead(..) => {}
                 });
+                // A function's own properties may take a young run too (`Heap::finished_run_object`):
+                // after one did, its sweep shows its survivors and lists those it keeps.
+                let young_function_runs = std::mem::take(&mut self.young_function_runs);
                 let (function_live, function_freed) =
-                    self.function_records.sweep(full, age, full, |record| match record {
+                    self.function_records.sweep(full, age, full || compacts || young_function_runs, |record| match record {
                         RecordSweep::Keep(record_id, function) => {
                             if compacts && function.object.properties().has_compact_range() {
                                 direct_property_owners.push((
                                     function.object.properties().start_offset(),
                                     Value::direct_function(record_id),
                                 ));
+                            } else if young_runs.hold(function.object.properties()) {
+                                note_young_owner(&mut young_owners, function.object.properties().start_offset(), YoungOwner::Function(record_id));
                             }
                         }
                         RecordSweep::Dead(_record_id, function) => {
                             #[cfg(feature = "profile-memory")]
                             let slots = properties.len(function.object.properties());
-                            properties.release_ordinary(function.object.properties());
+                            properties.release(function.object.properties());
                             #[cfg(feature = "profile-memory")]
                             memory_profile.freed_record_cell(Value::direct_function(_record_id), slots);
                         }
@@ -5044,8 +5079,16 @@ fn sort_by_unique_offset(keys: &mut Vec<u64>) {
 /// Lists a young survivor's run for `Heap::evacuate_young_runs`, out of line: survivors are
 /// few, and the sweep's visitor stays small enough to inline.
 #[inline(never)]
-fn note_young_owner(owners: &mut Vec<(usize, RecordId)>, start: usize, record_id: RecordId) {
-    owners.push((start, record_id));
+fn note_young_owner(owners: &mut Vec<(usize, YoungOwner)>, start: usize, owner: YoungOwner) {
+    owners.push((start, owner));
+}
+
+/// The record that owns a young run (`ValueArena::young_run_padded`): a direct object, or a
+/// function, whose own properties a recorded closure allocates finished.
+#[derive(Clone, Copy)]
+enum YoungOwner {
+    Object(RecordId),
+    Function(RecordId),
 }
 
 
