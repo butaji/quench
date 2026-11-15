@@ -1572,15 +1572,42 @@ impl Heap {
         self.insert_object_record(object)
     }
 
-    /// `alloc_object` of `object` whose prototype is already flagged as one
-    /// (`Object::was_used_as_prototype`), as a recorded closure's are (`Vm::closure_of_template`):
-    /// the flag is never cleared, so it needs no marking.
-    pub(crate) fn alloc_object_under_flagged_prototype(&mut self, object: Object) -> Value {
+    /// `alloc_object` of an object of `header` (inline storage), whose prototype is already
+    /// flagged as one (`Object::was_used_as_prototype`), as a recorded closure's are
+    /// (`Vm::closure_of_template`), so it needs no marking, and whose slots hold `undefined` until stores fill them (`fill_new_object_slot`), which
+    /// record their values' representations: the placeholders record none.
+    #[inline(always)]
+    pub(crate) fn alloc_unfilled_object_under_flagged_prototype(&mut self, header: InlineObjectHeader) -> Value {
+        let object = Object::from_inline_header(header, [Value::UNDEFINED; INLINE_PROPERTY_COUNT])
+            .expect("undefined is narrow");
         debug_assert!(self.prototype_flagged(object.proto()));
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::Object(object));
         }
-        self.insert_object_record(object)
+        self.insert_admitted_object_record(object)
+    }
+
+    /// `property_set` of slot `slot` of `object`, an object record allocated with inline
+    /// storage since the last allocation that could collect, whose slot holds `undefined`:
+    /// the barrier and the slot's recorded representation as for any store, and the narrow
+    /// store into the payload word without the general path's tests.
+    #[inline(always)]
+    pub(crate) fn fill_new_object_slot(&mut self, object: Value, slot: usize, value: Value) {
+        let Some(record_id) = object.direct_object_index() else {
+            return self.property_set(object, slot, value);
+        };
+        let Self { object_records, properties, .. } = &mut *self;
+        // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
+        let data = unsafe { object_records.get_live_mut_storing(record_id, value, properties) };
+        if !data.properties().has_inline_property_storage() || !data.store_inline_narrow(slot, value) {
+            return self.property_set(object, slot, value);
+        }
+        if properties.tracks() {
+            let shape = data.exact_shape();
+            if shape == data.shape() {
+                properties.note_slot_value(shape, slot, value);
+            }
+        }
     }
 
     /// Whether `prototype` names no object or one flagged as a prototype, as
@@ -1638,7 +1665,7 @@ impl Heap {
     }
 
     /// `alloc_function` of `function` whose prototype is already flagged as one, as
-    /// `alloc_object_under_flagged_prototype` allocates an object.
+    /// `alloc_unfilled_object_under_flagged_prototype` allocates an object.
     pub(crate) fn alloc_function_under_flagged_prototype(&mut self, function: FunctionRecord) -> Value {
         debug_assert!(self.prototype_flagged(function.object.proto()));
         if cfg!(feature = "profile-aggregate") {
