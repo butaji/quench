@@ -523,6 +523,7 @@ trait JsonUnit: Copy {
 }
 
 impl JsonUnit for u8 {
+    #[inline(always)]
     fn unit(self) -> u16 {
         u16::from(self)
     }
@@ -557,6 +558,7 @@ impl JsonUnit for u8 {
     fn starts_key(units: &[u8], key: &[u8]) -> bool {
         units.get(key.len()) == Some(&b'"') && same_ascii(&units[..key.len()], key)
     }
+    #[inline(always)]
     fn run(units: &[u8]) -> JsonStringUnits<'_> {
         JsonStringUnits::Run(Units::Ascii(units))
     }
@@ -566,9 +568,11 @@ impl JsonUnit for u8 {
 }
 
 impl JsonUnit for u16 {
+    #[inline(always)]
     fn unit(self) -> u16 {
         self
     }
+    #[inline(always)]
     fn run(units: &[u16]) -> JsonStringUnits<'_> {
         JsonStringUnits::Run(Units::Wide(units))
     }
@@ -596,11 +600,15 @@ impl Utf8Byte {
     fn text(units: &[Self]) -> &str {
         // SAFETY: `Utf8Byte` is a transparent `u8`.
         let bytes = unsafe { std::slice::from_raw_parts(units.as_ptr().cast::<u8>(), units.len()) };
-        std::str::from_utf8(bytes).expect("a run bounded by ASCII terminators is whole UTF-8 text")
+        debug_assert!(std::str::from_utf8(bytes).is_ok(), "a run bounded by ASCII terminators is whole UTF-8 text");
+        // SAFETY: the units are a `str`'s (`Utf8Byte::of`), and a run bounded by ASCII
+        // terminators, which no UTF-8 sequence holds, is whole characters of it.
+        unsafe { std::str::from_utf8_unchecked(bytes) }
     }
 }
 
 impl JsonUnit for Utf8Byte {
+    #[inline(always)]
     fn unit(self) -> u16 {
         u16::from(self.0)
     }
