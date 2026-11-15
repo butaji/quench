@@ -864,7 +864,6 @@ enum LaneBody {
     Declined,
 }
 
-
 impl LaneView {
     /// The name of its body's state, for the diagnostics report (`LaneBodyStats::report`).
     pub(super) fn lane_body_state(&self) -> &'static str {
@@ -981,13 +980,11 @@ impl LaneView {
         matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Unspecialized { .. }) || self.compiling()
     }
 
-
     /// Whether its body left too often and specializes again at its next entry.
     fn respecializes(&self) -> bool {
         // SAFETY: as `lane_body`.
         matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0)
     }
-
 
     /// Retires field hints and native bodies (and plans) that name shape IDs when compaction renumbers them.
     pub(super) fn invalidate_shape_bindings(&self) {
@@ -1554,7 +1551,7 @@ pub(super) struct ScriptCallTarget {
     forwarded_method: u16,
 }
 
-mod call_entry;
+mod call_entry; mod call_scope; use call_scope::SCOPE_GENERATION_MASK; #[cfg(test)] use call_scope::SCOPE_PROGRAM_SHIFT;
 use call_entry::CallEntry;
 
 // Recognized once per target, as it resolves; no operation runs them.
@@ -1588,26 +1585,6 @@ impl ScriptCallTarget {
 /// A lane run's generation (`LaneStack::generation`), narrow so a cache entry stays one
 /// line; its wrap clears every entry, so no stale one can match a reused number.
 type ScriptGeneration = u32;
-
-/// `LaneStack::scope` and `ScriptCallTarget::scope`: the generation in the low word, the program
-/// the target serves (or the lane runs) in the high one, so one compare decides both.
-const SCOPE_GENERATION_MASK: u64 = ScriptGeneration::MAX as u64;
-const SCOPE_PROGRAM_SHIFT: u32 = ScriptGeneration::BITS;
-
-impl ScriptCallTarget {
-    /// The generation and program it was resolved for, as `LaneStack::scope` holds the run's: its
-    /// two adjacent fields read as one word.
-    #[inline(always)]
-    fn scope(&self) -> u64 {
-        const { assert!(cfg!(target_endian = "little")) };
-        const { assert!(std::mem::offset_of!(ScriptCallTarget, program) == std::mem::offset_of!(ScriptCallTarget, generation) + 4) };
-        const { assert!(std::mem::size_of::<ProgramId>() == 4 && std::mem::size_of::<ScriptGeneration>() == 4) };
-        // SAFETY: the fields lie within `self`, which the assertions place side by side.
-        unsafe {
-            std::ptr::from_ref(self).cast::<u8>().add(std::mem::offset_of!(ScriptCallTarget, generation)).cast::<u64>().read_unaligned()
-        }
-    }
-}
 
 /// The rest values a gathering activation collects inline before its array is made.
 const GATHERED_INLINE_VALUES: usize = 8;
@@ -1867,10 +1844,6 @@ pub(super) struct LaneStack {
 /// A generation no lane runs under: an empty target entry never matches.
 const NO_SCRIPT_GENERATION: ScriptGeneration = 0;
 
-/// The key of a generation no collection epoch names: entering it retires the targets of the
-/// generation before (`LaneStack::retire_targets`).
-const RETIRED_GENERATION_KEY: (u64, Value) = (u64::MAX, Value::UNDEFINED);
-
 impl Default for LaneStack {
     fn default() -> Self {
         Self {
@@ -1913,13 +1886,6 @@ impl LaneStack {
     /// `remember_script_target` of another program's callee (`cross_targets`).
     fn remember_cross_target(&mut self, target: ScriptCallTarget, policy: crate::MemoryPolicy) {
         self.cross_targets.remember(target, script_call_targets(policy));
-    }
-
-    /// Retire every target resolved so far, which no lane run's generation key names again
-    /// (`enter_generation`): the dependency of a fact every cached call relied on, as `with`
-    /// being absent (`Vm::note_with_scope_entered`).
-    fn retire_targets(&mut self) {
-        self.enter_generation(RETIRED_GENERATION_KEY);
     }
 
     /// Forget resolved call targets, as the general loop's call target cache is reset.
@@ -2065,11 +2031,6 @@ impl LaneStack {
         }
     }
 
-    /// The executing program becomes `program` (`Vm::activate_program`).
-    #[inline(always)]
-    pub(super) fn enter_scope_program(&mut self, program: ProgramId) {
-        self.scope = self.scope & SCOPE_GENERATION_MASK | u64::from(program.raw()) << SCOPE_PROGRAM_SHIFT;
-    }
 }
 
 /// A lane native call made beside the lane's activations (`Vm::runs_beside_activations`):
@@ -3958,7 +3919,6 @@ fn lane_return_value_other<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Valu
     Resumed::Exit(lane_frame_return(unsafe { vm(cx) }, ip, value))
 }
 
-
 script_handler! {
     /// `lane_load_window_local_general` in an environment activation reading an initialized
     /// non-numeric binding its window or in-place storage holds densely, saving no
@@ -4176,7 +4136,6 @@ lane_handler! {
     }
 }
 
-
 script_handler! {
     /// `this` where the lane holds it; the frame's `this` takes `lane_load_frame_this`,
     /// so this handler makes no call and saves no registers.
@@ -4215,7 +4174,6 @@ script_handler! {
         next!(cx, r, following(ip), view)
     }
 }
-
 
 script_handler! {
     /// `Binary` of operator `OP` on two registers, its operator and operand kinds resolved
@@ -8289,7 +8247,6 @@ script_handler! {
     }
 }
 
-
 /// Counts an entry of `function`'s lane activation toward its lane body (`own`), or, `now`,
 /// specializes it at once, from the targets and callees the program's views hold now. Whether the body
 /// is still warming or specialized (`LaneView::specialize_lane_body`).
@@ -10691,7 +10648,6 @@ macro_rules! i32_loads {
     };
 }
 
-
 /// The pointer-chase handler whose second load is `op`.
 fn load_load_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
     macro_rules! loads {
@@ -11451,21 +11407,6 @@ impl<H: Host> Vm<H> {
             Some(set)
         } else {
             self.script_call_holds(other, callee).then_some(other)
-        }
-    }
-
-    /// `callee` when a target may be resolved and cached for it: a heap cell, and no `with` scope
-    /// entered (`note_with_scope_entered`), which no cached target proves absent any longer.
-    #[inline(always)]
-    fn cacheable_callee(&self, callee: Value) -> Option<()> {
-        (callee.heap_index().is_some() && !self.with_scope_entered).then_some(())
-    }
-
-    /// Enter a `with` scope's first mark (`Vm::with_scope_entered`), the end of every cached
-    /// target's proof that none was.
-    pub(super) fn note_with_scope_entered(&mut self) {
-        if !std::mem::replace(&mut self.with_scope_entered, true) {
-            self.lane_stack.retire_targets();
         }
     }
 
@@ -13224,8 +13165,6 @@ script_handler! {
 /// Values an applied frame call copies out without allocating their list.
 const FRAME_CALL_INLINE_ARGUMENTS: usize = 8;
 
-
-
 /// The values a lane `Call` record passes: its window of the running function's registers.
 ///
 /// # Safety
@@ -13555,7 +13494,6 @@ fn lane_promise_native<H: Host>(
         _ => unreachable!("only promise shortcut natives reach here"),
     }
 }
-
 
 /// A lane `Call` of a native that `Native::runs_from_lane` admits, made as the general path
 /// makes it from the running frame: with the frame's resume PC published and the arguments
@@ -15696,8 +15634,6 @@ enum LaneBodyLeft {
     Completed(Ip, Value),
 }
 
-
-
 fn lane_body_left<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
@@ -16527,7 +16463,6 @@ lane_handler! {
         resume!(cx, lane_return_frame::<H>(r, ip))
     }
 }
-
 
 /// The completion `lane_return_from` expects of the activation it returns from.
 #[inline(always)]
