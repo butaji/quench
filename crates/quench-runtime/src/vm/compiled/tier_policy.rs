@@ -18,7 +18,7 @@ pub(in crate::vm) struct Tiers {
 #[cfg(test)]
 pub(in crate::vm) const TEST_PRIORS: Priors = Priors {
     interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
-    region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800,
+    region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800, plan_ns_per_ir: 1500,
 };
 
 /// The runs a loop-free function makes unlowered before a later call lowers it
@@ -55,6 +55,10 @@ pub(in crate::vm) struct Priors {
     /// weight of its prior in IR instructions (eight compiles of a hundred).
     pub(in crate::vm) compile_forgetting_permille: u64,
     pub(in crate::vm) compile_prior_ir: u64,
+    /// Nanoseconds the plan of a lane body (inlining, proofs, lowering to IR) takes per IR
+    /// instruction on the program's own thread, until the process's own plans replace it: none
+    /// of it overlaps the program, as a compile on the code generator's thread does.
+    pub(in crate::vm) plan_ns_per_ir: u64,
 }
 
 /// The loop tier (OSR regions at backward jumps).
@@ -254,7 +258,7 @@ const MEASURED: Tiers = Tiers {
     },
     js_function: JsFunction { promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)] },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
-    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800 },
+    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800, plan_ns_per_ir: 1500 },
 };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)

@@ -47,6 +47,22 @@ impl ProgramStore {
         admitted
     }
 
+    /// Whether a compile of `site`'s function from its entry is still within `max`
+    /// (`admit_lane_compile`), without counting one: a plan past the bound is not made.
+    pub(in crate::vm) fn lane_compiles_left(&self, site: &(u32, u32, Option<u32>), max: u8) -> bool {
+        self.lane_compiles.borrow().get(site).is_none_or(|count| *count < max)
+    }
+
+    /// The IR size of `site`'s last lane plan, if one was made.
+    pub(in crate::vm) fn planned_lane_ir(&self, site: &(u32, u32, Option<u32>)) -> Option<usize> {
+        self.lane_plan_ir.borrow().get(site).copied()
+    }
+
+    /// Records that `site`'s lane plan made `ir` IR instructions.
+    pub(in crate::vm) fn note_planned_lane_ir(&self, site: (u32, u32, Option<u32>), ir: usize) {
+        self.lane_plan_ir.borrow_mut().insert(site, ir);
+    }
+
     /// Records `published` as the body of `key`.
     pub(in crate::vm) fn note_installed_lane(&self, key: LaneKey, published: &Rc<PublishedLaneMethod>) {
         self.lane_installed.borrow_mut().insert(key, Rc::downgrade(published));

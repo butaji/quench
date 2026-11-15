@@ -290,6 +290,11 @@ pub(super) struct LoopSite {
     tier: std::cell::RefCell<LoopTier>,
     /// The function's lane body planned to start at this loop's header (`lane_loop_body`).
     body: std::cell::RefCell<LoopBody>,
+    /// The header dispatches that found the body idle (`plan_loop_body`), each an iteration
+    /// of the interpreter's or a region's entry, and the iterations the loop takes before its
+    /// body is planned again (`loop_model::body_taken`, at the size its last plan had).
+    body_seen: std::cell::Cell<u64>,
+    body_due: std::cell::Cell<u64>,
 }
 
 impl LoopSite {
@@ -10024,8 +10029,8 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
     let arrays = loop_tier::sampled_arrays(vm, parameters.iter().copied());
     let specialize = |work: super::compiled::LaneBodyWork| {
         let work = match work {
-            super::compiled::LaneBodyWork::Start { generic, shrinks, observed, called, caller, .. } =>
-                super::compiled::LaneBodyWork::Start { generic, shrinks, observed, called, caller, arrays: &arrays },
+            super::compiled::LaneBodyWork::Start { generic, shrinks, observed, looped, called, caller, .. } =>
+                super::compiled::LaneBodyWork::Start { generic, shrinks, observed, looped, called, caller, arrays: &arrays },
             poll => poll,
         };
         if matches!(work, super::compiled::LaneBodyWork::Start { .. })
@@ -22627,7 +22632,7 @@ fn install_loop_sites<'live, H: Host>(
                     widenings: std::cell::Cell::new(0),
                     compile_attempts: std::cell::Cell::new(0),
                     compile_successes: std::cell::Cell::new(0),
-                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::initial()),
+                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::initial()), body_seen: std::cell::Cell::new(0), body_due: std::cell::Cell::new(0),
                 },
             )
         })

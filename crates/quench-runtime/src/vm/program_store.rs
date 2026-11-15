@@ -793,6 +793,9 @@ pub(crate) struct ProgramStore {
     /// The bodies published by what they compile from (`lane_publication::LaneKey`).
     /// The compiles each body or loop entry has had (`lane_publication::LaneKey`'s first three).
     lane_compiles: std::cell::RefCell<std::collections::BTreeMap<(u32, u32, Option<u32>), u8>>,
+    /// The IR size of the last lane plan from each entry of each function (`Vm::start_lane_method`):
+    /// what deciding the next compile's worth from costs, before planning it again.
+    lane_plan_ir: std::cell::RefCell<std::collections::BTreeMap<(u32, u32, Option<u32>), usize>>,
     lane_installed: std::cell::RefCell<std::collections::BTreeMap<lane_publication::LaneKey, Weak<crate::vm::compiled::PublishedLaneMethod>>>,
     /// The ahead-of-time bodies the loaded files hold.
     ahead: std::cell::RefCell<Vec<Rc<crate::vm::compiled::AheadImages>>>,
@@ -849,6 +852,7 @@ impl Default for ProgramStore {
             lane_installed: Default::default(),
             ahead: Default::default(),
             lane_compiles: Default::default(),
+            lane_plan_ir: Default::default(),
             programs: Vec::new(),
             // Each store's epochs start apart from every other's, so a context derived from
             // a store a snapshot or reset replaced never matches its successor's.

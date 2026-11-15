@@ -54,6 +54,28 @@ fn repays_entries(priors: &Priors, loops: &Loops, span: u64, entries: u64, itera
     saved >= entries.saturating_mul(priors.region_entry_ns)
 }
 
+/// The iterations after which a loop body whose iterations work through `work` bytecodes pays
+/// its `outlay` (`Vm::start_lane_method`): its plan, still to make where `unplanned`, takes the
+/// program's own time. The iterations to come are `taken / remaining_divisor` as for a region.
+fn body_required_taken(priors: &Priors, work: u64, outlay: u64) -> u64 {
+    outlay.checked_div(saved_per_iteration(priors, work)).map_or(u64::MAX, |paid| paid + 1).saturating_mul(priors.remaining_divisor)
+}
+
+/// The bytecodes one iteration of a loop body of `ir` instructions works through: the body
+/// inlines the loop's calls, so an iteration does the work of its instructions
+/// (`ir_per_bytecode` each), and of the loop's span at least.
+fn body_work(loops: &Loops, span: u64, ir: usize) -> u64 {
+    span.max(ir as u64 / loops.ir_per_bytecode)
+}
+
+/// `body_required_taken` at the costs this process has learned; under `tier-stress` none.
+pub(in crate::vm) fn body_taken(span: u64, ir: usize, unplanned: bool) -> u64 {
+    if admits_every_compile() { return 0; }
+    let plan = if unplanned { super::tier_model::learned_plan_ns_per_ir() } else { 0 };
+    let outlay = TIERS.priors.region_entry_ns + super::tier_model::outlay_ns(ir, plan, learned_ns_per_ir(), compile_wall_permille());
+    body_required_taken(&TIERS.priors, body_work(&TIERS.loops, span, ir), outlay)
+}
+
 /// `repays_entries` under the process's priors.
 pub(in crate::vm) fn repays(span: u64, entries: u64, iterations: u64) -> bool {
     repays_entries(&TIERS.priors, &TIERS.loops, span, entries, iterations)
@@ -97,6 +119,16 @@ mod tests {
     fn a_loop_that_saves_nothing_is_never_compiled() {
         let free = Priors { body_share: PER_MILLE, ..PRIORS };
         assert_eq!(required_taken(&free, &LOOPS, 10, COST, PER_MILLE), u32::MAX);
+    }
+
+    #[test]
+    fn a_body_that_inlines_its_calls_asks_iterations_for_its_own_size() {
+        // 8,000 instructions planned (12 ms) and compiled (24 ms at full wall) work through 1,000
+        // bytecodes an iteration, 7 us saved: some 20,000 iterations, though the span is 10.
+        let outlay = super::super::tier_model::outlay_ns(8_000, PRIORS.plan_ns_per_ir, COST, PER_MILLE);
+        let taken = body_required_taken(&PRIORS, body_work(&LOOPS, 10, 8_000), outlay);
+        assert!(taken > 19_000 && taken < 22_000, "{taken}");
+        assert_eq!(body_work(&LOOPS, 10, 40), 10);
     }
 
     #[test]

@@ -43,11 +43,18 @@ pub(super) struct CompileCost { ns: f64, ir: f64 }
 
 #[cfg(not(test))]
 static COMPILES: Mutex<CompileCost> = Mutex::new(CompileCost { ns: 0.0, ir: 0.0 });
+/// The plans' census pairs, as `COMPILES` holds the compiles'.
+#[cfg(not(test))]
+static PLANS: Mutex<CompileCost> = Mutex::new(CompileCost { ns: 0.0, ir: 0.0 });
 
 #[cfg(not(test))]
-fn with_compiles<R>(use_cost: impl FnOnce(&mut CompileCost) -> R) -> R {
-    use_cost(&mut COMPILES.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+fn with_cost<R>(of: &Mutex<CompileCost>, use_cost: impl FnOnce(&mut CompileCost) -> R) -> R {
+    use_cost(&mut of.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
 }
+#[cfg(not(test))]
+fn with_compiles<R>(use_cost: impl FnOnce(&mut CompileCost) -> R) -> R { with_cost(&COMPILES, use_cost) }
+#[cfg(not(test))]
+fn with_plans<R>(use_cost: impl FnOnce(&mut CompileCost) -> R) -> R { with_cost(&PLANS, use_cost) }
 
 /// Tests decide from the prior alone: learning from wall time would make what a test compiles
 /// depend on the load of the machine running it.
@@ -55,6 +62,8 @@ fn with_compiles<R>(use_cost: impl FnOnce(&mut CompileCost) -> R) -> R {
 fn with_compiles<R>(use_cost: impl FnOnce(&mut CompileCost) -> R) -> R {
     use_cost(&mut CompileCost { ns: 0.0, ir: 0.0 })
 }
+#[cfg(test)]
+fn with_plans<R>(use_cost: impl FnOnce(&mut CompileCost) -> R) -> R { with_compiles(use_cost) }
 
 impl CompileCost {
     /// Folds one compile's census pair in, the older ones weighted down by the forgetting factor.
@@ -64,11 +73,14 @@ impl CompileCost {
         self.ir = self.ir * forget + ir as f64;
     }
 
-    /// The estimated nanoseconds per IR instruction.
-    pub(super) fn ns_per_ir(&self, priors: &Priors) -> u64 {
+    /// The estimated nanoseconds per IR instruction, from `prior_ns_per_ir` before measurements.
+    pub(super) fn ns_per_ir_from(&self, priors: &Priors, prior_ns_per_ir: u64) -> u64 {
         let prior = priors.compile_prior_ir as f64;
-        ((self.ns + prior * priors.compile_ns_per_ir as f64) / (self.ir + prior)) as u64
+        ((self.ns + prior * prior_ns_per_ir as f64) / (self.ir + prior)) as u64
     }
+
+    /// The estimated compile nanoseconds per IR instruction.
+    pub(super) fn ns_per_ir(&self, priors: &Priors) -> u64 { self.ns_per_ir_from(priors, priors.compile_ns_per_ir) }
 }
 
 /// Records a finished compile of `ir` instructions that took `took`.
@@ -80,22 +92,46 @@ pub(super) fn learned_ns_per_ir() -> u64 {
     with_compiles(|cost| cost.ns_per_ir(&TIERS.priors))
 }
 
+/// Records a lane plan of `ir` instructions that took `took` on the program's thread.
+pub(super) fn note_plan(took: std::time::Duration, ir: usize) {
+    with_plans(|cost| cost.record(&TIERS.priors, took.as_nanos() as u64, ir));
+}
+
+/// The plan nanoseconds per IR instruction this process has learned.
+pub(super) fn learned_plan_ns_per_ir() -> u64 {
+    with_plans(|cost| cost.ns_per_ir_from(&TIERS.priors, TIERS.priors.plan_ns_per_ir))
+}
+
+/// What a body of `ir` instructions costs the running program before it runs: its plan
+/// (`plan_ns`, all on the program's thread; 0 once the plan is made) and the wall share of its compile.
+pub(super) fn outlay_ns(ir: usize, plan_ns_per_ir: u64, compile_ns_per_ir: u64, wall_permille: u64) -> u64 {
+    ir as u64 * (plan_ns_per_ir + compile_ns_per_ir * wall_permille / PER_MILLE)
+}
+
 /// The net gain in ns of compiling `observed` into code that takes `share` per mille of the
 /// interpreter's time per bytecode, compiled at `compile_ns_per_ir`: each future entry
 /// (Lindy, `entries / remaining_divisor`) saves the interpreter's work less the share the body
 /// still takes and less its own entry crossing; the compile costs the wall share of its time.
+#[cfg(test)]
 pub(super) fn net_ns(priors: &Priors, share: u64, compile_ns_per_ir: u64, wall_permille: u64, observed: &Observed) -> i64 {
+    net_planned_ns(priors, share, (0, compile_ns_per_ir), wall_permille, observed)
+}
+
+/// `net_ns` where the body's plan is still to make, at `plan_ns_per_ir`, besides its compile.
+pub(super) fn net_planned_ns(priors: &Priors, share: u64, (plan_ns_per_ir, compile_ns_per_ir): (u64, u64), wall_permille: u64, observed: &Observed) -> i64 {
     let per_entry = if observed.region { priors.region_entry_ns }
         else { (observed.length + observed.loop_work) * priors.interpreter_ns * (PER_MILLE - share) / PER_MILLE };
     let saved = per_entry.saturating_sub(priors.body_entry_ns) as i64;
     let future = (u64::from(observed.entries) / priors.remaining_divisor) as i64;
-    future * saved - (observed.ir as u64 * compile_ns_per_ir * wall_permille / PER_MILLE) as i64
+    future * saved - outlay_ns(observed.ir, plan_ns_per_ir, compile_ns_per_ir, wall_permille) as i64
 }
 
-/// Whether the model admits the compile of `observed`; under `tier-stress` every eligible
-/// compile is admitted (`TIERS` floor row).
-pub(super) fn admits(observed: &Observed, diagnostics: bool) -> bool {
-    let net = net_ns(&TIERS.priors, TIERS.priors.body_share, learned_ns_per_ir(), compile_wall_permille(), observed);
+/// Whether the model admits the compile of `observed`, whose plan is made already unless
+/// `unplanned` (its plan is then charged too); under `tier-stress` every eligible compile is
+/// admitted (`TIERS` floor row).
+pub(super) fn admits(observed: &Observed, unplanned: bool, diagnostics: bool) -> bool {
+    let plan = if unplanned { learned_plan_ns_per_ir() } else { 0 };
+    let net = net_planned_ns(&TIERS.priors, TIERS.priors.body_share, (plan, learned_ns_per_ir()), compile_wall_permille(), observed);
     if diagnostics { shadow_log(observed, net); }
     super::tier_policy::admits_every_compile() || net > 0
 }
@@ -144,6 +180,15 @@ mod tests {
     fn a_shared_core_charges_the_whole_compile() {
         let work = observed(400, 0, 8000, false, 1000);
         assert!(net_ns(&PRIORS, PRIORS.body_share, PRIORS.compile_ns_per_ir, 100, &work) > net(&work));
+    }
+
+    #[test]
+    fn a_plan_still_to_make_is_charged_on_the_programs_thread() {
+        // 400 bytecodes save 2470 ns an entry: 6000 entries (1500 to come, 3.7 ms) repay the
+        // 3 ms compile of 1000 instructions, not the 1.5 ms plan besides it.
+        let work = observed(400, 0, 6000, false, 1000);
+        assert!(net_ns(&PRIORS, PRIORS.body_share, PRIORS.compile_ns_per_ir, PER_MILLE, &work) > 0);
+        assert!(net_planned_ns(&PRIORS, PRIORS.body_share, (PRIORS.plan_ns_per_ir, PRIORS.compile_ns_per_ir), PER_MILLE, &work) < 0);
     }
 
     #[test]

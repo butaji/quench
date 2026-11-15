@@ -81,6 +81,14 @@ impl LoopBody {
     }
 }
 
+impl LoopSite {
+    /// The iterations the loop has taken, as far as the lane sees them: the interpreter's
+    /// warm-up, its regions' iterations, and the idle body's header dispatches since.
+    fn body_iterations(&self) -> u64 {
+        u64::from(self.taken.get()) + self.tier.borrow().iterations() + self.body_seen.get()
+    }
+}
+
 impl LoopBody {
     /// Whether the loop may still run a body of its own: one planning, compiling or running.
     pub(super) fn pending(&self) -> bool { !matches!(self, Self::Declined) }
@@ -94,7 +102,11 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
     let mut body = site.body.borrow_mut();
     let (pending, stuck, attempts) = match std::mem::replace(&mut *body, LoopBody::Declined) {
         LoopBody::Compiling { pending, stuck, attempts, .. } => (Some(pending), stuck, attempts),
-        LoopBody::Idle { stuck, attempts } => (None, stuck, attempts),
+        LoopBody::Idle { stuck, attempts } => {
+            site.body_seen.set(site.body_seen.get().saturating_add(1));
+            if site.body_iterations() < site.body_due.get() { *body = LoopBody::Idle { stuck, attempts }; return; }
+            (None, stuck, attempts)
+        }
         settled => { *body = settled; return; }
     };
     let function = site.function;
@@ -114,10 +126,16 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
     }));
     let work = match pending {
         Some(pending) => LaneBodyWork::Poll(pending),
-        None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, called: false, caller: own, arrays: &arrays },
+        None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, looped: Some((site.span(), site.body_iterations())), called: false, caller: own, arrays: &arrays },
     };
     let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc),
         &|function, header| lane_unit_trips(cx, function, header), &|callee| lane_callee_captures(cx, callee), &direct, work, Some(site.header));
+    // A body its iterations have not paid for waits until they would at its planned size.
+    if matches!(outcome, LaneBodyOutcome::Unpaid) {
+        let ir = vm.programs.planned_lane_ir(&(vm.active_program.raw(), function, Some(site.header)))
+            .unwrap_or_else(|| usize::try_from(site.span().saturating_mul(super::super::compiled::tier_policy::TIERS.loops.ir_per_bytecode)).unwrap_or(usize::MAX));
+        site.body_due.set(super::super::compiled::loop_model::body_taken(site.span(), ir, true));
+    }
     *body = LoopBody::after(outcome, stuck, attempts);
     if matches!(*body, LoopBody::Ready { .. }) { raise_tier_up(vm, site); }
 }
