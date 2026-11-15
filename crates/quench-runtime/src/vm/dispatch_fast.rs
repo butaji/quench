@@ -13838,6 +13838,7 @@ script_handler! {
         // The function a forwarded call calls is the site's callee, through its native, for a
         // body that inlines it (`lane_unit::Planner::through_call`).
         if through_call
+            && vm.tier_may_run(crate::jit_mode::Tier::ANY)
             && let Some((program, function, _, false)) = vm.same_realm_script_target(callee)
             && program == vm.active_program
         {
@@ -13895,7 +13896,7 @@ fn lane_function_call_activation<H: Host>(
     args: &[Value],
 ) -> Resumed {
     let vm = unsafe { vm(cx) };
-    let Some(target) = lane_passed_target(cx, callee, args.len()) else {
+    let Some(target) = lane_forwarded_target(cx, ip, callee, args.len()) else {
         return Resumed::Exit(lane_forwarded_frame_call(cx, r, ip, i, callee, receiver, args));
     };
     // `call_this_value` without its boxing of primitives, which allocates.
@@ -13909,6 +13910,30 @@ fn lane_function_call_activation<H: Host>(
         Ok((registers, base)) => Resumed::At(registers, base, Carried::script(cx)),
         Err(next) => Resumed::Exit(next),
     }
+}
+
+/// `lane_passed_target` of a forwarded call's `callee` at the call record `ip`, whose read
+/// memo slot links the callee's cache entry, as an array callback method's call links its
+/// callback's (`lane_callback_target`): the link, tested first, skips the set's hash and the
+/// cross-program and environment lookups for a callee the running program activates.
+#[inline(always)]
+fn lane_forwarded_target<H: Host>(cx: *mut LaneContext<H>, ip: Ip, callee: Value, passed: usize) -> Option<ScriptCallTarget> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: a call record's operand is `call`.
+    let link = unsafe { (*ip).operand.call.memo } as usize;
+    if vm.script_call_holds(link, callee) && !lane_constructing(vm, callee) {
+        // SAFETY: `script_call_holds` found the entry within the cache.
+        let target = unsafe { vm.lane_stack.script_targets.entries.get_unchecked(link) };
+        if lane_admits_activation(target) {
+            return Some(*target);
+        }
+    }
+    let target = lane_passed_target(cx, callee, passed)?;
+    if let Some(index) = vm.script_call_index(callee) {
+        // SAFETY: as `requicken`: the record's operand is the call's, written in place.
+        unsafe { (*ip.cast_mut()).operand.call.memo = index as u32 };
+    }
+    Some(target)
 }
 
 /// `lane_enter_cell_body` of a forwarded call of a plain target of the running program, passed
@@ -13975,8 +14000,9 @@ fn lane_passed_target<H: Host>(cx: *mut LaneContext<H>, callee: Value, passed: u
 }
 
 /// The activation of a `lane_passed_target` with receiver `this` and the `passed` values:
-/// an environment activation, or a keeping one, which keeps them and may enter another
-/// program (`Completion::Cross`).
+/// an environment activation, a plain call's push where the callee keeps nothing past its
+/// parameters, or a keeping one, which keeps them; either may enter another program
+/// (`Completion::Cross`).
 #[inline(always)]
 fn lane_activate_passed<H: Host>(
     cx: *mut LaneContext<H>,
@@ -13988,6 +14014,19 @@ fn lane_activate_passed<H: Host>(
 ) -> Result<(Registers, Ip), Ip> {
     if target.entry == CallEntry::Environment {
         return lane_activate_environment(cx, r, ip, target, passed, this);
+    }
+    // A callee that keeps no passed values (`ScriptCallTarget::forwards`) and is passed at
+    // most its parameters, or drops the rest, takes the plain call's push (`lane_activate`).
+    let vm = unsafe { vm(cx) };
+    let argc = u16::try_from(passed.len()).unwrap_or(u16::MAX);
+    let returns = unsafe { (*ip).a } & crate::bytecode::RETURN_REGISTER != 0;
+    if !target.forwards()
+        && (argc <= target.params || target.drops_extra_arguments())
+        && (!returns || lane_returning_call_admitted(cx))
+        && !vm.with_scope_entered
+        && lane_activation_room(vm, target)
+    {
+        return Ok(lane_push_passed::<H, true, false>(cx, r, ip, target, passed.as_ptr(), argc.min(target.params), this, false));
     }
     let arguments = ActivationArguments::Kept(passed.as_ptr(), passed.len());
     lane_activate_keeping::<H, true>(cx, r, ip, target, arguments, this, false, None)
