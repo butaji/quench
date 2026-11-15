@@ -2226,17 +2226,24 @@ impl<H: Host> Vm<H> {
         let (receiver, kind) = self.inherited_receiver(object)?;
         let function_receiver = kind == super::field_cache::InheritedReceiver::Function;
         self.inherited_entry_answers(kind, index).then_some(())?;
-        let (shape, link) = (receiver.shape(), receiver.proto_link());
+        let layout = receiver.layout_id();
         // SAFETY: a site's index names a recorded entry (`record_inherited_field`), and a
         // hint's was found in the cache.
         let cache = unsafe { self.heap.dependencies().inherited_unchecked(index) };
-        if cache.receiver != shape
-            || function_receiver && !cache.function_links
-            || !cache.proved
-            || cache.proved_prototype != link
-        {
+        if !cache.proved || function_receiver && !cache.function_links {
             return None;
         }
+        // The layout the proof last answered proves the receiver shape and prototype link
+        // at once; another layout compares them and, matching, becomes that layout.
+        if layout != cache.proved_layout {
+            let (shape, link) = (receiver.shape(), receiver.proto_link());
+            if cache.receiver != shape || cache.proved_prototype != link {
+                return None;
+            }
+            self.heap.dependencies_mut().inherited_mut(index).proved_layout = layout;
+        }
+        // SAFETY: as above.
+        let cache = unsafe { self.heap.dependencies().inherited_unchecked(index) };
         let depth = u16::from(cache.depth);
         let value = match cache.answer {
             InheritedFieldAnswer::Absent => Value::UNDEFINED,
@@ -3409,6 +3416,7 @@ impl<H: Host> Vm<H> {
         let dependencies = self.heap.dependencies_mut();
         let cache = dependencies.inherited_mut(proof.index);
         cache.proved_prototype = crate::heap::ProtoLink::of(proof.prototype);
+        cache.proved_layout = crate::heap::NO_PROVED_LAYOUT;
         cache.proved_holder = proof.holder;
         cache.constant_watch = None;
         dependencies.prove_inherited(proof.index, &subjects);
@@ -3463,6 +3471,7 @@ impl<H: Host> Vm<H> {
             answer: InheritedFieldAnswer::Absent,
             proved: false,
             proved_prototype: crate::heap::ProtoLink::NULL,
+            proved_layout: crate::heap::NO_PROVED_LAYOUT,
             proved_holder: Value::UNDEFINED,
             constant: Value::UNDEFINED,
             constant_watch: None,

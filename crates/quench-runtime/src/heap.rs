@@ -19,7 +19,7 @@ mod cell;
 mod dependencies;
 pub(crate) use dependencies::{
     Dependencies, INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache,
-    ProofKind,
+    NO_PROVED_LAYOUT, ProofKind,
 };
 mod cell_access;
 mod buffer_bytes;
