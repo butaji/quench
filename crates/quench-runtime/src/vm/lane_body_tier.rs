@@ -188,6 +188,14 @@ impl LaneView {
         entries % warmup == 0 && (entries / warmup).is_power_of_two()
     }
 
+    /// Whether `entries`, an attempt's count, is the last the warm-up schedule can name: the
+    /// next attempt doubles it past the counter's range, so no later entry looks again.
+    fn last_attempt(&self, entries: u16) -> bool {
+        let warmup = u32::from(self.warmup_entries().max(1));
+        let attempts = u32::from(entries) / warmup;
+        attempts >= 1 && u32::from(entries).saturating_add(warmup * attempts) > u32::from(u16::MAX)
+    }
+
     /// Whether its history affords another compile.
     pub(super) fn affords_compile(&self) -> bool {
         let history = self.tier().history.get();
@@ -392,7 +400,13 @@ impl LaneView {
             // Its entries decide when it looks again (`attempts_at`), no hot loop's skip.
             super::super::compiled::LaneBodyOutcome::Unpaid => {
                 self.tier().history.set(LaneBodyHistory { unpaid: true, ..self.tier().history.get() });
-                LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck }
+                let next = entries.saturating_add(1);
+                // The attempts double with each warm-up; past the last one the counter can
+                // name, the model has priced every entry this function can give and refused.
+                // The lane would keep running it through its records for nothing, slower than
+                // the general interpreter, so decline it there (`release_from_tier`).
+                if self.last_attempt(next) { return LaneBody::Declined }
+                LaneBody::Unspecialized { entries: next, recompiles, stuck }
             }
             super::super::compiled::LaneBodyOutcome::Short => {
                 self.tier().history.set(LaneBodyHistory { short: true, ..self.tier().history.get() });
