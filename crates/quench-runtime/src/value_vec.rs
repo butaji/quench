@@ -961,6 +961,15 @@ impl ValueArena {
 
     /// Frees `vector`'s storage. A young run (`Nursery`) returns with the rest of the young
     /// range when its collection ends, so its release is the range test alone.
+    /// Its length, capacity, released values and nursery range, for `QUENCH_TRACE=gc`.
+    pub(crate) fn trace_summary(&self) -> String {
+        let n = self.nursery;
+        let free_classes = self.free.iter().enumerate().filter(|(_, list)| !list.is_empty())
+            .map(|(class, list)| format!("{class}:{}", list.len())).collect::<Vec<_>>().join(",");
+        format!("arena_len={} arena_cap={} released={} nursery={}..{}..{} free=[{free_classes}]",
+            self.values.len(), self.values.capacity(), self.released_values, n.floor, n.top, n.end)
+    }
+
     #[inline(always)] pub(crate) fn release(&mut self, vector: ValueVec) {
         if !self.young_runs().hold(vector) {
             self.release_ordinary(vector);
@@ -1028,6 +1037,11 @@ impl ValueArena {
 
     pub(crate) fn finish_compaction(&mut self, length: usize) {
         self.values.truncate(length);
+        if crate::trace::Channel::Gc.on() {
+            let wide = self.values[..length].iter().filter(|value| value.to_narrow().is_none()).count();
+            let numbers = self.values[..length].iter().filter(|value| value.to_narrow().is_none() && value.as_number().is_some()).count();
+            eprintln!("arena census: compacted={length} wide={wide} wide_numbers={numbers}");
+        }
         // A burst's growth stays resident past the compaction that frees it: keep the room
         // the next doubling would give the live values, and return the rest.
         self.values.shrink_to(length.saturating_mul(COMPACTED_CAPACITY_FACTOR));
