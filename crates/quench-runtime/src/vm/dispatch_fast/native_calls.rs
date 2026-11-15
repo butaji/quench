@@ -133,7 +133,7 @@ script_handler! {
             Some((ChainRead::Value(value), _)) => resume!(cx, lane_native_complete(cx, ip, i, Some(value))),
             Some((ChainRead::Absent, _)) => resume!(cx, lane_native_complete(cx, ip, i, Some(Value::UNDEFINED))),
             Some((ChainRead::Getter(Some(getter)), receiver)) if !getter.is_undefined() => {
-                match lane_activate_getter(cx, r, ip, getter, receiver) {
+                match lane_activate_getter(cx, r, ip, getter, receiver, None) {
                     Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
                     Err(next) => next,
                 }

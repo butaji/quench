@@ -5385,7 +5385,7 @@ fn lane_index_getter_activation<H: Host>(
     let Some(getter) = vm.proved_symbol_getter(base, key) else {
         return Err(exit(ip));
     };
-    lane_activate_getter(cx, r, ip, getter, base)
+    lane_activate_getter(cx, r, ip, getter, base, None)
 }
 
 script_handler! {
@@ -7477,7 +7477,8 @@ fn lane_getter_activation<H: Host>(
 }
 
 /// The activation of `getter` with receiver `base` and no arguments for the read record at
-/// `ip`, whose completion is the read's value: a frameless target of the running program, or
+/// `ip`, whose completion is the read's value (`resolved`: its frameless target, which the read
+/// resolved already): a frameless target of the running program, or
 /// another program's plain activation (`Vm::cross_call_entry`), which runs in its program.
 /// `Err` carries the record to continue at: the general path for any other getter.
 fn lane_activate_getter<H: Host>(
@@ -7486,18 +7487,19 @@ fn lane_activate_getter<H: Host>(
     ip: Ip,
     getter: Value,
     base: Value,
+    resolved: Option<ScriptCallTarget>,
 ) -> Result<(Registers, Ip), Ip> {
     // The getter's activation is pushed above the reading function's, and resolving its
     // target may displace the cached target a running leaf names, so a leaf's read makes the
-    // leaf an activation first.
+    // leaf an activation first. A target the read resolved (`resolved`) is a copy, which
+    // that leaves as it was.
     lane_materialize_running_leaf(cx);
     let vm = unsafe { vm(cx) };
-    let no_arguments = ActivationArguments::Kept(std::ptr::NonNull::dangling().as_ptr(), 0);
-    if let Some(target) = lane_script_target(cx, getter).filter(|target| !target.forwards()) {
+    if let Some(target) = resolved.or_else(|| lane_script_target(cx, getter)).filter(|target| !target.forwards()) {
         let Some(this) = lane_call_this(vm, &target, base) else {
             return Err(exit(ip));
         };
-        return lane_activate_keeping::<H, false>(cx, r, ip, &target, no_arguments, this, false, None);
+        return lane_activate_kept::<H, false>(cx, r, ip, &target, &[], this);
     }
     // A getter that makes closures, of this program or another, runs as the environment
     // activation its plain call makes (`lane_activate_environment`), with no arguments, as
@@ -7531,7 +7533,7 @@ fn lane_activate_getter<H: Host>(
     let Some(this) = lane_call_this(vm, &target, base) else {
         return Err(exit(ip));
     };
-    lane_activate_keeping::<H, true>(cx, r, ip, &target, no_arguments, this, false, None)
+    lane_activate_kept::<H, true>(cx, r, ip, &target, &[], this)
 }
 
 /// A `GetField` record's value where caches answer it (`lane_cached_field`): one read of a
@@ -8106,7 +8108,7 @@ script_handler! {
                 next!(cx, r, following(ip), Carried::script_in(cx, view))
             }
             // The getter runs as the read's activation, as a cached accessor's does.
-            Some(PrivateRead::Getter(object, getter)) => match lane_activate_getter(cx, r, ip, getter, object) {
+            Some(PrivateRead::Getter(object, getter)) => match lane_activate_getter(cx, r, ip, getter, object, None) {
                 Ok((registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
                 Err(next) => next,
             },
@@ -13758,7 +13760,7 @@ script_handler! {
             if KIND == LOAD_NAME_CALL {
                 r.set(i.b, Value::UNDEFINED);
             }
-            return match lane_activate_getter(cx, r, ip, getter, globals) {
+            return match lane_activate_getter(cx, r, ip, getter, globals, None) {
                 Ok((registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
                 Err(next) => next,
             };
@@ -14045,10 +14047,26 @@ fn lane_activate_passed<H: Host>(
     if target.entry == CallEntry::Environment {
         return lane_activate_environment(cx, r, ip, target, passed, this);
     }
-    // A callee that keeps no passed values (`ScriptCallTarget::forwards`) and is passed at
-    // most its parameters, or drops the rest, takes the plain call's push (`lane_activate`).
+    lane_activate_kept::<H, true>(cx, r, ip, target, passed, this)
+}
+
+/// The activation of `target`, of the running program unless `MAY_CROSS`, for the record at
+/// `ip` with receiver `this` and the `passed` values, which lie outside the caller's call
+/// window (a forwarded or applied call's, a getter's none): a callee that keeps no passed
+/// values (`ScriptCallTarget::forwards`) and is passed at most its parameters, or drops the
+/// rest, takes the plain call's push (`lane_activate`); any other, a keeping activation.
+#[inline(always)]
+fn lane_activate_kept<H: Host, const MAY_CROSS: bool>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    passed: &[Value],
+    this: Value,
+) -> Result<(Registers, Ip), Ip> {
     let vm = unsafe { vm(cx) };
     let argc = u16::try_from(passed.len()).unwrap_or(u16::MAX);
+    // SAFETY: `ip` is a record of the running view.
     let returns = unsafe { (*ip).a } & crate::bytecode::RETURN_REGISTER != 0;
     if !target.forwards()
         && (argc <= target.params || target.drops_extra_arguments())
@@ -14056,10 +14074,10 @@ fn lane_activate_passed<H: Host>(
         && !vm.with_scope_entered
         && lane_activation_room(vm, target)
     {
-        return Ok(lane_push_passed::<H, true, false>(cx, r, ip, target, passed.as_ptr(), argc.min(target.params), this, false));
+        return Ok(lane_push_passed::<H, MAY_CROSS, false>(cx, r, ip, target, passed.as_ptr(), argc.min(target.params), this, false));
     }
     let arguments = ActivationArguments::Kept(passed.as_ptr(), passed.len());
-    lane_activate_keeping::<H, true>(cx, r, ip, target, arguments, this, false, None)
+    lane_activate_keeping::<H, MAY_CROSS>(cx, r, ip, target, arguments, this, false, None)
 }
 
 /// `lane_function_call` of a forwarded `callee` with no frameless target: a user function
