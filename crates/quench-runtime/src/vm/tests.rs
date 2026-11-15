@@ -4014,7 +4014,7 @@ fn method_entry_for_test(shape: u32, atom: crate::bytecode::Atom) -> MethodCache
 #[test]
 fn atom_invalidation_drops_only_the_entries_naming_the_atom() {
     let mut vm = Vm::new(TestHost::default());
-    vm.method_caches.resize(6, [super::EMPTY_METHOD_CACHE; 2]);
+    vm.method_caches = super::method_cache::MethodCacheTable::with_empty(6);
     // Sites 0 and 1 name atom 7; site 2 names atoms 7 and 8; site 3 names only 8; site 4
     // grows a megamorphic set naming both.
     vm.record_method_cache(0, method_entry_for_test(1, 7));
