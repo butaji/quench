@@ -1625,6 +1625,41 @@ enum Completion {
     ReturnsToBody,
     /// `ReturnsToBody` of a body's `new`. Made a frame, it is a construction's.
     ConstructsToBody,
+    /// A Wasm call of a JavaScript-backed import (`wasm_calls::lane_activate_js_import`), of
+    /// another program than its Wasm caller's: its return gives the caller the value's Wasm
+    /// form and runs the caller's program and instance again, as `LaneStack::to_wasm` keeps
+    /// them (`lane_complete_to_wasm`). Made a frame, its pending call converts the value
+    /// (`CallCompletion::ToWasm`).
+    ToWasm,
+}
+
+/// A JavaScript-backed import's call facts, fixed by its wrapper (`Cell::WasmHostFunction`):
+/// the wrapper and its realm, the JavaScript callee, the scalar kind of each parameter
+/// (`JS_IMPORT_I32`, `_F32`, `_F64`) and the result type.
+#[derive(Clone, Copy)]
+pub(super) struct JsImportPlan {
+    pub(super) wrapper: Value,
+    pub(super) realm: Value,
+    pub(super) callee: Value,
+    pub(super) argc: u8,
+    pub(super) kinds: [u8; JS_IMPORT_ARGUMENTS],
+    pub(super) result: Option<crate::WasmType>,
+}
+
+/// The most parameters an activated import passes (`JsImportPlan`).
+pub(super) const JS_IMPORT_ARGUMENTS: usize = 8;
+pub(super) const JS_IMPORT_I32: u8 = 0;
+pub(super) const JS_IMPORT_F32: u8 = 1;
+pub(super) const JS_IMPORT_F64: u8 = 2;
+
+/// What a `Completion::ToWasm` activation's return restores of its Wasm caller: the instance
+/// it ran over (`LaneContext::instance`), the memory binding its view was of, read again on
+/// return since the callee may grow the memory, and the import's result type.
+#[derive(Clone, Copy)]
+pub(super) struct ToWasmCall {
+    pub(super) instance: Value,
+    pub(super) memory: Option<Value>,
+    pub(super) result: Option<crate::WasmType>,
 }
 
 impl Completion {
@@ -1728,6 +1763,10 @@ use call_body_forms::{body_entry, leaf_body};
 const TARGET_CONSTRUCTS: u8 = 1;
 /// `ScriptCallTarget::forms`: `new` may run its body as the stores alone.
 const TARGET_INITIALIZES: u8 = 2;
+/// `ScriptCallTarget::forms`: a rest body (`CallEntry::Gathers`) that keeps the values it was
+/// passed, for a kept `arguments` (`CallPlan::keeps_arguments`) or legacy reflection of a
+/// sloppy function's; any other's rest array holds every value past its parameters.
+const TARGET_GATHERS_KEEPING: u8 = 4;
 
 impl ScriptCallTarget {
     /// `new` may activate it too (`Vm::inline_constructible`).
@@ -2038,6 +2077,12 @@ pub(super) struct LaneStack {
     /// invariants, each with the index of its activation, innermost last; its frame takes it
     /// when it materializes (`CallCompletion::Trapped`).
     trap_checks: Vec<(usize, TrapCheck)>,
+    /// What each `Completion::ToWasm` activation restores of its caller, innermost last; each
+    /// activation's frame takes its result type when it materializes (`CallCompletion::ToWasm`).
+    pub(super) to_wasm: Vec<ToWasmCall>,
+    /// The JavaScript-backed import a Wasm call last activated (`wasm_calls::lane_activate_js_import`),
+    /// read off its wrapper once; a collection forgets it (`forget_dead_callees`).
+    pub(super) js_import: Option<JsImportPlan>,
     /// The forwarding constructor bodies call targets name (`ScriptCallTarget::forwarded_method`),
     /// each once: a program's bodies are fixed, so the table only grows with distinct ones.
     forwarded_methods: Vec<crate::bytecode::ForwardedThisMethod>,
@@ -2092,6 +2137,8 @@ impl Default for LaneStack {
             steps: Vec::new(),
             iterators: Vec::new(),
             trap_checks: Vec::new(),
+            to_wasm: Vec::new(),
+            js_import: None,
             forwarded_methods: Vec::new(),
             activation_limit: std::cell::Cell::new(0),
             generation: NO_SCRIPT_GENERATION,
@@ -2246,6 +2293,7 @@ impl LaneStack {
     /// reuses their records: a body inlining one would take another function for it.
     pub(super) fn forget_dead_callees(&mut self, live: impl Fn(Value) -> bool) {
         self.wasm_export = None;
+        self.js_import = None;
         self.call_sites.get_mut().retain(|_, targets| { targets.retain(|target| target.identity().is_none_or(&live)); !targets.is_empty() });
     }
 
@@ -2997,6 +3045,52 @@ lane_handler! {
     /// Not a lane instruction: the general path executes it.
     fn lane_exit<>(cx, r, ip, i, view) {
         exit(ip)
+    }
+}
+
+lane_handler! {
+    /// An `Await` record, which the general path executes, unless the run's frame is the slot
+    /// of a chained job run whose next job resumes another activation: the await suspends and
+    /// that activation continues here (`lane_chained_await`).
+    fn lane_await<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        if vm.await_chain.is_none_or(|chain| chain.frame != unsafe { (*cx).frame })
+            || !vm.lane_stack.activations.is_empty()
+            || !matches!(vm.realm.jobs.front(), Some(super::PendingJob::Reaction(_)))
+        {
+            return exit(ip);
+        }
+        resume!(cx, lane_chained_await::<H>(cx, ip))
+    }
+}
+
+/// `Vm::lane_chain_await` from the lane's own frame, with no activation, call or leaf above
+/// it: the frame's slot now holds the resumed activation, which continues at its resume
+/// point. Anything else exits at the record, as `lane_exit` does.
+#[cold]
+#[inline(never)]
+fn lane_chained_await<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Resumed {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context and the run's pending calls and executing program outlive the run.
+    let frame = unsafe { (*cx).frame };
+    if !unsafe { (*cx).leaf.call }.is_null()
+        || !unsafe { (*cx).script_calls }
+        || !unsafe { &*(*cx).pending }.is_empty()
+        || unsafe { (*(*cx).executing).id != (*cx).program }
+        || vm.lane_raised.is_some()
+        || vm.lane_returned.is_some()
+    {
+        return Resumed::Exit(exit(ip));
+    }
+    // SAFETY: the context's program outlives the run; `ip` is a record of the frame's view.
+    let (code, program, pc) = unsafe { (&*(*cx).code, (*cx).program, ip.offset_from((*cx).base) as usize) };
+    match vm.lane_chain_await(code, program, frame, pc) {
+        None => Resumed::Exit(exit(ip)),
+        Some(Ok(())) => lane_enter_script_frame(cx, frame),
+        Some(Err(error)) => {
+            vm.lane_chain_error = Some(error);
+            Resumed::Exit(exit(ip))
+        }
     }
 }
 
@@ -4298,8 +4392,8 @@ unsafe fn lane_binary_value<H: Host>(
     match unsafe { vm(cx) }.number_binary(operator, left, right) {
         Some(value) => Some(value),
         // `undefined`, `null` or a Boolean among Numbers, as Sunspider's `x | 0` of a missing
-        // element or an emulator's `flag & mask`.
-        None if let Some(value) = unsafe { vm(cx) }.immediate_binary(operator, left, right) => Some(value),
+        // element or an emulator's `flag & mask`; a string key's `"k" + i` first.
+        None if let Some(value) = lane_concatenation_or_immediate(cx, operator, left, right) => Some(value),
         None if operator == super::operations::ADDITION => lane_concatenation(cx, left, right)
             .or_else(|| lane_bigint_value(cx, operator, left, right)),
         // A comparison, `instanceof`, or an ordinary-object `in` (`lane_relation_other`),
@@ -4313,6 +4407,19 @@ unsafe fn lane_binary_value<H: Host>(
         }
         None => lane_bigint_value(cx, operator, left, right),
     }
+}
+
+/// `+` of a string operand (`lane_concatenation`), as a key built as `"k" + i`, before the
+/// immediate operands' tests, which a string fails; else `Vm::immediate_binary`.
+#[inline(always)]
+fn lane_concatenation_or_immediate<H: Host>(cx: *mut LaneContext<H>, operator: u32, left: Value, right: Value) -> Option<Value> {
+    let heap = &unsafe { vm(cx) }.heap;
+    if operator == super::operations::ADDITION && (heap.is_string(left) || heap.is_string(right))
+        && let Some(value) = lane_concatenation(cx, left, right)
+    {
+        return Some(value);
+    }
+    unsafe { vm(cx) }.immediate_binary(operator, left, right)
 }
 
 /// `lane_binary_value` of a returning `Binary`, which keeps its operands encoded: two
@@ -12705,6 +12812,7 @@ impl<H: Host> Vm<H> {
         let mut forwarders = std::mem::take(&mut self.lane_stack.forwarders).into_iter();
         let (mut settling, mut steps, mut traps) = (std::mem::take(&mut self.lane_stack.settling).into_iter(), std::mem::take(&mut self.lane_stack.steps).into_iter(), std::mem::take(&mut self.lane_stack.trap_checks).into_iter());
         let iterators = std::mem::take(&mut self.lane_stack.iterators);
+        let mut to_wasm = std::mem::take(&mut self.lane_stack.to_wasm).into_iter();
         let states = ActivationState::of(&activations, cx);
         // A deferred native's caller activations below its callback take the lane's outer
         // pending calls and executing program (`NativeBoundary`).
@@ -12756,6 +12864,7 @@ impl<H: Host> Vm<H> {
                     let step = steps.next().expect("each array step activation has its entry");
                     CallCompletion::ArrayStep(Box::new(self.array_step_call(step.iteration, step.element, step.index)))
                 }
+                Some(Completion::ToWasm) => CallCompletion::ToWasm(to_wasm.next().expect("each import activation has its entry").result),
                 other => match activation.kind {
                     ActivationKind::WasmEntry { result, .. } => CallCompletion::WasmExport(result),
                     _ => setters::frame_completion(other, &mut traps),
@@ -13259,7 +13368,8 @@ impl<H: Host> Vm<H> {
             // forwarding one runs its program's keeping construction
             // (`lane_construct_keeping_activation`), which another program's caller does not.
             forms: u8::from(shape.constructs && !environment && !settles && !body.rest && !(cross && plan.keeps_arguments)) * TARGET_CONSTRUCTS
-                | u8::from(shape.initializes && !environment && !settles && !cross && !body.rest) * TARGET_INITIALIZES,
+                | u8::from(shape.initializes && !environment && !settles && !cross && !body.rest) * TARGET_INITIALIZES
+                | u8::from(body.rest && (plan.keeps_arguments || plan.legacy_reflection || (lexical_this.is_none() && !body.strict))) * TARGET_GATHERS_KEEPING,
             fill: u8::try_from(body.register_roots.entry_fill(body.registers)).unwrap_or(u8::MAX),
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
@@ -18040,17 +18150,27 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     // A forwarding activation keeps every value passed after its registers, as does one for
     // a skipped forwarding constructor, whose frame passed them on, and one passed more values
     // than it has parameters.
-    let keeps = target.forwards() || forwarder.is_some() || argc > usize::from(target.params);
+    // A rest body keeps nothing its rest array holds, unless a kept `arguments` or legacy
+    // reflection reads them (`TARGET_GATHERS_KEEPING`).
+    let gathers = target.entry == CallEntry::Gathers;
+    let keeps = forwarder.is_some()
+        || if gathers {
+            target.forms & TARGET_GATHERS_KEEPING != 0
+        } else {
+            target.forwards() || argc > usize::from(target.params)
+        };
     let window_size = if keeps { count + argc } else { count };
-    // The rest array, made before the window is: the values past the other parameters.
-    let rest = (target.entry == CallEntry::Gathers).then(|| {
+    // The rest array, made before the window is: the values past the other parameters, read
+    // in place from the caller's window or the kept values.
+    let rest = gathers.then(|| {
         let fixed = usize::from(target.params) - 1;
-        let passed = (fixed..argc).map(|index| match arguments {
-            ActivationArguments::Window(base) => r.get(base + index as u16),
+        let passed: &[Value] = match arguments {
+            // SAFETY: the window holds `argc` registers of the caller.
+            ActivationArguments::Window(base) => unsafe { std::slice::from_raw_parts(r.0.add(usize::from(base)), argc) },
             // SAFETY: kept values hold `argc` values.
-            ActivationArguments::Kept(values, _) => unsafe { *values.add(index) },
-        });
-        vm.rest_parameter_array(&passed.collect::<smallvec::SmallVec<[Value; GATHERED_INLINE_VALUES]>>())
+            ActivationArguments::Kept(values, _) => unsafe { std::slice::from_raw_parts(values, argc) },
+        };
+        vm.rest_parameter_array(passed.get(fixed..).unwrap_or_default())
     });
     // A call that returns its callee's completion completes its caller too, which only an
     // activation's return does in the lane. A host permitting proper tail calls
@@ -18366,6 +18486,9 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
         return Some(resumed);
     }
     let vm = unsafe { vm(cx) };
+    if let Some(Activation { kind: ActivationKind::Script(ScriptActivation { completion: Completion::ToWasm, .. }), .. }) = vm.lane_stack.activations.last() {
+        return Some(lane_complete_to_wasm(cx, ip, value));
+    }
     if proxy_traps::trap_result_needs_general_path(vm, vm.lane_stack.activations.last(), value) {
         return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
     }
@@ -18427,6 +18550,46 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
         }
         activation = vm.lane_stack.pop_activation().expect("the caller activation is the innermost");
     }
+}
+
+/// The return with `value` of the innermost activation, a JavaScript import's callee
+/// (`Completion::ToWasm`): its Wasm caller resumes after the call with the value's Wasm form,
+/// in its own program, instance and memory, which the callee may have grown. A value whose
+/// conversion could run guest code or throw returns from the callee's frame, whose pending
+/// call converts it (`CallCompletion::ToWasm`).
+#[inline(never)]
+fn lane_complete_to_wasm<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Resumed {
+    let vm = unsafe { vm(cx) };
+    let call = *vm.lane_stack.to_wasm.last().expect("an import activation has its entry");
+    let encoded = match call.result {
+        None => Some(Value::UNDEFINED),
+        Some(crate::WasmType::I32) => value.as_number().map(|number| Value::integer(crate::value::number_to_u32(number) as i32)),
+        Some(crate::WasmType::F32) => value.as_number().map(|number| Value::integer((number as f32).to_bits() as i32)),
+        Some(crate::WasmType::F64) => value.as_number().map(|number| vm.encode_bits64(number.to_bits())),
+        Some(_) => None,
+    };
+    let Some(encoded) = encoded else {
+        return Resumed::Exit(lane_frame_return(vm, ip, value));
+    };
+    vm.lane_stack.to_wasm.pop();
+    let activation = vm.lane_stack.pop_activation().expect("the import's activation is the innermost");
+    lane_restore_caller(cx, &activation);
+    lane_enter_program(cx, activation.caller_program);
+    let memory = match call.memory {
+        Some(binding) => {
+            let fresh = memory_view(vm, binding);
+            unsafe { (*cx).resolved = (binding, fresh) };
+            fresh
+        }
+        None => MemoryView::NONE,
+    };
+    unsafe {
+        (*cx).inline_calls = true;
+        (*cx).script_calls = false;
+        (*cx).instance = call.instance;
+        (*cx).memory = memory;
+    }
+    lane_resume_after_call(&activation, memory, encoded)
 }
 
 /// The return of the innermost activation, a Wasm one whose call keeps its result: its
@@ -20882,7 +21045,10 @@ fn derive_lane_view<'live, H: Host>(
             accumulator_registers.push(
                 carried.filter(|_| selected.is_some() && acc != ACC_NONE).unwrap_or(NO_ACCUMULATOR),
             );
-            let handler = selected.map_or(lane_exit::<H> as Handler, |selected| selected.handler) as *const ();
+            // An `Await` stays an exit; its record chains the next await resumption in place
+            // where the run's frame is a chained job slot (`lane_await`).
+            let exit_handler = if instruction.op().is_await() { lane_await::<H> as Handler } else { lane_exit::<H> as Handler };
+            let handler = selected.map_or(exit_handler, |selected| selected.handler) as *const ();
             LaneInstruction {
                 handler,
                 operand: operand.unwrap_or(LaneOperand { imm: 0 }),

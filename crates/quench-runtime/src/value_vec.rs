@@ -57,9 +57,8 @@ pub(crate) const INLINE_PROPERTY_COUNT: usize = 2;
 /// by storing a value they cannot hold before that; a range for its first values would regrow
 /// as it grows past them.
 const MIN_CAPACITY: usize = (INLINE_PROPERTY_COUNT + 1).next_power_of_two();
-/// Range capacities are the size classes `capacity_class` derives: powers of two from
-/// `MIN_CAPACITY` and the three-quarter steps between them, one free list each.
-const BUCKETS: usize = 64;
+/// Range capacities are the size classes `capacity_class` derives, one free list each.
+const BUCKETS: usize = 128;
 
 /// A size class's released runs, linked through each run's first value: a released run's
 /// values are dead, so its list costs no memory of its own. As a `Vec<u32>` per class, the
@@ -81,17 +80,20 @@ impl FreeRuns {
         self.len as usize
     }
 }
-/// The capacity of a range holding `len` values: the smallest power of two from
-/// `MIN_CAPACITY`, or three-quarter step between two (6, 12, 24, ...), that holds them. The
-/// half steps leave a range at most a third unused where powers of two left it half unused
-/// (typescript-lib: 1.6M of 6.7M live slots idle).
+/// The capacity of a range holding `len` values: `MIN_CAPACITY`, the step of 6, then from 8
+/// the quarter steps of each doubling (8, 10, 12, 14, 16, 20, 24, 28, 32, ...), the smallest
+/// that holds them. Quarter steps leave a range at most a fifth unused where three-quarter
+/// steps left a third (ai-astar: 250K nodes of 9 values held 12 each, 6 MB idle), and every
+/// class is a multiple of `CAPACITY_CLASS_STEP`, which `young_run_padded` copies by.
 #[inline] const fn capacity_class(len: usize) -> usize {
     if len <= MIN_CAPACITY {
         return MIN_CAPACITY;
     }
-    let power = len.next_power_of_two();
-    let step = power / 2 + power / 4;
-    if len <= step { step } else { power }
+    if len <= 2 * MIN_CAPACITY {
+        return if len <= MIN_CAPACITY + MIN_CAPACITY / 2 { MIN_CAPACITY + MIN_CAPACITY / 2 } else { 2 * MIN_CAPACITY };
+    }
+    let quarter = len.next_power_of_two() / 8;
+    len.div_ceil(quarter) * quarter
 }
 /// Released values on the free lists, as a share (`1 / divisor`) of the arena's length, that
 /// make a full collection compact the arena. Freed ranges are reused within their size class,
@@ -1537,13 +1539,18 @@ impl ValueArena {
         id
     }
 
-    /// The free list of a size class (`capacity_class`): two per doubling, the power of two
-    /// and the three-quarter step below the next one.
+    /// The free list of a size class (`capacity_class`): `MIN_CAPACITY` and its step first,
+    /// then four per doubling, the power of two and the quarter steps above it.
     #[inline(always)]
     fn bucket(capacity: usize) -> usize {
         debug_assert_eq!(capacity_class(capacity), capacity, "a range capacity is a size class");
-        let octave = (capacity.ilog2() - MIN_CAPACITY.ilog2()) as usize;
-        let bucket = 2 * octave + usize::from(!capacity.is_power_of_two());
+        let bucket = if capacity < 2 * MIN_CAPACITY {
+            usize::from(capacity != MIN_CAPACITY)
+        } else {
+            let octave = capacity.ilog2();
+            let floor = 1usize << octave;
+            2 + 4 * (octave - (2 * MIN_CAPACITY).ilog2()) as usize + (capacity - floor) / (floor / 4)
+        };
         assert!(bucket < BUCKETS, "property arena bucket overflow");
         bucket
     }
@@ -1588,19 +1595,19 @@ mod tests {
             values.set_auxiliary(value + 1);
         }
         assert_eq!(arena.get(values, 8).unwrap().as_number(), Some(8.0));
-        assert_eq!(arena.vector_stats(values), (9, 12));
+        assert_eq!(arena.vector_stats(values), (9, 10));
     }
 
     #[test]
-    fn size_classes_step_by_powers_of_two_and_three_quarters() {
+    fn size_classes_step_by_quarters_of_each_doubling() {
         let classes: Vec<_> = (0..=33).map(capacity_class).collect();
         assert_eq!(&classes[..=MIN_CAPACITY], &[MIN_CAPACITY; MIN_CAPACITY + 1]);
-        assert_eq!([classes[5], classes[6], classes[7], classes[9], classes[13], classes[17], classes[25], classes[33]], [6, 6, 8, 12, 16, 24, 32, 48]);
+        assert_eq!([classes[5], classes[6], classes[7], classes[9], classes[13], classes[17], classes[25], classes[33]], [6, 6, 8, 10, 14, 20, 28, 40]);
         // Each class has its own free list, in increasing order.
-        let buckets: Vec<_> = [4, 6, 8, 12, 16, 24, 32, 48].into_iter().map(ValueArena::bucket).collect();
-        assert_eq!(buckets, (0..8).collect::<Vec<_>>());
+        let buckets: Vec<_> = [4, 6, 8, 10, 12, 14, 16, 20, 24, 28, 32, 40].into_iter().map(ValueArena::bucket).collect();
+        assert_eq!(buckets, (0..12).collect::<Vec<_>>());
         // A range grows to the next class.
-        assert_eq!(capacity_class(12 + 1), 16);
+        assert_eq!(capacity_class(12 + 1), 14);
     }
 
     #[test]

@@ -507,6 +507,13 @@ impl<H: Host> Vm<H> {
                 let state = if reaction.rejected { PromiseState::Rejected } else { PromiseState::Fulfilled };
                 return vm.settle_reaction(p, reaction.next, state, value);
             }
+            if !await_reaction
+                && !reaction.rejected
+                && reaction.execution_context.is_none()
+                && let Some(settled) = vm.run_chained_reaction(reaction.handler, value, reaction.next)
+            {
+                return settled;
+            }
             let called = if await_reaction {
                 vm.resume_await(p, reaction.handler, awaited.flatten(), reaction.rejected, value)
             } else {
@@ -534,7 +541,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn settle_reaction(
+    pub(super) fn settle_reaction(
         &mut self,
         p: &ResidualProgram,
         next: Value,
@@ -581,7 +588,7 @@ impl<H: Host> Vm<H> {
     /// as `then` would. Without lifecycle observers the derived promise and both resolving
     /// functions are unobservable, so `promise`'s settlement can resolve `target` directly
     /// through a pass-through reaction.
-    fn promise_then_resolving(
+    pub(super) fn promise_then_resolving(
         &mut self,
         p: &ResidualProgram,
         promise: Value,

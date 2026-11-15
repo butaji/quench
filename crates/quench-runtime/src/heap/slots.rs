@@ -32,6 +32,7 @@ impl FreeSlotBitmap {
         debug_assert!(self.free_count as usize <= SLOTS_PER_SLAB);
     }
 
+    #[cfg(test)]
     pub(super) fn pop(&mut self) -> Option<u16> {
         let nonempty_words = self.nonempty_words;
         if nonempty_words == 0 {
@@ -54,6 +55,21 @@ impl FreeSlotBitmap {
         let offset = word_index * FREE_SLOT_WORD_BITS + bit_index;
         debug_assert!(offset < SLOTS_PER_SLAB);
         Some(offset as u16)
+    }
+
+    /// Claims every free slot of the highest word that has one: the word's index in the slab
+    /// and its free bits.
+    pub(super) fn pop_word(&mut self) -> Option<(usize, u64)> {
+        let nonempty_words = self.nonempty_words;
+        if nonempty_words == 0 {
+            return None;
+        }
+        let word_index = (u32::BITS - 1 - nonempty_words.leading_zeros()) as usize;
+        let bits = std::mem::take(&mut self.words[word_index]);
+        debug_assert_ne!(bits, 0);
+        self.nonempty_words &= !(1_u32 << word_index);
+        self.free_count -= bits.count_ones() as u16;
+        Some((word_index, bits))
     }
 
     pub(super) const fn len(&self) -> usize {

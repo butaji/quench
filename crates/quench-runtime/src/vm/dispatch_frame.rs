@@ -193,7 +193,10 @@ impl<H: Host> Vm<H> {
         let view = if admitted { self.entry_lane_view(program_id, function) } else { std::ptr::null() };
         // Native transitions read only boundary metadata from packed code;
         // they must not warm or allocate an interpreter dispatch expansion.
-        let decoded = if interprets {
+        // A Wasm function its lane runs leaves the lane only at a rare operator: the general
+        // loop reads its packed code there, without a second, expanded copy.
+        let lane_runs_wasm = !view.is_null() && program.kind == crate::bytecode::ProgramKind::Wasm;
+        let decoded = if interprets && !lane_runs_wasm {
             function_code.decoded.on_entry(&function_code.code, &function_code.wide)
         } else {
             None
@@ -446,7 +449,7 @@ impl<H: Host> Vm<H> {
         call_guard
     }
 
-    fn empty_frame(&self) -> Box<Frame> {
+    pub(super) fn empty_frame(&self) -> Box<Frame> {
         Box::new(Frame::empty(self.active_program, self.with_stack.len()))
     }
 
@@ -505,16 +508,7 @@ impl<H: Host> Vm<H> {
         let frame_index = self.activate_user_frame(p, id, parent, this, args, context)?;
         let view = if capture_constructor_this { std::ptr::null() } else { self.entered_lane_view(p, id) };
         let result = if Self::lane_runs_call(view) {
-            let body = p.function(id as usize);
-            let cursor = GeneralCodeCursor {
-                program: self.active_program,
-                function: id,
-                code: body.code.as_ptr(),
-                wide: body.wide.as_ptr(),
-                decoded: body.decoded.on_entry(&body.code, &body.wide).map_or(std::ptr::null(), <[WideInstruction]>::as_ptr),
-                lane: view,
-                back_edges: None,
-            };
+            let cursor = self.entry_cursor(p, id, view);
             self.run_frame_from_lane(p, frame_index, &cursor, 0)
         } else {
             self.run_frame_general(p, frame_index)
@@ -522,11 +516,30 @@ impl<H: Host> Vm<H> {
         self.complete_user_frame(p, result, capture_constructor_this)
     }
 
+    /// The cursor of a call of function `id` of the active program `p` that enters `view`, a
+    /// lane that runs it, at its first instruction.
+    pub(super) fn entry_cursor(&self, p: &ResidualProgram, id: u32, view: *const super::dispatch_fast::LaneView) -> GeneralCodeCursor {
+        let body = p.function(id as usize);
+        GeneralCodeCursor {
+            program: self.active_program,
+            function: id,
+            code: body.code.as_ptr(),
+            wide: body.wide.as_ptr(),
+            decoded: if !view.is_null() && p.kind == crate::bytecode::ProgramKind::Wasm {
+                std::ptr::null()
+            } else {
+                body.decoded.on_entry(&body.code, &body.wide).map_or(std::ptr::null(), <[WideInstruction]>::as_ptr)
+            },
+            lane: view,
+            back_edges: None,
+        }
+    }
+
     /// The lane view a call of function `id` of the active program `p` enters at its first
     /// instruction from a native (a promise job, a host callback), as a lane call of it would
     /// activate it (`Vm::resolve_script_call_target`): derived once its deferred runs complete
     /// (`ProgramStore::lane_call_may_derive`); null where the general loop runs it.
-    fn entered_lane_view(&self, p: &ResidualProgram, id: u32) -> *const super::dispatch_fast::LaneView {
+    pub(super) fn entered_lane_view(&self, p: &ResidualProgram, id: u32) -> *const super::dispatch_fast::LaneView {
         let program = self.active_program;
         let lane_runs = Self::FRAME_ENTRY_LANE_RUNS
             && !self.tier_may_run(crate::jit_mode::Tier::ANY);
@@ -592,7 +605,7 @@ impl<H: Host> Vm<H> {
 
     /// Binds a user function's activation and pushes it on the frame stack, returning its index.
     #[inline(always)]
-    fn activate_user_frame(
+    pub(super) fn activate_user_frame(
         &mut self,
         p: &ResidualProgram,
         id: u32,
@@ -1576,7 +1589,7 @@ impl<H: Host> Vm<H> {
     /// the general loop's steps make them; any other stop (another instruction, a pending
     /// call, a raised error, another frame or program) resumes the general loop where the
     /// lane left (`run_frames_after_lane_exit`).
-    fn run_frame_from_lane(
+    pub(super) fn run_frame_from_lane(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
@@ -1598,6 +1611,15 @@ impl<H: Host> Vm<H> {
                 let mut executing = ExecutingProgram { id: program, retained: None };
                 let mut running = frame;
                 let stop = self.run_fast_lane(p, program, cursor.lane, &mut running, pc, &mut pending_calls, &mut executing, true);
+                // An await the lane chained in place (`lane_await`) left another activation in
+                // the slot, or failed.
+                if let Some(error) = self.lane_chain_error.take() {
+                    return Err(error);
+                }
+                if running == frame && self.frames[frame].function != function {
+                    function = self.frames[frame].function;
+                    cursor = self.general_cursor(program, p, function, true);
+                }
                 let body = p.function(function as usize);
                 let stops_here = running == frame
                     && pending_calls.is_empty()
@@ -1609,11 +1631,22 @@ impl<H: Host> Vm<H> {
                 {
                     // An await the queue's next job follows resumes that job's activation here
                     // (`Vm::chain_lane_await`), with no return to the job loop.
-                    if let FrameOutcome::Await { value, destination, frame: None } = outcome
-                        && let Some(next) = self.chain_lane_await(p, program, frame, &cursor, value, destination)
-                    {
-                        (cursor, function, pc) = next?;
-                        continue;
+                    let chained = match outcome {
+                        FrameOutcome::Await { value, destination, frame: None } => {
+                            self.chain_lane_await(p, program, frame, &cursor, value, destination)
+                        }
+                        FrameOutcome::Complete(value) => self.chain_lane_complete(p, program, frame, &cursor, value),
+                        _ => None,
+                    };
+                    match chained {
+                        Some(Ok(Some(next))) => {
+                            (cursor, function, pc) = next;
+                            continue;
+                        }
+                        // The chain finished the slot's last job; its empty frame completes.
+                        Some(Ok(None)) => return Ok(FrameOutcome::Complete(Value::UNDEFINED)),
+                        Some(Err(error)) => return Err(error),
+                        None => {}
                     }
                     return Ok(outcome);
                 }
@@ -1676,7 +1709,7 @@ impl<H: Host> Vm<H> {
     /// value's conversion observes nothing: a non-object as it is, or an object
     /// `lane_promise_resolve` converts without running guest code. `None` leaves any other
     /// stop, or a conversion that could throw into the frame's handlers, to the general loop.
-    fn lane_stop_awaits(
+    pub(super) fn lane_stop_awaits(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
@@ -2464,6 +2497,13 @@ impl<H: Host> Vm<H> {
                         // SAFETY: as for `p` at the top of the loop.
                         settle_error = self.trap_result_error(unsafe { &*executing_residual }, &pending, frame, value);
                         value = self.completed_call_value(&pending.completion, frame, pending.destination, value);
+                        if let CallCompletion::ToWasm(result) = pending.completion {
+                            // SAFETY: as for `p` at the top of the loop.
+                            match self.wasm_import_result(unsafe { &*executing_residual }, value, result) {
+                                Ok(converted) => value = converted,
+                                Err(error) => settle_error = Some((pending.call_pc, error)),
+                            }
+                        }
                         if let Some(root) = pending.completion.take_promise() {
                             let promise = self.release_settled_call_root(root);
                             // SAFETY: as for `p` at the top of the loop.

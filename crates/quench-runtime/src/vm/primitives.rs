@@ -401,13 +401,13 @@ impl<H: Host> Vm<H> {
                 };
                 let target =
                     self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                // A string that needs no padding is the receiver itself.
                 if !target.is_finite() || target <= 0.0 {
-                    return Ok(self.heap.alloc_string(receiver));
+                    return Ok(this);
                 }
                 let target = target.trunc().min(64.0 * 1024.0 * 1024.0) as usize;
-                let receiver_units = receiver.units().to_vec();
-                if receiver_units.len() >= target {
-                    return Ok(self.heap.alloc_string(receiver));
+                if receiver.len() >= target {
+                    return Ok(this);
                 }
                 let fill = match args.get(1).copied() {
                     None | Some(Value::UNDEFINED) => super::wtf16::JsString::from_str(" "),
@@ -415,8 +415,22 @@ impl<H: Host> Vm<H> {
                 };
                 let fill_units = fill.units();
                 if fill_units.is_empty() {
-                    return Ok(self.heap.alloc_string(receiver));
+                    return Ok(this);
                 }
+                // ASCII text and fill: the bytes written once, in order, into the result.
+                if let (super::wtf16::Units::Ascii(text), super::wtf16::Units::Ascii(fill)) = (receiver.units(), fill_units) {
+                    let mut bytes = smallvec::SmallVec::<[u8; 32]>::with_capacity(target);
+                    let padding = fill.iter().copied().cycle().take(target - text.len());
+                    if native == Native::StringPadEnd {
+                        bytes.extend_from_slice(text);
+                        bytes.extend(padding);
+                    } else {
+                        bytes.extend(padding);
+                        bytes.extend_from_slice(text);
+                    }
+                    return Ok(self.heap.alloc_string(super::wtf16::JsString::from_ascii_bytes(&bytes)));
+                }
+                let receiver_units = receiver.units().to_vec();
                 let fill_len = target - receiver_units.len();
                 let mut padding = Vec::with_capacity(fill_len);
                 while padding.len() < fill_len {
@@ -670,10 +684,9 @@ impl<H: Host> Vm<H> {
 
     /// The string of the one ASCII byte `byte`.
     pub(super) fn ascii_byte_string(&mut self, byte: u8) -> Value {
-        let byte = [byte];
-        // SAFETY: the caller's byte is ASCII, so UTF-8.
-        let text = super::wtf16::JsString::from_str(unsafe { std::str::from_utf8_unchecked(&byte) });
-        self.heap.alloc_string(text)
+        // The byte's shared string once made (`Heap::alloc_unit_run`), with no string built
+        // to find it.
+        self.heap.alloc_unit_run(super::wtf16::Units::Ascii(&[byte]))
     }
 }
 

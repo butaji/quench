@@ -19,7 +19,7 @@ pub(crate) use constant::{WasmArrayInitializer, WasmInitializerEffect};
 pub(crate) mod tag;
 pub use tag::WasmTag;
 mod element;
-pub use element::{WasmElement, WasmElementMode};
+pub use element::{WasmElement, WasmElementItems, WasmElementMode};
 pub use table::{WasmTable, WasmTableInitializer};
 pub(crate) mod atomic;
 pub(crate) mod memory;
@@ -872,6 +872,7 @@ impl Engine {
                 &plan,
                 SignaturePool::Building(&mut signature_pool),
                 &mut constants,
+                &[],
             )?;
             if !lazy_lowering {
                 functions.push(function);
@@ -1462,8 +1463,8 @@ impl std::fmt::Debug for WasmLazy {
 
 impl WasmLazy {
     /// The record of function `index`, lowered as the module's compile lowered it, against
-    /// a program that holds `constant_count` constants.
-    pub(crate) fn lower(&self, index: usize, constant_count: usize) -> Function {
+    /// a program that holds `program_constants`.
+    pub(crate) fn lower(&self, index: usize, program_constants: &[Constant]) -> Function {
         let sources: &WasmLazyCode = &self.code;
         let plan = inline::LeafPlan::resume(
             &self.name,
@@ -1482,11 +1483,11 @@ impl WasmLazy {
         };
         let mut constants = self.constants.borrow_mut();
         let mut function = bindings
-            .lower_defined(index, &plan, SignaturePool::Finished(&self.signatures), &mut constants)
+            .lower_defined(index, &plan, SignaturePool::Finished(&self.signatures), &mut constants, program_constants)
             .unwrap_or_else(|error| panic!("Wasm function {index} of {} lowered at compile but not again: {error:?}", self.name));
         assert_eq!(
             constants.len(),
-            constant_count,
+            program_constants.len(),
             "Wasm function {index} of {} interned a constant its compile did not",
             self.name
         );
@@ -1518,6 +1519,7 @@ impl ModuleBindings<'_> {
         plan: &inline::LeafPlan<'_, 's, I>,
         signatures: SignaturePool<'_>,
         constants: &mut ConstantPool,
+        settled: &[Constant],
     ) -> Result<Function, Diagnostic> {
         let Self { name, globals, memories, data, tables, elements, tags } = *self;
         // The body is streamed, inlined, from its source.
@@ -1572,6 +1574,7 @@ impl ModuleBindings<'_> {
             code: Vec::new(),
             wide: Vec::new(),
             constants: std::mem::replace(constants, ConstantPool::with(std::iter::empty())),
+            settled_constants: settled,
             signatures,
             globals,
             memories,
@@ -1754,6 +1757,8 @@ struct Lowering<'a> {
     code: Vec<Instr>,
     wide: Vec<WideInstruction>,
     constants: ConstantPool,
+    // The program's constants a settled `constants` indexes (empty while compiling).
+    settled_constants: &'a [Constant],
     depth: Register,
     registers: u16,
     controls: Vec<Control>,
@@ -2142,7 +2147,7 @@ impl Lowering<'_> {
     }
 
     fn append_constant(&mut self, value: Constant) -> Result<u32, Diagnostic> {
-        self.constants.intern(value).ok_or_else(|| Diagnostic::unsupported(self.name, "too many Wasm constants"))
+        self.constants.intern(self.settled_constants, value).ok_or_else(|| Diagnostic::unsupported(self.name, "too many Wasm constants"))
     }
 
     fn scalar_constant(&mut self, value: WasmValue) -> Result<u32, Diagnostic> {

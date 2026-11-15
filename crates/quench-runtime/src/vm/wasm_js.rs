@@ -1709,6 +1709,16 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// What a JavaScript-backed import's call yields to its Wasm caller for the callee's
+    /// returned `value`: `undefined` for no result, else its encoded ToWebAssemblyValue for the
+    /// scalar `result` (`CallCompletion::ToWasm`).
+    pub(super) fn wasm_import_result(&mut self, p: &ResidualProgram, value: Value, result: Option<WasmType>) -> Result<Value, JsError> {
+        match result {
+            None => Ok(Value::UNDEFINED),
+            Some(ty) => self.js_to_wasm(p, value, ty, None),
+        }
+    }
+
     /// ToWebAssemblyValue of `value` for type `ty`, encoded.
     fn js_to_wasm(
         &mut self,

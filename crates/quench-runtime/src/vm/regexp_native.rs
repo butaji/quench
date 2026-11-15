@@ -337,12 +337,14 @@ impl<'a, 'f> Emit<'a, 'f> {
     /// The instructions that read and write registers, the counters and captures of the loops.
     fn registers_instruction(&mut self, pc: u32, inst: &NativeInst) {
         match inst {
-            NativeInst::CaptureOpen { temporary, restores } => {
+            NativeInst::CaptureOpen { temporary, count, restores } => {
                 let position = self.position();
-                if *restores {
-                    self.set_register(*temporary, position);
-                } else {
-                    self.store_register(*temporary, position);
+                for register in *temporary..*temporary + *count {
+                    if *restores {
+                        self.set_register(register, position);
+                    } else {
+                        self.store_register(register, position);
+                    }
                 }
                 self.next(pc);
             }

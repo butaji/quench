@@ -490,7 +490,7 @@ impl<H: Host> Vm<H> {
                 .try_reserve_exact(segment.items.len())
                 .map_err(|_| JsError::validation("Wasm element allocation failed".into()))?;
             for value in segment.items.iter() {
-                values.push(self.wasm_reference_initializer(module, value, environment)?);
+                values.push(self.wasm_reference_initializer(module, &value, environment)?);
             }
             // Materializing references can allocate. The instance root owns each
             // completed segment until it is installed in a table or kept passive.

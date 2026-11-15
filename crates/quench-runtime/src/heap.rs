@@ -667,6 +667,11 @@ pub(crate) struct Heap {
     young_weak: Vec<u32>,
     free_by_slab: Vec<FreeSlotBitmap>,
     free_slabs: Vec<u32>,
+    /// The slots of one free-list word claimed whole (`refill_bump`), which allocations take
+    /// lowest first, and the first slot of that word: claimed slots are young already, so an
+    /// allocation is a bit scan. A collection hands back the unused ones first (`retire_bump`).
+    bump_bits: u64,
+    bump_base: usize,
     free_slots: usize,
     external_bytes: usize,
     /// The allocation weight charged since the heap was made or reset: one per cell or
@@ -759,6 +764,10 @@ pub(crate) struct Heap {
     /// promotion and compaction: only the interpreter reads one in place, so only a run without
     /// native tiers (`Heap::set_narrow_runs`) makes them.
     narrow_runs: bool,
+    /// Whether a function record took a young run since the last collection
+    /// (`finished_run_object`): only then does a minor sweep visit live functions to list
+    /// their young survivors (`YoungOwner::Function`).
+    young_function_runs: bool,
     /// Values the cycle's weak reads handed out (`Heap::shade`), for its mark: a value read
     /// through a weak reference may be one its snapshot does not reach.
     satb_shaded: std::cell::RefCell<Vec<Value>>,
@@ -1012,6 +1021,8 @@ impl Heap {
             young: YoungSlots::default(),
             free_by_slab: Vec::with_capacity(12),
             free_slabs: Vec::with_capacity(12),
+            bump_bits: 0,
+            bump_base: 0,
             free_slots: 0,
             layout_id: Self::next_layout_id(),
             collect_at: std::cell::Cell::new(MemoryPolicy::default().pacing().minimum_young),
@@ -1258,6 +1269,16 @@ impl Heap {
     /// `mark_prototype` of a prototype other than the one it marked last.
     #[inline(never)]
     fn mark_new_prototype(&mut self, prototype: Value) {
+        // A prototype marked and watched before, as most allocations' prototypes are, only
+        // takes the recent entry when its run is still wide: no exclusive access, which
+        // widens and barriers.
+        if self.object(prototype).is_some_and(|object| {
+            object.was_used_as_prototype() && object.watched_subject().is_some() && !object.properties().is_narrow()
+        }) {
+            self.marked_prototypes.rotate_right(1);
+            self.marked_prototypes[0] = Some(prototype);
+            return;
+        }
         let Some(unwatched) = self.prototype_object_mut(prototype).map(|object| object.watched_subject().is_none()) else {
             return;
         };
@@ -1591,6 +1612,25 @@ impl Heap {
         self.insert_admitted_object_record(object)
     }
 
+    /// An object of the run header `header` (`InlineObjectHeader::of_run`) over a new young
+    /// run of the first `len` of `values` (the rest `undefined`), for a function record
+    /// (`YoungOwner::Function`), not yet allocated; `None` when the nursery has no run for it.
+    #[inline(always)]
+    pub(crate) fn finished_run_object<const N: usize>(
+        &mut self,
+        header: InlineObjectHeader,
+        values: &[Value; N],
+        len: usize,
+    ) -> Option<Object> {
+        self.properties.assert_shape_length(header.shape(), len);
+        if cfg!(feature = "profile-aggregate") {
+            return None;
+        }
+        let start = self.properties.young_run_padded(values, len)?;
+        self.young_function_runs = true;
+        Some(Object::from_run_header(header, start))
+    }
+
     /// `property_set` of slot `slot` of `object`, an object record allocated with inline
     /// storage since the last allocation that could collect, whose slot holds `undefined`:
     /// the barrier and the slot's recorded representation as for any store, and the narrow
@@ -1638,8 +1678,7 @@ impl Heap {
                 value
             }
             Err(mut object) => {
-                // A young run's owner is a direct object record (`ValueArena::young_run_padded`):
-                // an object that takes a legacy slot takes an ordinary run first.
+                // A young run's owner is a record (`YoungOwner`): an object that takes a legacy slot takes an ordinary run first.
                 if self.properties.holds_young_run(object.properties()) {
                     let storage = self.properties.duplicate(object.properties());
                     object.replace_property_storage(storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], &mut self.properties);
@@ -1691,10 +1730,15 @@ impl Heap {
                 self.profile_allocation(value);
                 value
             }
-            Err(function) => self.alloc_in_slot(
-                Cell::Function(Box::new(function)),
-                self.tracks_young_cells(),
-            ),
+            Err(mut function) => {
+                // A young run's owner is a record (`YoungOwner`): a function that takes a
+                // legacy slot takes an ordinary run first.
+                if self.properties.holds_young_run(function.object.properties()) {
+                    let storage = self.properties.duplicate(function.object.properties());
+                    function.object.replace_property_storage(storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], &mut self.properties);
+                }
+                self.alloc_in_slot(Cell::Function(Box::new(function)), self.tracks_young_cells())
+            }
         }
     }
 
@@ -1806,8 +1850,9 @@ impl Heap {
         };
         let index = slot as u32;
         self.slots.get_mut(slot).unwrap().cell = Some(cell());
-        if track_young {
-            self.young.insert(index as usize);
+        // A claimed slot is young already (`refill_bump`).
+        if !track_young {
+            self.young.remove_word(slot / u64::BITS as usize, 1 << (slot % u64::BITS as usize));
         }
         if weak {
             self.young_weak.push(index);
@@ -1820,22 +1865,56 @@ impl Heap {
         Value::heap(index)
     }
 
-    /// A free slot's index, the highest of the last slab with one, claimed.
+    /// A free slot's index, claimed and young: the lowest of the claimed word's
+    /// (`bump_bits`), else of a word newly claimed.
     #[inline(always)]
     fn take_free_slot(&mut self) -> Option<usize> {
+        let bits = self.bump_bits;
+        if bits != 0 {
+            self.bump_bits = bits & (bits - 1);
+            return Some(self.bump_base + bits.trailing_zeros() as usize);
+        }
+        self.refill_bump()
+    }
+
+    /// Claims the free slots of the highest word of the last slab with one, makes them young
+    /// in one word operation, and takes the lowest. Allocations then cost a bit scan, not a
+    /// free-list pop and a young insert each (BigInt sums, closures, environments).
+    #[inline(never)]
+    fn refill_bump(&mut self) -> Option<usize> {
         while let Some(slab) = self.free_slabs.last().copied() {
             let slab_index = slab as usize;
-            let Some(offset) = self.free_by_slab[slab_index].pop() else {
+            let Some((word, bits)) = self.free_by_slab[slab_index].pop_word() else {
                 self.free_slabs.pop();
                 continue;
             };
-            self.free_slots -= 1;
+            self.free_slots -= bits.count_ones() as usize;
             if self.free_by_slab[slab_index].is_empty() {
                 self.free_slabs.pop();
             }
-            return Some(slab_index * SLOTS_PER_SLAB + offset as usize);
+            let base = slab_index * SLOTS_PER_SLAB + word * u64::BITS as usize;
+            self.young.insert_word(base / u64::BITS as usize, bits);
+            self.bump_bits = bits & (bits - 1);
+            self.bump_base = base;
+            return Some(base + bits.trailing_zeros() as usize);
         }
         None
+    }
+
+    /// Hands the claimed slots no allocation took back to the free list, not young, before a
+    /// collection marks or sweeps: a sweep must not count free slots as young deaths.
+    pub(super) fn retire_bump(&mut self) {
+        let bits = std::mem::take(&mut self.bump_bits);
+        if bits == 0 {
+            return;
+        }
+        self.young.remove_word(self.bump_base / u64::BITS as usize, bits);
+        let slab = self.bump_base / SLOTS_PER_SLAB;
+        if self.free_by_slab[slab].is_empty() {
+            self.free_slabs.push(slab as u32);
+        }
+        self.free_by_slab[slab].insert_word((self.bump_base % SLOTS_PER_SLAB) / u64::BITS as usize, bits);
+        self.free_slots += bits.count_ones() as usize;
     }
 
     /// `alloc_in_slot` when no slot is free: a new one past the last.
@@ -2043,14 +2122,17 @@ impl Heap {
             }
         }
     }
-    /// Moves the surviving young runs of `owners`, live direct objects, out of the nursery's
-    /// young range, in the order of their starts, and ends the young cycle
-    /// (`ValueArena::finish_young_cycle`).
-    fn evacuate_young_runs(&mut self, mut owners: Vec<(usize, RecordId)>) {
+    /// Moves the surviving young runs of `owners`, live direct objects and functions
+    /// (`YoungOwner`), out of the nursery's young range, in the order of their starts, and
+    /// ends the young cycle (`ValueArena::finish_young_cycle`).
+    fn evacuate_young_runs(&mut self, mut owners: Vec<(usize, YoungOwner)>) {
         owners.sort_unstable_by_key(|&(start, _)| start);
-        for (_, record_id) in owners {
+        for (_, owner) in owners {
             // SAFETY: the owners were listed from records the sweep kept.
-            let object = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
+            let object = match owner {
+                YoungOwner::Object(record_id) => unsafe { self.object_records.get_live_mut_unbarriered(record_id) },
+                YoungOwner::Function(record_id) => &mut unsafe { self.function_records.get_live_mut_unbarriered(record_id) }.object,
+            };
             let mut vector = object.properties();
             // A promoted plain object's values may take a narrow run, as at compaction.
             let narrows = self.narrow_runs && !object.has_extras();
@@ -2174,6 +2256,7 @@ impl Heap {
         self.aged.clear();
         self.free_by_slab.clear();
         self.free_slabs.clear();
+        self.bump_bits = 0;
         self.free_slots = 0;
         buffer_bytes::bump_view_epoch();
         self.external_bytes = 0;
@@ -2430,6 +2513,7 @@ impl Heap {
     /// `collection_is_full`, noting a full collection's start for the old-generation sizing
     /// (`GenerationalPacing::old_sizing`).
     fn start_collection(&mut self, full: bool) -> bool {
+        self.retire_bump();
         let full = self.collection_is_full(full);
         if full {
             self.pacing_state.old_generation.start_full();
@@ -2722,7 +2806,7 @@ impl Heap {
         }
         // The direct objects whose young runs survive, by start (`ValueArena::evacuate_young`),
         // where no compaction moves every run.
-        let mut young_owners: Vec<(usize, RecordId)> = Vec::new();
+        let mut young_owners: Vec<(usize, YoungOwner)> = Vec::new();
         // The arrays whose young runs of elements survive, copied out before the young
         // objects' runs move or compaction moves every run.
         let mut young_arrays: Vec<RecordId> = Vec::new();
@@ -2773,7 +2857,7 @@ impl Heap {
             let payload_bytes = &mut self.payload_bytes;
             let live_payload_bytes = &mut live_payload_bytes;
             let mut sweep_rest = || {
-                // Every young run's owner is a direct object (`ValueArena::young_run_padded`), so
+                // Every young run's owner is a direct object or function (`YoungOwner`), so
                 // their sweep shows its survivors, minor or full, and lists those it keeps.
                 // A dead object's storage is released in place; one without extras, which its drop
                 // would free, is then forgotten.
@@ -2791,26 +2875,31 @@ impl Heap {
                                 Value::direct_object(record_id),
                             ));
                         } else if young_runs.hold(object.properties()) {
-                            note_young_owner(&mut young_owners, object.properties().start_offset(), record_id);
+                            note_young_owner(&mut young_owners, object.properties().start_offset(), YoungOwner::Object(record_id));
                         }
                     }
                     // Released in place: dropping it frees its extras.
                     RecordSweep::Dead(..) => {}
                 });
+                // A function's own properties may take a young run too (`Heap::finished_run_object`):
+                // after one did, its sweep shows its survivors and lists those it keeps.
+                let young_function_runs = std::mem::take(&mut self.young_function_runs);
                 let (function_live, function_freed) =
-                    self.function_records.sweep(full, age, full, |record| match record {
+                    self.function_records.sweep(full, age, full || compacts || young_function_runs, |record| match record {
                         RecordSweep::Keep(record_id, function) => {
                             if compacts && function.object.properties().has_compact_range() {
                                 direct_property_owners.push((
                                     function.object.properties().start_offset(),
                                     Value::direct_function(record_id),
                                 ));
+                            } else if young_runs.hold(function.object.properties()) {
+                                note_young_owner(&mut young_owners, function.object.properties().start_offset(), YoungOwner::Function(record_id));
                             }
                         }
                         RecordSweep::Dead(_record_id, function) => {
                             #[cfg(feature = "profile-memory")]
                             let slots = properties.len(function.object.properties());
-                            properties.release_ordinary(function.object.properties());
+                            properties.release(function.object.properties());
                             #[cfg(feature = "profile-memory")]
                             memory_profile.freed_record_cell(Value::direct_function(_record_id), slots);
                         }
@@ -5044,8 +5133,16 @@ fn sort_by_unique_offset(keys: &mut Vec<u64>) {
 /// Lists a young survivor's run for `Heap::evacuate_young_runs`, out of line: survivors are
 /// few, and the sweep's visitor stays small enough to inline.
 #[inline(never)]
-fn note_young_owner(owners: &mut Vec<(usize, RecordId)>, start: usize, record_id: RecordId) {
-    owners.push((start, record_id));
+fn note_young_owner(owners: &mut Vec<(usize, YoungOwner)>, start: usize, owner: YoungOwner) {
+    owners.push((start, owner));
+}
+
+/// The record that owns a young run (`ValueArena::young_run_padded`): a direct object, or a
+/// function, whose own properties a recorded closure allocates finished.
+#[derive(Clone, Copy)]
+enum YoungOwner {
+    Object(RecordId),
+    Function(RecordId),
 }
 
 
