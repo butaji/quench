@@ -25,7 +25,7 @@ impl Engine {
     ) -> Option<ChunkDelta> {
         let source = program.source.as_ref().filter(|source| source.base == 0)?;
         let replay = program.replay.as_deref()?;
-        let header = *program.functions.get(function as usize)?.header();
+        let header = program.functions.get(function as usize)?.header();
         let span = header.source_span?;
         let chunk = ChunkText::of(source, span)?;
         let (line_starts, utf16_excess) = replay.views.layout(&source.text);

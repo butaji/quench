@@ -55,7 +55,7 @@ impl ResidualProgram {
         if let Some(tier0) = slot.tier0.get() {
             return Some(tier0.record());
         }
-        if slot.header.is_async || slot.header.is_generator {
+        if slot.header().is_async || slot.header().is_generator {
             return None;
         }
         // Copied before any run derives facts into it (its call plan, its decoded form): the

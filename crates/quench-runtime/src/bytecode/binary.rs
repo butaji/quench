@@ -302,7 +302,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
     for (index, function) in program.functions.iter().enumerate() {
         let deferred = index != ROOT_FUNCTION;
         out.u8(u8::from(deferred));
-        write_function_header(&mut out, function.header());
+        write_function_header(&mut out, &function.header());
         let names_static = match load_records.get(&(index as u32)) {
             Some(range) => {
                 debug_assert!(deferred, "a load never releases its root");
