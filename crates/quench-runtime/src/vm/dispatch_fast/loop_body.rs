@@ -160,7 +160,7 @@ pub(super) fn header_for_tier_up<H: Host>(cx: *mut LaneContext<H>, own: &LaneVie
     let site = &own.loops[own.loop_at_backedge[at].1 as usize];
     if !left_for_tier_up(cx, site, pc) { return None; }
     let ready = matches!(*site.body.borrow(), LoopBody::Ready { .. });
-    tier_up_resume(site.header, site.backedge, pc, !site.header_handler.get().is_null(), ready).map(|header| header as usize)
+    tier_up_resume(site.header, site.backedge, pc, !site.header_handler.get().is_null() && site.header_handler.get() != super::RETIRED_HEADER, ready).map(|header| header as usize)
 }
 
 /// The header dispatch rule, at a loop's backward jump and at its held header: a `Ready` body
@@ -192,7 +192,7 @@ fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: 
     if !lane_body_admits(cx, &method, NO_PENDING_ACTIVATIONS) { return None; }
     // SAFETY: the context's program outlives the lane run; the activation owns its receiver
     // and captures, as at its body's prologue.
-    let (program, code, receiver) = unsafe { ((*cx).program, &*(*cx).code, lane_this(cx).unwrap_or(Value::DELETED)) };
+    let (program, code, receiver) = unsafe { ((*cx).program, &*(*cx).code, lane_this(cx, r).unwrap_or(Value::DELETED)) };
     let captures = capture_reads(unsafe { (*cx).capture });
     let exit = vm.run_lane_method(&method, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
     unsafe { (*cx).callee_warming = false };

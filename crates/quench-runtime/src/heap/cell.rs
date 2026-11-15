@@ -2873,6 +2873,7 @@ impl Object {
     }
 
     /// Genuine primitive-wrapper data; guest properties cannot supply this slot.
+    #[inline]
     pub(crate) fn boxed_primitive(&self) -> Option<Value> {
         self.extras()?.rare()?.boxed_primitive
     }
@@ -3108,6 +3109,7 @@ impl Object {
     pub(crate) fn set_module_bindings(&mut self, bindings: Vec<(Atom, ProgramId, u16)>) {
         self.extras_mut().rare_mut().module_bindings = bindings;
     }
+    #[inline]
     pub(crate) fn deferred_module(&self) -> Option<&crate::ModuleSource> {
         self.extras()?.rare()?.deferred_module.as_ref()
     }

@@ -325,6 +325,9 @@ pub(crate) struct ValueArena {
     free_dictionaries: Vec<u32>,
     next_dictionary: u32,
     nursery: Nursery,
+    /// Values the arena held, past its idle nursery and released runs, after the last full
+    /// collection (`GenerationalPacing::arena_growth_reached`).
+    settled_values: usize,
 }
 
 impl Default for ValueArena {
@@ -345,6 +348,7 @@ impl Default for ValueArena {
             free_dictionaries: Vec::new(),
             next_dictionary: 0,
             nursery: Nursery::default(),
+            settled_values: 0,
         }
     }
 }
@@ -376,7 +380,7 @@ impl ValueArena {
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
-        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _ } = self;
+        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _ } = self;
         writer.values(values);
         for bucket in free {
             writer.u32s(bucket);
@@ -430,6 +434,7 @@ impl ValueArena {
             bucket.clear();
         }
         self.released_values = 0;
+        self.settled_values = 0;
         self.shape_lengths.truncate(1);
         self.shape_lengths[0] = 0;
         self.dictionaries.clear();
@@ -1123,6 +1128,22 @@ impl ValueArena {
         let idle_nursery = self.nursery.end - self.nursery.top;
         self.released_values > 0
             && self.released_values >= (self.values.len() - idle_nursery) / COMPACTION_RELEASED_SHARE_DIVISOR
+    }
+
+    /// Values held past the idle nursery and the released runs.
+    pub(crate) fn occupied_values(&self) -> usize {
+        let idle_nursery = self.nursery.end - self.nursery.top;
+        (self.values.len() - idle_nursery).saturating_sub(self.released_values)
+    }
+
+    /// Records what a full collection left (`GenerationalPacing::arena_growth_reached`).
+    pub(crate) fn settle_after_full(&mut self) {
+        self.settled_values = self.occupied_values();
+    }
+
+    /// The values the last full collection left held (`settle_after_full`).
+    pub(crate) fn settled_values(&self) -> usize {
+        self.settled_values
     }
 
     pub(crate) fn has_compact_range(&self, vector: ValueVec) -> bool {

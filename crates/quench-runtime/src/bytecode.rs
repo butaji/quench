@@ -3783,6 +3783,9 @@ pub struct ResidualProgram {
     /// What each function's closures read of the environments they close over, when the
     /// compiler derived it; without it a closure keeps its whole scope chain.
     pub(crate) closure_reads: Option<std::rc::Rc<ClosureReads>>,
+    /// The kept code of a Wasm module whose functions lower on their first calls: a
+    /// released slot's record is lowered from it (`WasmLazy::lower`).
+    pub(crate) wasm_lazy: Option<std::rc::Rc<crate::wasm::WasmLazy>>,
     /// The compile-cache records of the functions its load released, encoded as each was
     /// finished, until its compact encoding takes them (`binary::LoadEncoding`).
     pub(crate) load_encoding: LoadRecords,
@@ -3920,6 +3923,11 @@ impl ResidualProgram {
                 panic!("native function {index} of {} was not lowered before linking", self.source_name);
             }
             let function = self.lower_unlowered(index, unlowered);
+            function.decoded.prime_loop(&function.code, &function.wide);
+            return function;
+        }
+        if let Some(lazy) = &self.wasm_lazy {
+            let function = lazy.lower(index, self.constants.len());
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
         }

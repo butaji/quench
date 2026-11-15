@@ -413,7 +413,9 @@ impl<H: Host> Vm<H> {
             }
             // As `resume_await` roots the job's promise and value, and the job its state.
             self.active_call_roots.truncate(roots);
-            self.active_call_roots.extend([next.state, next.promise, awaited]);
+            self.active_call_roots.push(next.state);
+            self.active_call_roots.push(next.promise);
+            self.active_call_roots.push(awaited);
             (resume, continuation, value) = (next, taken, awaited);
         };
         self.active_call_roots.truncate(roots);
@@ -426,23 +428,8 @@ impl<H: Host> Vm<H> {
     /// termination request, no module continuation waiting, no host observing Promise jobs,
     /// and the job, the awaiting activation and the running one sharing realm and program.
     fn take_chained_await(&mut self, program: ProgramId) -> Option<(AwaitResume, Continuation, Value)> {
-        if !self.chain_await_jobs
-            || !self.unobserved_jobs_entered
-            || self.heap.should_collect()
-            || self.execution_interrupt.is_termination_requested()
-            || self.static_module_jobs_pending()
-            || self.host.observes_promise_lifecycle()
-        {
-            return None;
-        }
+        let (state, value) = self.chain_gates()?;
         let realm = self.realm.globals;
-        let Some(PendingJob::Reaction(job)) = self.realm.jobs.front() else {
-            return None;
-        };
-        if job.rejected || job.execution_context.is_some() || job.realm != realm || !job.next.is_undefined() {
-            return None;
-        }
-        let (state, value) = (job.handler, job.value);
         let awaiting = self.heap.await_state_mut(state)?;
         if !matches!(awaiting, AwaitState::Pending { kind: AwaitKind::AsyncFunction(continuation), realm: resumes, .. }
             if *resumes == realm && continuation.frame.program == program)
@@ -452,6 +439,53 @@ impl<H: Host> Vm<H> {
         let ResumedAwait { continuation, promise, .. } = awaiting.resume()?;
         self.realm.jobs.pop_front();
         Some((AwaitResume { state, promise, role: AwaitRole::AsyncFunction, rejected: false }, continuation?, value))
+    }
+
+    /// The front job's handler and value when it is a fulfilled reaction of this realm with
+    /// no result promise or host context, in a queue `take_chained_await` may take it from.
+    #[inline]
+    fn chain_gates(&self) -> Option<(Value, Value)> {
+        let Some(PendingJob::Reaction(job)) = self.realm.jobs.front() else {
+            return None;
+        };
+        if job.rejected || job.execution_context.is_some() || job.realm != self.realm.globals || !job.next.is_undefined() {
+            return None;
+        }
+        if !self.chain_await_jobs
+            || !self.unobserved_jobs_entered
+            || self.heap.should_collect()
+            || self.execution_interrupt.is_termination_requested()
+            || self.static_module_jobs_pending()
+            || self.host.observes_promise_lifecycle()
+        {
+            return None;
+        }
+        Some((job.handler, job.value))
+    }
+
+    /// The front job's await state, value, and its activation's function and resume PC, when
+    /// `take_chained_await` may take it.
+    #[inline]
+    fn chainable_await(&mut self, program: ProgramId) -> Option<(Value, Value, u32, usize)> {
+        let (state, value) = self.chain_gates()?;
+        let realm = self.realm.globals;
+        match self.heap.await_state_mut(state)? {
+            AwaitState::Pending { kind: AwaitKind::AsyncFunction(continuation), realm: resumes, .. }
+                if *resumes == realm && continuation.frame.program == program =>
+            {
+                Some((state, value, continuation.frame.function, continuation.frame.pc))
+            }
+            _ => None,
+        }
+    }
+
+    /// Takes the front job, whose handler `chainable_await` found to be the pending await
+    /// `state` of an async function, and that activation.
+    #[inline]
+    fn take_front_await(&mut self, state: Value) -> Option<(AwaitResume, Continuation)> {
+        let ResumedAwait { continuation, promise, .. } = self.heap.await_state_mut(state)?.resume()?;
+        self.realm.jobs.pop_front();
+        Some((AwaitResume { state, promise, role: AwaitRole::AsyncFunction, rejected: false }, continuation?))
     }
 
     fn resume_async_activation(
@@ -481,7 +515,8 @@ impl<H: Host> Vm<H> {
         let roots = self.active_call_roots.len();
         let chained = initial_error.is_none() && resume.role.generator().is_none();
         let outer_chain = if chained {
-            self.active_call_roots.extend([resume.state, resume.promise]);
+            self.active_call_roots.push(resume.state);
+            self.active_call_roots.push(resume.promise);
             self.await_chain.replace(AwaitChain { frame: self.frames.len() - 1, resume, roots })
         } else {
             self.await_chain.take()
@@ -513,24 +548,18 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         program: ProgramId,
         frame: usize,
+        current: &super::dispatch_frame::GeneralCodeCursor,
         value: Value,
         destination: u16,
     ) -> Option<Result<(super::dispatch_frame::GeneralCodeCursor, u32, usize), JsError>> {
         let chain = self.await_chain.filter(|chain| chain.frame == frame)?;
-        let Some(PendingJob::Reaction(job)) = self.realm.jobs.front() else {
-            return None;
-        };
-        let (function, pc) = match self.heap.await_state_mut(job.handler)? {
-            AwaitState::Pending { kind: AwaitKind::AsyncFunction(continuation), .. } => {
-                (continuation.frame.function, continuation.frame.pc)
-            }
-            _ => return None,
-        };
-        let cursor = self.general_cursor(program, p, function, true);
+        let (state, awaited, function, pc) = self.chainable_await(program)?;
+        // Consecutive resumptions of one async function share its cursor.
+        let cursor = if current.function == function { *current } else { self.general_cursor(program, p, function, true) };
         if !Self::lane_runs(cursor.lane, pc) {
             return None;
         }
-        let (next, continuation, awaited) = self.take_chained_await(program)?;
+        let (next, continuation) = self.take_front_await(state)?;
         self.active_call_roots[chain.roots] = next.state;
         self.active_call_roots[chain.roots + 1] = next.promise;
         let resume_register = continuation.resume_register;

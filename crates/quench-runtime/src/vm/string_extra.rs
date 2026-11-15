@@ -270,6 +270,34 @@ const RADIX_DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
 /// neighbours (half the gap to the next double, scaled with each digit), the last rounds to
 /// even and may carry into the integer part, and integer digits below the double's precision
 /// are zeros.
+/// `number_to_radix` as a string value. An integer below 2^53 spells exactly its digits (no
+/// fraction, no digit below the double's precision), which a `u64` loop writes on the stack
+/// with one division per digit instead of `fmod` and two growing vectors.
+pub(super) fn number_to_radix_string(number: f64, radix: u32) -> super::wtf16::JsString {
+    let magnitude = number.abs();
+    if magnitude < crate::number_to_string::EXACT_INTEGER_MAGNITUDE && magnitude.fract() == 0.0 {
+        // 53 binary digits and a sign.
+        let mut buffer = [0u8; 54];
+        let mut at = buffer.len();
+        let mut integer = magnitude as u64;
+        let radix = u64::from(radix);
+        loop {
+            at -= 1;
+            buffer[at] = RADIX_DIGITS[(integer % radix) as usize];
+            integer /= radix;
+            if integer == 0 {
+                break;
+            }
+        }
+        if number < 0.0 {
+            at -= 1;
+            buffer[at] = b'-';
+        }
+        return super::wtf16::JsString::from_ascii_bytes(&buffer[at..]);
+    }
+    number_to_radix(number, radix).into()
+}
+
 pub(super) fn number_to_radix(number: f64, radix: u32) -> String {
     let base = f64::from(radix);
     let negative = number < 0.0;

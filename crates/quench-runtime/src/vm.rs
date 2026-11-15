@@ -1,5 +1,6 @@
 #[cfg(feature = "native-execution")]
 mod native_operands;
+mod register_file;
 mod shape_lookup; mod string_wrapper;
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
@@ -59,6 +60,9 @@ use std::rc::Rc;
 /// sequence. The state must not be zero, which xorshift never leaves.
 fn fresh_random_seed() -> u64 {
     use std::hash::BuildHasher as _;
+    if let Some(seed) = crate::clock::fixed_random_seed() {
+        return seed;
+    }
     std::collections::hash_map::RandomState::new().hash_one(std::time::SystemTime::now()) | 1
 }
 pub(super) use crate::units::MAX_SAFE_INTEGER;
@@ -177,6 +181,7 @@ mod property_definition;
 use group_by::GroupByKind;
 use property_definition::PropertyDefinitionKind;
 mod intact_fuses;
+mod iterator_proofs;
 mod iterators;
 mod json;
 mod method_cache;
@@ -323,7 +328,7 @@ pub(super) struct Frame {
     locals: Vec<Value>,
     dynamic_bindings: Vec<(Atom, Value)>,
     captured: bool,
-    registers: Vec<Value>,
+    registers: register_file::RegisterFile,
     capture_cache: CaptureCache,
     /// How many leading register slots hold values, whatever the current length: below it a
     /// root-mapped activation can take the file without rewriting it.
@@ -408,7 +413,7 @@ impl Frame {
             locals: vec![],
             dynamic_bindings: vec![],
             captured: false,
-            registers: vec![],
+            registers: register_file::RegisterFile::new(),
             initialized_registers: 0,
             capture_cache: CaptureCache::default(),
             active_iterators: vec![],
@@ -1839,6 +1844,9 @@ pub(crate) struct Vm<H> {
     /// %String.prototype% of the current realm; primitive string property
     /// reads use it directly, so realm switches re-derive it.
     string_proto: Value,
+    /// %Number.prototype% of the main realm: a number primitive's field read takes it
+    /// through the site's cache as a string's takes `string_proto`.
+    number_proto: Value,
     array_buffer_proto: Value,
     shared_array_buffer_proto: Value,
     array_iterator_proto: Value,
@@ -2008,6 +2016,9 @@ pub(crate) struct Vm<H> {
     /// (`json::JsonPlainCache`).
     json_plain: json::JsonPlainCache,
     species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
+    /// That an iterator prototype's chain lacks a name (`Vm::iterator_lacks_property`): the
+    /// prototype, the name (`PropertyKey::key32`) and the `prototype_layout_epoch` it was proved under.
+    iterator_absence_proof: std::cell::Cell<Option<(Value, u32, u64)>>,
     /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
     promise_species_proof: std::cell::RefCell<Option<promise::PromiseSpeciesProof>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
@@ -3040,6 +3051,7 @@ impl<H: Host> Vm<H> {
         self.array_species_proof = None;
         self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);
+        self.iterator_absence_proof.set(None);
         self.promise_species_proof.take();
         self.heap.dependencies_mut().retire_all();
         self.enumerable_keys.clear(); self.heap.clear_string_atoms(); self.concat_memo.clear();

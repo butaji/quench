@@ -229,7 +229,8 @@ pub(super) fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: 
     // SAFETY: an activation's window starts within the values, which hold no drop glue.
     unsafe { vm.lane_stack.values.set_top(activation.native.window as *mut Value) };
     let caller_memory = activation.caller_memory(cx);
-    let this = unsafe { (*cx).this };
+    // The returning activation's receiver, its window's context word.
+    let this = Registers(activation.native.window as *mut Value).this();
     unsafe {
         (*cx).registers = activation.caller_registers;
         (*cx).base = activation.caller_base;
@@ -237,8 +238,6 @@ pub(super) fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: 
     }
     if let ActivationKind::Script(script) = &activation.kind {
         unsafe {
-            (*cx).this = script.caller_this;
-            (*cx).env = script.caller_env;
             (*cx).capture = script.caller_capture;
         }
     }

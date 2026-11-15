@@ -65,6 +65,9 @@ script_handler! {
             copy_arguments(registers, r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))), ARGC);
             Registers(registers)
         };
+        if leaf_binds_this(LEAF) {
+            registers.set_this(this);
+        }
         // SAFETY: the program store keeps a derived view alive with its program; the tier
         // claims no leaf's view, so its activation starts at its first record.
         let base = unsafe { (*target.view).records() };
@@ -75,14 +78,9 @@ script_handler! {
             leaf.caller_registers = r;
             leaf.caller_base = (*cx).base;
             leaf.target = target;
-            if leaf_binds_this(LEAF) {
-                leaf.caller_this = (*cx).this;
-                (*cx).this = this;
-            }
             if leaf_swaps_env(LEAF) {
-                leaf.caller_env = (*cx).env;
                 leaf.caller_capture = (*cx).capture;
-                (*cx).env = target.env;
+                registers.set_env(target.env);
                 (*cx).capture = target.capture;
             }
             (*cx).registers = registers;
@@ -162,11 +160,7 @@ pub(super) fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value,
     // SAFETY: the call record belongs to the caller's live view; the target stays cached.
     unsafe {
         debug_assert!(leaf.form == form);
-        if leaf_binds_this(form) {
-            (*cx).this = leaf.caller_this;
-        }
         if leaf_swaps_env(form) {
-            (*cx).env = leaf.caller_env;
             (*cx).capture = leaf.caller_capture;
         }
         (*cx).registers = caller;

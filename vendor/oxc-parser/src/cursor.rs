@@ -18,6 +18,7 @@ pub struct ParserCheckpoint<'a> {
     errors_pos: usize,
     regexp_literals_pos: usize,
     fatal_error: Option<FatalError<'a>>,
+    early: crate::early::EarlyCheckpoint,
 }
 
 impl<'a, C: Config> ParserImpl<'a, C> {
@@ -318,6 +319,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             errors_pos: self.errors.len(),
             regexp_literals_pos: self.regexp_literals.len(),
             fatal_error: self.checkpoint_fatal_error(),
+            early: self.early.checkpoint(),
         }
     }
 
@@ -329,6 +331,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             errors_pos: self.errors.len(),
             regexp_literals_pos: self.regexp_literals.len(),
             fatal_error: self.checkpoint_fatal_error(),
+            early: self.early.checkpoint(),
         }
     }
 
@@ -343,6 +346,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             errors_pos,
             regexp_literals_pos,
             fatal_error,
+            early,
         } = checkpoint;
 
         self.lexer.rewind(lexer);
@@ -351,6 +355,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.errors.truncate(errors_pos);
         self.regexp_literals.truncate(regexp_literals_pos);
         self.fatal_error = fatal_error;
+        self.early.rewind(early);
     }
 
     pub(crate) fn lookahead<U>(&mut self, predicate: impl Fn(&mut ParserImpl<'a, C>) -> U) -> U {

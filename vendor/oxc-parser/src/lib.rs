@@ -69,6 +69,7 @@ use std::any::Any;
 pub mod config;
 mod context;
 mod cursor;
+mod early;
 mod error_handler;
 mod modifiers;
 mod module_record;
@@ -334,6 +335,11 @@ pub struct LazyBody<'p, 'a> {
     pub call_assignment_targets: bool,
     /// The function lies in another function's body.
     pub in_function: bool,
+    /// The names the function reads from outside it, sorted and without duplicates, `arguments`
+    /// left out, when the parse found no construct a semantic early error could fire on in it,
+    /// and no private name
+    /// (bodies released inside it excepted, each checked alone); `None` where it is not sure.
+    pub early: Option<&'p [&'a str]>,
 }
 
 impl LazyBodyCheck {
@@ -785,6 +791,13 @@ struct ParserImpl<'a, C: ParserConfig> {
 
     /// The call assignment targets built so far, discarded ones included.
     call_assignment_targets: u32,
+
+    /// Scopes of the lazily parsed function being parsed (`early`), for its check.
+    early: early::Early<'a>,
+
+    /// What a binding identifier parsed now declares, for `early`; `None` where the parser
+    /// does not say, which makes the tracker unsure.
+    binding_kind: Option<early::DeclKind>,
 }
 
 impl<'a, C: ParserConfig> ParserImpl<'a, C> {
@@ -828,6 +841,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             strict: source_type.is_module() || options.inherited_strict,
             regexp_literals: Vec::new(),
             call_assignment_targets: 0,
+            early: early::Early::default(),
+            binding_kind: None,
         }
     }
 

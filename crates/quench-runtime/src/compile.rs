@@ -2760,6 +2760,14 @@ impl<'a> Compiler<'a> {
             self.source_type,
             nesting,
         );
+        let reparsed = match reparsed {
+            Ok(reparsed) => Some(reparsed),
+            Err(lazy_bodies::ReparseFailure::StackExhausted) => {
+                self.errors.push(Diagnostic::stack_exhausted(self.source));
+                return self.compile_plain_function(function, context);
+            }
+            Err(lazy_bodies::ReparseFailure::Diagnostics) => None,
+        };
         let Some(reparsed) = reparsed.filter(|reparsed| reparsed.function().is_some_and(|again| again.span == function.span)) else {
             self.reject(function.span, "SyntaxError: a lazily parsed function body does not compile alone");
             return self.compile_plain_function(function, context);
@@ -3499,6 +3507,7 @@ impl<'a> Compiler<'a> {
             validated: Default::default(),
             undefined_constant: Default::default(),
             closure_reads,
+            wasm_lazy: None,
             load_encoding: crate::bytecode::LoadRecords::new(self.load_encoding.take()),
         };
         #[cfg(feature = "profile-aggregate")]

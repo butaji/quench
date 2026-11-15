@@ -16,7 +16,7 @@ use crate::snapshot::{read_list, Reader, Snap, SnapshotError, SnapshotResult, Wr
 macro_rules! builtin_prototypes {
     ($apply:ident) => {
         $apply!(
-            object_proto, function_proto, array_proto, string_proto, array_buffer_proto,
+            object_proto, function_proto, array_proto, string_proto, number_proto, array_buffer_proto,
             shared_array_buffer_proto, array_iterator_proto, typed_array_proto, uint8_array_proto,
             uint8_clamped_array_proto, uint16_array_proto, uint32_array_proto, int8_array_proto,
             int16_array_proto, int32_array_proto, bigint64_array_proto, biguint64_array_proto,
@@ -253,6 +253,7 @@ impl<H: Host> Vm<H> {
             function_proto: _,
             array_proto: _,
             string_proto: _,
+            number_proto: _,
             array_buffer_proto: _,
             shared_array_buffer_proto: _,
             array_iterator_proto: _,
@@ -345,6 +346,7 @@ impl<H: Host> Vm<H> {
             for_in: _,
             json_plain: _,
             species_slot_proof: _,
+            iterator_absence_proof: _,
             promise_species_proof: _,
             function_name_shapes: _,
             typeof_names: _,

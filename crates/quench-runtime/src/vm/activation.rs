@@ -85,6 +85,10 @@ pub(crate) struct TrapCheck {
     pub(super) target: Value,
     pub(super) atom: crate::bytecode::Atom,
     pub(super) access: TrapAccess,
+    /// The target's layout id when the pre-check ran, for a key its layout alone answers
+    /// (a name other than an array's `length`): the same layout after the trap answers as
+    /// the pre-check did. 0, which no object's layout is, where the check is made again.
+    pub(super) layout: u32,
 }
 
 impl CallCompletion {
@@ -396,7 +400,7 @@ impl Snap for Continuation {
         frame.this = Snap::unsnap(reader)?;
         frame.locals = Snap::unsnap(reader)?;
         frame.dynamic_bindings = Snap::unsnap(reader)?;
-        frame.registers = Snap::unsnap(reader)?;
+        frame.registers = super::register_file::RegisterFile::from_registers(&<Vec<Value> as Snap>::unsnap(reader)?);
         frame.active_iterators = Snap::unsnap(reader)?;
         frame.with_objects = Snap::unsnap(reader)?;
         let completion = Snap::unsnap(reader)?;
@@ -454,7 +458,7 @@ mod tests {
         frame.this = Value::heap(2);
         frame.locals = vec![Value::heap(4)];
         frame.dynamic_bindings = vec![(0, Value::heap(8))];
-        frame.registers = vec![Value::heap(5)];
+        frame.registers = crate::vm::register_file::RegisterFile::from_registers(&[Value::heap(5)]);
         frame.with_objects = vec![Value::heap(11)];
         frame.with_base = 3;
         frame.fixed_this = true;

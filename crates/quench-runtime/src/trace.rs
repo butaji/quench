@@ -146,5 +146,14 @@ setting! {
         /// Under `rc-gc`, checks before each minor sweep that nothing live names a record it
         /// frees, and reports what does (`Heap::rc_verify_frees`).
         RcVerify = "rc-verify",
+        /// JavaScript-visible clocks and `Math.random` are deterministic (`crate::clock`):
+        /// instruction counts stop depending on host speed. Printed scores are then meaningless.
+        VirtualClock = "virtual-clock",
+        /// Engine policies (GC old-generation sizing) read work, not wall time (`crate::clock::is_work`).
+        WorkClock = "work-clock",
+        /// Each lazily parsed body is checked both by the parse's verdict and by the semantic
+        /// analysis, and differences are printed (`lazy_bodies::verify_early`); `=stat` also
+        /// prints each body's verdict.
+        EarlyVerify = "early-verify",
     }
 }

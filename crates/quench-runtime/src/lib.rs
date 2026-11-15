@@ -69,6 +69,7 @@ mod number_to_string;
 mod number_inputs;
 mod profile;
 pub mod trace;
+pub mod clock;
 mod snapshot;
 mod staged;
 mod typed_ir;
@@ -82,7 +83,7 @@ pub use wasm::{
     WasmCallableType, WasmConstantExpression, WasmData, WasmDataMode, WasmElement, WasmElementMode,
     WasmCustomSection, WasmExport,
     WasmFunction, WasmFunctionBody, WasmFunctionImport, WasmGlobal, WasmGlobalInitializer,
-    WasmI32Function, WasmImportName, WasmInstance, WasmMemory, WasmModule,
+    WasmI32Function, WasmImportName, WasmInstance, WasmLazyBody, WasmLazyCode, WasmMemory, WasmModule,
     WasmReferenceInitializer, WasmReferenceKind, WasmSignature, WasmTable, WasmTableInitializer,
     WasmTag, WasmTrap, WasmType, WasmTypes, WasmValue, extern_kind::WasmExternKind,
 };

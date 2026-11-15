@@ -396,6 +396,8 @@ impl<H: Host> Vm<H> {
     fn collect_inner(&mut self, _program: &ResidualProgram, full: bool, begin_cycle: bool) {
         // Frameless activations' registers are no roots; their frames are.
         self.materialize_deferred_lane();
+        // The active for-in's cursor lives outside the heap until written back.
+        self.for_in_flush_cursor();
         self.clear_call_targets();
         self.resolved_module_requests.clear();
         self.invalidate_wasm_reference_caches();

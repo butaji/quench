@@ -25,11 +25,14 @@ pub(super) struct ClosureTemplate {
     function: u32,
     realm: Value,
     function_prototype: Value,
-    shape: u32,
+    /// The closure object's inline header (`InlineObjectHeader`) under its named shape, for a
+    /// closure whose own properties fit its inline slots (`finished_closure_fits`).
+    header: crate::heap::InlineObjectHeader,
     length: Value,
     name: Value,
     kind: FunctionKind,
-    prototype: Option<(Value, u32)>,
+    /// The prototype object's header: its parent, under the shape `constructor` gives it.
+    prototype: Option<crate::heap::InlineObjectHeader>,
 }
 
 /// The closure template slot of a program's function: functions of different programs share
@@ -363,23 +366,26 @@ impl<H: Host> Vm<H> {
     /// A closure of `template`'s function over `env`. The template's prototypes were flagged
     /// as prototypes by the closure it was recorded from, which needs no marking again.
     fn closure_of_template(&mut self, template: ClosureTemplate, env: Value) -> Value {
-        let prototype = template
-            .prototype
-            .map(|(parent, _)| self.heap.alloc_object_under_flagged_prototype(Self::empty_object(parent)));
-        let object = self.finished_closure_object(
-            template.function_prototype,
-            template.shape,
-            [template.length, template.name],
-            prototype,
-        );
+        // Both objects are allocated finished from headers derived once: the prototype under
+        // the shape its `constructor` add would reach, its slot filled once the closure exists.
+        let prototype = template.prototype.map(|header| self.heap.alloc_unfilled_object_under_flagged_prototype(header));
+        let named = [template.length, template.name];
+        // A function record's values stay out of the nursery's runs, which only object
+        // records' collection moves: an arena run comes from `finished_closure_object`.
+        let object = finished_closure_fits(prototype)
+            .then(|| crate::heap::Object::from_inline_header(template.header, finished_closure_slots(&named, prototype)))
+            .flatten()
+            .unwrap_or_else(|| {
+                self.finished_closure_object(template.function_prototype, template.header.shape(), named, prototype)
+            });
         let function = self.heap.alloc_function_under_flagged_prototype(FunctionRecord {
             object,
             realm: template.realm,
             kind: template.kind,
             env,
         });
-        if let (Some(prototype), Some((_, constructor))) = (prototype, template.prototype) {
-            self.heap.property_add(prototype, function, constructor);
+        if let Some(prototype) = prototype {
+            self.heap.fill_new_object_slot(prototype, 0, function);
         }
         function
     }
@@ -520,11 +526,13 @@ impl<H: Host> Vm<H> {
                     function: id,
                     realm,
                     function_prototype: function_object_prototype,
-                    shape,
+                    header: crate::heap::InlineObjectHeader::of(function_object_prototype, shape),
                     length: length_value,
                     name: name_value,
                     kind,
-                    prototype: constructor.map(|constructor| (self.realm_object_prototype(realm), constructor)),
+                    prototype: constructor.map(|constructor| {
+                        crate::heap::InlineObjectHeader::of(self.realm_object_prototype(realm), constructor)
+                    }),
                 });
             }
             return Ok(function);

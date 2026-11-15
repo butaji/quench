@@ -2636,7 +2636,7 @@ impl<H: Host> Vm<H> {
         if stateful {
             let last_index = Value::number(matched.as_ref().map_or(0, |matched| matched.range.end) as f64);
             match steady {
-                Some(steady) => self.heap.property_set(this, steady.slot, last_index),
+                Some(steady) => self.heap.primitive_cell_property_set(this, steady.slot, last_index),
                 None => self.store_regexp_last_index(p, this, last_index)?,
             }
         }

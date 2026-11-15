@@ -173,7 +173,7 @@ impl<H: Host> Vm<H> {
     /// alone decide: a built-in iterator record, or an ordinary object, with no own `key` (in
     /// its shape or side table) above a chain of ordinary objects (`Vm::plain_property_lookup`).
     /// `false` when they cannot, as for a Proxy, whose `get` trap observes the lookup.
-    fn iterator_lacks_property(&self, iterator: Value, key: PropertyKey) -> bool {
+    pub(super) fn iterator_lacks_property(&self, iterator: Value, key: PropertyKey) -> bool {
         let Some(record) = self.heap.iterator(iterator) else {
             return self.plain_property_lookup(iterator, key) == Some(None);
         };
@@ -184,7 +184,7 @@ impl<H: Host> Vm<H> {
             return false;
         }
         let proto = data.proto();
-        proto.is_null() || self.plain_property_lookup(proto, key) == Some(None)
+        proto.is_null() || self.iterator_absence_proved(proto, key) || self.plain_property_lookup(proto, key) == Some(None)
     }
 
     pub(super) fn iterator_step_value(
@@ -229,7 +229,7 @@ impl<H: Host> Vm<H> {
             // GetMethod of an absent `return` yields undefined and the close ends (ECMA-262
             // 7.4.11 steps 3-5); the shapes of a built-in iterator's chain decide that without
             // the general lookup.
-            if vm.iterator_lacks_property(iterator, PropertyKey::string(atom)) {
+            if vm.iterator_lacks_property_proving(iterator, PropertyKey::string(atom)) {
                 return Ok(Value::UNDEFINED);
             }
             let method = vm.get_property(p, iterator, atom)?;
@@ -2778,14 +2778,7 @@ impl<H: Host> Vm<H> {
         } else {
             self.box_object_or_type_error(p, source)?
         };
-        Ok(self.heap.alloc_iterator(IteratorRecord {
-            object: Self::empty_object(self.array_iterator_proto),
-            source,
-            kind,
-            index: 0,
-            done: false,
-            ext: crate::heap::IteratorExt::default(),
-        }))
+        Ok(self.array_iterator_of(kind, source))
     }
 
     pub(super) fn iterator_next(

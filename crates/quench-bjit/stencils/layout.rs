@@ -194,6 +194,11 @@ pub(crate) const JS_STEP_NATIVE_END: usize = 248;
 pub(crate) const JS_STEP_SHADOW_TOP: usize = 256;
 pub(crate) const JS_STEP_SHADOW_END: usize = 264;
 
+/// The context words below every lane window's register 0 (the runtime's
+/// `register_file::FRAME_CONTEXT`): a pushed window leaves them free past its registers for the
+/// next. Checked against the runtime by `stencil_layout_matches`.
+pub(crate) const FRAME_CONTEXT_WORDS: usize = 3;
+
 /// The entry cell's entry, recovery and body words (`EntryCell`), and the recovery space's
 /// values and activations (`LaneRecoverySpace`).
 pub(crate) const CELL_ENTRY_AT: usize = 0;

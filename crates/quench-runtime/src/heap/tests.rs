@@ -1431,9 +1431,8 @@ fn raw_slot_admission_records_write_domain_before_exposing_storage() {
 #[test]
 fn object_publication_admits_preinitialized_slots_after_census() {
     use crate::typed_ir::Type;
-    let publishers: [(&str, fn(&mut Heap, Object) -> Value); 3] = [
+    let publishers: [(&str, fn(&mut Heap, Object) -> Value); 2] = [
         ("object", Heap::alloc_object),
-        ("flagged-prototype", Heap::alloc_object_under_flagged_prototype),
         ("cell", |heap, object| heap.alloc(Cell::Object(object))),
     ];
     for (publisher, publish) in publishers {
@@ -1452,6 +1451,20 @@ fn object_publication_admits_preinitialized_slots_after_census() {
             assert_eq!(heap.property_get(heap.object(published).unwrap(), 0), Some(value));
         }
     }
+}
+
+#[test]
+fn unfilled_object_records_only_the_values_that_fill_it() {
+    use crate::typed_ir::Type;
+    let mut heap = Heap::new();
+    heap.track_slot_representations(&[(0, None), (1, None)]);
+    let header = crate::heap::InlineObjectHeader::of(Value::NULL, 1);
+    let object = heap.alloc_unfilled_object_under_flagged_prototype(header);
+    assert_eq!(heap.slot_type(1, 0), Type::NEVER);
+    heap.fill_new_object_slot(object, 0, Value::NULL);
+    assert_eq!(heap.slot_type(1, 0), Type::immediate(Value::NULL));
+    assert_eq!(heap.unrepresented_slots(), 0);
+    assert_eq!(heap.property_get(heap.object(object).unwrap(), 0), Some(Value::NULL));
 }
 
 #[test]

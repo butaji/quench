@@ -49,7 +49,7 @@ impl<H: Host> Vm<H> {
         };
         if let Prefilter::Excludes { stateful } = prefilter {
             if stateful {
-                self.heap.property_set(receiver, slot, Value::number(0.0));
+                self.heap.primitive_cell_property_set(receiver, slot, Value::number(0.0));
             }
             return Ok(if exec { Value::NULL } else { Value::FALSE });
         }
@@ -284,7 +284,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let Some((regex, input, matched)) = matched else {
             if stateful {
-                self.heap.property_set(receiver, slot, Value::number(0.0));
+                self.heap.primitive_cell_property_set(receiver, slot, Value::number(0.0));
             }
             return Ok(if exec { Value::NULL } else { Value::FALSE });
         };
@@ -305,7 +305,7 @@ impl<H: Host> Vm<H> {
         captures: bool,
     ) -> Result<Value, JsError> {
         if stateful {
-            self.heap.property_set(receiver, slot, Value::number(matched.range.end as f64));
+            self.heap.primitive_cell_property_set(receiver, slot, Value::number(matched.range.end as f64));
         }
         if captures {
             return self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched));

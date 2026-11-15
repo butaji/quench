@@ -92,7 +92,7 @@ pub(super) fn lane_read_get_trap<H: Host>(
         return Err(exit(ip));
     };
     let activated = lane_activate_trap(cx, r, ip, target, handler, &arguments)?;
-    owe_invariants(vm, Completion::ReadsTrapped, TrapCheck { target: arguments[0], atom, access: TrapAccess::Read });
+    owe_invariants(vm, Completion::ReadsTrapped, arguments[0], atom, TrapAccess::Read);
     Ok(activated)
 }
 
@@ -124,9 +124,41 @@ fn lane_activate_trap<H: Host, const N: usize>(cx: *mut LaneContext<H>, r: Regis
     }
 }
 
+/// The atom of a computed key a proxy's trap receives as a string: a string's own, or the
+/// canonical decimal text of an array index. `None` for any other key (a symbol, a negative
+/// or fractional number, an object whose ToPropertyKey runs guest code).
+fn keyed_trap_atom<H: Host>(vm: &mut Vm<H>, key: Value) -> Option<crate::bytecode::Atom> {
+    if let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) {
+        return Some(vm.lookup_array_index_atom(index).unwrap_or_else(|| vm.intern_atom(&index.to_string())));
+    }
+    vm.string_key_atom(key)
+}
+
+/// A lane `GetIndex` of `base[key]` at the record `ip` where `base` is a proxy whose `get`
+/// trap a named read would activate (`lane_read_get_trap`): the same activation with the
+/// key's string. `None`, before any effect, for any other read, which goes on along its
+/// path; `Err` carries the record to continue at.
+pub(super) fn lane_keyed_get_trap<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, base: Value, key: Value) -> Option<Result<(Registers, Ip), Ip>> {
+    let vm = unsafe { vm(cx) };
+    vm.proxy_parts(base)?;
+    let atom = keyed_trap_atom(vm, key)?;
+    let (trap, handler, arguments) = get_trap_call(vm, base, atom)?;
+    lane_materialize_running_leaf(cx);
+    let target = lane_trap_target(cx, trap)?;
+    Some(lane_activate_trap(cx, r, ip, target, handler, &arguments).map(|activated| {
+        owe_invariants(vm, Completion::ReadsTrapped, arguments[0], atom, TrapAccess::Read);
+        activated
+    }))
+}
+
 /// Records that the trap activation `lane_activate_keeping` just pushed completes as
-/// `completion` says and owes `check` its target's invariants.
-fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, check: TrapCheck) {
+/// `completion` says and owes `target` its invariants for `atom` (`TrapCheck`).
+fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, target: Value, atom: crate::bytecode::Atom, access: TrapAccess) {
+    // An array's `length` and elements are answered by its element facts too, which its
+    // layout does not name; any other name by its shape, which its layout does.
+    let by_layout = vm.heap.array(target).is_none() || (atom != vm.length_atom && !vm.atom_class(atom).contains(crate::vm::object::AtomClass::ARRAY_INDEX));
+    let layout = if by_layout { vm.object_data(target).map_or(0, |data| data.layout_id()) } else { 0 };
+    let check = TrapCheck { target, atom, access, layout };
     let depth = vm.lane_stack.activations.len() - 1;
     if let Some(Activation { kind: ActivationKind::Script(script), .. }) = vm.lane_stack.activations.last_mut() {
         script.completion = completion;
@@ -153,7 +185,9 @@ pub(super) fn trap_result_needs_general_path<H: Host>(vm: &Vm<H>, activation: Op
     match check.access {
         TrapAccess::StrictStore if !vm.truthy(value) => true,
         TrapAccess::Store | TrapAccess::StrictStore if !vm.truthy(value) => false,
-        _ => !vm.shape_leaves_atom_unconstrained(check.target, check.atom),
+        // A target whose layout the trap left as it was leaves the key unconstrained still.
+        _ => !(check.layout != 0 && vm.object_data(check.target).is_some_and(|data| data.layout_id() == check.layout))
+            && !vm.shape_leaves_atom_unconstrained(check.target, check.atom),
     }
 }
 
@@ -216,7 +250,7 @@ pub(super) fn lane_store_set_trap<H: Host>(
     Some(match lane_activate_trap(cx, r, ip, target, handler, &arguments) {
         Ok((registers, next)) => {
             let access = if strict { TrapAccess::StrictStore } else { TrapAccess::Store };
-            owe_invariants(vm, Completion::AssignsTrapped, TrapCheck { target: arguments[0], atom, access });
+            owe_invariants(vm, Completion::AssignsTrapped, arguments[0], atom, access);
             Resumed::At(registers, next, Carried::script(cx))
         }
         Err(next) => Resumed::Exit(next),

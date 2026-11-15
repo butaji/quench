@@ -827,6 +827,13 @@ impl JsString {
         self.flat().substring(range)
     }
 
+    /// The string of ASCII `bytes`, written straight into its canonical storage.
+    pub(crate) fn from_ascii_bytes(bytes: &[u8]) -> Self {
+        debug_assert!(bytes.is_ascii());
+        // SAFETY: ASCII bytes are UTF-8.
+        Self::from_flat(FlatUnits::ascii(unsafe { std::str::from_utf8_unchecked(bytes) }))
+    }
+
     /// Number::toString(10) of `value`, written on the stack: text this short is held inline.
     pub(crate) fn from_number(value: f64) -> Self {
         let mut text = crate::number_to_string::Short::new();

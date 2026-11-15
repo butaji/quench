@@ -71,8 +71,12 @@ impl<H: Host> Vm<H> {
         }
         let span = p.functions[function as usize].header().source_span
             .ok_or_else(|| JsError::validation("a first-call stub keeps no source".into()))?;
-        let residual = crate::Engine::specialize_first_call_chunk(p, function, span, &*self)
-            .map_err(|_| JsError::validation("a first-call chunk does not compile".into()))?;
+        // A body too deep for the stack reports it here, where it compiles, as V8 does.
+        let residual = match crate::Engine::specialize_first_call_chunk(p, function, span, &*self) {
+            Ok(residual) => residual,
+            Err(errors) if errors.iter().any(crate::compile::Diagnostic::is_stack_exhausted) => return Err(self.stack_exhaustion_error()),
+            Err(_) => return Err(JsError::validation("a first-call chunk does not compile".into())),
+        };
         let target = residual
             .functions
             .iter()

@@ -40,7 +40,7 @@ mod tests {
 #[derive(Clone, Copy)]
 pub(super) struct GeneralCodeCursor {
     program: ProgramId,
-    function: u32,
+    pub(super) function: u32,
     code: *const Instr,
     wide: *const WideInstruction,
     /// Fixed-width expansion of `code`; null while the function is cold.
@@ -1441,11 +1441,13 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     fn shrink_frame_buffers(frame: &mut Frame) {
         frame.original_arguments.shrink_to(RETAINED_FRAME_VALUES);
-        for buffer in [&mut frame.locals, &mut frame.registers] {
-            if buffer.capacity() > RETAINED_FRAME_VALUES {
-                buffer.clear();
-                buffer.shrink_to(RETAINED_FRAME_VALUES);
-            }
+        if frame.locals.capacity() > RETAINED_FRAME_VALUES {
+            frame.locals.clear();
+            frame.locals.shrink_to(RETAINED_FRAME_VALUES);
+        }
+        if frame.registers.capacity() > RETAINED_FRAME_VALUES {
+            frame.registers.clear();
+            frame.registers.shrink_to(RETAINED_FRAME_VALUES);
         }
         frame.initialized_registers = frame.initialized_registers.min(frame.registers.len());
         frame.dynamic_bindings.shrink_to(RETAINED_FRAME_VALUES);
@@ -1611,7 +1613,7 @@ impl<H: Host> Vm<H> {
                     // An await the queue's next job follows resumes that job's activation here
                     // (`Vm::chain_lane_await`), with no return to the job loop.
                     if let FrameOutcome::Await { value, destination, frame: None } = outcome
-                        && let Some(next) = self.chain_lane_await(p, program, frame, value, destination)
+                        && let Some(next) = self.chain_lane_await(p, program, frame, &cursor, value, destination)
                     {
                         (cursor, function, pc) = next?;
                         continue;
