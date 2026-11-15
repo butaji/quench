@@ -441,7 +441,7 @@ impl ProcessControl {
         #[cfg(not(unix))]
         let umask = INITIAL_UMASK;
         Self(Rc::new(ProcessControlCells {
-            started: std::time::Instant::now(),
+            started: quench_runtime::clock::instant_now(),
             performance_origins,
             loop_start_ns: Cell::new(None),
             loop_idle_ns: Cell::new(0.0),
@@ -507,7 +507,7 @@ impl ProcessControl {
     }
 
     pub(crate) fn uptime(&self) -> f64 {
-        self.0.started.elapsed().as_secs_f64()
+        quench_runtime::clock::instant_now().saturating_duration_since(self.0.started).as_secs_f64()
     }
 
     pub(crate) fn exit_code(&self) -> Option<i32> {
@@ -636,7 +636,7 @@ fn sample_performance_origins() -> Option<(f64, f64)> {
         if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) } != 0 {
             return None;
         }
-        let wall = std::time::SystemTime::now()
+        let wall = quench_runtime::clock::system_now()
             .duration_since(std::time::UNIX_EPOCH)
             .ok()?;
         Some((
@@ -651,16 +651,5 @@ fn sample_performance_origins() -> Option<(f64, f64)> {
 }
 
 fn monotonic_time_ns() -> Option<f64> {
-    #[cfg(unix)]
-    {
-        let mut time: libc::timespec = unsafe { std::mem::zeroed() };
-        if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) } != 0 {
-            return None;
-        }
-        Some(time.tv_sec as f64 * 1_000_000_000.0 + time.tv_nsec as f64)
-    }
-    #[cfg(not(unix))]
-    {
-        None
-    }
+    quench_runtime::clock::monotonic_ns()
 }

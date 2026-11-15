@@ -328,7 +328,12 @@ impl GenerationalPacing {
     /// The state transition after each collection, and the plan for the next one.
     pub(super) fn plan(&self, state: &mut PacingState, outcome: CollectionOutcome) -> NextCollection {
         state.aging.start(self.ages_from_start);
-        self.old_sizing.after_collection(outcome.full, &mut state.old_generation);
+        let traced = if outcome.full { outcome.live_weight } else { outcome.live_weight.saturating_sub(outcome.live_weight_after_full) };
+        crate::clock::charge_work(
+            (outcome.allocated.saturating_mul(old_sizing::WORK_MUTATOR_PER_ALLOCATED)
+                + traced.saturating_mul(old_sizing::WORK_GC_PER_LIVE)) as u64,
+        );
+        self.old_sizing.after_collection(outcome.full, &mut state.old_generation, outcome.since_previous_full, outcome.live_weight);
         if outcome.full {
             if state.resident_after_full > 0 && outcome.since_previous_full > 0 {
                 let growth = outcome.resident_at_start.saturating_sub(state.resident_after_full);

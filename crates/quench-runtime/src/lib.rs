@@ -69,6 +69,7 @@ mod number_to_string;
 mod number_inputs;
 mod profile;
 pub mod trace;
+pub mod clock;
 mod snapshot;
 mod staged;
 mod typed_ir;

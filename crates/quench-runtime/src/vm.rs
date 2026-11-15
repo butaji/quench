@@ -60,6 +60,9 @@ use std::rc::Rc;
 /// sequence. The state must not be zero, which xorshift never leaves.
 fn fresh_random_seed() -> u64 {
     use std::hash::BuildHasher as _;
+    if let Some(seed) = crate::clock::fixed_random_seed() {
+        return seed;
+    }
     std::collections::hash_map::RandomState::new().hash_one(std::time::SystemTime::now()) | 1
 }
 pub(super) use crate::units::MAX_SAFE_INTEGER;
