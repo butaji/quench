@@ -50,7 +50,16 @@ impl<H: Host> Vm<H> {
         if let FunctionKind::User(id, _) = kind
             && let (Some(stub), Some(chunk)) = (self.programs.get(program), self.programs.get(id))
         {
-            self.first_chunks.retain(|_, (stub, chunk, _)| stub.strong_count() > 0 && chunk.strong_count() > 0);
+            // Dead entries are swept only when the table is full, and a sweep that frees under
+            // a quarter of it grows it: each entry is swept a bounded number of times. A sweep
+            // per insert cost each first call the whole table (2000 stubs: 20K Ir per call).
+            if self.first_chunks.len() == self.first_chunks.capacity() {
+                self.first_chunks.retain(|_, (stub, chunk, _)| stub.strong_count() > 0 && chunk.strong_count() > 0);
+                let capacity = self.first_chunks.capacity();
+                if self.first_chunks.len() * 4 > capacity * 3 {
+                    self.first_chunks.reserve(capacity);
+                }
+            }
             self.first_chunks.insert((program, function), (Rc::downgrade(&stub), Rc::downgrade(&chunk), kind));
         }
         Ok(kind)

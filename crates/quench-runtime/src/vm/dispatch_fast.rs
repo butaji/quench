@@ -17345,7 +17345,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         ActivationArguments::Kept(_, count) => count,
     };
     #[cfg(feature = "profile-lane-exits")]
-    if let Some(body) = vm.programs.residual(target.program).and_then(|code| {
+    if let Some(body) = vm.programs.residual(target.program()).and_then(|code| {
         let body = code.function_get(target.function as usize)?;
         let plan = body.call_plan(code);
         Some(format!(

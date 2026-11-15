@@ -127,10 +127,7 @@ impl<H: Host> Vm<H> {
             if !root.declares_global_lexical(atom) {
                 return None;
             }
-            let slot = root
-                .local_atoms
-                .iter()
-                .position(|candidate| *candidate == atom)?;
+            let slot = root.local_slot(atom)?;
             Some((index, slot))
         })
     }
@@ -285,10 +282,7 @@ impl<H: Host> Vm<H> {
         if !metadata.declares_environment_atom(atom) {
             return None;
         }
-        metadata
-            .local_atoms
-            .iter()
-            .position(|candidate| *candidate == atom)
+        metadata.local_slot(atom)
     }
 
     pub(super) fn name_binding(
@@ -1081,11 +1075,9 @@ impl<H: Host> Vm<H> {
         if let Some(frame_index) = self.frames.len().checked_sub(1)
             && (self.frames[frame_index].function != 0
                 || p.function(self.frames[frame_index].function as usize)
-                    .global_lexical_atoms()
-                    .contains(&atom)
+                    .declares_global_lexical(atom)
                 || p.function(self.frames[frame_index].function as usize)
-                    .global_var_atoms()
-                    .contains(&atom)
+                    .declares_global_var(atom)
                 || self.root_local_var_binding(p, self.frames[frame_index].function, atom))
             && let Some(slot) = self.local_binding_slot(p, self.frames[frame_index].function, atom)
         {
@@ -1098,8 +1090,7 @@ impl<H: Host> Vm<H> {
                 )
                 .is_some();
             if p.function(self.frames[frame_index].function as usize)
-                .global_immutable_atoms()
-                .contains(&atom)
+                .declares_global_immutable(atom)
             {
                 return Err(self.type_error(p, "assignment to constant binding".into()));
             }
@@ -2605,11 +2596,7 @@ impl<H: Host> Vm<H> {
             if program.root_variables_are_local() || !function.declares_global_var(atom) {
                 continue;
             }
-            let Some(slot) = function
-                .local_atoms
-                .iter()
-                .position(|candidate| *candidate == atom)
-            else {
+            let Some(slot) = function.local_slot(atom) else {
                 continue;
             };
             if frame.captured {
