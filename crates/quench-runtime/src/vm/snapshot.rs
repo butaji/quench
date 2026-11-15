@@ -355,6 +355,7 @@ impl<H: Host> Vm<H> {
             array_index_atoms: _,
             atom_sequence,
             regexp_subjects: _,
+            concat_memo: _,
             regexp_matchers: _,
             atom_classes: _,
             intrinsic_natives: _,

@@ -139,6 +139,7 @@ impl<H: Host> Vm<H> {
             startup_intrinsics: Default::default(),
             atom_sequence: Rc::new(crate::bytecode::AtomSequence::new(Default::default())),
             regexp_subjects: Default::default(),
+            concat_memo: Default::default(),
             regexp_matchers: Default::default(),
             atom_classes: vec![],
             intrinsic_natives: Vec::new(),

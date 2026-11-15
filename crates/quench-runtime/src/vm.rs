@@ -2017,6 +2017,8 @@ pub(crate) struct Vm<H> {
     /// The strings most recently matched by a RegExp whose search decodes them, most recent
     /// first, each prepared once for repeated matching (`Vm::regexp_subject`).
     regexp_subjects: regexp::SubjectCache,
+    /// The atoms concatenations of atom strings and integers spelled (`Vm::memoized_concat`).
+    concat_memo: string_cache::ConcatMemo,
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,
@@ -3032,7 +3034,7 @@ impl<H: Host> Vm<H> {
         self.species_slot_proof.set(None);
         self.promise_species_proof.take();
         self.heap.dependencies_mut().retire_all();
-        self.enumerable_keys.clear(); self.heap.clear_string_atoms();
+        self.enumerable_keys.clear(); self.heap.clear_string_atoms(); self.concat_memo.clear();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();

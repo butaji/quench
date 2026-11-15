@@ -7,8 +7,85 @@ const STRING_CONCAT_INLINE_PARTS: usize = 9;
 /// past it the copy a flat concatenation makes costs more than its record saves, and a string
 /// read soon is copied twice.
 const PARTS_KNOWN_LIMIT: usize = 64;
+/// Direct-mapped entries of `ConcatMemo`.
+const CONCAT_MEMO_ENTRIES: usize = 256;
+/// The longest ASCII text a concatenation key packs into its word, beside its length byte.
+const PACKED_TEXT_LIMIT: usize = 7;
+/// The high bit of a packed key's length byte, which no integer's or atom's key sets there.
+const PACKED_TEXT_MARK: u8 = 0x80;
+/// The odd multiplier (2^64 / golden ratio) and right-key rotation spreading a key pair.
+const CONCAT_MEMO_MIX: (u64, u32) = (0x9e37_79b9_7f4a_7c15, 17);
+
+/// The atom `left + right` spells, by operand key (`Vm::concat_key`), which names each
+/// operand's text. Atoms keep their text until the VM reassigns them, which clears it.
+pub(super) struct ConcatMemo(Box<[(u64, u64, u32); CONCAT_MEMO_ENTRIES]>);
+
+impl Default for ConcatMemo {
+    fn default() -> Self {
+        Self(Box::new([(u64::MAX, u64::MAX, 0); CONCAT_MEMO_ENTRIES]))
+    }
+}
+
+impl ConcatMemo {
+    pub(super) fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    #[inline(always)]
+    fn index(left: u64, right: u64) -> usize {
+        let (multiplier, rotation) = CONCAT_MEMO_MIX;
+        let mixed = (left ^ right.rotate_left(rotation)).wrapping_mul(multiplier);
+        (mixed >> (u64::BITS - CONCAT_MEMO_ENTRIES.trailing_zeros())) as usize
+    }
+}
 
 impl<H: Host> Vm<H> {
+    /// The memo key of a concatenation operand: an integer's bits, a short ASCII string's
+    /// text and length packed into one word (high byte `0x80 | len`), or an atom string's atom
+    /// (above the low word); `None` for any other value. Each key names its text alone.
+    #[inline(always)]
+    fn concat_key(&self, operand: Value) -> Option<u64> {
+        if operand.as_int().is_some() {
+            return Some(operand.to_bits());
+        }
+        if let Some(super::wtf16::Units::Ascii(text)) = self.heap.string(operand).and_then(|text| text.existing_flat()).map(|flat| flat.view())
+            && text.len() <= PACKED_TEXT_LIMIT
+        {
+            let mut word = [0u8; PACKED_TEXT_LIMIT + 1];
+            word[..text.len()].copy_from_slice(text);
+            word[PACKED_TEXT_LIMIT] = PACKED_TEXT_MARK | text.len() as u8;
+            return Some(u64::from_le_bytes(word));
+        }
+        self.heap.string_atom(operand).map(|atom| (1 << u32::BITS) | u64::from(atom))
+    }
+
+    /// The string of the atom `left + right` of a string and an integer spelled when it last
+    /// ran (`ConcatMemo`), as `"k" + i` keys repeat; `None` for any other pair, or where the
+    /// memo has no live string for it.
+    #[inline(always)]
+    pub(super) fn memoized_concat(&self, left: Value, right: Value) -> Option<Value> {
+        // A key joins a string and an integer, as `"k" + i` does; two strings take the joins.
+        if left.as_int().is_none() == right.as_int().is_none() {
+            return None;
+        }
+        let (left, right) = (self.concat_key(left)?, self.concat_key(right)?);
+        let (l, r, atom) = self.concat_memo.0[ConcatMemo::index(left, right)];
+        if l != left || r != right {
+            return None;
+        }
+        self.heap.atom_string(atom, false)
+    }
+
+    /// Records that `left + right` made the atom string `result` (`memoized_concat`).
+    fn memoize_concat(&mut self, left: Value, right: Value, result: Value) {
+        if left.as_int().is_none() == right.as_int().is_none() {
+            return;
+        }
+        if let (Some(l), Some(r), Some(atom)) = (self.concat_key(left), self.concat_key(right), self.heap.string_atom(result)) {
+            self.concat_memo.0[ConcatMemo::index(l, r)] = (l, r, atom);
+        }
+    }
+
     /// `left + right` of strings and Numbers whose text is ASCII and short enough to sit
     /// inline (`SHORT_ASCII_CAPACITY`), such as a key built as `"d" + i`: each operand's
     /// bytes written once into the result, with no string made per operand or joined.
@@ -41,10 +118,12 @@ impl<H: Host> Vm<H> {
         // matched to its atom once rather than per concatenation and per keyed access.
         let atom = self.find_atom(Self::atom_hash_str(text), |atom| self.atom_units_equal_str(atom, text));
         if let Some(string) = atom.and_then(|atom| self.heap.atom_string(atom, false)) {
+            self.memoize_concat(left, right, string);
             return Some(string);
         }
         let string = self.heap.alloc_string(JsString::from_str(text));
         atom.inspect(|atom| self.heap.record_string_atom(string, *atom));
+        self.memoize_concat(left, right, string);
         Some(string)
     }
 
