@@ -174,6 +174,9 @@ pub(crate) const NARROW_HEAP_FAMILIES: usize = 1 << HEAP_FAMILY_BITS.count_ones(
 const _: () = assert!(HEAP_FAMILY_BITS >> HEAP_FAMILY_SHIFT == NARROW_HEAP_FAMILIES as u64 - 1);
 const _: () = assert!(NARROW_HEAP_FAMILIES + 4 <= 1 << NARROW_CODE_BITS);
 const _: () = assert!(NARROW_HEAP_FAMILIES + 3 + NARROW_HEAP_FAMILIES <= NARROW_LOOKUP_CODES);
+/// `null`'s narrow form, as `to_narrow` computes it.
+const NULL_NARROW: u32 = ((NARROW_HEAP_FAMILIES + 1) as u32) << NARROW_CODE_SHIFT;
+const _: () = assert!(NARROW_UPPER_WORDS[NARROW_HEAP_FAMILIES + 1] == TAG_NULL);
 /// The upper word of a direct object handle and its narrow code, its family bits, as
 /// `to_narrow`'s table names them; `to_narrow_reference` packs it without the lookup.
 pub(crate) const DIRECT_OBJECT_UPPER: u64 = TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT;
@@ -210,6 +213,10 @@ impl Value {
     /// integer first, keep `to_narrow`.
     #[inline(always)] pub(crate) fn to_narrow_reference(self) -> Option<u32> {
         if self.0 & !LOWER_WORD != DIRECT_OBJECT_UPPER {
+            // `null`, a list's end, the other common value of a new object's field.
+            if self.0 == TAG_NULL {
+                return Some(NULL_NARROW);
+            }
             return self.to_narrow();
         }
         let lower = self.0 as u32;
@@ -775,6 +782,12 @@ impl fmt::Debug for Value {
 mod tests {
     use super::Value;
     use std::mem::size_of;
+
+    #[test]
+    fn a_reference_narrowing_of_null_is_the_general_one() {
+        assert_eq!(Value::NULL.to_narrow_reference(), Value::NULL.to_narrow());
+        assert_eq!(Value::from_narrow(Value::NULL.to_narrow_reference().unwrap()), Value::NULL);
+    }
 
     #[test]
     fn to_uint32_of_large_magnitudes_is_the_value_modulo_two_to_the_32() {
