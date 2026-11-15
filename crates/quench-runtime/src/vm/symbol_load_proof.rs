@@ -48,6 +48,8 @@ struct FactEntry {
 pub(super) const KIND_OWN: u64 = 1;
 pub(super) const KIND_INHERITED: u64 = 2;
 pub(super) const KIND_ABSENT: u64 = 3;
+/// The receiver's own shape lacks the key; nothing said of its chain, so no read answers by it.
+pub(super) const KIND_ABSENT_OWN: u64 = 4;
 pub(super) const KIND_GETTER: u64 = 5;
 
 /// The parts of an answer word (`FactEntry`): its kind, slot and hops, and whether it holds
@@ -242,6 +244,22 @@ impl SymbolLoadProofs {
         unsafe { &*base.as_ptr().add(index) }.set(FactEntry { tag: FactEntry::tag(layout, key32), answer: word });
         if let Some(cell) = self.entries.holder(index) {
             cell.set(holder);
+        }
+    }
+
+    /// Records that a receiver of `layout` lacks `key32` among its own names, where no entry
+    /// for the pair says more (any other answer implies it).
+    pub(super) fn record_absent_own(&self, layout: u32, key32: u32) {
+        let base = match self.entries.base.get() {
+            Some(base) => *base,
+            None => self.entries.allocate(),
+        };
+        let index = Self::index(layout, key32);
+        let tag = FactEntry::tag(layout, key32);
+        // SAFETY: `index` is below the mapping's entry count.
+        let entry = unsafe { &*base.as_ptr().add(index) };
+        if entry.get().tag != tag {
+            entry.set(FactEntry { tag, answer: KIND_ABSENT_OWN << 28 });
         }
     }
 
