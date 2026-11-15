@@ -3451,20 +3451,31 @@ fn lane_window_closure_value<H: Host>(
     registers: u16,
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    // A closure reading nothing of this activation's scope takes its parent environment,
-    // and the activation needs no environment of its own for it.
-    if let Some(value) = vm.scope_free_closure(function, unsafe { (*cx).registers }.env()) {
-        note_allocation(vm);
-        return Some(value);
-    }
-    let owner = vm.lane_stack.activations.last().map(|activation| activation.function);
+    let owner = vm.lane_stack.activations.last().map(|activation| activation.function)?;
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let parent = unsafe { (*cx).registers }.env();
     // SAFETY: the running environment activation's window, whose function is the
     // innermost activation's and whose environment's parent is the context's.
-    let environment = owner.map(|owner| unsafe {
-        window_environment(vm, &*(*cx).code, r.0.add(usize::from(registers)), owner, (*cx).registers.env(), (*cx).program, r.this())
-    });
-    // SAFETY: the context's program outlives the lane run.
-    let value = environment.and_then(|environment| lane_closure(vm, unsafe { &*(*cx).code }, function, environment));
+    let window = |vm: &mut Vm<H>| unsafe {
+        window_environment(vm, code, r.0.add(usize::from(registers)), owner, parent, (*cx).program, r.this())
+    };
+    let value = match vm.lane_closure_template(function) {
+        // A recorded closure is made from its template once: over another environment where
+        // it reads nothing of this activation's (`Vm::maker_free_environment`), so the
+        // activation needs none of its own for it, else over the activation's.
+        Some(template) => {
+            let env = match vm.maker_free_environment(&template, parent, owner) {
+                Some(env) => env,
+                None => window(vm),
+            };
+            Some(vm.closure_of_template(template, env))
+        }
+        None => {
+            let environment = window(vm);
+            lane_closure(vm, code, function, environment)
+        }
+    };
     note_allocation(vm);
     value
 }

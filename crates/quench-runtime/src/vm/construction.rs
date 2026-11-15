@@ -34,11 +34,16 @@ pub(super) struct ClosureTemplate {
     kind: FunctionKind,
     /// The prototype object's header: its parent, under the shape `constructor` gives it.
     prototype: Option<crate::heap::InlineObjectHeader>,
-    /// Whether the closures read nothing of the scope that makes them
-    /// (`bytecode::closure_reads_no_enclosing_scope`): an environment activation makes them over its own
-    /// parent's environment and needs none of its own for them
-    /// (`Vm::scope_free_closure`).
-    scope_free: bool,
+    /// What the closures read of the activation that makes them (`MakerReads`): an
+    /// environment activation makes those reading nothing of its own environment over
+    /// another (`Vm::maker_free_closure`).
+    maker_reads: crate::bytecode::MakerReads,
+    /// Whether the function's closures are call-only where the lane makes them
+    /// (`Value::known_closure`), which no template makes.
+    call_only: bool,
+    /// The environment of no slots that `MakerReads::Outer` closures of one maker share: the
+    /// maker's parent and it. Cleared at each collection (`forget_outer_environments`).
+    outer_environment: Option<(Value, Value)>,
 }
 
 
@@ -336,16 +341,69 @@ impl<H: Host> Vm<H> {
         self.closure_in_realm(p, id, env, self.realm.globals)
     }
 
-    /// A closure of the active program's function `id` in the running realm whose recorded
-    /// template reads nothing of its maker's scope (`ClosureTemplate::scope_free`), made over
-    /// `env`, the maker's own parent environment; `None` for any other.
+    /// The recorded template a lane closure of the active program's function `id` is made
+    /// from in the running realm: none under a `with` scope, nor for a call-only closure
+    /// (`Value::known_closure`), whose function has none.
     #[inline(always)]
-    pub(super) fn scope_free_closure(&mut self, id: u32, env: Value) -> Option<Value> {
+    pub(super) fn lane_closure_template(&self, id: u32) -> Option<ClosureTemplate> {
         if self.with_scope_entered {
             return None;
         }
-        let template = self.recorded_closure_template(id, self.realm.globals).filter(|template| template.scope_free)?;
-        Some(self.closure_of_template(template, env))
+        self.recorded_closure_template(id, self.realm.globals).filter(|template| !template.call_only)
+    }
+
+    /// The environment a closure of `template` made by an activation of the active program's
+    /// function `maker` under `parent` takes when it reads nothing of the maker's own
+    /// (`ClosureTemplate::maker_reads`): `parent` itself, or for one reading further out an
+    /// environment of `maker` of no slots under it, shared by the maker's activations until a
+    /// collection. `None` for a closure that reads the maker's environment.
+    #[inline(always)]
+    pub(super) fn maker_free_environment(&mut self, template: &ClosureTemplate, parent: Value, maker: u32) -> Option<Value> {
+        match template.maker_reads {
+            crate::bytecode::MakerReads::Maker => None,
+            crate::bytecode::MakerReads::Nothing => Some(parent),
+            crate::bytecode::MakerReads::Outer => Some(match template.outer_environment {
+                Some((held, env)) if held == parent => env,
+                _ => {
+                    let env = self.outer_environment(parent, maker);
+                    let index = closure_template_index(template.program, template.function);
+                    if let Some(slot) = self.closure_templates[index].as_mut() {
+                        slot.outer_environment = Some((parent, env));
+                    }
+                    env
+                }
+            }),
+        }
+    }
+
+    /// An environment of the active program's function `maker` under `parent` holding none
+    /// of its bindings: one slot, never read, so its storage links to its parent's as an
+    /// activation's does (`EnvironmentSlots::link`).
+    #[cold]
+    fn outer_environment(&mut self, parent: Value, maker: u32) -> Value {
+        let slots = crate::heap::EnvironmentSlots::from_values(std::iter::once(Value::DELETED));
+        let scope = crate::heap::EnvironmentScopeRef::of_program(self.active_program.raw());
+        let (environment, storage) = self.heap.alloc_environment(parent, maker, slots, scope);
+        if let Some(Cell::Environment { function: owner, slots: parent_slots, .. }) = self.heap.get(parent)
+            && *owner != u32::MAX
+            && *owner != super::ROOT_FUNCTION_ID
+            && let Some(parent_storage) = parent_slots.dense_storage()
+            // SAFETY: the storage `alloc_environment` returned stays put while it lives.
+            && let Some(own) = unsafe { &*storage }.dense_storage()
+        {
+            // SAFETY: both storages are live dense ones, the parent's outliving its child's
+            // link until the next collection, whose epoch retires it.
+            unsafe { crate::heap::EnvironmentSlots::link(own, parent_storage, self.heap.collection_epoch()) };
+        }
+        environment
+    }
+
+    /// Forgets the outer environments the templates hold (`ClosureTemplate::outer_environment`):
+    /// at a collection, which they do not root.
+    pub(super) fn forget_outer_environments(&mut self) {
+        for template in self.closure_templates.iter_mut().flatten() {
+            template.outer_environment = None;
+        }
     }
 
     /// The template recorded for closures of the active program's function `id` in `realm`.
@@ -384,7 +442,7 @@ impl<H: Host> Vm<H> {
 
     /// A closure of `template`'s function over `env`. The template's prototypes were flagged
     /// as prototypes by the closure it was recorded from, which needs no marking again.
-    fn closure_of_template(&mut self, template: ClosureTemplate, env: Value) -> Value {
+    pub(super) fn closure_of_template(&mut self, template: ClosureTemplate, env: Value) -> Value {
         // Both objects are allocated finished from headers derived once: the prototype under
         // the shape its `constructor` add would reach, its slot filled once the closure exists.
         // A closure whose record is claimed first is its prototype's `constructor` from the
@@ -570,7 +628,15 @@ impl<H: Host> Vm<H> {
                         crate::heap::InlineObjectHeader::of(self.realm_object_prototype(realm), constructor)
                     }),
                     // A call-only closure (`Value::known_closure`) names its maker's activation.
-                    scope_free: !function_plan.prototype_unobservable && crate::bytecode::closure_reads_no_enclosing_scope(p, id),
+                    maker_reads: if function_plan.prototype_unobservable {
+                        crate::bytecode::MakerReads::Maker
+                    } else {
+                        p.closure_reads.as_deref().map_or(crate::bytecode::MakerReads::Maker, |reads| {
+                            reads.maker_reads(id, crate::bytecode::arrow_chain_reads_implicit_bindings(p, id))
+                        })
+                    },
+                    call_only: function_plan.prototype_unobservable,
+                    outer_environment: None,
                 });
             }
             return Ok(function);

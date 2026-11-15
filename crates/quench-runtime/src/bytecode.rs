@@ -4401,7 +4401,7 @@ pub use native_metadata::NativeProgramNamespace;
 mod chunk_append;
 pub(crate) use chunk_append::{SiteCount, ChunkDelta, TableLengths};
 mod closure_reads;
-pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts};
+pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts, MakerReads};
 pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis, LoadEncoding, LoadRecords};
 mod disassemble;
 mod flow_view;
@@ -4410,37 +4410,29 @@ pub use flow_view::{FlowFunction, FlowInstruction};
 mod tests;
 mod validate;
 
-/// Whether closures of function `id` of `code` read nothing of the activation that makes
-/// them (`reads_no_enclosing_scope`), to a depth of eight nested functions.
-pub(crate) fn closure_reads_no_enclosing_scope(code: &ResidualProgram, id: u32) -> bool {
-    reads_no_enclosing_scope(code, id, true, 8)
-}
-
-/// Whether closures of function `id` of `code` read nothing of the activation that makes
-/// them, nor do the closures they make in turn: no captured slot and no by-name resolution
-/// at any depth, no dynamic scope, and, for an arrow (`lexical`, down a chain of arrows),
-/// no `this`, `arguments` or implicit binding, which it would read from its maker. Such a
-/// closure may take the maker's own parent environment, from which it reads as little.
-/// Bounded at `depth` nested functions, past which it answers `false`.
-fn reads_no_enclosing_scope(code: &ResidualProgram, id: u32, lexical: bool, depth: u8) -> bool {
-    let Some(depth) = depth.checked_sub(1) else { return false };
-    let Some(function) = code.function_get(id as usize) else { return false };
-    if function.has_dynamic_scope_access() || function.inherited_with_scope {
-        return false;
-    }
-    let lexical = lexical && function.is_arrow;
-    function.instructions().all(|instruction| {
-        let op = instruction.op();
-        if op.immediate_role() == ImmediateRole::SuperinstructionIndex || op.reads_arguments() && lexical {
+/// Whether function `id` of `code`, an arrow, or an arrow it makes through arrows alone,
+/// reads an implicit binding of the activation it would resolve in: `this`, `arguments`,
+/// `new.target`, a home object or any by-name binding (bounded at eight levels, past which
+/// it answers `true`). A non-arrow binds its own.
+pub(crate) fn arrow_chain_reads_implicit_bindings(code: &ResidualProgram, id: u32) -> bool {
+    fn reads(code: &ResidualProgram, id: u32, depth: u8) -> bool {
+        let Some(depth) = depth.checked_sub(1) else { return true };
+        let Some(function) = code.function_get(id as usize) else { return true };
+        if !function.is_arrow {
             return false;
         }
-        match op {
-            Op::LoadCapture | Op::StoreCapture | Op::StoreVarBinding => false,
-            Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof | Op::ResolveName | Op::LoadResolvedName
-            | Op::DeleteName | Op::StoreName | Op::StoreResolvedName => false,
-            Op::LoadThis | Op::InitializeThis | Op::SuperCallCheck | Op::LoadCallee => !lexical,
-            Op::MakeClosure => reads_no_enclosing_scope(code, instruction.closure_function_index(), lexical, depth),
-            _ => true,
-        }
-    })
+        function.instructions().any(|instruction| {
+            let op = instruction.op();
+            op.immediate_role() == ImmediateRole::SuperinstructionIndex
+                || op.reads_arguments()
+                || match op {
+                    Op::LoadThis | Op::InitializeThis | Op::SuperCallCheck | Op::LoadCallee | Op::LoadName
+                    | Op::LoadNameCall | Op::LoadNameTypeof | Op::ResolveName | Op::LoadResolvedName | Op::DeleteName
+                    | Op::StoreName | Op::StoreResolvedName | Op::StoreVarBinding => true,
+                    Op::MakeClosure => reads(code, instruction.closure_function_index(), depth),
+                    _ => false,
+                }
+        })
+    }
+    reads(code, id, 8)
 }

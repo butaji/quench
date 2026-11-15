@@ -91,6 +91,12 @@ impl<H: Host> Vm<H> {
     /// callee has no lexical `this` to read. Anything else resolves in `closure_target`.
     #[inline(always)]
     fn sibling_closure_target(&mut self, entry: &ScriptCallTarget, callee: Value, env: Value) -> Option<ScriptCallTarget> {
+        // A sibling over the entry's own environment, as closures made over their maker's
+        // parent are (`Vm::maker_free_environment`), shares every fact the entry read of it:
+        // its captures and an arrow's lexical `this`.
+        if env == entry.env {
+            return Some(ScriptCallTarget { callee, ..*entry });
+        }
         if !entry.this_binding.binds_receiver() {
             return None;
         }

@@ -428,6 +428,7 @@ impl<H: Host> Vm<H> {
         // The active for-in's cursor lives outside the heap until written back.
         self.for_in_flush_cursor();
         self.clear_call_targets();
+        self.forget_outer_environments();
         self.resolved_module_requests.clear();
         self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
