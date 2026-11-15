@@ -33,7 +33,7 @@ thread_local! {
 
 /// A whole program's parse arena (`sized_arena`): the warm one when it is large enough,
 /// handed back when dropped, warm if no larger one is.
-pub(crate) struct ParseArena(std::mem::ManuallyDrop<Allocator>);
+pub(crate) struct ParseArena(std::mem::ManuallyDrop<Allocator>, usize);
 
 impl std::ops::Deref for ParseArena {
     type Target = Allocator;
@@ -69,8 +69,12 @@ impl Drop for ParseArena {
 /// checked into it and left it, and their pages would otherwise stay resident under every
 /// function the program compiles after (mandreel: its 2.7 MB function's check left 33 MB
 /// resident under that function's own compile).
+/// Only while the arena holds the one chunk it was handed with: `release_free_pages_below`
+/// reads its free space from that chunk's size (with a second chunk the capacity counts both,
+/// and the range began in front of the chunk: a cold JetStream ai-astar load freed heap
+/// memory in front of it).
 pub(crate) fn release_parsed_free_pages(allocator: &ParseArena) {
-    release_free_pages_below(allocator, allocator.capacity(), WARM_TREE_BYTES);
+    release_free_pages_below(allocator, allocator.1, WARM_TREE_BYTES);
 }
 
 /// The arena for parsing a whole program of `text`: the warm arena, when its chunk holds as
@@ -86,7 +90,10 @@ pub(crate) fn sized_arena(text: &str) -> ParseArena {
             arena(text)
         }
     };
-    ParseArena(std::mem::ManuallyDrop::new(allocator))
+    // Its one chunk's capacity: a parse past it takes another chunk, and the free space is no
+    // longer one range below the cursor.
+    let chunk = allocator.capacity();
+    ParseArena(std::mem::ManuallyDrop::new(allocator), chunk)
 }
 
 /// Returns the warm arena's pages to the system (`WARM`).
