@@ -19543,20 +19543,7 @@ fn derive_lane_view<'live, H: Host>(
     specialize_frame_locals::<H>(function, &mut records);
     specialize_captures::<H>(&mut records);
     let environment_window = specialize_environment_window::<H>(function, &decoded, &mut records);
-    let (loops, osr_rejections) = if loop_tier && kind != crate::bytecode::ProgramKind::Wasm {
-        install_loop_sites::<H>(
-            function_id,
-            function,
-            &decoded,
-            constants,
-            sites,
-            live,
-            diagnostics,
-            &mut records,
-        )
-    } else {
-        (Box::default(), Vec::new())
-    };
+    let (loops, osr_rejections) = loop_sites::<H>((loop_tier, kind), function_id, function, &decoded, constants, sites, live, diagnostics, &mut records);
     // The fused records are script handlers; Wasm bodies run none.
     if !wasm {
         specialize_load_branch_pairs::<H>(&mut records);
@@ -19668,6 +19655,18 @@ fn is_global_name_access(op: Op) -> bool {
 /// handlers keep their target hint there (`linked_script_call_entry`).
 fn holds_no_call_link(op: Op) -> bool {
     !op.traits().has(crate::bytecode::Traits::CALL_LINK)
+}
+
+/// `install_loop_sites` where a loop tier runs JavaScript; no sites for any other view.
+fn loop_sites<'live, H: Host>(
+    (loop_tier, kind): (bool, crate::bytecode::ProgramKind), function_id: u32, function: &Function, decoded: &[WideInstruction],
+    constants: &[Value], sites: &[crate::bytecode::FieldSite],
+    live: &dyn Fn() -> Option<&'live std::rc::Rc<crate::compile::liveness::RegisterMasks>>, diagnostics: bool, records: &mut [LaneInstruction],
+) -> (Box<[LoopSite]>, Vec<(super::compiled::RegionRejection, usize)>) {
+    if !loop_tier || kind == crate::bytecode::ProgramKind::Wasm {
+        return Default::default();
+    }
+    install_loop_sites::<H>(function_id, function, decoded, constants, sites, live, diagnostics, records)
 }
 
 /// Gives each backward `Jump` whose loop the shared compiler admits (`analyze_osr_region`) the

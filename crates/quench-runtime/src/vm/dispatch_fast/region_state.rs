@@ -111,8 +111,10 @@ impl Region {
     /// `header` is the header record of this region's view, and `cx` its running context.
     unsafe fn holds_fields<H: Host>(&self, cx: *mut LaneContext<H>, r: Registers, header: Ip) -> bool {
         for planned in &*self.plan.units {
-            if let Some(access) = &planned.unit.field {
-                if !unsafe { field_holds(cx, r, header.add(planned.at), access) } { return false; }
+            if let Some(access) = &planned.unit.field
+                && !unsafe { field_holds(cx, r, header.add(planned.at), access) }
+            {
+                return false;
             }
         }
         true
