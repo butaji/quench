@@ -3132,6 +3132,40 @@ impl Lowering<'_, '_> {
         let unequal = self.ins().iconst(types::I8, 0);
         self.ins().brif(compared, cells, &[], join, &[ir::BlockArg::Value(unequal)]);
         self.builder.switch_to_block(cells);
+        // Two strings both held inline (`FlatUnits::Short`, zero-padded) are equal exactly
+        // when their records' words are: decided here, the helper left for other forms.
+        let [records, short, compare] = std::array::from_fn(|_| self.builder.create_block());
+        self.ins().brif(string, records, &[], compare, &[]);
+        self.builder.switch_to_block(records);
+        let base = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, string_record_base));
+        let mut decided = self.ins().icmp_imm_u(IntCC::NotEqual, base, 0);
+        let mut addresses = [base; 2];
+        for (address, bits) in addresses.iter_mut().zip([left, right]) {
+            let index = self.ins().band_imm_u(bits, i64::from(u32::MAX));
+            let small = self.ins().band_imm_u(index, i64::from(crate::heap::SMALL_STRING_ID_MASK));
+            let recorded = self.ins().icmp_imm_u(IntCC::NotEqual, small, i64::from(crate::heap::SMALL_STRING_ID_BASE));
+            decided = self.ins().band(decided, recorded);
+            let offset = self.ins().imul_imm_u(index, crate::vm::wtf16::native_string::RECORD_SIZE as i64);
+            *address = self.ins().iadd(base, offset);
+        }
+        let shorts = self.builder.create_block();
+        self.ins().brif(decided, shorts, &[], compare, &[]);
+        self.builder.switch_to_block(shorts);
+        let meta = regions::flags(crate::staged::region::Region::HeapMeta.mutable());
+        let tags = addresses.map(|address| self.ins().load(types::I8, meta, address, crate::vm::wtf16::native_string::TAG_OFFSET));
+        let either = self.ins().bor(tags[0], tags[1]);
+        let both_short = self.ins().icmp_imm_u(IntCC::Equal, either, i64::from(crate::vm::wtf16::native_string::TAG_SHORT));
+        self.ins().brif(both_short, short, &[], compare, &[]);
+        self.builder.switch_to_block(short);
+        let mut differ = self.ins().iconst(types::I64, 0);
+        for word in 0..crate::vm::wtf16::native_string::RECORD_SIZE / 8 {
+            let [a, b] = addresses.map(|address| self.ins().load(types::I64, meta, address, (word * 8) as i32));
+            let bits = self.ins().bxor(a, b);
+            differ = self.ins().bor(differ, bits);
+        }
+        let same_text = self.ins().icmp_imm_u(IntCC::Equal, differ, 0);
+        self.ins().jump(join, &[ir::BlockArg::Value(same_text)]);
+        self.builder.switch_to_block(compare);
         let result = self.helper_call(LaneHelper::StrictEqual, &[left, right]);
         let cells_equal = self.ins().ireduce(types::I8, result);
         self.ins().jump(join, &[ir::BlockArg::Value(cells_equal)]);
