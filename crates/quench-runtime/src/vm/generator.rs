@@ -201,10 +201,9 @@ impl<H: Host> Vm<H> {
         }
         let function = &p.function(id as usize);
         let mut frame = self.pooled_frame();
-        frame
-            .locals
-            .resize(function.locals as usize, Value::UNDEFINED);
-        frame.locals[function.params as usize..].fill(Value::UNDEFINED);
+        // Every local starts undefined, written once, a pooled frame's old values included.
+        frame.locals.clear();
+        frame.locals.resize(function.locals as usize, Value::UNDEFINED);
         let fixed = usize::from(function.params) - usize::from(function.rest);
         for index in 0..fixed {
             frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
@@ -297,8 +296,13 @@ impl<H: Host> Vm<H> {
                 self.generator_proto
             });
         let prototype_atom = self.prototype_atom();
+        // A generator function's own `prototype` is a non-configurable data property, read
+        // through its shape's memo (`own_function_prototype_data`).
         let generator_prototype = function_object
-            .and_then(|function| self.own_property(function, prototype_atom))
+            .and_then(|function| {
+                self.own_function_prototype_data(function, prototype_atom)
+                    .or_else(|| self.own_property(function, prototype_atom))
+            })
             .filter(|prototype| self.object_data(*prototype).is_some())
             .unwrap_or(default_prototype);
         let mut object = Self::empty_object(generator_prototype);
@@ -317,15 +321,13 @@ impl<H: Host> Vm<H> {
             done: false,
             ext: crate::heap::IteratorExt::default(),
         });
-        if let Some(IteratorRecord { source, .. }) = self.heap.iterator_mut(generator) {
-            *source = generator;
-        }
-        let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(generator) else {
+        let Some(IteratorRecord { source, ext, .. }) = self.heap.iterator_mut(generator) else {
             self.pool_frame(frame);
             return Err(JsError(
                 "generator allocation lost its iterator cell".into(),
             ));
         };
+        *source = generator;
         ext.generator = Some(Box::new(GeneratorRecord::new(
             Continuation::suspend(frame, Completion::GeneratorStart, None, Value::UNDEFINED),
             realm,
