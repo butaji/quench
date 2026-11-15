@@ -1255,7 +1255,7 @@ file-lines crates/quench-node/src/modules/cli_options.rs 565
 file-lines crates/quench-node/src/modules/cluster/primary.rs 611
 file-lines crates/quench-node/src/modules/console_class_shared_vm.rs 755
 file-lines crates/quench-node/src/modules/console_shared_vm.rs 553
-file-lines crates/quench-node/src/modules/contextify_shared_vm.rs 793
+file-lines crates/quench-node/src/modules/contextify_shared_vm.rs 789
 file-lines crates/quench-node/src/modules/crypto_asymmetric.rs 1233
 file-lines crates/quench-node/src/modules/crypto_asymmetric_shared_vm.rs 846
 file-lines crates/quench-node/src/modules/crypto_key_shared_vm.rs 663

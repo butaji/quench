@@ -32,6 +32,8 @@ pub(crate) struct State {
 
 static NEXT_SCRIPT: AtomicU64 = AtomicU64::new(1);
 
+mod magic_comment;
+
 /// The private symbols the binding keeps its facts under, built once per VM.
 mod slot {
     pub(super) const CONTEXT: &str = "context";
@@ -143,13 +145,7 @@ pub(crate) fn script_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 
 /// The value of the last `//# name=value` directive in `source`, or undefined.
 fn magic_comment(c: &mut Context<'_>, source: &str, name: &str) -> RootId {
-    let found = source.lines().rev().find_map(|line| {
-        let comment = line.trim_start().strip_prefix("//")?;
-        let comment = comment.strip_prefix(['#', '@'])?.trim_start();
-        let value = comment.strip_prefix(name)?.trim_start().strip_prefix('=')?.trim();
-        (!value.is_empty() && !value.contains(char::is_whitespace)).then_some(value)
-    });
-    match found {
+    match magic_comment::value(source, name) {
         Some(value) => c.string_rooted(value),
         None => c.undefined(),
     }
