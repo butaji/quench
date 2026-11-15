@@ -18988,19 +18988,20 @@ fn lane_wasm_export_frame<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     vm.frames[caller].pc = call_pc + 1;
     vm.frames[caller].pc_is_resume = true;
-    let previous = vm.replace_active_program(program);
+    // The callee runs in its own program, which its frame belongs to and the loop's executing
+    // one sets aside as a frame call into another program does (`lane_push_frame_call`).
+    let caller_program = unsafe { (*cx).program };
+    lane_enter_program(cx, program);
     let call_guard = match vm.push_wasm_frame_over(&callee_code, function, env, &encoded) {
         Ok(guard) => guard,
         Err(error) => {
             // An exhausted guest stack traps, which reaches the caller as a `RuntimeError`.
-            vm.set_active_program(previous);
-            // SAFETY: the context's program, the caller's, outlives the lane run.
+            lane_enter_program(cx, caller_program);
+            // SAFETY: the context's program, the caller's again, outlives the lane run.
             vm.lane_raised = Some(vm.trap_raised_in_javascript(unsafe { &*(*cx).code }, error));
             return Some(Resumed::Exit(exit(ip)));
         }
     };
-    // The callee runs in its own program, which the loop's executing one sets aside as a
-    // frame call into another program does (`lane_push_frame_call`).
     // SAFETY: the general loop's executing program outlives the lane run.
     let executing = unsafe { &mut *(*cx).executing };
     let saved = super::dispatch_frame::SavedProgram {
@@ -19008,7 +19009,6 @@ fn lane_wasm_export_frame<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip
         retained: std::mem::replace(&mut executing.retained, Some(callee_code)),
     };
     executing.id = program;
-    lane_enter_program(cx, program);
     // The run goes on as a Wasm run (`LaneContext::inline_calls`) until the frame returns,
     // which completes on the general path, as it completes any call into another program
     // (`lane_return_frame`); the caller's lane run starts afresh there.
