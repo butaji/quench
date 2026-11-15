@@ -670,10 +670,9 @@ impl<H: Host> Vm<H> {
 
     /// The string of the one ASCII byte `byte`.
     pub(super) fn ascii_byte_string(&mut self, byte: u8) -> Value {
-        let byte = [byte];
-        // SAFETY: the caller's byte is ASCII, so UTF-8.
-        let text = super::wtf16::JsString::from_str(unsafe { std::str::from_utf8_unchecked(&byte) });
-        self.heap.alloc_string(text)
+        // The byte's shared string once made (`Heap::alloc_unit_run`), with no string built
+        // to find it.
+        self.heap.alloc_unit_run(super::wtf16::Units::Ascii(&[byte]))
     }
 }
 
