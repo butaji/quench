@@ -47,6 +47,26 @@ pub(crate) fn advance_prototype_layout_epoch() {
     prototype_values::reset();
 }
 
+/// Changes whenever a builtin a fast path assumes may no longer be the intrinsic: an intact
+/// fuse pops or must be proved again (`code_dependencies::Fuses`), or a heap forgets its
+/// proofs. A memo that found a native intrinsic under one value keeps the answer while the
+/// value holds: one compare instead of re-proving the builtin's identity. One counter for the
+/// process, like `PROTOTYPE_LAYOUT_EPOCH`; a change another heap made only sends memos back
+/// to the proof.
+static INTRINSIC_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// The current `INTRINSIC_EPOCH`.
+#[inline(always)]
+pub(crate) fn intrinsic_epoch() -> u64 {
+    INTRINSIC_EPOCH.load(Ordering::Relaxed)
+}
+
+/// Retires every memo made under the current `INTRINSIC_EPOCH`.
+#[cold]
+pub(crate) fn note_intrinsic_change() {
+    INTRINSIC_EPOCH.fetch_add(1, Ordering::Relaxed);
+}
+
 #[cfg(test)]
 mod cell_layout_tests {
     use super::*;

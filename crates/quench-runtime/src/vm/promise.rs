@@ -14,13 +14,15 @@ use rustc_hash::FxHashSet;
 /// of one shape and prototype (`Vm::promise_species_proved`), held as a dependency: the walk
 /// that proved it found `constructor` in a data slot of a prototype and the constructor's own
 /// `@@species` holding the intrinsic getter, and both objects are watched prototypes whose
-/// values it watches (`heap::watch_prototype_values`, holder then constructor): a write to their slots or a
-/// change to any prototype's layout retires it, as does a collection. A use reads no slot.
+/// values it watches (`heap::watch_prototype_values`, holder then constructor): a write to their
+/// slots advances the intrinsic epoch, a change to any prototype's layout the chain epoch, and
+/// either retires it, as does a collection. A use reads no slot: a layout id and two epochs.
 pub(super) struct PromiseSpeciesProof {
-    shape: u32,
-    prototype: Value,
+    layout: u32,
+    epochs: (u64, u64),
     realm: Value,
-    watches: [crate::heap::PrototypeValueWatch; 2],
+    /// Keeps the subscriptions whose retirement advances the intrinsic epoch.
+    _watches: [crate::heap::PrototypeValueWatch; 2],
 }
 
 pub(super) fn module_cache_key(name: &str, module_type: &str) -> String {
@@ -4978,19 +4980,19 @@ impl<H: Host> Vm<H> {
         intrinsic
     }
 
-    /// Whether the `PromiseSpeciesProof` answers `promise`: a receiver of the proved shape and
-    /// prototype, with no side descriptors, under the value epoch the proof was made in.
+    /// Whether the `PromiseSpeciesProof` answers `promise`: a receiver of the proved layout
+    /// (shape and prototype), with no side descriptors, under the epochs the proof was made in.
     #[inline]
     fn promise_species_proved(&self, promise: Value) -> bool {
         let proofs = self.promise_species_proof.borrow();
-        let Some(proof) = proofs.as_ref().filter(|proof| proof.watches.iter().all(|watch| watch.is_published())) else {
+        let Some(proof) = proofs.as_ref() else {
             return false;
         };
         let Some(data) = self.heap.ordinary_object(promise) else {
             return false;
         };
-        data.shape() == proof.shape
-            && data.proto() == proof.prototype
+        data.layout_id() == proof.layout
+            && proof.epochs == (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch())
             && !data.has_side_descriptors()
             && proof.realm == self.realm.globals
     }
@@ -5004,7 +5006,7 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.heap.ordinary_object(promise) else {
             return;
         };
-        let (shape, prototype, key) = (data.shape(), data.proto(), PropertyKey::string(self.runtime_atoms.constructor));
+        let (layout, key) = (data.layout_id(), PropertyKey::string(self.runtime_atoms.constructor));
         let Some(SymbolLoadAnswer::Inherited { hops, .. }) =
             self.symbol_load_proofs.answer(data.layout_id(), key, crate::heap::prototype_layout_epoch())
         else {
@@ -5020,7 +5022,12 @@ impl<H: Host> Vm<H> {
         self.heap.mark_prototype(constructor);
         let watch = |object| self.heap.object(object).and_then(|data| crate::heap::watch_prototype_values(data.exact_shape()));
         *self.promise_species_proof.borrow_mut() = watch(holder).zip(watch(constructor))
-            .map(|(holder, constructor)| PromiseSpeciesProof { shape, prototype, realm: self.realm.globals, watches: [holder, constructor] });
+            .map(|(holder, constructor)| PromiseSpeciesProof {
+                layout,
+                epochs: (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch()),
+                realm: self.realm.globals,
+                _watches: [holder, constructor],
+            });
     }
 
     pub(super) fn promise_then(
