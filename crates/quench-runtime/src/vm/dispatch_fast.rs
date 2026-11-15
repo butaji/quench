@@ -15909,8 +15909,54 @@ fn lane_call_keeping_activation<H: Host>(
     if target.entry == CallEntry::Gathers && target.forms & TARGET_GATHERS_KEEPING == 0 {
         return lane_activate_gathering(cx, r, ip, &target, window, this).map_err(Some);
     }
+    if target.entry == CallEntry::Keeps {
+        return lane_activate_keeping_window(cx, r, ip, &target, window, this).map_err(Some);
+    }
     let arguments = ActivationArguments::Window(window);
     lane_activate_keeping::<H, false>(cx, r, ip, &target, arguments, this, false, None).map_err(Some)
+}
+
+/// The keeping activation of a target of the running program that keeps the values it was
+/// passed (`CallEntry::Keeps`), called with its window at `arguments` of `r`, made as a plain
+/// call's push is (`lane_fill_window`, `lane_enter_window`) with the values kept after its
+/// registers, as `lane_activate_keeping` keeps them, and the activation marked keeping.
+#[inline(always)]
+fn lane_activate_keeping_window<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    arguments: u16,
+    this: Value,
+) -> Result<(Registers, Ip), Ip> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: `ip` is a record of the running view.
+    let i = unsafe { &*ip };
+    let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+    if (returns && !lane_returning_call_admitted(cx)) || vm.with_scope_entered {
+        return Err(exit(ip));
+    }
+    let argc = ImmediateLayout::argument_count(i.imm());
+    let count = usize::from(target.registers);
+    let window_size = count + usize::from(argc);
+    let room = fill_room::<ACTIVATION_FILL_BLOCK>(window_size).max(usize::from(target.room));
+    if vm.lane_stack.activations.len() >= vm.lane_stack.activation_limit.get() || vm.lane_stack.values.room() < room {
+        return Err(lane_script_call_frame::<H>(ip, room));
+    }
+    // SAFETY: the call's window of `r` holds its `argc` values; capacity holds the window
+    // and the kept values after it, each written before the length covers it.
+    let callee_registers = unsafe {
+        let passed = r.0.add(usize::from(arguments)).cast_const();
+        let registers = lane_fill_window(vm, target, passed, argc.min(target.params));
+        copy_arguments(registers.0.add(count), passed, argc);
+        vm.lane_stack.values.set_top(registers.0.add(window_size + lane_values::CONTEXT));
+        registers
+    };
+    let entered = lane_enter_window::<H, false, false>(cx, r, ip, target, callee_registers, argc, this, false, None);
+    if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations.last_mut().map(|activation| &mut activation.kind) {
+        script.forwards = true;
+    }
+    Ok(entered)
 }
 
 /// The plain activation (`lane_push_passed`) of a rest body of the running program that keeps
