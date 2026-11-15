@@ -2407,7 +2407,18 @@ impl Heap {
     /// settled_reclaimable_bytes`), a large program a process keeps raises its own threshold,
     /// while a stream of short-lived ones keeps the minimum.
     pub(crate) fn charge_reclaimable_program(&mut self, bytes: usize) {
+        /// The least program footprint since the last full collection that makes one due.
+        const MINIMUM_PROGRAM_GROWTH: usize = 256 << 10;
         self.reclaimable_program_bytes_since_full = self.reclaimable_program_bytes_since_full.saturating_add(bytes);
+        // Programs die without allocating on the heap: once as much program as the last full
+        // collection kept has come since, a full collection is due by itself, or a code-load
+        // loop keeps every dead program until heap allocation happens to make one
+        // (octane-code-load: no full collection in a run). Against what was kept, programs
+        // that all stay (one live function per eval) make it due ever less often.
+        if self.reclaimable_program_bytes_since_full >= self.reclaimable_program_bytes_after_full.max(MINIMUM_PROGRAM_GROWTH) {
+            self.full_due = true;
+            self.request_collection();
+        }
     }
     /// Records the footprints of the reclaimable programs that stay, after a full collection.
     pub(crate) fn set_reclaimable_programs_after_full(&mut self, bytes: usize) {
