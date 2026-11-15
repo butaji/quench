@@ -28,6 +28,7 @@ use crate::{
     config::Config,
     process::{self, Finished},
     step::Verdict,
+    tiers::{self, INTERPRETER},
 };
 use classes::Fields;
 use table::{Table, Tally};
@@ -35,7 +36,6 @@ use table::{Table, Tally};
 const KERNELS: &str = "crates/quench-tier-corpus/cparity/js";
 const RATCHET: &str = "crates/quench-tier-corpus/cparity.txt";
 const DUMPS: [&str; 2] = ["quench-gate", "cparity"];
-const INTERPRETER: &str = "--no-jit";
 const JAVASCRIPT: &str = "js";
 const TRACE_VARIABLE: &str = "QUENCH_TRACE";
 const TRACE_CHANNELS: &str = "js-jit,jit-dump=";
@@ -92,7 +92,7 @@ fn measure(config: &Config, host: &Path, kernel: &Path, table: &mut Table, tally
     let mut hot = None;
     for tier in Tier::ALL {
         let directory = fresh_directory(config, &format!("{name}-{}", tier.name())).map_err(|error| error.to_string())?;
-        let run = node(config, host, kernel, &format!("--{}", tier.name()), Some(&directory))?;
+        let run = node(config, host, kernel, &tiers::flag(tier), Some(&directory))?;
         if run.stdout != expected {
             tally.failures.push(format!("{name} {}: printed {:?}, the interpreter {expected:?}", tier.name(), run.stdout));
             continue;

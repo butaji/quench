@@ -9,12 +9,15 @@
 mod build;
 mod census;
 mod config;
+mod conformance;
 mod cparity;
 mod lint;
 mod oracle;
+mod pool;
 mod process;
 mod runtime_tests;
 mod step;
+mod tiers;
 
 use std::process::ExitCode;
 
@@ -24,12 +27,13 @@ use step::{Outcome, Step};
 /// The exit status of a run that was asked for something it cannot do.
 const USAGE_ERROR: u8 = 2;
 
-const STEPS: [Step; 5] = [
+const STEPS: [Step; 6] = [
     Step { name: "build", quick: false, blocking: true, run: build::run },
     Step { name: "lint", quick: true, blocking: false, run: lint::run },
     Step { name: "census", quick: true, blocking: false, run: census::run },
     Step { name: "oracle", quick: false, blocking: false, run: oracle::run },
     Step { name: "c-parity", quick: true, blocking: false, run: cparity::run },
+    Step { name: "conformance", quick: false, blocking: false, run: conformance::run },
 ];
 
 /// Runs the selected steps in order, stopping after a blocking step fails.
