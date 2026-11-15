@@ -16,7 +16,7 @@ pub(super) fn parse_program<'a>(
     source: &'a str,
     source_type: SourceType,
 ) -> ParserReturn<'a> {
-    parse_program_with(allocator, source, source_type, None, None, false, false)
+    parse_program_with(allocator, source, source_type, None, None, false, false, false)
 }
 
 /// `parse_program`, with the function bodies starting at or after `lazy_from` parsed lazily
@@ -29,7 +29,9 @@ pub(super) fn parse_program_with<'a>(
     lazy_body_check: Option<oxc_parser::LazyBodyCheck>,
     inherited_strict: bool,
     nested: bool,
+    recognize: bool,
 ) -> ParserReturn<'a> {
+    let recognize = recognize && lazy_body_check.is_some() && crate::trace::Dev::Recognize.value() != Some("off");
     Parser::new(allocator, source, source_type)
         .with_options(ParseOptions {
             allow_call_assignment_targets: true,
@@ -37,6 +39,8 @@ pub(super) fn parse_program_with<'a>(
             lazy_nested_bodies: nested && lazy_body_check.is_some(),
             lazy_body_check,
             inherited_strict,
+            lazy_recognize: recognize,
+            lazy_recognize_verify: recognize && crate::trace::Dev::Recognize.value() == Some("verify"),
             ..ParseOptions::default()
         })
         .parse()

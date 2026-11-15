@@ -47,7 +47,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         ObjectExpression::boxed(self.end_span(start), object_expression_properties, self)
     }
 
-    fn parse_object_expression_property(&mut self) -> ObjectPropertyKind<'a> {
+    pub(super) fn parse_object_expression_property(&mut self) -> ObjectPropertyKind<'a> {
         match self.cur_kind() {
             Kind::Dot3 => ObjectPropertyKind::SpreadProperty(self.parse_spread_element()),
             _ => ObjectPropertyKind::ObjectProperty(self.parse_object_literal_element()),

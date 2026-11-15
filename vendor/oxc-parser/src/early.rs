@@ -118,6 +118,17 @@ pub(crate) struct EarlyCheckpoint {
     lost: bool,
 }
 
+/// A body's own tracker state at its opening brace (`Early::snapshot_body`).
+pub(crate) struct BodySnapshot<'a> {
+    scope: Scope,
+    boundary: Boundary,
+    body: Body,
+    decls: Vec<(Ident<'a>, DeclKind)>,
+    refs: Vec<Ident<'a>>,
+    unsure: bool,
+    lost: bool,
+}
+
 /// What the tracker found for one lazily parsed body.
 pub(crate) struct EarlyVerdict<'a> {
     /// The names its subtree reads from outside it, sorted, without duplicates.
@@ -185,6 +196,50 @@ impl<'a> Early<'a> {
         self.unsure = false;
         self.scopes.push(Scope { kind: ScopeKind::Function, decls_start: self.decls.len() as u32, refs_start: self.refs.len() as u32 });
         self.boundaries.push(Boundary { labels_start: self.labels.len() as u32, home: Home::Plain, loops: 0, switches: 0, in_params: false, simple_params: true });
+    }
+
+    /// The innermost body's own state at its opening brace, which `end_body` consumes, so a
+    /// body recognized and then refused can be parsed again (`restore_body`).
+    pub(crate) fn snapshot_body(&self) -> Option<BodySnapshot<'a>> {
+        let body = *self.bodies.last()?;
+        let scope = *self.scopes.get(body.scope as usize)?;
+        if self.scopes.len() != body.scope as usize + 1 {
+            return None;
+        }
+        Some(BodySnapshot {
+            scope,
+            boundary: *self.boundaries.last()?,
+            body,
+            decls: self.decls[scope.decls_start as usize..].to_vec(),
+            refs: self.refs[scope.refs_start as usize..].to_vec(),
+            unsure: self.unsure,
+            lost: self.lost,
+        })
+    }
+
+    /// Undoes `end_body` of the body `snapshot` was taken of at its opening brace.
+    pub(crate) fn restore_body(&mut self, snapshot: BodySnapshot<'a>) {
+        let BodySnapshot { scope, boundary, body, decls, refs, unsure, lost } = snapshot;
+        self.refs.truncate(scope.refs_start as usize);
+        self.refs.extend(refs);
+        self.decls.truncate(scope.decls_start as usize);
+        self.decls.extend(decls);
+        self.scopes.truncate(body.scope as usize);
+        self.scopes.push(scope);
+        self.boundaries.push(boundary);
+        self.bodies.push(body);
+        self.unsure = unsure;
+        self.lost = lost;
+    }
+
+    /// Whether `end_body` would now find the innermost body unsure.
+    pub(crate) fn body_unsure(&self) -> bool {
+        let Some(body) = self.bodies.last() else { return true };
+        if self.unsure || self.lost || self.scopes.len() != body.scope as usize + 1 {
+            return true;
+        }
+        let decls = &self.decls[self.scopes[body.scope as usize].decls_start as usize..];
+        !decls.iter().all(|declared| declared.1 == DeclKind::VarThrough) && conflicts(decls)
     }
 
     /// Ends the innermost tracked body after its closing brace: its scope and boundary close,
@@ -381,6 +436,23 @@ impl<'a> Early<'a> {
             if reserved(name.as_str()) {
                 self.unsure = true;
             } else if name.as_str() == "arguments" && self.boundaries.last().is_some_and(|boundary| matches!(boundary.home, Home::Field | Home::StaticBlock)) {
+                self.unsure = true;
+            }
+            if !self.lost {
+                self.refs.push(name);
+            }
+        }
+    }
+
+    /// `reference`, where only a `keyword`-kind token can name a word a semantic rule reads.
+    #[inline]
+    pub(crate) fn reference_word(&mut self, name: Ident<'a>, keyword: bool) {
+        if keyword {
+            self.reference(name);
+            return;
+        }
+        if self.active() {
+            if name.as_str().len() == 9 && name.as_str() == "arguments" && self.boundaries.last().is_some_and(|boundary| matches!(boundary.home, Home::Field | Home::StaticBlock)) {
                 self.unsure = true;
             }
             if !self.lost {

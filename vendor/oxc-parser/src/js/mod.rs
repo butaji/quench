@@ -11,6 +11,7 @@ mod function;
 mod module;
 mod object;
 mod operator;
+mod recognize;
 mod statement;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

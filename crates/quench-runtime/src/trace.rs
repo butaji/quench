@@ -160,5 +160,8 @@ setting! {
         Tier0Always = "tier0-always",
         /// No function runs unlowered: each lowers at its first read.
         Tier0Off = "tier0-off",
+        /// Lazily parsed bodies are recognized without their trees (`ParseOptions::lazy_recognize`):
+        /// `=off` builds them, `=verify` builds them as well and prints where the verdicts differ.
+        Recognize = "recognize",
     }
 }
