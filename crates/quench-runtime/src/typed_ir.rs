@@ -132,6 +132,9 @@ impl Type {
             .then_some(Self(TypeKind::FunctionIdentity(identity)))
     }
 
+    /// Whether nothing narrower than a Number is known: what an int32 contract of a loop may narrow.
+    pub(crate) fn is_any_or_number(self) -> bool { matches!(self, Self::ANY | Self::NUMBER) }
+
     pub(crate) fn function_identity(self) -> Option<Value> {
         match self.0 { TypeKind::FunctionIdentity(identity) => Some(identity), _ => None }
     }

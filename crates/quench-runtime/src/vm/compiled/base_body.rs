@@ -127,8 +127,7 @@ impl<H: Host> Vm<H> {
         let (ints, doubles) = observed(parameters);
         let callees = self.stitch_callees(program, function, &code, &direct(self));
         let invalidation = Invalidation::default();
-        // Where the VM and the program run specialized, the code holds Stable facts: its stores run in
-        // place for the atoms no method cache names, and its prototype-held reads fold to their values.
+        // Where the VM and the program run specialized, the code holds Stable facts: stores run in place for the atoms no method cache names, prototype-held reads fold.
         let folds = self.specialized && program.specialized;
         let SiteFacts { constructors, presences, globals } = self.site_facts(folds, program, function, (&code, parameters), body);
         let reads = |site: u16| self.native_field_read_descriptors(site);

@@ -3145,7 +3145,7 @@ impl Lowering<'_, '_> {
                 let index = usize::from(register);
                 if (header..=back).contains(&pc) && register < self.unit.caller_registers
                     && self.is_live(header, register) && self.written.contains(index)
-                    && matches!(initial[index], Type::ANY | Type::NUMBER) && self.int32_candidate(register, ty) {
+                    && initial[index].is_any_or_number() && self.int32_candidate(register, ty) {
                     candidates.insert(index);
                 }
             });

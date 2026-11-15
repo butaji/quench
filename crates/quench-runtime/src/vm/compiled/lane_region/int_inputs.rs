@@ -34,7 +34,7 @@ impl Lowering<'_, '_> {
         let mut seeded = false;
         for register in self.index_inputs(loops) {
             let slot = &mut initial[usize::from(register)];
-            if matches!(*slot, Type::ANY | Type::NUMBER) {
+            if slot.is_any_or_number() {
                 *slot = Type::INT32;
                 seeded = true;
             }

@@ -166,8 +166,7 @@ impl<H: Host> Vm<H> {
         let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(self, Miss::PlanNoEntry); None })?;
         let (left_at, entry_left) = left_places(&unit, generic, entry.unwrap_or(0));
         let mut fields = self.lane_unit_fields(program, &unit, &left_at);
-        // Admitting the stores' writes once, here, widens what they widen; the fields then
-        // read the widened slots, and the body's entries admit nothing again.
+        // Admitting the stores' writes once, here, widens what they widen; the fields then read the widened slots.
         if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| lane_region::site_loads(&fields, site).map(Vec::as_slice))) { fields = self.lane_unit_fields(program, &unit, &left_at); }
         let global_reads = self.lane_global_reads(program, function, &unit);
         let (direct, direct_sites) = unit_direct_calls(&unit, direct);
@@ -262,8 +261,7 @@ impl<H: Host> Vm<H> {
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget, arrays));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
         if let Some(entries) = observed && !pays_compile(plan.tiers, entries, native.dfg.num_insts(), caller, self.programs.js_jit_diagnostics_enabled()) { return Err(Unstarted::Unpaid); }
-        let bound = if entry.is_some() { plan.tiers.lane_body.max_osr_compiles } else { plan.tiers.lane_body.max_compiles };
-        if !self.programs.admit_lane_compile(&key, bound) { plan_miss(self, Miss::PlanCompileBound); return Err(Unstarted::Declined); }
+        if !self.programs.admit_lane_compile(&key, plan.tiers.lane_body.compile_bound(entry.is_some())) { plan_miss(self, Miss::PlanCompileBound); return Err(Unstarted::Declined); }
         let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
         watch.hold_roots(plan.lowered.region.stable.roots.clone(), &mut self.heap);
         let watcher: Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();

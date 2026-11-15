@@ -294,6 +294,11 @@ const FLOOR: Tiers = Tiers {
 };
 
 impl LaneBody {
+    /// The compiles allowed a function's whole body, or of one of its loop entries (OSR).
+    pub(in crate::vm) fn compile_bound(&self, osr: bool) -> u8 {
+        if osr { self.max_osr_compiles } else { self.max_compiles }
+    }
+
     /// The entries before a function's body specializes in this process's mode.
     pub(in crate::vm) fn warmup(&self) -> u16 {
         if crate::jit_mode::base_only() { self.base_entries } else { self.warmup_entries }
