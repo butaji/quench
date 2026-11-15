@@ -1140,6 +1140,7 @@ impl<H: Host> Vm<H> {
                 let object = self.box_object(value)?;
                 self.with_stack.push(object);
                 self.with_scope_entered = true;
+                self.refresh_call_refusal();
                 Ok(Value::UNDEFINED)
             }
             Native::WithExit => {
@@ -2249,7 +2250,11 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<Value, JsError> {
-        if let Some(value) = self.intern_dynamic_concat(left, right).or_else(|| self.short_ascii_concat(left, right)) {
+        if let Some(value) = self
+            .memoized_concat(left, right)
+            .or_else(|| self.intern_dynamic_concat(left, right))
+            .or_else(|| self.short_ascii_concat(left, right))
+        {
             #[cfg(feature = "profile-aggregate")]
             self.profile.string_concat(true);
             return Ok(value);

@@ -600,7 +600,7 @@ fn date_utc_constructor_value<H: Host>(
 
 /// Whether `native` is a Date getter (`date_getter`): it reads its receiver's time value and
 /// the host's time zone rules, and runs no guest code.
-pub(super) fn date_reads(native: Native) -> bool {
+pub(super) const fn date_reads(native: Native) -> bool {
     matches!(
         native,
         Native::DateGetTime
@@ -636,7 +636,7 @@ fn date_getter(native: Native, milliseconds: f64) -> Option<f64> {
     if native == Native::DateGetTimezoneOffset {
         let offset = milliseconds
             .is_finite()
-            .then(|| local_offset_at(milliseconds.trunc() as i64))
+            .then(|| local_offset_cached(milliseconds.trunc() as i64))
             .flatten()
             .map(|offset| -offset / SECONDS_PER_MINUTE);
         return Some(offset.map_or(f64::NAN, f64::from));
@@ -680,22 +680,13 @@ fn date_parts_utc(milliseconds: f64) -> Option<DateParts> {
     if !milliseconds.is_finite() || milliseconds.abs() > DATE_TIME_CLIP_LIMIT_MS {
         return None;
     }
-    if let Some(date) = Utc
-        .timestamp_millis_opt(milliseconds.trunc() as i64)
-        .single()
-    {
-        return Some(DateParts {
-            year: date.year(),
-            month: date.month0(),
-            day: date.day(),
-            weekday: date.weekday().num_days_from_sunday(),
-            hour: date.hour(),
-            minute: date.minute(),
-            second: date.second(),
-            millisecond: date.timestamp_subsec_millis(),
-        });
-    }
-    let whole = milliseconds.trunc() as i64;
+    date_parts_of(milliseconds.trunc() as i64)
+}
+
+/// The fields of the time `whole` milliseconds after the epoch, by integer arithmetic
+/// (`civil_from_days`): the proleptic Gregorian calendar chrono computes, for every time a
+/// Date holds.
+fn date_parts_of(whole: i64) -> Option<DateParts> {
     let days = whole.div_euclid(DATE_MILLISECONDS_PER_DAY);
     let time = whole.rem_euclid(DATE_MILLISECONDS_PER_DAY);
     let (year, month, day) = civil_from_days(days);
@@ -712,18 +703,15 @@ fn date_parts_utc(milliseconds: f64) -> Option<DateParts> {
     })
 }
 
+/// The local fields of `milliseconds`: its UTC time moved by the local offset, as
+/// `date_local` moves it.
 fn date_parts_local(milliseconds: f64) -> Option<DateParts> {
-    let date = date_local(milliseconds)?;
-    Some(DateParts {
-        year: date.year(),
-        month: date.month0(),
-        day: date.day(),
-        weekday: date.weekday().num_days_from_sunday(),
-        hour: date.hour(),
-        minute: date.minute(),
-        second: date.second(),
-        millisecond: date.timestamp_subsec_millis(),
-    })
+    if !milliseconds.is_finite() || milliseconds.abs() > DATE_TIME_CLIP_LIMIT_MS {
+        return None;
+    }
+    let timestamp = milliseconds.trunc() as i64;
+    let offset_seconds = date_offset_seconds(local_offset_cached(timestamp).unwrap_or_else(local_offset_now));
+    date_parts_of(timestamp + i64::from(offset_seconds) * DATE_MILLISECONDS_PER_SECOND)
 }
 
 fn date_utc(milliseconds: f64) -> Option<DateTime<Utc>> {
@@ -741,11 +729,17 @@ pub(super) fn date_local(milliseconds: f64) -> Option<DateTime<FixedOffset>> {
         return None;
     }
     let timestamp = milliseconds.trunc() as i64;
-    let offset_seconds = local_offset_at(timestamp).unwrap_or_else(local_offset_now);
+    let offset_seconds = local_offset_cached(timestamp).unwrap_or_else(local_offset_now);
     let offset = FixedOffset::east_opt(date_offset_seconds(offset_seconds))?;
     Utc.timestamp_millis_opt(timestamp)
         .single()
         .map(|date| date.with_timezone(&offset))
+}
+
+/// `local_offset_at` through the span of timestamps it was last found constant over
+/// (`local_zone::cached_offset`).
+fn local_offset_cached(timestamp: i64) -> Option<i32> {
+    local_zone::cached_offset(timestamp, local_offset_at)
 }
 
 fn local_offset_at(timestamp: i64) -> Option<i32> {

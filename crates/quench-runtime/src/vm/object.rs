@@ -492,7 +492,7 @@ impl<H: Host> Vm<H> {
                 ShapeTransition::Add { key, .. } => match key {
                     property_key::PropertyKey::String(atom) => format!("Add:{}", self.atom_name(*atom)),
                     property_key::PropertyKey::Symbol(_) => "Add:<symbol>".to_owned(),
-                    property_key::PropertyKey::Private(_) => "Add:<private>".to_owned(),
+                    property_key::PropertyKey::Private(..) => "Add:<private>".to_owned(),
                 },
                 ShapeTransition::Delete { key, .. } => match key {
                     property_key::PropertyKey::String(atom) => format!("Delete:{}", self.atom_name(*atom)),
@@ -1076,7 +1076,7 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn invalidate_method_caches_for_key(&mut self, key: PropertyKey) {
         match key {
-            PropertyKey::String(atom) | PropertyKey::Private(atom) => {
+            PropertyKey::String(atom) | PropertyKey::Private(_, atom) => {
                 self.invalidate_method_caches_for_atom(atom);
             }
             PropertyKey::Symbol(_) => {}
@@ -1851,6 +1851,18 @@ impl<H: Host> Vm<H> {
         &mut self, record_id: u32, cache: FieldCache, value: Value,
         layout: crate::heap::PropertyStoreLayout,
     ) -> bool {
+        if !LOGS && layout == crate::heap::PropertyStoreLayout::Preserve {
+            // The unlogged store `lane_set_this_field_own` makes through a hint: one compare
+            // proves the exact shape and the arena form (`Object::formed_plain_start`), then
+            // the store gate; any other form takes the staged store. A refusal changes nothing,
+            // so an observed arena's store goes on to the flat store below.
+            // SAFETY: a direct object's live record; the exact shape covers the slot.
+            if cache.holder == NO_FIELD_HOLDER
+                && unsafe { crate::staged::store::concrete_own_store(&mut self.heap, record_id, cache.receiver, false, cache.slot, value) }
+            {
+                return true;
+            }
+        }
         let receiver = self.heap.object_record_by_id(record_id);
         if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
             return false;
@@ -2214,17 +2226,24 @@ impl<H: Host> Vm<H> {
         let (receiver, kind) = self.inherited_receiver(object)?;
         let function_receiver = kind == super::field_cache::InheritedReceiver::Function;
         self.inherited_entry_answers(kind, index).then_some(())?;
-        let (shape, link) = (receiver.shape(), receiver.proto_link());
+        let layout = receiver.layout_id();
         // SAFETY: a site's index names a recorded entry (`record_inherited_field`), and a
         // hint's was found in the cache.
         let cache = unsafe { self.heap.dependencies().inherited_unchecked(index) };
-        if cache.receiver != shape
-            || function_receiver && !cache.function_links
-            || !cache.proved
-            || cache.proved_prototype != link
-        {
+        if !cache.proved || function_receiver && !cache.function_links {
             return None;
         }
+        // The layout the proof last answered proves the receiver shape and prototype link
+        // at once; another layout compares them and, matching, becomes that layout.
+        if layout != cache.proved_layout {
+            let (shape, link) = (receiver.shape(), receiver.proto_link());
+            if cache.receiver != shape || cache.proved_prototype != link {
+                return None;
+            }
+            self.heap.dependencies_mut().inherited_mut(index).proved_layout = layout;
+        }
+        // SAFETY: as above.
+        let cache = unsafe { self.heap.dependencies().inherited_unchecked(index) };
         let depth = u16::from(cache.depth);
         let value = match cache.answer {
             InheritedFieldAnswer::Absent => Value::UNDEFINED,
@@ -3005,7 +3024,7 @@ impl<H: Host> Vm<H> {
         let Some(receiver) = self.shape_property_lookup(object, atom) else {
             return;
         };
-        let (receiver_shape, prototype) = (receiver.shape(), receiver.proto());
+        let (receiver_shape, prototype, receiver_layout) = (receiver.shape(), receiver.proto(), receiver.layout_id());
         if let Some(slot) = self.shape_slot(receiver_shape, atom) {
             // An own accessor, as `debug`'s `enabled` on each logger function: every receiver
             // of the shape holds its own getter in the slot, read from it at each hit.
@@ -3017,12 +3036,15 @@ impl<H: Host> Vm<H> {
                     site,
                     AccessorFieldCache {
                         receiver: receiver_shape,
+                        layout: receiver_layout,
                         prototype,
                         holder: OWN_ACCESSOR,
                         slot: slot as u16,
                         slot_accessor: self.slot_accessor(receiver_shape, slot),
                         epoch,
                         next: NO_ACCESSOR_FIELD,
+                        getter: Value::UNDEFINED,
+                        answer: FieldCache::own(0, 0),
                     },
                 );
             }
@@ -3068,12 +3090,15 @@ impl<H: Host> Vm<H> {
             site,
             AccessorFieldCache {
                 receiver: receiver_shape,
+                layout: receiver_layout,
                 prototype,
                 holder,
                 slot: slot as u16,
                 slot_accessor,
                 epoch,
                 next: NO_ACCESSOR_FIELD,
+                getter: Value::UNDEFINED,
+                answer: FieldCache::own(0, 0),
             },
         );
     }
@@ -3117,15 +3142,39 @@ impl<H: Host> Vm<H> {
         if index == NO_ACCESSOR_FIELD {
             return None;
         }
-        let receiver = self.shape_property_lookup(object, atom)?;
-        let (shape, proto, epoch) = (receiver.shape(), receiver.proto(), crate::heap::prototype_layout_epoch());
-        let cache = loop {
-            let cache = self.accessor_fields.get(index as usize)?;
-            if shape == cache.receiver && proto == cache.prototype && epoch == cache.epoch {
-                break cache;
-            }
-            index = cache.next;
+        let epoch = crate::heap::prototype_layout_epoch();
+        // An ordinary receiver matches its entry by layout, which holds its shape and
+        // prototype: a recorded layout is of a shaped receiver outside dictionary mode, so a
+        // match proves what `shape_property_lookup` would.
+        let (receiver, cache) = if let Some(receiver) = self.heap.object_record(object) {
+            let layout = receiver.layout_id();
+            let cache = loop {
+                let cache = self.accessor_fields.get(index as usize)?;
+                if layout == cache.layout && epoch == cache.epoch {
+                    break cache;
+                }
+                index = cache.next;
+            };
+            (receiver, cache)
+        } else {
+            let receiver = self.shape_property_lookup(object, atom)?;
+            let (shape, proto) = (receiver.shape(), receiver.proto());
+            let cache = loop {
+                let cache = self.accessor_fields.get(index as usize)?;
+                if shape == cache.receiver && proto == cache.prototype && epoch == cache.epoch {
+                    break cache;
+                }
+                index = cache.next;
+            };
+            (receiver, cache)
         };
+        self.accessor_entry_part(cache, receiver, setter)
+    }
+
+    /// The getter (`setter` false) or setter of the accessor `cache` names, which proves
+    /// `receiver`'s shape and chain.
+    #[inline(always)]
+    fn accessor_entry_part(&self, cache: &AccessorFieldCache, receiver: &Object, setter: bool) -> Option<Value> {
         let holder = if cache.holder == OWN_ACCESSOR {
             if receiver.has_side_descriptors() {
                 return None;
@@ -3147,6 +3196,48 @@ impl<H: Host> Vm<H> {
                 let attributes = self.slot_attributes(holder, usize::from(cache.slot))?;
                 if setter { attributes.setter } else { attributes.getter }
             }
+        }
+    }
+
+    /// A getter read at cache index `site` that the site's newest accessor entry memoizes
+    /// (`memoize_getter_answer`): the getter's own field read of the receiver, made where the
+    /// entry still proves `object`'s shape, prototype and chain and its holder still holds
+    /// that getter. `None` leaves the read to `cached_field_getter`.
+    #[inline(always)]
+    pub(super) fn memoized_getter_answer(&self, object: Value, site: usize) -> Option<Value> {
+        let entry = self.accessor_fields.get(self.accessor_field_indices.get(site) as usize)?;
+        let (getter, answer) = (entry.getter, entry.answer);
+        if getter.is_undefined() {
+            return None;
+        }
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        if receiver.shape() != entry.receiver
+            || receiver.proto() != entry.prototype
+            || crate::heap::prototype_layout_epoch() != entry.epoch
+            || self.accessor_entry_part(entry, receiver, false)? != getter
+        {
+            return None;
+        }
+        self.record_field_entry_hit(answer, object)
+    }
+
+    /// Records at the site's newest accessor entry, where it proves `object`, that its
+    /// getter `getter` returns the field read `answer` of the receiver
+    /// (`memoized_getter_answer`).
+    pub(super) fn memoize_getter_answer(&mut self, object: Value, site: usize, getter: Value, answer: FieldCache) {
+        let Some(receiver) = object.direct_object_index().map(|id| self.heap.object_record_by_id(id)) else {
+            return;
+        };
+        let (shape, proto) = (receiver.shape(), receiver.proto());
+        if self.shape_is_dictionary(shape) {
+            return;
+        }
+        let index = self.accessor_field_indices.get(site);
+        if let Some(entry) = self.accessor_fields.get_mut(index as usize)
+            && entry.receiver == shape
+            && entry.prototype == proto
+        {
+            (entry.getter, entry.answer) = (getter, answer);
         }
     }
 
@@ -3397,6 +3488,7 @@ impl<H: Host> Vm<H> {
         let dependencies = self.heap.dependencies_mut();
         let cache = dependencies.inherited_mut(proof.index);
         cache.proved_prototype = crate::heap::ProtoLink::of(proof.prototype);
+        cache.proved_layout = crate::heap::NO_PROVED_LAYOUT;
         cache.proved_holder = proof.holder;
         cache.constant_watch = None;
         dependencies.prove_inherited(proof.index, &subjects);
@@ -3451,6 +3543,7 @@ impl<H: Host> Vm<H> {
             answer: InheritedFieldAnswer::Absent,
             proved: false,
             proved_prototype: crate::heap::ProtoLink::NULL,
+            proved_layout: crate::heap::NO_PROVED_LAYOUT,
             proved_holder: Value::UNDEFINED,
             constant: Value::UNDEFINED,
             constant_watch: None,
@@ -3820,7 +3913,7 @@ impl<H: Host> Vm<H> {
         let key = match property {
             PropertyKey::String(atom) => self.heap.alloc_string(self.atom_value(atom)),
             PropertyKey::Symbol(key) => key,
-            PropertyKey::Private(_) => {
+            PropertyKey::Private(..) => {
                 unreachable!("private keys cannot reach Proxy DefineOwnProperty")
             }
         };

@@ -16,7 +16,8 @@ script_handler! {
     fn lane_script_call_leaf<LEAF: u8, ARGC: u16>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
-        let target = if unsafe { (*cx).script_calls } && !lane_constructing(vm, callee) {
+        // A pending construction refuses every cached target (`LaneStack::set_refused`).
+        let target = if unsafe { (*cx).script_calls } {
             vm.linked_script_call_entry(callee, &i.call_link)
         } else {
             None
@@ -49,7 +50,9 @@ script_handler! {
         };
         // The cached target is of the running program (`Vm::script_call_holds`).
         debug_assert!(!lane_crosses::<H, true>(cx, target));
-        if vm.with_scope_entered || !lane_admits_window(vm, target, ARGC) {
+        // An admitted target runs under no `with` scope (`LaneStack::refuse_cached_calls`).
+        debug_assert!(!vm.with_scope_entered);
+        if !lane_admits_window(vm, target, ARGC) {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
         vm.programs.record_js_jit_lane_entry(target.program(), target.function);
@@ -57,8 +60,8 @@ script_handler! {
         // SAFETY: as `lane_push_passed`'s window, which the stack's length covers only once
         // the leaf is materialized: no collection runs before.
         let registers = unsafe {
-            let registers = stack.values.as_mut_ptr().add(stack.values.len());
-            fill_admitted_window(registers, usize::from(target.registers));
+            let registers = stack.values.top();
+            fill_admitted_window(registers, usize::from(target.fill), usize::from(target.registers));
             copy_arguments(registers, r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))), ARGC);
             Registers(registers)
         };

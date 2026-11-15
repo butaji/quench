@@ -577,7 +577,7 @@ fn data_view_bits_of_number(native: Native, value: f64) -> u64 {
 }
 
 /// Whether `native` is a DataView element `get` or `set` method.
-pub(super) fn data_view_element(native: Native) -> bool {
+pub(super) const fn data_view_element(native: Native) -> bool {
     data_view_setter(native)
         || matches!(
             native,
@@ -596,7 +596,7 @@ pub(super) fn data_view_element(native: Native) -> bool {
 }
 
 /// Whether `native` is a DataView `set` method.
-fn data_view_setter(native: Native) -> bool {
+const fn data_view_setter(native: Native) -> bool {
     matches!(
         native,
         Native::DataViewSetUint8

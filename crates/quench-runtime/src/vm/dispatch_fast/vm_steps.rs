@@ -12,6 +12,14 @@ use super::*;
 /// body at the next record.
 pub(in crate::vm) unsafe extern "C" fn lane_vm_step<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
+    // An ahead body runs from its entry trampoline, with no lane run to step in: it leaves at
+    // the record, which the entry's per-PC fallback executes (as `lane_body_call`).
+    if context == 0 { return LANE_CALL_MISSED; }
+    // A direct callee's body runs in a native frame (`ShadowFrame`) with no activation: the
+    // running function, its registers and the frames guest code would need are the shadow
+    // frame's, not the lane's. The body leaves at the record, which materializes the shadow
+    // frames, and the lane makes the step with its own activation (as `lane_body_call` does).
+    if Vm::<H>::lane_shadow_active() { return LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext<H>;
     // The function's activation is the one the step reads (`activations.last`).
     lane_materialize_running_leaf(cx);

@@ -166,6 +166,7 @@ pub(super) fn direct_mapped_index_by_shift(key: impl Hash, shift: u32) -> usize 
 }
 
 impl<K: Copy + Eq + Hash, V: Copy> ShapeMemo<K, V> {
+    #[inline(always)]
     fn index(shape: u32, key: K) -> usize {
         direct_mapped_index((shape, key), SHAPE_MEMO_ENTRIES)
     }

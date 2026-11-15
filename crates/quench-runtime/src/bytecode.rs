@@ -1255,6 +1255,8 @@ pub struct SourceSpan {
 
 /// Membership views of a function's declared-name lists, which stay the authority for
 /// their order and serialization: a name's declaration kind is one lookup, not a scan.
+/// Made only for a function with a list longer than `LOCAL_SLOT_SCAN`: a short list is
+/// scanned, where a box of sets per called function held 9.6 MB of jsdom-d3-startup's peak.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DeclaredAtomSets {
     global_lexical: rustc_hash::FxHashSet<Atom>,
@@ -1756,11 +1758,21 @@ pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 /// finds the function on the stack. Most of a program's functions never run during a
 /// collection, so their masks are never built. The loop tier's regions share them
 /// (`osr_loop::LoopRegion::live`) rather than copying a function's masks for each loop.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct RegisterRoots {
     covered: bool,
+    /// The registers below which every register live at entry lies (`entry_fill`), or
+    /// `ALL_LIVE_AT_ENTRY` where liveness proves no bound.
+    entry_live: u16,
     dead_call_results: crate::heap::ThinBoxSlice<u32>,
     masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+}
+
+/// Uncovered, which bounds no register live at entry.
+impl Default for RegisterRoots {
+    fn default() -> Self {
+        Self::new(false)
+    }
 }
 
 impl RegisterRoots {
@@ -1768,9 +1780,31 @@ impl RegisterRoots {
         Self::with_dead_call_results(covered, Default::default())
     }
 
-    /// `dead_call_results` in increasing pc order.
+    /// `dead_call_results` in increasing pc order, with no bound on the live entry registers.
     pub(crate) fn with_dead_call_results(covered: bool, dead_call_results: crate::heap::ThinBoxSlice<u32>) -> Self {
-        Self { covered, dead_call_results, masks: std::cell::OnceCell::new() }
+        Self::with_entry_live(covered, Self::ALL_LIVE_AT_ENTRY, dead_call_results)
+    }
+
+    /// `with_dead_call_results`, every register live at entry below `entry_live`.
+    pub(crate) fn with_entry_live(covered: bool, entry_live: u16, dead_call_results: crate::heap::ThinBoxSlice<u32>) -> Self {
+        Self { covered, entry_live, dead_call_results, masks: std::cell::OnceCell::new() }
+    }
+
+    /// An `entry_live` that bounds nothing.
+    pub(crate) const ALL_LIVE_AT_ENTRY: u16 = u16::MAX;
+
+    /// The registers an activation of a function of `registers` registers starts with its
+    /// initial value: those below every register live at its entry. No instruction reads
+    /// another before writing it, and a collection reads a covered function's registers only
+    /// where its masks prove them live, so the rest may hold any value a window held before.
+    #[inline(always)]
+    pub(crate) fn entry_fill(&self, registers: u16) -> u16 {
+        self.entry_live.min(registers)
+    }
+
+    /// The `entry_live` bound as recorded.
+    pub(crate) fn entry_live(&self) -> u16 {
+        self.entry_live
     }
 
     pub(crate) fn covered(&self) -> bool {
@@ -2007,6 +2041,13 @@ impl Function {
 
     /// The declaration kinds of local `slot`'s name (none for a slot outside the function).
     pub(crate) fn slot_declaration(&self, slot: usize) -> SlotDeclaration {
+        let (var, lexical) = (self.global_var_atoms(), self.global_lexical_atoms());
+        if var.len() <= LOCAL_SLOT_SCAN && lexical.len() <= LOCAL_SLOT_SCAN {
+            return self.local_atoms.get(slot).map_or_else(SlotDeclaration::default, |atom| SlotDeclaration {
+                global_var: var.contains(atom),
+                global_lexical: lexical.contains(atom),
+            });
+        }
         self.declared_atoms()
             .slots
             .get(slot)
@@ -2016,21 +2057,37 @@ impl Function {
 
     /// Whether `atom` is among `global_lexical_atoms`.
     pub(crate) fn declares_global_lexical(&self, atom: Atom) -> bool {
+        let atoms: &[Atom] = self.global_lexical_atoms();
+        if atoms.len() <= LOCAL_SLOT_SCAN {
+            return atoms.contains(&atom);
+        }
         self.declared_atoms().global_lexical.contains(&atom)
     }
 
     /// Whether `atom` is among `global_var_atoms`.
     pub(crate) fn declares_global_var(&self, atom: Atom) -> bool {
+        let atoms: &[Atom] = self.global_var_atoms();
+        if atoms.len() <= LOCAL_SLOT_SCAN {
+            return atoms.contains(&atom);
+        }
         self.declared_atoms().global_var.contains(&atom)
     }
 
     /// Whether `atom` is among `global_immutable_atoms`.
     pub(crate) fn declares_global_immutable(&self, atom: Atom) -> bool {
+        let atoms: &[Atom] = self.global_immutable_atoms();
+        if atoms.len() <= LOCAL_SLOT_SCAN {
+            return atoms.contains(&atom);
+        }
         self.declared_atoms().global_immutable.contains(&atom)
     }
 
     /// Whether `atom` is among `environment_atoms`.
     pub(crate) fn declares_environment_atom(&self, atom: Atom) -> bool {
+        let atoms: &[Atom] = &self.environment_atoms[..];
+        if atoms.len() <= LOCAL_SLOT_SCAN {
+            return atoms.contains(&atom);
+        }
         self.declared_atoms().environment.contains(&atom)
     }
 
@@ -3444,6 +3501,17 @@ impl AsRef<[u8]> for KeptPrefix {
     }
 }
 
+/// What the host does with a deferred record's bytes once they are decoded, set once by the
+/// embedding: the decoded function lives on the heap, so the bytes are read again only if the
+/// record is released and decoded anew, and a mapped compile-cache entry need not keep them
+/// resident (Air: 94 of a 123-page entry resident at its peak, its records decoded).
+static RECORD_READ: std::sync::OnceLock<fn(&[u8])> = std::sync::OnceLock::new();
+
+/// Sets `RECORD_READ`; the first call wins.
+pub fn set_record_read(action: fn(&[u8])) {
+    let _ = RECORD_READ.set(action);
+}
+
 /// A compile-cache entry split into its encoding and the source text
 /// `binary::append_kept_source` kept after it, when it keeps `source_len` bytes of text whose
 /// checksum holds; the entry itself otherwise.
@@ -3857,9 +3925,18 @@ impl ResidualProgram {
         }
         let deferred = self.encoded_records.as_deref().and_then(|records| binary::decode_deferred_function(records, index));
         let function = match deferred {
-            Some(decoded) => decoded.unwrap_or_else(|error| {
-                panic!("function {index} of {} does not decode: {error}", self.source_name)
-            }),
+            Some(decoded) => {
+                let function = decoded.unwrap_or_else(|error| {
+                    panic!("function {index} of {} does not decode: {error}", self.source_name)
+                });
+                if let (Some(action), Some(bytes)) = (
+                    RECORD_READ.get(),
+                    self.encoded_records.as_deref().and_then(|records| binary::deferred_record_bytes(records, index)),
+                ) {
+                    action(bytes);
+                }
+                function
+            }
             None => {
                 if !crate::DYNAMIC_EXECUTION_ENABLED {
                     panic!("native function {index} of {} has no archived record", self.source_name);

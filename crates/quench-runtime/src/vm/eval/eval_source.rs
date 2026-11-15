@@ -30,6 +30,13 @@ pub(super) fn is_cacheable(residual: &ResidualProgram, source: &str) -> bool {
         && residual.replay.as_ref().map_or_else(|| !crate::Engine::eval_has_tagged_template(source), |replay| replay.template_sites == 0)
 }
 
+/// Whether the compiled strict eval's code may serve a later strict eval of the same text, as
+/// a program of its own. Tagged templates do not matter: a program's template objects are
+/// its own (the realm keys them by program, function and site).
+pub(super) fn is_strict_code_cacheable(residual: &ResidualProgram) -> bool {
+    residual.functions.first().is_some_and(|root| root.strict)
+}
+
 /// What an eval's compilation reads of its caller, and the direct-eval cache key it makes.
 pub(super) struct CallerFacts {
     pub(super) context: crate::compile::EvalContext,
@@ -140,7 +147,7 @@ impl std::hash::Hash for EvalSource {
 
 /// Everything besides its text that a direct eval's compilation reads of its caller: two
 /// direct evals of one text with equal scopes compile to the same program.
-#[derive(PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct DirectEvalKey {
     pub(crate) source: EvalSource,
     pub(crate) strict: bool,

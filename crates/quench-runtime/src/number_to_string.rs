@@ -109,7 +109,7 @@ pub(crate) fn write(value: f64, out: &mut impl Output) {
     // Ryu writes positional notation for a decimal point position in (-5, 16], within
     // Number::toString's (-6, 21], and then the same text, but for the `.0` it gives an
     // integer.
-    if !text.contains('e') {
+    if (POSITIONAL_RYU_MIN..POSITIONAL_RYU_MAX).contains(&magnitude) || !text.contains('e') {
         out.extend_from_slice(text.strip_suffix(".0").unwrap_or(text).as_bytes());
         return;
     }
@@ -117,12 +117,19 @@ pub(crate) fn write(value: f64, out: &mut impl Output) {
     lay_out(&digits, point, out);
 }
 
+/// Ryu writes positional text for every magnitude in this range (its decimal point position
+/// is within (-5, 16] there), so the text needs no search for an exponent.
+const POSITIONAL_RYU_MIN: f64 = 1e-4;
+const POSITIONAL_RYU_MAX: f64 = 1e15;
+
 /// Powers of ten a double holds exactly, for scaling to a few fraction digits.
 const EXACT_POWERS_OF_TEN: [f64; 18] = [
     1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17,
 ];
 /// Below this, `round(x * 10^j)` recovers any integer `m` with `m / 10^j` rounding to `x`:
 /// the two roundings move the product by under two of its ulps, which stay below one half.
+/// The most fraction digits `short_decimal` tries before Ryu writes the value.
+const SHORT_FRACTION_DIGITS: usize = 4;
 const RECOVERABLE_DIGITS_MAGNITUDE: f64 = (1u64 << (f64::MANTISSA_DIGITS - 2)) as f64;
 
 /// The shortest round-trip digits of a positive non-integer `magnitude` at a fixed-point
@@ -134,7 +141,9 @@ fn short_decimal(magnitude: f64) -> Option<(u64, i32)> {
     if magnitude < EXACT_POWERS_OF_TEN[(-MIN_FIXED_POINT_POSITION) as usize].recip() {
         return None;
     }
-    for (fraction_digits, &scale) in EXACT_POWERS_OF_TEN.iter().enumerate().skip(1) {
+    // Each count tried costs a multiply, a round and a divide, so only the few counts whose
+    // decimals are common are tried; Ryu writes longer ones for less than trying them all.
+    for (fraction_digits, &scale) in EXACT_POWERS_OF_TEN.iter().enumerate().take(SHORT_FRACTION_DIGITS + 1).skip(1) {
         let scaled = (magnitude * scale).round();
         if scaled >= RECOVERABLE_DIGITS_MAGNITUDE {
             return None;

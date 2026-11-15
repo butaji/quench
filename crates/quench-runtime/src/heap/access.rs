@@ -390,7 +390,9 @@ impl Heap {
     pub(crate) fn object_mut(&mut self, value: Value) -> Option<&mut Object> {
         if let Some(record_id) = value.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.object_records.get_live_mut(record_id, &self.properties) });
+            let object = unsafe { self.object_records.get_live_mut(record_id, &self.properties) };
+            widen_narrow_run(object, &mut self.properties);
+            return Some(object);
         }
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
@@ -417,7 +419,9 @@ impl Heap {
     pub(crate) fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut Object> {
         if let Some(record_id) = value.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.object_records.get_live_mut_storing(record_id, stored, &self.properties) });
+            let object = unsafe { self.object_records.get_live_mut_storing(record_id, stored, &self.properties) };
+            widen_narrow_run(object, &mut self.properties);
+            return Some(object);
         }
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
@@ -854,4 +858,22 @@ impl Heap {
         self.remembered_marks[word] |= bit;
         self.remembered.push(index as u32);
     }
+}
+
+/// Widens a direct object's narrow run (`value_vec::NARROW_FORM`) before a general mutable
+/// borrow hands it out: its writers (`ValueArena::set`, `push`, extras) take wide values only.
+/// The exact-shape stores (`store_exact_slot`) keep a narrow run narrow.
+#[inline(always)]
+pub(super) fn widen_narrow_run(object: &mut super::Object, properties: &mut ValueArena) {
+    let vector = object.properties();
+    if vector.is_narrow() {
+        widen_narrow_run_cold(object, properties, vector);
+    }
+}
+
+#[inline(never)]
+#[cold]
+fn widen_narrow_run_cold(object: &mut super::Object, properties: &mut ValueArena, vector: crate::value_vec::ValueVec) {
+    let wide = properties.widen(vector);
+    object.set_properties(wide, properties);
 }

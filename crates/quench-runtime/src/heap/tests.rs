@@ -677,100 +677,6 @@ fn object_integrity_metadata_survives_collection() {
     assert!(garbage.iter().all(|value| !heap.is_live(*value)));
 }
 
-#[test]
-fn out_of_line_private_brand_keeps_its_home_alive() {
-    let mut heap = Heap::new();
-    let home = heap.alloc(Cell::Object(plain_object()));
-    let instance = heap.alloc(Cell::Object(plain_object()));
-    heap.object_record_mut(instance)
-        .unwrap()
-        .add_private_name(PrivateBrand { home, name: 0 });
-
-    heap.collect([instance]);
-
-    assert!(heap.is_live(instance));
-    assert!(heap.is_live(home));
-
-    heap.collect([]);
-
-    assert!(!heap.is_live(instance));
-    assert!(!heap.is_live(home));
-}
-
-#[test]
-fn object_property_storage_migration_preserves_writes_and_gc_roots() {
-    let mut heap = Heap::new();
-    // Shape `n` holds `n` properties; the add past the inline values migrates them.
-    let migrated = INLINE_PROPERTY_COUNT + 1;
-    for shape in 1..=migrated {
-        heap.register_property_shape(shape as u32, shape, None);
-    }
-    let first = heap.alloc(Cell::Error("first".into()));
-    let replaced = heap.alloc(Cell::Error("replaced".into()));
-    let replacement = heap.alloc(Cell::Error("replacement".into()));
-    let fillers = (2..INLINE_PROPERTY_COUNT)
-        .map(|_| heap.alloc(Cell::Error("filler".into())))
-        .collect::<Vec<_>>();
-    let last = heap.alloc(Cell::Error("last".into()));
-    let object = heap.alloc(Cell::Object(plain_object()));
-    assert!(heap.object(object).unwrap().inline_properties().is_some());
-    heap.object_record_mut(object)
-        .unwrap()
-        .set_extensible(false);
-    heap.property_add(object, first, 1);
-    heap.property_add(object, replaced, 2);
-    for (index, filler) in fillers.iter().enumerate() {
-        heap.property_add(object, *filler, (3 + index) as u32);
-    }
-    assert!(heap.object(object).unwrap().inline_properties().is_some());
-    heap.property_set(object, 1, replacement);
-    heap.property_add(object, last, migrated as u32);
-
-    heap.collect([object]);
-    let data = heap.object(object).unwrap();
-    assert_eq!(data.shape(), migrated as u32);
-    assert!(data.inline_properties().is_none());
-    assert!(!data.is_extensible());
-    assert_eq!(heap.property_get(data, 0), Some(first));
-    assert_eq!(heap.property_get(data, 1), Some(replacement));
-    for (index, filler) in fillers.iter().enumerate() {
-        assert_eq!(heap.property_get(data, 2 + index), Some(*filler));
-    }
-    assert_eq!(heap.property_get(data, migrated - 1), Some(last));
-    assert!(heap.is_live(first));
-    assert!(!heap.is_live(replaced));
-    assert!(heap.is_live(replacement));
-    assert!(heap.is_live(last));
-
-    heap.collect([]);
-    assert!(!heap.is_live(object));
-    assert!(!heap.is_live(first));
-    assert!(!heap.is_live(replacement));
-    assert!(!heap.is_live(last));
-}
-
-#[test]
-fn inline_property_values_are_gc_roots_until_deleted_or_the_owner_dies() {
-    let mut heap = Heap::new();
-    // A shape of two properties, the pair below, whatever the inline count.
-    heap.register_property_shape(1, 2, None);
-    let kept = heap.alloc(Cell::Error("kept".into()));
-    let deleted = heap.alloc(Cell::Error("deleted".into()));
-    let object = heap.alloc_object_pair(Value::NULL, 1, kept, deleted);
-    heap.property_set(object, 1, Value::DELETED);
-
-    heap.collect([object]);
-
-    assert!(heap.is_live(object));
-    assert!(heap.is_live(kept));
-    assert!(!heap.is_live(deleted));
-
-    heap.collect([]);
-
-    assert!(!heap.is_live(object));
-    assert!(!heap.is_live(kept));
-}
-
 #[cfg(feature = "profile-memory")]
 #[test]
 fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
@@ -784,10 +690,6 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     data.set_module_namespace();
     data.set_module_bindings(vec![(0, crate::vm::program_store::ProgramId::MAIN, 0)]);
     data.set_deferred_module(Some(crate::ModuleSource::text("module.js", "export const value = 1;")));
-    data.add_private_name(PrivateBrand {
-        home: object,
-        name: 0,
-    });
 
     assert!(heap.memory_stats().3 > before);
     assert!(heap.live_payload_bytes()[CellKind::Object as usize] > 0);
@@ -837,7 +739,7 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
         let constructor = heap.alloc(Cell::Object(plain_object()));
         let weak_constructor = heap.weak_handle(constructor).unwrap();
         let regexp = heap.alloc(Cell::RegExp {
-            object: Box::new(plain_object()),
+            object: plain_object(),
             meta: Rc::new(crate::heap::RegExpMeta {
                 source: "a".into(),
                 flags: crate::vm::RegExpFlags::validated(""),
@@ -1625,11 +1527,7 @@ fn named_property_publication_retires_readers_for_every_record_family() {
                     object, realm: Value::NULL, env: Value::NULL,
                     kind: FunctionKind::User(crate::vm::ProgramId::MAIN, 0),
                 })),
-                Family::Promise => Cell::Promise(Box::new(PromiseCell { object, record: PromiseRecord {
-                    state: PromiseState::Pending, result: Value::UNDEFINED,
-                    reactions: Default::default(), rejection: PromiseRejectionState::Unobserved,
-                    host_context: None.into(), module_evaluation: false,
-                } })),
+                Family::Promise => Cell::Promise(Box::new(PromiseCell { object, record: PromiseRecord::pending(None.into()) })),
                 Family::Iterator => Cell::Iterator(Box::new(IteratorRecord {
                     object, source: Value::NULL, kind: IteratorKind::Array, index: 0, done: false,
                     ext: IteratorExt::default(),

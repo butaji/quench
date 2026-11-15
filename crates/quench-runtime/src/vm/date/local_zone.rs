@@ -40,3 +40,41 @@ fn system_timezone() -> Option<chrono_tz::Tz> {
 pub fn local_timezone_changed() {
     GENERATION.fetch_add(1, Ordering::Release);
 }
+
+/// The longest gap between two lookups of one offset across which the offset is taken to
+/// hold: no zone changes its offset and changes it back within a day (V8's date cache takes
+/// 19 days, `kDefaultDSTDeltaInSec`).
+const OFFSET_SPAN_STEP_MS: i64 = 86_400_000;
+
+thread_local! {
+    /// The span of timestamps the last lookups found one offset at: the generation of `TZ`
+    /// they read, the first and last timestamp, and the offset.
+    static OFFSET_SPAN: Cell<(u64, i64, i64, i32)> = const { Cell::new((u64::MAX, 0, -1, 0)) };
+}
+
+/// The local offset at `timestamp` that `lookup` finds, read from the span of timestamps
+/// earlier lookups found it constant over where `timestamp` falls in it: each lookup of the
+/// same offset within `OFFSET_SPAN_STEP_MS` of the span widens it. Only a parsed zone's
+/// offsets are kept; chrono's `Local` rereads the system's on each conversion.
+pub(super) fn cached_offset(timestamp: i64, lookup: fn(i64) -> Option<i32>) -> Option<i32> {
+    let generation = GENERATION.load(Ordering::Acquire);
+    let (seen, first, last, offset) = OFFSET_SPAN.get();
+    let current = seen == generation;
+    if current && first <= timestamp && timestamp <= last {
+        return Some(offset);
+    }
+    let found = lookup(timestamp)?;
+    if local_timezone().is_none() {
+        return Some(found);
+    }
+    let extends = current && found == offset;
+    let (first, last) = if extends && timestamp > last && timestamp - last <= OFFSET_SPAN_STEP_MS {
+        (first, timestamp)
+    } else if extends && timestamp < first && first - timestamp <= OFFSET_SPAN_STEP_MS {
+        (timestamp, last)
+    } else {
+        (timestamp, timestamp)
+    };
+    OFFSET_SPAN.set((generation, first, last, found));
+    Some(found)
+}

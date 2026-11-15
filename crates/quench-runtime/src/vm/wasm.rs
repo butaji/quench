@@ -4721,9 +4721,10 @@ mod tests {
             .iter_mut()
             .find(|instruction| instruction.op() == crate::bytecode::Op::WasmRefFunc)
             .unwrap();
-        *reference = crate::bytecode::Instr::new(crate::bytecode::Op::WasmRefFunc, 0, 0, 0, 9);
+        // Its registers stay, so the function's liveness claims still hold.
+        *reference = crate::bytecode::Instr::new(crate::bytecode::Op::WasmRefFunc, reference.a(), reference.b(), reference.c(), 9);
         // Residual validation knows the operand layout; pool attachment owns source indices.
-        assert!(corrupt.validate().is_ok());
+        assert_eq!(corrupt.validate(), Ok(()));
         let first = vm.instantiate_wasm_module(&owner).unwrap();
         let owner_env = vm.root_value(first.environment).unwrap();
         let mut signature_validation_vm = Vm::new(crate::SystemHost);

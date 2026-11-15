@@ -170,6 +170,15 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         prototype_lookup: lookup,
         inline_properties,
         arena_start,
+        element_facts,
+        // A restored heap gives each prototype a new watch (`Heap::register_restored_prototypes`).
+        watch: _,
+        // An array's elements are written with its record (`ArrayObject::write_snapshot`).
+        elements: _,
+        rare,
+    } = extras;
+    let default_rare = RareExtras::default();
+    let RareExtras {
         arguments_map,
         brand,
         external_address,
@@ -178,14 +187,10 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         structured_transfer_forbidden,
         module_bindings,
         deferred_module,
-        private_elements,
         stack_data,
-        element_facts,
-        // A restored heap gives each prototype a new watch (`Heap::register_restored_prototypes`); its code holds no global value.
-        watch: _, global_values: _,
-        // An array's elements are written with its record (`ArrayObject::write_snapshot`).
-        elements: _,
-    } = extras;
+        // Its code holds no global value.
+        global_values: _,
+    } = rare.as_deref().unwrap_or(&default_rare);
     if external_address.is_some() {
         return Err(SnapshotError::unsupported("an object whose address an embedder observed"));
     }
@@ -210,12 +215,6 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
     writer.bool(deferred_module.is_some());
     if let Some(module) = deferred_module {
         write_module_source(writer, module);
-    }
-    writer.len(private_elements.len());
-    for element in private_elements {
-        writer.value(element.brand.home);
-        writer.u32(element.brand.name);
-        writer.option_value(element.data);
     }
     writer.bool(stack_data.is_some());
     if let Some(stack) = stack_data {
@@ -243,17 +242,8 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
     let structured_serialization = structured_serialization::read(reader)?;
     let module_bindings = read_list(reader, |reader| Ok((reader.u32()?, ProgramId::from_raw(reader.u32()?), reader.u16()?)))?;
     let deferred_module = if reader.bool()? { Some(read_module_source(reader)?) } else { None };
-    let private_elements = read_list(reader, |reader| {
-        Ok(PrivateElement {
-            brand: PrivateBrand { home: reader.value()?, name: reader.u32()? },
-            data: reader.option_value()?,
-        })
-    })?;
     let stack_data = if reader.bool()? { Some(read_stack_data(reader)?) } else { None };
-    Ok(ObjectExtras {
-        prototype_lookup,
-        inline_properties,
-        arena_start,
+    let rare = RareExtras {
         arguments_map,
         brand,
         external_address: None,
@@ -262,11 +252,18 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
         structured_transfer_forbidden,
         module_bindings,
         deferred_module,
-        private_elements,
         stack_data,
+        global_values: None,
+    };
+    let rare = Some(Box::new(rare));
+    Ok(ObjectExtras {
+        prototype_lookup,
+        inline_properties,
+        arena_start,
         element_facts,
-        watch: Default::default(), global_values: None,
+        watch: Default::default(),
         elements: Default::default(),
+        rare,
     })
 }
 
@@ -472,24 +469,19 @@ impl IteratorRecord {
 
 impl crate::heap::PromiseCell {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        let crate::heap::PromiseRecord {
-            state,
-            result,
-            reactions,
-            rejection,
-            host_context,
-            module_evaluation,
-        } = &self.record;
+        let record = &self.record;
+        let (state, result, rejection, host_context) =
+            (record.state(), record.result(), record.rejection(), record.host_context);
         // A snapshot holds no module record (`PromiseRuntime::write_snapshot`), so no promise
         // is a module's evaluation promise.
-        if *module_evaluation {
+        if record.module_evaluation {
             return Err(SnapshotError::unsupported("a module evaluation promise"));
         }
         write_object(writer, &self.object)?;
-        promise_state::write(writer, *state);
-        writer.value(*result);
-        writer.len(reactions.len());
-        for reaction in reactions {
+        promise_state::write(writer, state);
+        writer.value(result);
+        writer.len(record.reactions().count());
+        for reaction in record.reactions() {
             writer.value(reaction.on_fulfilled);
             writer.value(reaction.on_rejected);
             writer.value(reaction.next);
@@ -524,17 +516,9 @@ impl crate::heap::PromiseCell {
         let rejection = crate::heap::PromiseRejectionState::from_parts(phase, std::num::NonZeroU64::new(reader.u64()?))
             .ok_or_else(|| SnapshotError("a reported promise rejection has no identifier".into()))?;
         let host_context = if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None }.into();
-        Ok(Self {
-            object,
-            record: crate::heap::PromiseRecord {
-                state,
-                result,
-                reactions: reactions.into(),
-                rejection,
-                host_context,
-                module_evaluation: false,
-            },
-        })
+        let record = crate::heap::PromiseRecord::from_parts(state, result, reactions.into(), rejection, host_context)
+            .ok_or_else(|| SnapshotError("a promise's state contradicts its result or reactions".into()))?;
+        Ok(Self { object, record })
     }
 }
 
@@ -866,7 +850,7 @@ impl Cell {
                 };
                 // A restored RegExp owns its record; literal sites share theirs again from the
                 // program store (`ProgramStore::regexp_literal_meta`) on their next evaluation.
-                Self::RegExp { object, meta: std::rc::Rc::new(RegExpMeta { source, flags, legacy_constructor, matcher: Default::default() }) }
+                Self::RegExp { object: *object, meta: std::rc::Rc::new(RegExpMeta { source, flags, legacy_constructor, matcher: Default::default() }) }
             }
             tag::ERROR => Self::Error(reader.string()?),
             tag::PROMISE => Self::Promise(Box::new(crate::heap::PromiseCell::read_snapshot(reader)?)),

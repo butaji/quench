@@ -819,7 +819,7 @@ impl<H: Host> Vm<H> {
                     vm.heap.alloc(Cell::Object(object))
                 };
                 let previous_target = vm.construct_target;
-                vm.construct_target = Some(ConstructionTarget { callee, new_target });
+                vm.set_construct_target(Some(ConstructionTarget { callee, new_target }));
                 let result = if derived_constructor {
                     vm.call_user_for_construct(p, callee, args)
                         .map(|(value, this)| (value, Some(this)))
@@ -827,7 +827,7 @@ impl<H: Host> Vm<H> {
                     vm.call_value(p, callee, object, args)
                         .map(|value| (value, None))
                 };
-                vm.construct_target = previous_target;
+                vm.set_construct_target(previous_target);
                 let (result, this) = result?;
                 if vm.is_object_like(result) {
                     return Ok(result);

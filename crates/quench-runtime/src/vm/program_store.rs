@@ -644,9 +644,16 @@ struct ProgramEntry {
     #[cfg(feature = "native-execution")]
     native_js: Option<Rc<super::native_program::NativeJsCode>>,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
-    constants: Vec<Value>,
-    const_arrays: Vec<Option<crate::heap::ArrayElements>>,
-    function_sources: Vec<Option<Value>>,
+    /// Its materialized constants, with room for those its first-call chunks append, which
+    /// never move them (`AppendVec`).
+    constants: crate::bytecode::append_vec::AppendVec<Value>,
+    /// The elements of the constant array literals that ran, by their first constant: few
+    /// programs run any, so a table dense over every constant touched a page per 256 of them
+    /// for nothing (an indirect eval of a 2 MB bundle, every load).
+    const_arrays: FxHashMap<u32, crate::heap::ArrayElements>,
+    /// The source texts `Function.prototype.toString` made, by function: few functions are
+    /// printed, so the table holds those alone, not a slot for each function and its room.
+    function_sources: FxHashMap<u32, Value>,
     /// Each RegExp literal site's record, shared by every object it evaluates to.
     regexp_literals: Vec<Option<Rc<crate::heap::RegExpMeta>>>,
     module_environment: Option<Value>,
@@ -777,6 +784,10 @@ pub(crate) struct ProgramStore {
     global_eval_programs: FxHashMap<super::eval::eval_source::EvalSource, ProgramId>,
     /// Compiled direct evals by text and the caller facts the compilation reads.
     direct_eval_programs: FxHashMap<super::eval::eval_source::DirectEvalKey, ProgramId>,
+    /// Strict direct evals by text and caller facts: a strict eval's program is its own Script
+    /// per evaluation (its eval origin is not shared), so a later eval of the same text makes a
+    /// new program over the latest one's code (`eval_cache.rs`).
+    strict_direct_eval_code: FxHashMap<super::eval::eval_source::DirectEvalKey, ProgramId>,
     owned_scripts: FxHashMap<ProgramId, OwnedScript>,
     /// Completed reclamation passes; see `reclaim_unreferenced`.
     reclaim_passes: u64,
@@ -818,6 +829,7 @@ impl Default for ProgramStore {
             programs: Vec::new(),
             global_eval_programs: FxHashMap::default(),
             direct_eval_programs: FxHashMap::default(),
+            strict_direct_eval_code: FxHashMap::default(),
             owned_scripts: FxHashMap::default(),
             reclaim_passes: 0,
             unchecked_reclaimable: 0,
@@ -1035,6 +1047,7 @@ impl ProgramStore {
     pub(crate) fn reset(&mut self, main: Rc<ResidualProgram>) -> ProgramId {
         self.global_eval_programs.clear();
         self.direct_eval_programs.clear();
+        self.strict_direct_eval_code.clear();
         self.owned_scripts.clear();
         self.programs.clear();
         self.unchecked_reclaimable = 0;
@@ -1246,18 +1259,19 @@ impl ProgramStore {
         if !retain_profile_records && let Some(program) = Rc::get_mut(&mut program) {
             program.release_replayable_records();
         }
-        let regexp_literals = vec![None; program.regexp_literal_sites.capacity()];
-        let function_sources = vec![None; program.functions.capacity()];
+        // Sized by the sites the program has: a chunk's sites, appended later, grow it.
+        let regexp_literals = vec![None; program.regexp_literal_sites.len()];
+        let function_sources = FxHashMap::default();
         let lane_views = LaneViews::default();
-        let lane_deferred = vec![std::cell::Cell::new(0); program.functions.capacity()];
+        let lane_deferred = zeroed_counts(program.functions.capacity());
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.programs.push(Some(Box::new(ProgramEntry {
             residual: Residual::decoded(program),
             #[cfg(feature = "native-execution")]
             native_js: None,
             wasm_signatures: None,
-            constants: Vec::new(),
-            const_arrays: Vec::new(),
+            constants: Vec::new().into(),
+            const_arrays: FxHashMap::default(),
             function_sources,
             regexp_literals,
             module_environment: None,
@@ -1564,10 +1578,11 @@ impl ProgramStore {
         }
     }
 
-    pub(crate) fn set_constants(&mut self, id: ProgramId, constants: Vec<Value>) {
+    /// Sets program `id`'s materialized constants, with room for `headroom` more.
+    pub(crate) fn set_constants(&mut self, id: ProgramId, constants: Vec<Value>, headroom: usize) {
         if let Some(entry) = self.entry_mut(id) {
-            entry.const_arrays = vec![None; constants.capacity()];
-            entry.constants = constants;
+            entry.const_arrays.clear();
+            entry.constants = crate::bytecode::append_vec::AppendVec::with_headroom(constants, headroom);
             // Lane views carry constants, so they derive from the new set.
             entry.lane_views = LaneViews::default();
         }
@@ -2435,7 +2450,7 @@ impl ProgramStore {
         id: ProgramId,
     ) -> Option<(&ResidualProgram, &[LaneViewCell], &[Value])> {
         let entry = self.entry(id)?;
-        Some((&entry.residual, entry.lane_views.of(&entry.residual), entry.constants.as_slice()))
+        Some((&entry.residual, entry.lane_views.of(&entry.residual), &entry.constants[..]))
     }
 
     /// Invalidates every lane view's bindings to shape IDs: compaction renumbered
@@ -2535,7 +2550,7 @@ impl ProgramStore {
 
     pub(crate) fn constants(&self, id: ProgramId) -> &[Value] {
         self.entry(id)
-            .map_or(&[], |entry| entry.constants.as_slice())
+            .map_or(&[], |entry| &entry.constants[..])
     }
 
     #[cfg(feature = "native-execution")]
@@ -2565,19 +2580,17 @@ impl ProgramStore {
     ) -> Option<crate::heap::ArrayElements> {
         let entry = self.entry_mut(id)?;
         let end = start.checked_add(count)?;
-        let cached = entry.const_arrays.get_mut(start)?;
-        if cached.is_none() {
-            *cached = Some(crate::heap::ArrayElements::from_slice(entry.constants.get(start..end)?));
+        let key = u32::try_from(start).ok()?;
+        if let Some(cached) = entry.const_arrays.get(&key) {
+            return Some(cached.clone());
         }
-        cached.clone()
+        let elements = crate::heap::ArrayElements::from_slice(entry.constants.get(start..end)?);
+        entry.const_arrays.insert(key, elements.clone());
+        Some(elements)
     }
 
     pub(crate) fn function_source(&self, id: ProgramId, function: u32) -> Option<Value> {
-        self.entry(id)?
-            .function_sources
-            .get(function as usize)
-            .copied()
-            .flatten()
+        self.entry(id)?.function_sources.get(&function).copied()
     }
 
     pub(crate) fn cache_function_source(
@@ -2586,11 +2599,9 @@ impl ProgramStore {
         function: u32,
         source: Value,
     ) -> Option<Value> {
-        let cached = self
-            .entry_mut(id)?
-            .function_sources
-            .get_mut(function as usize)?;
-        Some(*cached.get_or_insert(source))
+        let entry = self.entry_mut(id)?;
+        (function < entry.residual.functions.capacity() as u32).then_some(())?;
+        Some(*entry.function_sources.entry(function).or_insert(source))
     }
 
     pub(crate) fn regexp_literal_meta(
@@ -2610,6 +2621,9 @@ impl ProgramStore {
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
+        if site >= entry.regexp_literals.len() && site < entry.residual.regexp_literal_sites.capacity() {
+            entry.regexp_literals.resize(site + 1, None);
+        }
         let Some(cached) = entry.regexp_literals.get_mut(site) else {
             return false;
         };
@@ -2644,7 +2658,7 @@ impl ProgramStore {
                 entry.minor_root_traces = entry.minor_root_traces.min(age.minors()) - 1;
             }
             roots.extend_from_slice(&entry.constants);
-            roots.extend(entry.function_sources.iter().flatten());
+            roots.extend(entry.function_sources.values().copied());
             roots.extend(entry.module_environment);
             roots.extend(entry.import_meta);
             roots.extend(entry.module_imports.iter().map(|(_, import)| match import {
@@ -3004,4 +3018,13 @@ fn count_comparison_guard(census: &mut (u32, u32, u32, u32), operator: u32) {
     } else if named(&ORDER) {
         census.3 = census.3.saturating_add(1);
     }
+}
+
+/// `len` zero counts on zero pages: a program's per-function counts take a slot for each
+/// function it may append, which a filled table would touch at its load.
+pub(super) fn zeroed_counts(len: usize) -> Vec<std::cell::Cell<u8>> {
+    let mut zeros = std::mem::ManuallyDrop::new(vec![0u8; len]);
+    // SAFETY: `Cell<u8>` has the layout of `u8`, so the zeroed buffer is `len` counts of 0,
+    // owned by the new vector alone.
+    unsafe { Vec::from_raw_parts(zeros.as_mut_ptr().cast::<std::cell::Cell<u8>>(), zeros.len(), zeros.capacity()) }
 }

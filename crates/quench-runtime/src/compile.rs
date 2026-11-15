@@ -1253,7 +1253,7 @@ impl Engine {
         let semantic = semantic_stats::checked_semantic(&parsed.program, name)?;
         let mut private_name_ids = private_name_ids(&semantic.semantic);
         let mut private_name_labels = private_name_labels(&semantic.semantic);
-        let mut prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program);
+        let mut prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program, &Default::default());
         #[cfg(feature = "verify-replay")]
         let free_names = free_names::free_names(&semantic.semantic, &parsed.program);
         let inherited_private_ids = if wrapped_eval

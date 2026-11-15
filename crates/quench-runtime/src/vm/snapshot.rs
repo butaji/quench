@@ -89,8 +89,9 @@ impl Snap for property_key::PropertyKey {
                 writer.u8(property_key_tag::SYMBOL);
                 writer.value(symbol);
             }
-            Self::Private(atom) => {
+            Self::Private(home, atom) => {
                 writer.u8(property_key_tag::PRIVATE);
+                writer.value(home);
                 writer.u32(atom);
             }
         }
@@ -100,7 +101,7 @@ impl Snap for property_key::PropertyKey {
         Ok(match reader.u8()? {
             property_key_tag::STRING => Self::String(reader.u32()?),
             property_key_tag::SYMBOL => Self::Symbol(reader.value()?),
-            property_key_tag::PRIVATE => Self::Private(reader.u32()?),
+            property_key_tag::PRIVATE => Self::Private(reader.value()?, reader.u32()?),
             _ => return Err(SnapshotError("invalid snapshot property key".into())),
         })
     }
@@ -242,6 +243,8 @@ impl<H: Host> Vm<H> {
             typed_views: _,
             native_microtask_running,
             unobserved_jobs_entered: _,
+            chain_await_jobs: _,
+            await_chain: _,
             host,
             specialized,
             heap,
@@ -354,6 +357,7 @@ impl<H: Host> Vm<H> {
             array_index_atoms: _,
             atom_sequence,
             regexp_subjects: _,
+            concat_memo: _,
             regexp_matchers: _,
             atom_classes: _,
             intrinsic_natives: _,
@@ -579,6 +583,7 @@ impl<H: Host> Vm<H> {
         Vec::<(Atom, Value)>::unsnap(&mut reader)?.into_iter().for_each(|(atom, string)| self.heap.register_string_atom(string, atom, true));
         self.startup_intrinsics = startup_intrinsics::StartupIntrinsics::read_snapshot(&mut reader)?;
         self.with_scope_entered = reader.bool()?;
+        self.refresh_call_refusal();
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_realm");
         self.programs = ProgramStore::read_snapshot(&mut reader, &bytes, &self.atom_sequence)?;

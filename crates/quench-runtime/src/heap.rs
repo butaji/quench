@@ -19,7 +19,7 @@ mod cell;
 mod dependencies;
 pub(crate) use dependencies::{
     Dependencies, INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache,
-    ProofKind,
+    NO_PROVED_LAYOUT, ProofKind,
 };
 mod cell_access;
 mod buffer_bytes;
@@ -169,6 +169,8 @@ pub(crate) struct NativeObjectLayout {
     /// a recorded shape leaves out: a guard of a recorded shape masks them off the word.
     pub(crate) inline_form: u32,
     pub(crate) extras_form: u32,
+    pub(crate) narrow_form: u32,
+    pub(crate) narrow_run_tag: u64,
     pub(crate) inline_property_count: usize,
     pub(crate) extras_tag: u64,
     pub(crate) extras_tag_mask: u64,
@@ -200,6 +202,8 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     dictionary_mask: crate::value_vec::DICTIONARY_STORAGE,
     inline_form: cell::NATIVE_OBJECT_INLINE_FORM,
     extras_form: cell::NATIVE_OBJECT_EXTRAS_FORM,
+    narrow_form: crate::value_vec::NARROW_FORM,
+    narrow_run_tag: cell::NATIVE_OBJECT_NARROW_RUN_TAG,
     inline_property_count: INLINE_PROPERTY_COUNT,
     extras_tag: cell::NATIVE_OBJECT_EXTRAS_TAG,
     extras_tag_mask: cell::NATIVE_OBJECT_EXTRAS_TAG_MASK,
@@ -632,6 +636,7 @@ pub(crate) struct Heap {
     /// Small strings (`small_strings`): ids of the string records' hole, and the texts read.
     small_strings: small_strings::SmallStringSpace,
     small_views: small_strings::SmallViews,
+    small_templates: small_strings::SmallTemplates,
     string_atoms: string_atoms::StringAtoms,
     /// Wasm vectors: immutable leaves (`Heap::alloc_v128`), in a slot when this is full.
     v128_records: V128RecordSpace,
@@ -777,6 +782,10 @@ pub(crate) struct Heap {
     /// Under `QUENCH_DEV=rc-verify`, the candidates counts would have freed, kept instead
     /// until a full collection's trace checks that none is reachable.
     rc_suspects: Vec<Value>,
+    /// The last minor collection's counting (`QUENCH_TRACE=gc`): the microseconds before
+    /// and after its mark, its candidates, the zero-count records it carried, its young
+    /// survivors, and the candidates it freed.
+    rc_trace: [u64; 6],
     /// Marks on the parallel pool whatever the heap's size (`Heap::parallel_mark`), so unit
     /// tests reach the parallel path with small heaps.
     #[cfg(test)]
@@ -1270,7 +1279,12 @@ impl Heap {
         // A flag, not an edge: no write barrier for record prototypes.
         match prototype.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-            Some(record_id) => Some(unsafe { self.object_records.get_live_mut_unbarriered(record_id) }),
+            Some(record_id) => {
+                let object = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
+                // A prototype takes extras (`Object::mark_as_prototype`), which hold wide runs.
+                access::widen_narrow_run(object, &mut self.properties);
+                Some(object)
+            }
             None => self.object_mut(prototype),
         }
     }
@@ -2069,7 +2083,9 @@ impl Heap {
             }
             .expect("property owner remains live during compaction");
             let mut vector = object.properties();
-            target += properties.compact_vector(&mut vector, target);
+            // A plain object's values may take a narrow run (`value_vec::NARROW_FORM`).
+            let narrows = owner.direct_object_index().is_some() && !object.has_extras() && !object.is_array();
+            target += properties.compact_vector(&mut vector, target, narrows);
             object.set_properties(vector, properties);
         }
         properties.finish_compaction(target);
@@ -2094,6 +2110,7 @@ impl Heap {
         self.string_records = StringRecordSpace::default();
         self.small_strings = small_strings::SmallStringSpace::default();
         self.small_views = small_strings::SmallViews::default();
+        self.small_templates = small_strings::SmallTemplates::default();
         self.clear_string_atoms();
         self.v128_records = V128RecordSpace::default();
         self.marks.clear();
@@ -2221,8 +2238,10 @@ impl Heap {
         std::mem::take(&mut self.abandoned_contexts)
     }
     pub(crate) fn should_full_collect(&self) -> bool {
+        // Under counts, minor collections free old garbage: the backup trace runs when
+        // `Heap::rc_plan` finds the live records grown, not at an allocation cap.
         self.full_due
-            || self.pacing().allocation_cap_reached(
+            || !self.rc_active && self.pacing().allocation_cap_reached(
                 self.live_after_full,
                 self.allocated_since_full(),
                 self.pacing_state.cap_backoff,
@@ -2501,7 +2520,9 @@ impl Heap {
                 }
             }
             if self.rc_active {
+                let started = std::time::Instant::now();
                 self.rc_pre_mark(&mut work);
+                self.rc_trace[0] = started.elapsed().as_micros() as u64;
             }
         }
         #[cfg(debug_assertions)]
@@ -2599,7 +2620,9 @@ impl Heap {
         self.mark_stack = { work.clear(); work };
         let finalization_jobs = self.prune_weak_entries(full, age);
         if self.rc_active && !full {
+            let started = std::time::Instant::now();
             self.rc_epoch();
+            self.rc_trace[1] = started.elapsed().as_micros() as u64;
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
@@ -3017,7 +3040,10 @@ impl Heap {
                 .ok()
                 .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<usize>().ok())
                 .map_or(0, |pages| pages * 4);
-            eprintln!("gc rss_kb={rss_kb} live_weight={live_weight} full={full}{concurrent} mark_us={mark_us} sweep_us={sweep_us} records_us={trace_records_us} resident_start={} resident_kept={} weight_between_fulls={} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.resident_at_full_start, self.resident_after_full, self.weight_between_fulls, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state);
+            eprintln!("gc rss_kb={rss_kb} live_weight={live_weight} full={full}{concurrent} mark_us={mark_us} rc={:?} sweep_us={sweep_us} records_us={trace_records_us} resident_start={} resident_kept={} weight_between_fulls={} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?} {}", self.rc_trace, self.resident_at_full_start, self.resident_after_full, self.weight_between_fulls, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state, self.properties.trace_summary());
+        }
+        if full && crate::trace::Channel::StorageCensus.on() {
+            self.trace_storage_census();
         }
         self.live_weight_after_previous = live_weight;
         self.set_young_budget(next.threshold);
@@ -4009,7 +4035,7 @@ impl Heap {
         let data = self.object(object)?;
         let vector = data.properties();
         let shape = data.shape();
-        if vector.has_inline_property_storage() || vector.is_dictionary() || slot >= self.properties.len(vector) {
+        if vector.has_inline_property_storage() || vector.is_dictionary() || vector.is_narrow() || slot >= self.properties.len(vector) {
             return None;
         }
         // A widening can retire an active caller. Decline before exposing a raw
@@ -4349,13 +4375,28 @@ impl Heap {
         trace_kind: GcTraceKind,
         last_proto: &mut PushedProtos,
     ) {
-        let proto = object.proto();
-        if proto.is_heap() && last_proto.first_push(proto) {
-            work.push(proto);
-        }
-        object_roots(trace_kind, owner, object.shape(), object.was_used_as_prototype(), work);
-        object.visit_extras_roots(|value| work.push(value));
-        if let Some(values) = object.inline_properties() {
+        // The common object: inline values, no extras. Its prototype is tested by link first,
+        // and its values by narrow code, before anything is decoded. One loop takes either
+        // kind of inline values, so `mark_leaf` stays inlined at a single site.
+        let inline = if let Some((link, narrows)) = object.plain_inline_trace() {
+            if last_proto.first_link(link) {
+                let proto = link.prototype();
+                if proto.is_heap() && last_proto.first_push(proto) {
+                    work.push(proto);
+                }
+            }
+            object_roots(trace_kind, owner, object.shape(), false, work);
+            Some(narrows.map(|narrow| if Value::narrow_is_heap(narrow) { Value::from_narrow(narrow) } else { Value::UNDEFINED }))
+        } else {
+            let proto = object.proto();
+            if proto.is_heap() && last_proto.first_push(proto) {
+                work.push(proto);
+            }
+            object_roots(trace_kind, owner, object.shape(), object.was_used_as_prototype(), work);
+            object.visit_extras_roots(|value| work.push(value));
+            object.inline_properties()
+        };
+        if let Some(values) = inline {
             for value in values {
                 if value.is_heap() && !value.is_deleted() && !mark_leaf(value, work, last_proto) {
                     work.push(value);
@@ -4880,6 +4921,11 @@ fn note_young_owner(owners: &mut Vec<(usize, RecordId)>, start: usize, record_id
 fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
     properties.note_shape_value(shape, slot, value);
     let mut vector = data.properties();
+    if vector.is_narrow() {
+        // An add grows the run, which only a wide run does (`ValueArena::push`).
+        vector = properties.widen(vector);
+        data.set_properties(vector, properties);
+    }
     if !vector.has_inline_property_storage() {
         let before = vector.into_parts();
         properties.push(&mut vector, value);
@@ -4965,6 +5011,18 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
             // SAFETY: as above.
             unsafe { store_extended_slot(data, properties, slot, value, inline) };
         }
+        // A narrow run takes a narrow value in place; another value widens it first.
+        ExactStorage::Narrow => match value.to_narrow() {
+            // SAFETY: as above.
+            Some(narrow) => unsafe { properties.narrow_set(data.properties(), slot, narrow) },
+            None if layout != PropertyStoreLayout::MayWiden => return false,
+            None => {
+                let wide = properties.widen(data.properties());
+                data.set_properties(wide, properties);
+                // SAFETY: as above; the widened run holds every slot.
+                unsafe { properties.set_unchecked(data.properties(), slot, value) };
+            }
+        },
     }
     true
 }
@@ -4991,15 +5049,28 @@ mod offset_order_tests;
 /// objects alternates between theirs and their arrays' (V8-v7 Splay's leaves: one entry
 /// missed about twice per leaf, a third of the pops of a full collection).
 #[derive(Clone, Copy)]
-pub(crate) struct PushedProtos([Value; 2]);
+pub(crate) struct PushedProtos([Value; 2], ProtoLink);
 
 impl Default for PushedProtos {
     fn default() -> Self {
-        Self([Value::UNDEFINED; 2])
+        Self([Value::UNDEFINED; 2], ProtoLink::NULL)
     }
 }
 
 impl PushedProtos {
+    /// Whether `link` is not the prototype link this walk tested last; it then becomes the
+    /// last. A prototype this walk tested was pushed then (or was not a heap value), and a
+    /// push need happen once per collection, so a run of objects that share a prototype
+    /// decodes it once.
+    #[inline(always)]
+    pub(crate) fn first_link(&mut self, link: ProtoLink) -> bool {
+        if link == self.1 {
+            return false;
+        }
+        self.1 = link;
+        true
+    }
+
     /// Whether `proto` is not one of the two pushed last; it then becomes the newest.
     #[inline(always)]
     pub(crate) fn first_push(&mut self, proto: Value) -> bool {
@@ -5008,5 +5079,107 @@ impl PushedProtos {
         }
         self.0 = [proto, self.0[0]];
         true
+    }
+}
+
+impl Heap {
+    /// `QUENCH_TRACE=storage-census`: per container, the live 8-byte values and how many have a
+    /// narrow form (`Value::to_narrow`), the bytes that 4-byte storage would save, and the
+    /// record counts beside them, after a full collection. One line, in KB where sized.
+    #[cold]
+    #[inline(never)]
+    fn trace_storage_census(&self) {
+        #[derive(Default)]
+        struct Tally { containers: usize, values: usize, narrow: usize, words: usize }
+        impl Tally {
+            fn take(&mut self, values: impl Iterator<Item = Value>) {
+                self.containers += 1;
+                for value in values {
+                    self.values += 1;
+                    if value.to_narrow().is_some() { self.narrow += 1; }
+                }
+            }
+            fn line(&self, name: &str) -> String {
+                format!("{name}={}/{}n/{}w/{}c save={}KB", self.values, self.narrow, self.words, self.containers, self.narrow_savings() / 1024)
+            }
+            fn narrow_savings(&self) -> usize {
+                // A narrow value takes 4 bytes of the 8, where the container is narrow whole.
+                self.narrow * 4
+            }
+        }
+        let properties = &self.properties;
+        let mut own = Tally::default();
+        let mut runs_narrow = 0usize;
+        let mut elements = Tally::default();
+        let mut element_capacity = 0usize;
+        let mut take_object = |object: &Object, own: &mut Tally| {
+            let vector = object.properties();
+            if vector.is_dictionary() { return; }
+            let len = properties.len(vector);
+            if !vector.has_inline_property_storage() {
+                own.words += properties.capacity(vector);
+            }
+            if vector.is_narrow() || vector.has_inline_property_storage() {
+                // Already 4 bytes a value, or in the record's own word: nothing more to save.
+                runs_narrow += usize::from(vector.is_narrow());
+                own.containers += 1;
+                own.values += len;
+                return;
+            }
+            own.take((0..len).filter_map(|slot| properties.get(vector, slot)));
+        };
+        let (mut objects, mut arrays, mut functions) = (0usize, 0usize, 0usize);
+        self.object_records.for_each_live(|_, object| { objects += 1; take_object(object, &mut own); });
+        self.array_records.for_each_live(|_, array| {
+            arrays += 1;
+            take_object(array, &mut own);
+            let backing = array.elements();
+            element_capacity += backing.capacity();
+            elements.words += backing.capacity();
+            elements.take(backing.as_slice().iter().copied());
+        });
+        self.function_records.for_each_live(|_, function| { functions += 1; take_object(&function.object, &mut own); });
+        let (mut maps, mut sets, mut environments, mut cells) = (Tally::default(), Tally::default(), Tally::default(), 0usize);
+        let mut map_bytes = 0usize;
+        for slot in self.slots.iter() {
+            let Some(cell) = slot.cell.as_ref() else { continue };
+            cells += 1;
+            match cell {
+                Cell::Map { entries, .. } => {
+                    map_bytes += entries.payload_bytes();
+                    maps.words += 2 * entries.capacity();
+                    maps.take(entries.iter().flat_map(|(key, value)| [key, value]));
+                }
+                Cell::Set { entries, .. } => {
+                    map_bytes += entries.payload_bytes();
+                    sets.words += entries.capacity();
+                    sets.take(entries.iter());
+                }
+                Cell::Environment { slots, .. } => {
+                    environments.containers += 1;
+                    environments.values += slots.len();
+                    environments.words += slots.len();
+                }
+                _ => {}
+            }
+        }
+        let _ = element_capacity;
+        let rss_kb = std::fs::read_to_string("/proc/self/statm")
+            .ok()
+            .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<usize>().ok())
+            .map_or(0, |pages| pages * 4);
+        let total = own.narrow_savings() + elements.narrow_savings() + maps.narrow_savings() + sets.narrow_savings();
+        eprintln!(
+            "storage census: rss_kb={rss_kb} records objects={objects} arrays={arrays} functions={functions} cells={cells} arena_words={} {} narrow_runs={runs_narrow} {} {} {} envs={}/{}c map_set_payload={}KB save_total={}KB",
+            properties.resident_words(),
+            own.line("own"),
+            elements.line("elements"),
+            maps.line("map"),
+            sets.line("set"),
+            environments.values,
+            environments.containers,
+            map_bytes / 1024,
+            total / 1024,
+        );
     }
 }

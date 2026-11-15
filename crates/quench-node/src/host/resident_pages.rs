@@ -367,8 +367,21 @@ pub fn map_read_only_file(fd: libc::c_int, length: usize) -> Option<usize> {
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_tracked_bytes(bytes: &[u8]) {
     let page = page_size();
-    let start = (bytes.as_ptr() as usize).next_multiple_of(page);
-    let end = (bytes.as_ptr() as usize + bytes.len()) / page * page;
+    release_tracked_range((bytes.as_ptr() as usize).next_multiple_of(page), (bytes.as_ptr() as usize + bytes.len()) / page * page);
+}
+
+/// A decoded deferred record's pages (`quench_runtime::set_record_read`), including the pages
+/// it shares with its neighbours: records are mostly smaller than a page and decode in
+/// call order, so whole pages would rarely clear; a neighbour still to decode refaults its
+/// page from the file.
+pub fn release_read_record(bytes: &[u8]) {
+    let page = page_size();
+    let start = bytes.as_ptr() as usize / page * page;
+    release_tracked_range(start, (bytes.as_ptr() as usize + bytes.len()).next_multiple_of(page));
+}
+
+/// Defers releasing the tracked file pages `start..end` (page-aligned) with the others.
+fn release_tracked_range(start: usize, end: usize) {
     if start >= end {
         return;
     }
@@ -1070,6 +1083,9 @@ pub fn release_read_only_pages_now() {}
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_tracked_bytes(_bytes: &[u8]) {}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_read_record(_bytes: &[u8]) {}
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_pages_after_load() {}

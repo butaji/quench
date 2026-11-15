@@ -21,8 +21,7 @@ impl ProgramStore {
     /// Adds `values`, the materialized constants a chunk appended to program `id`, to its own.
     pub(in crate::vm) fn push_constants(&mut self, id: ProgramId, values: impl ExactSizeIterator<Item = Value>) {
         if let Some(entry) = self.entry_mut(id) {
-            debug_assert!(entry.constants.capacity() - entry.constants.len() >= values.len(), "a program's constants never move");
-            entry.constants.extend(values);
+            entry.constants.append(values);
         }
     }
 }

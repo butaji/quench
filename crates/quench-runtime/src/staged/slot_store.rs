@@ -23,7 +23,8 @@ pub(crate) fn admitted_payload<S: Stage>(stage: &mut S, record: S::Word, record_
     value: S::Word, miss: S::Miss) -> Option<(S::Word, S::Cond)> {
     let word = super::object::header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
     if hinted {
-        let shape = stage.site(u64::from(shape & !OBJECT.extras_form));
+        // A hint of extras or a narrow run admits no store here: the word then never matches.
+        let shape = stage.site(u64::from(shape & !(OBJECT.extras_form | OBJECT.narrow_form)));
         let same = stage.eq_imm(word, shape);
         stage.guard(same, miss)?;
     } else {
@@ -31,8 +32,9 @@ pub(crate) fn admitted_payload<S: Stage>(stage: &mut S, record: S::Word, record_
         let shape = stage.site(u64::from(shape));
         let same = stage.eq_imm(exact, shape);
         stage.guard(same, miss)?;
-        let extras = storage_form(stage, word, OBJECT.extras_form);
-        let plain = stage.not(extras);
+        // Neither extras nor a narrow run: the payload is a packed word or a wide run's start.
+        let displaced = storage_form(stage, word, OBJECT.extras_form | OBJECT.narrow_form);
+        let plain = stage.not(displaced);
         stage.guard(plain, miss)?;
     }
     let open = stage.store_gate(record_id, value);

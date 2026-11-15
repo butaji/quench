@@ -161,7 +161,7 @@ pub(super) fn exact_shape(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlags
     let base = builder.ins().iconst(types::I64, crate::heap::layouts::table_base() as i64);
     let entry = builder.ins().iadd(base, offset);
     let word = builder.ins().load(types::I32, flags, entry, layout.auxiliary_offset as i32);
-    builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form)))
+    builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form | layout.narrow_form)))
 }
 
 /// `staged::object::inline_storage`'s residual for the record at `record`.
@@ -475,7 +475,7 @@ impl CheckedObject {
     pub(super) fn arena_address(self, builder: &mut FunctionBuilder<'_>, slot: u16, miss: ir::Block) -> Option<ir::Value> {
         debug_assert!(usize::from(slot) < self.0.storage_len);
         let base = match self.0.slots {
-            Slots::Packed(_) => return None,
+            Slots::Packed(_) | Slots::Narrow(_) => return None,
             Slots::Flat(base) => base,
             Slots::Either { inline, flat, .. } => {
                 let is_flat = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);

@@ -61,8 +61,8 @@ pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     let target = lane_script_target(cx, setter).filter(|target| !target.forwards())?;
     let this = lane_call_this(vm, &target, object)?;
     // SAFETY: the record's value register is one of the running function's.
-    let stored = ActivationArguments::Kept(unsafe { r.0.add(usize::from(i.a)) }, 1);
-    Some(match lane_activate_keeping::<H, false>(cx, r, ip, &target, stored, this, false, None) {
+    let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };
+    Some(match lane_activate_kept::<H, false>(cx, r, ip, &target, stored, this) {
         Ok((registers, next)) => {
             if let Some(Activation { kind: ActivationKind::Script(script), .. }) = vm.lane_stack.activations.last_mut() {
                 script.completion = Completion::Assigns;

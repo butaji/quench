@@ -55,21 +55,40 @@ pub(crate) struct PromiseReaction {
     pub(crate) next: Value,
     pub(crate) execution_context: StoredHostContext,
 }
-/// A pending promise's reactions. Most promises gain one `then` before they settle, which
-/// is stored inline in the record's box instead of in an allocation of its own.
+/// A promise's reactions, as they leave a record that settles. Most promises gain one `then`
+/// before they settle, which the record keeps inline.
 pub(crate) type PromiseReactions = smallvec::SmallVec<[PromiseReaction; 1]>;
 
+/// A promise's [[PromiseState]], [[PromiseResult]], reactions, rejection tracking and host
+/// context, in 56 bytes. A pending promise has reactions and no result or rejection
+/// identifier; a settled one has a result, maybe an identifier, and no reactions: the two
+/// share `first`. With a field for each, the record took 80 bytes and a promise's cell 96
+/// (doxbee-promise held 19 MB of promise records at its peak).
 #[derive(Clone, Debug)]
 pub(crate) struct PromiseRecord {
-    pub(crate) state: PromiseState,
-    pub(crate) result: Value,
-    pub(crate) reactions: PromiseReactions,
-    pub(crate) rejection: PromiseRejectionState,
     pub(crate) host_context: StoredHostContext,
+    /// Pending: the first reaction, when `has_first`. Settled: `on_fulfilled` is the
+    /// result, `on_rejected` and `next` are undefined, and `execution_context` holds the
+    /// rejection's identifier (0 for none), not a host context.
+    first: PromiseReaction,
+    /// Pending: the reactions after the first, in order.
+    more: Option<Box<Vec<PromiseReaction>>>,
+    state: PromiseState,
+    phase: PromiseRejectionPhase,
+    has_first: bool,
     /// A module's async evaluation waits on this promise: settling it makes module
     /// advancement due (`PromiseRuntime::async_module_settled`).
     pub(crate) module_evaluation: bool,
 }
+
+const _: () = assert!(size_of::<PromiseRecord>() == 56);
+
+const NO_REACTION: PromiseReaction = PromiseReaction {
+    on_fulfilled: Value::UNDEFINED,
+    on_rejected: Value::UNDEFINED,
+    next: Value::UNDEFINED,
+    execution_context: StoredHostContext(NO_HOST_CONTEXT),
+};
 
 /// Where a promise's rejection is in the host's reporting. From `AwaitingReport` on, the
 /// state carries the identifier the host knows the rejection by (they start at one), which
@@ -130,18 +149,124 @@ impl PromiseRejectionState {
 }
 
 impl PromiseRecord {
-    /// Bytes the reactions hold outside the record.
-    pub(crate) fn reaction_heap_bytes(&self) -> usize {
-        if self.reactions.spilled() {
-            self.reactions.capacity() * size_of::<PromiseReaction>()
-        } else {
-            0
+    /// A pending promise with no reactions under `host_context`.
+    pub(crate) fn pending(host_context: StoredHostContext) -> Self {
+        Self {
+            host_context,
+            first: NO_REACTION,
+            more: None,
+            state: PromiseState::Pending,
+            phase: PromiseRejectionPhase::Unobserved,
+            has_first: false,
+            module_evaluation: false,
         }
     }
 
+    /// A record of these parts, or `None` when they contradict each other: a pending promise
+    /// with a result or a rejection identifier, or a settled one with reactions.
+    pub(crate) fn from_parts(
+        state: PromiseState,
+        result: Value,
+        reactions: PromiseReactions,
+        rejection: PromiseRejectionState,
+        host_context: StoredHostContext,
+    ) -> Option<Self> {
+        let mut record = Self::pending(host_context);
+        if state == PromiseState::Pending {
+            if rejection.parts().1.is_some() || result != Value::UNDEFINED {
+                return None;
+            }
+            for reaction in reactions {
+                record.push_reaction(reaction);
+            }
+        } else {
+            if !reactions.is_empty() {
+                return None;
+            }
+            record.settle(state, result);
+        }
+        record.set_rejection(rejection);
+        Some(record)
+    }
+
+    #[inline(always)]
+    pub(crate) fn state(&self) -> PromiseState {
+        self.state
+    }
+
+    /// [[PromiseResult]]: undefined while pending.
+    #[inline(always)]
+    pub(crate) fn result(&self) -> Value {
+        if self.state == PromiseState::Pending { Value::UNDEFINED } else { self.first.on_fulfilled }
+    }
+
+    pub(crate) fn rejection(&self) -> PromiseRejectionState {
+        let id = if self.state == PromiseState::Pending {
+            None
+        } else {
+            std::num::NonZeroU64::new(self.first.execution_context.0)
+        };
+        PromiseRejectionState::from_parts(self.phase, id).expect("a reported rejection keeps its identifier")
+    }
+
+    /// Records where the rejection is in the host's reporting. Only a settled promise's
+    /// rejection carries an identifier.
+    pub(crate) fn set_rejection(&mut self, rejection: PromiseRejectionState) {
+        let (phase, id) = rejection.parts();
+        if self.state != PromiseState::Pending {
+            self.first.execution_context = StoredHostContext(id.map_or(0, std::num::NonZeroU64::get));
+        } else {
+            assert!(id.is_none(), "a pending promise's rejection has no identifier");
+        }
+        self.phase = phase;
+    }
+
+    /// Adds a reaction to a pending promise.
+    pub(crate) fn push_reaction(&mut self, reaction: PromiseReaction) {
+        debug_assert_eq!(self.state, PromiseState::Pending);
+        if self.has_first {
+            self.more.get_or_insert_with(Default::default).push(reaction);
+        } else {
+            self.first = reaction;
+            self.has_first = true;
+        }
+    }
+
+    /// The pending promise's reactions, in order; none once it settled.
+    pub(crate) fn reactions(&self) -> impl Iterator<Item = &PromiseReaction> {
+        let pending = self.state == PromiseState::Pending;
+        let first = (pending && self.has_first).then_some(&self.first);
+        let more = if pending { self.more.as_deref().map_or(&[][..], Vec::as_slice) } else { &[] };
+        first.into_iter().chain(more)
+    }
+
+    /// Settles a pending promise with `result`, handing back its reactions.
+    pub(crate) fn settle(&mut self, state: PromiseState, result: Value) -> PromiseReactions {
+        debug_assert_eq!(self.state, PromiseState::Pending);
+        debug_assert_ne!(state, PromiseState::Pending);
+        let mut reactions = PromiseReactions::new();
+        if self.has_first {
+            reactions.push(self.first);
+        }
+        if let Some(more) = self.more.take() {
+            reactions.extend(*more);
+        }
+        self.has_first = false;
+        self.state = state;
+        self.first = PromiseReaction { on_fulfilled: result, execution_context: StoredHostContext(0), ..NO_REACTION };
+        reactions
+    }
+
+    /// Bytes the reactions hold outside the record.
+    pub(crate) fn reaction_heap_bytes(&self) -> usize {
+        self.more.as_deref().map_or(0, |more| {
+            size_of::<Vec<PromiseReaction>>() + more.capacity() * size_of::<PromiseReaction>()
+        })
+    }
+
     pub(crate) fn append_roots(&self, roots: &mut Vec<Value>) {
-        roots.push(self.result);
-        for reaction in &self.reactions {
+        roots.push(self.result());
+        for reaction in self.reactions() {
             roots.push(reaction.on_fulfilled);
             roots.push(reaction.on_rejected);
             roots.push(reaction.next);
@@ -164,7 +289,7 @@ impl AbandonedHostContexts {
     pub(crate) fn abandon(&mut self, record: &PromiseRecord) {
         // Plain loops: most dead promises are settled, with no reactions, under a host that
         // gave them no context, and an adapter chain costs each of them its setup.
-        for reaction in &record.reactions {
+        for reaction in record.reactions() {
             if let Some(context) = reaction.execution_context.get() {
                 self.jobs.push(context);
             }

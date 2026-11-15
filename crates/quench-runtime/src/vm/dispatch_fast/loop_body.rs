@@ -105,8 +105,13 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
         return;
     }
     let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, body)).unwrap_or_default();
-    // The loop's arrays are the activation's registers now: sampled, as an OSR loop samples its own.
-    let arrays = super::loop_tier::sampled_arrays(vm, (0..code.function_get(function as usize).map_or(0, |body| body.registers)).map(|register| r.get(register)));
+    // The loop's arrays are the activation's registers live at its header now: sampled, as an
+    // OSR loop samples its own. A dead register may hold any value a window held before
+    // (`RegisterRoots::entry_fill`), so it reads as `undefined`.
+    let live = code.register_root_masks(function);
+    let arrays = super::loop_tier::sampled_arrays(vm, (0..code.function_get(function as usize).map_or(0, |body| body.registers)).map(|register| {
+        if live.is_none_or(|live| live.is_live(site.header as usize, register)) { r.get(register) } else { Value::UNDEFINED }
+    }));
     let work = match pending {
         Some(pending) => LaneBodyWork::Poll(pending),
         None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, called: false, caller: own, arrays: &arrays },
@@ -151,7 +156,8 @@ const fn tier_up_resume(header: u32, backedge: u32, pc: u32, held: bool, ready: 
 /// body stays published for its other entries.
 pub(super) fn header_for_tier_up<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, pc: usize) -> Option<usize> {
     let pc = u32::try_from(pc).ok()?;
-    let site = &own.loops[*own.loop_at_backedge.get(pc as usize).filter(|&&index| index != NO_LOOP)? as usize];
+    let at = own.loop_at_backedge.binary_search_by_key(&pc, |&(backedge, _)| backedge).ok()?;
+    let site = &own.loops[own.loop_at_backedge[at].1 as usize];
     if !left_for_tier_up(cx, site, pc) { return None; }
     let ready = matches!(*site.body.borrow(), LoopBody::Ready { .. });
     tier_up_resume(site.header, site.backedge, pc, !site.header_handler.get().is_null(), ready).map(|header| header as usize)

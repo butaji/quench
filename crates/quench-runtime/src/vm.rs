@@ -189,6 +189,7 @@ mod shape_memo;
 mod symbol_write_proof;
 mod symbol_load_proof;
 mod private_site_home;
+mod private_slots;
 mod enumerable_key_memo;
 mod name_atom_memo;
 mod object_assignment;
@@ -827,6 +828,9 @@ enum SlotAccessor {
 #[derive(Clone, Copy)]
 struct AccessorFieldCache {
     receiver: u32,
+    /// The receiver's layout id (`Object::layout_id`): its shape and prototype in one word,
+    /// which an ordinary receiver's hit compares instead of each.
+    layout: u32,
     /// The receiver's prototype, where the chain to `holder` starts.
     prototype: Value,
     /// The prototype holding the accessor, or `OWN_ACCESSOR` for the receiver itself, whose
@@ -841,6 +845,11 @@ struct AccessorFieldCache {
     epoch: u64,
     /// The site's next older entry in `Vm::accessor_fields`, or `NO_ACCESSOR_FIELD`.
     next: u32,
+    /// The getter whose call a field read of the receiver answers (`answer`), or undefined:
+    /// `Vm::memoized_getter_answer` reads it in place of the call.
+    getter: Value,
+    /// That read's field entry, which proves the receiver's shape itself.
+    answer: FieldCache,
 }
 /// A cache site without an accessor entry (`Vm::accessor_field_indices`).
 const NO_ACCESSOR_FIELD: u32 = object::MRU_CHAIN_END;
@@ -1392,7 +1401,7 @@ impl ShapeAttributes {
 impl ShapeTransition {
     fn introduces_gc_roots(self) -> bool {
         match self {
-            Self::Add { key, .. } => key.symbol_value().is_some(),
+            Self::Add { key, .. } => key.gc_value().is_some(),
             Self::Descriptor { attributes, .. } => attributes.table_accessors(),
             Self::Root | Self::FunctionName { .. } | Self::FunctionNameReconfigured | Self::FunctionLengthReconfigured | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
         }
@@ -1414,7 +1423,7 @@ impl ShapeTransition {
             Self::Descriptor { slot, attributes } if !attributes.table_accessors() => {
                 Some(ShapeTransitionKey::Descriptor { slot, attributes })
             }
-            Self::Delete { key, .. } if key.symbol_value().is_none() => {
+            Self::Delete { key, .. } if key.gc_value().is_none() => {
                 Some(ShapeTransitionKey::Delete(key))
             }
             Self::Root
@@ -1812,6 +1821,14 @@ pub(crate) struct Vm<H> {
     /// Whether the innermost running job queue has entered the host's context for unobserved
     /// Promise jobs (`Host::enter_unobserved_job`): its consecutive jobs share that entry.
     unobserved_jobs_entered: bool,
+    /// Whether the innermost running job queue runs every job it holds in order, with no
+    /// predicate between jobs: a resumed async activation may then run the queue's next
+    /// await resumption itself (`Vm::take_chained_await`).
+    chain_await_jobs: bool,
+    /// The async function activation a job resumed and the lane runs at frame index
+    /// `AwaitChain::frame`, which an await may swap for the queue's next resumption
+    /// (`Vm::chain_lane_await`).
+    await_chain: Option<promise_async::AwaitChain>,
     pub(crate) host: H,
     specialized: bool,
     heap: Heap,
@@ -2008,6 +2025,8 @@ pub(crate) struct Vm<H> {
     /// The strings most recently matched by a RegExp whose search decodes them, most recent
     /// first, each prepared once for repeated matching (`Vm::regexp_subject`).
     regexp_subjects: regexp::SubjectCache,
+    /// The atoms concatenations of atom strings and integers spelled (`Vm::memoized_concat`).
+    concat_memo: string_cache::ConcatMemo,
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,
@@ -3001,7 +3020,7 @@ impl<H: Host> Vm<H> {
         self.direct_eval = false;
         self.parameter_eval = false;
         self.eval_script_context = false;
-        self.construct_target = None;
+        self.set_construct_target(None);
         self.realm.promise = Default::default();
         self.shapes.truncate(1);
         self.shape_constructors.clear();
@@ -3023,7 +3042,7 @@ impl<H: Host> Vm<H> {
         self.species_slot_proof.set(None);
         self.promise_species_proof.take();
         self.heap.dependencies_mut().retire_all();
-        self.enumerable_keys.clear(); self.heap.clear_string_atoms();
+        self.enumerable_keys.clear(); self.heap.clear_string_atoms(); self.concat_memo.clear();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();
@@ -3178,7 +3197,7 @@ impl<H: Host> Vm<H> {
         }
     }
     fn materialize_program_constants(&mut self, id: ProgramId, program: &ResidualProgram) {
-        let mut constants = Vec::with_capacity(program.constants.capacity());
+        let mut constants = Vec::with_capacity(program.constants.len());
         // Equal string constants share one cell, as engines intern literals: a string is an
         // immutable primitive, so which cell holds it is unobservable, and `===` between
         // literals from different sites then decides by identity before comparing text.
@@ -3200,7 +3219,7 @@ impl<H: Host> Vm<H> {
             };
             constants.push(value);
         }
-        self.programs.set_constants(id, constants);
+        self.programs.set_constants(id, constants, program.constants.capacity() - program.constants.len());
         // Lane views carry constants, so call targets naming the old views are stale.
         self.lane_stack.clear_script_targets();
         if id == self.active_program {
@@ -3299,6 +3318,22 @@ impl<H: Host> Vm<H> {
     pub(super) fn set_active_program(&mut self, program: ProgramId) {
         let constants = std::ptr::from_ref(self.programs.constants(program));
         self.activate_program(program, constants);
+    }
+
+    /// Sets the construction whose callee's frame is pending (`construct_target`), which
+    /// refuses cached lane calls while it is (`refresh_call_refusal`).
+    #[inline]
+    pub(in crate::vm) fn set_construct_target(&mut self, target: Option<ConstructionTarget>) {
+        self.construct_target = target;
+        self.refresh_call_refusal();
+    }
+
+    /// Whether cached lane calls are refused (`dispatch_fast::LaneStack::set_refused`): under a
+    /// `with` scope or a pending construction, whose calls the lane does not make from a cache.
+    #[inline]
+    pub(super) fn refresh_call_refusal(&mut self) {
+        let refused = self.with_scope_entered || self.construct_target.is_some();
+        self.lane_stack.set_refused(refused);
     }
 
     /// `set_active_program` with `program`'s constants (`ProgramStore::constants`) in hand.

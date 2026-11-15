@@ -33,6 +33,7 @@ pub(super) fn parse_program_with<'a>(
         .with_options(ParseOptions {
             allow_call_assignment_targets: true,
             lazy_function_bodies: lazy_from,
+            lazy_nested_bodies: lazy_body_check.is_some(),
             lazy_body_check,
             inherited_strict,
             ..ParseOptions::default()

@@ -3,7 +3,8 @@
 //! research/nojit/splay/rc-design.txt.
 //!
 //! An old record's count is the number of references to it from old records' contents (the
-//! values their `SatbSnapshot` copies, and a string's parts), saturating at `RC_STUCK`.
+//! values their `SatbSnapshot` copies, and a string's parts): two bits per record up to
+//! `RC_STUCK`, the references past it in an overflow table.
 //! Young records are not counted until they survive a minor collection, which makes every
 //! survivor old (`PromotionAge::First`). The barrier copies an old record's children before
 //! its first write in an epoch (`RecordSpace::rc_note`); each minor collection, the epoch's
@@ -73,7 +74,7 @@ macro_rules! with_space_mut {
 
 /// Records a minor collection makes candidates for freeing, at most: the rest of a cascade
 /// carries to the next one.
-const RC_FREE_BUDGET: usize = 1 << 16;
+const RC_FREE_BUDGET: usize = 1 << 20;
 
 /// Live records past this multiple of the last full collection's survivors (at least
 /// `RC_FULL_FLOOR`) make the next collection the backup trace, for cycles and stuck counts.
@@ -167,12 +168,6 @@ impl Heap {
         locate(value).is_some_and(|(family, id)| with_space!(self, family, |space| space.is_marked(id)))
     }
 
-    /// `rc_count_of`, for tests.
-    #[cfg(test)]
-    pub(super) fn rc_count(&self, value: Value) -> Option<u8> {
-        locate(value).map(|(family, id)| with_space!(self, family, |space| space.rc_count(id)))
-    }
-
     /// Increments the counts of the record children of each of `owners`.
     fn rc_increment_children(&self, owners: impl IntoIterator<Item = Value>, children: &mut Vec<Value>) {
         for owner in owners {
@@ -236,6 +231,8 @@ impl Heap {
             carried.sort_unstable_by_key(|value| value.to_bits());
             carried.dedup();
         }
+        self.rc_trace[2] = candidates.len() as u64;
+        self.rc_trace[3] = carried.len() as u64;
         self.rc_zero = carried;
         if !candidates.is_empty() {
             self.rc_pin_cell_references(&candidates, work);
@@ -289,6 +286,10 @@ impl Heap {
         let mut children = Vec::new();
         self.rc_increment_children(survivors.iter().copied(), &mut children);
         let candidates = std::mem::take(&mut self.rc_candidates);
+        self.rc_trace[4] = survivors.len() as u64;
+        if crate::trace::Channel::Gc.on() {
+            self.rc_trace[5] = candidates.iter().filter(|&&value| !self.rc_is_old(value)).count() as u64;
+        }
         for &candidate in &candidates {
             let Some((family, id)) = locate(candidate) else { continue };
             if with_space!(self, family, |space| space.is_marked(id)) {
@@ -402,11 +403,9 @@ impl Heap {
     }
 
     /// The records whose count differs from the references the live records' contents hold
-    /// (saturating at `RC_STUCK`), with the count and the references: none when counting is
-    /// right. A stuck count may stand for fewer references, which the barrier's missed
-    /// deletions leave.
+    /// with the count and the references: none when counting is right.
     #[cfg(test)]
-    pub(super) fn rc_mismatches(&self) -> Vec<(Value, u8, usize)> {
+    pub(super) fn rc_mismatches(&self) -> Vec<(Value, u32, usize)> {
         let mut references: std::collections::HashMap<Value, usize> = std::collections::HashMap::new();
         let mut children = Vec::new();
         for (family, handle) in self.record_families() {
@@ -423,9 +422,10 @@ impl Heap {
         for (family, handle) in self.record_families() {
             family.for_each_live_id(&mut |id| {
                 let value = handle(id);
-                let count = self.rc_count(value).expect("a record");
+                let (family, id) = locate(value).expect("a record");
+                let count = with_space!(self, family, |space| space.rc_exact_count(id));
                 let held = references.get(&value).copied().unwrap_or(0);
-                if count != held.min(records::RC_STUCK as usize) as u8 && count != records::RC_STUCK {
+                if count != u32::MAX && count as usize != held {
                     mismatches.push((value, count, held));
                 }
             });

@@ -357,7 +357,7 @@ impl<H: Host> Vm<H> {
     /// `key` as a JavaScript property key value.
     fn property_key_value(&mut self, key: PropertyKey) -> Value {
         match key {
-            PropertyKey::String(atom) | PropertyKey::Private(atom) => {
+            PropertyKey::String(atom) | PropertyKey::Private(_, atom) => {
                 self.heap.alloc_string(self.atom_value(atom))
             }
             PropertyKey::Symbol(symbol) => symbol,

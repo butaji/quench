@@ -26,17 +26,12 @@ impl<H: Host> Vm<H> {
     /// `length`, and a typed array's or DataView's `byteLength` and `byteOffset`), wherever a
     /// prototype holds it, as primordials copy it. `None` leaves the read to the general path.
     pub(super) fn pure_virtual_field(&self, object: Value, atom: Atom) -> Option<Value> {
-        if !self.atom_class(atom).contains(object::AtomClass::VIRTUAL_FIELD)
-            || !matches!(
-                self.heap.get(object)?,
-                Cell::Map { .. } | Cell::Set { .. } | Cell::TypedArray { .. } | Cell::DataView { .. }
-            )
-        {
+        if !self.atom_class(atom).contains(object::AtomClass::VIRTUAL_FIELD) {
             return None;
         }
         let key = PropertyKey::string(atom);
         let mut current = object;
-        let mut data = self.heap.get(object)?.object()?;
+        let mut data = self.virtual_field_view(object)?;
         loop {
             if data.is_module_namespace()
                 || (data.has_side_descriptors() && self.descriptors.contains_key(&(current, key)))
@@ -54,6 +49,16 @@ impl<H: Host> Vm<H> {
             }
             data = self.heap.ordinary_object(current)?;
         }
+    }
+
+    /// The object data of a collection or buffer view, whose intrinsic accessors answer the
+    /// virtual field names (`AtomClass::VIRTUAL_FIELD`); `None` for any other value.
+    pub(super) fn virtual_field_view(&self, object: Value) -> Option<&Object> {
+        let cell = self.heap.get(object)?;
+        if !matches!(cell, Cell::Map { .. } | Cell::Set { .. } | Cell::TypedArray { .. } | Cell::DataView { .. }) {
+            return None;
+        }
+        cell.object()
     }
 
     fn keep_alive(&mut self, value: Value) {

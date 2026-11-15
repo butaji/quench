@@ -58,7 +58,7 @@ fn chunk_analysis(parsed: &oxc_parser::ParserReturn<'_>, name: &str) -> Option<S
     }
     let semantic = semantic_stats::checked_semantic(&parsed.program, name).ok()?;
     let private_name_ids = private_name_ids(&semantic.semantic);
-    let unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program);
+    let unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program, &Default::default());
     private_name_ids.is_empty().then_some(unobservable)
 }
 

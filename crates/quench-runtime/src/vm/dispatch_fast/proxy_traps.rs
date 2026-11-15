@@ -43,10 +43,10 @@ fn lane_read_forwarded<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, b
         }
         target = inner;
     }
-    match vm.ordinary_chain_read(target, atom) {
+    match vm.ordinary_chain_read_proved(target, atom) {
         Some(ChainRead::Value(value)) => lane_complete_read(r, ip, i, value),
         Some(ChainRead::Absent) => lane_complete_read(r, ip, i, Value::UNDEFINED),
-        Some(ChainRead::Getter(Some(getter))) if !getter.is_undefined() => lane_activate_getter(cx, r, ip, getter, base),
+        Some(ChainRead::Getter(Some(getter))) if !getter.is_undefined() => lane_activate_getter(cx, r, ip, getter, base, None),
         _ => Err(exit(ip)),
     }
 }
@@ -73,19 +73,55 @@ pub(super) fn lane_read_get_trap<H: Host>(
         return Err(exit(ip));
     };
     let Some((trap, handler, arguments)) = get_trap_call(vm, base, atom) else {
+        #[cfg(feature = "profile-lane-exits")]
+        if let Some((target, handler)) = vm.proxy_parts(base) {
+            let trap = vm.plain_property_lookup(handler, crate::vm::PropertyKey::string(vm.runtime_atoms.get));
+            super::super::lane_exits::record_detail(format!(
+                "get trap decline trap={} unconstrained={} name={}",
+                match trap { None => "unanswered", Some(None) => "absent", Some(Some(_)) => "found" },
+                vm.shape_leaves_atom_unconstrained(target, atom),
+                vm.atom_name(atom)
+            ));
+        }
         return lane_read_forwarded(cx, r, ip, base, atom);
     };
     lane_materialize_running_leaf(cx);
-    let Some(target) = lane_script_target(cx, trap).filter(|target| !target.forwards()) else {
+    let Some(target) = lane_trap_target(cx, trap) else {
+        #[cfg(feature = "profile-lane-exits")]
+        super::super::lane_exits::record_detail("get trap decline target".into());
         return Err(exit(ip));
     };
-    let Some(this) = lane_call_this(vm, &target, handler) else {
-        return Err(exit(ip));
-    };
-    let passed = ActivationArguments::Kept(arguments.as_ptr(), GET_TRAP_ARGUMENTS);
-    let activated = lane_activate_keeping::<H, false>(cx, r, ip, &target, passed, this, false, None)?;
+    let activated = lane_activate_trap(cx, r, ip, target, handler, &arguments)?;
     owe_invariants(vm, Completion::ReadsTrapped, TrapCheck { target: arguments[0], atom, access: TrapAccess::Read });
     Ok(activated)
+}
+
+/// The frameless target of the trap function `trap` and whether it is another program's,
+/// which its activation enters and its return leaves (`lane_complete_activation`): a trap of
+/// a library loaded as its own script, as Vue's and MobX's handlers are, activates as one of
+/// the running program's does. `None` for a trap the lane does not activate.
+fn lane_trap_target<H: Host>(cx: *mut LaneContext<H>, trap: Value) -> Option<(ScriptCallTarget, bool)> {
+    if let Some(target) = lane_script_target(cx, trap) {
+        return (!target.forwards()).then_some((target, false));
+    }
+    let vm = unsafe { vm(cx) };
+    // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
+    let target = vm.cross_call_entry(trap).map(|target| unsafe { *target })?;
+    (target.entry.activates() && !target.forwards() && !lane_constructing(vm, trap)).then_some((target, true))
+}
+
+/// The activation of the trap `target` (`lane_trap_target`) called on `handler` with
+/// `arguments` for the access record at `ip`. `Err` carries the record to continue at.
+fn lane_activate_trap<H: Host, const N: usize>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, (target, crosses): (ScriptCallTarget, bool), handler: Value, arguments: &[Value; N]) -> Result<(Registers, Ip), Ip> {
+    let Some(this) = lane_call_this(unsafe { vm(cx) }, &target, handler) else {
+        return Err(exit(ip));
+    };
+    let passed = ActivationArguments::Kept(arguments.as_ptr(), N);
+    if crosses {
+        lane_activate_keeping::<H, true>(cx, r, ip, &target, passed, this, false, None)
+    } else {
+        lane_activate_keeping::<H, false>(cx, r, ip, &target, passed, this, false, None)
+    }
 }
 
 /// Records that the trap activation `lane_activate_keeping` just pushed completes as
@@ -175,10 +211,9 @@ pub(super) fn lane_store_set_trap<H: Host>(
     let Some((trap, handler, arguments)) = set_trap_call(vm, object, atom, value) else {
         return lane_store_forwarded(cx, r, ip, object, atom, value);
     };
-    let target = lane_script_target(cx, trap).filter(|target| !target.forwards())?;
-    let this = lane_call_this(vm, &target, handler)?;
-    let passed = ActivationArguments::Kept(arguments.as_ptr(), SET_TRAP_ARGUMENTS);
-    Some(match lane_activate_keeping::<H, false>(cx, r, ip, &target, passed, this, false, None) {
+    let target = lane_trap_target(cx, trap)?;
+    lane_call_this(vm, &target.0, handler)?;
+    Some(match lane_activate_trap(cx, r, ip, target, handler, &arguments) {
         Ok((registers, next)) => {
             let access = if strict { TrapAccess::StrictStore } else { TrapAccess::Store };
             owe_invariants(vm, Completion::AssignsTrapped, TrapCheck { target: arguments[0], atom, access });

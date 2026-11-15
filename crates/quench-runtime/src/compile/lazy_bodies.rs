@@ -290,6 +290,8 @@ pub(super) struct BodyFacts {
     pub(super) failed: bool,
     /// Each body's free names (`first_call::free_names`).
     pub(super) free_names: super::first_call::FreeNames,
+    /// The bodies checked whose free names do not bound what they reach by name.
+    unbounded: FxHashSet<u32>,
     #[cfg(feature = "aot")]
     pub(super) native_source_requests: Option<(bool, Vec<super::NativeSourceKey>)>,
 }
@@ -323,28 +325,89 @@ impl BodyFacts {
             self.failed = true;
             return;
         }
+        let inner = self.compose_released(program, built.semantic.scoping());
         #[cfg(feature = "aot")]
         if let Some((specialized, requests)) = &mut self.native_source_requests {
             requests.extend(super::Engine::native_source_requests(program, built.semantic.scoping(), *specialized, global_script_calls));
         }
-        self.add_facts(&built.semantic, program, in_function);
+        self.add_facts(&built.semantic, program, in_function, &inner);
+    }
+
+    /// What the bodies released inside `program` (`ParseOptions::lazy_nested_bodies`), each
+    /// checked as the parser released it, reach outside themselves: `program`'s analysis sees
+    /// each with its directives only.
+    fn compose_released(&self, program: &oxc_ast::ast::Program<'_>, scoping: &oxc_semantic::Scoping) -> Released {
+        let mut found = ReleasedInside { facts: self, inside: Vec::new() };
+        oxc_ast_visit::Visit::visit_program(&mut found, program);
+        let mut released = Released { bounded: true, reached: FxHashSet::default(), free: Vec::new() };
+        for (start, scope) in found.inside {
+            let Some(names) = self.free_names.get(&start).filter(|_| !self.unbounded.contains(&start)) else {
+                released.bounded = false;
+                continue;
+            };
+            let around = scope.and_then(|scope| scoping.scope_parent_id(scope));
+            for name in names.iter() {
+                released.reached.insert(name.clone());
+                if around.is_none_or(|around| scoping.find_binding(around, (&**name).into()).is_none()) {
+                    released.free.push(name.clone());
+                }
+            }
+        }
+        released
     }
 
     /// Adds the facts of a checked body: its private names, its free names, and its
     /// call-only facts unless they wait for a compilation that may never come.
-    fn add_facts(&mut self, semantic: &oxc_semantic::Semantic<'_>, program: &oxc_ast::ast::Program<'_>, in_function: bool) {
+    fn add_facts(&mut self, semantic: &oxc_semantic::Semantic<'_>, program: &oxc_ast::ast::Program<'_>, in_function: bool, inner: &Released) {
         let first_id = self.next_private_id;
         for (span, id) in super::private_name_ids(semantic) {
             self.private_name_ids.insert(span, first_id + id);
             self.next_private_id = self.next_private_id.max(first_id + id + 1);
         }
         self.private_name_labels.extend(super::private_name_labels(semantic));
-        let free_names = super::first_call::free_names(program, semantic.scoping());
+        let free_names = inner.bounded.then(|| super::first_call::free_names(program, semantic.scoping(), &inner.free)).flatten();
+        if free_names.is_none() && let Some(start) = super::first_call::alone_start(program) {
+            self.unbounded.insert(start);
+        }
         if !self.call_only_deferred || super::call_only::compiles_at_load(program, in_function && free_names.is_none(), self.next_private_id != first_id) {
-            self.prototype_unobservable.extend(super::call_only::prototype_unobservable_functions(semantic, program));
+            // A binding a released body reaches may be used there in any way.
+            if inner.bounded {
+                self.prototype_unobservable.extend(super::call_only::prototype_unobservable_functions(semantic, program, &inner.reached));
+            }
             self.call_only_found.push((program.span.start, program.span.end));
         }
         self.free_names.extend(free_names);
+    }
+}
+
+/// What the bodies released inside a checked body reach outside themselves
+/// (`BodyFacts::compose_released`).
+struct Released {
+    /// Every released body's free names bound what it reaches by name.
+    bounded: bool,
+    /// Every free name of a released body.
+    reached: FxHashSet<Box<str>>,
+    /// Those the checked body does not bind where the released body lies: its own free names.
+    free: Vec<Box<str>>,
+}
+
+/// The functions of a checked body whose bodies were released and checked inside it, by
+/// start, with their scopes.
+struct ReleasedInside<'f> {
+    facts: &'f BodyFacts,
+    inside: Vec<(u32, Option<oxc_syntax::scope::ScopeId>)>,
+}
+
+impl<'a> oxc_ast_visit::Visit<'a> for ReleasedInside<'_> {
+    fn visit_function(&mut self, function: &oxc_ast::ast::Function<'a>, flags: oxc_syntax::scope::ScopeFlags) {
+        let start = function.span.start;
+        let released = function.body.as_ref().is_some_and(|body| body.statements.is_empty())
+            && (self.facts.free_names.contains_key(&start) || self.facts.unbounded.contains(&start));
+        if released {
+            self.inside.push((start, function.scope_id.get()));
+        } else {
+            oxc_ast_visit::walk::walk_function(self, function, flags);
+        }
     }
 }
 

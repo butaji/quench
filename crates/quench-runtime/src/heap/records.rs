@@ -228,6 +228,10 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY, 
     rc: bool,
     /// The counts, a block of them per record block while `rc` (`rc_ensure`).
     rc_blocks: Vec<RcBlock>,
+    /// The references past `RC_STUCK` of each record whose count bits hold it: the exact
+    /// count is `RC_STUCK` plus its entry. Counts above the bits are rare and brief (a record
+    /// held by its live holder and by dead ones not yet freed), so a table holds them.
+    rc_overflow: std::sync::Mutex<rustc_hash::FxHashMap<RecordId, u32>>,
     /// The children the barrier copied this epoch, for decrements, and the records it logged,
     /// for increments of their children at the epoch's end.
     rc_decrements: Vec<Value>,
@@ -261,6 +265,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> Default for RecordSpace<T, CAP
             satb_reused_words: Vec::new(),
             rc: false,
             rc_blocks: Vec::new(),
+            rc_overflow: std::sync::Mutex::new(rustc_hash::FxHashMap::default()),
             rc_decrements: Vec::new(),
             rc_logged: Vec::new(),
         }
@@ -301,11 +306,18 @@ struct RecordBlock {
 struct RcBlock {
     lo: [AtomicU64; BLOCK_WORDS],
     hi: [AtomicU64; BLOCK_WORDS],
+    /// Records whose count passed `RC_STUCK + RC_OVERFLOW_LIMIT`: no longer counted, they are
+    /// freed only by a trace (prototypes, shared constant strings).
+    stuck: [AtomicU64; BLOCK_WORDS],
 }
 
 impl RcBlock {
     fn new() -> Self {
-        Self { lo: [const { AtomicU64::new(0) }; BLOCK_WORDS], hi: [const { AtomicU64::new(0) }; BLOCK_WORDS] }
+        Self {
+            lo: [const { AtomicU64::new(0) }; BLOCK_WORDS],
+            hi: [const { AtomicU64::new(0) }; BLOCK_WORDS],
+            stuck: [const { AtomicU64::new(0) }; BLOCK_WORDS],
+        }
     }
 
     /// Clears the counts of the ids of `word_index` that `kept` leaves out.
@@ -313,6 +325,7 @@ impl RcBlock {
     fn keep(&mut self, word_index: usize, kept: u64) {
         *self.lo[word_index].get_mut() &= kept;
         *self.hi[word_index].get_mut() &= kept;
+        *self.stuck[word_index].get_mut() &= kept;
     }
 }
 
@@ -1289,8 +1302,8 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
             live &= live - 1;
         }
         block.occupied[word_index] = marked;
-        if let Some(counts) = self.rc_blocks.get_mut(block_index) {
-            counts.keep(word_index, marked);
+        if self.rc {
+            self.rc_keep(block_index, word_index, marked);
         }
         (marked.count_ones() as usize, self.release(id_base, dead, visit))
     }
@@ -1324,8 +1337,8 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         block.aged[word_index] = stays;
         block.marked[word_index] = marked & !stays;
         block.occupied[word_index] &= !dead;
-        if let Some(counts) = self.rc_blocks.get_mut(block_index) {
-            counts.keep(word_index, !dead);
+        if self.rc {
+            self.rc_keep(block_index, word_index, !dead);
         }
         if stays != 0 {
             self.aged_words.push(base);
@@ -1540,26 +1553,78 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         set(&block.hi[word], count & 2 != 0);
     }
 
-    /// Adds a reference to live record `id`; a stuck count stays.
+    /// The exact count of `id`, with its overflow entry.
+    #[cfg(test)]
+    pub(super) fn rc_exact_count(&self, id: RecordId) -> u32 {
+        let count = self.rc_count(id) as u32;
+        let overflow = self.rc_overflow.lock().unwrap_or_else(|poison| poison.into_inner());
+        if self.rc_stuck(id) {
+            return u32::MAX;
+        }
+        count + if count == RC_STUCK as u32 { overflow.get(&id).copied().unwrap_or(0) } else { 0 }
+    }
+
+    /// Adds a reference to live record `id`; past `RC_STUCK`, in the overflow table.
     #[inline(always)]
     pub(super) fn rc_increment(&self, id: RecordId) {
         let count = self.rc_count(id);
         if count < RC_STUCK {
             self.rc_store(id, count + 1);
+        } else if !self.rc_stuck(id) {
+            self.rc_overflow_add(id);
         }
     }
 
-    /// Drops a reference to live record `id`; whether its count reached 0. A stuck count
-    /// stays, and a count of 0 (an over-decrement, which a deletion the barrier missed cannot
-    /// cause: those only over-count) stays 0.
+    /// Whether `id`'s count is stuck: past the overflow table's limit.
+    #[inline(always)]
+    fn rc_stuck(&self, id: RecordId) -> bool {
+        let (block_index, record_index) = Self::split_id(id);
+        let word = &self.rc_blocks[block_index].stuck[record_index / OCCUPANCY_WORD_BITS];
+        word.load(Ordering::Relaxed) & (1_u64 << (record_index % OCCUPANCY_WORD_BITS)) != 0
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn rc_overflow_add(&self, id: RecordId) {
+        let mut overflow = self.rc_overflow.lock().unwrap_or_else(|poison| poison.into_inner());
+        let extra = overflow.entry(id).or_default();
+        *extra += 1;
+        if *extra > RC_OVERFLOW_LIMIT {
+            overflow.remove(&id);
+            let (block_index, record_index) = Self::split_id(id);
+            let word = &self.rc_blocks[block_index].stuck[record_index / OCCUPANCY_WORD_BITS];
+            word.fetch_or(1_u64 << (record_index % OCCUPANCY_WORD_BITS), Ordering::Relaxed);
+        }
+    }
+
+    /// Drops a reference to live record `id`; whether its count reached 0. A count of 0 (an
+    /// over-decrement, which a deletion the barrier missed cannot cause: those only
+    /// over-count) stays 0.
     #[inline(always)]
     pub(super) fn rc_decrement(&self, id: RecordId) -> bool {
         let count = self.rc_count(id);
-        if count == 0 || count == RC_STUCK {
+        if count == 0 || count == RC_STUCK && (self.rc_stuck(id) || self.rc_overflow_take(id)) {
             return false;
         }
         self.rc_store(id, count - 1);
         count == 1
+    }
+
+    /// Takes one reference from `id`'s overflow entry; `false` when it has none.
+    #[cold]
+    #[inline(never)]
+    fn rc_overflow_take(&self, id: RecordId) -> bool {
+        let mut overflow = self.rc_overflow.lock().unwrap_or_else(|poison| poison.into_inner());
+        match overflow.get_mut(&id) {
+            Some(extra) => {
+                *extra -= 1;
+                if *extra == 0 {
+                    overflow.remove(&id);
+                }
+                true
+            }
+            None => false,
+        }
     }
 
     /// Makes old record `id` a candidate for freeing: its mark bit is cleared, so a minor
@@ -1578,8 +1643,29 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         true
     }
 
+    /// Clears the counts of the ids of a word that `kept` leaves out, as the sweep frees
+    /// them, with their overflow entries.
+    #[inline(never)]
+    fn rc_keep(&mut self, block_index: usize, word_index: usize, kept: u64) {
+        let Some(counts) = self.rc_blocks.get_mut(block_index) else { return };
+        let mut overflowed = *counts.lo[word_index].get_mut() & *counts.hi[word_index].get_mut()
+            & !*counts.stuck[word_index].get_mut() & !kept;
+        counts.keep(word_index, kept);
+        if overflowed != 0 {
+            let overflow = self.rc_overflow.get_mut().unwrap_or_else(|poison| poison.into_inner());
+            if !overflow.is_empty() {
+                let base = (block_index * RECORDS_PER_BLOCK + word_index * OCCUPANCY_WORD_BITS) as RecordId;
+                while overflowed != 0 {
+                    overflow.remove(&(base + overflowed.trailing_zeros()));
+                    overflowed &= overflowed - 1;
+                }
+            }
+        }
+    }
+
     /// Every count becomes 0, as a recount starts.
     pub(super) fn rc_clear(&mut self) {
+        self.rc_overflow.get_mut().unwrap_or_else(|poison| poison.into_inner()).clear();
         self.rc_ensure();
         for block in &mut self.rc_blocks {
             for word in 0..BLOCK_WORDS {
@@ -1614,5 +1700,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     }
 }
 
-/// The saturated count: references past it are not counted, and only a trace frees the record.
+/// The largest count the bits hold: references past it are counted in the overflow table.
 pub(super) const RC_STUCK: u8 = 3;
+/// The references past `RC_STUCK` the overflow table counts before the record's count sticks.
+const RC_OVERFLOW_LIMIT: u32 = 64;

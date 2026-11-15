@@ -224,6 +224,13 @@ impl Value {
         (lower >> NARROW_INDEX_BITS == 0).then_some(lower << NARROW_INDEX_SHIFT | DIRECT_OBJECT_NARROW_CODE << NARROW_CODE_SHIFT)
     }
 
+    /// Whether `narrow` packs a heap reference (`is_heap`), read from its code alone: heap
+    /// families take the codes below `NARROW_HEAP_FAMILIES`, constants the codes above.
+    #[inline(always)] pub(crate) fn narrow_is_heap(narrow: u32) -> bool {
+        narrow & NARROW_INTEGER_FLAG == 0
+            && (narrow >> NARROW_CODE_SHIFT) & ((1 << NARROW_CODE_BITS) - 1) < NARROW_HEAP_FAMILIES as u32
+    }
+
     /// The value `narrow` packs (`to_narrow`).
     #[inline(always)] pub(crate) fn from_narrow(narrow: u32) -> Self {
         if narrow & NARROW_INTEGER_FLAG != 0 {

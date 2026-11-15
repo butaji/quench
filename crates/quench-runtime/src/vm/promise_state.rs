@@ -24,17 +24,17 @@ impl<H: Host> Vm<H> {
         let Some(record) = self.promise_record_mut(promise) else {
             return;
         };
-        let notification = match record.rejection {
+        let notification = match record.rejection() {
             PromiseRejectionState::Unobserved => {
-                record.rejection = PromiseRejectionState::Observed;
+                record.set_rejection(PromiseRejectionState::Observed);
                 None
             }
             PromiseRejectionState::AwaitingReport(_) => {
-                record.rejection = PromiseRejectionState::Observed;
+                record.set_rejection(PromiseRejectionState::Observed);
                 None
             }
             PromiseRejectionState::Reported(id) => {
-                record.rejection = PromiseRejectionState::HandledReported(id);
+                record.set_rejection(PromiseRejectionState::HandledReported(id));
                 Some(RejectionNotification::Handled(promise))
             }
             PromiseRejectionState::Reporting(_)
@@ -63,13 +63,13 @@ impl<H: Host> Vm<H> {
             };
             let Some(id) = (|| {
                 let record = self.promise_record_mut(promise)?;
-                let PromiseRejectionState::HandledReported(id) = record.rejection else {
+                let PromiseRejectionState::HandledReported(id) = record.rejection() else {
                     return None;
                 };
-                if record.state != PromiseState::Rejected {
+                if record.state() != PromiseState::Rejected {
                     return None;
                 }
-                record.rejection = PromiseRejectionState::Handled(id);
+                record.set_rejection(PromiseRejectionState::Handled(id));
                 Some(id.get())
             })() else {
                 continue;
@@ -96,14 +96,14 @@ impl<H: Host> Vm<H> {
             };
             let Some((id, result)) = (|| {
                 let record = self.promise_record_mut(promise)?;
-                let PromiseRejectionState::AwaitingReport(id) = record.rejection else {
+                let PromiseRejectionState::AwaitingReport(id) = record.rejection() else {
                     return None;
                 };
-                if record.state != PromiseState::Rejected {
+                if record.state() != PromiseState::Rejected {
                     return None;
                 }
-                record.rejection = PromiseRejectionState::Reporting(id);
-                Some((id.get(), record.result))
+                record.set_rejection(PromiseRejectionState::Reporting(id));
+                Some((id.get(), record.result()))
             })() else {
                 continue;
             };
@@ -124,13 +124,13 @@ impl<H: Host> Vm<H> {
         let Some(record) = self.promise_record_mut(promise) else {
             return Err(JsError("invalid Promise rejection report".into()));
         };
-        let PromiseRejectionState::Reporting(id) = record.rejection else {
+        let PromiseRejectionState::Reporting(id) = record.rejection() else {
             return Err(JsError("Promise rejection was not pending report".into()));
         };
-        if record.state != PromiseState::Rejected {
+        if record.state() != PromiseState::Rejected {
             return Err(JsError("Promise rejection was not pending report".into()));
         }
-        record.rejection = PromiseRejectionState::Reported(id);
+        record.set_rejection(PromiseRejectionState::Reported(id));
         Ok(())
     }
 
@@ -139,7 +139,7 @@ impl<H: Host> Vm<H> {
     fn queue_unhandled_rejection(&mut self, promise: Value) {
         let unobserved = self
             .promise_record(promise)
-            .is_some_and(|record| record.rejection == PromiseRejectionState::Unobserved);
+            .is_some_and(|record| record.rejection() == PromiseRejectionState::Unobserved);
         if !unobserved {
             return;
         }
@@ -152,9 +152,9 @@ impl<H: Host> Vm<H> {
         self.realm.promise.last_rejection_id = id;
         self.promise_record_mut(promise)
             .expect("settled Promise record remains registered")
-            .rejection = PromiseRejectionState::AwaitingReport(
-            std::num::NonZeroU64::new(id).expect("rejection identifiers start at one"),
-        );
+            .set_rejection(PromiseRejectionState::AwaitingReport(
+                std::num::NonZeroU64::new(id).expect("rejection identifiers start at one"),
+            ));
         self.realm.promise.rejection_notifications.push_back(RejectionNotification::Unhandled(promise));
     }
 
@@ -169,17 +169,15 @@ impl<H: Host> Vm<H> {
             let Some(record) = self.promise_record_mut(promise) else {
                 return Err(JsError("invalid Promise state".into()));
             };
-            if record.state != PromiseState::Pending {
+            if record.state() != PromiseState::Pending {
                 return Ok(());
             }
-            record.state = state;
-            record.result = result;
             let module_evaluation = record.module_evaluation;
             // Whether to queue the report once the host's settled hook has run, which may
             // observe the rejection first.
             let notify_unhandled =
-                state == PromiseState::Rejected && record.rejection == PromiseRejectionState::Unobserved;
-            (std::mem::take(&mut record.reactions), notify_unhandled, module_evaluation, record.host_context)
+                state == PromiseState::Rejected && record.rejection() == PromiseRejectionState::Unobserved;
+            (record.settle(state, result), notify_unhandled, module_evaluation, record.host_context)
         };
         self.realm.promise.async_module_settled |= module_evaluation;
         if let Some(resource) = host_context.get() {

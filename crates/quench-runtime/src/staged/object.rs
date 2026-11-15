@@ -57,6 +57,11 @@ pub(crate) enum Slots<W, C> {
     Flat(W),
     /// Packed or flat, as `inline` says; `flat` is the run's address where it is flat.
     Either { packed: Packed<W>, inline: C, flat: W },
+    /// The address of word zero of a narrow run (`value_vec::NARROW_FORM`): value `i` is the
+    /// narrow word at byte `4 * i` (little-endian halves, the lower first). Only a stage that
+    /// decides the form at run time (the interpreter) reads one; a specializer's residual
+    /// leaves at its miss instead.
+    Narrow(W),
 }
 
 /// The layout of one object record and how many values its shape holds.
@@ -123,7 +128,7 @@ pub(crate) fn exact_shape<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
 /// `exact_shape` of an auxiliary word already loaded.
 #[inline(always)]
 pub(crate) fn recorded_shape<S: Stage>(stage: &mut S, word: S::Word) -> S::Word {
-    stage.and_imm(word, u64::from(!(OBJECT.inline_form | OBJECT.extras_form)))
+    stage.and_imm(word, u64::from(!(OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form)))
 }
 
 /// Whether the storage-form bit `bit` (`OBJECT.inline_form`, `OBJECT.extras_form`) is set in
@@ -209,7 +214,7 @@ pub(crate) fn own_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Co
 pub(crate) fn formed_own_layout<S: Stage>(stage: &mut S, record: S::Word, word: S::Word, form: Form,
     storage_len: usize, access: PackedAccess, miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
     // A stage that decides the form takes the arena run, the common form, on one test.
-    let bits = stage.and_imm(word, u64::from(OBJECT.inline_form | OBJECT.extras_form));
+    let bits = stage.and_imm(word, u64::from(OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form));
     let arena = stage.eq_imm(bits, 0u32);
     if stage.known(arena) == Some(true) && form != Form::Packed {
         let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
@@ -280,13 +285,37 @@ fn plain_slots<S: Stage>(stage: &mut S, payload: S::Word, packed: Packed<S::Word
                 true
             }
             Form::Either => {
+                // A narrow run on the flat side leaves: only the interpreter reads one, and its
+                // stage decides the flag.
+                let narrow = narrow_run(stage, payload);
+                let wide = stage.not(narrow);
+                let admitted = stage.any(inline, wide);
+                stage.guard(admitted, miss)?;
                 // The run is addressed on the flat side of the flag only.
                 let flat = stage.choose(inline, |stage| stage.constant(0), |stage| arena_run(stage, payload));
                 return Some(Slots::Either { packed, inline, flat });
             }
         },
     };
-    Some(if flat { Slots::Flat(arena_run(stage, payload)) } else { Slots::Packed(packed) })
+    if !flat {
+        return Some(Slots::Packed(packed));
+    }
+    // A flat plain object's run may be narrow (`NARROW_RUN_TAG` beside its start): the
+    // interpreter reads it, a specializer leaves.
+    let narrow = narrow_run(stage, payload);
+    if stage.known(narrow) == Some(true) {
+        return Some(Slots::Narrow(arena_run(stage, payload)));
+    }
+    let wide = stage.not(narrow);
+    stage.guard(wide, miss)?;
+    Some(Slots::Flat(arena_run(stage, payload)))
+}
+
+/// Whether a plain object's payload word, outside inline storage, names a narrow run.
+#[inline(always)]
+pub(crate) fn narrow_run<S: Stage>(stage: &mut S, payload: S::Word) -> S::Cond {
+    let tag = stage.and_imm(payload, OBJECT.narrow_run_tag);
+    stage.ne_imm(tag, 0u32)
 }
 
 /// Value `slot` of an object of `layout`, which holds it.
@@ -298,7 +327,18 @@ pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond
         Slots::Packed(packed) => packed_read(stage, packed, slot),
         Slots::Either { packed, inline, flat } => stage.choose(inline,
             |stage| packed_read(stage, packed, slot), |stage| flat_read(stage, flat, slot)),
+        Slots::Narrow(base) => narrow_read(stage, base, slot),
     }
+}
+
+/// Narrow value `slot` of the run whose word zero is at `base`, decoded.
+#[inline(always)]
+fn narrow_read<S: Stage>(stage: &mut S, base: S::Word, slot: u16) -> S::Word {
+    const _: () = assert!(cfg!(target_endian = "little"), "narrow slot i is the u32 at byte 4 * i");
+    let offset = stage.site(u64::from(slot) * u64::from(u32::BITS / 8));
+    let address = stage.add_imm(base, offset);
+    let narrow = stage.load_u32(Region::ObjectSlots.mutable(), address, 0);
+    decode_narrow(stage, narrow)
 }
 
 /// Flat value `slot`: the slot is a per-site operand, so its byte offset is a hole.

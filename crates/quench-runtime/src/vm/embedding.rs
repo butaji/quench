@@ -952,7 +952,7 @@ impl<H: Host> Vm<H> {
         let promise = self.embedding_value(promise)?;
         let value = self.embedding_value(value)?;
         let state = self.promise_record(promise)
-            .ok_or_else(|| JsError("value does not have Promise internal slots".into()))?.state;
+            .ok_or_else(|| JsError("value does not have Promise internal slots".into()))?.state();
         if state != super::promise::PromiseState::Pending { return Ok(()); }
         let program = self.embedding_program()?;
         self.promise_resolve_value(&program, promise, value)
@@ -983,10 +983,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<crate::PromiseSnapshot<Value>>, JsError> {
         use crate::PromiseSnapshot as Snapshot;
         let value = self.embedding_value(root)?;
-        Ok(self.promise_record(value).map(|record| match record.state {
+        Ok(self.promise_record(value).map(|record| match record.state() {
             super::promise::PromiseState::Pending => Snapshot::Pending,
-            super::promise::PromiseState::Fulfilled => Snapshot::Fulfilled(record.result),
-            super::promise::PromiseState::Rejected => Snapshot::Rejected(record.result),
+            super::promise::PromiseState::Fulfilled => Snapshot::Fulfilled(record.result()),
+            super::promise::PromiseState::Rejected => Snapshot::Rejected(record.result()),
         }))
     }
 

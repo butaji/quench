@@ -43,12 +43,12 @@ impl LaneView {
     /// one entry in `audit_period`, alternating; `None` for the rest and once the audit ended.
     #[inline(always)]
     pub(in crate::vm) fn audit_entry(&self) -> Option<Timed> {
-        let mut history = self.history.get();
+        let mut history = self.tier().history.get();
         if history.audit.done {
             return None;
         }
         history.audit.seen = history.audit.seen.wrapping_add(1);
-        self.history.set(history);
+        self.tier().history.set(history);
         let period = TIERS.lane_body.audit_period;
         (history.audit.seen % period == 0)
             .then(|| if (history.audit.seen / period) % AUDITED_SIDES == 0 { Timed::Body } else { Timed::Interpreter })
@@ -57,11 +57,11 @@ impl LaneView {
     /// Books a completed timed run of `nanos` on `side`, then takes the verdict once both
     /// sides have their samples.
     pub(in crate::vm) fn audit_record(&self, side: Timed, nanos: u64) {
-        let mut history = self.history.get();
+        let mut history = self.tier().history.get();
         let booked = &mut history.audit.sides[side as usize];
         booked.nanos = booked.nanos.saturating_add(nanos);
         booked.runs = booked.runs.saturating_add(1);
-        self.history.set(history);
+        self.tier().history.set(history);
         self.audit_verdict();
     }
 
@@ -75,21 +75,21 @@ impl LaneView {
     /// Ends the audit: a body whose mean timed run is not `audit_margin_permille` below the
     /// interpreter's retires, and its function runs in the lane for good.
     fn audit_verdict(&self) {
-        let mut history = self.history.get();
+        let mut history = self.tier().history.get();
         let lane = &TIERS.lane_body;
         let [body, interpreted] = history.audit.sides;
         if history.audit.done || body.runs < lane.audit_samples || interpreted.runs < lane.audit_samples {
             return;
         }
         history.audit.done = true;
-        self.history.set(history);
+        self.tier().history.set(history);
         let verdict = Verdict::of(body, interpreted, lane.audit_margin_permille);
-        self.body_stats.audit.set(Some(verdict));
+        self.tier().body_stats.audit.set(Some(verdict));
         if !verdict.retire {
             return;
         }
         // SAFETY: as `lane_body`; the verdict runs between runs, after the run that ended it.
-        let lane_body = unsafe { &mut *self.tier_lane.get() };
+        let lane_body = unsafe { &mut *self.tier().tier_lane.get() };
         if matches!(lane_body, LaneBody::Specialized { .. }) {
             self.retire_body(lane_body, LaneBody::Declined);
             self.release_from_tier();
@@ -98,10 +98,10 @@ impl LaneView {
 
     /// Starts the audit of a body just specialized.
     pub(super) fn audit_restart(&self) {
-        let mut history = self.history.get();
+        let mut history = self.tier().history.get();
         history.audit = Audit::default();
-        self.history.set(history);
-        self.body_stats.audit.set(None);
+        self.tier().history.set(history);
+        self.tier().body_stats.audit.set(None);
     }
 }
 

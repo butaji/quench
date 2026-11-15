@@ -28,7 +28,17 @@ struct SiteHome {
     environment: Value,
     home: Value,
     element: Option<PrivateElement>,
+    /// The shape of the object the site last accessed the private field of under `home`
+    /// (`NO_SHAPE` for none), and the field's slot in it: a private field is a shape slot
+    /// (`private_slots`), so an object of that shape holds it there. A define site holds the
+    /// shape its add left the object in as `slot`. A compaction of the shape table drops
+    /// both (`forget_shapes`).
+    shape: u32,
+    slot: u32,
 }
+
+/// `SiteHome::shape` of an entry that records no shape.
+const NO_SHAPE: u32 = u32::MAX;
 
 /// A private name's method or accessor, which an object carrying its brand reads.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -60,12 +70,10 @@ impl PrivateSiteHomes {
     pub(super) fn record(&self, site: usize, environment: Value, home: Value) {
         let index = Self::index(site);
         // The element found under the same home stays (`element`).
-        let element = self
-            .entries
-            .get(index)
-            .filter(|entry| entry.site == site && entry.home == home)
-            .and_then(|entry| entry.element);
-        self.entries.set(index, SiteHome { site, environment, home, element });
+        let kept = self.entries.get(index).filter(|entry| entry.site == site && entry.home == home);
+        let element = kept.and_then(|entry| entry.element);
+        let (shape, slot) = kept.map_or((NO_SHAPE, 0), |entry| (entry.shape, entry.slot));
+        self.entries.set(index, SiteHome { site, environment, home, element, shape, slot });
     }
 
     /// The private method or accessor site `site` found for its name under `home`
@@ -87,6 +95,49 @@ impl PrivateSiteHomes {
         }
     }
 
+    /// The slot of the private field site `site` reads, under the home it found for
+    /// `environment`, in an object of `shape` (`record_field_slot`).
+    #[inline(always)]
+    pub(super) fn field_slot(&self, site: usize, environment: Value, shape: u32) -> Option<usize> {
+        let entry = self.entries.get(Self::index(site))?;
+        (entry.site == site && entry.environment == environment && entry.shape == shape).then_some(entry.slot as usize)
+    }
+
+    /// The shape and slot site `site` recorded under the home it found for `environment`.
+    pub(super) fn field_entry(&self, site: usize, environment: Value) -> Option<(u32, usize)> {
+        let entry = self.entries.get(Self::index(site))?;
+        (entry.site == site && entry.environment == environment && entry.shape != NO_SHAPE)
+            .then_some((entry.shape, entry.slot as usize))
+    }
+
+    /// Records that private field reads at `site` under `home` find the field at `slot` of
+    /// an object of `shape`, a shape no dictionary edit changes.
+    pub(super) fn record_field_slot(&self, site: usize, home: Value, shape: u32, slot: usize) {
+        let index = Self::index(site);
+        if let Some(entry) = self.entries.get(index)
+            && entry.site == site
+            && entry.home == home
+            && let Ok(slot) = u32::try_from(slot)
+        {
+            self.entries.set(index, SiteHome { shape, slot, ..entry });
+        }
+    }
+
+    /// The shape a private field define at `site` under `home` leaves an object of `shape`
+    /// in (`record_define`).
+    #[inline(always)]
+    pub(super) fn define_shape(&self, site: usize, home: Value, shape: u32) -> Option<u32> {
+        let entry = self.entries.get(Self::index(site))?;
+        (entry.site == site && entry.home == home && entry.shape == shape).then_some(entry.slot)
+    }
+
+    /// Records that a private field define at `site` under `home` takes an object of
+    /// `shape` to `next`, both shapes no dictionary edit changes.
+    pub(super) fn record_define(&self, site: usize, home: Value, shape: u32, next: u32) {
+        // A define site reads no environment: the home stands in for it, a live value.
+        self.entries.set(Self::index(site), SiteHome { site, environment: home, home, element: None, shape, slot: next });
+    }
+
     pub(super) fn clear(&self) {
         self.entries.clear();
     }
@@ -101,6 +152,16 @@ impl PrivateSiteHomes {
             visit(entry.home);
             if let Some(PrivateElement::Method(value) | PrivateElement::Getter(value)) = entry.element {
                 visit(value);
+            }
+        }
+    }
+
+    /// Drops every recorded shape: the shape table was compacted, and its ids now name
+    /// other shapes.
+    pub(super) fn forget_shapes(&self) {
+        for index in 0..PRIVATE_SITE_HOME_ENTRIES {
+            if let Some(entry) = self.entries.get(index) {
+                self.entries.set(index, SiteHome { shape: NO_SHAPE, ..entry });
             }
         }
     }

@@ -254,6 +254,13 @@ mod tests {
         let small = heap.alloc_small_string(SmallParts::new([prefix_id, suffix_id, 0], 2, Some((25.0, 1))).unwrap()).unwrap();
         assert!(SmallParts::new([prefix_id, suffix_id, 0], 2, Some((2.5, 1))).is_none(), "a double beside two strings takes a parts record");
         assert!(is_small_string(small.direct_string_index().unwrap()));
+        // A double between them takes a template, whose strings stay rooted with the table.
+        let template = heap.small_template(prefix_id, suffix_id).unwrap();
+        assert_eq!(heap.small_template(prefix_id, suffix_id), Some(template));
+        let templated = heap.alloc_small_string(SmallParts::templated(template, 2.5)).unwrap();
+        heap.collect([small, templated]);
+        assert!(heap.is_live(prefix) && heap.is_live(suffix));
+        assert_eq!(text(&heap, templated), "a prefix long enough 2.5 and a suffix");
         let nested = SmallParts::new([small.direct_string_index().unwrap(), 0, 0], 1, Some((-1.5, 0))).unwrap();
         let outer = heap.alloc_small_string(nested).unwrap();
         // The parts outlive collections that root only the small strings, read or not.

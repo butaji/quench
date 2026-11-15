@@ -156,6 +156,16 @@ struct State {
     proofs: LocalProofs,
 }
 
+/// A dense element a read loaded (`LocalProofs::elements`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct KnownElement {
+    values: ir::Value,
+    index: ir::Value,
+    address: ir::Value,
+    bits: ir::Value,
+    present: bool,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FieldValue {
     /// Receiver home until its next definition (`None` is the fixed `this`).
@@ -185,6 +195,10 @@ struct LocalProofs {
     int32_projections: smallvec::SmallVec<[(ir::Value, ir::Value); INLINE_NUMBER_PROJECTIONS]>,
     /// Dense array views by the tagged base they prove, until an instruction that could change an array's storage (`retains_array_views`).
     arrays: smallvec::SmallVec<[(ir::Value, super::DenseArrayView); INLINE_ARRAY_VIEWS]>,
+    /// Dense elements a read loaded, until an instruction that may write any element: their
+    /// backing and index, the element's address and bits, and whether the read proved them
+    /// present (no hole). A store to the same element reuses the read's bounds proof and bits.
+    elements: smallvec::SmallVec<[KnownElement; INLINE_ARRAY_VIEWS]>,
     /// Whether this block read the code's invalidation word since the last helper that may change a Stable fact's subject
     /// (run JavaScript, write a prototype, name a method): every Stable fact the code folded holds until such a helper (`Lowering::hold_stable`).
     stable: bool,
@@ -218,7 +232,7 @@ impl State {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), stable: false, realm: false,
-            arrays: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
+            arrays: smallvec::SmallVec::new(), elements: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
     }
 
     /// The `headers` index of an owner: a register, or fixed `this` (`None`).
@@ -232,6 +246,7 @@ impl State {
         self.proofs.fields.clear();
         self.proofs.int32_projections.clear();
         self.proofs.arrays.clear();
+        self.proofs.elements.clear();
         self.proofs.headers.fill(None);
         self.proofs.readable.clear();
         self.proofs.layouts.clear();
@@ -573,6 +588,9 @@ struct Lowering<'a, 'f> {
     hoisted: BTreeMap<usize, LoopRead>,
     /// Loop-invariant array bases whose views their loop's entry proves (`loop_arrays`).
     loop_arrays: Vec<LoopArray>,
+    /// Loop bounds the entering edge guards below a hoisted dense array's length
+    /// (`int_ranges::LoopBound`), so the loop's accesses below the bound need no bounds check.
+    loop_bounds: Vec<int_ranges::LoopBound>,
     /// Each hoisted base's tagged value and view, by register, across its loop's iterations.
     array_vars: BTreeMap<ArraySource, ArrayVariables>,
     views: ElementViews,
@@ -913,6 +931,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
             .all(|other| other.int32_projections.contains(projection))).collect();
         state.proofs.arrays = first.arrays.iter().copied().filter(|view| rest.iter()
             .all(|other| other.arrays.contains(view))).collect();
+        state.proofs.elements = first.elements.iter().copied().filter(|element| rest.iter()
+            .all(|other| other.elements.contains(element))).collect();
         state.proofs.stable = first.stable && rest.iter().all(|other| other.stable);
         state.proofs.realm = first.realm && rest.iter().all(|other| other.realm);
         // A block a rotated latch also enters has an edge `rest` does not hold: only a sealable block keeps the homes.
@@ -1105,19 +1125,31 @@ pub(super) fn leaders(instructions: &[WideInstruction]) -> CompoundBitSet {
 /// sink or completion whose last read's slots have only held int32 values, its value's tag
 /// tested at the read.
 fn int32_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
+    read_slot_type(program, fields, instruction) == Some(Type::INT32)
+}
+
+/// Whether `instruction` reads a field whose slots have held Numbers, not only int32s: the read
+/// proves Number once and keeps the double view, so its arithmetic takes the double operation.
+fn number_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
+    read_slot_type(program, fields, instruction) == Some(Type::NUMBER)
+}
+
+/// The slot type every shape of `instruction`'s plain field read observed, if they agree.
+fn read_slot_type(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> Option<Type> {
     if !instruction.op().class().eq(Class::GetField) || instruction.returns_from_frame() || instruction.writes_current_this() {
-        return false;
+        return None;
     }
     let last = match instruction.field_lookup() {
         Some(FieldLookup::Atom { cache_site, .. }) => cache_site,
         Some(FieldLookup::Site(index)) => match program.field_sites.get(index) {
             Some(site) if site.sink.is_none() => site.second.unwrap_or(site.first).1,
-            _ => return false,
+            _ => return None,
         },
-        None => return false,
+        None => return None,
     };
-    site_loads(fields, last).is_some_and(|shapes| !shapes.is_empty()
-        && shapes.iter().all(|field| field.ty == Type::INT32))
+    let shapes = site_loads(fields, last)?;
+    let ty = shapes.first()?.ty;
+    shapes.iter().all(|field| field.ty == ty).then_some(ty)
 }
 
 /// Whether `instruction` can change no heap value natively: anything else it would do (a
@@ -1655,6 +1687,7 @@ pub(super) fn lower(
         intrinsics: Vec::new(),
         hoisted: BTreeMap::new(),
         loop_arrays: Vec::new(),
+        loop_bounds: Vec::new(),
         array_vars: BTreeMap::new(),
         views,
         loop_fields: Vec::new(),
@@ -1777,7 +1810,9 @@ pub(super) fn lower(
             read.pc == at && read.owner.is_none() && instructions[at].op().class().eq(Class::LoadCapture))),
         lowering.views, typed_captures);
     lowering.entering = lowering.entering_ranges(entry_pc);
-    lowering.ranges = int_ranges::analyze(program, unit, &lowering.facts, entry_pc, &lowering.entering, generic, &|pc| lowering.dense_loop_access(pc));
+    lowering.loop_bounds = int_ranges::loop_bounds(program, unit, &lowering.facts, &lowering.loop_arrays, generic, &|pc| lowering.dense_loop_access(pc));
+    lowering.guard_bound_indexes(entry_pc, generic);
+    lowering.ranges = int_ranges::analyze(program, unit, &lowering.facts, entry_pc, &lowering.entering, &lowering.loop_bounds, generic, &|pc| lowering.dense_loop_access(pc));
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
         lowering.hoists.entry(field.header).or_default().push(InvariantRead { pc: field.reads[0], owner: Some(field.owner), rooted: false });
@@ -2009,6 +2044,7 @@ impl Lowering<'_, '_> {
         // Only the same pre-branch SSA definition can survive both numeric arms.
         state.proofs.fields.retain(|field| incoming.proofs.fields.contains(field));
         state.proofs.int32_projections.retain(|projection| incoming.proofs.int32_projections.contains(projection));
+        state.proofs.elements.retain(|element| incoming.proofs.elements.contains(element));
         state.proofs.meet_homed(&incoming.proofs.homed);
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
             let current = state.values[index];
@@ -2468,6 +2504,20 @@ impl Lowering<'_, '_> {
             && types.and_then(|types| types.get(usize::from(register))).is_some_and(|ty| ty.is_subtype(Type::INT32))).collect()
     }
 
+    /// Entering ranges for the loop bounds' indexes: an index live and int32 at `entry` whose
+    /// range there is unknown is guarded non-negative once, so the ranges pass proves its reads
+    /// within the length the bound guards. An entry that left before (`generic`) guards none.
+    fn guard_bound_indexes(&mut self, entry: usize, generic: &[usize]) {
+        if generic.contains(&entry) { return }
+        let types = self.facts.at(entry);
+        for bound in self.loop_bounds.clone() {
+            let index = bound.index;
+            if !self.is_live(entry, index) || self.entering.iter().any(|(register, _)| *register == index)
+                || !types.and_then(|types| types.get(usize::from(index))).is_some_and(|ty| ty.is_subtype(Type::INT32)) { continue }
+            self.entering.push((index, IntRange::NON_NEGATIVE));
+        }
+    }
+
     /// Leaves at `pc` where an entering register is below its range's minimum: the one guard
     /// the ranges pass's entry state relies on (the range's maximum is int32's).
     fn guard_entering_ranges(&mut self, state: &mut State, pc: usize) {
@@ -2505,6 +2555,11 @@ impl Lowering<'_, '_> {
         self.left_here = self.generic.contains(&pc);
         if self.unit.markers.contains(&pc) || !retains_array_views(&self.program.constants, instruction) {
             state.proofs.arrays.clear();
+        }
+        // An element store reads the proofs first and retires them itself (`set_index`).
+        if self.unit.markers.contains(&pc) || !(reads_only(&self.program.constants, instruction)
+            || instruction.op().class().eq(Class::SetIndex)) {
+            state.proofs.elements.clear();
         }
         if let Some(read) = self.hoisted.get(&pc).copied() {
             self.hoisted_read(state, instruction, read);
@@ -3790,6 +3845,16 @@ impl Lowering<'_, '_> {
                     self.builder.def_var(variables.length, view.length);
                     let unproved = self.ins().iconst(types::I32, 0);
                     self.builder.def_var(variables.room, unproved);
+                    // Each bound the loop compares its indexes with is at most the length: one
+                    // guard here stands for the bounds check of every access below the bound.
+                    let bounds: Vec<Register> = self.loop_bounds.iter()
+                        .filter(|bound| bound.header == header && array.source == ArraySource::Register(bound.array))
+                        .map(|bound| bound.limit).collect();
+                    for limit in bounds {
+                        let limit = self.int(state, limit, exit);
+                        let within = self.ins().icmp(IntCC::SignedLessThanOrEqual, limit, view.length);
+                        emit_js_guard(&mut self.builder, within, exit);
+                    }
                 }
                 ElementViews::Typed => self.hoist_typed_view(array, bits, variables, exit),
             }
@@ -3861,6 +3926,7 @@ impl Lowering<'_, '_> {
         if let Some(array) = self.loop_array(pc as usize, Some(instruction.register_b())).filter(|array| number && array.writable) {
             self.loop_element_write(state, array, pc, instruction, exit);
             state.proofs.arrays.clear();
+            state.proofs.elements.clear();
             state.proofs.fields.clear();
             state.proofs.stable = false;
             return true;
@@ -3894,6 +3960,7 @@ impl Lowering<'_, '_> {
             self.reload_dense_arrays(pc as usize);
         }
         state.proofs.arrays.clear();
+        state.proofs.elements.clear();
         state.proofs.fields.clear();
         // The helper may write a prototype's element or mapped argument.
         state.proofs.stable = false;
@@ -3919,6 +3986,23 @@ impl Lowering<'_, '_> {
             self.builder.def_var(variables.values, values);
             self.builder.def_var(variables.length, length);
         }
+    }
+
+    /// Records `element` as loaded, replacing any older record of its backing and index.
+    fn know_element(&mut self, state: &mut State, element: KnownElement) {
+        let (values, index) = (self.resolved(element.values), self.resolved(element.index));
+        state.proofs.elements.retain(|known| (self.resolved(known.values), self.resolved(known.index)) != (values, index));
+        state.proofs.elements.push(element);
+    }
+
+    /// The element of `values` at `index` a read loaded, if no element write followed.
+    fn known_element(&self, state: &State, values: ir::Value, index: ir::Value) -> Option<KnownElement> {
+        let (values, index) = (self.resolved(values), self.resolved(index));
+        state.proofs.elements.iter().copied().find(|known| (self.resolved(known.values), self.resolved(known.index)) == (values, index))
+    }
+
+    fn resolved(&self, value: ir::Value) -> ir::Value {
+        self.builder.func.dfg.resolve_aliases(value)
     }
 
     /// The hoisted view's elements' address and count.
@@ -3952,11 +4036,13 @@ impl Lowering<'_, '_> {
             let offset = self.ins().imul_imm_s(offset, std::mem::size_of::<crate::Value>() as i64);
             let address = self.ins().iadd(values, offset);
             let value = self.ins().load(types::I64, regions::elements(), address, 0);
+            self.know_element(state, KnownElement { values, index, address, bits: value, present: false });
             return self.set_tagged(state, destination, value);
         }
         if array.views == ElementViews::Dense {
             let view = super::DenseArrayView { values, length, writable: array.writable, uncounted: array.writable };
-            let value = super::emit_dense_element(&mut self.builder, view, index, exit, in_bounds).1;
+            let (address, value) = super::emit_dense_element(&mut self.builder, view, index, exit, in_bounds);
+            self.know_element(state, KnownElement { values, index, address, bits: value, present: true });
             return self.set_tagged(state, destination, value);
         }
         let kind = self.hoisted_kind(array);
@@ -3979,6 +4065,16 @@ impl Lowering<'_, '_> {
         // append helper is a call every live value is spilled around, which a loop that
         // never appends should not pay (a site that left compiles it, `left_here`).
         if !self.left_here {
+            // The same element a read of this backing loaded, with no element write since: the
+            // read's bounds proof holds, and its bits are the element's (a hole leaves).
+            if let Some(known) = self.known_element(state, values, index) {
+                if !known.present {
+                    let present = self.ins().icmp_imm_u(IntCC::NotEqual, known.bits, Value::DELETED.to_bits() as i64);
+                    emit_js_guard(&mut self.builder, present, exit);
+                }
+                self.ins().store(regions::elements(), value, known.address, 0);
+                return;
+            }
             let view = super::DenseArrayView { values, length, writable: true, uncounted: true };
             return self.index_write(state, index, value, view, exit, in_bounds);
         }
@@ -4139,7 +4235,7 @@ impl Lowering<'_, '_> {
             self.return_value(record, value);
             return Some(false);
         }
-        self.define_field_read(state, instruction, value, (field, rest.is_empty(), known), exit);
+        self.define_field_read(state, pc, instruction, value, (field, rest.is_empty(), known), exit);
         Some(true)
     }
 

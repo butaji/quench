@@ -39,6 +39,10 @@ pub(crate) struct InheritedFieldCache {
     pub(crate) proved: bool,
     /// The receiver's prototype link the proof holds for, compared undecoded.
     pub(crate) proved_prototype: super::ProtoLink,
+    /// The layout id (`heap::layouts`) of a receiver the proof last answered, or
+    /// `NO_PROVED_LAYOUT`: its header word holds the receiver shape and the prototype link,
+    /// so a receiver of that layout matches both on one compare. Reset with each new proof.
+    pub(crate) proved_layout: u32,
     pub(crate) proved_holder: Value,
     /// The value a `Slot` answer read under the current proof, held while `constant_watch`
     /// is published (`heap::watch_prototype_values` of the holder): a use then reads it
@@ -49,6 +53,9 @@ pub(crate) struct InheritedFieldCache {
     /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
     pub(crate) next: u32,
 }
+/// An `InheritedFieldCache::proved_layout` no layout id reaches.
+pub(crate) const NO_PROVED_LAYOUT: u32 = u32::MAX;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InheritedFieldAnswer {
     /// The last recorded prototype holds the data property at this slot.
