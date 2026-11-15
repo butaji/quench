@@ -4,10 +4,10 @@ use super::*;
 
 /// What a lane body's code relies on beyond its guards, its direct callees' included, once
 /// each. A receiver's shape is guarded at each field use (and proved again after any call,
-/// `State::call_effect`), so an object leaving it falls out at the guard: only its slots'
-/// observations are dependencies, and a compaction retires code that names shape ids
-/// (`LaneView::invalidate_shape_bindings`). A holder's (prototype's) layout is read
-/// without a guard, so its departures are dependencies too.
+/// `State::call_effect`, unless the VM holds it stable: `StableFacts::shapes`), so an object
+/// leaving it falls out at the guard: only its slots' observations are dependencies, and a
+/// compaction retires code that names shape ids (`LaneView::invalidate_shape_bindings`). A
+/// holder's (prototype's) layout is read without a guard, so its departures are dependencies too.
 #[derive(Default)]
 pub(in crate::vm) struct LaneDependencies {
     pub(in crate::vm) slots: Vec<crate::code_dependencies::SlotDependency>,
@@ -37,12 +37,13 @@ impl LaneDependencies {
     }
 }
 
-/// Subscribes `code` to the Stable facts it folded: prototype values, method atoms, globals, layouts,
-/// slot observations and instanceof facts; `false` where a reader table is full.
+/// Subscribes `code` to the Stable facts it folded: prototype values, method atoms, shapes held past a
+/// call, globals, layouts, slot observations and instanceof facts; `false` where a reader table is full.
 fn subscribe_stable(stable: &lane_region::StableFacts, code: &Rc<dyn crate::code_dependencies::DependentCode>,
     heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
     stable.holders.iter().all(|holder| crate::heap::subscribe_prototype_values(*holder, code))
         && stable.atoms.iter().all(|atom| method_atoms.subscribe(*atom, code))
+        && stable.shapes.iter().all(|shape| heap.subscribe_shape(*shape, code))
         && stable.globals.iter().all(|fact| crate::heap::subscribe_global_value(*fact, code))
         && stable.layouts.iter().all(|fact| crate::heap::subscribe_global_layout(*fact, code))
         && stable.slots.iter().all(|dependency| heap.subscribe_slot_observation(*dependency, code))

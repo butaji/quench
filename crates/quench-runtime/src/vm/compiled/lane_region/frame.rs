@@ -363,6 +363,7 @@ pub(super) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
     state.proofs.headers[index] = None;
     state.proofs.layouts.retain(|(owner, _), _| *owner != Some(register));
     state.proofs.receivers.remove(&register);
+    state.proofs.kept_shapes.remove(&register);
     state.proofs.fields.retain(|field| field.owner != Some(register));
 }
 
@@ -377,6 +378,7 @@ pub(super) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
         .then(|| register_tagged(builder, registers, state, source));
     let header = state.proofs.headers[source_index];
     let receiver = state.proofs.receivers.contains(&source);
+    let kept = state.proofs.kept_shapes.get(&source).copied();
     let layouts: Vec<_> = state.proofs.layouts.iter().filter_map(|((owner, shape), projection)|
         (*owner == Some(source)).then_some((*shape, *projection))).collect();
     let fields: smallvec::SmallVec<[_; INLINE_FIELD_BINDINGS]> = state.proofs.fields.iter()
@@ -391,6 +393,7 @@ pub(super) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
     state.proofs.set_readable(usize::from(destination), state.proofs.readable.contains(source_index));
     for (shape, projection) in layouts { state.proofs.layouts.insert((Some(destination), shape), projection); }
     if receiver { state.proofs.receivers.insert(destination); }
+    if let Some(shape) = kept { state.proofs.kept_shapes.insert(destination, shape); }
     state.proofs.fields.extend(fields);
     value
 }

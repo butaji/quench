@@ -206,6 +206,9 @@ struct LocalProofs {
     readable: CompoundBitSet,
     /// A fixed receiver (`None`) or register's complete own-slot projection.
     layouts: BTreeMap<(Option<Register>, u32), CheckedObject>,
+    /// The exact shape a register's object had before a call (`kept_shapes.rs`), which the code
+    /// holds again at the register's next use where the VM holds the shape stable.
+    kept_shapes: BTreeMap<Register, u32>,
     /// Registers holding the receiver, whose facts the entry proved.
     receivers: BTreeSet<Register>,
     /// Immutable reads; receiver definitions and memory effects retire these facts.
@@ -245,7 +248,7 @@ impl State {
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), proofs: LocalProofs {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
-            layouts: BTreeMap::new(), receivers: BTreeSet::new(),
+            layouts: BTreeMap::new(), kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), stable: false, realm: false,
             arrays: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
     }
@@ -270,6 +273,7 @@ impl State {
     /// Native reentry retires shape/storage and function-body admission proofs;
     /// object records and language families stay.
     fn call_effect(&mut self) {
+        self.proofs.keep_shapes(&self.values);
         self.proofs.fields.clear();
         self.proofs.int32_projections.clear();
         self.proofs.arrays.clear();
@@ -1939,6 +1943,7 @@ impl Lowering<'_, '_> {
     fn join_states(&mut self, state: &mut State, incoming: &State, pc: usize) {
         // Only the same pre-branch SSA definition can survive both numeric arms.
         state.proofs.fields.retain(|field| incoming.proofs.fields.contains(field));
+        state.join_kept_shapes(incoming);
         state.proofs.int32_projections.retain(|projection| incoming.proofs.int32_projections.contains(projection));
         state.proofs.meet_homed(&incoming.proofs.homed);
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
@@ -2690,7 +2695,7 @@ impl Lowering<'_, '_> {
         let mut stage = Emit { builder: &mut self.builder, property_values, gate };
         let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
             held,
-            stable: StableHold { holders: &mut self.stable.holders, loops: &self.stable.stable_loops, online: self.vm.online, at: self.at } });
+            stable: StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, loops: &self.stable.stable_loops, online: self.vm.online, at: self.at } });
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
             payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls,
@@ -4178,6 +4183,7 @@ mod tests;
 #[cfg(test)]
 #[path = "lane_region/lowering_tests.rs"]
 mod lowering_tests;
+#[path = "lane_region/kept_shapes.rs"] mod kept_shapes;
 #[cfg(test)]
 #[path = "lane_region/slot_proof_tests.rs"]
 mod slot_proof_tests;

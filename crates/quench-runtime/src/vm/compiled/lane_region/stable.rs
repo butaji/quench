@@ -25,6 +25,9 @@ pub(crate) struct StableFacts {
     pub(crate) slots: Box<[crate::code_dependencies::SlotDependency]>,
     /// Constructors whose `prototype` it holds for an `instanceof` (`Vm::instanceof_fact`).
     pub(crate) instanceofs: Box<[crate::code_dependencies::InstanceofFact]>,
+    /// Exact shapes of objects whose layout it holds past a call (`Vm::shape_is_stable`): the
+    /// first object to leave one retires it (`Heap::subscribe_shape`).
+    pub(crate) shapes: Box<[u32]>,
 }
 
 /// The Stable facts a lowering folded so far.
@@ -32,6 +35,8 @@ pub(crate) struct StableFacts {
 pub(super) struct StableUses {
     /// Holder shapes whose prototypes' values the code took as constants.
     pub(super) holders: crate::bitset::BitSet,
+    /// Exact shapes of the objects whose shape the code held past a call (`StableHold::hold_shape`).
+    pub(super) shapes: crate::bitset::BitSet,
     /// Atoms it stores directly because no method cache named them.
     atoms: BTreeSet<Atom>,
     /// Global cells whose values the code took as constants.
@@ -58,6 +63,7 @@ pub(super) struct StableUses {
 impl StableUses {
     pub(super) fn take(&mut self) -> StableFacts {
         StableFacts { holders: std::mem::take(&mut self.holders).iter().map(|holder| holder as u32).collect(),
+            shapes: std::mem::take(&mut self.shapes).iter().map(|shape| shape as u32).collect(),
             atoms: std::mem::take(&mut self.atoms).into_iter().collect(),
             globals: std::mem::take(&mut self.globals).into_iter().collect(), roots: std::mem::take(&mut self.roots),
             layouts: std::mem::take(&mut self.layouts).into_iter().collect(),
@@ -67,15 +73,34 @@ impl StableUses {
 }
 
 impl StableHold<'_> {
+    /// The invalidation point of a held fact at the instruction at `at`: the word read unless
+    /// the block or loop holds every Stable fact already (`Lowering::hold_stable`).
+    fn read_held(&self, (builder, helpers): (&mut FunctionBuilder<'_>, LaneHelpers), online: OnlineFacts<'_>,
+        state: &mut State, exit: ir::Block) {
+        let held = state.proofs.stable || self.loops.iter().any(|(header, end)| (*header..=*end).contains(&self.at));
+        if !held { read_invalidation_word(builder, helpers, online, state, exit); }
+    }
+
     /// Holds the values of prototypes of exact shape `holder` from the instruction at `at`: an
     /// invalidation point unless the block or loop holds every Stable fact already
     /// (`Lowering::hold_stable`). Nothing where the code takes no dependencies on the VM.
-    pub(super) fn hold_holder(&mut self, (builder, helpers): (&mut FunctionBuilder<'_>, LaneHelpers),
+    pub(super) fn hold_holder(&mut self, frame: (&mut FunctionBuilder<'_>, LaneHelpers),
         state: &mut State, exit: ir::Block, holder: u32) -> Option<()> {
         let online = self.online?;
-        let held = state.proofs.stable || self.loops.iter().any(|(header, end)| (*header..=*end).contains(&self.at));
-        if !held { read_invalidation_word(builder, helpers, online, state, exit); }
+        self.read_held(frame, online, state, exit);
         self.holders.insert_growing(holder as usize);
+        Some(())
+    }
+
+    /// Holds that the objects now of exact shape `shape` still have it, from the instruction at
+    /// `at`: an invalidation point as `hold_holder`'s, the code retiring at the first object to
+    /// leave the shape. `None` where the code takes no dependencies on the VM or the VM does not
+    /// hold the shape stable (`Vm::shape_is_stable`).
+    pub(super) fn hold_shape(&mut self, frame: (&mut FunctionBuilder<'_>, LaneHelpers),
+        state: &mut State, exit: ir::Block, shape: u32) -> Option<()> {
+        let online = self.online.filter(|online| (online.shape_stable)(shape))?;
+        self.read_held(frame, online, state, exit);
+        self.shapes.insert_growing(shape as usize);
         Some(())
     }
 }
@@ -155,7 +180,7 @@ impl Lowering<'_, '_> {
 
     /// Holds the values of prototypes of exact shape `holder` (`hold_stable`).
     pub(super) fn hold_holder(&mut self, state: &mut State, exit: ir::Block, holder: u32) {
-        let mut hold = StableHold { holders: &mut self.stable.holders, loops: &self.stable.stable_loops,
+        let mut hold = StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, loops: &self.stable.stable_loops,
             online: self.vm.online, at: self.at };
         hold.hold_holder((&mut self.builder, self.helpers), state, exit, holder).expect("only a division with Stable facts holds a prototype");
     }

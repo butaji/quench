@@ -17,7 +17,7 @@ fn lowered(source: &str, names: &[&str], ty: Type, invalidation: Option<usize>) 
     let atoms = crate::bitset::BitSet::default();
     let facts = match invalidation {
         Some(invalidation) => VmFacts { online: Some(OnlineFacts { method_cache_atoms: &atoms, invalidation, constants: &[],
-            instanceofs: &|_| None, names: None }), ..VmFacts::STATIC },
+            instanceofs: &|_| None, shape_stable: &|_| false, names: None }), ..VmFacts::STATIC },
         None => VmFacts::STATIC,
     };
     let isa = super::super::super::jit_backend::target_isa().unwrap();
