@@ -1302,7 +1302,9 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
             live &= live - 1;
         }
         block.occupied[word_index] = marked;
-        self.rc_keep(block_index, word_index, marked);
+        if self.rc {
+            self.rc_keep(block_index, word_index, marked);
+        }
         (marked.count_ones() as usize, self.release(id_base, dead, visit))
     }
 
@@ -1335,7 +1337,9 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         block.aged[word_index] = stays;
         block.marked[word_index] = marked & !stays;
         block.occupied[word_index] &= !dead;
-        self.rc_keep(block_index, word_index, !dead);
+        if self.rc {
+            self.rc_keep(block_index, word_index, !dead);
+        }
         if stays != 0 {
             self.aged_words.push(base);
         }
@@ -1641,7 +1645,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
 
     /// Clears the counts of the ids of a word that `kept` leaves out, as the sweep frees
     /// them, with their overflow entries.
-    #[inline(always)]
+    #[inline(never)]
     fn rc_keep(&mut self, block_index: usize, word_index: usize, kept: u64) {
         let Some(counts) = self.rc_blocks.get_mut(block_index) else { return };
         let mut overflowed = *counts.lo[word_index].get_mut() & *counts.hi[word_index].get_mut()
