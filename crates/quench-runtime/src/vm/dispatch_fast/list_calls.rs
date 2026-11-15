@@ -89,7 +89,9 @@ pub(super) fn lane_list_activation<H: Host>(
         };
         return Some(lane_activate_passed(cx, r, ip, &activated, args, this));
     }
-    let Some(target) = lane_passed_target(cx, callee, length) else {
+    // The site's memo slot links the callee's target (`lane_forwarded_target`).
+    let mut resolved = None;
+    let Some(target) = lane_forwarded_target(cx, ip, callee, length, &mut resolved).copied() else {
         // A user function that needs a frame takes it in place (`lane_passed_frame_call`), with
         // the elements copied out first: making the caller's
         // activations frames moves no heap array, but the callee may change the list.
