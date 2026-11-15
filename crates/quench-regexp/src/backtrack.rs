@@ -23,6 +23,7 @@ mod workspace;
 use dispatch::Dispatch;
 use native::NativeSlot;
 use specialize::{replay, step, Concrete, Cursor, Replay, Step};
+pub(crate) use workspace::recycle_captures;
 use workspace::{AnchoredRun, ClassRun, anchored_run_of, class_run_of};
 
 use super::{
@@ -1620,11 +1621,17 @@ impl Program {
     /// The first match at a position from `first`, trying only `first` when `sticky`, with
     /// its captures collected where `captures` asks for them.
     pub(crate) fn find<T: Text + ?Sized>(&self, text: &T, first: usize, sticky: bool, captures: bool) -> Option<Found> {
-        self.search(text, first, sticky, |registers| {
-            registers[..if captures { 2 * self.capture_count } else { 0 }]
+        self.search(text, first, sticky, |registers, spare| {
+            if !captures || self.capture_count == 0 {
+                return Vec::new();
+            }
+            let bounds = registers[..2 * self.capture_count]
                 .as_chunks::<2>().0.iter()
-                .map(|bounds| (bounds[0] != UNSET).then(|| bounds[0]..bounds[1]))
-                .collect()
+                .map(|bounds| (bounds[0] != UNSET).then(|| bounds[0]..bounds[1]));
+            let mut collected = std::mem::take(spare);
+            collected.clear();
+            collected.extend(bounds);
+            collected
         })
     }
 
@@ -1656,7 +1663,7 @@ impl Program {
         text: &T,
         first: usize,
         sticky: bool,
-        captures: impl FnOnce(&[usize]) -> Vec<Option<Range<usize>>>,
+        captures: impl FnOnce(&[usize], &mut Vec<Option<Range<usize>>>) -> Vec<Option<Range<usize>>>,
     ) -> Option<Found> {
         if let (Some(length), Some(_)) = (self.literal_length, text.bytes()) {
             let last = if sticky { first } else { text.len() };
