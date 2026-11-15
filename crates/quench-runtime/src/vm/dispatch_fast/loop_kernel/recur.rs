@@ -18,8 +18,10 @@ pub(super) struct Fold {
     left: bool,
     operand: Arg,
     int32: bool,
-    /// The columns the chain's nodes write, where a store or a final value reads them.
+    /// The columns the chain's nodes write, where a store or a side node reads them.
     outs: [Option<u16>; 2],
+    /// The nodes only a written register's final value reads: their last value only.
+    lasts: [Option<u16>; 2],
 }
 
 /// The longest chain a kernel runs.
@@ -98,13 +100,17 @@ pub(super) struct Recurrence {
     side: Vec<u16>,
 }
 
-/// Whether node `id`'s column is read by a store, a written register's final value, or a
-/// side node.
-fn read_later(shape: &Shape, side: &[u16], id: u16) -> bool {
+/// Whether node `id`'s whole column is read: by a store or a side node.
+fn read_as_column(shape: &Shape, side: &[u16], id: u16) -> bool {
     let read = Arg::Col(id);
     shape.stores.iter().any(|store| store.value == read)
-        || shape.temps.iter().any(|&(_, arg)| arg == read)
         || side.iter().any(|&n| shape.nodes[usize::from(n)].a == read || shape.nodes[usize::from(n)].b == read)
+}
+
+/// Whether node `id`'s column is read by a store, a side node or a written register's final
+/// value.
+fn read_later(shape: &Shape, side: &[u16], id: u16) -> bool {
+    read_as_column(shape, side, id) || shape.temps.iter().any(|&(_, arg)| arg == Arg::Col(id))
 }
 
 /// Whether `arg` is the recurrence or a value computed from it this iteration.
@@ -145,8 +151,9 @@ impl Recurrence {
             2 if is_int32_truncation(shape, first, last) => true,
             _ => return None,
         };
-        let outs = [first, last].map(|id| read_later(shape, side, id).then_some(id));
-        Some(Fold { op, left, operand, int32, outs })
+        let outs = [first, last].map(|id| read_as_column(shape, side, id).then_some(id));
+        let lasts = [first, last].map(|id| shape.temps.iter().any(|&(_, arg)| arg == Arg::Col(id)).then_some(id));
+        Some(Fold { op, left, operand, int32, outs, lasts })
     }
 
     /// The scratch columns a run needs.
@@ -245,27 +252,43 @@ impl Fold {
             (sum, if INT32 { to_int32(sum) } else { sum })
         };
         let mut value = phis[0];
+        // The value before the last iteration, from which the last's nodes are redone.
+        let mut before = value;
         if self.outs == [None, None] {
             match self.operand {
                 Arg::Col(n) => {
                     for &x in &scratch[usize::from(n) * CHUNK..][..len] {
+                        before = value;
                         value = step(value, x).1;
                     }
                 }
                 _ => {
                     let x = self.scalar(scalars);
-                    (0..len).for_each(|_| value = step(value, x).1);
+                    (0..len).for_each(|_| {
+                        before = value;
+                        value = step(value, x).1;
+                    });
                 }
             }
         } else {
             for k in 0..len {
                 let x = match self.operand { Arg::Col(n) => scratch[usize::from(n) * CHUNK + k], _ => self.scalar(scalars) };
                 let (first, last) = step(value, x);
+                before = value;
                 value = last;
                 for (out, result) in self.outs.iter().zip([first, last]) {
                     if let Some(id) = out {
                         scratch[usize::from(*id) * CHUNK + k] = result;
                     }
+                }
+            }
+        }
+        if len > 0 && self.lasts != [None, None] {
+            let x = match self.operand { Arg::Col(n) => scratch[usize::from(n) * CHUNK + len - 1], _ => self.scalar(scalars) };
+            let (first, last) = step(before, x);
+            for (out, result) in self.lasts.iter().zip([first, last]) {
+                if let Some(id) = out {
+                    scratch[usize::from(*id) * CHUNK + len - 1] = result;
                 }
             }
         }
