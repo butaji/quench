@@ -16603,18 +16603,15 @@ fn lane_instance_env<H: Host>(cx: *mut LaneContext<H>) -> Value {
 #[inline(always)]
 fn lane_enter_program<H: Host>(cx: *mut LaneContext<H>, program: ProgramId) {
     let vm = unsafe { vm(cx) };
-    let Some((code, views, constants)) = vm.programs.lane_program(program) else {
-        unreachable!("a lane target names a program the store holds");
-    };
-    let (code, views, constants) = (std::ptr::from_ref(code), views as *const _, std::ptr::from_ref(constants));
-    vm.activate_program(program, constants);
+    let context = vm.lane_program_context(program);
+    vm.activate_context(program, context);
     // SAFETY: the context outlives the lane run; the store keeps the program's residual,
-    // views and constants for it.
+    // views and constants for it, and its context names them.
     unsafe {
-        (*cx).code = code;
+        (*cx).code = (*context).code;
         (*cx).program = program;
-        (*cx).views = views;
-        (*cx).constants = constants;
+        (*cx).views = (*context).views;
+        (*cx).constants = (*context).constants;
     }
 }
 
