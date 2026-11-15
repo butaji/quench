@@ -1762,6 +1762,17 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     /// young records the mark reached (the marked aged ones of the young words), which the
     /// sweep makes old.
     pub(super) fn for_each_young_survivor(&self, mut visit: impl FnMut(RecordId)) {
+        self.for_each_young_survivor_word(|base, _block_index, _word_index, mut survivors| {
+            while survivors != 0 {
+                visit(base + survivors.trailing_zeros());
+                survivors &= survivors - 1;
+            }
+        });
+    }
+
+    /// `for_each_young_survivor` a word at a time: each word's first id, block and word
+    /// position, and its survivors' bits.
+    fn for_each_young_survivor_word(&self, mut visit: impl FnMut(RecordId, usize, usize, u64)) {
         // A word reloaded for allocation is listed once per load; a candidate's word is in
         // `aged_words`.
         let mut bases: Vec<RecordId> = Self::young_word_bases(&self.young_words, self.young_floor, self.next_id).collect();
@@ -1771,12 +1782,25 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         for base in bases {
             let (block_index, word_index) = Self::word_position(base);
             let block = &self.blocks[block_index];
-            let mut survivors = block.aged[word_index] & block.marked[word_index];
-            while survivors != 0 {
-                visit(base + survivors.trailing_zeros());
-                survivors &= survivors - 1;
+            let survivors = block.aged[word_index] & block.marked[word_index];
+            if survivors != 0 {
+                visit(base, block_index, word_index, survivors);
             }
         }
+    }
+
+    /// The young survivors (`for_each_young_survivor`) whose count is 0, a word of counts at
+    /// a time; the counts cover every block (`rc_ensure`).
+    pub(super) fn rc_zero_survivors(&self, mut visit: impl FnMut(RecordId)) {
+        self.for_each_young_survivor_word(|base, block_index, word_index, survivors| {
+            let counts = &self.rc_blocks[block_index];
+            let mut zero = survivors
+                & !(counts.lo[word_index].load(Ordering::Relaxed) | counts.hi[word_index].load(Ordering::Relaxed));
+            while zero != 0 {
+                visit(base + zero.trailing_zeros());
+                zero &= zero - 1;
+            }
+        });
     }
 }
 

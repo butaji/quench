@@ -801,9 +801,9 @@ pub(crate) struct Heap {
     rc_candidates: Vec<Value>,
     /// Whether the running mark is a minor collection's under counts: the aged object and
     /// array records it marks count their children as it pushes them (`Heap::mark_value`),
-    /// and are listed in `rc_counted`.
+    /// and are counted in `rc_counted`.
     rc_marking: bool,
-    rc_counted: Vec<Value>,
+    rc_counted: usize,
     /// The records old as the running full collection started, per family
     /// (`Heap::rc_full_start`).
     rc_old: Vec<Vec<u64>>,
@@ -3825,14 +3825,14 @@ impl Heap {
             let object = unsafe { self.object_records.get_live(record_id) };
             if self.rc_marking && self.object_records.is_aged(record_id) {
                 // A survivor (or a re-marked candidate) counts what its snapshot names
-                // (`SatbSnapshot`), pushed here. Its shape's edges and owned roots are this
-                // collection's roots already (`Vm::collect_inner` under counts).
+                // (`SatbSnapshot`), pushed here. Its shape's edges are pinned or this
+                // collection's roots, and its owned roots are roots (`Vm::collect_inner`).
                 let first = work.len();
                 Self::object_children(value, object, &self.properties, work, &mut |_, _, _, _, _| {}, trace_kind, &mut PushedProtos::default());
                 for &child in &work[first..] {
                     self.rc_increment(child);
                 }
-                self.rc_counted.push(value);
+                self.rc_counted += 1;
             } else {
                 Self::object_children(
                     value,
@@ -3869,7 +3869,7 @@ impl Heap {
                 for &child in &work[first..] {
                     self.rc_increment(child);
                 }
-                self.rc_counted.push(value);
+                self.rc_counted += 1;
             } else {
                 let string_records = &mut self.string_records;
                 Self::array_children(

@@ -309,8 +309,8 @@ impl Heap {
     pub(super) fn rc_epoch(&mut self) {
         // The object and array survivors counted their children in the mark (`rc_counted`);
         // the other families' (with the candidates the mark re-marked, aged) count theirs here.
-        let mut survivors = std::mem::take(&mut self.rc_counted);
-        let counted = survivors.len();
+        let counted = std::mem::take(&mut self.rc_counted);
+        let mut survivors = Vec::new();
         let mut family = 0..;
         for_each_space_mut!(self, |space, handle| {
             space.rc_ensure();
@@ -319,19 +319,16 @@ impl Heap {
             }
         });
         let mut children = Vec::new();
-        self.rc_increment_children(survivors[counted..].iter().copied(), &mut children);
+        self.rc_increment_children(survivors.iter().copied(), &mut children);
         let candidates = std::mem::take(&mut self.rc_candidates);
-        self.rc_trace[4] = survivors.len() as u64;
+        self.rc_trace[4] = (counted + survivors.len()) as u64;
         if crate::trace::Channel::Gc.on() {
             self.rc_trace[5] = candidates.iter().filter(|&&value| !self.rc_is_old(value)).count() as u64;
         }
+        // Every survivor has counted its children now; those left at 0, re-marked candidates
+        // among them (aged), are found a word of counts at a time.
         let mut zero = std::mem::take(&mut self.rc_zero);
-        for value in candidates.into_iter().chain(survivors) {
-            let Some((family, id)) = locate(value) else { continue };
-            if with_space!(self, family, |space| space.is_marked(id) && space.rc_count(id) == 0) {
-                zero.push(value);
-            }
-        }
+        for_each_space_mut!(self, |space, handle| space.rc_zero_survivors(|id| zero.push(handle(id))));
         self.rc_zero = zero;
     }
 
