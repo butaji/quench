@@ -22,7 +22,6 @@ pub(super) fn lane_apply_activation<H: Host>(
         Native::FunctionApply => (r.get(i.c), argument(0), argument(1)),
         _ => (argument(0), argument(1), *args.get(2)?),
     };
-    let listed = !(native == Native::FunctionApply && (list.is_undefined() || list.is_null()));
     #[cfg(feature = "profile-lane-exits")]
     {
         let vm = unsafe { vm(cx) };
@@ -39,11 +38,13 @@ pub(super) fn lane_apply_activation<H: Host>(
             vm.lane_stack.activations.len(),
         ));
     }
-    lane_list_activation(cx, r, ip, i, callee, receiver, list, listed)
+    let absent = native == Native::FunctionApply && (list.is_undefined() || list.is_null());
+    lane_list_activation(cx, r, ip, i, callee, receiver, list, if absent { None } else { Some(unsafe { vm(cx) }.dense_list_length(list)?) })
 }
 
 /// `callee`'s activation with `receiver` and the elements of `list`, a dense array without
-/// holes (none when not `listed`), for an applied call or a spread call (`CallArray`), whose
+/// holes whose first `listed` stored elements are the arguments (`Vm::dense_list_length`;
+/// none when `None`), for an applied call or a spread call (`CallArray`), whose
 /// argument array the call's spread evaluation built; `None` for any other list.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
@@ -55,10 +56,10 @@ pub(super) fn lane_list_activation<H: Host>(
     callee: Value,
     receiver: Value,
     list: Value,
-    listed: bool,
+    listed: Option<usize>,
 ) -> Option<Result<(Registers, Ip), Ip>> {
     let vm = unsafe { vm(cx) };
-    let length = if listed { vm.dense_list_length(list)? } else { 0 };
+    let length = listed.unwrap_or(0);
     // A bound function or `Function.prototype.call` forwards the list to the function it
     // names (`Vm::forwarded_call`), which a forwarded call activates; the elements are copied
     // out first, as a frame call's are.
@@ -100,7 +101,7 @@ pub(super) fn lane_list_activation<H: Host>(
         return Some(Err(exit(ip)));
     };
     // Read after the resolution above, which runs no guest code but may allocate.
-    let elements: &[Value] = if listed { &vm.heap.array_elements(list)?.as_slice()[..length] } else { &[] };
+    let elements: &[Value] = if listed.is_some() { &vm.heap.array_elements(list)?.as_slice()[..length] } else { &[] };
     Some(lane_activate_passed(cx, r, ip, &target, elements, this))
 }
 

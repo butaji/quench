@@ -119,6 +119,27 @@ impl<H: Host> Vm<H> {
             && self.fuse_intact(IntactFuse::ArrayIteratorNext)
     }
 
+    /// The length of `list` when spreading it yields its stored elements without running
+    /// guest code: an array whose iteration is intact (`array_iteration_intact`) holding only
+    /// present own data elements, no indexed descriptor, sparse storage or hole. One array
+    /// read answers what `array_iteration_intact` and `present_dense_elements` answer apart.
+    pub(super) fn intact_spread_length(&mut self, list: Value) -> Option<usize> {
+        let array = self.heap.array(list)?;
+        if array.is_arguments_object() || array.has_side_descriptors() || array.has_indexed_descriptors() || array.proto() != self.array_proto {
+            return None;
+        }
+        let shape = array.shape();
+        let elements = array.elements().as_slice();
+        let length = elements.len();
+        if elements.iter().any(|value| value.is_deleted()) || self.heap.sparse_length(list).is_some() {
+            return None;
+        }
+        let intact = (self.array_iteration_shape == Some(shape) || self.array_shape_lacks_iterator(shape))
+            && self.fuse_intact(IntactFuse::ArrayIterator)
+            && self.fuse_intact(IntactFuse::ArrayIteratorNext);
+        intact.then_some(length)
+    }
+
     /// Whether array shape `shape` has no own `@@iterator`, remembered for a shape that keeps
     /// its properties (no dictionary) until shape compaction renumbers the shapes.
     #[cold]

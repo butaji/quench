@@ -14769,15 +14769,13 @@ script_handler! {
     #[inline(never)]
     fn lane_call_spread<>(cx, r, ip, i, view) {
         let list = r.get(ImmediateLayout::call_window_base(i.imm()));
-        let vm = unsafe { vm(cx) };
-        let length = vm.heap.array(list).map_or(0, |array| array.elements().len());
-        if !vm.array_iteration_intact(list) || vm.present_dense_elements(list, 0..length).is_none() {
+        let Some(length) = (unsafe { vm(cx) }).intact_spread_length(list) else {
             return exit(ip);
-        }
+        };
         if let Some(resumed) = lane_spread_native_call(cx, ip, i, r.get(i.b), r.get(i.c), list) {
             resume!(cx, resumed)
         }
-        match lane_list_activation(cx, r, ip, i, r.get(i.b), r.get(i.c), list, true) {
+        match lane_list_activation(cx, r, ip, i, r.get(i.b), r.get(i.c), list, Some(length)) {
             Some(Ok((registers, base))) => next!(cx, registers, base, Carried::script_in(cx, view)),
             Some(Err(next)) => next,
             None => exit(ip),
@@ -14792,7 +14790,10 @@ script_handler! {
     #[inline(never)]
     fn lane_call_array<>(cx, r, ip, i, view) {
         let list = r.get(ImmediateLayout::call_window_base(i.imm()));
-        match lane_list_activation(cx, r, ip, i, r.get(i.b), r.get(i.c), list, true) {
+        let Some(length) = (unsafe { vm(cx) }).dense_list_length(list) else {
+            return exit(ip);
+        };
+        match lane_list_activation(cx, r, ip, i, r.get(i.b), r.get(i.c), list, Some(length)) {
             Some(Ok((registers, base))) => next!(cx, registers, base, Carried::script_in(cx, view)),
             Some(Err(next)) => next,
             None => exit(ip),
