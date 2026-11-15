@@ -3372,20 +3372,31 @@ impl<H: Host> Vm<H> {
     /// Set's size accessors. `None`
     /// for any other getter or receiver, whose call the general path makes.
     pub(super) fn pure_native_getter_value(&self, getter: Value, this: Value) -> Option<Value> {
-        let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = self.heap.function(getter) else {
-            return None;
-        };
-        match *native {
+        self.pure_native_value(self.pure_native_getter(getter)?, this)
+    }
+
+    /// The native of `getter` where `pure_native_value` answers it: a function's native is
+    /// fixed for its life, so a proof that names the getter may keep its native instead.
+    pub(super) fn pure_native_getter(&self, getter: Value) -> Option<Native> {
+        match self.heap.function(getter) {
+            Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) => Some(*native),
+            _ => None,
+        }
+    }
+
+    /// `pure_native_getter_value` of the native getter `native`.
+    pub(super) fn pure_native_value(&self, native: Native, this: Value) -> Option<Value> {
+        match native {
             Native::TypedArrayLengthGetter
             | Native::TypedArrayByteLengthGetter
             | Native::TypedArrayByteOffsetGetter
-            | Native::TypedArrayBufferGetter => self.typed_array_getter_value(*native, this),
+            | Native::TypedArrayBufferGetter => self.typed_array_getter_value(native, this),
             Native::DataViewByteLengthGetter | Native::DataViewByteOffsetGetter => {
                 let (buffer, offset, length) = self.data_view_view(this)?;
                 if self.array_buffer_out_of_bounds(buffer, offset, length) {
                     return None;
                 }
-                let value = if *native == Native::DataViewByteLengthGetter { length } else { offset };
+                let value = if native == Native::DataViewByteLengthGetter { length } else { offset };
                 Some(Value::number(value as f64))
             }
             Native::MapSizeGetter => match self.heap.get(this) {

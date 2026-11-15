@@ -19,7 +19,8 @@ struct TypedArrayGeometryProof {
     prototype: Value,
     atom: Atom,
     epoch: u64,
-    getter: Value,
+    /// The intrinsic accessor's native (`Vm::pure_native_getter`), fixed with the getter.
+    native: Native,
 }
 
 #[derive(Default)]
@@ -39,23 +40,24 @@ impl<H: Host> Vm<H> {
         let (shape, prototype) = (data.shape(), data.proto());
         let epoch = crate::heap::prototype_layout_epoch();
         let index = atom as usize % TYPED_ARRAY_GEOMETRY_ENTRIES;
-        let getter = match self.typed_array_geometry.0[index].get() {
+        let native = match self.typed_array_geometry.0[index].get() {
             Some(proof) if proof.shape == shape && proof.prototype == prototype && proof.atom == atom && proof.epoch == epoch => {
-                proof.getter
+                proof.native
             }
             _ => self.prove_geometry_getter(shape, prototype, atom, epoch)?,
         };
-        self.pure_native_getter_value(getter, object)
+        self.pure_native_value(native, object)
     }
 
-    /// The getter `typed_array_geometry_read` reads `atom` through from a receiver of own
-    /// shape `shape` and prototype `prototype`, proved and recorded under `epoch`; `None`
-    /// where the shape is a dictionary or holds the name, or no intrinsic accessor answers.
-    fn prove_geometry_getter(&mut self, shape: u32, prototype: Value, atom: Atom, epoch: u64) -> Option<Value> {
+    /// The native getter `typed_array_geometry_read` reads `atom` through from a receiver of
+    /// own shape `shape` and prototype `prototype`, proved and recorded under `epoch`; `None`
+    /// where the shape is a dictionary or holds the name, or no intrinsic native accessor answers.
+    fn prove_geometry_getter(&mut self, shape: u32, prototype: Value, atom: Atom, epoch: u64) -> Option<Native> {
         if self.shape_is_dictionary(shape) || self.shape_slot(shape, atom).is_some() {
             return None;
         }
         let (getter, depth) = self.typed_array_geometry_getter(prototype, atom)?;
+        let native = self.pure_native_getter(getter)?;
         // Every link up to the holder becomes a prototype first, so a later change to one
         // advances the epoch and retires the proof.
         let mut link = prototype;
@@ -65,9 +67,9 @@ impl<H: Host> Vm<H> {
         }
         if crate::heap::prototype_layout_epoch() == epoch {
             let index = atom as usize % TYPED_ARRAY_GEOMETRY_ENTRIES;
-            self.typed_array_geometry.0[index].set(Some(TypedArrayGeometryProof { shape, prototype, atom, epoch, getter }));
+            self.typed_array_geometry.0[index].set(Some(TypedArrayGeometryProof { shape, prototype, atom, epoch, native }));
         }
-        Some(getter)
+        Some(native)
     }
 
     /// The getter of the accessor `atom` names first along the ordinary prototypes from
