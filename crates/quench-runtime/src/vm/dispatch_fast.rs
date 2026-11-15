@@ -6320,7 +6320,7 @@ fn lane_closure_value_of<H: Host>(cx: *mut LaneContext<H>, id: u32) -> Option<Va
 #[inline(always)]
 fn lane_closure<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, function: u32, env: Value) -> Option<Value> {
     if !vm.with_scope_entered
-        && code.function_get(function as usize).is_some_and(|body| body.prototype_unobservable)
+        && code.functions.get(function as usize).is_some_and(|slot| slot.header().prototype_unobservable)
         && let Some(known) = Value::known_closure(function, env)
     {
         return Some(known);
