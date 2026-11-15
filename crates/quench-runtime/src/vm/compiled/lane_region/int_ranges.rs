@@ -10,16 +10,20 @@
 //! growing instead of assuming one and checking it on the back edge.
 
 use super::*;
-use super::super::facts::{self, Model, Observed, ObservedRead, Seeds, Text};
+use super::super::facts::{self, Model, Observed, ObservedRead, Point, Seeds, Text};
+use super::loop_versions::{Hoist, Induction, Nest, Resolved, Shape, Version};
 
 /// The facts one analysis proves, by unit PC.
 pub(super) struct IntRanges {
     overflow_free: CompoundBitSet,
     in_bounds: CompoundBitSet,
-    /// The accesses whose index is below a bound its loop's entry compares with the array's
-    /// length once (`Lowering::version_bounds`), by PC (ascending), with the bound's register and, for an
-    /// index `base + iv` below `base + bound`, the base's.
-    versioned: Vec<(usize, Register, Option<Register>)>,
+    /// The accesses whose indices their loop's entry compares with the array's length once
+    /// (`Lowering::version_loops`), by PC (ascending).
+    versioned: Vec<Version>,
+    /// The pure integer operations a loop's entry evaluates once (`Lowering::hoist_pure`), by PC (ascending).
+    hoisted: Vec<Hoist>,
+    /// The products of a counter a loop's entry holds and advances (`Lowering::start_inductions`).
+    inductions: Vec<Induction>,
     /// The arithmetic whose result leaves int32 within `IntRange::WORD`, by PC (ascending), with its range.
     index_ranges: Vec<(usize, IntRange)>,
     /// The products no consumer reads the sign of a zero of, by PC (ascending).
@@ -31,7 +35,7 @@ pub(super) struct IntRanges {
 impl IntRanges {
     pub(super) fn new(instructions: usize) -> Self {
         Self { overflow_free: CompoundBitSet::with_capacity(instructions), in_bounds: CompoundBitSet::with_capacity(instructions),
-            versioned: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions) }
+            versioned: Vec::new(), hoisted: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions) }
     }
 
     /// Whether the product at `pc` may keep the int32 zero for a negative one: no operands make a
@@ -53,12 +57,32 @@ impl IntRanges {
     /// Whether the index of the element access at `pc` lies in `0..length` of its array: proved
     /// at the access, or by its loop's entry (`versioned`).
     pub(super) fn in_bounds(&self, pc: usize) -> bool {
-        self.in_bounds.contains(pc) || self.versioned.binary_search_by_key(&pc, |(at, ..)| *at).is_ok()
+        self.in_bounds.contains(pc) || self.versioned.binary_search_by_key(&pc, |version| version.pc).is_ok()
     }
 
-    /// The accesses whose bound their loop's entry compares with the array's length, by PC, with
-    /// the bound's register.
-    pub(super) fn versioned(&self) -> &[(usize, Register, Option<Register>)] { &self.versioned }
+    /// The accesses whose indices their loop's entry compares with the array's length, by PC.
+    pub(super) fn versioned(&self) -> &[Version] { &self.versioned }
+
+    /// The pure integer operations hoisted to a loop's entry, by PC.
+    pub(super) fn hoisted(&self) -> &[Hoist] { &self.hoisted }
+
+    /// The products an entry holds and advances.
+    pub(super) fn inductions(&self) -> &[Induction] { &self.inductions }
+
+    /// Keeps what a loop's entry proves of an access: its proof, the sum of its index bounded by it
+    /// (an index below its array's length, which every layout stores in 32 bits), and its product's
+    /// induction.
+    fn keep(&mut self, resolved: Resolved) {
+        self.versioned.push(resolved.version);
+        let known = IntRange { min: 0, max: crate::bytecode::MAX_ARRAY_LENGTH as i64 };
+        if let Some(found) = resolved.add.and_then(|add| self.index_ranges.binary_search_by_key(&add, |(at, _)| *at).ok()) {
+            let range = &mut self.index_ranges[found].1;
+            *range = range.intersect(known).unwrap_or(known);
+        }
+        if let Some(induction) = resolved.induction.filter(|induction| self.inductions.iter().all(|held| held.multiply != induction.multiply)) {
+            self.inductions.push(induction);
+        }
+    }
 }
 
 impl Lowering<'_, '_> {
@@ -89,9 +113,9 @@ impl Lowering<'_, '_> {
         reads
     }
 
-    /// The proofs of the unit entered at `entry` with the checked inputs `initial`.
+    /// The proofs of the unit entered at `entry` with the checked inputs `initial`, over `loops`, its local loops.
     pub(super) fn prove_ranges(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
-        leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) -> IntRanges {
+        leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, loops: &[(usize, usize)]) -> IntRanges {
         let dense = |pc: usize| self.hoisted_access(pc);
         let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
         let reads = self.element_reads(instructions);
@@ -101,20 +125,48 @@ impl Lowering<'_, '_> {
         let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
             native_calls: self.native_calls };
         let mut proved = IntRanges::new(instructions.len());
-        let mut bounded: Vec<(usize, Register, (Register, Option<Register>))> = Vec::new();
-        facts::analyze_text(&text, initial, seeds).replay(&text, seeds, |pc, point| {
-            if point.overflow_free(&self.program.constants, instructions[pc]) { proved.overflow_free.insert(pc); }
-            match point.index_proof(&model, pc, instructions[pc]) {
-                facts::IndexProof::Proven => { proved.in_bounds.insert(pc); }
-                facts::IndexProof::Versioned { array, bound } => bounded.push((pc, array, (bound, None))),
-                facts::IndexProof::Check => bounded.extend(self.affine_bound(instructions, pc, point)),
-            }
-            let signless = signless.binary_search(&pc).is_ok();
-            if let Some(range) = point.index_range(&self.program.constants, instructions[pc], signless) { proved.index_ranges.push((pc, range)); }
-            if point.zero_free(&self.program.constants, instructions[pc]) { proved.zero_free.insert(pc); }
-        });
-        proved.versioned = self.versioned_bounds(&model, instructions, &bounded);
+        let mut seen = Seen::default();
+        facts::analyze_text(&text, initial, seeds).replay(&text, seeds, |pc, point| self.prove_at((&mut proved, &mut seen), (&model, &signless, instructions), pc, point));
         proved.signless = signless;
+        self.prove_loops(&mut proved, &model, Nest { instructions, loops: &self.lowered_loops(loops), hoists: &[] }, &seen);
         proved
     }
+
+    /// What the point before the instruction at `pc` proves of it, and what the loops around it
+    /// will decide (`seen`).
+    fn prove_at(&self, (proved, seen): (&mut IntRanges, &mut Seen), (model, signless, instructions): (&Model<'_>, &[usize], &[WideInstruction]),
+        pc: usize, point: &Point) {
+        let instruction = instructions[pc];
+        if point.overflow_free(&self.program.constants, instruction) { proved.overflow_free.insert(pc); }
+        match point.index_proof(model, pc, instruction) {
+            facts::IndexProof::Proven => { proved.in_bounds.insert(pc); }
+            proof => seen.shapes.extend(self.shape(instructions, pc, point, proof)),
+        }
+        let range = point.index_range(&self.program.constants, instruction, signless.binary_search(&pc).is_ok());
+        if let Some(range) = range {
+            proved.index_ranges.push((pc, range));
+            if self.hoistable(pc, instruction, point) { seen.hoistable.push(pc); }
+        }
+        if point.zero_free(&self.program.constants, instruction) { proved.zero_free.insert(pc); }
+    }
+
+    /// What the entries of `nest`'s loops prove of what `seen`: the operations each evaluates once, and
+    /// the accesses each proves within their arrays.
+    fn prove_loops(&self, proved: &mut IntRanges, model: &Model<'_>, nest: Nest<'_>, seen: &Seen) {
+        proved.hoisted = self.plan_hoists(nest, &seen.hoistable);
+        let hoists = proved.hoisted.clone();
+        let nest = Nest { hoists: &hoists, ..nest };
+        for shape in &seen.shapes {
+            if let Some(resolved) = self.resolve((nest, &*proved), model, shape) { proved.keep(resolved); }
+        }
+        proved.versioned.sort_by_key(|version| version.pc);
+    }
+}
+
+/// What the analysis's points leave to the loops: the accesses whose indices a loop's entry may prove
+/// (`Shape`) and the arithmetic a loop's entry may evaluate (`Lowering::hoistable`), by PC.
+#[derive(Default)]
+struct Seen {
+    shapes: Vec<Shape>,
+    hoistable: Vec<usize>,
 }

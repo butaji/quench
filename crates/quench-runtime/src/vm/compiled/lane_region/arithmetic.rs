@@ -17,10 +17,11 @@ impl Lowering<'_, '_> {
     pub(super) fn arithmetic(&mut self, state: &mut State, pc: usize, instruction: WideInstruction,
         operation: NumberArithmetic, exit: ir::Block) -> Option<()> {
         let operands = (instruction.result_register(), [instruction.operand_b(), instruction.operand_c()]);
-        if operation == NumberArithmetic::Divide || self.float_operand(state, operands.1) {
-            self.arithmetic_step(state, (operands, operation), (Domain::Float64, Overflow::Exit, NegativeZero::Exit), exit);
-        } else if let Some(range) = self.index_math(state, pc, instruction) {
+        let words = if operation == NumberArithmetic::Divide { None } else { self.index_math(state, pc, instruction) };
+        if let Some(range) = words {
             self.index_arithmetic(state, operands, (operation, range), exit)?;
+        } else if operation == NumberArithmetic::Divide || self.float_operand(state, operands.1) {
+            self.arithmetic_step(state, (operands, operation), (Domain::Float64, Overflow::Exit, NegativeZero::Exit), exit);
         } else if self.proved_int(state, operands.1) {
             self.int32_arithmetic(state, pc, operands, (operation, exit));
         } else if operation.int32_projection_is_wrapping() && self.truncated(pc, operands.0) {

@@ -359,6 +359,8 @@ struct LoopRead {
     /// replace this receiver or change its shape. Never inferred from feedback.
     receiver: Option<(Register, Type)>,
     header: Option<ObjectHeader>,
+    /// The word an induction value (`representation` `Int64`) advances by at each step of its counter.
+    step: Option<Variable>,
 }
 
 #[derive(Clone, Copy)]
@@ -726,8 +728,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn define(&mut self, state: &mut State, register: Register, value: ir::Value, fact: RegisterFact) {
-        frame::register_define(&mut self.builder, &mut self.registers, &mut self.written, state,
-            register, value, fact);
+        frame::register_define(&mut self.builder, &mut self.registers, &mut self.written, state, register, value, fact);
     }
 
     fn set_tagged(&mut self, state: &mut State, register: Register, bits: ir::Value) {
@@ -835,7 +836,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             Some(block) => {
                 self.entered.insert(pc);
                 self.finishes |= pc <= self.at;
-                if self.at < pc { self.hoist_loop_entry(state, pc); }
+                if self.at < pc { self.hoist_entry(state, pc); }
                 self.conform(state, pc);
                 if self.at < pc { self.arrive(state, pc); }
                 self.goto(block, &[]);
@@ -1732,7 +1733,7 @@ pub(super) fn lower(
             read.pc == at && read.owner.is_none() && instructions[at].op().is_load_capture())),
         lowering.views, typed_captures, |pc| coverage.lowered(pc));
     lowering.entering = lowering.entering_ranges(entry_pc);
-    lowering.ranges = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape);
+    lowering.ranges = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);
     lowering.arrays_fixed = lowering.arrays_stay_put(&leaders, &writes);
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
@@ -1804,7 +1805,7 @@ pub(super) fn lower(
         // A bounded range reads its fields at their sites; hoisting them to a shared entry
         // guard would make every call leave at the entry.
         lowering.proving_entry = true;
-        lowering.hoist_loop_entry(&mut state, pc);
+        lowering.hoist_entry(&mut state, pc);
         lowering.proving_entry = false;
         lowering.goto(target, &[]);
     }
@@ -1814,7 +1815,7 @@ pub(super) fn lower(
         if !coverage.lowered(pc) { continue; }
         if let Some(block) = lowering.blocks[pc] {
             if reachable {
-                lowering.hoist_loop_entry(&mut state, pc);
+                lowering.hoist_entry(&mut state, pc);
                 lowering.conform(&mut state, pc);
                 lowering.arrive(&state, pc);
                 lowering.entered.insert(pc);
@@ -2428,6 +2429,7 @@ impl Lowering<'_, '_> {
     fn instruction(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         if self.consumed.contains(pc) { return true; }
         self.left_here = self.generic.contains(&pc);
+        self.advance_inductions(pc);
         if self.unit.markers.contains(&pc) || !retains_array_views(&self.program.constants, instruction) {
             state.proofs.arrays.clear();
         }
@@ -3272,15 +3274,6 @@ impl Lowering<'_, '_> {
         false
     }
 
-    /// The reads `header`'s loop repeats unchanged, made on its entry edge from `state`: a
-    /// guard that fails there leaves at the header, before the loop runs.
-    fn hoist_loop_entry(&mut self, state: &mut State, header: usize) {
-        self.hoist_arrays(state, header, false);
-        self.hoist_stable(state, header);
-        self.hoist_reads(state, header);
-        self.hoist_arrays(state, header, true);
-    }
-
     /// Whether an enclosing loop's entry hoisted the capture read at `pc` already (its body holds
     /// this loop's, so the read is invariant there too): reading it again at each entry here would
     /// be a helper call inside the outer loop, spilling every value live across it.
@@ -3428,7 +3421,7 @@ impl Lowering<'_, '_> {
                     self.loop_stores.insert(store, LoopStore { header: object_header, address, packed_range });
                 }
             }
-            let read = LoopRead { value: variable, ty, representation, receiver, header: object_header };
+            let read = LoopRead { value: variable, ty, representation, receiver, header: object_header, step: None };
             if let Some(index) = field {
                 for pc in &self.loop_fields[index].reads { self.hoisted.insert(*pc, read); }
             } else { self.hoisted.insert(pc, read); }
@@ -3478,7 +3471,6 @@ impl Lowering<'_, '_> {
                 ElementViews::Typed(_) => self.hoist_typed_view(array, bits, variables, exit),
             }
         }
-        if !captured { self.version_bounds(state, header, exit); }
     }
 
     /// The tagged value of `array`'s source on the loop's entry edge: its register's, or its

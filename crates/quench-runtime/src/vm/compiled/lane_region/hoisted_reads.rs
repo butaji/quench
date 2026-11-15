@@ -6,11 +6,17 @@ impl Lowering<'_, '_> {
     /// `instruction`, whose value `read` holds since the loop's preheader: its register
     /// takes the held value and facts, and the receiver the facts the read proved.
     pub(super) fn hoisted_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, read: LoopRead) {
-        let LoopRead { value: variable, ty, representation, receiver, header } = read;
+        let LoopRead { value: variable, ty, representation, receiver, header, .. } = read;
         if let Some(receiver) = receiver {
             prove_receiver(state, instruction, receiver, header);
         }
         let raw = self.builder.use_var(variable);
+        if representation == Representation::Int64 {
+            // An integer operation's word, evaluated once for the loop (`hoist_pure`), or advanced by its counter's steps.
+            self.define(state, instruction.result_register(), raw, RegisterFact::definition(ty, Representation::Int64));
+            self.native += 1;
+            return;
+        }
         if representation == Representation::Int32 && instruction.op().is_load_capture() {
             // Captures have no tagged field-cache consumer. Preserve the
             // admitted view; recovery or a tagged use boxes it on demand.

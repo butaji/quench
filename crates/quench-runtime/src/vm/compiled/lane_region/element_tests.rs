@@ -174,9 +174,6 @@ fn matmul_indices_are_computed_in_integer_words_with_no_conversion_in_the_loop()
     let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
     let body = loop_body(&function);
     assert_eq!(conversions(&function, &body), 0, "an index is no Number that converts to an integer and back: {function}");
-    let products = wide_operations(&function, &body, ir::Opcode::Imul, |function, operands|
-        operands.iter().all(|operand| is_sign_extension(function, *operand)));
-    assert_eq!(products, 2, "`i * n` and `k * n` multiply int32s in 64-bit words: {function}");
     let sums = wide_operations(&function, &body, ir::Opcode::Iadd, |function, operands|
         operands.iter().any(|operand| is_sign_extension(function, *operand)));
     assert!(sums >= 2, "each index adds its int32 to a 64-bit product: {function}");
@@ -191,9 +188,11 @@ fn an_index_that_may_be_a_negative_zero_is_still_an_integer_word() {
     let function = entered_region(source, ElementViews::Typed(Some(Kind::Float64)), IntRange::FULL);
     let body = loop_body(&function);
     assert_eq!(conversions(&function, &body), 0, "{function}");
-    let products = wide_operations(&function, &body, ir::Opcode::Imul, |function, operands|
+    let everything: Vec<ir::Inst> = function.layout.blocks().flat_map(|block| function.layout.block_insts(block)).collect();
+    let words = |instructions: &[ir::Inst]| wide_operations(&function, instructions, ir::Opcode::Imul, |function, operands|
         operands.iter().all(|operand| is_sign_extension(function, *operand)));
-    assert_eq!(products, 1, "the product runs in 64-bit words: {function}");
+    assert_eq!(words(&everything), 1, "the product runs in 64-bit words: {function}");
+    assert_eq!(words(&body), 0, "and once, on the loop's entering edge, as its operands are invariant: {function}");
 }
 
 /// The branches in `body` on an int32 overflow flag: the exits an int32 operation takes.
@@ -261,4 +260,32 @@ fn an_index_that_adds_an_invariant_base_to_a_counter_compares_base_and_bound_onc
     let function = entered_region(source, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
     let body = loop_body(&function);
     assert_eq!(bounds_compares(&function, &body), 0, "{function}");
+}
+
+/// The comparison of the entering edge: instructions of `function` outside its loops.
+fn before_loops(function: &ir::Function) -> Vec<ir::Inst> {
+    let body = loop_body(function);
+    function.layout.blocks().flat_map(|block| function.layout.block_insts(block)).filter(|inst| !body.contains(inst)).collect()
+}
+
+#[test]
+fn matmul_k_loop_multiplies_nothing_and_compares_no_index_with_a_length() {
+    use crate::heap::TypedArrayKind as Kind;
+    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
+    let body = loop_body(&function);
+    let products = wide_operations(&function, &body, ir::Opcode::Imul, |_, _| true);
+    assert_eq!(products, 0, "`i * n` is evaluated on the entering edge and `k * n` advances by `n`: {function}");
+    assert_eq!(bounds_compares(&function, &body), 0, "both accesses carry the entry's proof: {function}");
+    let entry = before_loops(&function);
+    assert!(wide_operations(&function, &entry, ir::Opcode::Imul, |_, _| true) >= 2, "the entry holds `i * n` and the start of `k * n`: {function}");
+    assert!(version_compares(&function, &entry) >= 2, "the entry compares the reach of each access with its length: {function}");
+}
+
+#[test]
+fn a_loop_invariant_product_is_one_word_the_entry_evaluates_once() {
+    use crate::heap::TypedArrayKind as Kind;
+    let source = "function f(a, x, y, n) { var s = 0; for (var k = 0; k < n; k++) s += a[x * y + k]; return s; }";
+    let function = entered_region(source, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
+    let products = wide_operations(&function, &loop_body(&function), ir::Opcode::Imul, |_, _| true);
+    assert_eq!(products, 0, "`x * y` does not change with `k`: {function}");
 }
