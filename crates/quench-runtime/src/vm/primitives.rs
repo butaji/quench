@@ -5,6 +5,9 @@ mod whitespace;
 pub(super) use whitespace::is_ecma_whitespace_character;
 use whitespace::is_ecma_whitespace;
 
+/// The longest `repeat` result made by one copy of ASCII text (`Native::StringRepeat`).
+const REPEAT_COPY_MAX_UNITS: usize = 4096;
+
 impl<H: Host> Vm<H> {
     pub(super) fn call_target(&self, callee: Value) -> Result<CallTarget, JsError> {
         match self.heap.function(callee) {
@@ -398,6 +401,17 @@ impl<H: Host> Vm<H> {
                 };
                 if size > super::wtf16::MAX_STRING_UNITS {
                     return Err(self.range_error(p, "Invalid string length".into()));
+                }
+                if count == 1 && self.heap.is_string(this) {
+                    return Ok(this);
+                }
+                // Short ASCII text, as a pad or an indent: its bytes written once, in place
+                // of the rope doubling a long result takes.
+                if size <= REPEAT_COPY_MAX_UNITS
+                    && let Some(super::wtf16::Units::Ascii(bytes)) = receiver.existing_units()
+                {
+                    let text: smallvec::SmallVec<[u8; 64]> = bytes.iter().copied().cycle().take(size).collect();
+                    return Ok(self.heap.alloc_string(super::wtf16::JsString::from_ascii_bytes(&text)));
                 }
                 Ok(self.heap.alloc_string(receiver.repeat(count)))
             }
