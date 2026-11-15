@@ -193,6 +193,9 @@ struct LocalProofs {
     fields: smallvec::SmallVec<[FieldValue; INLINE_FIELD_BINDINGS]>,
     /// Pure ToInt32 results, separate from each source value's semantic type.
     int32_projections: smallvec::SmallVec<[(ir::Value, ir::Value); INLINE_NUMBER_PROJECTIONS]>,
+    /// Number views of tagged values a test proved (`frame_operands::register_number_value`): a
+    /// second register defined as the same value (`p.x * p.x`) takes the double without a test.
+    numbers: smallvec::SmallVec<[(ir::Value, ir::Value); INLINE_NUMBER_PROJECTIONS]>,
     /// Dense array views by the tagged base they prove, until an instruction that could change an array's storage (`retains_array_views`).
     arrays: smallvec::SmallVec<[(ir::Value, super::DenseArrayView); INLINE_ARRAY_VIEWS]>,
     /// Dense elements a read loaded, until an instruction that may write any element: their
@@ -231,7 +234,7 @@ impl State {
         Self { values: vec![RegisterFact::canonical(); registers], proofs: LocalProofs {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), receivers: BTreeSet::new(),
-            fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), stable: false, realm: false,
+            fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false,
             arrays: smallvec::SmallVec::new(), elements: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
     }
 
@@ -929,6 +932,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
             .all(|other| other.fields.contains(field))).collect();
         state.proofs.int32_projections = first.int32_projections.iter().copied().filter(|projection| rest.iter()
             .all(|other| other.int32_projections.contains(projection))).collect();
+        state.proofs.numbers = first.numbers.iter().copied().filter(|projection| rest.iter()
+            .all(|other| other.numbers.contains(projection))).collect();
         state.proofs.arrays = first.arrays.iter().copied().filter(|view| rest.iter()
             .all(|other| other.arrays.contains(view))).collect();
         state.proofs.elements = first.elements.iter().copied().filter(|element| rest.iter()
@@ -2048,6 +2053,7 @@ impl Lowering<'_, '_> {
         // Only the same pre-branch SSA definition can survive both numeric arms.
         state.proofs.fields.retain(|field| incoming.proofs.fields.contains(field));
         state.proofs.int32_projections.retain(|projection| incoming.proofs.int32_projections.contains(projection));
+        state.proofs.numbers.retain(|projection| incoming.proofs.numbers.contains(projection));
         state.proofs.elements.retain(|element| incoming.proofs.elements.contains(element));
         state.proofs.meet_homed(&incoming.proofs.homed);
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
