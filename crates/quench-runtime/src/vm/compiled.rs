@@ -1348,6 +1348,10 @@ macro_rules! lane_helper_inventory {
 lane_helper_inventory! { H;
     FunctionCapture => lane_function_capture_read::<H>,
     FieldGet => lane_field_get::<H>,
+    /// The count of the entry function's `arguments` (`lane_body_arguments_length`).
+    ArgumentsLength => super::dispatch_fast::lane_body_arguments_length::<H>,
+    /// One kept `arguments` element (`lane_body_argument_get`).
+    ArgumentGet => super::dispatch_fast::lane_body_argument_get::<H>,
     FieldSet => lane_field_set::<H>,
     Call => super::dispatch_fast::lane_body_call::<H>,
     IndexSet => lane_index_set::<H>,

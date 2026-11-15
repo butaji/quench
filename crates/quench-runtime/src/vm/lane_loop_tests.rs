@@ -346,6 +346,41 @@ fn lane_bodies_run_environment_activations() {
     assert_eq!(printed(source, "lane-env-activation.js", crate::ExecutionMode::Compiled, false), interpreted);
 }
 
+/// A lane body reads its own `arguments`: the count and the kept values a keeping activation
+/// holds, and the object's own data once a binding is materialized. The values are the
+/// interpreter's in both cases.
+#[test]
+fn lane_bodies_read_their_arguments_binding() {
+    let kept = r#"
+      function total(first) {
+        let sum = 0;
+        for (let i = 0; i < arguments.length; i = (i + 1) | 0) sum = (sum + arguments[i]) | 0;
+        return (sum + first) | 0;
+      }
+      let t = 0;
+      for (let calls = 0; calls < 3000; calls = (calls + 1) | 0) t = (t + total(calls, 1, 2, 3)) | 0;
+      print(t);
+    "#;
+    let interpreted = printed(kept, "lane-arguments.js", crate::ExecutionMode::Interpreted, false);
+    assert_eq!(interpreted.len(), 1);
+    assert_eq!(printed(kept, "lane-arguments.js", crate::ExecutionMode::Compiled, true), interpreted);
+    assert_eq!(printed(kept, "lane-arguments.js", crate::ExecutionMode::Compiled, false), interpreted);
+    // The binding is materialized before the loop reads it: the object's own data answers.
+    let materialized = r#"
+      function gather(first) {
+        const all = arguments;
+        let sum = 0;
+        for (let i = 0; i < all.length; i = (i + 1) | 0) sum = (sum + all[i]) | 0;
+        return (sum + first) | 0;
+      }
+      let t = 0;
+      for (let calls = 0; calls < 3000; calls = (calls + 1) | 0) t = (t + gather(calls, 4, 5)) | 0;
+      print(t);
+    "#;
+    let interpreted = printed(materialized, "lane-arguments-object.js", crate::ExecutionMode::Interpreted, false);
+    assert_eq!(printed(materialized, "lane-arguments-object.js", crate::ExecutionMode::Compiled, true), interpreted);
+}
+
 /// What `source`, wrapped in a function, prints when run in `mode`, with lane bodies where
 /// `lane_methods`.
 fn printed(source: &str, name: &str, mode: crate::ExecutionMode, lane_methods: bool) -> Vec<String> {

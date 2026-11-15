@@ -52,6 +52,7 @@ mod polls;
 #[cfg(all(test, feature = "aot"))] #[path = "lane_region/home_tests.rs"] mod home_tests;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
+#[path = "lane_region/arguments.rs"] mod arguments;
 #[path = "lane_region/captures.rs"] mod captures;
 #[path = "lane_region/relocs.rs"] pub(super) mod relocs;
 use relocs::RelocKind; pub(super) use relocs::{helper_symbol, numeric_symbol};
@@ -766,6 +767,12 @@ impl<'a, 'f> Lowering<'a, 'f> {
     fn define(&mut self, state: &mut State, register: Register, value: ir::Value, fact: RegisterFact) {
         frame::register_define(&mut self.builder, &mut self.registers, &mut self.written, state,
             register, value, fact);
+    }
+
+    /// Whether `pc` is the entry function's own record: an inlined callee's records read that
+    /// callee's activation, which no window of the entry's holds.
+    fn caller_record(&self, pc: usize) -> bool {
+        matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_)))
     }
 
     fn set_tagged(&mut self, state: &mut State, register: Register, bits: ir::Value) {
@@ -2647,6 +2654,15 @@ impl Lowering<'_, '_> {
                     true
                 })
             }
+            // The entry function's own `arguments` binding, whose values the activation kept
+            // or an unmaterialized binding holds; an inlined callee's reads its own, which no
+            // window of this activation holds.
+            Class::ArgumentsLength if plain && self.completion.status_and_pc()
+                && self.caller_record(pc) && instruction.local_slot() <= usize::from(u16::MAX) =>
+                self.arguments_length(state, pc as u32, instruction),
+            Class::ArgumentGet if plain && self.completion.status_and_pc()
+                && self.caller_record(pc) && instruction.local_slot() <= usize::from(u16::MAX) =>
+                self.arguments_get(state, pc as u32, instruction),
             Class::Jump if plain => return self.jump(state, pc, instruction),
             _ if plain && instruction.op().is_truthiness_jump() => {
                 let target = instruction.jump_target() as usize;

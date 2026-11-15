@@ -16431,6 +16431,7 @@ fn shared_osr_compiles_loose_nullish_equality_without_coercion() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function sumList(node) {

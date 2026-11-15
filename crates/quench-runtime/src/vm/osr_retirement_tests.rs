@@ -95,6 +95,7 @@ fn shared_osr_receiver_shape_departures_between_runs_do_not_exhaust_compilations
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_sum_that_overflows_int32_each_iteration_widens_and_stays_native() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
         function f(a) {
           let s = 0;

@@ -11493,6 +11493,9 @@ impl<H: Host> Vm<H> {
             && !settles
             && self.claims_across(cross)
             && !body.rest
+            // A `keeps_arguments` target activates in the keeping form, whose window no body
+            // run reads yet: its rows lower (`ArgumentsLength`, `ArgumentGet`), the entry does
+            // not (lane-bodies claim for keeping activations).
             && !plan.keeps_arguments
             && shape.entry == CallEntry::Activates
             && tier_may_claim
@@ -15094,6 +15097,48 @@ fn lane_body_inlined_activation<H: Host>(
 /// A lane body's read of a capture `packed` names (depth in its high half, slot in its low),
 /// by the lane's own `LoadCapture` lookup (`lane_read_capture_value`): its value, or
 /// `Value::DELETED` for none or an uninitialized binding, which leaves the body at the read.
+/// `ArgumentsLength` of a lane body's entry function (`lane_arguments_length`): the count a
+/// keeping activation kept, else the count an unmaterialized binding answers. `DELETED` where
+/// the lane's own handler must read the materialized object, which the body's leave reaches.
+pub(in crate::vm) unsafe extern "C" fn lane_body_arguments_length<H: Host>(_vm: u64, _residual: u64, context: u64, slot: u64) -> u64 {
+    if !crate::DYNAMIC_EXECUTION_ENABLED || context == 0 { return Value::DELETED.to_bits(); }
+    let cx = context as usize as *mut LaneContext<H>;
+    let value = match unsafe { lane_keeping_activation(cx) } {
+        Some((argc, _)) => Value::integer(i32::from(argc)),
+        None => match unsafe { lane_unmaterialized_arguments(cx, slot as usize) } {
+            Some((_, count)) => Value::number(count as f64),
+            None => Value::DELETED,
+        },
+    };
+    value.to_bits()
+}
+
+/// `ArgumentGet` of that binding at an integer index a keeping activation kept or an
+/// unmaterialized binding holds (`lane_argument_get`); any other key leaves at the record.
+pub(in crate::vm) unsafe extern "C" fn lane_body_argument_get<H: Host>(_vm: u64, _residual: u64, context: u64, slot: u64, index: u64) -> u64 {
+    if !crate::DYNAMIC_EXECUTION_ENABLED || context == 0 { return Value::DELETED.to_bits(); }
+    let cx = context as usize as *mut LaneContext<H>;
+    let index = Value::from_bits(index);
+    if let Some((argc, function)) = unsafe { lane_keeping_activation(cx) }
+        && let Some(index) = index.as_int().and_then(|index| u16::try_from(index).ok()).filter(|index| *index < argc)
+    {
+        // SAFETY: the context's program outlives the lane run, and the keeping activation
+        // holds its `argc` values after the function's registers (`lane_keep_arguments`).
+        let registers = unsafe { &*(*cx).code }.function(function as usize).registers;
+        return unsafe { (*cx).registers }.get(registers + index).to_bits();
+    }
+    match unsafe { lane_unmaterialized_arguments(cx, slot as usize) } {
+        Some((values, count)) => index
+            .as_int()
+            .and_then(|index| usize::try_from(index).ok())
+            .filter(|index| *index < count)
+            // SAFETY: `values` holds `count` kept values, and the index is below it.
+            .map_or(Value::DELETED, |index| unsafe { *values.add(index) })
+            .to_bits(),
+        None => Value::DELETED.to_bits(),
+    }
+}
+
 pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: u64, context: u64, packed: u64) -> u64 {
     // As `lane_body_call`: static regions recover captures through their semantic operation,
     // and an ahead body has no lane context to read them from.
