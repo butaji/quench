@@ -2815,6 +2815,7 @@ const LANE_VIEW_FIRST_CHUNK: usize = 8;
 pub(super) type LaneViewCell = std::cell::OnceCell<std::ptr::NonNull<super::dispatch_fast::LaneView>>;
 
 /// The view a cell holds, if its function's was derived.
+#[inline(always)]
 pub(super) fn derived_lane_view(cell: &LaneViewCell) -> Option<&super::dispatch_fast::LaneView> {
     // SAFETY: a cell points into its table's arena (`LaneViews::store`), which outlives it.
     cell.get().map(|view| unsafe { view.as_ref() })

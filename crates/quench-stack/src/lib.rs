@@ -152,6 +152,7 @@ impl GuestCallGuard {
     }
 
     /// How many more requested Wasm frame bytes the thread admits.
+    #[inline]
     pub fn remaining_storage_bytes() -> usize {
         MAX_GUEST_FRAME_STORAGE_BYTES - ACTIVE_GUEST_FRAME_STORAGE_BYTES.with(Cell::get)
     }
