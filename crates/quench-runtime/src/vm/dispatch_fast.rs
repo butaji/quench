@@ -7512,8 +7512,18 @@ script_handler! {
             vm.primary_record_holder_field_hit(code, object, i.c).or_else(|| vm.proved_inherited_field_hit(code, object, i.c))
         });
         let Some(value) = quick.or_else(|| unsafe { lane_field_value(cx, r, i) }) else {
-            if lane_field_read_beside_activations(cx, r, i).is_some() {
-                sibling!(lane_get_field_beside_activations::<H>, r, ip, Carried::script_in(cx, view))
+            if let Some(base) = lane_field_read_beside_activations(cx, r, i) {
+                // A proxy's trap runs as an activation beside the others (`lane_read_get_trap`);
+                // the in-place general read would call it across the native boundary.
+                if unsafe { vm(cx) }.proxy_parts(base).is_some() {
+                    match lane_getter_activation(cx, r, ip, i) {
+                        Ok((registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
+                        // A native getter that raised is not called again: the general path raises it.
+                        Err(next) if (unsafe { vm(cx) }).lane_raised.is_some() => return next,
+                        Err(_) => {}
+                    }
+                }
+                sibling!(lane_get_field_beside_activations::<H>, unsafe { (*cx).registers }, ip, Carried::script_in(cx, view))
             }
             return match lane_getter_activation(cx, r, ip, i) {
                 Ok((registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
@@ -18147,7 +18157,9 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
             // [[Construct]] of an ordinary constructor yields its returned object,
             // otherwise the receiver it allocated. A skipped forwarding constructor returns
             // `undefined` after the method, so its construction yields the receiver.
-            if script.completion.crosses() {
+            // A trap of another program (`proxy_traps::lane_trap_target`) completes as a
+            // trap, not as `Completion::Cross`, and leaves its program the same way.
+            if script.completion.crosses() || activation.caller_program != unsafe { (*cx).program } {
                 lane_enter_program(cx, activation.caller_program);
             }
             value = setters::completed_value(vm, &activation, script.completion, this, value);
