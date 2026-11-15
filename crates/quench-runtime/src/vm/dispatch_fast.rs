@@ -14118,6 +14118,17 @@ script_handler! {
         // SAFETY: the call's window is registers of the running function, which the
         // activation or native call copies before anything can move them.
         let window = unsafe { lane_call_window(r, i) };
+        // `f.call(thisArg, ...args)` of a callee the site linked (`lane_forwarded_target`):
+        // the forwarding is one step, so its activation needs no walk of `forwarded_call`.
+        // SAFETY: a call record's operand is `call`.
+        let link = unsafe { (*ip).operand.call.memo } as usize;
+        if vm.script_call_holds(link, r.get(i.c))
+            && matches!(vm.heap.function(r.get(i.b)), Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }))
+            && !vm.tier_may_run(crate::jit_mode::Tier::ANY)
+        {
+            let (receiver, args) = window.split_first().map_or((Value::UNDEFINED, &[][..]), |(first, rest)| (*first, rest));
+            resume!(cx, lane_function_call_activation(cx, r, ip, i, r.get(i.c), receiver, args))
+        }
         let Some(super::function::Forwarded { callee, receiver, args, kind, through_call }) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
             resume!(cx, lane_bound_arguments_call(cx, r, ip, i));
         };
@@ -14182,17 +14193,18 @@ fn lane_function_call_activation<H: Host>(
     args: &[Value],
 ) -> Resumed {
     let vm = unsafe { vm(cx) };
-    let Some(target) = lane_forwarded_target(cx, ip, callee, args.len()) else {
+    let mut resolved = None;
+    let Some(target) = lane_forwarded_target(cx, ip, callee, args.len(), &mut resolved) else {
         return Resumed::Exit(lane_forwarded_frame_call(cx, r, ip, i, callee, receiver, args));
     };
     // `call_this_value` without its boxing of primitives, which allocates.
-    let Some(this) = lane_call_this(vm, &target, receiver) else {
+    let Some(this) = lane_call_this(vm, target, receiver) else {
         return Resumed::Exit(exit(ip));
     };
-    if let Some(resumed) = lane_forwarded_cell_entry(cx, r, ip, i, &target, args, this) {
+    if let Some(resumed) = lane_forwarded_cell_entry(cx, r, ip, i, target, args, this) {
         return resumed;
     }
-    match lane_activate_passed(cx, r, ip, &target, args, this) {
+    match lane_activate_passed(cx, r, ip, target, args, this) {
         Ok((registers, base)) => Resumed::At(registers, base, Carried::script(cx)),
         Err(next) => Resumed::Exit(next),
     }
@@ -14203,18 +14215,25 @@ fn lane_function_call_activation<H: Host>(
 /// callback's (`lane_callback_target`): the link, tested first, skips the set's hash and the
 /// cross-program and environment lookups for a callee the running program activates.
 #[inline(always)]
-fn lane_forwarded_target<H: Host>(cx: *mut LaneContext<H>, ip: Ip, callee: Value, passed: usize) -> Option<ScriptCallTarget> {
+fn lane_forwarded_target<'a, H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    callee: Value,
+    passed: usize,
+    resolved: &'a mut Option<ScriptCallTarget>,
+) -> Option<&'a ScriptCallTarget> {
     let vm = unsafe { vm(cx) };
     // SAFETY: a call record's operand is `call`.
     let link = unsafe { (*ip).operand.call.memo } as usize;
     if vm.script_call_holds(link, callee) && !lane_constructing(vm, callee) {
-        // SAFETY: `script_call_holds` found the entry within the cache.
-        let target = unsafe { vm.lane_stack.script_targets.entries.get_unchecked(link) };
+        // SAFETY: `script_call_holds` found the entry within the cache, which nothing
+        // resolves into before the caller reads it; read in place, not copied.
+        let target = unsafe { &*std::ptr::from_ref(vm.lane_stack.script_targets.entries.get_unchecked(link)) };
         if lane_admits_activation(target) {
-            return Some(*target);
+            return Some(target);
         }
     }
-    let target = lane_passed_target(cx, callee, passed)?;
+    let target = resolved.insert(lane_passed_target(cx, callee, passed)?);
     if let Some(index) = vm.script_call_index(callee) {
         // SAFETY: as `requicken`: the record's operand is the call's, written in place.
         unsafe { (*ip.cast_mut()).operand.call.memo = index as u32 };
