@@ -138,6 +138,19 @@ pub fn release_read_only_pages_now() {
     release_read_only_pages_weighed(true);
 }
 
+/// Releases the read-only pages at a run's one-off boundary (around output after a
+/// collection, before teardown) whatever share of the resident set they are
+/// (`file_pages_weigh`): such a boundary comes at most once per collection, so its refaults
+/// stay bounded, and it falls at the heap's high, where JetStream 3's end-of-run summary
+/// otherwise faulted its code in beside the run's (no-JIT, x86_64, 5 runs, 2026-11-15, max RSS
+/// MB: OfflineAssembler 18.3 -> 17.4, sync-fs 18.7 -> 17.9, gbemu 19.4 -> 18.5, Air 17.9 ->
+/// 17.4, pdfjs 24.0 -> 23.5; scores within noise). Weighed, the release was skipped once the
+/// heap passed three times the code.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_read_only_pages_at_boundary() {
+    release_read_only_pages_weighed(false);
+}
+
 /// Releases the read-only pages; `weighed` skips the release when the file pages are a small
 /// share of the resident set (`file_pages_weigh`), which a paced release does not need: at
 /// its pace the refaults stay bounded however large the heap.
@@ -961,11 +974,11 @@ pub fn around_output<R>(output: impl FnOnce() -> R) -> R {
     let collections = COLLECTIONS.load(Relaxed);
     let releases = COLLECTIONS_AT_OUTPUT_RELEASE.swap(collections, Relaxed) != collections;
     if releases {
-        release_read_only_pages_now();
+        release_read_only_pages_at_boundary();
     }
     let result = output();
     if releases {
-        release_read_only_pages_now();
+        release_read_only_pages_at_boundary();
     }
     result
 }
@@ -1137,6 +1150,10 @@ pub fn release_read_only_pages() {}
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_pages_now() {}
+
+/// Releases the read-only pages at a run's one-off boundary; nothing to release here.
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_read_only_pages_at_boundary() {}
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_tracked_bytes(_bytes: &[u8]) {}
