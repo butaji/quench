@@ -77,7 +77,7 @@ impl<H: Host> Vm<H> {
             return self.ordinary_chain_read(object, atom);
         }
         let key = PropertyKey::string(atom);
-        let Some(data) = self.heap.ordinary_object(object) else {
+        let Some(data) = self.proved_read_receiver(object, key) else {
             return self.ordinary_chain_read(object, atom);
         };
         if let Some(key32) = key.key32()
@@ -106,6 +106,19 @@ impl<H: Host> Vm<H> {
             }
             Some(SymbolLoadAnswer::Absent) if inherits => {
                 return Some(ChainRead::Absent);
+            }
+            // An inherited accessor (a class getter, as reactive state's computed reads are):
+            // its getter from the holder's slot, without the walk.
+            Some(SymbolLoadAnswer::Getter { hops, slot }) if inherits => {
+                let holder = match key.key32().and_then(|key32| self.symbol_load_proofs.holder(data.layout_id(), key32)) {
+                    Some(id) if id != 0 => self.heap.object_record_by_id(id - 1),
+                    _ => self.proof_holder(data, hops)?,
+                };
+                if let Some(attributes) = self.slot_attributes(holder, slot as usize)
+                    && attributes.accessor
+                {
+                    return Some(ChainRead::Getter(attributes.getter));
+                }
             }
             _ => {}
         }

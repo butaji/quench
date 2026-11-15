@@ -649,7 +649,7 @@ pub(crate) fn recompile(
         return Err("the program keeps part of its compiled source".into());
     }
     let text: &str = &source.text;
-    let header = *program
+    let header = program
         .functions
         .get(id as usize)
         .ok_or("no such function")?

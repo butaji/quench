@@ -1908,6 +1908,7 @@ impl<H: Host> Vm<H> {
             if !resumed && native_step.is_none() && Self::lane_enters(cursor.lane, pc, entering_after_lane_exit) {
                 let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
                 pc = self.run_fast_lane(p, cursor.program, cursor.lane, &mut frame, pc, pending_calls, &mut executing, allow_inline_calls);
+                crate::clock::note_lane_run();
                 after_lane_exit = self.heap.should_collect();
                 // The lane may leave in a frame of another program, its activations' calls
                 // having set the loop's executing program aside as the loop's pushes do.

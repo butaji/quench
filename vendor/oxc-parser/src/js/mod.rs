@@ -13,6 +13,7 @@ mod object;
 mod operator;
 mod recognize;
 mod statement;
+pub(crate) mod stream;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Tristate {

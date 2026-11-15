@@ -53,6 +53,9 @@ pub(crate) struct RecognizerCheckpoint<'a> {
     binding_kind: Option<DeclKind>,
     protos: u32,
     lazy_function_bodies: usize,
+    /// The escaped strings and templates listed (`Lexer::escaped_strings`): none read again
+    /// is listed anew while these are unchanged.
+    escaped: (usize, usize),
 }
 
 impl<'a, C: Config> ParserImpl<'a, C> {
@@ -64,19 +67,20 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             binding_kind: self.binding_kind,
             protos: self.early.protos,
             lazy_function_bodies: self.lazy_function_bodies.len(),
+            escaped: (self.lexer.escaped_strings.len(), self.lexer.escaped_templates.len()),
         }
     }
 
     pub(crate) fn recognizer_rewind(&mut self, checkpoint: RecognizerCheckpoint<'a>) {
-        let RecognizerCheckpoint { parser, ctx, strict, binding_kind, protos, lazy_function_bodies } = checkpoint;
+        let RecognizerCheckpoint { parser, ctx, strict, binding_kind, protos, lazy_function_bodies, escaped } = checkpoint;
         self.rewind(parser);
         // The strings and templates read past the checkpoint are read again; left listed, they
         // would read as lying after every body released before them (`escaped_after`).
         let from = self.cur_start();
-        if self.lexer.escaped_strings.keys().any(|start| *start > from) {
+        if self.lexer.escaped_strings.len() != escaped.0 {
             self.lexer.escaped_strings.retain(|start, _| *start <= from);
         }
-        if self.lexer.escaped_templates.keys().any(|start| *start > from) {
+        if self.lexer.escaped_templates.len() != escaped.1 {
             self.lexer.escaped_templates.retain(|start, _| *start <= from);
         }
         self.ctx = ctx;
@@ -272,6 +276,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             }
             Kind::Await if self.is_using_statement() => Err(()),
             Kind::Using if self.is_using_declaration() => Err(()),
+            Kind::Function if !stmt_ctx.is_single_statement() => self.rc_function(false),
+            Kind::Class if !stmt_ctx.is_single_statement() => self.rc_class(false),
             Kind::Function
             | Kind::Class
             | Kind::Export
@@ -575,6 +581,191 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         Ok(())
     }
 
+    /// A plain function, declaration or expression, whose parameters are identifiers
+    /// (`parse_function_impl` and `parse_function` with a body that is not lazy, as no body
+    /// inside a recognized one is). Err on a generator or any other parameter.
+    fn rc_function(&mut self, expression: bool) -> Rc<()> {
+        let start = self.cur_start();
+        let checkpoint = self.recognizer_checkpoint();
+        if self.rc_function_header(expression).is_err() {
+            // Read by the parser instead, its body recognized all the same.
+            self.recognizer_rewind(checkpoint);
+            if expression {
+                self.parse_function_expression(start, false);
+            } else {
+                self.parse_function_declaration(start, false, StatementContext::StatementList);
+            }
+            return self.rc_live();
+        }
+        let ctx = self.ctx;
+        self.ctx = ctx.and_in(true).and_await(false).and_yield(false).and_new_target(true);
+        self.parse_function_body();
+        self.early.exit_function();
+        self.ctx = ctx;
+        self.rc_live()
+    }
+
+    /// A class (`parse_class` in JavaScript), its plain methods recognized here
+    /// (`rc_class_method`) and every other element read by the parser.
+    fn rc_class(&mut self, expression: bool) -> Rc<()> {
+        let strict = std::mem::replace(&mut self.strict, true);
+        self.bump_any();
+        let binding_kind = self.binding_kind.take();
+        let id = (self.cur_kind().is_binding_identifier()
+            && !(self.at(Kind::Implements) && self.lexer.peek_token().kind().is_identifier_or_keyword()))
+        .then(|| self.parse_binding_identifier().name);
+        self.binding_kind = binding_kind;
+        self.rc_live()?;
+        if let Some(name) = id
+            && !expression
+        {
+            self.early.declare(name, DeclKind::Lexical);
+        }
+        self.early.enter(crate::early::ScopeKind::Block);
+        if let Some(name) = id {
+            self.early.declare(name, DeclKind::OwnName);
+        }
+        let (extends, implements) = self.parse_class_heritage_clause();
+        self.rc_live()?;
+        if implements.is_some() {
+            return Err(());
+        }
+        self.early.enter_class_body(extends.is_some_and(|extends| !extends.is_empty()));
+        self.rc_eat(Kind::LCurly)?;
+        loop {
+            while self.rc_take(Kind::Semicolon) {}
+            if self.at(Kind::RCurly) || self.fatal_error.is_some() {
+                break;
+            }
+            let checkpoint = self.recognizer_checkpoint();
+            if self.rc_class_method().is_err() {
+                self.recognizer_rewind(checkpoint);
+                self.parse_class_element();
+                self.rc_live()?;
+            }
+        }
+        self.rc_eat(Kind::RCurly)?;
+        self.early.exit_class_body();
+        self.early.exit();
+        self.strict = strict;
+        Ok(())
+    }
+
+    /// `[static] [get|set] name(a, b) { ... }`, its name a plain identifier (no keyword,
+    /// accessor or modifier word) and its parameters identifiers (`parse_method` with a body that is not
+    /// lazy); Err on anything else, which the parser then reads.
+    fn rc_class_method(&mut self) -> Rc<()> {
+        let named = |p: &mut Self| !p.cur_token().escaped() && p.lexer.peek_token().kind() == Kind::Ident;
+        let r#static = self.at(Kind::Static) && named(self);
+        if r#static {
+            self.bump_any();
+        }
+        let accessor = (matches!(self.cur_kind(), Kind::Get | Kind::Set) && named(self)).then(|| self.cur_kind());
+        if accessor.is_some() {
+            self.bump_any();
+        }
+        let home = if !r#static && accessor.is_none() && self.at(Kind::Constructor) {
+            // `parse_constructor_declaration`.
+            self.bump_any();
+            if !self.at(Kind::LParen) {
+                return Err(());
+            }
+            self.early.method_home(true)
+        } else {
+            if !self.at(Kind::Ident) {
+                return Err(());
+            }
+            let name = self.rc_name();
+            if r#static && name == "prototype" || !self.at(Kind::LParen) {
+                return Err(());
+            }
+            crate::early::Home::Method
+        };
+        self.early.enter_function(Some(home));
+        let ctx = self.ctx;
+        self.ctx = ctx.and_in(true).and_await(false).and_yield(false).and_new_target(true);
+        self.bump_any();
+        // A getter takes no parameter and a setter exactly one (`check_method_definition_accessor`).
+        if accessor != Some(Kind::Get) && !self.at(Kind::RParen) {
+            self.early.set_in_params(true);
+            loop {
+                self.rc_binding_identifier(DeclKind::Param)?;
+                if accessor.is_some() || !self.rc_take(Kind::Comma) || self.at(Kind::RParen) {
+                    break;
+                }
+            }
+            self.early.set_in_params(false);
+        } else if accessor == Some(Kind::Set) {
+            return Err(());
+        }
+        self.rc_eat(Kind::RParen)?;
+        self.early.set_simple_params(true);
+        if !self.at(Kind::LCurly) {
+            return Err(());
+        }
+        // Marked once nothing can rewind it: a rewind keeps the innermost class's mark.
+        if matches!(home, crate::early::Home::BaseConstructor | crate::early::Home::DerivedConstructor) {
+            self.early.constructor();
+        }
+        self.parse_function_body();
+        self.early.exit_function();
+        self.ctx = ctx;
+        self.rc_live()
+    }
+
+    /// `function`, its name and identifier parameters, up to the body's `{`, scope entered;
+    /// Err on anything else.
+    fn rc_function_header(&mut self, expression: bool) -> Rc<()> {
+        self.bump_any();
+        if self.at(Kind::Star) {
+            return Err(());
+        }
+        let kind = self.cur_kind();
+        let ctx = self.ctx;
+        if kind.is_binding_identifier() {
+            if expression {
+                self.ctx = ctx.and_await(false).and_yield(false);
+            }
+            let reserved = self.rc_reserved_here(kind);
+            self.ctx = ctx;
+            if reserved {
+                return Err(());
+            }
+            let name = self.rc_name();
+            let name = self.ident(name);
+            if expression {
+                self.early.enter_function(Some(crate::early::Home::Plain));
+                self.early.declare(name, DeclKind::OwnName);
+            } else {
+                self.declare_function_name(name, false);
+                self.early.enter_function(Some(crate::early::Home::Plain));
+            }
+        } else if expression {
+            self.early.enter_function(Some(crate::early::Home::Plain));
+        } else {
+            return Err(());
+        }
+        self.ctx = ctx.and_in(true).and_await(false).and_yield(false).and_new_target(true);
+        self.rc_eat(Kind::LParen)?;
+        if !self.at(Kind::RParen) {
+            self.early.set_in_params(true);
+            loop {
+                self.rc_binding_identifier(DeclKind::Param)?;
+                if !self.rc_take(Kind::Comma) || self.at(Kind::RParen) {
+                    break;
+                }
+            }
+            self.early.set_in_params(false);
+        }
+        self.rc_eat(Kind::RParen)?;
+        self.early.set_simple_params(true);
+        self.ctx = ctx;
+        if !self.at(Kind::LCurly) {
+            return Err(());
+        }
+        Ok(())
+    }
+
     fn rc_expr(&mut self) -> Rc<Shape> {
         if self.ctx.has_decorator() {
             return Err(());
@@ -590,10 +781,19 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     }
 
     fn rc_assign(&mut self) -> Rc<Shape> {
-        if self.rc_deep() {
-            return Err(());
-        }
+        // The stack depth is checked where each operand begins (`rc_binary`).
         let kind = self.cur_kind();
+        if matches!(kind, Kind::Yield | Kind::LParen | Kind::Async | Kind::LBrack | Kind::LCurly) {
+            return self.rc_assign_led(kind);
+        }
+        let shape = self.rc_binary()?;
+        self.rc_assign_rest(shape, None)
+    }
+
+    /// `rc_assign` where the first token may begin something else: `yield`, an arrow
+    /// function, or a pattern.
+    #[inline(never)]
+    fn rc_assign_led(&mut self, kind: Kind) -> Rc<Shape> {
         if kind == Kind::Yield {
             self.parse_assignment_expression_or_higher();
             self.rc_live()?;
@@ -613,6 +813,13 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         // An object or array literal is a pattern if `=` follows: the parser reads it then.
         let pattern = matches!(kind, Kind::LBrack | Kind::LCurly).then(|| self.recognizer_checkpoint());
         let shape = self.rc_binary()?;
+        self.rc_assign_rest(shape, pattern)
+    }
+
+    /// What follows an assignment expression's conditional operand: `=>`, an assignment
+    /// operator or `?`.
+    #[inline(always)]
+    fn rc_assign_rest(&mut self, shape: Shape, pattern: Option<RecognizerCheckpoint<'a>>) -> Rc<Shape> {
         let kind = self.cur_kind();
         if kind == Kind::Arrow {
             if shape != Shape::Ident {
@@ -899,9 +1106,15 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 Ok(Shape::Super)
             }
             Kind::Async if !self.at_function_with_async() => self.rc_identifier_reference(),
-            Kind::Function
-            | Kind::Async
-            | Kind::Class
+            Kind::Function => {
+                self.rc_function(true)?;
+                Ok(Shape::Other)
+            }
+            Kind::Class => {
+                self.rc_class(true)?;
+                Ok(Shape::Other)
+            }
+            Kind::Async
             | Kind::NoSubstitutionTemplate
             | Kind::TemplateHead
             | Kind::Import
@@ -909,6 +1122,16 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             | Kind::SlashEq => {
                 self.parse_primary_expression();
                 self.rc_live()?;
+                Ok(Shape::Other)
+            }
+            // A plain decimal reads as the parser reads it: no separator, no leading zero.
+            Kind::Decimal | Kind::Float
+                if !self.cur_token().has_separator() && {
+                    let src = self.cur_src().as_bytes();
+                    src.len() < 2 || src[0] != b'0' || !src[1].is_ascii_digit()
+                } =>
+            {
+                self.bump_any();
                 Ok(Shape::Other)
             }
             kind if kind.is_number() => {

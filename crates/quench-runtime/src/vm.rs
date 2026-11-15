@@ -2131,6 +2131,10 @@ pub(crate) struct Vm<H> {
     /// id, so a collection that sweeps that prototype drops the hint's value, and one that
     /// renumbers shapes every hint.
     holder_hints: Vec<HolderHint>,
+    /// Under reference counts: the shapes whose edges are pinned (`Heap::rc_pin`), and the
+    /// heap's pin epoch they were pinned in.
+    rc_pinned_shapes: usize,
+    rc_pin_epoch: u64,
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
     prototype_atom: Atom,

@@ -294,6 +294,8 @@ pub(super) struct BodyFacts {
     pub(super) free_names: super::first_call::FreeNames,
     /// The bodies checked whose free names do not bound what they reach by name.
     unbounded: FxHashSet<u32>,
+    /// The functions whose bodies compile as a stream of statement runs (`statement_stream`).
+    pub(super) streamed: FxHashSet<u32>,
     #[cfg(feature = "aot")]
     pub(super) native_source_requests: Option<(bool, Vec<super::NativeSourceKey>)>,
 }
@@ -317,6 +319,7 @@ impl BodyFacts {
         if stub {
             return early.is_some_and(|early| !verify_early() && self.checked_by_parse(program, call_assignment_targets, in_function, early));
         }
+        self.streamed.extend(super::statement_stream::streamable_start(program));
         if verify_early() && crate::trace::Dev::EarlyVerify.value() == Some("stat") {
             eprintln!("early-stat: {} {} {} deferred={} at_load={}", if early.is_some() { "sure" } else { "unsure" }, program.span.start, program.span.end - program.span.start, self.call_only_deferred, super::call_only::compiles_at_load(program, false, false));
         }

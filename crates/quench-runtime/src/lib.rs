@@ -7,6 +7,9 @@
 // `heap::array_proofs` reads its armed pointer as a plain thread-local load on every array
 // storage change (`ARMED_PROOFS`).
 #![feature(thread_local)]
+// Staged rows mark their branch closures `#[inline]`, so the interpreter's stage runs them
+// in place: a closure is one instantiation per crate, which another unit only calls.
+#![feature(stmt_expr_attributes)]
 #![cfg_attr(all(test, feature = "bench-primitives"), feature(test))]
 
 mod execution_interrupt;
@@ -89,7 +92,7 @@ pub use wasm::{
 };
 
 pub use vm::AheadImages;
-pub use bytecode::{set_record_read, KeptBytes, ResidualProgram, ModuleRequest, ModuleRequestPhase, FlowFunction, FlowInstruction};
+pub use bytecode::{set_record_built, set_record_read, KeptBytes, ResidualProgram, ModuleRequest, ModuleRequestPhase, FlowFunction, FlowInstruction};
 pub use module_identity::normalized_text as normalized_module_name;
 pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
 pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId};

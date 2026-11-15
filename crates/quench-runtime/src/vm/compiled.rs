@@ -726,10 +726,16 @@ pub(super) fn emit_array_length_read(
         header,
         i32::try_from(ARRAY.header_length_offset).expect("array length offset fits i32"),
     );
-    let int32 = builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, length, 0);
-    emit_js_guard(builder, int32, fallback);
+    // A flagged length word (a narrow or double-kind backing, bits 31 and 30) is not the
+    // array's length: unsigned, it is above every dense length, and leaves.
+    let plain = builder.ins().icmp_imm_u(IntCC::UnsignedLessThanOrEqual, length, i64::from(MAX_DENSE_LENGTH_WORD));
+    emit_js_guard(builder, plain, fallback);
     length
 }
+
+/// The largest length word of a backing whose values are wide tagged words: bits 31
+/// (`NARROW_LEN`) and 30 (the double element kind) flag other storage.
+const MAX_DENSE_LENGTH_WORD: u32 = (1 << 30) - 1;
 
 /// A dense own array's elements as one access proved them: the backing's first value and
 /// its length. Holds until something changes the array's storage (`ArrayElements`): only
@@ -797,6 +803,12 @@ pub(super) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload
     let record = emit_array_record_address(builder, record_base, record_id);
     let header = emit_array_header(builder, record);
     let length = builder.ins().load(types::I32, MemFlagsData::trusted(), header, ARRAY.header_length_offset as i32);
+    // A helper may have changed the backing's storage form in place (narrow or double kind,
+    // a flagged length word): the view then reads as empty, so every access through it
+    // misses its bounds test and leaves.
+    let plain = builder.ins().icmp_imm_u(IntCC::UnsignedLessThanOrEqual, length, i64::from(MAX_DENSE_LENGTH_WORD));
+    let zero = builder.ins().iconst(types::I32, 0);
+    let length = builder.ins().select(plain, length, zero);
     (builder.ins().iadd_imm_s(header, ARRAY.header_values_offset as i64), length)
 }
 
@@ -4637,10 +4649,17 @@ impl<H: Host> Vm<H> {
         // A Number store logs nothing.
         let elements = self.heap.record_array_store_mut_unlogged(array, Value::integer(0))?.elements_mut();
         if elements.owner_count() != 1 { return None; }
-        let elements = super::index::mutable_array_elements(elements);
-        let before = elements.capacity();
-        elements.reserve(1);
-        let room = elements.capacity();
+        // A double backing keeps its kind (`ArrayElements::reserve_double`).
+        let (before, room) = if elements.is_double() {
+            let before = elements.capacity();
+            elements.reserve_double(1);
+            (before, elements.capacity())
+        } else {
+            let elements = super::index::mutable_array_elements(elements);
+            let before = elements.capacity();
+            elements.reserve(1);
+            (before, elements.capacity())
+        };
         self.heap.charge_payload_growth((room - before) * size_of::<Value>());
         (!self.heap.should_collect()).then_some(room.min(osr_loop::MAX_INDEXED_LENGTH))
     }

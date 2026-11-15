@@ -850,6 +850,16 @@ impl JsString {
         self.flat().substring(range)
     }
 
+    /// The string of at most `SHORT_ASCII_CAPACITY` ASCII `bytes`, held inline: the
+    /// canonical storage `from_ascii_bytes` picks for them, with no length dispatch.
+    #[inline(always)]
+    pub(crate) fn short_ascii(bytes: &[u8]) -> Self {
+        debug_assert!(bytes.len() <= SHORT_ASCII_CAPACITY && bytes.is_ascii());
+        let mut inline = [0; SHORT_ASCII_CAPACITY];
+        inline[..bytes.len()].copy_from_slice(bytes);
+        Self { repr: Repr::Flat(FlatUnits::Short(ShortAscii { length: bytes.len() as u8, bytes: inline })) }
+    }
+
     /// The string of ASCII `bytes`, written straight into its canonical storage.
     pub(crate) fn from_ascii_bytes(bytes: &[u8]) -> Self {
         debug_assert!(bytes.is_ascii());
@@ -961,6 +971,34 @@ impl JsString {
         }
     }
 
+    /// `read` of this string's units, for a reader that reads them once. A long rope not yet
+    /// flat answers its first `ROPE_WALK_READS` reads (counted with `unit_at`'s) from a copy
+    /// made for the read, so its leaves stay shared with the strings they were cut from
+    /// instead of a flat copy kept for the rope's life; a rope read again and again is made
+    /// flat as `units` makes it. Hashing and comparing an eval's source (multi-inspector
+    /// code-load: 20 sources of 2.1 MB, each made flat by its eval-cache lookup) read this way.
+    pub(crate) fn read_units<R>(&self, read: impl FnOnce(Units<'_>) -> R) -> R {
+        if let Repr::Shared(inner) = &self.repr
+            && inner.flat.get().is_none()
+            && inner.length as usize >= ROPE_WALK_MIN_UNITS
+            && inner.rope_reads.get() < ROPE_WALK_READS
+            && inner.unflattened_host().is_none()
+        {
+            inner.rope_reads.set(inner.rope_reads.get() + 1);
+            return Self::read_rope_unkept(self, read);
+        }
+        read(self.units())
+    }
+
+    #[cold]
+    fn read_rope_unkept<R>(&self, read: impl FnOnce(Units<'_>) -> R) -> R {
+        let mut read = Some(read);
+        if let Some(result) = self.with_ascii_rope_bytes(|bytes| (read.take().expect("read once"))(Units::Ascii(bytes))) {
+            return result;
+        }
+        (read.take().expect("read once"))(self.flat_unkept().view())
+    }
+
     /// Whether this is a rope of ASCII units not made flat yet.
     pub(crate) fn is_unflattened_ascii_rope(&self) -> bool {
         matches!(&self.repr, Repr::Shared(inner) if inner.ascii && inner.flat.get().is_none() && inner.unflattened_host().is_none())
@@ -973,6 +1011,16 @@ impl JsString {
         match &self.repr {
             Repr::Flat(units) => Some(units),
             Repr::Shared(inner) => inner.flat.get(),
+        }
+    }
+
+    /// The units of `existing_flat` in place, read where the concatenation paths read them
+    /// (an `Option::map` of `FlatUnits::view` stayed a call per read).
+    #[inline(always)]
+    pub(crate) fn existing_units(&self) -> Option<Units<'_>> {
+        match &self.repr {
+            Repr::Flat(units) => Some(units.view()),
+            Repr::Shared(inner) => inner.flat.get().map(|units| units.view()),
         }
     }
 
@@ -1232,7 +1280,7 @@ impl JsString {
     #[inline(always)]
     pub(crate) fn concat(&self, text: &Self) -> Self {
         if let (Repr::Flat(FlatUnits::AsciiPrefix(buffer, length)), Some(Units::Ascii(bytes))) =
-            (&self.repr, text.existing_flat().map(FlatUnits::view))
+            (&self.repr, text.existing_units())
             && let Some(length) = buffer.append(*length, bytes.iter().copied())
         {
             return Self { repr: Repr::Flat(FlatUnits::AsciiPrefix(buffer.clone(), length)) };
@@ -1317,7 +1365,7 @@ impl JsString {
             return Self { repr: Repr::Flat(FlatUnits::Short(joined)) };
         }
         if let (Some(Units::Ascii(head)), Some(Units::Ascii(tail))) =
-            (left.existing_flat().map(FlatUnits::view), right.existing_flat().map(FlatUnits::view))
+            (left.existing_units(), right.existing_units())
         {
             let units = FlatUnits::ascii_with(head.len() + tail.len(), |bytes| {
                 let (start, end) = bytes.split_at_mut(head.len());
@@ -1336,7 +1384,7 @@ impl JsString {
     /// Appends flat `text` into this string's append buffer past its end, when this string
     /// ends where the buffer does and `text` fits: an ASCII prefix only grows its length.
     fn append_in_place(&mut self, text: &Self) -> bool {
-        let Some(tail) = text.existing_flat().map(FlatUnits::view) else {
+        let Some(tail) = text.existing_units() else {
             return false;
         };
         if let (Repr::Flat(FlatUnits::AsciiPrefix(buffer, length)), Units::Ascii(bytes)) = (&mut self.repr, tail) {
@@ -1409,7 +1457,7 @@ impl JsString {
                 return false;
             }
         }
-        self.units() == other.units()
+        self.read_units(|left| other.read_units(|right| left == right))
     }
 
     /// `JsStringInner::compare_hash` of this string's shared text `inner`, made on first use.
@@ -1418,7 +1466,7 @@ impl JsString {
         if cached != 0 {
             return cached;
         }
-        let hash = (self.units().text_hash() as u16) | 1;
+        let hash = (self.read_units(|units| units.text_hash()) as u16) | 1;
         inner.compare_hash.set(hash);
         hash
     }

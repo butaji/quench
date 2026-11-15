@@ -143,12 +143,12 @@ impl<'a> FunctionTable<'a> {
     /// The header of a function whose record this compilation does not hold: one a replay
     /// skipped, which the load made, or one the load released; in a chunk, one of its
     /// program's.
-    pub(super) fn header_without_record(&self, id: u32) -> Option<&crate::bytecode::FunctionHeader> {
+    pub(super) fn header_without_record(&self, id: u32) -> Option<crate::bytecode::FunctionHeader> {
         match self {
             Self::Replay { program, .. } => Some(program.get(id as usize)?.header()),
             Self::Entries { program, .. } if (id as usize) < program.len() => Some(program[id as usize].header()),
             Self::Entries { .. } => match self.entry(id)? {
-                FunctionEntry::Released(released) => Some(&released.header),
+                FunctionEntry::Released(released) => Some(released.header),
                 _ => None,
             },
         }

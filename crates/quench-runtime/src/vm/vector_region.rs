@@ -71,6 +71,11 @@ enum Step {
     Address { a: u16, index: u16, offset: u64 },
     Load { a: u16, address: u16, at: u32, leave: Leave },
     Store { value: u16, address: u16, at: u32, leave: Leave },
+    /// An `Address` whose register only the `Load` or `Store` after it reads, folded into
+    /// it: the address is computed in place and written to its register only where the
+    /// access leaves, for the general path to read.
+    LoadAt { a: u16, address: u16, index: u16, offset: u64, at: u32, leave: Leave },
+    StoreAt { value: u16, address: u16, index: u16, offset: u64, at: u32, leave: Leave },
 }
 
 /// A run of records one record executes (`lane_vector_region`).
@@ -200,6 +205,31 @@ impl VectorRegion {
                         // SAFETY: `vector_bytes` keeps the vector's bytes in the memory.
                         Some(bytes) => put!(a, u128::from_le_bytes(unsafe { bytes.read() })),
                         None => leave!(leave, at),
+                    }
+                }
+                Step::LoadAt { a, address, index, offset, at, leave } => {
+                    let effective = u64::from(r.i32(index) as u32) + offset;
+                    match vector_bytes(memory, effective) {
+                        // SAFETY: `vector_bytes` keeps the vector's bytes in the memory.
+                        Some(bytes) => put!(a, u128::from_le_bytes(unsafe { bytes.read() })),
+                        None => {
+                            r.set(address, Value::from_bits64(effective).expect("an untagged memory32 address"));
+                            leave!(leave, at)
+                        }
+                    }
+                }
+                Step::StoreAt { value, address, index, offset, at, leave } => {
+                    let effective = u64::from(r.i32(index) as u32) + offset;
+                    match vector_bytes(memory, effective) {
+                        Some(bytes) => {
+                            let bits = get!(value);
+                            // SAFETY: as for `Step::Load`.
+                            unsafe { bytes.write(bits.to_le_bytes()) }
+                        }
+                        None => {
+                            r.set(address, Value::from_bits64(effective).expect("an untagged memory32 address"));
+                            leave!(leave, at)
+                        }
                     }
                 }
                 Step::Store { value, address, at, leave } => {
@@ -394,6 +424,17 @@ impl Builder<'_> {
     /// rotation (`x << k | x >> (64 - k)`), or `_mm_mul_epu32` (two one-operand u32
     /// shuffles and the extending multiply of their results). Each intermediate is written
     /// after both its sources are read, so the fused step reads what they read.
+    /// The index and offset of the `Address` step just before an access at `pc` through
+    /// `address`, removed, when nothing after the access reads its register.
+    fn folded_address(&mut self, pc: usize, address: u16) -> Option<(u16, u64)> {
+        let &Step::Address { a, index, offset } = self.steps.last()? else { return None };
+        let live = self.live.get(pc + 1).unwrap_or(RegisterSet::MAX);
+        (a == address && index != address && !register_in(live, usize::from(address))).then(|| {
+            self.steps.pop();
+            (index, offset)
+        })
+    }
+
     fn fused(&self, pc: usize, step: Step) -> Option<Step> {
         let &[.., first, second] = self.steps.as_slice() else {
             return None;
@@ -584,14 +625,22 @@ impl Builder<'_> {
             Admitted::Load => {
                 self.scalar(c);
                 let leave = self.leave(pc);
-                self.steps.push(Step::Load { a, address: c, at: self.at(pc), leave });
+                let step = match self.folded_address(pc, c) {
+                    Some((index, offset)) => Step::LoadAt { a, address: c, index, offset, at: self.at(pc), leave },
+                    None => Step::Load { a, address: c, at: self.at(pc), leave },
+                };
+                self.steps.push(step);
                 self.write(a, true, None);
             }
             Admitted::Store => {
                 self.scalar(c);
                 self.vector(pc, a);
                 let leave = self.leave(pc);
-                self.steps.push(Step::Store { value: a, address: c, at: self.at(pc), leave });
+                let step = match self.folded_address(pc, c) {
+                    Some((index, offset)) => Step::StoreAt { value: a, address: c, index, offset, at: self.at(pc), leave },
+                    None => Step::Store { value: a, address: c, at: self.at(pc), leave },
+                };
+                self.steps.push(step);
             }
         }
         Some(())

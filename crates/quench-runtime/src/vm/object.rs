@@ -732,7 +732,7 @@ impl<H: Host> Vm<H> {
     /// so a change to any of them retires it.
     #[cold]
     #[inline(never)]
-    fn prove_index_free_chain(&self, first: Value) -> bool {
+    pub(super) fn prove_index_free_chain(&self, first: Value) -> bool {
         let mut subjects = Vec::new();
         let mut array_holder = false;
         let mut current = first;
@@ -757,7 +757,7 @@ impl<H: Host> Vm<H> {
         if let Some(subjects) = subjects.into_iter().collect::<Option<Vec<u32>>>() {
             let next = self.object_data(first).map_or(Value::NULL, |data| data.proto());
             self.heap.dependencies().prove(crate::heap::ProofKind::IndexFreeChain, &subjects, |proofs| {
-                proofs.index_free_chain = Some(crate::heap::IndexFreeChainProof { first, next });
+                proofs.index_free_chain = Some(crate::heap::IndexFreeChainProof::new(first, next));
             });
         }
         true
@@ -1908,6 +1908,20 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// `hinted_primary_field_store_hit` of a site whose objects keep narrow runs
+    /// (`lane_set_field_narrow`): the value's narrow form in place (`concrete_narrow_store`).
+    #[inline(always)]
+    pub(super) fn hinted_narrow_field_store_hit(&mut self, hint: FieldCache, object: Value, atom: Atom, value: Value) -> bool {
+        if self.method_caches_may_name(atom) || hint.holder != NO_FIELD_HOLDER {
+            return false;
+        }
+        let Some(record_id) = object.direct_object_index() else {
+            return false;
+        };
+        // SAFETY: a direct object Value names a live record; the hint's slot is one its shape covers.
+        unsafe { crate::staged::store::concrete_narrow_store(&mut self.heap, record_id, hint.receiver, hint.slot, value) }
+    }
+
     /// `primary_own_field_store_hit` of an object in a slot cell: its exact shape the site's
     /// own entry (`Heap::cell_property_set_exact`).
     #[inline(never)]
@@ -2334,18 +2348,16 @@ impl<H: Host> Vm<H> {
     /// shape and prototype link a prototype-held hint tests (`holder_hint_hit`).
     #[inline(always)]
     fn hinted_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
-        if let Some(record_id) = object.direct_object_index() {
-            return Some(self.heap.object_record_by_id(record_id));
-        }
+        if let Some(record_id) = object.direct_object_index() { return Some(self.heap.object_record_by_id(record_id)); }
+        if let Some(array) = self.heap.record_array(object) { return Some(array); }
         self.hinted_other_receiver(object)
     }
 
-    /// `hinted_receiver` of anything but a direct object, out of line: the hint tests a plain
-    /// object first, with no compare of the other families before it.
+    /// `hinted_receiver` of anything but a direct object or array (as hot: `a.push`), out of
+    /// line: the hint tests those first, with no compare of the other families before them.
     #[cold]
     #[inline(never)]
     fn hinted_other_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
-        if let Some(array) = self.heap.record_array(object) { return Some(array); }
         let function = object.direct_function_index().and_then(|_| self.heap.function(object));
         function.map(|function| &function.object).or_else(|| self.heap.ordinary_builtin_object(object))
     }

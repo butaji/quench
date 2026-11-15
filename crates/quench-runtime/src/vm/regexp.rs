@@ -2795,7 +2795,10 @@ impl<H: Host> Vm<H> {
                 if range.start == 0 && range.end == length {
                     whole
                 } else {
-                    self.heap.alloc_string(JsString::from_unit_run(units.slice(range)))
+                    match units {
+                        super::wtf16::Units::Ascii(bytes) => self.heap.alloc_ascii_run(&bytes[range]),
+                        super::wtf16::Units::Wide(_) => self.heap.alloc_string(JsString::from_unit_run(units.slice(range))),
+                    }
                 }
             })
         };
@@ -2965,7 +2968,10 @@ impl<H: Host> Vm<H> {
         if owner.constructor() == state.constructor {
             match owner {
                 crate::heap::RegExpLegacyOwner::Enabled(_) => {
-                    state.legacy = LegacyStatics { last: matched(input), input_override: None };
+                    let previous = std::mem::replace(&mut state.legacy, LegacyStatics { last: matched(input), input_override: None });
+                    if let LegacyRegExpMatch::Matched { matched, .. } = previous.last {
+                        matched.recycle();
+                    }
                 }
                 crate::heap::RegExpLegacyOwner::Disabled(_) => {
                     state.legacy = LegacyStatics { last: LegacyRegExpMatch::Invalid, input_override: None };

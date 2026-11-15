@@ -1008,6 +1008,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
+        crate::clock::note_step();
         // A Number-only unary Math call neither allocates nor enters guest code. Its
         // ignored receiver and trailing arguments need no roots on that path.
         let result = if let Some(value) =

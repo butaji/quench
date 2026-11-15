@@ -98,6 +98,7 @@ use oxc_span::{SourceType, Span};
 use oxc_syntax::module_record::ModuleRecord;
 
 pub use crate::lexer::{Kind, Token};
+pub use crate::js::stream::{StatementStream, StreamStep};
 use crate::{
     config::{
         LexerConfig, NoTokensParserConfig, ParserConfig, RuntimeParserConfig, TokensParserConfig,
@@ -490,6 +491,22 @@ mod parser_parse {
         #[cfg(any(test, feature = "benchmarking"))]
         pub fn new_for_tests_and_benchmarks() -> Self {
             Self(())
+        }
+    }
+
+    impl<'a> Parser<'a, NoTokensParserConfig> {
+        /// The statements of a function body's text, parsed a run at a time and released
+        /// after each run is read (`StatementStream`). The stream holds this thread's one
+        /// parser while it lives: nothing else parses until it is dropped.
+        pub fn statement_stream(self) -> StatementStream<'a> {
+            StatementStream::new(ParserImpl::new(
+                self.allocator,
+                self.source_text,
+                self.source_type,
+                self.options,
+                self.config,
+                UniquePromise::new(),
+            ))
         }
     }
 

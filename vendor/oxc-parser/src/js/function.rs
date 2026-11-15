@@ -845,7 +845,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// Declares a function declaration's name where it lies (`early`): lexical in a block,
     /// where a plain function in sloppy code also binds in the function around it (Annex B),
     /// which the tracker does not model.
-    fn declare_function_name(&mut self, name: oxc_str::Ident<'a>, async_or_generator: bool) {
+    pub(super) fn declare_function_name(&mut self, name: oxc_str::Ident<'a>, async_or_generator: bool) {
         if !self.early.active() {
             return;
         }
@@ -942,7 +942,7 @@ struct LazyFunction<'f, 'a> {
 /// The parser state a function body's parse can extend with data that outlives the body.
 /// A lazily parsed body releases the arena it used only when this is unchanged.
 #[derive(PartialEq, Eq)]
-struct LazyBodyCheckpoint {
+pub(crate) struct LazyBodyCheckpoint {
     /// Arena chunks only grow: the same capacity means the same current chunk.
     arena_capacity: usize,
     errors: usize,
@@ -956,7 +956,7 @@ struct LazyBodyCheckpoint {
 }
 
 impl LazyBodyCheckpoint {
-    fn of<C: Config>(parser: &ParserImpl<'_, C>) -> Self {
+    pub(crate) fn of<C: Config>(parser: &ParserImpl<'_, C>) -> Self {
         Self {
             arena_capacity: parser.allocator().capacity(),
             errors: parser.errors.len(),

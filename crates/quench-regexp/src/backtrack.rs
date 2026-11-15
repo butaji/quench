@@ -23,6 +23,7 @@ mod workspace;
 use dispatch::Dispatch;
 use native::NativeSlot;
 use specialize::{replay, step, Concrete, Cursor, Replay, Step};
+pub(crate) use workspace::recycle_captures;
 use workspace::{AnchoredRun, ClassRun, anchored_run_of, class_run_of};
 
 use super::{
@@ -141,6 +142,9 @@ fn ascii_table(ascii: u128) -> AsciiTable {
 /// A set a program's instructions test units against: the set with its `AsciiTable`.
 struct MatchSet {
     table: AsciiTable,
+    /// A byte per unit of an ASCII subject, for the scan of a repeat (`run_end`): a load
+    /// and a compare a unit, where the bit table takes a shift, a load and a bit test.
+    bytes: [bool; 256],
     beyond: Beyond,
 }
 
@@ -148,6 +152,7 @@ impl From<UnitSet> for MatchSet {
     fn from(set: UnitSet) -> Self {
         Self {
             table: ascii_table(set.ascii),
+            bytes: std::array::from_fn(|unit| unit < ASCII_UNITS as usize && set.ascii >> unit & 1 != 0),
             beyond: set.beyond,
         }
     }
@@ -1604,10 +1609,10 @@ impl Program {
     fn run_end<T: Text + ?Sized>(&self, test: UnitTest, text: &T, from: usize, to: usize) -> usize {
         let taken = match (test, text.bytes()) {
             (UnitTest::Set(set), Some(bytes)) => {
-                let table = &self.sets[set as usize].table;
+                let table = &self.sets[set as usize].bytes;
                 bytes[from..to]
                     .iter()
-                    .position(|unit| !table.contains(*unit))
+                    .position(|unit| !table[usize::from(*unit)])
             }
             (UnitTest::Exact(expected), Some(bytes)) => {
                 bytes[from..to].iter().position(|unit| u32::from(*unit) != expected)
@@ -1620,11 +1625,17 @@ impl Program {
     /// The first match at a position from `first`, trying only `first` when `sticky`, with
     /// its captures collected where `captures` asks for them.
     pub(crate) fn find<T: Text + ?Sized>(&self, text: &T, first: usize, sticky: bool, captures: bool) -> Option<Found> {
-        self.search(text, first, sticky, |registers| {
-            registers[..if captures { 2 * self.capture_count } else { 0 }]
+        self.search(text, first, sticky, |registers, spare| {
+            if !captures || self.capture_count == 0 {
+                return Vec::new();
+            }
+            let bounds = registers[..2 * self.capture_count]
                 .as_chunks::<2>().0.iter()
-                .map(|bounds| (bounds[0] != UNSET).then(|| bounds[0]..bounds[1]))
-                .collect()
+                .map(|bounds| (bounds[0] != UNSET).then(|| bounds[0]..bounds[1]));
+            let mut collected = std::mem::take(spare);
+            collected.clear();
+            collected.extend(bounds);
+            collected
         })
     }
 
@@ -1656,7 +1667,7 @@ impl Program {
         text: &T,
         first: usize,
         sticky: bool,
-        captures: impl FnOnce(&[usize]) -> Vec<Option<Range<usize>>>,
+        captures: impl FnOnce(&[usize], &mut Vec<Option<Range<usize>>>) -> Vec<Option<Range<usize>>>,
     ) -> Option<Found> {
         if let (Some(length), Some(_)) = (self.literal_length, text.bytes()) {
             let last = if sticky { first } else { text.len() };

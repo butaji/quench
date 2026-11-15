@@ -47,6 +47,26 @@ pub(crate) fn advance_prototype_layout_epoch() {
     prototype_values::reset();
 }
 
+/// Changes whenever a builtin a fast path assumes may no longer be the intrinsic: an intact
+/// fuse pops or must be proved again (`code_dependencies::Fuses`), or a heap forgets its
+/// proofs. A memo that found a native intrinsic under one value keeps the answer while the
+/// value holds: one compare instead of re-proving the builtin's identity. One counter for the
+/// process, like `PROTOTYPE_LAYOUT_EPOCH`; a change another heap made only sends memos back
+/// to the proof.
+static INTRINSIC_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// The current `INTRINSIC_EPOCH`.
+#[inline(always)]
+pub(crate) fn intrinsic_epoch() -> u64 {
+    INTRINSIC_EPOCH.load(Ordering::Relaxed)
+}
+
+/// Retires every memo made under the current `INTRINSIC_EPOCH`.
+#[cold]
+pub(crate) fn note_intrinsic_change() {
+    INTRINSIC_EPOCH.fetch_add(1, Ordering::Relaxed);
+}
+
 #[cfg(test)]
 mod cell_layout_tests {
     use super::*;
@@ -886,7 +906,9 @@ impl Native {
     /// its own code natively, or pushes a frame for it only after making the activations
     /// frames (`Vm::call_wasm_exported_function`); its trap becomes an error object where the
     /// general path raises it (JetStream richards-wasm calls an export 2.1 million times an
-    /// iteration from a frameless activation).
+    /// iteration from a frameless activation). A keyed collection's or array's iterator
+    /// creation, `%IteratorPrototype%[@@iterator]`, `concat`, `Array.from` and `Object.isExtensible` belong
+    /// too (MobX's observable set reads `values()` 4,087 times per three proxy-mobx iterations).
     pub(crate) fn runs_beside_activations(self) -> bool {
         self.is_reflect_operation() || matches!(
             self,
@@ -911,6 +933,17 @@ impl Native {
                 | Self::StringReplaceAll
                 | Self::NumberString
                 | Self::MapEntries
+                | Self::MapKeys
+                | Self::MapValues
+                | Self::SetValues
+                | Self::SetKeys
+                | Self::SetEntries
+                | Self::IteratorSelf
+                | Self::ArrayConcat
+                | Self::ArrayFrom
+                | Self::ObjectIsExtensible
+                | Self::ArrayReverse
+                | Self::MathRandom
                 | Self::ArraySlice
                 | Self::ArrayMap
                 | Self::ArrayForEach
@@ -1780,7 +1813,7 @@ impl ArrayObject {
     /// narrow backing proves no index (`ArrayStorageProofs::prove`), so none reads it.
     #[inline]
     pub(crate) fn widen_elements(&mut self) {
-        if self.elements().is_narrow() {
+        if self.elements().is_encoded() {
             self.elements_raw_mut().widen();
         }
     }
@@ -2380,6 +2413,16 @@ impl Object {
         debug_assert!(!plain || self.extras_pointer().is_none());
         plain.then_some(self.payload as usize)
     }
+    /// `formed_plain_start` of a narrow run (`value_vec::NARROW_FORM`): the run's first word
+    /// where the whole auxiliary word equals `hint`, a narrow form without inline storage or
+    /// extras, so slot `i` is half `i` of the run counted in `u32`s from twice that word.
+    #[inline(always)]
+    pub(crate) fn formed_narrow_start(&self, hint: u32) -> Option<usize> {
+        use crate::value_vec::{NARROW_FORM, STORAGE_FORM};
+        let narrow = hint & STORAGE_FORM == NARROW_FORM && self.aux() == hint && self.payload >> u32::BITS == NARROW_RUN_TAG >> u32::BITS;
+        narrow.then_some(self.payload as u32 as usize)
+    }
+
 
     /// The arena storage start of an object whose auxiliary word is `hint` whole, a lane
     /// record's own-field hint (`hint_shape`) of the arena form; `None` for any other word or form.
@@ -3347,12 +3390,14 @@ impl EnvironmentScopeRef {
         Self(std::num::NonZeroUsize::new(pointer as usize).expect("a box is never null"))
     }
 
+    #[inline(always)]
     fn scope(&self) -> Option<&EnvironmentScope> {
         // SAFETY: an untagged word is the pointer `boxed` leaked, owned by `self` until `Drop`.
         (self.0.get() & INLINE_SCOPE_TAG == 0)
             .then(|| unsafe { &*(self.0.get() as *const EnvironmentScope) })
     }
 
+    #[inline(always)]
     pub(crate) fn program(&self) -> Option<u32> {
         match self.scope() {
             Some(scope) => scope.program,

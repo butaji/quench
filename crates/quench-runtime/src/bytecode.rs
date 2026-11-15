@@ -1470,6 +1470,92 @@ impl FunctionHeader {
     }
 }
 
+/// A slot's `FunctionHeader` in 24 bytes, not 48: each optional word is stored with
+/// `u32::MAX` for none (no program reaches that many functions, atoms or source bytes), and
+/// the seven flags share one byte. `FunctionSlot::header` unpacks it, field by field where
+/// the caller reads one.
+#[derive(Clone, Copy, Debug)]
+struct PackedHeader {
+    parent: u32,
+    name: u32,
+    inferred_name: u32,
+    span_start: u32,
+    span_end: u32,
+    length: u16,
+    dispatch: DispatchClass,
+    flags: u8,
+}
+
+const _: () = assert!(size_of::<PackedHeader>() == 24);
+const _: () = assert!(size_of::<FunctionSlot>() == 64);
+
+const NO_WORD: u32 = u32::MAX;
+
+impl PackedHeader {
+    const ARROW: u8 = 1 << 0;
+    const ASYNC: u8 = 1 << 1;
+    const GENERATOR: u8 = 1 << 2;
+    const CLASS_CONSTRUCTOR: u8 = 1 << 3;
+    const CONSTRUCTIBLE: u8 = 1 << 4;
+    const PROTOTYPE_UNOBSERVABLE: u8 = 1 << 5;
+    const INHERITED_WITH_SCOPE: u8 = 1 << 6;
+
+    fn word(value: Option<u32>) -> u32 {
+        let word = value.unwrap_or(NO_WORD);
+        assert!(value.is_none() || word != NO_WORD, "a header word reaches u32::MAX");
+        word
+    }
+
+    #[inline(always)]
+    fn option(word: u32) -> Option<u32> {
+        (word != NO_WORD).then_some(word)
+    }
+
+    fn pack(header: &FunctionHeader) -> Self {
+        let flag = |on: bool, bit: u8| if on { bit } else { 0 };
+        let (span_start, span_end) = match header.source_span {
+            Some(span) => (Self::word(Some(span.start)), span.end),
+            None => (NO_WORD, 0),
+        };
+        Self {
+            parent: Self::word(header.parent),
+            name: Self::word(header.name),
+            inferred_name: Self::word(header.inferred_name),
+            span_start,
+            span_end,
+            length: header.length,
+            dispatch: header.dispatch,
+            flags: flag(header.is_arrow, Self::ARROW)
+                | flag(header.is_async, Self::ASYNC)
+                | flag(header.is_generator, Self::GENERATOR)
+                | flag(header.is_class_constructor, Self::CLASS_CONSTRUCTOR)
+                | flag(header.constructible, Self::CONSTRUCTIBLE)
+                | flag(header.prototype_unobservable, Self::PROTOTYPE_UNOBSERVABLE)
+                | flag(header.inherited_with_scope, Self::INHERITED_WITH_SCOPE),
+        }
+    }
+
+    #[inline(always)]
+    fn unpack(self) -> FunctionHeader {
+        let flag = |bit: u8| self.flags & bit != 0;
+        FunctionHeader {
+            parent: Self::option(self.parent),
+            name: Self::option(self.name),
+            inferred_name: Self::option(self.inferred_name),
+            source_span: Self::option(self.span_start).map(|start| SourceSpan { start, end: self.span_end }),
+            length: self.length,
+            dispatch: self.dispatch,
+            is_arrow: flag(Self::ARROW),
+            is_async: flag(Self::ASYNC),
+            is_generator: flag(Self::GENERATOR),
+            is_class_constructor: flag(Self::CLASS_CONSTRUCTOR),
+            constructible: flag(Self::CONSTRUCTIBLE),
+            prototype_unobservable: flag(Self::PROTOTYPE_UNOBSERVABLE),
+            inherited_with_scope: flag(Self::INHERITED_WITH_SCOPE),
+        }
+    }
+}
+
 /// What a record built from its program (`ResidualProgram::built_record`) is for: kept as the
 /// function's record, which its first call makes, or read once and dropped.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1488,7 +1574,7 @@ enum RecordUse {
 /// or released, its first read compiling the record again from source or decoding it.
 #[derive(Clone, Debug)]
 pub struct FunctionSlot {
-    header: FunctionHeader,
+    header: PackedHeader,
     record: std::cell::OnceCell<std::rc::Rc<Function>>,
     unlowered: std::cell::RefCell<Option<Unlowered>>,
     /// The unlowered record its first runs execute until it lowers (`tier0`).
@@ -1523,7 +1609,7 @@ impl Unlowered {
 impl FunctionSlot {
     fn new(header: FunctionHeader, record: Option<Function>, unlowered: Option<Unlowered>) -> Self {
         let record = record.map_or_else(Default::default, |function| std::rc::Rc::new(function).into());
-        Self { header, record, unlowered: unlowered.into(), tier0: Default::default() }
+        Self { header: PackedHeader::pack(&header), record, unlowered: unlowered.into(), tier0: Default::default() }
     }
 
     pub(crate) fn compiled(function: Function) -> Self {
@@ -1553,8 +1639,8 @@ impl FunctionSlot {
         self.record.get().is_none() && self.unlowered.borrow().is_none() && self.tier0.get().is_none()
     }
 
-    #[inline(always)] pub(crate) fn header(&self) -> &FunctionHeader {
-        &self.header
+    #[inline(always)] pub(crate) fn header(&self) -> FunctionHeader {
+        self.header.unpack()
     }
 
     /// The compiled record, when it exists: the lowered one, else the one its first runs
@@ -3583,6 +3669,16 @@ pub fn set_record_read(action: fn(&[u8])) {
     let _ = RECORD_READ.set(action);
 }
 
+/// What the host does each time a function's record is built on its first use (lowered, decoded
+/// or compiled again), set once by the embedding: new code joining a run is the work its
+/// code-page policy follows (a work clock that runs without collections).
+static RECORD_BUILT: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// Sets `RECORD_BUILT`; the first call wins.
+pub fn set_record_built(action: fn()) {
+    let _ = RECORD_BUILT.set(action);
+}
+
 /// A compile-cache entry split into its encoding and the source text
 /// `binary::append_kept_source` kept after it, when it keeps `source_len` bytes of text whose
 /// checksum holds; the entry itself otherwise.
@@ -3992,8 +4088,17 @@ impl ResidualProgram {
         }
     }
 
-    /// `index`'s record, from its unlowered form, its encoded entry or its source.
+    /// `index`'s record, from its unlowered form, its encoded entry or its source; the host
+    /// counts each as work (`set_record_built`).
     fn built_record(&self, index: usize, purpose: RecordUse) -> Function {
+        let function = self.build_record(index, purpose);
+        if let Some(action) = RECORD_BUILT.get() {
+            action();
+        }
+        function
+    }
+
+    fn build_record(&self, index: usize, purpose: RecordUse) -> Function {
         let unlowered = {
             let mut unlowered = self.functions[index].unlowered.borrow_mut();
             match purpose {
