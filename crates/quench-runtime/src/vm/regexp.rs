@@ -2795,7 +2795,10 @@ impl<H: Host> Vm<H> {
                 if range.start == 0 && range.end == length {
                     whole
                 } else {
-                    self.heap.alloc_string(JsString::from_unit_run(units.slice(range)))
+                    match units {
+                        super::wtf16::Units::Ascii(bytes) => self.heap.alloc_ascii_run(&bytes[range]),
+                        super::wtf16::Units::Wide(_) => self.heap.alloc_string(JsString::from_unit_run(units.slice(range))),
+                    }
                 }
             })
         };

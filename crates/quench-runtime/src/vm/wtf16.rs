@@ -850,6 +850,16 @@ impl JsString {
         self.flat().substring(range)
     }
 
+    /// The string of at most `SHORT_ASCII_CAPACITY` ASCII `bytes`, held inline: the
+    /// canonical storage `from_ascii_bytes` picks for them, with no length dispatch.
+    #[inline(always)]
+    pub(crate) fn short_ascii(bytes: &[u8]) -> Self {
+        debug_assert!(bytes.len() <= SHORT_ASCII_CAPACITY && bytes.is_ascii());
+        let mut inline = [0; SHORT_ASCII_CAPACITY];
+        inline[..bytes.len()].copy_from_slice(bytes);
+        Self { repr: Repr::Flat(FlatUnits::Short(ShortAscii { length: bytes.len() as u8, bytes: inline })) }
+    }
+
     /// The string of ASCII `bytes`, written straight into its canonical storage.
     pub(crate) fn from_ascii_bytes(bytes: &[u8]) -> Self {
         debug_assert!(bytes.is_ascii());
