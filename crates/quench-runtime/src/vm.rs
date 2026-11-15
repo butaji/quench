@@ -2110,12 +2110,7 @@ pub(crate) struct Vm<H> {
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
     /// The host's object templates (`object_template`), indexed by their ids.
     object_templates: Vec<object_template::ObjectTemplate>,
-    /// The method caches of the sites that have recorded one: a site at or past its length is
-    /// empty (`record_method_cache` grows it). A program lays out a site for every method call
-    /// its lazily compiled bodies may hold, and a bundle's never run.
     method_caches: Vec<[MethodCache; method_cache::METHOD_CACHE_WAYS]>,
-    /// The method cache sites laid out across programs, `method_caches` aside.
-    method_site_count: usize,
     megamorphic_methods: Vec<MethodCacheSet>,
     method_cache_atoms: method_cache::MethodCacheAtoms,
     #[cfg(feature = "profile-aggregate")]
@@ -3073,7 +3068,7 @@ impl<H: Host> Vm<H> {
         self.prototype_atom = self.intern_atom("prototype");
         self.to_fixed_atom = self.intern_atom("toFixed");
         self.to_precision_atom = self.intern_atom("toPrecision");
-        self.method_caches.clear(); self.method_site_count = program.method_sites.capacity();
+        self.method_caches = vec![[EMPTY_METHOD_CACHE; method_cache::METHOD_CACHE_WAYS]; program.method_sites.capacity()];
         self.megamorphic_methods.clear();
         self.method_cache_atoms.clear();
         self.object_shapes = site_table::SiteTable::with_empty(program.object_sites.capacity());
@@ -3230,7 +3225,7 @@ impl<H: Host> Vm<H> {
             sites,
             shared_uncached_field: ProgramCacheLayout::shared_uncached_field(self.field_caches.len(), sites.fields),
             field_base: self.field_caches.len(),
-            method_base: self.method_site_count,
+            method_base: self.method_caches.len(),
             object_base: self.object_shapes.len(),
         });
         let fields = usize::from(sites.fields);
@@ -3240,7 +3235,7 @@ impl<H: Host> Vm<H> {
         self.field_add_indices.extend_empty(fields);
         self.inherited_field_indices.extend_empty(fields);
         self.accessor_field_indices.extend_empty(fields);
-        self.method_site_count += sites.methods;
+        self.method_caches.resize(self.method_caches.len() + sites.methods, [EMPTY_METHOD_CACHE; method_cache::METHOD_CACHE_WAYS]);
         self.object_shapes.extend_empty(sites.objects);
     }
 
@@ -3255,9 +3250,8 @@ impl<H: Host> Vm<H> {
             self.inherited_field_indices.set(site, NO_INHERITED_FIELD);
             self.accessor_field_indices.set(site, NO_ACCESSOR_FIELD);
         }
-        let recorded = self.method_caches.len();
-        let methods = layout.method_base.min(recorded)..(layout.method_base + layout.sites.methods).min(recorded);
-        self.method_caches[methods].fill([EMPTY_METHOD_CACHE; method_cache::METHOD_CACHE_WAYS]);
+        self.method_caches[layout.method_base..layout.method_base + layout.sites.methods]
+            .fill([EMPTY_METHOD_CACHE; method_cache::METHOD_CACHE_WAYS]);
         for site in layout.object_base..layout.object_base + layout.sites.objects {
             self.object_shapes.set(site, NO_OBJECT_SHAPE);
         }

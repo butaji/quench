@@ -179,9 +179,6 @@ impl<H: Host> Vm<H> {
             return;
         }
         self.method_cache_atoms.reach(site);
-        if site >= self.method_caches.len() {
-            self.method_caches.resize(site + 1, [EMPTY_METHOD_CACHE; METHOD_CACHE_WAYS]);
-        }
         let entries = &mut self.method_caches[site];
         if entries.iter().any(|entry| entry.records_same(&cache)) || entries[1].target.is_none() {
             let named = entries[0].atom == cache.atom || entries[1].atom == cache.atom;
@@ -320,9 +317,10 @@ impl<H: Host> Vm<H> {
 
         let specialized = self.specialized && p.specialized;
         let mut candidate = if specialized {
-            self.method_caches
-                .get(cache_site)
-                .and_then(|entries| entries.iter().enumerate().find(|(_, entry)| entry.serves(shape, metadata.atom, proto, this)))
+            self.method_caches[cache_site]
+                .iter()
+                .enumerate()
+                .find(|(_, entry)| entry.serves(shape, metadata.atom, proto, this))
                 .map(|(tier, entry)| (*entry, tier))
         } else {
             None

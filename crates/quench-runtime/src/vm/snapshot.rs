@@ -397,7 +397,7 @@ impl<H: Host> Vm<H> {
             // Templates name roots of the running heap; a restored heap starts without any,
             // and its hosts capture them again.
             object_templates: _,
-            method_caches: _, method_site_count: _,
+            method_caches: _,
             megamorphic_methods: _,
             method_cache_atoms: _,
             #[cfg(feature = "profile-aggregate")]
@@ -751,7 +751,7 @@ impl<H: Host> Vm<H> {
         self.inherited_field_indices.clear();
         self.accessor_field_indices.clear();
         self.accessor_fields.clear();
-        self.method_caches.clear(); self.method_site_count = 0;
+        self.method_caches.clear();
         self.object_shapes.clear();
         self.field_cache_writes = Some(Vec::new());
         for index in 0..self.programs.len() {
@@ -763,7 +763,7 @@ impl<H: Host> Vm<H> {
                 None => self.program_cache_layouts.push(ProgramCacheLayout {
                     sites: Default::default(),
                     field_base: self.field_caches.len(),
-                    method_base: self.method_site_count,
+                    method_base: self.method_caches.len(),
                     object_base: self.object_shapes.len(),
                     shared_uncached_field: None,
                 }),
