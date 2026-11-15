@@ -564,6 +564,9 @@ impl Regex {
             Some(program) => program,
             None => return Some(None),
         };
+        if sticky && program.refuses_start(bytes, start) {
+            return Some(None);
+        }
         Some(program.find(bytes, start, sticky, captures).map(|found| self.offset_match(found, captures)))
     }
 

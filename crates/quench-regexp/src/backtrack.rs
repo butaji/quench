@@ -1711,6 +1711,17 @@ impl Program {
     }
 
     /// The first position from `from` through `last` where a match can start.
+    /// Whether no match can start at `at` of an ASCII subject's `bytes`, by the start set's
+    /// table alone: a sticky search's one start, refused before the search machinery (a
+    /// tokenizer tries each token pattern at the same position, and most refuse it).
+    #[inline(always)]
+    pub(crate) fn refuses_start(&self, bytes: &[u8], at: usize) -> bool {
+        match &self.starts {
+            Some(starts) if !starts.at_start && !starts.at_end => bytes.get(at).is_none_or(|unit| !starts.units.table.contains(*unit)),
+            _ => false,
+        }
+    }
+
     #[inline(always)]
     fn next_start<T: Text + ?Sized>(&self, text: &T, from: usize, last: usize) -> Option<usize> {
         if from > last {
