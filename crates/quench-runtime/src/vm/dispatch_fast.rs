@@ -14215,13 +14215,15 @@ script_handler! {
         let arguments = ImmediateLayout::call_window_base(i.imm());
         // A plain activation of a window the fixed copies take, not completing its caller,
         // pushes as `lane_script_call`'s does, entering the callee's program
-        // (`lane_enter_window`'s cross completion).
+        // (`lane_enter_window`'s cross completion); the site calls its fixed form from now on
+        // (`lane_script_call_cross_plain`).
         let argc = ImmediateLayout::argument_count(i.imm());
         if target.entry == CallEntry::Activates
             && i.a & crate::bytecode::RETURN_REGISTER == 0
             && argc <= FIXED_ARGUMENT_COPIES
             && lane_admits_window(vm, target, argc)
         {
+            requicken::<H>(ip, cross_plain_handler::<H>(argc));
             // SAFETY: the record's window of `r` holds its values.
             let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
             let (registers, base) = lane_push_passed::<H, true, false>(cx, r, ip, target, passed, argc, this, false);
@@ -14239,6 +14241,48 @@ script_handler! {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
             Err(next) => next,
         }
+    }
+}
+
+script_handler! {
+    /// `lane_script_call_cross` at a site whose last callee was another program's plain
+    /// activation (`CallEntry::Activates`) of `ARGC` arguments, which no completion of its
+    /// caller follows: that activation alone, with the fixed copy of its window. Any other
+    /// call takes the general cross form.
+    fn lane_script_call_cross_plain<ARGC: u16>(cx, r, ip, i, view) {
+        if !unsafe { (*cx).script_calls } {
+            return exit(ip);
+        }
+        let vm = unsafe { vm(cx) };
+        let callee = r.get(i.b);
+        let target = if lane_constructing(vm, callee) { None } else { vm.linked_cross_call_entry(callee, &i.call_link) };
+        // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
+        let Some(target) = target.map(|target| unsafe { &*target }) else {
+            sibling!(lane_script_call_cross::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        if target.entry != CallEntry::Activates || !lane_admits_window(vm, target, ARGC) {
+            sibling!(lane_script_call_cross::<H>, r, ip, Carried::script_in(cx, view))
+        }
+        let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else {
+            sibling!(lane_script_call_cross::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        // SAFETY: the record's window of `r` holds its values.
+        let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
+        let (registers, base) = lane_push_passed::<H, true, false>(cx, r, ip, target, passed, ARGC, this, false);
+        next!(cx, registers, base, Carried::script(cx))
+    }
+}
+
+/// The `lane_script_call_cross_plain` instantiation of a window of `argc` values, at most
+/// `FIXED_ARGUMENT_COPIES`.
+fn cross_plain_handler<H: Host>(argc: u16) -> Handler {
+    const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
+    match argc {
+        0 => lane_script_call_cross_plain::<H, 0>,
+        1 => lane_script_call_cross_plain::<H, 1>,
+        2 => lane_script_call_cross_plain::<H, 2>,
+        3 => lane_script_call_cross_plain::<H, 3>,
+        _ => lane_script_call_cross_plain::<H, 4>,
     }
 }
 
