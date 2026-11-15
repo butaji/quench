@@ -11,6 +11,14 @@ use crate::snapshot::{SnapshotError, SnapshotResult};
 /// The deletes and descriptor edits of an owned dictionary that make a shape of their own.
 const SHAPE_MAKING_EDITS: u8 = 8;
 
+/// The deletes a layout's chain shares before its next delete makes the object its own
+/// dictionary (`DictionaryTrigger::DeletionPattern`), unless most slots are vacated first. A
+/// constructor that replaces a few of its fields, as `makeObservable` deletes each observable
+/// data field to define its accessor, makes the same transitions for every instance, which
+/// the transition cache shares and the field caches cover; an object used as a map passes
+/// the bound within a few deletes and edits a dictionary of its own.
+const SHARED_DELETIONS: usize = 8;
+
 /// One slot's live property and attributes (`ShapeLookupIndex::slot_entries`).
 type SlotEntry = Option<(PropertyKey, ShapeAttributes)>;
 
@@ -163,6 +171,25 @@ impl<H: Host> Vm<H> {
     /// object of a layout) stays a shared, cached shape; more mean the object is used as a
     /// map, whose adds and deletes would otherwise grow a cached chain without bound that
     /// every later such object retraces without an index.
+    /// The deletes and vacated rebuilds on `shape`'s chain, counted back to the last shape
+    /// without any (`ShapeFacts::deletions`) and capped past `SHARED_DELETIONS`. Walked only
+    /// when a delete makes a shape the transition cache did not hold.
+    fn chain_deletions(&self, shape: u32) -> usize {
+        let mut count = 0;
+        let mut cursor = Some(shape);
+        while let Some(id) = cursor
+            && count <= SHARED_DELETIONS
+        {
+            let entry = &self.shapes[id as usize];
+            if !entry.facts.deletions() {
+                break;
+            }
+            count += usize::from(matches!(entry.transition, ShapeTransition::Delete { .. } | ShapeTransition::Vacant));
+            cursor = entry.parent();
+        }
+        count
+    }
+
     fn dictionary_step(&self, shape: u32, transition: ShapeTransition) -> Option<DictionaryTrigger> {
         let entry = &self.shapes[shape as usize];
         let storage_len = entry.storage_len();
@@ -172,8 +199,8 @@ impl<H: Host> Vm<H> {
                 (storage_len > object::FIELD_CACHE_SLOT_CAPACITY).then_some(DictionaryTrigger::PropertyCount)
             }
             ShapeTransition::Delete { .. } => {
-                let deleted_before = entry.parent().is_some_and(|parent| self.shapes[parent as usize].facts.deletions());
-                (deleted_before || mostly_vacated(storage_len, self.shape_entry_count(shape)))
+                let repeated = self.chain_deletions(shape) > SHARED_DELETIONS;
+                (repeated || mostly_vacated(storage_len, self.shape_entry_count(shape)))
                     .then_some(DictionaryTrigger::DeletionPattern)
             }
             _ => None,

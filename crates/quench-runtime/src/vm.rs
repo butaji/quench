@@ -1561,7 +1561,7 @@ impl ShapeFacts {
     /// (`ShapeAttributes::table_accessors`) or a pair cell in its slot (`slot_accessor_pair`).
     const ACCESSOR_PAIRS: u8 = 1 << 3;
     /// Some property of the chain was deleted, or left a vacant slot when it was rebuilt: a
-    /// second deletion makes the object its own dictionary (`DictionaryTrigger::DeletionPattern`).
+    /// deletion past `SHARED_DELETIONS` makes the object its own dictionary (`DictionaryTrigger::DeletionPattern`).
     const DELETIONS: u8 = 1 << 4;
     /// A transition introduced non-default slot attributes. Without this fact every
     /// allocated slot has the default data descriptor, including vacated slots.
