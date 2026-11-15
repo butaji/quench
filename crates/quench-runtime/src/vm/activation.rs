@@ -252,10 +252,17 @@ impl Continuation {
     }
 
     fn clear_dead_registers(&mut self) {
-        for index in 0..self.frame.registers.len() {
-            if !self.register_is_live(index) {
-                self.frame.registers[index] = Value::UNDEFINED;
-            }
+        let Some(live) = self.live_registers else { return };
+        let registers = &mut self.frame.registers;
+        let covered = registers.len().min(u64::BITS as usize);
+        let (low, high) = registers.split_at_mut(covered);
+        high.fill(Value::UNDEFINED);
+        // The registers the mask covers, as bits: none of a frame without registers.
+        let covered_bits = u64::MAX.checked_shr(u64::BITS - covered as u32).unwrap_or(0);
+        let mut dead = !live & covered_bits;
+        while dead != 0 {
+            low[dead.trailing_zeros() as usize] = Value::UNDEFINED;
+            dead &= dead - 1;
         }
     }
 
