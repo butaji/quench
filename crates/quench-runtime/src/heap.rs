@@ -668,7 +668,7 @@ pub(crate) struct Heap {
     free_by_slab: Vec<FreeSlotBitmap>,
     free_slabs: Vec<u32>,
     /// The slots of one free-list word claimed whole (`refill_bump`), which allocations take
-    /// lowest first, and the first slot of that word: claimed slots are young already, so an
+    /// highest first, as the free list hands slots out, and the first slot of that word: claimed slots are young already, so an
     /// allocation is a bit scan. A collection hands back the unused ones first (`retire_bump`).
     bump_bits: u64,
     bump_base: usize,
@@ -1868,20 +1868,22 @@ impl Heap {
         Value::heap(index)
     }
 
-    /// A free slot's index, claimed and young: the lowest of the claimed word's
+    /// A free slot's index, claimed and young: the highest of the claimed word's
     /// (`bump_bits`), else of a word newly claimed.
     #[inline(always)]
     fn take_free_slot(&mut self) -> Option<usize> {
         let bits = self.bump_bits;
         if bits != 0 {
-            self.bump_bits = bits & (bits - 1);
-            return Some(self.bump_base + bits.trailing_zeros() as usize);
+            let bit = (u64::BITS - 1 - bits.leading_zeros()) as usize;
+            self.bump_bits = bits & !(1 << bit);
+            self.free_slots -= 1;
+            return Some(self.bump_base + bit);
         }
         self.refill_bump()
     }
 
     /// Claims the free slots of the highest word of the last slab with one, makes them young
-    /// in one word operation, and takes the lowest. Allocations then cost a bit scan, not a
+    /// in one word operation, and takes the highest. Allocations then cost a bit scan, not a
     /// free-list pop and a young insert each (BigInt sums, closures, environments).
     #[inline(never)]
     fn refill_bump(&mut self) -> Option<usize> {
@@ -1891,15 +1893,17 @@ impl Heap {
                 self.free_slabs.pop();
                 continue;
             };
-            self.free_slots -= bits.count_ones() as usize;
+            // Claimed slots stay counted free until taken.
+            self.free_slots -= 1;
             if self.free_by_slab[slab_index].is_empty() {
                 self.free_slabs.pop();
             }
             let base = slab_index * SLOTS_PER_SLAB + word * u64::BITS as usize;
             self.young.insert_word(base / u64::BITS as usize, bits);
-            self.bump_bits = bits & (bits - 1);
+            let bit = (u64::BITS - 1 - bits.leading_zeros()) as usize;
+            self.bump_bits = bits & !(1 << bit);
             self.bump_base = base;
-            return Some(base + bits.trailing_zeros() as usize);
+            return Some(base + bit);
         }
         None
     }
@@ -1917,7 +1921,6 @@ impl Heap {
             self.free_slabs.push(slab as u32);
         }
         self.free_by_slab[slab].insert_word((self.bump_base % SLOTS_PER_SLAB) / u64::BITS as usize, bits);
-        self.free_slots += bits.count_ones() as usize;
     }
 
     /// `alloc_in_slot` when no slot is free: a new one past the last.
