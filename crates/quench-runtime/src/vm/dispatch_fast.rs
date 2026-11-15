@@ -14209,6 +14209,20 @@ script_handler! {
             return exit(ip);
         };
         let arguments = ImmediateLayout::call_window_base(i.imm());
+        // A plain activation of a window the fixed copies take, not completing its caller,
+        // pushes as `lane_script_call`'s does, entering the callee's program
+        // (`lane_enter_window`'s cross completion).
+        let argc = ImmediateLayout::argument_count(i.imm());
+        if target.entry == CallEntry::Activates
+            && i.a & crate::bytecode::RETURN_REGISTER == 0
+            && argc <= FIXED_ARGUMENT_COPIES
+            && lane_admits_window(vm, target, argc)
+        {
+            // SAFETY: the record's window of `r` holds its values.
+            let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
+            let (registers, base) = lane_push_passed::<H, true, false>(cx, r, ip, target, passed, argc, this, false);
+            next!(cx, registers, base, Carried::script(cx))
+        }
         let activated = if target.entry == CallEntry::Environment {
             // SAFETY: the call's window is registers of the running function.
             lane_activate_environment(cx, r, ip, target, unsafe { lane_call_window(r, i) }, this)
