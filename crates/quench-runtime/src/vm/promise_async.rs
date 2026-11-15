@@ -472,7 +472,7 @@ impl<H: Host> Vm<H> {
         let Some(PendingJob::Reaction(job)) = self.realm.jobs.front() else {
             return None;
         };
-        if job.rejected || job.execution_context.is_some() || job.realm != self.realm.globals {
+        if job.rejected || job.execution_context.get().is_some() || job.realm != self.realm.globals {
             return None;
         }
         if !self.chain_gates_open() {
@@ -942,7 +942,7 @@ impl<H: Host> Vm<H> {
             }
             let realm = self.realm.globals;
             match self.realm.jobs.front() {
-                Some(PendingJob::Thenable(job)) if job.execution_context.is_none() && job.realm == realm => {
+                Some(PendingJob::Thenable(job)) if job.execution_context.get().is_none() && job.realm == realm => {
                     let (then, thenable, promise) = (job.then, job.thenable, job.promise);
                     let capabilities = &self.realm.promise.reaction_capabilities;
                     if !self.is_intrinsic_promise_then(then)
@@ -956,7 +956,7 @@ impl<H: Host> Vm<H> {
                     self.promise_then_resolving(p, thenable, promise)?;
                 }
                 Some(PendingJob::Reaction(job))
-                    if !job.rejected && job.execution_context.is_none() && job.realm == realm =>
+                    if !job.rejected && job.execution_context.get().is_none() && job.realm == realm =>
                 {
                     let (handler, value, next) = (job.handler, job.value, job.next);
                     if self.is_function(handler) {

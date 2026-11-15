@@ -353,7 +353,9 @@ pub(super) struct PromiseJob {
     pub(super) next: Value,
     pub(super) rejected: bool,
     pub(super) value: Value,
-    pub(super) execution_context: Option<HostExecutionContext>,
+    /// In one word (`StoredHostContext`): queued jobs had taken 64 bytes each, and doxbee-promise
+    /// queued 25K at once.
+    pub(super) execution_context: crate::heap::StoredHostContext,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -363,7 +365,7 @@ pub(super) struct ThenableJob {
     pub(super) then: Value,
     pub(super) thenable: Value,
     pub(super) promise: Value,
-    pub(super) execution_context: Option<HostExecutionContext>,
+    pub(super) execution_context: crate::heap::StoredHostContext,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -4849,7 +4851,7 @@ impl<H: Host> Vm<H> {
             then,
             thenable: value,
             promise,
-            execution_context,
+            execution_context: execution_context.into(),
         }));
         Ok(())
     }
@@ -4945,7 +4947,7 @@ impl<H: Host> Vm<H> {
                 then,
                 thenable: value,
                 promise,
-                execution_context,
+                execution_context: execution_context.into(),
             }));
             return true;
         }

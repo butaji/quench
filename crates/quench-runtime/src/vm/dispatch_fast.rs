@@ -2223,9 +2223,21 @@ impl LaneStack {
         let frame_storage_bytes = activation.frame_storage_bytes();
         debug_assert!(len < self.activations.capacity(), "lane activations stay within capacity");
         // SAFETY: the slot at `len` lies within capacity and is uninitialized; the length
-        // covers it only once written.
+        // covers it only once written. Each field is written alone, so the native prefix's
+        // unwritten words (`ShadowFrame::EMPTY`) cost no stores; they are `MaybeUninit`.
         unsafe {
-            self.activations.as_mut_ptr().add(len).write(activation);
+            let slot = self.activations.as_mut_ptr().add(len);
+            let native = &raw mut (*slot).native;
+            (&raw mut (*native).callee).write(activation.native.callee);
+            (&raw mut (*native).this).write(activation.native.this);
+            (&raw mut (*native).body).write(activation.native.body);
+            (&raw mut (*native).window).write(activation.native.window);
+            (&raw mut (*slot).function).write(activation.function);
+            (&raw mut (*slot).call).write(activation.call);
+            (&raw mut (*slot).caller_base).write(activation.caller_base);
+            (&raw mut (*slot).caller_registers).write(activation.caller_registers);
+            (&raw mut (*slot).caller_program).write(activation.caller_program);
+            (&raw mut (*slot).kind).write(activation.kind);
             self.activations.set_len(len + 1);
         }
         self.wasm_storage_bytes += frame_storage_bytes;
@@ -18225,7 +18237,9 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         caller_program: unsafe { (*cx).program },
         kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
-            argc: argc as u16,
+            // An activation keeping nothing passed its parameters alone, which its window holds
+            // (a rest body's rest array among them): its materialization reads them there.
+            argc: if keeps { argc } else { argc.min(usize::from(target.params)) } as u16,
             completion: if forwarder.is_some() {
                 Completion::Forwarder
             } else {
