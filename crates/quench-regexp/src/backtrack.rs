@@ -36,6 +36,8 @@ const UNSET: usize = usize::MAX;
 
 /// A quantifier bound without a maximum.
 const UNBOUNDED: u32 = u32::MAX;
+/// `Inst::LoopTail::start` of a loop whose body cannot match empty, which keeps no start.
+const NO_START: u32 = u32::MAX;
 
 /// The code units an ASCII bitmap covers.
 const ASCII_UNITS: u32 = ASCII_MAX as u32 + 1;
@@ -805,7 +807,10 @@ impl Compiler {
                     }
                     return Ok(());
                 }
-                let (counter, start) = (self.register(), self.register());
+                // A body that cannot match empty never ends an iteration where it began, so
+                // only a nullable one keeps each iteration's start for the empty check.
+                let counter = self.register();
+                let start = if nullable(body) { self.register() } else { NO_START };
                 self.emit(Inst::LoopInit { counter });
                 let head = self.emit(Inst::LoopHead {
                     counter,
@@ -814,7 +819,9 @@ impl Compiler {
                     greedy: *greedy,
                     exit: 0,
                 });
-                self.emit(Inst::LoopIterate { start });
+                if start != NO_START {
+                    self.emit(Inst::LoopIterate { start });
+                }
                 if count > 0 {
                     self.emit(Inst::ResetCaptures { first, count });
                 }
