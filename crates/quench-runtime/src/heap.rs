@@ -3032,6 +3032,9 @@ impl Heap {
                 .map_or(0, |pages| pages * 4);
             eprintln!("gc rss_kb={rss_kb} live_weight={live_weight} full={full}{concurrent} mark_us={mark_us} sweep_us={sweep_us} records_us={trace_records_us} resident_start={} resident_kept={} weight_between_fulls={} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?} {}", self.resident_at_full_start, self.resident_after_full, self.weight_between_fulls, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state, self.properties.trace_summary());
         }
+        if full && crate::trace::Channel::StorageCensus.on() {
+            self.trace_storage_census();
+        }
         self.live_weight_after_previous = live_weight;
         self.set_young_budget(next.threshold);
         self.full_due = next.full;
@@ -5066,5 +5069,107 @@ impl PushedProtos {
         }
         self.0 = [proto, self.0[0]];
         true
+    }
+}
+
+impl Heap {
+    /// `QUENCH_TRACE=storage-census`: per container, the live 8-byte values and how many have a
+    /// narrow form (`Value::to_narrow`), the bytes that 4-byte storage would save, and the
+    /// record counts beside them, after a full collection. One line, in KB where sized.
+    #[cold]
+    #[inline(never)]
+    fn trace_storage_census(&self) {
+        #[derive(Default)]
+        struct Tally { containers: usize, values: usize, narrow: usize, words: usize }
+        impl Tally {
+            fn take(&mut self, values: impl Iterator<Item = Value>) {
+                self.containers += 1;
+                for value in values {
+                    self.values += 1;
+                    if value.to_narrow().is_some() { self.narrow += 1; }
+                }
+            }
+            fn line(&self, name: &str) -> String {
+                format!("{name}={}/{}n/{}w/{}c save={}KB", self.values, self.narrow, self.words, self.containers, self.narrow_savings() / 1024)
+            }
+            fn narrow_savings(&self) -> usize {
+                // A narrow value takes 4 bytes of the 8, where the container is narrow whole.
+                self.narrow * 4
+            }
+        }
+        let properties = &self.properties;
+        let mut own = Tally::default();
+        let mut runs_narrow = 0usize;
+        let mut elements = Tally::default();
+        let mut element_capacity = 0usize;
+        let mut take_object = |object: &Object, own: &mut Tally| {
+            let vector = object.properties();
+            if vector.is_dictionary() { return; }
+            let len = properties.len(vector);
+            if !vector.has_inline_property_storage() {
+                own.words += properties.capacity(vector);
+            }
+            if vector.is_narrow() || vector.has_inline_property_storage() {
+                // Already 4 bytes a value, or in the record's own word: nothing more to save.
+                runs_narrow += usize::from(vector.is_narrow());
+                own.containers += 1;
+                own.values += len;
+                return;
+            }
+            own.take((0..len).filter_map(|slot| properties.get(vector, slot)));
+        };
+        let (mut objects, mut arrays, mut functions) = (0usize, 0usize, 0usize);
+        self.object_records.for_each_live(|_, object| { objects += 1; take_object(object, &mut own); });
+        self.array_records.for_each_live(|_, array| {
+            arrays += 1;
+            take_object(array, &mut own);
+            let backing = array.elements();
+            element_capacity += backing.capacity();
+            elements.words += backing.capacity();
+            elements.take(backing.as_slice().iter().copied());
+        });
+        self.function_records.for_each_live(|_, function| { functions += 1; take_object(&function.object, &mut own); });
+        let (mut maps, mut sets, mut environments, mut cells) = (Tally::default(), Tally::default(), Tally::default(), 0usize);
+        let mut map_bytes = 0usize;
+        for slot in self.slots.iter() {
+            let Some(cell) = slot.cell.as_ref() else { continue };
+            cells += 1;
+            match cell {
+                Cell::Map { entries, .. } => {
+                    map_bytes += entries.payload_bytes();
+                    maps.words += 2 * entries.capacity();
+                    maps.take(entries.iter().flat_map(|(key, value)| [key, value]));
+                }
+                Cell::Set { entries, .. } => {
+                    map_bytes += entries.payload_bytes();
+                    sets.words += entries.capacity();
+                    sets.take(entries.iter());
+                }
+                Cell::Environment { slots, .. } => {
+                    environments.containers += 1;
+                    environments.values += slots.len();
+                    environments.words += slots.len();
+                }
+                _ => {}
+            }
+        }
+        let _ = element_capacity;
+        let rss_kb = std::fs::read_to_string("/proc/self/statm")
+            .ok()
+            .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<usize>().ok())
+            .map_or(0, |pages| pages * 4);
+        let total = own.narrow_savings() + elements.narrow_savings() + maps.narrow_savings() + sets.narrow_savings();
+        eprintln!(
+            "storage census: rss_kb={rss_kb} records objects={objects} arrays={arrays} functions={functions} cells={cells} arena_words={} {} narrow_runs={runs_narrow} {} {} {} envs={}/{}c map_set_payload={}KB save_total={}KB",
+            properties.resident_words(),
+            own.line("own"),
+            elements.line("elements"),
+            maps.line("map"),
+            sets.line("set"),
+            environments.values,
+            environments.containers,
+            map_bytes / 1024,
+            total / 1024,
+        );
     }
 }

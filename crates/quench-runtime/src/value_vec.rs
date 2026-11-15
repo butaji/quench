@@ -303,6 +303,8 @@ pub(crate) struct ValueArena {
     free: [Vec<u32>; BUCKETS],
     /// Values held by the ranges on `free`.
     released_values: usize,
+    /// The narrow-run words the current compaction wrote, for its `QUENCH_TRACE=gc` census.
+    narrowed_words: usize,
     shape_lengths: Vec<u32>,
     /// The slot owners of every shape (`ValueArena::slot_owner`): each shape's chain starts at
     /// its `shape_chains` index in `chain_owners`, which names, per slot, the shape that added
@@ -331,6 +333,7 @@ impl Default for ValueArena {
             values: PropertyBuffer::default(),
             free: [const { Vec::new() }; BUCKETS],
             released_values: 0,
+            narrowed_words: 0,
             shape_lengths: vec![0],
             shape_chains: Vec::new(),
             chain_owners: Vec::new(),
@@ -373,7 +376,7 @@ impl ValueArena {
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
-        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, dictionaries, free_dictionaries, next_dictionary, nursery: _ } = self;
+        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _ } = self;
         writer.values(values);
         for bucket in free {
             writer.u32s(bucket);
@@ -1065,6 +1068,11 @@ impl ValueArena {
 
     /// Frees `vector`'s storage. A young run (`Nursery`) returns with the rest of the young
     /// range when its collection ends, so its release is the range test alone.
+    /// The arena's words in use, released ranges included (`QUENCH_TRACE=storage-census`).
+    pub(crate) fn resident_words(&self) -> usize {
+        self.values.len()
+    }
+
     /// Its length, capacity, released values and nursery range, for `QUENCH_TRACE=gc`.
     pub(crate) fn trace_summary(&self) -> String {
         let n = self.nursery;
@@ -1150,10 +1158,12 @@ impl ValueArena {
             self.values[target + narrow_words(length)..target + capacity].fill(Value::UNDEFINED);
             narrow.relocate(target);
             *vector = narrow;
+            self.narrowed_words += capacity;
             return capacity;
         }
         let capacity = self.capacity(*vector);
         let words = if vector.is_narrow() { narrow_words(length) } else { length };
+        if vector.is_narrow() { self.narrowed_words += capacity; }
         self.values.copy_within(source..source + words, target);
         self.values[target + words..target + capacity].fill(Value::UNDEFINED);
         vector.relocate(target);
@@ -1170,10 +1180,13 @@ impl ValueArena {
     pub(crate) fn finish_compaction(&mut self, length: usize) {
         self.values.truncate(length);
         if crate::trace::Channel::Gc.on() {
+            // Narrow-run words hold value pairs, not values: the census counts them apart and
+            // leaves them out of the wide counts only in sum (they read as numbers).
             let wide = self.values[..length].iter().filter(|value| value.to_narrow().is_none()).count();
             let numbers = self.values[..length].iter().filter(|value| value.to_narrow().is_none() && value.as_number().is_some()).count();
-            eprintln!("arena census: compacted={length} wide={wide} wide_numbers={numbers}");
+            eprintln!("arena census: compacted={length} narrow_run_words={} wide={wide} wide_numbers={numbers} (narrow-run words included)", self.narrowed_words);
         }
+        self.narrowed_words = 0;
         // A burst's growth stays resident past the compaction that frees it: keep the room
         // the next doubling would give the live values, and return the rest.
         self.values.shrink_to(length.saturating_mul(COMPACTED_CAPACITY_FACTOR));
@@ -1275,7 +1288,7 @@ impl ValueArena {
         debug_assert_eq!(length, self.shape_lengths[shape as usize] as usize, "property values must match shape");
     }
 
-    fn capacity(&self, vector: ValueVec) -> usize {
+    pub(crate) fn capacity(&self, vector: ValueVec) -> usize {
         if vector.has_inline_property_storage() {
             return 0;
         }

@@ -75,6 +75,9 @@ setting! {
         Allocator = "allocator",
         Gc = "gc",
         GcTime = "gc-time",
+        /// At each full collection, the live values per container and how many have a narrow
+        /// form: what 4-byte storage could save (`Heap::trace_storage_census`).
+        StorageCensus = "storage-census",
         Shapes = "shapes",
         Rewrite = "rewrite",
         /// Every loaded program's finished bytecode, printed at exit.
