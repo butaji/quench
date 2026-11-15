@@ -15783,8 +15783,47 @@ fn lane_call_keeping_activation<H: Host>(
     let Some(this) = lane_call_this(vm, &target, receiver) else {
         return Err(Some(exit(ip)));
     };
-    let arguments = ActivationArguments::Window(ImmediateLayout::call_window_base(i.imm()));
+    let window = ImmediateLayout::call_window_base(i.imm());
+    if target.entry == CallEntry::Gathers && target.forms & TARGET_GATHERS_KEEPING == 0 {
+        return lane_activate_gathering(cx, r, ip, &target, window, this).map_err(Some);
+    }
+    let arguments = ActivationArguments::Window(window);
     lane_activate_keeping::<H, false>(cx, r, ip, &target, arguments, this, false, None).map_err(Some)
+}
+
+/// The plain activation (`lane_push_passed`) of a rest body of the running program that keeps
+/// nothing (`TARGET_GATHERS_KEEPING` clear), called with its window at `arguments` of `r`:
+/// the fixed parameters copied as any call's are, and the rest parameter's register the array
+/// of the values past them, read in place from the window.
+#[inline(always)]
+fn lane_activate_gathering<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    arguments: u16,
+    this: Value,
+) -> Result<(Registers, Ip), Ip> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: `ip` is a record of the running view.
+    let i = unsafe { &*ip };
+    let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+    if (returns && !lane_returning_call_admitted(cx)) || vm.with_scope_entered {
+        return Err(exit(ip));
+    }
+    if !lane_activation_room(vm, target) {
+        return Err(lane_script_call_frame::<H>(ip, usize::from(target.room)));
+    }
+    let argc = ImmediateLayout::argument_count(i.imm());
+    let fixed = target.params - 1;
+    // SAFETY: the call's window of `r` holds its `argc` values.
+    let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
+    let rest = vm.rest_parameter_array(unsafe {
+        std::slice::from_raw_parts(passed.add(usize::from(fixed.min(argc))), usize::from(argc.saturating_sub(fixed)))
+    });
+    let callee_registers = lane_fill_window(vm, target, passed, argc.min(fixed));
+    callee_registers.set(fixed, rest);
+    Ok(lane_enter_window::<H, false, false>(cx, r, ip, target, callee_registers, argc.min(target.params), this, false, None))
 }
 
 script_handler! {
