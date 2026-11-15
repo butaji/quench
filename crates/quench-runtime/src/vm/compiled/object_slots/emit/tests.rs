@@ -3,7 +3,9 @@
 use super::*;
 use crate::heap::{Cell, Heap, Object, PlainPropertyStorage};
 use crate::staged::object::{own_layout, read_slot, Form, PackedAccess, Rep};
+use crate::staged::slot_store::store_flat;
 use crate::staged::Region;
+use crate::vm::switches::with_float_slots;
 
 /// Objects of every storage form, with their values: narrow and wide, inline and spilled,
 /// plain and marked as prototypes.
@@ -306,4 +308,61 @@ fn a_record_base_is_read_once_outside_a_loop_with_or_without_a_call() {
     for with_call in [false, true] {
         assert_eq!(record_base_loads_after_optimizing(&*isa, with_call), (0, 1), "call: {with_call}");
     }
+}
+
+/// Native code running `record.slot0 -= dx * record.slot1 * mag` over a record whose arena values
+/// are raw doubles (`Rep::Float64`), and its CLIF.
+fn compiled_float_update(isa: &dyn cranelift_codegen::isa::TargetIsa) -> (CodeMemory, String) {
+    let mut signature = Signature::new(isa.default_call_conv());
+    signature.params.extend([AbiParam::new(types::I64), AbiParam::new(types::I64), AbiParam::new(types::F64), AbiParam::new(types::F64)]);
+    let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
+    let mut context = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut native, &mut context);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let [record, base, dx, mag] = builder.block_params(entry).try_into().unwrap();
+    let miss = builder.create_block();
+    let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None };
+    let inline = crate::staged::object::inline_storage(&mut stage, record);
+    let layout = own_layout(&mut stage, record, inline, Form::Arena, 2, PackedAccess::Reload, miss).unwrap();
+    let velocity = read_slot(&mut stage, layout, 0, Rep::Float64);
+    let mass = read_slot(&mut stage, layout, 1, Rep::Float64);
+    let payload = stage.load_u64(Region::Payload.mutable(), record, crate::heap::NATIVE_OBJECT_LAYOUT.payload_offset as i32);
+    let pull = stage.builder.ins().fmul(dx, mass);
+    let pull = stage.builder.ins().fmul(pull, mag);
+    let updated = stage.builder.ins().fsub(velocity, pull);
+    store_flat(&mut stage, payload, 0, (updated, Rep::Float64));
+    builder.ins().return_(&[]);
+    builder.switch_to_block(miss);
+    builder.ins().return_(&[]);
+    builder.seal_all_blocks();
+    builder.finalize(isa.frontend_config());
+    let clif = native.display().to_string();
+    (compile_native_function(native, isa, usize::MAX, CodeMemory::new).unwrap(), clif)
+}
+
+/// A field update over raw-double slots (nbody's `a.vx -= dx * b.m * mag`) is a `load.f64` per
+/// operand, the arithmetic and one store, with no tag test or box, and it computes what the
+/// interpreter's reads and writes of the same slots do.
+#[test]
+fn a_float_slot_update_is_loads_arithmetic_and_a_store() {
+    with_float_slots(|| {
+        let isa = super::super::super::super::jit_backend::target_isa().unwrap();
+        let (memory, clif) = compiled_float_update(&*isa);
+        assert_eq!(clif.matches("load.f64").count(), 2, "{clif}");
+        assert_eq!(clif.matches("fmul").count(), 2, "{clif}");
+        assert_eq!(clif.matches("fsub").count(), 1, "{clif}");
+        assert_eq!(clif.matches("store").count(), 1, "{clif}");
+        assert!(!clif.contains("bitcast"), "{clif}");
+        let mut heap = Heap::new();
+        heap.track_slot_representations(&[(0, None), (3, None)]);
+        let object = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::number(1.5), Value::number(2.0), Value::number(0.25)]);
+        let record = heap.object(object).unwrap() as *const Object as u64;
+        // SAFETY: the function reads and writes the record's arena run, which is live.
+        let run = unsafe { std::mem::transmute::<*mut u8, unsafe extern "C" fn(u64, u64, f64, f64)>(memory.pointer()) };
+        unsafe { run(record, heap.property_values_base() as u64, 0.5, 4.0) };
+        let read = |slot| heap.property_get(heap.object(object).unwrap(), slot);
+        assert_eq!((read(0), read(1), read(2)), (Some(Value::number(-2.5)), Some(Value::integer(2)), Some(Value::number(0.25))));
+    });
 }
