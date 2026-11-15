@@ -2798,7 +2798,7 @@ fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
 /// the peak).
 #[derive(Default)]
 pub(super) struct LaneViews {
-    table: std::cell::OnceCell<Box<[LaneViewCell]>>,
+    table: std::cell::OnceCell<LaneViewTable>,
     /// The derived views in chunks that never grow past their capacity, so a view's address is
     /// fixed while its program holds it. Each chunk holds as many as all earlier chunks together
     /// (`LANE_VIEW_FIRST_CHUNK` first), so a program's views take a few allocations with at
@@ -2810,6 +2810,60 @@ pub(super) struct LaneViews {
 /// a handful of views, which this keeps in one allocation of 704 bytes.
 const LANE_VIEW_FIRST_CHUNK: usize = 8;
 
+
+/// A program's lane view cells, one per function slot its table can reach. A large table lies
+/// on fresh zero pages, an empty cell being zero bits, so only the pages of functions that
+/// derive a view become resident: each eval of first-inspector-code-load builds a program of
+/// 31K functions whose top level alone derives a view, and kept a 250 KB table written whole.
+enum LaneViewTable {
+    Boxed(Box<[LaneViewCell]>),
+    Mapped { base: std::ptr::NonNull<LaneViewCell>, len: usize, bytes: usize },
+}
+
+/// The smallest table that takes its own mapping, which costs two system calls.
+const MAPPED_LANE_VIEW_TABLE_BYTES: usize = 4 * super::site_table::MAPPING_GRANULE_BYTES;
+
+// An empty cell is zero bits, which a fresh mapping holds.
+const _: () = assert!(
+    // SAFETY: a cell is one pointer-sized `Option<NonNull>`, whose `None` this reads.
+    unsafe { std::mem::transmute::<LaneViewCell, usize>(std::cell::OnceCell::new()) } == 0
+);
+
+impl LaneViewTable {
+    fn new(len: usize) -> Self {
+        let bytes = len * size_of::<LaneViewCell>();
+        if bytes < MAPPED_LANE_VIEW_TABLE_BYTES {
+            return Self::Boxed((0..len).map(|_| std::cell::OnceCell::new()).collect());
+        }
+        let bytes = bytes.next_multiple_of(super::site_table::MAPPING_GRANULE_BYTES);
+        let base = super::site_table::storage::map_zeroed(bytes).cast();
+        Self::Mapped { base, len, bytes }
+    }
+}
+
+impl std::ops::Deref for LaneViewTable {
+    type Target = [LaneViewCell];
+
+    #[inline(always)]
+    fn deref(&self) -> &[LaneViewCell] {
+        match self {
+            Self::Boxed(cells) => cells,
+            // SAFETY: the mapping holds `len` cells, zero bits being empty ones, for the table's
+            // life.
+            Self::Mapped { base, len, .. } => unsafe { std::slice::from_raw_parts(base.as_ptr(), *len) },
+        }
+    }
+}
+
+impl Drop for LaneViewTable {
+    fn drop(&mut self) {
+        if let Self::Mapped { base, bytes, .. } = *self {
+            // SAFETY: the mapping came from `map_zeroed` with these bytes, and the table is its
+            // only reader.
+            unsafe { super::site_table::storage::unmap(base.cast(), bytes) };
+        }
+    }
+}
 
 /// One function's derived lane view, in its program's arena (`LaneViews::arena`).
 pub(super) type LaneViewCell = std::cell::OnceCell<std::ptr::NonNull<super::dispatch_fast::LaneView>>;
@@ -2867,7 +2921,7 @@ impl LaneViews {
 
     #[cold]
     fn make_table(&self, residual: &ResidualProgram) -> &[LaneViewCell] {
-        self.table.get_or_init(|| (0..residual.functions.capacity()).map(|_| std::cell::OnceCell::new()).collect())
+        self.table.get_or_init(|| LaneViewTable::new(residual.functions.capacity()))
     }
 
     /// `function`'s view if it has one, without making the table.
