@@ -338,9 +338,16 @@ impl Tiers {
     }
 }
 
-/// The tier that compiles lane bodies in this process's mode.
+/// The tier that compiles and publishes lane bodies in this process's mode: `--b-jit`'s stencil
+/// bodies, `--q-jit`'s Quick lowering, or the Ultra lowering of every mode with it.
 pub(in crate::vm) fn lane_body_tier() -> Tier {
-    if crate::jit_mode::base_only() { Tier::Base } else { Tier::Ultra }
+    if crate::jit_mode::base_only() {
+        Tier::Base
+    } else if crate::jit_mode::quick_only() {
+        Tier::Quick
+    } else {
+        Tier::Ultra
+    }
 }
 
 /// The base a share in percent is a share of.
