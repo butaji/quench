@@ -29,7 +29,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn prune_function_values(&mut self, full: bool) {
         let heap = &self.heap;
         let FunctionValues { entries, young } = &mut self.function_values;
-        let live = |entry: &mut Vec<WeakHandle>| {
+        let live = |entry: &mut Handles| {
             entry.retain(|handle| heap.weak_value(*handle).is_some());
             !entry.is_empty()
         };
@@ -51,11 +51,15 @@ impl<H: Host> Vm<H> {
     }
 }
 
+/// A function's closures: nearly every function makes one (a Wasm module's table entries,
+/// 20K on dotnet-aot-wasm), held in place without an allocation of its own.
+pub(super) type Handles = smallvec::SmallVec<[WeakHandle; 1]>;
+
 /// The closures each top-level function made, by weak handle, and the keys whose closures
 /// may still be young: a minor collection prunes only those.
 #[derive(Default)]
 pub(super) struct FunctionValues {
-    entries: FxHashMap<(ProgramId, u32), Vec<WeakHandle>>,
+    entries: FxHashMap<(ProgramId, u32), Handles>,
     young: Vec<(ProgramId, u32)>,
 }
 
@@ -68,7 +72,7 @@ impl FunctionValues {
 }
 
 impl std::ops::Deref for FunctionValues {
-    type Target = FxHashMap<(ProgramId, u32), Vec<WeakHandle>>;
+    type Target = FxHashMap<(ProgramId, u32), Handles>;
     fn deref(&self) -> &Self::Target {
         &self.entries
     }
