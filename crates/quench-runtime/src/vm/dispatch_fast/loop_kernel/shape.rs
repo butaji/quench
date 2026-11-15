@@ -5,7 +5,7 @@ use super::super::*;
 use crate::bytecode::OperandKind;
 
 /// Most operations a kernel keeps (columns of scratch).
-const MAX_NODES: usize = 48;
+const MAX_NODES: usize = 64;
 /// Most recurrences, scalars and affine values a kernel keeps.
 const MAX_SLOTS: usize = 32;
 
@@ -221,6 +221,10 @@ impl<'a> Graph<'a> {
         };
         let a = self.operand(file, instruction.operand_b())?;
         let b = self.operand(file, instruction.operand_c())?;
+        // An induction stepped by a constant (`i += 4`) stays affine, as `inc_dec` steps it.
+        if let Some(affine) = shifted(kind, a, b).filter(|&sym| matches!(sym, Sym::Affine(r, _) if self.written[usize::from(r)])) {
+            return Some(affine);
+        }
         let (a, b) = (self.arith_operand(a)?, self.arith_operand(b)?);
         self.node(kind, a, b)
     }
@@ -288,6 +292,22 @@ impl<'a> Graph<'a> {
             }
         }
         Some(())
+    }
+}
+
+/// An affine value plus or minus an integer constant.
+fn shifted(kind: SymOp, a: Sym, b: Sym) -> Option<Sym> {
+    let integer = |sym: Sym| match sym {
+        Sym::Const(value) if value.fract() == 0.0 && value.abs() <= 65536.0 => Some(value as i32),
+        _ => None,
+    };
+    match (kind, a, b) {
+        (SymOp::Arith(NumberArithmetic::Add), Sym::Affine(register, offset), other)
+        | (SymOp::Arith(NumberArithmetic::Add), other, Sym::Affine(register, offset)) => Some(Sym::Affine(register, offset.checked_add(integer(other)?)?)),
+        (SymOp::Arith(NumberArithmetic::Subtract), Sym::Affine(register, offset), other) => {
+            Some(Sym::Affine(register, offset.checked_sub(integer(other)?)?))
+        }
+        _ => None,
     }
 }
 

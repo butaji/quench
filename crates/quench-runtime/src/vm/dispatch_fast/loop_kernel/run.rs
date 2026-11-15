@@ -279,7 +279,8 @@ impl LoopKernel {
         for (n, store) in shape.stores.iter().enumerate() {
             let stored = state.spans[usize::from(store.base)].base;
             // Two stores into one array through two registers would commit out of order.
-            if shape.stores[..n].iter().any(|other| state.spans[usize::from(other.base)].base == stored) {
+            // Stores through one register were proved disjoint (`disjoint_stores`).
+            if shape.stores[..n].iter().any(|other| other.base != store.base && state.spans[usize::from(other.base)].base == stored) {
                 return None;
             }
             // A typed array's buffer may be another view's: only its own view reads it.
@@ -340,14 +341,11 @@ impl LoopKernel {
         state.firsts[usize::from(slot)] + i64::from(self.shape.affines[usize::from(slot)].step) * k as i64
     }
 
-    /// The column operations, in node order (operands precede their users); `false` where a
-    /// loaded element is no Number.
+    /// The column operations: the loads, then the operators in node order (operands precede
+    /// their users); `false` where a loaded element is no Number.
     fn columns(&self, state: &State, scratch: &mut [f64], done: u64, len: usize) -> bool {
         let mut numbers = true;
         for (id, node) in self.shape.nodes.iter().enumerate() {
-            if node.seq || node.hoisted {
-                continue;
-            }
             match node.op {
                 NodeOp::Load { base, index } => {
                     numbers &= self.load(state, &mut scratch[id * CHUNK..][..len], base, index, done);
@@ -356,22 +354,45 @@ impl LoopKernel {
                     .iter_mut()
                     .enumerate()
                     .for_each(|(k, o)| *o = self.index(state, index, done + k as u64) as f64),
-                NodeOp::Arith(_) | NodeOp::Bits(_) => self.operator_column(state, scratch, id, len),
+                NodeOp::Arith(_) | NodeOp::Bits(_) => {}
+            }
+        }
+        for (id, node) in self.shape.nodes.iter().enumerate() {
+            if matches!(node.op, NodeOp::Arith(_) | NodeOp::Bits(_)) && !node.seq && !node.hoisted {
+                self.operator_column(state, scratch, id, len);
             }
         }
         numbers
     }
 
-    /// Node `id`'s operator over the columns and scalars it reads, which precede it.
+    /// Node `id`'s operator over the columns and scalars it reads. A recurrence it reads is
+    /// the column of its value at an iteration's end, one iteration late (`sequential`): its
+    /// value at entry for the chunk's first iteration.
     fn operator_column(&self, state: &State, scratch: &mut [f64], id: usize, len: usize) {
         let node = self.shape.nodes[id];
-        let (prev, rest) = scratch.split_at_mut(id * CHUNK);
-        let column = |arg: Arg| match arg {
-            Arg::Col(n) => Column::Col(&prev[usize::from(n) * CHUNK..][..len]),
+        let base = scratch.as_mut_ptr();
+        // SAFETY: a column `n` of the node's operands (or a lagged recurrence's) is another
+        // node's, so it does not overlap the node's own; both lie inside `scratch`.
+        let read = |n: usize, from: usize, to: usize| unsafe { std::slice::from_raw_parts(base.add(n * CHUNK + from), to - from) };
+        let column = |arg: Arg, from: usize, to: usize| match arg {
+            Arg::Col(n) => Column::Col(read(usize::from(n), from, to)),
             Arg::Scalar(slot) => Column::Scalar(state.scalars[usize::from(slot)]),
-            Arg::Phi(_) | Arg::Affine(_) => unreachable!("a column operation reads neither"),
+            Arg::Phi(p) if from == 0 => Column::Scalar(state.phis[usize::from(p)]),
+            Arg::Phi(p) => match self.shape.phis[usize::from(p)].1 {
+                Arg::Col(n) => Column::Col(read(usize::from(n), from - 1, to - 1)),
+                _ => unreachable!("a lagged recurrence ends as a column"),
+            },
+            Arg::Affine(_) => unreachable!("a column operation reads no affine value"),
         };
-        operate(node.op, &mut rest[..len], column(node.a), column(node.b));
+        // SAFETY: as above.
+        let out = unsafe { std::slice::from_raw_parts_mut(base.add(id * CHUNK), len) };
+        if matches!(node.a, Arg::Phi(_)) || matches!(node.b, Arg::Phi(_)) {
+            let (first, rest) = out.split_at_mut(1);
+            operate(node.op, first, column(node.a, 0, 1), column(node.b, 0, 1));
+            operate(node.op, rest, column(node.a, 1, len), column(node.b, 1, len));
+        } else {
+            operate(node.op, out, column(node.a, 0, len), column(node.b, 0, len));
+        }
     }
 
     /// Decodes `bases[base][index + step * k]` into `out`; `false` where one is no Number.
