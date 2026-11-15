@@ -5,7 +5,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{now_ns, sha256};
+use crate::jetstream::SubScores;
+use crate::sub_scores::{PeerKind, classify};
+use crate::{NON_RELEASE_WARNING, now_ns, sha256};
 
 pub(crate) const MIN_QUALIFYING_ROUNDS: usize = 11;
 const MIN_DIAGNOSTIC_SCREEN_ROUNDS: usize = 3;
@@ -73,6 +75,8 @@ struct SuiteInput {
     fixtures: BTreeMap<String, FixtureInput>,
     complete: bool,
     qualification_ready: bool,
+    #[serde(default)]
+    quench_release_build: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -166,6 +170,7 @@ struct AnalysisReport {
     maximum_rss_ratio: f64,
     suite_inputs: Vec<ArtifactInput>,
     bootstrap: BootstrapMethod,
+    quench_release_build: bool,
     fixtures: BTreeMap<String, FixtureAnalysis>,
     qualified: bool,
 }
@@ -214,6 +219,8 @@ struct FixtureAnalysis {
     engine_medians: BTreeMap<String, EngineMedians>,
     comparisons: BTreeMap<String, PairAnalysis>,
     qualified: bool,
+    /// Quench's sub-score kind against the best peer; absent when sub-scores are not printed.
+    kind: Option<PeerKind>,
 }
 
 #[derive(Serialize)]
@@ -257,7 +264,7 @@ struct RawSample {
     timed_out: bool,
     wall_ns: u128,
     score: f64,
-    sub_scores: Option<crate::jetstream::SubScores>,
+    sub_scores: Option<SubScores>,
     peak_rss_bytes: u64,
 }
 
@@ -308,6 +315,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         .map_err(|error| format!("cannot read {}: {error}", input_path.display()))?;
     let input: SuiteInput = serde_json::from_slice(&input_bytes)
         .map_err(|error| format!("invalid benchmark report: {error}"))?;
+    warn_if_non_release(&input);
     if input.jit_wasm_selective_ab {
         let config = SELECTIVE_HANDOFF_CONFIG;
         validate_diagnostic_ab(&input, config)?;
@@ -389,6 +397,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         engine_provenance,
         rounds_per_fixture: input.rounds_requested,
         analysis_runtime,
+        quench_release_build: input.quench_release_build,
         minimum_score_ratio: MINIMUM_SCORE_RATIO,
         maximum_rss_ratio: maximum_rss_ratio(input.suite),
         suite_inputs: input.suite_inputs,
@@ -434,6 +443,12 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         report.suite
     );
     Ok(())
+}
+
+fn warn_if_non_release(input: &SuiteInput) {
+    if !input.quench_release_build {
+        eprintln!("{NON_RELEASE_WARNING}");
+    }
 }
 
 fn parse_args(args: &[String]) -> Result<(PathBuf, Option<PathBuf>), String> {
@@ -1277,6 +1292,7 @@ fn analyze_fixture(
         );
     }
     let qualified = comparisons.values().all(|comparison| comparison.qualified);
+    let kind = board_kind(&raw_rounds, &engine_medians, requested_rounds);
     Ok(FixtureAnalysis {
         input_sha256,
         paired_rounds: requested_rounds,
@@ -1284,6 +1300,47 @@ fn analyze_fixture(
         engine_medians,
         comparisons,
         qualified,
+        kind,
+    })
+}
+
+/// Quench's median sub-scores against the best peer's, the peer with the highest median score.
+fn board_kind(
+    rounds: &[RoundEvidence],
+    medians: &BTreeMap<String, EngineMedians>,
+    requested_rounds: usize,
+) -> Option<PeerKind> {
+    let quench = median_sub_scores(&engine_sub_scores(rounds, QUENCH), requested_rounds)?;
+    let (peer, _) = medians
+        .iter()
+        .filter(|(name, _)| name.as_str() != QUENCH)
+        .max_by(|left, right| left.1.score.total_cmp(&right.1.score))?;
+    let peer_scores = median_sub_scores(&engine_sub_scores(rounds, peer), requested_rounds)?;
+    Some(PeerKind {
+        peer: peer.clone(),
+        kind: classify(quench, peer_scores),
+    })
+}
+
+fn engine_sub_scores(rounds: &[RoundEvidence], engine: &str) -> Vec<SubScores> {
+    rounds
+        .iter()
+        .filter_map(|round| round.samples.get(engine)?.sub_scores)
+        .collect()
+}
+
+/// The field-wise median of one engine's sub-scores, when every round recorded them.
+fn median_sub_scores(sub_scores: &[SubScores], requested_rounds: usize) -> Option<SubScores> {
+    if sub_scores.len() != requested_rounds {
+        return None;
+    }
+    let median_of = |select: fn(&SubScores) -> f64| {
+        median(&sub_scores.iter().map(select).collect::<Vec<_>>())
+    };
+    Some(SubScores {
+        first: median_of(|scores| scores.first),
+        worst: median_of(|scores| scores.worst),
+        average: median_of(|scores| scores.average),
     })
 }
 
@@ -1582,6 +1639,7 @@ mod tests {
         };
         SuiteInput {
             schema: crate::SUITE_REPORT_SCHEMA,
+            quench_release_build: true,
             suite: crate::Suite::JetStream3,
             jit_mode: crate::JitMode::Jit,
             jit_diagnostics: false,
@@ -1652,6 +1710,7 @@ mod tests {
     fn analyzer_rejects_root_only_reports_even_if_they_claim_qualification() {
         let input = SuiteInput {
             schema: crate::SUITE_REPORT_SCHEMA,
+            quench_release_build: true,
             suite: Suite::JetStream3,
             jit_mode: JitMode::Jit,
             jit_diagnostics: false,
@@ -1696,6 +1755,7 @@ mod tests {
     fn analyzer_rejects_root_first_reports_even_if_they_claim_qualification() {
         let input = SuiteInput {
             schema: crate::SUITE_REPORT_SCHEMA,
+            quench_release_build: true,
             suite: Suite::JetStream3,
             jit_mode: JitMode::Jit,
             jit_diagnostics: false,
@@ -1740,6 +1800,7 @@ mod tests {
     fn analyzer_rejects_diagnostic_ab_reports_even_if_they_claim_qualification() {
         let input = SuiteInput {
             schema: crate::SUITE_REPORT_SCHEMA,
+            quench_release_build: true,
             suite: Suite::JetStream3,
             jit_mode: JitMode::Jit,
             jit_diagnostics: false,
