@@ -3460,7 +3460,7 @@ impl<'a> Compiler<'a> {
                 slots.extend(functions.into_iter().enumerate().map(|(id, function)| {
                     match function {
                         Some(function) if lowered_here(id) => FunctionSlot::compiled(function),
-                        Some(function) => FunctionSlot::unlowered(function),
+                        Some(function) => FunctionSlot::unlowered_packed(function),
                         None => FunctionSlot::released(released[&id].header),
                     }
                 }));
