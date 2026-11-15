@@ -3228,16 +3228,6 @@ fn lane_chain_reaction_return<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: V
     }
 }
 
-/// `lane_frame_return` of the frame's call record at `call` returning `value`, where a chained
-/// reaction's frame continues with the queue's next job instead (`lane_chain_reaction_return`).
-#[inline(always)]
-fn lane_frame_return_or_chain<H: Host>(cx: *mut LaneContext<H>, call: Ip, value: Value) -> Resumed {
-    if let Some(resumed) = lane_chain_reaction_return(cx, call, value) {
-        return resumed;
-    }
-    Resumed::Exit(lane_frame_return(unsafe { vm(cx) }, call, value))
-}
-
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
 mod loop_body;
@@ -19111,7 +19101,7 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
         // The call returns its callee's completion: its caller completes in turn, an
         // activation here or the frame in the general loop, which the exit hands it to.
         if lane_caller_returns_in_frame(vm, value, &mut then) {
-            return Some(lane_frame_return_or_chain(cx, activation.call, value));
+            return Some(Resumed::Exit(lane_frame_return(vm, activation.call, value)));
         }
         activation = vm.lane_stack.pop_activation().expect("the caller activation is the innermost");
     }
