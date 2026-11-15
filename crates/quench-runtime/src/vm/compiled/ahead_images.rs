@@ -216,9 +216,9 @@ impl<H: Host> Vm<H> {
         }).ok()?;
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
             fault_poll: image.fault_poll, hoists_arrays: false, stable: Default::default() };
-        let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None }, fields: Vec::new(),
+        let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None }, fields: Vec::new(),
             direct: Box::new([]), closed: false, function, invalidation: crate::code_dependencies::Invalidation::default(), budget: 0, tiers: self.programs.tiers() };
-        let method = plan.finish(&linked)?;
+        let method = plan.finish(&linked, None)?;
         self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers())
     }
 

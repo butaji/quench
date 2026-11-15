@@ -1254,20 +1254,22 @@ pub(super) struct VmFacts<'a> {
     pub(super) frozen_fields: Option<&'a crate::dense_map::DenseMap<Value>>,
     /// The image's constant block, materialized after realm initialization.
     pub(super) frozen_constants: Option<usize>,
+    /// The scalar entry a lane body's direct calls of its own function call (`lane_region::scalar`).
+    pub(super) scalar: Option<lane_region::scalar::ScalarAbi>,
 }
 
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None };
+        frozen_fields: None, frozen_constants: None, scalar: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None }
+            frozen_fields: None, frozen_constants: None, scalar: None }
     }
 }
 
@@ -3387,6 +3389,9 @@ pub(super) struct LaneMethod {
     pub(super) invalidation: crate::code_dependencies::Invalidation,
     _code: CodeMemory,
     entry: BodyEntry,
+    /// Where its scalar entry lies in the same code (`lane_region::scalar`), which a native call
+    /// that proves its numeric arguments calls by the entry cell's `scalar` word.
+    scalar: Option<usize>,
     recovery_space: super::dispatch_fast::LaneRecoverySpace,
     /// The lowering requires an owned, resumable poll-page capability.
     fault_poll: bool,
@@ -3436,6 +3441,11 @@ impl LaneMethod {
     /// The address of its compiled entry, which a direct caller calls (`DirectCallee`).
     pub(super) fn entry_address(&self) -> usize {
         self.entry as usize
+    }
+
+    /// The address of its scalar entry, if it has one (`EntryCell::scalar`).
+    pub(super) fn scalar_address(&self) -> Option<usize> {
+        self.scalar
     }
 
     /// Whether an entry, which costs a few hundred instructions the lane's own run of a

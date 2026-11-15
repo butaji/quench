@@ -11,7 +11,7 @@ impl Lowering<'_, '_> {
         let registers = row.registers()?;
         (instruction.result_flags() == 0
             && registers.into_iter().flatten().all(|register| register < self.unit.registers)
-            && (self.completion != Completion::Number || !row.uses_locals()))
+            && (!self.completion.numeric() || !row.uses_locals()))
             .then_some(row)
     }
 

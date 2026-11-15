@@ -35,21 +35,27 @@ pub(crate) struct PublishedCode<T> {
     code: std::cell::RefCell<Option<Rc<T>>>,
     /// Set when the code retires, for runs already inside it (`Invalidation`).
     invalidation: Invalidation,
-    /// The entry word to put back (`stub`) if it still holds this code's `entry`.
-    entry_link: std::cell::Cell<Option<(*const std::cell::Cell<usize>, usize, usize)>>,
+    /// The entry words to put back (`stub`) while they still hold this code's `entry`.
+    entry_links: std::cell::RefCell<smallvec::SmallVec<[EntryLink; ENTRY_WORDS]>>,
     /// The heap identities its code embeds, kept alive while it is published (`hold_roots`).
     roots: std::cell::RefCell<FoldedRoots>,
 }
 
+/// An entry word, the entry it holds and the stub it returns to: a view's cell words (`EntryCell`).
+type EntryLink = (*const std::cell::Cell<usize>, usize, usize);
+
+/// The entry words of a view's cell that a published body owns: its `entry` and its `scalar` entry.
+const ENTRY_WORDS: usize = 2;
+
 impl<T> PublishedCode<T> {
-    /// Names the entry word whose `entry` this code retiring takes back to `stub`.
+    /// Names an entry word whose `entry` this code retiring takes back to `stub`.
     pub(crate) fn on_retire(&self, word: &std::cell::Cell<usize>, entry: usize, stub: usize) {
-        self.entry_link.set(Some((std::ptr::from_ref(word), entry, stub)));
+        self.entry_links.borrow_mut().push((std::ptr::from_ref(word), entry, stub));
     }
     pub(crate) fn new(code: T) -> Self { Self::with_invalidation(code, Invalidation::default()) }
     /// Code compiled to read `invalidation` at its invalidation points.
     pub(crate) fn with_invalidation(code: T, invalidation: Invalidation) -> Self {
-        Self { code: std::cell::RefCell::new(Some(Rc::new(code))), invalidation, entry_link: std::cell::Cell::new(None), roots: Default::default() }
+        Self { code: std::cell::RefCell::new(Some(Rc::new(code))), invalidation, entry_links: Default::default(), roots: Default::default() }
     }
     /// Keeps `roots`, the heap identities its code embeds, alive until it retires: `heap` roots
     /// them at every collection (`Heap::extend_folded_roots`).
@@ -64,7 +70,8 @@ impl<T> PublishedCode<T> {
     pub(crate) fn retire(&self) {
         self.invalidation.set();
         *self.roots.borrow_mut() = FoldedRoots::default();
-        if let Some((word, entry, stub)) = self.entry_link.take() {
+        let links = std::mem::take(&mut *self.entry_links.borrow_mut());
+        for (word, entry, stub) in links {
             // SAFETY: the word is a view's, which outlives the publications it names (the
             // view owns its body and its pins).
             let word = unsafe { &*word };
