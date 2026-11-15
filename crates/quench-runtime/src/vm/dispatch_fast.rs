@@ -14833,13 +14833,14 @@ fn lane_native_value<H: Host>(
     // The Native argument carries the caller's function-kind proof. Each operation uses
     // its semantic fallback; the remaining natives try `lane_string_or_native_call`.
     match native {
-        // The JIT-mode DataView lane; a miss takes the native, which coerces and throws.
-        Native::DataViewGetFloat64 | Native::DataViewSetFloat64
-            if vm.execution_mode == super::ExecutionMode::Compiled =>
-        {
+        // The DataView Float64 lane, in every mode: one read of the view and one of its
+        // buffer; a miss takes the native, which coerces and throws.
+        Native::DataViewGetFloat64 | Native::DataViewSetFloat64 => {
             let value = vm.lane_data_view_float64(native, receiver, args);
             if value.is_some() {
-                vm.programs.note_js_jit_dataview_float64(native == Native::DataViewSetFloat64);
+                if vm.execution_mode == super::ExecutionMode::Compiled {
+                    vm.programs.note_js_jit_dataview_float64(native == Native::DataViewSetFloat64);
+                }
                 return value;
             }
         }
