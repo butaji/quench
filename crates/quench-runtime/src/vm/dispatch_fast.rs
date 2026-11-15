@@ -18603,7 +18603,25 @@ const LANE_SCRIPT_WINDOW: usize = 4 * ACTIVATION_FILL_BLOCK;
 /// enters Wasm functions; a capture store's handler reads the context a Wasm view lacks.
 fn wasm_lane_handler<H: Host>(op: Op) -> Option<Option<LaneHandler>> {
     let call = LaneHandler { handler: reference_call_handler::<H>(), produces: false };
-    match op.class() { Class::Call => Some(Some(call)), Class::StoreCapture => Some(None), _ => None }
+    let ret = LaneHandler { handler: lane_return_wasm::<H>, produces: false };
+    match op.class() {
+        Class::Call => Some(Some(call)),
+        Class::StoreCapture => Some(None),
+        Class::Return => Some(Some(ret)),
+        _ => None,
+    }
+}
+
+lane_handler! {
+    /// A Wasm view's return: the Wasm activation's completion first, which a Wasm callee
+    /// returns to far more often than to a script caller; any other takes
+    /// `lane_return_general`'s order.
+    fn lane_return_wasm<>(cx, r, ip, i, view) {
+        if let Some(resumed) = lane_complete_wasm_activation(cx, r.get(i.a)) {
+            resume!(cx, resumed)
+        }
+        sibling!(lane_return_general::<H>, r, ip, view)
+    }
 }
 
 return_handler! {
