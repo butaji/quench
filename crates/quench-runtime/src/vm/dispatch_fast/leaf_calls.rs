@@ -16,7 +16,8 @@ script_handler! {
     fn lane_script_call_leaf<LEAF: u8, ARGC: u16>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
-        let target = if unsafe { (*cx).script_calls } && !lane_constructing(vm, callee) {
+        // A pending construction refuses every cached target (`LaneStack::set_refused`).
+        let target = if unsafe { (*cx).script_calls } {
             vm.linked_script_call_entry(callee, &i.call_link)
         } else {
             None

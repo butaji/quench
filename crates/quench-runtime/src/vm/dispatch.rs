@@ -233,10 +233,10 @@ impl<H: Host> Vm<H> {
             self.set_active_program(program);
         }
         let constructs = matches!(completion, CallCompletion::Constructor(_));
-        if constructs { self.construct_target = Some(ConstructionTarget { callee, new_target: callee }); }
+        if constructs { self.set_construct_target(Some(ConstructionTarget { callee, new_target: callee })); }
         let call_guard = self.push_general_user_frame(callee_residual.as_deref().unwrap_or(p), id, env, this, arguments,
             CallContext::user_function(id, callee));
-        if constructs { self.construct_target = None; }
+        if constructs { self.set_construct_target(None); }
         if call_guard.is_err() {
             self.set_active_program(caller_program);
         }

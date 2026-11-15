@@ -243,7 +243,7 @@ impl<H: Host> Vm<H> {
         if context.callee() != Some(target.callee) {
             return None;
         }
-        self.construct_target = None;
+        self.set_construct_target(None);
         Some(target.new_target)
     }
 

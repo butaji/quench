@@ -3004,7 +3004,7 @@ impl<H: Host> Vm<H> {
         self.direct_eval = false;
         self.parameter_eval = false;
         self.eval_script_context = false;
-        self.construct_target = None;
+        self.set_construct_target(None);
         self.realm.promise = Default::default();
         self.shapes.truncate(1);
         self.shape_constructors.clear();
@@ -3302,6 +3302,22 @@ impl<H: Host> Vm<H> {
     pub(super) fn set_active_program(&mut self, program: ProgramId) {
         let constants = std::ptr::from_ref(self.programs.constants(program));
         self.activate_program(program, constants);
+    }
+
+    /// Sets the construction whose callee's frame is pending (`construct_target`), which
+    /// refuses cached lane calls while it is (`refresh_call_refusal`).
+    #[inline]
+    pub(in crate::vm) fn set_construct_target(&mut self, target: Option<ConstructionTarget>) {
+        self.construct_target = target;
+        self.refresh_call_refusal();
+    }
+
+    /// Whether cached lane calls are refused (`dispatch_fast::LaneStack::set_refused`): under a
+    /// `with` scope or a pending construction, whose calls the lane does not make from a cache.
+    #[inline]
+    pub(super) fn refresh_call_refusal(&mut self) {
+        let refused = self.with_scope_entered || self.construct_target.is_some();
+        self.lane_stack.set_refused(refused);
     }
 
     /// `set_active_program` with `program`'s constants (`ProgramStore::constants`) in hand.

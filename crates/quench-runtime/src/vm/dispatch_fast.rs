@@ -2163,12 +2163,19 @@ impl LaneStack {
         self.admission = Admission(Admission::new(self.generation, program).0 | self.refused);
     }
 
-    /// From now on no cached target or memo admits a call (`Admission::REFUSED`): a `with`
-    /// scope was entered (`Vm::with_scope_entered`), under which every lane call leaves the
-    /// lane, so the cached paths need not test it.
-    pub(super) fn refuse_cached_calls(&mut self) {
-        self.refused = Admission::REFUSED;
-        self.admission = Admission(self.admission.0 | Admission::REFUSED);
+    /// Whether no cached target or memo admits a call (`Admission::REFUSED`): while a `with`
+    /// scope was entered (`Vm::with_scope_entered`) or a construction's callee is pending
+    /// (`Vm::construct_target`), under which a lane call leaves the lane, so the cached paths
+    /// need not test either (`Vm::refresh_call_refusal`).
+    pub(super) fn set_refused(&mut self, refused: bool) {
+        self.refused = if refused { Admission::REFUSED } else { 0 };
+        self.admission = Admission(self.admission.0 & !Admission::REFUSED | self.refused);
+    }
+
+    /// Whether cached calls are refused (`set_refused`).
+    #[inline(always)]
+    fn refuses(&self) -> bool {
+        self.refused != 0
     }
 
     /// The admission a target or memo made now holds: the lane's, without `Admission::REFUSED`.
@@ -12907,12 +12914,11 @@ script_handler! {
         }
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
-        if lane_constructing(vm, callee) {
-            sibling!(lane_native_call::<H>, r, ip, Carried::script_in(cx, view))
-        }
+        // A pending construction refuses every cached target (`LaneStack::set_refused`).
         let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else {
             sibling!(lane_script_call_resolve::<H>, r, ip, Carried::script_in(cx, view))
         };
+        debug_assert!(!lane_constructing(vm, callee));
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
         // One test: the site calls the form for its target's entry directly from now on
@@ -13491,9 +13497,9 @@ script_handler! {
         }
         if let Some(target) = vm.resolve_script_call_target(code, callee) {
             if target.program() == vm.active_program {
-                // Under a `with` scope no cached target admits a call
-                // (`LaneStack::refuse_cached_calls`): the call leaves the lane, as it would.
-                if vm.with_scope_entered {
+                // Under a `with` scope or a pending construction no cached target admits a
+                // call (`LaneStack::set_refused`): the call leaves the lane, as it would.
+                if vm.lane_stack.refuses() {
                     return exit(ip);
                 }
                 sibling!(lane_script_call::<H, ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
@@ -18533,8 +18539,8 @@ unsafe fn lane_memo_read<H: Host, const SHAPE: u8>(
     let callee = r.get(i.b);
     let held = site_read_memo(&vm.lane_stack.read_memos, i)?;
     if held.callee != callee
+        // A pending construction refuses every memo (`LaneStack::set_refused`).
         || held.admission != vm.lane_stack.admission
-        || lane_constructing(vm, callee)
     {
         return None;
     }
@@ -19160,7 +19166,7 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
     // SAFETY: the construction's window is registers of the caller frame, which the push
     // neither moves nor frees before it copies them.
     let arguments: *const [Value] = unsafe { std::ptr::slice_from_raw_parts(r.0.add(usize::from(i.c)), argc) };
-    vm.construct_target = Some(super::activation::ConstructionTarget { callee, new_target: callee });
+    vm.set_construct_target(Some(super::activation::ConstructionTarget { callee, new_target: callee }));
     // A constructor of another program runs in its own, which the push makes active and the
     // loop's executing one sets aside, as `lane_push_frame_call` pushes a call.
     let caller_program = (program != unsafe { (*cx).program }).then(|| {
@@ -19177,7 +19183,7 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
     // SAFETY: the context's program is now the callee's, which outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let pushed = vm.push_general_user_frame(code, id, env, this, unsafe { &*arguments }, CallContext::user_function(id, callee));
-    vm.construct_target = None;
+    vm.set_construct_target(None);
     match pushed {
         Ok(call_guard) => {
             // SAFETY: the general loop's pending calls outlive the lane run.
