@@ -2206,6 +2206,18 @@ pub(crate) struct LoweringTables<'t> {
     pub(crate) undefined_constant: u32,
 }
 
+/// The largest body whose copies are coalesced though it has no loop: a leaf small enough for
+/// a call entry to recognise by its shape (`capture_append::recognizes`).
+const RECOGNISED_LEAF_INSTRUCTIONS: usize = 16;
+
+/// Whether coalescing the copies frame-register promotion left repays its cost: a body that
+/// loops runs its instructions many times and its loops' tiers read the coalesced shape, and a
+/// small leaf's call entry recognises it. Any other body mostly runs once (octane-code-load:
+/// coalescing cost 4.7% of the run and saved no instruction on any V8-v7 or JetStream row).
+fn coalescing_repays(function: &BcFunction) -> bool {
+    function.code.len() <= RECOGNISED_LEAF_INSTRUCTIONS || function.loops()
+}
+
 /// The lowering passes after a function's dispatch class is settled (`settle_dispatch`):
 /// numeric and plain-local specialization and frame registers. They add no table entries,
 /// so they run equally at load and on a function's first read from its finished program.
@@ -2225,7 +2237,9 @@ pub(crate) fn lower_settled<'a>(
     let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions);
     frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, atom_name);
     if specialized {
-        rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
+        if coalescing_repays(function) {
+            rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
+        }
         object_registers::promote(function, methods, field_sites, superinstructions, object_sites);
     }
     if function
