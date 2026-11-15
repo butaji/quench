@@ -1056,6 +1056,16 @@ impl<H: Host> Vm<H> {
         crate::stack::StackGuard::enter().map_err(|crate::stack::StackExhausted| self.stack_exhaustion_error())
     }
 
+    /// The error a call into a guest of `kind` raises when the guest call budget is spent:
+    /// a Wasm callee traps, a JavaScript one throws `stack_exhaustion_error`.
+    pub(super) fn guest_exhaustion_error(&mut self, kind: crate::bytecode::ProgramKind) -> JsError {
+        if kind == crate::bytecode::ProgramKind::Wasm {
+            JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted)
+        } else {
+            self.stack_exhaustion_error()
+        }
+    }
+
     pub(super) fn stack_exhaustion_error(&mut self) -> JsError {
         // Exhaustion must not invoke guest accessors or constructors.
         let prototype =

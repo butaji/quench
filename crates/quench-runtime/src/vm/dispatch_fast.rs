@@ -16116,9 +16116,10 @@ script_handler! {
     fn lane_script_construct<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
-        if !unsafe { (*cx).script_calls && (*cx).script_constructs }
-            || vm.construct_target.is_some()
-        {
+        // Under a `with` scope or a pending construction no cached target admits the
+        // construction (`LaneStack::set_refused`), so the resolve-and-retry below would
+        // never find one: it leaves the lane, as a refused call does.
+        if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.lane_stack.refuses() {
             return exit(ip);
         }
         // The cached target in place, as a call reads it (`Vm::script_call_entry`); an
@@ -21431,7 +21432,7 @@ fn derive_lane_view<'live, H: Host>(
     let memory_register = (kind == crate::bytecode::ProgramKind::Wasm)
         .then(|| memory_register(function))
         .flatten();
-    let jump_targets = jump_targets(&decoded);
+    let entries = entered_records(&decoded, function.parameter_end_pc);
     // Wasm instructions, whose fusions the passes under `wasm` make, occur only in Wasm
     // bodies: JavaScript compiles to none of them.
     let wasm = kind == crate::bytecode::ProgramKind::Wasm;
@@ -21472,10 +21473,10 @@ fn derive_lane_view<'live, H: Host>(
                 })
                 .map(|operand| lane_call_result_marked(operand, instruction, function, pc))
                 .map(|operand| lane_call_awaited_marked(operand, &decoded, pc, live));
-            // Control reaches this record only from the previous one when no
-            // jump targets it; the general loop never enters at a record that
-            // reads the accumulator.
-            let carried = producer.take().filter(|_| ACCUMULATOR && !jump_targets.contains(pc));
+            // Control reaches this record only from the previous one when nothing enters it
+            // (`entered_records`); the general loop never enters at a record that reads the
+            // accumulator.
+            let carried = producer.take().filter(|_| ACCUMULATOR && !entries.contains(pc));
             let acc = carried.map_or(ACC_NONE, |register| {
                 accumulator_field(instruction, register)
             });
@@ -21631,7 +21632,7 @@ fn derive_lane_view<'live, H: Host>(
             heap,
             memory_register,
             live,
-            &jump_targets,
+            &entries,
             &exits,
             &produced,
         ),
@@ -22121,7 +22122,7 @@ fn derive_lane_view<'live, H: Host>(
                     || usize::from(first) >= FLOAT_PAIR_FIRSTS
                     || !next.op().is_wasm_f64_store()
                     || next.a() != instruction.a()
-                    || jump_targets.contains(pc + 1)
+                    || entries.contains(pc + 1)
                     || !store_runs
                 {
                     return None;
@@ -22220,7 +22221,7 @@ fn derive_lane_view<'live, H: Host>(
                 if carrying_zero_jump(records[pc].handler).is_some() {
                     continue;
                 }
-                if !instruction.op().is_jump() || entry_jumps.contains(pc) || jump_targets.contains(pc) || pc == 0 {
+                if !instruction.op().is_jump() || entry_jumps.contains(pc) || entries.contains(pc) || pc == 0 {
                     return None;
                 }
                 let then = JumpFusions::<H>::THEN
@@ -22237,7 +22238,7 @@ fn derive_lane_view<'live, H: Host>(
                             } as *const ()
                     });
                 // Entering a pair's second move runs that move's own record.
-                if pair && !then && jump_targets.contains(pc - 1) && carried_through(records, pc - 1).is_none() {
+                if pair && !then && entries.contains(pc - 1) && carried_through(records, pc - 1).is_none() {
                     return None;
                 }
                 let register = if then || pair {
@@ -22323,9 +22324,9 @@ fn derive_lane_view<'live, H: Host>(
                     && jump == pc + 4
                     && instruction.a() == moving.b()
                     && load.a() == moving.b()
-                    && !jump_targets.contains(pc + 1)
-                    && !jump_targets.contains(pc + 2)
-                    && !jump_targets.contains(pc + 3)
+                    && !entries.contains(pc + 1)
+                    && !entries.contains(pc + 2)
+                    && !entries.contains(pc + 3)
                     && decoded[pc + 3].op().is_move()
                     && let Some(store_op) = Some(decoded[pc + 2].op())
                     && let Some(fused) = store_move_handler::<H>(store_op, ACC_NONE)
@@ -24136,7 +24137,6 @@ impl InstructionSet {
     }
 }
 
-/// The instruction PCs targeted by a jump.
 /// The records of every branch table's entries, whose jump offsets the table reads.
 fn branch_table_entry_records(instructions: &[WideInstruction]) -> InstructionSet {
     let mut entries = InstructionSet::new(instructions.len());
@@ -24150,7 +24150,9 @@ fn branch_table_entry_records(instructions: &[WideInstruction]) -> InstructionSe
     entries
 }
 
-fn jump_targets(instructions: &[WideInstruction]) -> InstructionSet {
+/// The records control enters other than from the record before: jump targets, and the end of
+/// a generator's parameter initialization, where its first resumption starts.
+fn entered_records(instructions: &[WideInstruction], parameter_end_pc: u32) -> InstructionSet {
     let mut targets = InstructionSet::new(instructions.len());
     for instruction in instructions {
         let target = instruction.imm() as usize;
@@ -24159,6 +24161,9 @@ fn jump_targets(instructions: &[WideInstruction]) -> InstructionSet {
         {
             targets.insert(target);
         }
+    }
+    if parameter_end_pc != 0 {
+        targets.insert(parameter_end_pc as usize);
     }
     targets
 }

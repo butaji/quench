@@ -477,7 +477,7 @@ impl<H: Host> Vm<H> {
     #[cold]
     #[inline(never)]
     fn unwind_exhausted_push(&mut self, p: &ResidualProgram) -> JsError {
-        let outcome = Err(self.stack_exhaustion_error());
+        let outcome = Err(self.guest_exhaustion_error(p.kind));
         let mut frame = self.frames.pop().unwrap();
         self.deactivate_frame(&mut frame, &outcome);
         self.persist_global_lexical_bindings(p, &frame);
@@ -504,7 +504,7 @@ impl<H: Host> Vm<H> {
         // activations against the same guest budget so a small Node
         // `--stack_size` cannot exhaust the native worker stack first.
         let _call_guard =
-            crate::stack::GuestCallGuard::enter().map_err(|crate::stack::StackExhausted| self.stack_exhaustion_error())?;
+            crate::stack::GuestCallGuard::enter().map_err(|crate::stack::StackExhausted| self.guest_exhaustion_error(p.kind))?;
         let frame_index = self.activate_user_frame(p, id, parent, this, args, context)?;
         let view = if capture_constructor_this { std::ptr::null() } else { self.entered_lane_view(p, id) };
         let result = if Self::lane_runs_call(view) {
