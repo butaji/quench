@@ -254,7 +254,7 @@ fn a_lane_body_leave_continues_in_the_per_pc_fallback() {
     run_native_answer(r#"
         function mix(n) { let s = 0; for (let i = 0; i < n; i++) { s += String(i).length + i; } return s; }
         const answer = mix(12);
-        if (answer !== 66 + 15) throw Error("answer " + answer);
+        if (answer !== 66 + 14) throw Error("answer " + answer);
     "#);
 }
 

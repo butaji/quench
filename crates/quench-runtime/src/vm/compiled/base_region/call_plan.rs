@@ -353,7 +353,11 @@ mod tests {
             [protocol::GENERAL_RETURN_STATUS_BASE, protocol::LANE_BODY_RETURNED, protocol::LANE_BODY_NOT_ENTERED, protocol::NATIVE_JS_STOPPED, protocol::TERMINATED_STATUS]
         );
         assert_eq!(protocol::REGISTER_BYTES, std::mem::size_of::<crate::value::Value>());
+        // The stencil rows's dispatch layout is the build without `native-execution`, whose
+        // `stop_pc` moves every word after it by one; a base-tier binary is built without it.
+        #[cfg(not(feature = "native-execution"))]
         let dispatch = |offsets: [usize; 7]| offsets;
+        #[cfg(not(feature = "native-execution"))]
         assert_eq!(
             dispatch([
                 std::mem::offset_of!(compiled::JsStepDispatch, vm), std::mem::offset_of!(compiled::JsStepDispatch, residual), std::mem::offset_of!(compiled::JsStepDispatch, lane_context),
