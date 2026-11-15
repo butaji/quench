@@ -4392,8 +4392,8 @@ unsafe fn lane_binary_value<H: Host>(
     match unsafe { vm(cx) }.number_binary(operator, left, right) {
         Some(value) => Some(value),
         // `undefined`, `null` or a Boolean among Numbers, as Sunspider's `x | 0` of a missing
-        // element or an emulator's `flag & mask`.
-        None if let Some(value) = unsafe { vm(cx) }.immediate_binary(operator, left, right) => Some(value),
+        // element or an emulator's `flag & mask`; a string key's `"k" + i` first.
+        None if let Some(value) = lane_concatenation_or_immediate(cx, operator, left, right) => Some(value),
         None if operator == super::operations::ADDITION => lane_concatenation(cx, left, right)
             .or_else(|| lane_bigint_value(cx, operator, left, right)),
         // A comparison, `instanceof`, or an ordinary-object `in` (`lane_relation_other`),
@@ -4407,6 +4407,19 @@ unsafe fn lane_binary_value<H: Host>(
         }
         None => lane_bigint_value(cx, operator, left, right),
     }
+}
+
+/// `+` of a string operand (`lane_concatenation`), as a key built as `"k" + i`, before the
+/// immediate operands' tests, which a string fails; else `Vm::immediate_binary`.
+#[inline(always)]
+fn lane_concatenation_or_immediate<H: Host>(cx: *mut LaneContext<H>, operator: u32, left: Value, right: Value) -> Option<Value> {
+    let heap = &unsafe { vm(cx) }.heap;
+    if operator == super::operations::ADDITION && (heap.is_string(left) || heap.is_string(right))
+        && let Some(value) = lane_concatenation(cx, left, right)
+    {
+        return Some(value);
+    }
+    unsafe { vm(cx) }.immediate_binary(operator, left, right)
 }
 
 /// `lane_binary_value` of a returning `Binary`, which keeps its operands encoded: two
