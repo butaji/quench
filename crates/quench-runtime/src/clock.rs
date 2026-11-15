@@ -96,9 +96,9 @@ static WORK: AtomicU64 = AtomicU64::new(0);
 /// any policy may read in place of wall time (GC pacing, RC epochs, allocator release, code
 /// aging). It advances at each collection by the mutator work since the previous one
 /// (weight allocated) and the collection's own work (weight it traced), and between
-/// collections by slow-path steps (`note_step`) and lane runs (`note_lane_run`), so code
-/// that allocates little still moves it; identical on every run of the same program.
-/// Tight loops inside one lane run do not move it (their charge would cost the hot path).
+/// collections by native calls (`note_step`), lane runs (`note_lane_run`) and lane loop
+/// iterations (`note_backedges`, once per fuel batch of backward jumps), so code that
+/// allocates little still moves it; identical on every run of the same program.
 /// One relaxed load.
 pub fn now_work() -> u64 {
     WORK.load(Ordering::Relaxed)
@@ -133,6 +133,13 @@ pub fn note_step() {
 static LANE_RUNS_LEFT: std::cell::Cell<u32> = std::cell::Cell::new(LANE_RUN_BATCH);
 /// Lane runs between charges to the work clock.
 const LANE_RUN_BATCH: u32 = 256;
+/// Work, in typical-host nanoseconds, of one loop iteration in the lane.
+const WORK_PER_BACKEDGE: u64 = 10;
+/// Credit `count` backward jumps a lane run took (its safepoint, once per fuel batch).
+#[inline]
+pub fn note_backedges(count: u32) {
+    charge_work(u64::from(count) * WORK_PER_BACKEDGE);
+}
 
 /// One interpreter lane run that has left to the general loop (batched like `note_step`).
 #[inline(always)]

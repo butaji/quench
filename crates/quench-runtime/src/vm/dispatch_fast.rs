@@ -15,11 +15,12 @@
 //! dispatch is `become`, a jump whatever the handler keeps on its stack, and a run of
 //! handlers shares one stack frame; a helper of the default convention that a
 //! handler calls returns where to continue (`Resumed`) for the handler to dispatch; otherwise
-//! every handler returns to the lane loop. A taken safepoint jump compares the
-//! stack pointer with the run's stack floor: should a build not form a sibling
-//! call, the stack reaches the floor and the jump returns to the lane loop,
-//! which unwinds it; a due collection raises the floor so that the next
-//! safepoint jump leaves the lane.
+//! every handler returns to the lane loop. A taken safepoint jump spends one unit of
+//! the run's fuel (`script_fuel_out`); once per batch it reaches `lane_safepoint`, which
+//! returns to the lane loop (unwinding the stack should a build not form a sibling call)
+//! or leaves the lane where a collection is due or termination requested. A due
+//! collection zeroes the fuel, so the next safepoint jump leaves; a termination request
+//! from another thread raises the floor, read within one batch.
 
 use super::compiled::tier_policy::TIERS;
 use super::compiled::{CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
@@ -2503,6 +2504,10 @@ struct LaneContext<H: Host> {
     /// The run's floor cell (`lane_floor`), which a JavaScript safepoint reads from here
     /// (`script_below_floor`).
     floor: *const std::sync::atomic::AtomicUsize,
+    /// Backward jumps left before one reaches `lane_safepoint` (`script_fuel_out`), which
+    /// credits the work clock and refills it; zero while the floor is raised at entry or a
+    /// collection is due (`note_allocation`), so every backward jump reaches it.
+    fuel: u32,
     /// Whether that callee left the lane because it has no body yet and is still warming
     /// toward one (`lane_body_activate`): its caller's leave says nothing of the caller's own
     /// specialization (`lane_leave_counts`).
@@ -2688,6 +2693,53 @@ fn tls_lane_context() -> *mut () {
 fn tls_lane_context() -> *mut () {
     LANE_CONTEXT.0.get()
 }
+/// The running lane's fuel (`LaneContext::fuel`), for the handlers that do not carry the
+/// context and for `note_allocation`; null while no lane runs.
+#[thread_local]
+static LANE_FUEL: TlsCell<*mut u32> = TlsCell(std::cell::Cell::new(std::ptr::null_mut()));
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+#[inline(always)]
+fn tls_lane_fuel() -> *mut u32 {
+    let value: *mut u32;
+    // SAFETY: as `tls_lane_context`.
+    unsafe { std::arch::asm!("mov {}, qword ptr fs:[{}@TPOFF]", out(reg) value, sym LANE_FUEL, options(pure, nostack, readonly, preserves_flags)) };
+    value
+}
+#[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+#[inline(always)]
+fn tls_lane_fuel() -> *mut u32 {
+    LANE_FUEL.0.get()
+}
+
+/// Backward jumps a lane run takes between two safepoint visits: the bound on how long a
+/// termination request from another thread waits (it raises the floor, which the visit reads).
+const LANE_FUEL_BATCH: u32 = 4096;
+
+/// Spend one unit of the running lane's fuel; true when it was out, so the backward jump
+/// takes `lane_safepoint`. One decrement of a context field and one branch: the safepoint
+/// test of every backward jump, in place of the stack-floor compare.
+#[inline(always)]
+fn script_fuel_out<H: Host>(cx: *mut LaneContext<H>) -> bool {
+    // SAFETY: the run's context, which only this thread touches.
+    unsafe {
+        let (left, out) = (*cx).fuel.overflowing_sub(1);
+        (*cx).fuel = left;
+        out
+    }
+}
+
+/// `script_fuel_out` for a handler without the context.
+#[inline(always)]
+fn fuel_out() -> bool {
+    // SAFETY: set for the whole of a lane run to its context's fuel; only read while a lane runs.
+    unsafe {
+        let fuel = tls_lane_fuel();
+        let (left, out) = (*fuel).overflowing_sub(1);
+        *fuel = left;
+        out
+    }
+}
+
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[inline(always)]
 fn tls_lane_floor() -> *const std::sync::atomic::AtomicUsize {
@@ -2752,12 +2804,6 @@ fn stack_pointer() -> usize {
     COLLECTION_DUE_FLOOR - 1
 }
 
-/// Whether a taken safepoint jump takes the slow path.
-#[inline(always)]
-fn below_floor() -> bool {
-    stack_pointer() < lane_floor().load(std::sync::atomic::Ordering::Relaxed)
-}
-
 /// `below_floor` of a JavaScript record, whose context register carries the run's floor
 /// (`LaneContext::floor`) without the thread-local load.
 #[inline(always)]
@@ -2775,6 +2821,10 @@ pub(super) fn note_allocation<H: Host>(vm: &Vm<H>) {
         // SAFETY: as `lane_floor`, while a lane runs; null otherwise.
         if let Some(floor) = unsafe { floor.as_ref() } {
             floor.store(COLLECTION_DUE_FLOOR, std::sync::atomic::Ordering::Relaxed);
+        }
+        // SAFETY: as `fuel_out`, while a lane runs; null otherwise.
+        if let Some(fuel) = unsafe { tls_lane_fuel().as_mut() } {
+            *fuel = 0;
         }
         vm.lane_stack.activation_limit.set(0);
     }
@@ -4019,8 +4069,8 @@ script_handler! {
         };
         r.set(i.a, value);
         let jump_ip = following(ip);
-        if script_below_floor(cx) {
-            resume!(cx, lane_jump::<H>(r, jump_ip, true, Carried::script_in(cx, view), None))
+        if script_fuel_out(cx) {
+            resume!(cx, lane_jump_safepoint::<H>(jump_ip, Carried::script_in(cx, view)))
         }
         // SAFETY: the view records the distance to a validated jump target, the test record
         // `specialize_update_jumps` matched.
@@ -4051,8 +4101,8 @@ script_handler! {
         };
         r.set(i.a, value);
         let jump_ip = following(ip);
-        if script_below_floor(cx) {
-            resume!(cx, lane_jump::<H>(r, jump_ip, true, Carried::script_in(cx, view), None))
+        if script_fuel_out(cx) {
+            resume!(cx, lane_jump_safepoint::<H>(jump_ip, Carried::script_in(cx, view)))
         }
         // SAFETY: the view records the distance to a validated jump target, the test record
         // `specialize_update_jumps` matched.
@@ -4081,8 +4131,8 @@ script_handler! {
         };
         r.set(i.a, value);
         let jump_ip = following(ip);
-        if script_below_floor(cx) {
-            resume!(cx, lane_jump::<H>(r, jump_ip, true, Carried::script_in(cx, view), None))
+        if script_fuel_out(cx) {
+            resume!(cx, lane_jump_safepoint::<H>(jump_ip, Carried::script_in(cx, view)))
         }
         // SAFETY: the view records the distance to a validated jump target, the load record
         // `specialize_update_jumps` matched, whose branch record follows it.
@@ -9719,7 +9769,7 @@ fn lane_jump<H: Host>(
     let jump = unsafe { (*ip).jump() };
     // SAFETY: the view records the distance to a validated jump target.
     let target = unsafe { ip.byte_offset(jump) };
-    if backward && below_floor() {
+    if backward && fuel_out() {
         return Resumed::Exit(match commit {
             None => lane_safepoint::<H>(ip, target, view.acc),
             Some((register, value)) => lane_safepoint_writing::<H>(r, ip, target, view.acc, register, value),
@@ -9729,6 +9779,15 @@ fn lane_jump<H: Host>(
         r.set(register, value);
     }
     Resumed::At(r, target, view)
+}
+
+/// A backward jump whose fuel ran out (`script_fuel_out`): its safepoint, as `lane_jump`
+/// takes it, for the handlers that fuse the jump with its target's records.
+#[inline(always)]
+fn lane_jump_safepoint<H: Host>(ip: Ip, view: Carried) -> Resumed {
+    // SAFETY: the view records the distance to a validated jump target.
+    let target = unsafe { ip.byte_offset((*ip).jump()) };
+    Resumed::Exit(lane_safepoint::<H>(ip, target, view.acc))
 }
 
 /// Count one backward jump of a crediting run (`LaneContext::backedges_left`); at the budget's
@@ -9762,8 +9821,8 @@ script_handler! {
     /// of a list walk: the safepoint and the test as one dispatch. A heap value other than a
     /// record runs the test's own record.
     fn lane_jump_back_nullish<NEGATED: bool, NULLISH: u16>(cx, r, ip, i, view) {
-        if script_below_floor(cx) {
-            resume!(cx, lane_jump::<H>(r, ip, true, Carried::script_in(cx, view), None))
+        if script_fuel_out(cx) {
+            resume!(cx, lane_jump_safepoint::<H>(ip, Carried::script_in(cx, view)))
         }
         // SAFETY: the view records the distance to a validated jump target, the test record
         // `specialize_nullish_back_edges` matched.
@@ -9794,8 +9853,8 @@ script_handler! {
     /// safepoint, the update, the copy and the test as one dispatch. An update other than an
     /// integer's runs the update's own record, a test of anything else the test's.
     fn lane_jump_back_update_small<DECREMENT: bool, MOVE: bool, OP: u32>(cx, r, ip, i, view) {
-        if script_below_floor(cx) {
-            resume!(cx, lane_jump::<H>(r, ip, true, Carried::script_in(cx, view), None))
+        if script_fuel_out(cx) {
+            resume!(cx, lane_jump_safepoint::<H>(ip, Carried::script_in(cx, view)))
         }
         // SAFETY: the view records the distance to a validated jump target, the update record
         // `specialize_update_back_edges` matched, which the copy and the test follow.
@@ -9848,7 +9907,7 @@ script_handler! {
         // SAFETY: the region carries its validated header and latch PCs, and
         // every instruction record remains contiguous in this lane view.
         let at = |pc: u32| unsafe { header.offset(pc as isize - site.header as isize) };
-        if script_below_floor(cx) {
+        if script_fuel_out(cx) {
             return lane_safepoint::<H>(ip, header, Slot::unset());
         }
         if site.interprets() {
@@ -11451,8 +11510,9 @@ fn frame_memory_view<H: Host>(
     })
 }
 
-/// A taken safepoint jump below the stack floor: leave the lane when a
-/// collection is due, otherwise dispatch the target from the lane loop,
+/// A taken safepoint jump whose fuel ran out (`script_fuel_out`): leave the lane when a
+/// collection is due or termination requested, otherwise refill the fuel, credit the work
+/// clock and dispatch the target from the lane loop,
 /// which unwinds the stack, with the accumulator `acc` the jump carries
 /// (`LaneContext::resumed_acc`): a loop head whose every edge carries a
 /// register reads it there. Out of line, so a
@@ -11463,7 +11523,20 @@ fn lane_safepoint<H: Host>(ip: Ip, target: Ip, acc: Slot<Value>) -> Ip {
     let cx = lane_context::<H>();
     // SAFETY: called only while a lane runs, from one of its handlers.
     if unsafe { vm(cx) }.heap.should_collect() || unsafe { vm(cx) }.execution_interrupt.is_termination_requested() {
+        // SAFETY: as above.
+        unsafe { (*cx).fuel = 0 };
         return exit(ip);
+    }
+    // A crediting run counts every backward jump here; any other run takes a batch of
+    // jumps before its next visit, and credits the work clock with the batch it spent.
+    // SAFETY: as above.
+    unsafe {
+        if (*cx).backedges_left.is_some() {
+            (*cx).fuel = 0;
+        } else {
+            (*cx).fuel = LANE_FUEL_BATCH;
+            crate::clock::note_backedges(LANE_FUEL_BATCH);
+        }
     }
     lane_count_backedge::<H>(cx);
     // SAFETY: as above; the lane loop takes it before dispatching `target`.
@@ -24349,6 +24422,12 @@ impl<H: Host> Vm<H> {
             frame_storage: NO_FRAME_STORAGE,
             proofs: crate::heap::ArrayStorageProofs::new(),
             floor: entered.cell,
+            // SAFETY: the VM holds its interrupt state for the whole run.
+            fuel: if unsafe { &*entered.cell }.load(std::sync::atomic::Ordering::Relaxed) == COLLECTION_DUE_FLOOR {
+                0
+            } else {
+                LANE_FUEL_BATCH
+            },
         };
         // The frame's receiver is its context word (`Registers::this`).
         registers.set_this(self.frame_lane_this(*frame));
@@ -24356,6 +24435,8 @@ impl<H: Host> Vm<H> {
         registers.set_capture(std::ptr::null());
         let cx: *mut LaneContext<H> = &mut context;
         let outer = LANE_CONTEXT.with(|current| current.replace(cx.cast()));
+        // SAFETY: `cx` outlives the run, which restores the outer fuel before it ends.
+        let outer_fuel = LANE_FUEL.with(|current| current.replace(unsafe { &raw mut (*cx).fuel }));
         let _proofs = crate::heap::LaneProofScope::enter();
         // SAFETY: `cx` is the only access path to the context during the run.
         unsafe { (*cx).memory = frame_memory_view(cx, view, registers) };
@@ -24383,6 +24464,7 @@ impl<H: Host> Vm<H> {
         }
         self.materialize_lane_exit(cx);
         LANE_CONTEXT.with(|current| current.set(outer));
+        LANE_FUEL.with(|current| current.set(outer_fuel));
         if !outer.is_null() {
             // SAFETY: every active context has this repr(C) prefix. Its callback owns the
             // actual Host type, which may differ from this nested run's Host.
