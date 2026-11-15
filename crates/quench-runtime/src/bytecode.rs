@@ -3583,6 +3583,16 @@ pub fn set_record_read(action: fn(&[u8])) {
     let _ = RECORD_READ.set(action);
 }
 
+/// What the host does each time a function's record is built on its first use (lowered, decoded
+/// or compiled again), set once by the embedding: new code joining a run is the work its
+/// code-page policy follows (a work clock that runs without collections).
+static RECORD_BUILT: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// Sets `RECORD_BUILT`; the first call wins.
+pub fn set_record_built(action: fn()) {
+    let _ = RECORD_BUILT.set(action);
+}
+
 /// A compile-cache entry split into its encoding and the source text
 /// `binary::append_kept_source` kept after it, when it keeps `source_len` bytes of text whose
 /// checksum holds; the entry itself otherwise.
@@ -3992,8 +4002,17 @@ impl ResidualProgram {
         }
     }
 
-    /// `index`'s record, from its unlowered form, its encoded entry or its source.
+    /// `index`'s record, from its unlowered form, its encoded entry or its source; the host
+    /// counts each as work (`set_record_built`).
     fn built_record(&self, index: usize, purpose: RecordUse) -> Function {
+        let function = self.build_record(index, purpose);
+        if let Some(action) = RECORD_BUILT.get() {
+            action();
+        }
+        function
+    }
+
+    fn build_record(&self, index: usize, purpose: RecordUse) -> Function {
         let unlowered = {
             let mut unlowered = self.functions[index].unlowered.borrow_mut();
             match purpose {
