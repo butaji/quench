@@ -446,7 +446,7 @@ impl<H: Host> Vm<H> {
         call_guard
     }
 
-    fn empty_frame(&self) -> Box<Frame> {
+    pub(super) fn empty_frame(&self) -> Box<Frame> {
         Box::new(Frame::empty(self.active_program, self.with_stack.len()))
     }
 
@@ -505,16 +505,7 @@ impl<H: Host> Vm<H> {
         let frame_index = self.activate_user_frame(p, id, parent, this, args, context)?;
         let view = if capture_constructor_this { std::ptr::null() } else { self.entered_lane_view(p, id) };
         let result = if Self::lane_runs_call(view) {
-            let body = p.function(id as usize);
-            let cursor = GeneralCodeCursor {
-                program: self.active_program,
-                function: id,
-                code: body.code.as_ptr(),
-                wide: body.wide.as_ptr(),
-                decoded: body.decoded.on_entry(&body.code, &body.wide).map_or(std::ptr::null(), <[WideInstruction]>::as_ptr),
-                lane: view,
-                back_edges: None,
-            };
+            let cursor = self.entry_cursor(p, id, view);
             self.run_frame_from_lane(p, frame_index, &cursor, 0)
         } else {
             self.run_frame_general(p, frame_index)
@@ -522,11 +513,26 @@ impl<H: Host> Vm<H> {
         self.complete_user_frame(p, result, capture_constructor_this)
     }
 
+    /// The cursor of a call of function `id` of the active program `p` that enters `view`, a
+    /// lane that runs it, at its first instruction.
+    pub(super) fn entry_cursor(&self, p: &ResidualProgram, id: u32, view: *const super::dispatch_fast::LaneView) -> GeneralCodeCursor {
+        let body = p.function(id as usize);
+        GeneralCodeCursor {
+            program: self.active_program,
+            function: id,
+            code: body.code.as_ptr(),
+            wide: body.wide.as_ptr(),
+            decoded: body.decoded.on_entry(&body.code, &body.wide).map_or(std::ptr::null(), <[WideInstruction]>::as_ptr),
+            lane: view,
+            back_edges: None,
+        }
+    }
+
     /// The lane view a call of function `id` of the active program `p` enters at its first
     /// instruction from a native (a promise job, a host callback), as a lane call of it would
     /// activate it (`Vm::resolve_script_call_target`): derived once its deferred runs complete
     /// (`ProgramStore::lane_call_may_derive`); null where the general loop runs it.
-    fn entered_lane_view(&self, p: &ResidualProgram, id: u32) -> *const super::dispatch_fast::LaneView {
+    pub(super) fn entered_lane_view(&self, p: &ResidualProgram, id: u32) -> *const super::dispatch_fast::LaneView {
         let program = self.active_program;
         let lane_runs = Self::FRAME_ENTRY_LANE_RUNS
             && !self.tier_may_run(crate::jit_mode::Tier::ANY);
@@ -592,7 +598,7 @@ impl<H: Host> Vm<H> {
 
     /// Binds a user function's activation and pushes it on the frame stack, returning its index.
     #[inline(always)]
-    fn activate_user_frame(
+    pub(super) fn activate_user_frame(
         &mut self,
         p: &ResidualProgram,
         id: u32,
@@ -1576,7 +1582,7 @@ impl<H: Host> Vm<H> {
     /// the general loop's steps make them; any other stop (another instruction, a pending
     /// call, a raised error, another frame or program) resumes the general loop where the
     /// lane left (`run_frames_after_lane_exit`).
-    fn run_frame_from_lane(
+    pub(super) fn run_frame_from_lane(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
@@ -1609,11 +1615,22 @@ impl<H: Host> Vm<H> {
                 {
                     // An await the queue's next job follows resumes that job's activation here
                     // (`Vm::chain_lane_await`), with no return to the job loop.
-                    if let FrameOutcome::Await { value, destination, frame: None } = outcome
-                        && let Some(next) = self.chain_lane_await(p, program, frame, &cursor, value, destination)
-                    {
-                        (cursor, function, pc) = next?;
-                        continue;
+                    let chained = match outcome {
+                        FrameOutcome::Await { value, destination, frame: None } => {
+                            self.chain_lane_await(p, program, frame, &cursor, value, destination)
+                        }
+                        FrameOutcome::Complete(value) => self.chain_lane_complete(p, program, frame, &cursor, value),
+                        _ => None,
+                    };
+                    match chained {
+                        Some(Ok(Some(next))) => {
+                            (cursor, function, pc) = next;
+                            continue;
+                        }
+                        // The chain finished the slot's last job; its empty frame completes.
+                        Some(Ok(None)) => return Ok(FrameOutcome::Complete(Value::UNDEFINED)),
+                        Some(Err(error)) => return Err(error),
+                        None => {}
                     }
                     return Ok(outcome);
                 }
