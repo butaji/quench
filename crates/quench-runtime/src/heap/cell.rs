@@ -1287,6 +1287,7 @@ pub(crate) enum IteratorKind {
     AsyncGenerator,
 }
 impl IteratorKind {
+    #[inline]
     pub(crate) fn is_array_iterator(self) -> bool {
         matches!(
             self,
@@ -1294,6 +1295,7 @@ impl IteratorKind {
         )
     }
 
+    #[inline]
     pub(crate) fn is_collection_iterator(self) -> bool {
         matches!(
             self,
@@ -4009,11 +4011,13 @@ pub(crate) struct IteratorExt {
 
 impl IteratorExt {
     /// The full position whose low half is the cell's `index`.
+    #[inline]
     pub(crate) fn position(&self, low: u32) -> usize {
         ((u64::from(self.position_high) << u32::BITS) | u64::from(low)) as usize
     }
 
     /// Splits `position` between the cell's `index` and this box.
+    #[inline]
     pub(crate) fn store_position(&mut self, low: &mut u32, position: usize) {
         let position = position as u64;
         *low = position as u32;

@@ -286,6 +286,7 @@ impl Heap {
     }
 
     /// `iterator`, mutably, past the write barrier.
+    #[inline]
     pub(crate) fn iterator_mut(&mut self, value: Value) -> Option<&mut IteratorRecord> {
         if let Some(record_id) = value.direct_iterator_index() {
             // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
