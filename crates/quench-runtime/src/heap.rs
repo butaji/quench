@@ -12,7 +12,7 @@ pub(crate) mod layouts;
 mod dense_growth;
 pub(crate) use dense_growth::dense_write_gap_limit;
 mod store_gate;
-pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
+pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, LENGTH_FROM_VALUES, NARROW_LEN, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod array_proofs;
 pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope, retire_array_storage_proofs};
 mod cell;
@@ -2703,6 +2703,7 @@ impl Heap {
         // The arrays whose young runs of elements survive, copied out before the young
         // objects' runs move or compaction moves every run.
         let mut young_arrays: Vec<RecordId> = Vec::new();
+        let mut narrowable_arrays: Vec<RecordId> = Vec::new();
         let mut direct_property_owners = Vec::with_capacity(if compacts {
             self.property_owner_counts.1
         } else {
@@ -2838,6 +2839,7 @@ impl Heap {
                 // Every young run of elements is a young array's (`ArrayElements::young`), so
                 // their sweep, which shows its survivors minor or full, lists those it keeps.
                 let young_arrays = &mut young_arrays;
+                let narrowable_arrays = &mut narrowable_arrays;
                 // A dead array is released in place; one owning nothing its drop frees is then
                 // forgotten, as a young array whose elements its young cycle takes back is.
                 let sparse = self.sparse_arrays.is_some();
@@ -2859,6 +2861,8 @@ impl Heap {
                         }
                         if array.elements().is_young() {
                             young_arrays.push(record_id);
+                        } else if full && array.elements().may_narrow() {
+                            narrowable_arrays.push(record_id);
                         }
                         if compacts && array.properties().has_compact_range() {
                             direct_property_owners.push((
@@ -2970,7 +2974,18 @@ impl Heap {
         }
         for record_id in young_arrays {
             // SAFETY: the sweep listed these from the records it kept.
-            unsafe { self.array_records.get_live_mut_unbarriered(record_id) }.leave_nursery();
+            unsafe { self.array_records.get_live_mut_unbarriered(record_id) }.survive_nursery();
+        }
+        let (candidates, mut narrowed, mut saved_total) = (narrowable_arrays.len(), 0usize, 0usize);
+        for record_id in narrowable_arrays {
+            // SAFETY: the sweep listed these from the records it kept.
+            let saved = unsafe { self.array_records.get_live_mut_unbarriered(record_id) }.narrow_elements();
+            narrowed += usize::from(saved != 0);
+            saved_total += saved;
+            self.payload_bytes = self.payload_bytes.saturating_sub(saved);
+        }
+        if full && crate::trace::Channel::Gc.on() {
+            eprintln!("[narrow-elements] candidates={candidates} narrowed={narrowed} saved={}KB", saved_total / 1024);
         }
         if compacts {
             // Compaction moves the young survivors with every other run and forgets the
@@ -4530,7 +4545,7 @@ impl Heap {
                     value
                         .elements()
                         .iter()
-                        .copied()
+                        
                         .filter(|value| value.is_heap()),
                 );
             }
@@ -4721,13 +4736,14 @@ impl Heap {
         );
         // The count of non-int32 values is kept per backing: none means no element to scan.
         if array.elements().holds_only_int32() { return; }
-        work.extend(
-            array
-                .elements()
-                .iter()
-                .copied()
-                .filter(|value| value.is_heap() && !Self::mark_leaf(&mut mark_string, *value)),
-        );
+        match array.elements().wide_values() {
+            Some(values) => work.extend(
+                values.iter().copied().filter(|value| value.is_heap() && !Self::mark_leaf(&mut mark_string, *value)),
+            ),
+            None => work.extend(
+                array.elements().iter().filter(|value| value.is_heap() && !Self::mark_leaf(&mut mark_string, *value)),
+            ),
+        }
     }
 
     /// Marks `value` where the trace finds it, through `mark_string`, when it is a string, and

@@ -331,7 +331,9 @@ pub(super) fn lane_loop_arrays<H: Host>(vm: &mut Vm<H>, r: Registers, region: &L
 /// (`append_dense_element`, `fill_dense_hole`).
 fn push_dense_array<H: Host>(vm: &mut Vm<H>, value: Value, written: bool, entry: &mut LoopEntry) -> Option<()> {
     if !written {
-        let elements = vm.heap.record_array(value)?.elements().as_slice();
+        // A region reads the values in place: a narrow backing widens first.
+        vm.heap.widen_array_elements(value);
+        let elements = vm.heap.record_array(value)?.elements().wide_values()?;
         return entry.push_array(elements.as_ptr().cast_mut(), elements.len(), elements.len());
     }
     if vm.dense_array_length(value).is_none() || !vm.prototypes_hold_no_index(value) {

@@ -67,7 +67,7 @@ pub(super) fn lane_list_activation<H: Host>(
         vm.heap.function(callee),
         Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall | Native::FunctionCall), .. })
     ) {
-        let elements: smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]> = vm.heap.array_elements(list).map_or(&[][..], |elements| &elements.as_slice()[..length]).iter().copied().collect();
+        let elements: smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]> = vm.heap.array_elements(list).map_or_else(smallvec::SmallVec::new, |elements| elements.range(0..length).collect());
         let Some(super::function::Forwarded { callee: target, receiver, args, kind, .. }) = vm.forwarded_call(callee, receiver, elements) else {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::record_detail("applied forwarding declined".into());
@@ -94,14 +94,15 @@ pub(super) fn lane_list_activation<H: Host>(
         // the elements copied out first: making the caller's
         // activations frames moves no heap array, but the callee may change the list.
         let elements: smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]> =
-            vm.heap.array_elements(list).map_or(&[][..], |elements| &elements.as_slice()[..length]).iter().copied().collect();
+            vm.heap.array_elements(list).map_or_else(smallvec::SmallVec::new, |elements| elements.range(0..length).collect());
         return Some(Err(lane_passed_frame_call(cx, r, ip, i, callee, receiver, FrameCallArguments::List(&elements)).into_loop()));
     };
     let Some(this) = lane_call_this(vm, &target, receiver) else {
         return Some(Err(exit(ip)));
     };
     // Read after the resolution above, which runs no guest code but may allocate.
-    let elements: &[Value] = if listed.is_some() { &vm.heap.array_elements(list)?.as_slice()[..length] } else { &[] };
+    let held = if listed.is_some() { vm.heap.array_elements(list)?.values_cow() } else { std::borrow::Cow::Borrowed(&[][..]) };
+    let elements: &[Value] = if listed.is_some() { &held[..length] } else { &[] };
     Some(lane_activate_passed(cx, r, ip, &target, elements, this))
 }
 
@@ -130,7 +131,7 @@ pub(super) fn lane_spread_native_call<H: Host>(
     if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
         return Some(Resumed::Exit(exit(ip)));
     }
-    let args = smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::from_slice(vm.heap.array_elements(list)?.as_slice());
+    let args = vm.heap.array_elements(list)?.iter().collect::<smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]>>();
     let value = lane_native_value(cx, ip, i, native, callee, receiver, &args);
     Some(lane_native_complete(cx, ip, i, value))
 }

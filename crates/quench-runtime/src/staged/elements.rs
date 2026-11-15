@@ -48,6 +48,20 @@ pub(crate) struct Backing<W> {
 #[inline(always)]
 pub(crate) fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<Backing<S::Word>> {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let (record, header, length) = flagged_backing(stage, record_base, base, miss)?;
+    // A narrow backing (`ArrayElements::is_narrow`) flags its length's top bit: it misses.
+    let narrow = stage.ugt_imm(length, u64::from(!crate::heap::NARROW_LEN));
+    let wide = stage.not(narrow);
+    stage.guard(wide, miss)?;
+    let values = stage.add_imm(header, ARRAY.header_values_offset as u64);
+    Some(Backing { record, header, values, length })
+}
+
+/// `array_backing` up to the length load: the record, the backing's header and its length
+/// word with the narrow flag (`NARROW_LEN`) left in.
+#[inline(always)]
+fn flagged_backing<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<(S::Word, S::Word, S::Word)> {
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let is_array = super::value::is_direct_array(stage, base);
     stage.guard(is_array, miss)?;
     let index = stage.and_imm(base, u64::from(u32::MAX));
@@ -57,8 +71,7 @@ pub(crate) fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base:
     let record = stage.add(record_base, offset);
     let header = array_header(stage, record);
     let length = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_length_offset as i32);
-    let values = stage.add_imm(header, ARRAY.header_values_offset as u64);
-    Some(Backing { record, header, values, length })
+    Some((record, header, length))
 }
 
 /// The backing's header of the array record at `record`. Without extras, the record's object
@@ -271,10 +284,23 @@ pub(crate) fn concrete_dense_element(elements: &[crate::Value], index: usize) ->
 /// direct array `base` among the array records at `record_base`.
 #[inline(always)]
 pub(crate) fn concrete_record_element(record_base: *const crate::heap::ArrayObject, base: crate::Value, index: usize) -> Option<crate::Value> {
+    use crate::heap::{NARROW_LEN, NATIVE_ARRAY_LAYOUT as ARRAY};
     let mut stage = Concrete::new(std::ptr::null());
-    let backing = array_backing(&mut stage, record_base as u64, base.to_bits(), ())?;
-    dense_element(&mut stage, backing.values, backing.length, index as u64, ())
-        .map(|(_, value)| crate::Value::from_bits(value))
+    let (_, header, length) = flagged_backing(&mut stage, record_base as u64, base.to_bits(), ())?;
+    if length <= u64::from(!NARROW_LEN) {
+        let values = header + ARRAY.header_values_offset as u64;
+        return dense_element(&mut stage, values, length, index as u64, ())
+            .map(|(_, value)| crate::Value::from_bits(value));
+    }
+    // A narrow backing (`ArrayElements::is_narrow`), which `array_backing` misses: the element
+    // decoded from its narrow form.
+    if index as u64 >= length & u64::from(!NARROW_LEN) {
+        return None;
+    }
+    let address = header + ARRAY.header_values_offset as u64 + (index * std::mem::size_of::<u32>()) as u64;
+    let narrow = stage.load_u32(Region::Elements.mutable(), address, 0);
+    let value = super::object::decode_narrow(&mut stage, narrow);
+    (value != crate::Value::DELETED.to_bits()).then(|| crate::Value::from_bits(value))
 }
 
 #[cfg(test)]

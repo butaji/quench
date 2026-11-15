@@ -1771,6 +1771,25 @@ impl ArrayObject {
         self.elements_raw_mut().leave_nursery();
     }
 
+    /// `ArrayElements::survive_nursery`: the same values, so no proof or dependent retires.
+    pub(crate) fn survive_nursery(&mut self) {
+        self.elements_raw_mut().survive_nursery();
+    }
+
+    /// `ArrayElements::widen`: the same values, so no dependent retires; a proof of the
+    /// narrow backing proves no index (`ArrayStorageProofs::prove`), so none reads it.
+    #[inline]
+    pub(crate) fn widen_elements(&mut self) {
+        if self.elements().is_narrow() {
+            self.elements_raw_mut().widen();
+        }
+    }
+
+    /// `ArrayElements::narrow_in_place`: the same values, so no proof or dependent retires.
+    pub(crate) fn narrow_elements(&mut self) -> usize {
+        self.elements_raw_mut().narrow_in_place()
+    }
+
     /// Replaces the present element at `index` in place where this array alone owns its
     /// backing (`ArrayElements::replace_in_place`); `false` changes nothing. A replacement
     /// changes no backing, so no array storage proof retires; a prototype's dependents do.

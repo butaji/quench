@@ -516,7 +516,7 @@ impl<H: Host> Vm<H> {
                 .and_then(|elements| {
                     elements
                         .get(index)
-                        .copied()
+                        
                         .filter(|value| !value.is_deleted())
                 })
                 .or_else(|| self.heap.sparse_get(target, index).filter(|value| !value.is_deleted()))

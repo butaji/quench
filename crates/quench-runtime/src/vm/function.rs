@@ -234,7 +234,7 @@ impl<H: Host> Vm<H> {
             ),
         });
         self.with_call_roots([arguments], |vm| {
-            vm.initialize_arguments_object(arguments, Some(function), &args, expose_callee)?;
+            vm.initialize_arguments_object(arguments, Some(function), &args.values_cow(), expose_callee)?;
             Ok(arguments)
         })
     }
@@ -398,7 +398,7 @@ impl<H: Host> Vm<H> {
             match self.heap.function(callee) {
                 Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) => {
                     let (target, this, bound) = self.bound_function_parts(*env)?;
-                    if !args.prepend(bound) {
+                    if !args.prepend(&bound) {
                         return None;
                     }
                     (callee, receiver) = (target, this);
@@ -434,7 +434,7 @@ impl<H: Host> Vm<H> {
 
     /// A bound function's target, bound `this` and bound arguments, read from the
     /// environment object `Function.prototype.bind` made (`env`); `None` for any other.
-    pub(super) fn bound_function_parts(&self, env: Value) -> Option<(Value, Value, &[Value])> {
+    pub(super) fn bound_function_parts(&self, env: Value) -> Option<(Value, Value, std::borrow::Cow<'_, [Value]>)> {
         let data = self.object_data(env)?;
         let shape = data.shape();
         // The environment's three slots, read through the layout its shape keeps for every
@@ -470,7 +470,7 @@ impl<H: Host> Vm<H> {
         };
         let arguments = arguments
             .and_then(|list| self.heap.array_elements(list))
-            .map_or(&[][..], |elements| elements.as_slice());
+            .map_or(std::borrow::Cow::Borrowed(&[][..]), |elements| elements.as_slice());
         Some((target, receiver, arguments))
     }
 }

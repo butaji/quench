@@ -389,7 +389,7 @@ fn read_stack_data(reader: &mut Reader<'_>) -> SnapshotResult<StackData> {
 impl ArrayObject {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
         write_object(writer, &self.object)?;
-        writer.values(self.elements());
+        writer.values(&self.elements().values_cow());
         Ok(())
     }
 

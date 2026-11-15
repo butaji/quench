@@ -808,7 +808,7 @@ impl<H: Host> Vm<H> {
             {
                 let value = elements
                     .get(index as usize)
-                    .copied()
+                    
                     .filter(|value| !value.is_deleted())
                     .or_else(|| self.heap.sparse_get(object, index as usize));
                 if let Some(value) = value.filter(|value| !value.is_deleted()) {

@@ -842,7 +842,7 @@ impl<H: Host> Vm<H> {
         }
         let roots = self.active_call_roots.len();
         let mut undefined_count = 0;
-        if let Some(elements) = self.present_dense_elements(object, 0..length).map(<[Value]>::to_vec) {
+        if let Some(elements) = self.present_dense_elements(object, 0..length).map(|values| values.into_owned()) {
             // SortIndexedProperties reads each present own data element, observing nothing.
             let present = elements.into_iter().filter(|value| !value.is_undefined());
             self.active_call_roots.extend(present);

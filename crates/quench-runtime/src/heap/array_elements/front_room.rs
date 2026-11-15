@@ -32,7 +32,7 @@ impl UniqueElements {
             // header back would cover with values: a fresh backing instead.
             let mut all = Vec::with_capacity(values.len() + self.0.len());
             all.extend_from_slice(values);
-            all.extend_from_slice(&self.0);
+            all.extend(self.0.iter());
             self.0 = ArrayElements::from_slice(&all);
             return;
         }
@@ -87,7 +87,7 @@ impl UniqueElements {
             // As in `prepend`: the moved values would cover the headers before this one.
             self.0 = match self.0.len() {
                 0 => ArrayElements::new(),
-                _ => ArrayElements::copied(&self.0, self.0.header().others),
+                _ => self.0.widened(),
             };
             return;
         }

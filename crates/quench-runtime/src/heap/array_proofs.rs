@@ -131,11 +131,15 @@ impl ArrayStorageProofs {
         // A bound below 2^31 lets an int32 key reach `element` and `replace` as its u32 bits
         // (`dispatch_fast::proof_int_index`): a negative key lands at or above 2^31, past
         // every bound, so the bounds test is also the sign test. No dense backing is that long.
-        let length = array.elements().len().min(i32::MAX as usize);
+        // A narrow backing proves no index (`ArrayElements::is_narrow`): reads take the long way.
+        let length = if array.elements().is_narrow() { 0 } else { array.elements().len().min(i32::MAX as usize) };
         let (values, writable) = match array.unique_values().filter(|_| replaces) {
             Some(values) => (values, length),
-            // SAFETY: a slice's pointer is never null.
-            None => (unsafe { NonNull::new_unchecked(array.elements().as_slice().as_ptr().cast_mut()) }, 0),
+            None => match array.elements().wide_values() {
+                // SAFETY: a slice's pointer is never null.
+                Some(wide) => (unsafe { NonNull::new_unchecked(wide.as_ptr().cast_mut()) }, 0),
+                None => (NonNull::dangling(), 0),
+            },
         };
         self.readable[slot] = length;
         self.writable[slot] = writable;
@@ -153,17 +157,35 @@ impl ArrayStorageProofs {
 impl Heap {
     /// Proves the storage of `base` in `register`'s slot of `proofs` when `base` names a
     /// record array; `false` for any other value.
+    /// Widens the narrow backing of the record array `base` (`ArrayObject::widen_elements`),
+    /// as a loop entry that reads it in place needs; any other value is left as it is.
+    pub(crate) fn widen_array_elements(&mut self, base: Value) {
+        let Some(record_id) = base.direct_array_index() else {
+            return;
+        };
+        // SAFETY: direct-array Values name live records; `&mut self` is exclusive; widening
+        // writes no reference into the record, so no barrier applies.
+        let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
+        if array.elements().is_narrow() {
+            retire_array_storage_proofs();
+            array.widen_elements();
+        }
+    }
+
     pub(crate) fn prove_array_storage(&mut self, proofs: &mut ArrayStorageProofs, register: u16, base: Value) -> bool {
         let Some(record_id) = base.direct_array_index() else {
             return false;
         };
+        // SAFETY: direct-array Values name live records; `&mut self` is exclusive; proving
+        // writes nothing into the record, so no barrier applies.
+        let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
+        // An array a lane proves is hot: its reads take the proof's wide values. Widening
+        // copies the same values (a marker reading the old copy sees what it would have).
+        array.widen_elements();
         // Proven storage is written past the snapshot barrier: none is proven while a cycle marks.
         if self.satb_active {
             return false;
         }
-        // SAFETY: direct-array Values name live records; `&mut self` is exclusive; proving
-        // writes nothing into the record, so no barrier applies.
-        let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
         let armed: *mut ArrayStorageProofs = proofs;
         if ARMED_PROOFS.get() != armed {
             retire_array_storage_proofs();

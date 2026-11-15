@@ -204,7 +204,8 @@ impl<H: Host> Vm<H> {
         let Some(elements) = self.heap.array_elements(data) else {
             return Err(self.type_error(p, "incompatible Segments receiver".into()));
         };
-        let [segmenter, input, boundaries] = elements.as_slice() else {
+        let held_values = elements.as_slice();
+        let [segmenter, input, boundaries] = &*held_values else {
             return Err(self.type_error(p, "incompatible Segments receiver".into()));
         };
         let (segmenter, input, boundaries) = (*segmenter, *input, *boundaries);
@@ -218,6 +219,7 @@ impl<H: Host> Vm<H> {
             return Ok(None);
         };
         let end = elements
+            .values_cow()
             .partition_point(|boundary| boundary.as_number().unwrap_or(0.0) <= index as f64);
         let Some((start, end)) = end
             .checked_sub(1)
