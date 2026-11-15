@@ -92,6 +92,9 @@ impl<H: Host> Vm<H> {
         if let Some(value) = self.substring_in_place(native, receiver, args) {
             return Some(value);
         }
+        if let Some(value) = self.split_in_place(native, receiver, args) {
+            return Some(value);
+        }
         let result = self.call_primitive_native(p, native, receiver, args).ok();
         // A string method reads its receiver as text, which it may make on demand.
         self.heap.charge_materialized_text();
