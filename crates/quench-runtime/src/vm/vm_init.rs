@@ -128,6 +128,7 @@ impl<H: Host> Vm<H> {
             symbol_load_proofs: Default::default(),
             private_site_homes: Default::default(),
             array_iteration_shape: None,
+            collection_iteration_shape: None,
             array_species_proof: None,
             for_in: Default::default(),
             json_plain: Default::default(),

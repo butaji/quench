@@ -3721,6 +3721,24 @@ script_handler! {
 }
 
 script_handler! {
+    /// `AppendArray` spreading, with no holes before it, a source whose iteration runs no
+    /// guest code (`Vm::spread_intact_in_place`): its values join the literal without an
+    /// iterator or result object. Any other append takes the general step in place.
+    fn lane_append_array<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let source = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS);
+        let (Some(source), true, 0) = (source, i.c != 0, i.imm()) else {
+            sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        if !vm.spread_intact_in_place(r.get(i.a), r.get(source)) {
+            sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
+        }
+        note_allocation(vm);
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
     /// `IteratorClose` of a built-in iterator whose chain lacks `return`
     /// (`Vm::iterator_close_absent`), which ends with `undefined`; any other takes the general
     /// step in place.
@@ -20871,6 +20889,7 @@ const fn iterator_handler<H: Host>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
         Class::GetIterator => Some(lane_get_iterator::<H>),
         Class::IteratorClose => Some(lane_iterator_close::<H>),
+        Class::AppendArray => Some(lane_append_array::<H>),
         Class::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
         Class::RequireIteratorResult => Some(lane_require_iterator_result::<H>),
         Class::IteratorCleanupPop => Some(lane_iterator_cleanup_pop::<H>),

@@ -263,6 +263,16 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Array.from map function is not callable".into()));
         }
         let map_this = args.get(2).copied().unwrap_or(Value::UNDEFINED);
+        // `Array.from(source)` on the intrinsic Array of a source whose iteration runs no guest
+        // code (`intact_iteration_kind`): its `@@iterator` Get reads a data property and the
+        // construction calls nothing, so the array of its values is the whole result.
+        if mapfn.is_none()
+            && target_kind == ArrayFromTarget::Array
+            && self.is_current_realm_native(constructor, Native::Array)
+            && let Some(values) = self.intact_iteration_values(source)
+        {
+            return Ok(self.literal_array(values.len(), |index| values[index]));
+        }
         let iterator_symbol = self.well_known_symbols.get(WellKnownSymbol::Iterator);
         let iterator_method = iterator_symbol
             .map(|symbol| self.get_index(p, source, symbol))

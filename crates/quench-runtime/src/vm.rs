@@ -2050,6 +2050,8 @@ pub(crate) struct Vm<H> {
     private_site_homes: private_site_home::PrivateSiteHomes,
     /// An array shape with no own `@@iterator` (`Vm::array_iteration_intact`).
     array_iteration_shape: Option<u32>,
+    /// A Set or Map shape with no own `@@iterator` (`Vm::intact_iteration_kind`).
+    collection_iteration_shape: Option<u32>,
     array_species_proof: Option<array::ArraySpeciesProof>,
     for_in: object_static::ForInMemo,
     /// What `JSON.stringify`'s plain writer keeps between calls: its text buffer, which a
@@ -3097,6 +3099,7 @@ impl<H: Host> Vm<H> {
         self.symbol_load_proofs.clear();
         self.private_site_homes.clear();
         self.array_iteration_shape = None;
+        self.collection_iteration_shape = None;
         self.array_species_proof = None;
         self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);

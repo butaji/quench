@@ -1039,6 +1039,7 @@ impl<H: Host> Vm<H> {
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
         self.array_iteration_shape = None;
+        self.collection_iteration_shape = None;
         self.array_species_proof = None;
         self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);

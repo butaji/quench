@@ -344,6 +344,7 @@ impl<H: Host> Vm<H> {
             symbol_load_proofs: _,
             private_site_homes: _,
             array_iteration_shape: _,
+            collection_iteration_shape: _,
             array_species_proof: _,
             for_in: _,
             json_plain: _,
