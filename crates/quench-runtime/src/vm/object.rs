@@ -3215,7 +3215,7 @@ impl<H: Host> Vm<H> {
         };
         let slot = word.slot();
         // SAFETY: the fact names `slot` of the holder's shape: the layout fixes an own holder's,
-        // and the chain epoch an inherited one's.
+        // and the subjects that hold the entry an inherited one's.
         let stored = || unsafe { self.heap.property_get_shaped(holder, slot) };
         Some(match kind {
             KIND_GETTER_SLOT => {
@@ -3269,43 +3269,29 @@ impl<H: Host> Vm<H> {
         self.cached_field_accessor(object, atom, site, true)
     }
 
-    /// The getter (`setter` false) or setter the site's accessor entry names.
+    /// The getter (`setter` false) or setter the site's accessor answers on `object`. A record
+    /// receiver asks the fact table alone, which holds every accessor an entry recorded under
+    /// the subjects of its chain (`record_accessor_fact`): one probe for the receiver's layout,
+    /// whatever shapes the site rotates through, and a miss leaves the read to the general
+    /// path, which records both again. Other receivers match the site's entries by shape.
     #[inline(always)]
     fn cached_field_accessor(&self, object: Value, atom: Atom, site: usize, setter: bool) -> Option<Value> {
         let mut index = self.accessor_field_indices.get(site);
         if index == NO_ACCESSOR_FIELD {
             return None;
         }
+        if let Some(receiver) = self.heap.object_record(object) {
+            return self.fact_accessor(receiver, atom, setter).flatten();
+        }
         let epoch = crate::heap::prototype_layout_epoch();
-        // An ordinary receiver matches its entry by layout, which holds its shape and
-        // prototype: a recorded layout is of a shaped receiver outside dictionary mode, so a
-        // match proves what `shape_property_lookup` would.
-        let (receiver, cache) = if let Some(receiver) = self.heap.object_record(object) {
-            // The fact table first: one probe for the receiver's layout, whatever entries
-            // the site rotates through.
-            if let Some(part) = self.fact_accessor(receiver, atom, setter) {
-                return part;
+        let receiver = self.shape_property_lookup(object, atom)?;
+        let (shape, proto) = (receiver.shape(), receiver.proto());
+        let cache = loop {
+            let cache = self.accessor_fields.get(index as usize)?;
+            if shape == cache.receiver && proto == cache.prototype && epoch == cache.epoch {
+                break cache;
             }
-            let layout = receiver.layout_id();
-            let cache = loop {
-                let cache = self.accessor_fields.get(index as usize)?;
-                if layout == cache.layout && epoch == cache.epoch {
-                    break cache;
-                }
-                index = cache.next;
-            };
-            (receiver, cache)
-        } else {
-            let receiver = self.shape_property_lookup(object, atom)?;
-            let (shape, proto) = (receiver.shape(), receiver.proto());
-            let cache = loop {
-                let cache = self.accessor_fields.get(index as usize)?;
-                if shape == cache.receiver && proto == cache.prototype && epoch == cache.epoch {
-                    break cache;
-                }
-                index = cache.next;
-            };
-            (receiver, cache)
+            index = cache.next;
         };
         self.accessor_entry_part(cache, receiver, setter)
     }
