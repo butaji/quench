@@ -436,8 +436,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn site_keyed_own_read(&self, site: usize, object: Value, key: Value) -> Option<Value> {
         let data = self.heap.ordinary_object(object)?;
-        let epoch = crate::heap::prototype_layout_epoch();
-        let slot = self.symbol_load_proofs.site_own_slot(site, data.shape(), key, epoch)?;
+        let slot = self.symbol_load_proofs.site_own_slot(site, data.layout_id(), key)?;
         if data.is_arguments_object() {
             return None;
         }
@@ -459,7 +458,7 @@ impl<H: Host> Vm<H> {
         };
         if let Some(data) = self.heap.ordinary_object(object) {
             let epoch = crate::heap::prototype_layout_epoch();
-            self.symbol_load_proofs.record_site_own_slot(site, data.shape(), key, property, epoch);
+            self.symbol_load_proofs.record_site_own_slot(site, data.layout_id(), key, property, epoch);
         }
     }
 
@@ -501,13 +500,26 @@ impl<H: Host> Vm<H> {
     /// `plain_property_get` of a symbol key or a key `plain_named_key` admits, answered by
     /// the proof of where the walk from a receiver of the same shape found it
     /// (`symbol_load_proofs`), or by `prove_symbol_load`.
-    #[inline]
+    #[inline(always)]
     fn plain_proved_get(&mut self, object: Value, key: PropertyKey) -> Option<Value> {
+        if let Some(data) = self.heap.ordinary_object(object)
+            && let Some(key32) = key.key32()
+            && let Some(slot) = self.symbol_load_proofs.own_slot(data.layout_id(), key32)
+        {
+            // SAFETY: the proof recorded this slot for an own data property of this layout's shape.
+            return Some(unsafe { self.heap.property_get_unchecked(data, slot as usize) });
+        }
+        self.plain_proved_get_past_own(object, key)
+    }
+
+    /// `plain_proved_get` past an own-slot hit: the other answers, else the proving walk.
+    #[inline(never)]
+    fn plain_proved_get_past_own(&mut self, object: Value, key: PropertyKey) -> Option<Value> {
         use super::symbol_load_proof::SymbolLoadAnswer;
         let data = self.proved_read_receiver(object, key)?;
         let epoch = crate::heap::prototype_layout_epoch();
-        let answer = self.symbol_load_proofs.answer(data.shape(), key, epoch);
-        // A proof's shape is an ordinary one, so the receiver is no namespace, deferred module
+        let answer = self.symbol_load_proofs.answer(data.layout_id(), key, epoch);
+        // A proof's layout is an ordinary one, so the receiver is no namespace, deferred module
         // or arguments object; side descriptors could name the key outside its shape.
         let inherits = !data.has_side_descriptors();
         match answer {
@@ -515,17 +527,15 @@ impl<H: Host> Vm<H> {
             Some(SymbolLoadAnswer::Own(slot)) => {
                 return Some(unsafe { self.heap.property_get_unchecked(data, slot as usize) });
             }
-            Some(SymbolLoadAnswer::Inherited { prototype, holder, slot })
-                if inherits && data.proto() == prototype =>
-            {
-                let holder = self.heap.ordinary_object(holder)?;
-                // SAFETY: the proof keeps the holder and the shape its slot was recorded in.
+            Some(SymbolLoadAnswer::Inherited { hops, slot }) if inherits => {
+                let holder = self.proof_holder(data, hops)?;
+                // SAFETY: the chain epoch keeps the holder and the shape its slot was recorded in.
                 return unsafe { self.heap.property_get_shaped(holder, slot as usize) };
             }
-            Some(SymbolLoadAnswer::Absent { prototype }) if inherits && data.proto() == prototype => {
+            Some(SymbolLoadAnswer::Absent) if inherits => {
                 return Some(Value::UNDEFINED);
             }
-            Some(SymbolLoadAnswer::Getter { prototype, .. }) if inherits && data.proto() == prototype => {
+            Some(SymbolLoadAnswer::Getter { .. }) if inherits => {
                 return None;
             }
             _ => {}
@@ -557,7 +567,7 @@ impl<H: Host> Vm<H> {
     fn prove_load_walk(&mut self, object: Value, key: PropertyKey, epoch: u64) -> Option<ProvedLoad> {
         use super::symbol_load_proof::SymbolLoadAnswer;
         let data = self.proved_read_receiver(object, key)?;
-        let (shape, prototype) = (data.shape(), data.proto());
+        let (layout, prototype) = (data.layout_id(), data.proto());
         let mut current = object;
         let mut depth = 0u8;
         let (answer, value) = loop {
@@ -581,8 +591,8 @@ impl<H: Host> Vm<H> {
                 let accessors = self.shape_may_have_accessors(link_shape);
                 if accessors && self.slot_attributes(link, slot)?.accessor {
                     if depth > 0 && let Ok(slot) = u32::try_from(slot) {
-                        let getter = SymbolLoadAnswer::Getter { prototype, holder: current, slot };
-                        self.prove_symbol_chain(shape, key, epoch, prototype, depth, getter);
+                        let getter = SymbolLoadAnswer::Getter { hops: depth, slot };
+                        self.prove_symbol_chain(layout, key, epoch, prototype, depth, getter);
                     }
                     return Some(ProvedLoad::Getter);
                 }
@@ -593,7 +603,7 @@ impl<H: Host> Vm<H> {
                 let answer = if depth == 0 {
                     SymbolLoadAnswer::Own(slot)
                 } else {
-                    SymbolLoadAnswer::Inherited { prototype, holder: current, slot }
+                    SymbolLoadAnswer::Inherited { hops: depth, slot }
                 };
                 break (answer, value);
             }
@@ -602,7 +612,7 @@ impl<H: Host> Vm<H> {
             }
             let next = link.proto();
             if next.is_null() {
-                break (SymbolLoadAnswer::Absent { prototype }, Value::UNDEFINED);
+                break (SymbolLoadAnswer::Absent, Value::UNDEFINED);
             }
             let Some(deeper) = depth.checked_add(1) else {
                 return Some(ProvedLoad::Unproved);
@@ -610,18 +620,18 @@ impl<H: Host> Vm<H> {
             depth = deeper;
             current = next;
         };
-        self.prove_symbol_chain(shape, key, epoch, prototype, depth, answer);
+        self.prove_symbol_chain(layout, key, epoch, prototype, depth, answer);
         Some(match answer {
-            SymbolLoadAnswer::Absent { .. } => ProvedLoad::Absent,
+            SymbolLoadAnswer::Absent => ProvedLoad::Absent,
             _ => ProvedLoad::Value(value),
         })
     }
 
-    /// Records `answer` for `key` on receivers of `shape` once the `depth` prototypes from
+    /// Records `answer` for `key` on receivers of `layout` once the `depth` prototypes from
     /// `prototype` the walk passed are marked prototypes.
     fn prove_symbol_chain(
         &mut self,
-        shape: u32,
+        layout: u32,
         key: PropertyKey,
         epoch: u64,
         prototype: Value,
@@ -631,7 +641,7 @@ impl<H: Host> Vm<H> {
         self.mark_prototype_links(prototype, depth);
         // Marking a link that was no prototype yet leaves the epoch where it was.
         if crate::heap::prototype_layout_epoch() == epoch {
-            self.symbol_load_proofs.record(shape, key, epoch, answer);
+            self.symbol_load_proofs.record(layout, key, epoch, answer);
         }
     }
 

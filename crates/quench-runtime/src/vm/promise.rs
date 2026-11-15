@@ -5002,12 +5002,18 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.heap.ordinary_object(promise) else {
             return;
         };
-        let (shape, key) = (data.shape(), PropertyKey::string(self.runtime_atoms.constructor));
-        let Some(SymbolLoadAnswer::Inherited { prototype, holder, .. }) =
-            self.symbol_load_proofs.answer(shape, key, crate::heap::prototype_layout_epoch())
+        let (shape, prototype, key) = (data.shape(), data.proto(), PropertyKey::string(self.runtime_atoms.constructor));
+        let Some(SymbolLoadAnswer::Inherited { hops, .. }) =
+            self.symbol_load_proofs.answer(data.layout_id(), key, crate::heap::prototype_layout_epoch())
         else {
             return;
         };
+        // The holder is `hops` links up from the promise.
+        let mut holder = promise;
+        for _ in 0..hops {
+            let Some(link) = self.heap.object(holder) else { return };
+            holder = link.proto();
+        }
         self.heap.mark_prototype(holder);
         self.heap.mark_prototype(constructor);
         let watch = |object| self.heap.object(object).and_then(|data| crate::heap::watch_prototype_values(data.exact_shape()));

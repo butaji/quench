@@ -80,22 +80,28 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.heap.ordinary_object(object) else {
             return self.ordinary_chain_read(object, atom);
         };
+        if let Some(key32) = key.key32()
+            && let Some(slot) = self.symbol_load_proofs.own_slot(data.layout_id(), key32)
+        {
+            // SAFETY: the proof recorded this slot for an own data property of this layout's shape.
+            return Some(ChainRead::Value(unsafe { self.heap.property_get_unchecked(data, slot as usize) }));
+        }
         let epoch = crate::heap::prototype_layout_epoch();
         // A proof's shape is an ordinary one; side descriptors could name the key off it.
         let inherits = !data.has_side_descriptors();
-        match self.symbol_load_proofs.answer(data.shape(), key, epoch) {
+        match self.symbol_load_proofs.answer(data.layout_id(), key, epoch) {
             // SAFETY: the proof recorded this slot for an own data property of this shape.
             Some(SymbolLoadAnswer::Own(slot)) => {
                 return Some(ChainRead::Value(unsafe { self.heap.property_get_unchecked(data, slot as usize) }));
             }
-            Some(SymbolLoadAnswer::Inherited { prototype, holder, slot }) if inherits && data.proto() == prototype => {
-                let holder = self.heap.ordinary_object(holder)?;
-                // SAFETY: the proof keeps the holder and the shape its slot was recorded in.
+            Some(SymbolLoadAnswer::Inherited { hops, slot }) if inherits => {
+                let holder = self.proof_holder(data, hops)?;
+                // SAFETY: the chain epoch keeps the holder and the shape its slot was recorded in.
                 if let Some(value) = unsafe { self.heap.property_get_shaped(holder, slot as usize) } {
                     return Some(ChainRead::Value(value));
                 }
             }
-            Some(SymbolLoadAnswer::Absent { prototype }) if inherits && data.proto() == prototype => {
+            Some(SymbolLoadAnswer::Absent) if inherits => {
                 return Some(ChainRead::Absent);
             }
             _ => {}
