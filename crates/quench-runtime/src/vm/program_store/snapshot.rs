@@ -127,7 +127,13 @@ impl ProgramEntry {
             writer.len(*start as usize);
             writer.values(array);
         }
-        function_sources.snap(writer)?;
+        let mut sources: Vec<(u32, crate::value::Value)> = function_sources.iter().map(|(function, source)| (*function, *source)).collect();
+        sources.sort_unstable_by_key(|(function, _)| *function);
+        writer.len(sources.len());
+        for (function, source) in sources {
+            writer.len(function as usize);
+            writer.value(source);
+        }
         module_environment.snap(writer)?;
         import_meta.snap(writer)?;
         writer.len(module_imports.len());
@@ -193,7 +199,10 @@ impl ProgramEntry {
             let start = u32::try_from(reader.len()?).map_err(|_| SnapshotError("snapshot constant array start".into()))?;
             Ok((start, crate::heap::ArrayElements::from(reader.values()?)))
         })?.into_iter().collect();
-        let function_sources = Snap::unsnap(reader)?;
+        let function_sources = read_list(reader, |reader| {
+            let function = u32::try_from(reader.len()?).map_err(|_| SnapshotError("snapshot function source".into()))?;
+            Ok((function, reader.value()?))
+        })?.into_iter().collect();
         let module_environment = Snap::unsnap(reader)?;
         let import_meta = Snap::unsnap(reader)?;
         let module_imports = read_list(reader, |reader| {
@@ -223,10 +232,10 @@ impl ProgramEntry {
             native_js: None,
             lane_views: super::LaneViews::default(),
             js_entry_facts: super::JsEntryFactsTable::default(),
-            lane_deferred: vec![std::cell::Cell::new(0); functions],
+            lane_deferred: super::zeroed_counts(functions),
             residual,
             wasm_signatures: None,
-            constants,
+            constants: constants.into(),
             const_arrays,
             function_sources,
             module_environment,

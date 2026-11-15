@@ -2273,7 +2273,7 @@ fn minor_collections_trace_changed_program_roots_until_promoted() {
         vm.collect_slow(&program, true);
         let constant = vm.heap.alloc_string("young constant".into());
         let weak = vm.heap.weak_handle(constant).unwrap();
-        vm.programs.set_constants(id, vec![constant]);
+        vm.programs.set_constants(id, vec![constant], 0);
         for _ in 0..=PromotionAge::OLDEST.minors() {
             vm.collect_slow(&program, false);
             assert_eq!(vm.heap.weak_value(weak), Some(constant), "{age:?}");

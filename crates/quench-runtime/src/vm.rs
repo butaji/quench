@@ -3178,7 +3178,7 @@ impl<H: Host> Vm<H> {
         }
     }
     fn materialize_program_constants(&mut self, id: ProgramId, program: &ResidualProgram) {
-        let mut constants = Vec::with_capacity(program.constants.capacity());
+        let mut constants = Vec::with_capacity(program.constants.len());
         // Equal string constants share one cell, as engines intern literals: a string is an
         // immutable primitive, so which cell holds it is unobservable, and `===` between
         // literals from different sites then decides by identity before comparing text.
@@ -3200,7 +3200,7 @@ impl<H: Host> Vm<H> {
             };
             constants.push(value);
         }
-        self.programs.set_constants(id, constants);
+        self.programs.set_constants(id, constants, program.constants.capacity() - program.constants.len());
         // Lane views carry constants, so call targets naming the old views are stale.
         self.lane_stack.clear_script_targets();
         if id == self.active_program {
