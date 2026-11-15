@@ -40,6 +40,7 @@ pub(crate) mod ic;
 pub(crate) mod object;
 pub(crate) mod store;
 pub(crate) mod slot_store;
+pub(crate) mod integer_field;
 pub(crate) mod strings;
 pub(crate) mod holder;
 pub(crate) mod call; pub(crate) mod frame;

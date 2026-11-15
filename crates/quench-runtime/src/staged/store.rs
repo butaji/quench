@@ -18,7 +18,7 @@ const FIRST_CONSTANT_CODE: u64 = crate::value::NARROW_HEAP_FAMILIES as u64;
 /// A bit mask's complement in the low word: the upper word of a value.
 const UPPER_WORD: u64 = !(u32::MAX as u64);
 /// Bytes in one half of a packed payload word.
-const HALF_BYTES: u64 = std::mem::size_of::<u32>() as u64;
+pub(crate) const HALF_BYTES: u64 = std::mem::size_of::<u32>() as u64;
 
 /// The word a value that has no narrow form (a Number, a wide reference) yields.
 const NOT_NARROW: u64 = u64::MAX;
@@ -31,19 +31,25 @@ fn narrow_form<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
     let upper = stage.and_imm(value, UPPER_WORD);
     let is_int = stage.eq_imm(upper, ValueLayout::INT_TAG);
     stage.choose(is_int, |stage| {
-        // An integer fits where its biased low word is below the span.
-        let lower = stage.and_imm(value, LOWER_WORD);
-        let span = 1_u64 << NarrowLayout::INTEGER_BITS;
-        let biased = stage.add_imm(lower, span >> 1);
-        let biased = stage.and_imm(biased, LOWER_WORD);
-        let over = stage.ugt_imm(biased, span - 1);
-        let fits = stage.not(over);
-        let shifted = stage.mul_imm(lower, 1_u64 << NarrowLayout::CODE_SHIFT);
-        let shifted = stage.and_imm(shifted, LOWER_WORD);
-        let integer = stage.or_imm(shifted, u64::from(NarrowLayout::INTEGER_FLAG));
+        let (integer, fits) = narrow_integer(stage, value);
         let refused = stage.constant(NOT_NARROW);
         stage.select(fits, integer, refused)
     }, |stage| reference_form(stage, value, upper))
+}
+
+/// The narrow form of the int32 in the low word of `value`, and whether it fits: an integer
+/// fits where its biased low word is below the span.
+#[inline(always)]
+pub(crate) fn narrow_integer<S: Stage>(stage: &mut S, value: S::Word) -> (S::Word, S::Cond) {
+    let lower = stage.and_imm(value, LOWER_WORD);
+    let span = 1_u64 << NarrowLayout::INTEGER_BITS;
+    let biased = stage.add_imm(lower, span >> 1);
+    let biased = stage.and_imm(biased, LOWER_WORD);
+    let over = stage.ugt_imm(biased, span - 1);
+    let fits = stage.not(over);
+    let shifted = stage.mul_imm(lower, 1_u64 << NarrowLayout::CODE_SHIFT);
+    let shifted = stage.and_imm(shifted, LOWER_WORD);
+    (stage.or_imm(shifted, u64::from(NarrowLayout::INTEGER_FLAG)), fits)
 }
 
 /// `narrow_form` of a value that is no integer: its code is its family bits, a constant's

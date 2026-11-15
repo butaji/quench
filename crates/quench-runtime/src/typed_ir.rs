@@ -9,7 +9,7 @@
 
 use crate::{Value, ValueType};
 
-mod int_range;
+mod int_range; pub(crate) mod loop_ints; pub(crate) mod counted_loop;
 mod representation;
 pub(crate) use representation::Representation;
 mod slot_type;

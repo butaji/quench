@@ -249,3 +249,28 @@ fn staged_int32_remainder_is_the_number_remainder_or_leaves() {
         }
     }
 }
+
+/// The truncation island `ToInt32(addend ± factor * k)` is the wrapping int32 operations for
+/// every int32 `addend` and `factor` and every exact `k`: the Number product and sum it
+/// truncates are exact binary64 integers.
+#[test]
+fn the_truncation_island_is_the_number_truncation_for_exact_factors() {
+    use crate::staged::numeric::scaled_sum;
+    use crate::typed_ir::loop_ints::{exact_factor, EXACT_FACTOR_BOUND};
+    let ints = [0, 1, -1, 2, 7, i32::MAX, i32::MIN, i32::MAX - 1, i32::MIN + 1, 1 << 30, -(1 << 30), 123_456_789, -987_654_321];
+    let bound = EXACT_FACTOR_BOUND as i32;
+    let constants = [0, 1, -1, 3, -3, 5, 1_000_003, bound - 1, 1 - bound, bound / 2, -bound / 2];
+    for operation in [NumberArithmetic::Add, NumberArithmetic::Subtract] {
+        for scaled_first in [false, true] {
+            for addend in ints { for factor in ints { for constant in constants {
+                assert!(exact_factor(constant));
+                let product = f64::from(factor) * f64::from(constant);
+                let (left, right) = if scaled_first { (product, f64::from(addend)) } else { (f64::from(addend), product) };
+                let exact = if operation == NumberArithmetic::Add { left + right } else { left - right };
+                assert_eq!(scaled_sum(operation, scaled_first, addend, factor, constant), exact as i64 as i32,
+                    "{operation:?} {addend} {factor} {constant} {scaled_first}");
+            }}}
+        }
+    }
+    assert!(!exact_factor(bound) && !exact_factor(-bound) && !exact_factor(i32::MIN));
+}

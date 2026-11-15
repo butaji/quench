@@ -261,6 +261,13 @@ pub(crate) fn decode_narrow<S: Stage>(stage: &mut S, narrow: S::Word) -> S::Word
     decode_narrow_through(stage, narrow, upper_words)
 }
 
+/// The int32 word a narrow integer encodes (the integer arm of `decode_narrow`), zero-extended:
+/// its code shifted down. The reads of a slot a region proved holds an integer take it alone.
+#[inline(always)]
+pub(crate) fn decode_narrow_integer<S: Stage>(stage: &mut S, narrow: S::Word) -> S::Word {
+    stage.sar32_imm(narrow, NarrowLayout::CODE_SHIFT)
+}
+
 /// `decode_narrow` with the reference codes' upper words at `upper_words`, a copy of
 /// `NarrowLayout::upper_words` (an ahead-of-time image links its own).
 #[inline(always)]
@@ -268,7 +275,7 @@ pub(crate) fn decode_narrow_through<S: Stage>(stage: &mut S, narrow: S::Word, up
     let flag = stage.and_imm(narrow, u64::from(NarrowLayout::INTEGER_FLAG));
     let integer = stage.ne_imm(flag, 0u32);
     stage.choose(integer, |stage| {
-        let shifted = stage.sar32_imm(narrow, NarrowLayout::CODE_SHIFT);
+        let shifted = decode_narrow_integer(stage, narrow);
         stage.or_imm(shifted, ValueLayout::INT_TAG)
     }, |stage| {
         let code = stage.shr_imm(narrow, NarrowLayout::CODE_SHIFT);

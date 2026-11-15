@@ -136,6 +136,8 @@ union LaneOperand {
     site: *const LoopSite,
     /// The first record of a vector region: the region, which the view owns.
     region: *const vector_region::VectorRegion,
+    /// A counted loop's update record: its proved region (`region_state`), which the view owns.
+    int_region: *const super::proved_region::Region,
 }
 
 /// A `GetField` record's operand: its immediate, and the exact receiver shape its own-field
@@ -326,6 +328,7 @@ pub(super) struct LaneView {
     /// first resolution: every closure of the function shares them.
     target_body: std::cell::OnceCell<TargetBody>,
     _string_case_filters: Box<[string_case_filter::StringCaseFilter]>,
+    pub(super) _regions: Box<[super::proved_region::Region]>,
     /// The window of an environment activation, when its local and closure records also run
     /// in one (`specialize_environment_window`).
     environment_window: Option<EnvironmentWindow>,
@@ -2727,7 +2730,7 @@ lane_handler! {
 }
 
 #[path = "dispatch_fast/lane_frame.rs"]
-mod lane_frame;
+mod lane_frame; mod region_state; mod int_region; mod field_region;
 mod local_fields;
 use local_fields::local_field_handler;
 mod loop_body;
@@ -19567,11 +19570,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_proved_arrays::<H>(&decoded, &mut records);
         specialize_array_literals::<H>(&mut records);
     }
-    let min_run = if closes_loop(&decoded, &exits) {
-        LANE_ENTRY_MIN_RUN
-    } else {
-        LANE_ENTRY_MIN_CALL_RUN
-    };
+    let min_run = if closes_loop(&decoded, &exits) { LANE_ENTRY_MIN_RUN } else { LANE_ENTRY_MIN_CALL_RUN };
     // A resumed JavaScript loop body's straight tail jumps back to its head, so its run
     // continues there; a Wasm body resumes nowhere, and following its jumps only made more
     // of its PCs entries, whose lane runs a `return_call` chain left at once (TOD-19:
@@ -19583,7 +19582,7 @@ fn derive_lane_view<'live, H: Host>(
             entries[pc / u64::BITS as usize] |= 1 << (pc % u64::BITS as usize);
         }
     }
-    let entries = entries.into_boxed_slice();
+    let mut entries = entries.into_boxed_slice();
     let returns_from_entry = reads_accumulator.first() == Some(&false) && entry_run_returns(&decoded, &exits);
     let activation = ActivationShape::of(function);
     let hinted_records = |names: bool| -> Box<[u32]> {
@@ -19608,6 +19607,7 @@ fn derive_lane_view<'live, H: Host>(
         loop_at_backedge[site.backedge as usize] = index as u32;
     }
     LaneView {
+        _regions: region_state::install::<H>(first, &decoded, constants, live, &jump_targets, (loop_tier, wasm), &mut entries),
         records,
         entries,
         memory_register,

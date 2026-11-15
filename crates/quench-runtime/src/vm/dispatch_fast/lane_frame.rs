@@ -4,9 +4,14 @@ use super::*;
 use crate::bytecode::{Operand, Register};
 use crate::staged::{Concrete, Constant, Edge, Frame, NumberOperation, NumericFrame, Operation, Step};
 
+/// The window of a proved region (`region_state`): its int32 registers hold the int tag, which
+/// the region's entry proved once, so an int32 operand reads its payload unchecked and a result
+/// writes the payload alone. Where `LaneFrame`'s `ACC` names an accumulator field, this names none.
+pub(super) const ACC_PROVED: u8 = u8::MAX;
+
 /// The interpreter's frame: the live register file and the accumulator view a producer
 /// carries. `ACC` names the record's accumulator field (`read`).
-struct LaneFrame<const ACC: u8> {
+pub(super) struct LaneFrame<const ACC: u8> {
     registers: Registers,
     view: Carried,
     /// The activation's `this` (`LaneContext::this`): `Value::DELETED` where the lane does
@@ -19,7 +24,7 @@ struct LaneFrame<const ACC: u8> {
 impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame for an operation that reads no `this`.
     #[inline(always)]
-    fn new(registers: Registers, view: Carried) -> Self {
+    pub(super) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None }
     }
 
@@ -44,7 +49,8 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 
     #[inline(always)]
     fn write(&mut self, _stage: &mut Concrete, register: Register, value: u64, _fact: Self::Fact) {
-        self.registers.set(register, Value::from_bits(value));
+        if ACC == ACC_PROVED { self.registers.set_payload(register, value as u32) }
+        else { self.registers.set(register, Value::from_bits(value)) }
     }
 
     #[inline(always)]
@@ -105,26 +111,39 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 impl<const ACC: u8> crate::staged::GlobalFrame<Concrete> for LaneFrame<ACC> {}
 
 impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
+    #[inline(always)]
     fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
+        if ACC == ACC_PROVED {
+            // SAFETY: a proved region names registers only (`int_region`'s units).
+            return u64::from(self.registers.payload(unsafe { operand.register_index().unwrap_unchecked() }))
+        }
         let register = operand.register_index().expect("a staged numeric operand is a register");
         u64::from(Value::from_bits(self.read(stage, register)).as_int().expect("a proved int operand") as u32)
     }
 
+    #[inline(always)]
     fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
         let register = operand.register_index().expect("a staged numeric operand is a register");
         Value::from_bits(self.read(stage, register)).as_number().expect("a proved Number operand").to_bits()
     }
 
+    #[inline(always)]
     fn prove_number(&mut self, stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
+        if ACC == ACC_PROVED { return Some(()) }
         Value::from_bits(self.read(stage, register)).as_number().map(|_| ())
     }
 
+    #[inline(always)]
     fn int_result(&mut self, _stage: &mut Concrete, word: u64) -> u64 {
+        if ACC == ACC_PROVED { return word }
         Value::integer(word as u32 as i32).to_bits()
     }
 
+    #[inline(always)]
     fn miss(&self) {}
+    #[inline(always)]
     fn int_fact(&self) {}
+    #[inline(always)]
     fn number_fact(&self) {}
 }
 

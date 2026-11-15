@@ -420,6 +420,5 @@ pub(super) fn sample_array<H: Host>(vm: &Vm<H>, value: Value) -> Option<crate::t
 /// each with the range its value gives the entry (`IntRange::entering`): an observation the
 /// compiled code's entry contract checks, as `number_arrays`'.
 pub(super) fn int_entries(r: Registers, region: &LoopRegion) -> Vec<(Register, crate::typed_ir::IntRange)> {
-    region.entry_registers().filter_map(|register| r.get(register).as_int()
-        .map(|value| (register, crate::typed_ir::IntRange::entering(value)))).collect()
+    crate::typed_ir::loop_ints::entering(region.entry_registers(), |register| r.get(register))
 }

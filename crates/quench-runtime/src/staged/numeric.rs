@@ -179,6 +179,7 @@ fn bitwise_not<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F
 }
 
 /// A relation of two operands in `domain`; its predicate word.
+#[inline(always)]
 fn relation<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     left: Operand, right: Operand, relation: NumberRelation, domain: Domain) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
@@ -191,6 +192,7 @@ fn relation<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 }
 
 /// Arithmetic of two operands in `domain`; the result in `domain` or widened to binary64.
+#[inline(always)]
 fn arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left: Operand, right: Operand,
     operation: NumberArithmetic, domain: Domain, overflow: Overflow) -> Step<S::Word, F::Control> {
@@ -256,6 +258,7 @@ fn to_numeric<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 }
 
 /// `source ± 1` (`++`/`--`) of an int32 `source`: the int32 sum or difference with one.
+#[inline(always)]
 fn increment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, source: Register, decrement: bool,
     overflow: Overflow) -> Step<S::Word, F::Control> {
@@ -267,6 +270,7 @@ fn increment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 }
 
 #[allow(clippy::too_many_arguments)]
+#[inline(always)]
 fn int_arithmetic_result<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left_value: S::Word, right_value: S::Word,
     operation: NumberArithmetic, overflow: Overflow, miss: S::Miss) -> Step<S::Word, F::Control> {
@@ -300,6 +304,7 @@ fn int_arithmetic_result<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fra
 
 /// `-0` a zero int32 product yields, which no int32 holds: a zero result with a negative
 /// sign on either factor.
+#[inline(always)]
 fn negative_zero<S: NumericStage>(stage: &mut S, operation: NumberArithmetic,
     left: S::Word, right: S::Word, result: S::Word) -> Option<S::Cond> {
     (operation == NumberArithmetic::Multiply).then(|| {
@@ -310,6 +315,7 @@ fn negative_zero<S: NumericStage>(stage: &mut S, operation: NumberArithmetic,
     })
 }
 
+#[inline(always)]
 fn int32(word: u64) -> i32 { word as u32 as i32 }
 
 /// The interpreter's wrapping int32 result, from the same rows as every arithmetic stage.
@@ -336,7 +342,19 @@ macro_rules! wrapping_int32_arithmetic {
 }
 crate::vm::operations::number_arithmetic_rows!(wrapping_int32_arithmetic);
 
+/// `ToInt32(addend ± factor * constant)` of int32s, `constant` an exact factor (`exact_factor`), with the
+/// product on the left of the sum where `scaled_first`: the Number product and sum are exact,
+/// so their truncation is the wrapping int32 operations (`Overflow::Wrap`), and a negative
+/// zero product vanishes in the sum with an int32.
+#[inline(always)]
+pub(crate) fn scaled_sum(operation: NumberArithmetic, scaled_first: bool, addend: i32, factor: i32, constant: i32) -> i32 {
+    let scaled = NumberArithmetic::Multiply.apply(&mut WrappingInt32Stage, factor, constant);
+    let (left, right) = if scaled_first { (scaled, addend) } else { (addend, scaled) };
+    operation.apply(&mut WrappingInt32Stage, left, right)
+}
+
 impl NumericStage for super::Concrete {
+    #[inline(always)]
     fn relation(&mut self, relation: NumberRelation, domain: Domain,
         left: u64, right: u64) -> bool {
         match domain {
@@ -345,45 +363,61 @@ impl NumericStage for super::Concrete {
                 f64::from_bits(left), f64::from_bits(right)),
         }
     }
+    #[inline(always)]
     fn float_arithmetic(&mut self, operation: NumberArithmetic, left: u64, right: u64) -> u64 {
         operation.apply(&mut NumberF64Stage,
             f64::from_bits(left), f64::from_bits(right)).to_bits()
     }
+    #[inline(always)]
     fn float_negate(&mut self, value: u64) -> u64 {
         (-f64::from_bits(value)).to_bits()
     }
+    #[inline(always)]
     fn int_arithmetic(&mut self, operation: NumberArithmetic,
         left: u64, right: u64) -> (u64, bool) {
         let (left, right) = (int32(left), int32(right));
-        let checked = operation.apply(&mut CheckedInt32Stage, left, right);
-        let overflowed = checked.is_none();
-        let result = checked.unwrap_or_else(|| operation.apply(&mut WrappingInt32Stage, left, right));
-        (u64::from(result as u32), overflowed)
+        let overflowed = operation.apply(&mut CheckedInt32Stage, left, right).is_none();
+        (u64::from(operation.apply(&mut WrappingInt32Stage, left, right) as u32), overflowed)
     }
+    #[inline(always)]
     fn float_remainder(&mut self, left: u64, right: u64) -> u64 {
         crate::vm::operations::number_remainder(f64::from_bits(left), f64::from_bits(right)).to_bits()
     }
+    #[inline(always)]
     fn int_remainder(&mut self, left: u64, right: u64) -> u64 {
         u64::from(int32(left).wrapping_rem(int32(right)) as u32)
     }
+    #[inline(always)]
     fn float_unary(&mut self, operation: super::math::FloatUnary, value: u64) -> u64 {
         super::math::float_unary(operation, f64::from_bits(value)).to_bits()
     }
+    #[inline(always)]
     fn float_extreme(&mut self, maximum: bool, left: u64, right: u64) -> u64 {
         super::math::float_extreme(maximum, f64::from_bits(left), f64::from_bits(right)).to_bits()
     }
+    #[inline(always)]
     fn int_multiply(&mut self, left: u64, right: u64) -> u64 {
         u64::from(super::math::int_multiply(int32(left), int32(right)) as u32)
     }
+    #[inline(always)]
     fn i32_constant(&mut self, value: i32) -> u64 { u64::from(value as u32) }
+    #[inline(always)]
     fn f64_constant(&mut self, value: f64) -> u64 { value.to_bits() }
+    #[inline(always)]
     fn narrow(&mut self, value: u64) -> u64 { u64::from(value as u32) }
+    #[inline(always)]
     fn i32_to_f64(&mut self, value: u64) -> u64 { f64::from(int32(value)).to_bits() }
+    #[inline(always)]
     fn i32_is_zero(&mut self, value: u64) -> bool { int32(value) == 0 }
+    #[inline(always)]
     fn i32_is_negative(&mut self, value: u64) -> bool { int32(value) < 0 }
+    #[inline(always)]
     fn both(&mut self, a: bool, b: bool) -> bool { a && b }
+    #[inline(always)]
     fn either(&mut self, a: bool, b: bool) -> bool { a || b }
+    #[inline(always)]
     fn cond_word(&mut self, cond: bool) -> u64 { u64::from(cond) }
+    #[inline(always)]
     fn guard_false(&mut self, cond: bool, _miss: ()) -> Option<()> { (!cond).then_some(()) }
 }
 

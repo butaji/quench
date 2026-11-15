@@ -161,6 +161,10 @@ pub(in crate::vm) struct Wasm {
 /// the generic case: the width of every polymorphic cache and of each guarded switch a tier
 /// specializes a site into. One bound for every lattice of site feedback.
 pub(in crate::vm) const POLYMORPHISM: usize = 4;
+/// The entries a proved region (`dispatch_fast::region_state`) may fail to prove its facts at
+/// before its header runs the generic test for good: each failure demotes its records, so a
+/// loop whose entries alternate in kind pays at most this many demotions.
+pub(in crate::vm) const REGION_DECLINES: u8 = 4;
 /// What a speculated fact costs and saves, in nanoseconds, from which a site's break-even rate
 /// derives (`site_posterior::break_even`) with the posterior's quantile (`tier-decision-rule-v1`
 /// section 4). Per execution a speculating read pays `guard_read_ns` when the fact holds and

@@ -1,6 +1,7 @@
 //! Conditional numeric refinement of one admitted packed field. The loop's
 //! existing alias plan owns object identity; this analysis owns numeric bounds.
 use super::*;
+use crate::typed_ir::loop_ints::{effective_relation, relation_ranges};
 use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 
 /// What ranges cannot say: a register's relation to an array's `length`, naming the
@@ -128,32 +129,6 @@ impl State {
     }
 }
 
-/// The relation an edge proves of its operands: `relation` where `truth`, else its negation.
-fn effective_relation(relation: NumberRelation, truth: bool) -> NumberRelation {
-    use NumberRelation::*;
-    if truth { return relation; }
-    match relation {
-        Equal => NotEqual, NotEqual => Equal, LessThan => GreaterEqual,
-        LessEqual => GreaterThan, GreaterThan => LessEqual, GreaterEqual => LessThan,
-    }
-}
-
-fn relation_ranges(relation: NumberRelation, truth: bool, left: IntRange, right: IntRange) -> Option<(IntRange, IntRange)> {
-    use NumberRelation::*;
-    let relation = effective_relation(relation, truth);
-    match relation {
-        Equal => { let common = left.intersect(right)?; Some((common, common)) }
-        NotEqual => (left != right || left.min != left.max).then_some((left, right)),
-        GreaterThan | GreaterEqual => relation_ranges(
-            if relation == GreaterThan { LessThan } else { LessEqual }, true, right, left).map(|(right, left)| (left, right)),
-        LessThan | LessEqual => {
-            let strict = i64::from(relation == LessThan);
-            Some((IntRange::bounds(i64::from(left.min), i64::from(left.max).min(i64::from(right.max) - strict))?,
-                IntRange::bounds(i64::from(right.min).max(i64::from(left.min) + strict), i64::from(right.max))?))
-        }
-    }
-}
-
 pub(super) fn result(state: &State, program: &ResidualProgram, instruction: WideInstruction) -> Option<IntRange> {
     if instruction.result_flags() != 0 { return None; }
     if instruction.op().is_load_const() {
@@ -263,29 +238,5 @@ mod tests {
         state.join(other);
         assert_eq!(state.ranges[0], Some(IntRange { min: -1, max: 7 }));
         assert_eq!(state.field, IntRange::singleton(0));
-    }
-
-    #[test]
-    fn relation_edges_overapproximate_all_signed_integer_outcomes() {
-        use NumberRelation::*;
-        for min in -3..=3 { for max in min..=3 { for other_min in -3..=3 { for other_max in other_min..=3 {
-            let left = IntRange { min, max };
-            let right = IntRange { min: other_min, max: other_max };
-            for relation in [Equal, NotEqual, LessThan, LessEqual, GreaterThan, GreaterEqual] {
-                for truth in [false, true] {
-                    let refined = relation_ranges(relation, truth, left, right);
-                    for x in min..=max { for y in other_min..=other_max {
-                        let actual = match relation { Equal => x == y, NotEqual => x != y,
-                            LessThan => x < y, LessEqual => x <= y, GreaterThan => x > y, GreaterEqual => x >= y };
-                        if actual == truth {
-                            let (left, right) = refined.expect("reachable edge");
-                            assert!(left.contains(IntRange::singleton(x)) && right.contains(IntRange::singleton(y)));
-                        }
-                    }}
-                }
-            }
-        }}}}
-        assert!(relation_ranges(LessThan, true, IntRange::singleton(i32::MIN), IntRange::singleton(i32::MIN)).is_none());
-        assert!(relation_ranges(GreaterThan, true, IntRange::singleton(i32::MAX), IntRange::singleton(i32::MAX)).is_none());
     }
 }
