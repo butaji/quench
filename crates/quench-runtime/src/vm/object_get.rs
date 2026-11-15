@@ -515,24 +515,25 @@ impl<H: Host> Vm<H> {
     /// (`symbol_load_proofs`), or by `prove_symbol_load`.
     #[inline(always)]
     fn plain_proved_get(&mut self, object: Value, key: PropertyKey) -> Option<Value> {
-        if let Some(data) = self.heap.ordinary_object(object)
-            && let Some(key32) = key.key32()
-            && let Some(slot) = self.symbol_load_proofs.own_slot(data.layout_id(), key32)
-        {
+        let Some(data) = self.heap.ordinary_object(object) else { return self.plain_proved_get_past_own(object, key, None) };
+        let probed = key.key32().and_then(|key32| self.symbol_load_proofs.word(data.layout_id(), key32));
+        if let Some(word) = probed.filter(|word| word.kind() == super::symbol_load_proof::KIND_OWN) {
             // SAFETY: the proof recorded this slot for an own data property of this layout's shape.
-            return Some(unsafe { self.heap.property_get_unchecked(data, slot as usize) });
+            return Some(unsafe { self.heap.property_get_unchecked(data, word.slot()) });
         }
-        self.plain_proved_get_past_own(object, key)
+        self.plain_proved_get_past_own(object, key, probed.map(|word| (data.layout_id(), word)))
     }
 
-    /// `plain_proved_get` past an own-slot hit: the other answers, else the proving walk.
+    /// `plain_proved_get` past an own-slot hit, given the entry its probe found for the
+    /// receiver's layout (`probed`): the other answers, else the proving walk.
     #[inline(never)]
-    fn plain_proved_get_past_own(&mut self, object: Value, key: PropertyKey) -> Option<Value> {
+    fn plain_proved_get_past_own(&mut self, object: Value, key: PropertyKey, probed: Option<(u32, super::symbol_load_proof::FactWord)>) -> Option<Value> {
         use super::symbol_load_proof::{KIND_ABSENT, KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT, KIND_INHERITED, KIND_OWN};
         let data = self.proved_read_receiver(object, key)?;
         let epoch = crate::heap::prototype_layout_epoch();
         if let Some(key32) = key.key32()
-            && let Some(word) = self.symbol_load_proofs.word(data.layout_id(), key32)
+            && let Some(word) = probed.filter(|&(layout, _)| layout == data.layout_id()).map(|(_, word)| word)
+                .or_else(|| self.symbol_load_proofs.word(data.layout_id(), key32))
         {
             // A proof's layout is an ordinary one, so the receiver is no namespace, deferred
             // module or arguments object; side descriptors could name the key outside its shape.

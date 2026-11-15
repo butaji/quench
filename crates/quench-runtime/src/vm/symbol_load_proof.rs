@@ -210,17 +210,9 @@ impl SymbolLoadProofs {
         FactEntry::decode(entry.answer, epoch as u32)
     }
 
-    /// The own data slot a proof gives `key32` on a receiver of `layout`: the hit path every
-    /// generic load tries first, one tag compare and one kind compare.
-    #[inline(always)]
-    pub(super) fn own_slot(&self, layout: u32, key32: u32) -> Option<u32> {
-        let entry = self.entries.slot(Self::index(layout, key32))?.get();
-        (entry.tag == FactEntry::tag(layout, key32) && (entry.answer >> 28) & 0xf == KIND_OWN)
-            .then_some((entry.answer & u64::from(SLOT_LIMIT - 1)) as u32)
-    }
-
     /// The answer word of the entry for `key32` on a receiver of `layout`, unchecked for its
-    /// epoch (`FactWord::current`).
+    /// epoch (`FactWord::current`): the one probe a generic load makes, an own slot answered
+    /// from it at once.
     #[inline(always)]
     pub(super) fn word(&self, layout: u32, key32: u32) -> Option<FactWord> {
         let entry = self.entries.slot(Self::index(layout, key32))?.get();
