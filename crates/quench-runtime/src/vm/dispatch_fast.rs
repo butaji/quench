@@ -21747,7 +21747,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_array_literals::<H>(&mut records);
     }
     // Loop kernels take their test records last, keeping each record's final handler.
-    let loop_kernels = if !wasm && !loop_tier {
+    let loop_kernels = if !wasm && (!loop_tier || crate::jit_mode::base_only()) {
         loop_kernel::install_loop_kernels::<H>(&decoded, constants, function, &exits, &mut records)
     } else {
         Box::default()
@@ -21973,6 +21973,11 @@ fn install_loop_sites<'live, H: Host>(
         })
         .collect();
     let mut sites = sites;
+    // BaseJIT's stencils run a loop the interpreter's kernel takes slower than the kernel does:
+    // under `--b-jit` that loop keeps no site, so its kernel runs it (`install_loop_kernels`).
+    if crate::jit_mode::base_only() {
+        sites.retain(|(pc, site)| !loop_kernel::LoopKernel::accepts(decoded, constants, function, site.header as usize, *pc));
+    }
     let headers: Vec<u32> = sites.iter().map(|(_, site)| site.header).collect();
     for (pc, site) in &mut sites {
         // The header names its site by the distance to the site's jump (`lane_header_site`).
