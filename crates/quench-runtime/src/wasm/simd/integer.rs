@@ -325,6 +325,20 @@ pub(super) fn pairwise_add(value: u128, width: u32, sign: Signedness) -> WasmVal
 /// the vector region inlines it.
 #[inline(always)]
 pub(super) fn dot(left: u128, right: u128) -> WasmValue {
+    // x86-64 always has SSE2, whose `pmaddwd` is exactly this operation: each i32 lane the
+    // wrapping sum of two i16 products (only -32768 * -32768 twice wraps, as here).
+    #[cfg(target_arch = "x86_64")]
+    {
+        use std::arch::x86_64::{__m128i, _mm_madd_epi16};
+        // SAFETY: `__m128i` and `u128` are 16 plain bytes; SSE2 is part of x86-64.
+        return WasmValue::V128(unsafe {
+            std::mem::transmute::<__m128i, u128>(_mm_madd_epi16(
+                std::mem::transmute::<u128, __m128i>(left),
+                std::mem::transmute::<u128, __m128i>(right),
+            ))
+        });
+    }
+    #[allow(unreachable_code)]
     // The i16 lanes as arrays, so each sum of two products is plain lane arithmetic.
     let lanes = |bits: u128| {
         let bytes = bits.to_le_bytes();
