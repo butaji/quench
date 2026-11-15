@@ -534,6 +534,29 @@ impl<H: Host> Vm<H> {
         (!values.iter().any(|value| value.is_deleted())).then(|| values.to_vec())
     }
 
+    /// The length of `list` where CreateListFromArrayLike reads its first elements as they
+    /// are stored: a dense array without holes, or an arguments object that keeps its
+    /// template's data `length` (`arguments_object_length`), no indexed descriptor and no
+    /// hole below it. A mapped parameter's element holds the parameter's value, as its loads
+    /// and stores keep it. `None` for any other list, whose reads may run guest code.
+    pub(super) fn dense_list_length(&self, list: Value) -> Option<usize> {
+        let array = self.heap.array(list)?;
+        if self.heap.sparse_length(list).is_some() {
+            return None;
+        }
+        let elements = array.elements().as_slice();
+        let length = if array.is_arguments_object() {
+            if array.has_indexed_descriptors() {
+                return None;
+            }
+            usize::try_from(self.arguments_object_length(list)?.as_int()?).ok()?
+        } else {
+            elements.len()
+        };
+        let values = elements.get(..length)?;
+        (!values.iter().any(|value| value.is_deleted())).then_some(length)
+    }
+
     #[quench_macros::operation_semantics(resolve_step_operation)]
     #[inline(always)]
     pub(super) fn step(

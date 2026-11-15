@@ -58,16 +58,7 @@ pub(super) fn lane_list_activation<H: Host>(
     listed: bool,
 ) -> Option<Result<(Registers, Ip), Ip>> {
     let vm = unsafe { vm(cx) };
-    let dense = |vm: &Vm<H>| {
-        vm.heap.array(list).is_some_and(|array| {
-            !array.is_arguments_object()
-                && vm.heap.sparse_length(list).is_none()
-                && !array.elements().as_slice().iter().any(|value| value.is_deleted())
-        })
-    };
-    if listed && !dense(vm) {
-        return None;
-    }
+    let length = if listed { vm.dense_list_length(list)? } else { 0 };
     // A bound function or `Function.prototype.call` forwards the list to the function it
     // names (`Vm::forwarded_call`), which a forwarded call activates; the elements are copied
     // out first, as a frame call's are.
@@ -75,11 +66,7 @@ pub(super) fn lane_list_activation<H: Host>(
         vm.heap.function(callee),
         Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall | Native::FunctionCall), .. })
     ) {
-        let elements = if listed {
-            vm.heap.array_elements(list)?.as_slice().iter().copied().collect()
-        } else {
-            smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::new()
-        };
+        let elements: smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]> = vm.heap.array_elements(list).map_or(&[][..], |elements| &elements.as_slice()[..length]).iter().copied().collect();
         let Some(super::function::Forwarded { callee: target, receiver, args, kind, .. }) = vm.forwarded_call(callee, receiver, elements) else {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::record_detail("applied forwarding declined".into());
@@ -101,23 +88,19 @@ pub(super) fn lane_list_activation<H: Host>(
         };
         return Some(lane_activate_passed(cx, r, ip, &activated, args, this));
     }
-    let length = if listed { vm.heap.array(list).map_or(0, |array| array.elements().len()) } else { 0 };
     let Some(target) = lane_passed_target(cx, callee, length) else {
         // A user function that needs a frame takes it in place (`lane_passed_frame_call`), with
         // the elements copied out first: making the caller's
         // activations frames moves no heap array, but the callee may change the list.
-        let elements = if listed {
-            vm.heap.array_elements(list)?.as_slice().iter().copied().collect()
-        } else {
-            smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::new()
-        };
+        let elements: smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]> =
+            vm.heap.array_elements(list).map_or(&[][..], |elements| &elements.as_slice()[..length]).iter().copied().collect();
         return Some(Err(lane_passed_frame_call(cx, r, ip, i, callee, receiver, FrameCallArguments::List(&elements)).into_loop()));
     };
     let Some(this) = lane_call_this(vm, &target, receiver) else {
         return Some(Err(exit(ip)));
     };
     // Read after the resolution above, which runs no guest code but may allocate.
-    let elements: &[Value] = if listed { vm.heap.array_elements(list)?.as_slice() } else { &[] };
+    let elements: &[Value] = if listed { &vm.heap.array_elements(list)?.as_slice()[..length] } else { &[] };
     Some(lane_activate_passed(cx, r, ip, &target, elements, this))
 }
 
