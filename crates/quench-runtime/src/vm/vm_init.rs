@@ -129,6 +129,7 @@ impl<H: Host> Vm<H> {
             for_in: Default::default(),
             json_plain: Default::default(),
             species_slot_proof: Default::default(),
+            iterator_absence_proof: Default::default(),
             promise_species_proof: Default::default(),
             enumerable_keys: Default::default(),
             name_atom_memo: Default::default(),

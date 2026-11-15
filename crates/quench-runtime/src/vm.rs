@@ -178,6 +178,7 @@ mod property_definition;
 use group_by::GroupByKind;
 use property_definition::PropertyDefinitionKind;
 mod intact_fuses;
+mod iterator_proofs;
 mod iterators;
 mod json;
 mod method_cache;
@@ -2012,6 +2013,9 @@ pub(crate) struct Vm<H> {
     /// (`json::JsonPlainCache`).
     json_plain: json::JsonPlainCache,
     species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
+    /// That an iterator prototype's chain lacks a name (`Vm::iterator_lacks_property`): the
+    /// prototype, the name (`PropertyKey::key32`) and the `prototype_layout_epoch` it was proved under.
+    iterator_absence_proof: std::cell::Cell<Option<(Value, u32, u64)>>,
     /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
     promise_species_proof: std::cell::RefCell<Option<promise::PromiseSpeciesProof>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
@@ -3044,6 +3048,7 @@ impl<H: Host> Vm<H> {
         self.array_species_proof = None;
         self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);
+        self.iterator_absence_proof.set(None);
         self.promise_species_proof.take();
         self.heap.dependencies_mut().retire_all();
         self.enumerable_keys.clear(); self.heap.clear_string_atoms(); self.concat_memo.clear();

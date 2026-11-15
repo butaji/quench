@@ -3491,6 +3491,36 @@ script_handler! {
 }
 
 script_handler! {
+    /// `GetIterator` of a plain array whose iteration is intact (`Vm::array_iteration_intact`):
+    /// the intrinsic values iterator, made without looking up or calling `@@iterator`; any other
+    /// operand takes the general step in place.
+    fn lane_get_iterator<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let source = r.get(i.b);
+        if !vm.array_iteration_intact(source) {
+            sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
+        }
+        let iterator = vm.array_iterator_of(super::IteratorKind::ArrayValues, source);
+        note_allocation(vm);
+        r.set(i.a, iterator);
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `IteratorClose` of a built-in iterator whose chain lacks `return`
+    /// (`Vm::iterator_close_absent`), which ends with `undefined`; any other takes the general
+    /// step in place.
+    fn lane_iterator_close<>(cx, r, ip, i, view) {
+        if !(unsafe { vm(cx) }).iterator_close_absent(r.get(i.b)) {
+            sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
+        }
+        r.set(i.a, Value::UNDEFINED);
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
     /// `ToPropertyKey` of a string or symbol, which is itself, or of an integer, its decimal
     /// string; any other value, which may run guest code or format a float, takes the
     /// general step in place.
@@ -20134,16 +20164,26 @@ const fn private_element_handler<H: Host>(opcode: Op) -> Option<Handler> {
     }
 }
 
+/// The handlers of the iterator protocol's steps: an array's intrinsic iterator, a close
+/// that ends without a call, and the bookkeeping of the iterators a frame must close.
+const fn iterator_handler<H: Host>(opcode: Op) -> Option<Handler> {
+    match opcode.class() {
+        Class::GetIterator => Some(lane_get_iterator::<H>),
+        Class::IteratorClose => Some(lane_iterator_close::<H>),
+        Class::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
+        Class::RequireIteratorResult => Some(lane_require_iterator_result::<H>),
+        Class::IteratorCleanupPop => Some(lane_iterator_cleanup_pop::<H>),
+        _ => None,
+    }
+}
+
 /// Handlers that neither produce nor read the accumulator, apart from the
 /// branch tests, which read it.
 const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
         Class::StoreLocalPlain => Some(lane_store_local_plain::<H>),
         Class::StoreName => Some(lane_store_name_first::<H>),
-        Class::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
         Class::DefineArrayElement => Some(lane_define_array_element::<H>),
-        Class::RequireIteratorResult => Some(lane_require_iterator_result::<H>),
-        Class::IteratorCleanupPop => Some(lane_iterator_cleanup_pop::<H>),
         Class::StoreLocal | Class::StoreEnvLocal => Some(lane_store_local::<H>),
         Class::LoadThis => Some(lane_load_this::<H>),
         Class::LoadCallee => Some(lane_load_callee::<H>),
@@ -20159,6 +20199,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::DefineField => Some(lane_define_field::<H>),
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
         Class::CopyDataProperties => Some(lane_copy_data_properties::<H>),
+        _ if iterator_handler::<H>(opcode).is_some() => iterator_handler::<H>(opcode),
         _ if lane_steps_in_place(opcode) => Some(lane_general_step::<H>),
         Class::IncDec => Some(lane_inc_dec::<H, false>),
         _ if denoted_handler::<H>(opcode).is_some() => denoted_handler::<H>(opcode),

@@ -346,6 +346,7 @@ impl<H: Host> Vm<H> {
             for_in: _,
             json_plain: _,
             species_slot_proof: _,
+            iterator_absence_proof: _,
             promise_species_proof: _,
             function_name_shapes: _,
             typeof_names: _,
