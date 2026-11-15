@@ -14267,7 +14267,7 @@ script_handler! {
     #[inline(never)]
     fn lane_generator_step<>(cx, r, ip, i, view) {
         let (method, iterator) = (r.get(i.b), r.get(i.c));
-        if let Some(next) = lane_resume_generator_frame(cx, ip, i, method, iterator) {
+        if let Some(next) = lane_resume_generator_frame(cx, ip, i, method, iterator, None) {
             return next;
         }
         let value = lane_call_from_frame(cx, ip, |vm, code| vm.generator_iteration_step(code, method, iterator));
@@ -14292,8 +14292,17 @@ script_handler! {
         let kind = vm.iteration_step(iterator, method);
         match kind {
             super::iterators::IterationStep::Array | super::iterators::IterationStep::Collection if reads_step => {}
-            // A generator's step resumes it in place, as `lane_iterator_step` makes it.
+            // A generator's step resumes it in place, as `lane_iterator_step` makes it; a yield
+            // the lane makes then writes the reads' registers itself (`StepReads`).
             super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
+                if reads_step {
+                    // SAFETY: the record lies in the running view.
+                    let pc = unsafe { ip.offset_from((*cx).base) } as usize;
+                    let reads = super::generator::StepReads { done: done_read.a, value: value_read.a, resume_pc: pc + form.records() };
+                    if let Some(next) = lane_resume_generator_frame(cx, ip, i, method, iterator, Some(reads)) {
+                        return next;
+                    }
+                }
                 sibling!(lane_generator_step::<H>, r, ip, Carried::script_in(cx, view))
             }
             _ => sibling!(lane_iterator_step::<H>, r, ip, Carried::script_in(cx, view)),
@@ -20545,6 +20554,7 @@ fn lane_resume_generator_frame<H: Host>(
     i: &LaneInstruction,
     method: Value,
     generator: Value,
+    reads: Option<super::generator::StepReads>,
 ) -> Option<Ip> {
     let vm = unsafe { vm(cx) };
     // A step that returns its result from the frame takes the native call.
@@ -20557,7 +20567,8 @@ fn lane_resume_generator_frame<H: Host>(
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     let destination = i.a & crate::bytecode::REGISTER_MASK;
     match vm.resume_generator_in_place(frame, call_pc + 1, method, generator, Value::UNDEFINED, true)? {
-        Ok((call_guard, resume)) => {
+        Ok((call_guard, mut resume)) => {
+            resume.reads = reads;
             // SAFETY: the general loop's pending calls outlive the lane run.
             unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
                 caller: frame,

@@ -32,6 +32,17 @@ script_handler! {
             delegated_result: None,
         };
         let resume = call.completion.take_generator().expect("a generator call");
+        if let Some(reads) = resume.reads {
+            // A for-of step's reads: the value and `done` go to their registers and the
+            // caller resumes past them, with no result object.
+            vm.suspend_in_loop_generator_yield(suspended, value, i.a & crate::bytecode::REGISTER_MASK);
+            drop(call.call_guard);
+            vm.active_registers = vm.frames[call.caller].registers.as_mut_ptr();
+            vm.write(call.caller, reads.done, Value::FALSE);
+            vm.write(call.caller, reads.value, value);
+            vm.frames[call.caller].pc = reads.resume_pc;
+            resume!(cx, lane_enter_script_frame(cx, call.caller))
+        }
         let result = vm.finish_in_loop_generator_step(suspended, resume, value, stop);
         drop(call.call_guard);
         vm.active_registers = vm.frames[call.caller].registers.as_mut_ptr();
