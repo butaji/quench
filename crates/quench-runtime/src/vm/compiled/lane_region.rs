@@ -527,6 +527,8 @@ struct Lowering<'a, 'f> {
     hoisted: BTreeMap<usize, LoopRead>,
     /// Loop-invariant array bases whose views their loop's entry proves (`loop_arrays`).
     loop_arrays: Vec<LoopArray>,
+    /// The shapes loops proved of their invariant receivers on their entering edges (`loop_receivers`).
+    loop_shapes: Vec<loop_receivers::LoopShape>,
     /// Whether no operation of the unit may move an array's backing or the array record table
     /// (`arrays_stay_put`), so the record table's base is read-only throughout.
     arrays_fixed: bool,
@@ -1618,7 +1620,7 @@ pub(super) fn lower(
         hoists: BTreeMap::new(),
         intrinsics: Vec::new(),
         hoisted: BTreeMap::new(),
-        loop_arrays: Vec::new(), arrays_fixed: false,
+        loop_arrays: Vec::new(), loop_shapes: Vec::new(), arrays_fixed: false,
         array_vars: BTreeMap::new(),
         views,
         loop_fields: Vec::new(),
@@ -1841,6 +1843,7 @@ pub(super) fn lower(
             lowering.switch_to(block, lowering.sealable.contains(pc));
             state = lowering.entry_state(pc, count);
             lowering.keep_shared_proofs(&mut state, pc);
+            lowering.seed_loop_shapes(&mut state, pc);
             reachable = true;
         }
         if !reachable {
@@ -4184,6 +4187,7 @@ mod tests;
 #[path = "lane_region/lowering_tests.rs"]
 mod lowering_tests;
 #[path = "lane_region/kept_shapes.rs"] mod kept_shapes;
+#[path = "lane_region/loop_receivers.rs"] mod loop_receivers;
 #[cfg(test)]
 #[path = "lane_region/slot_proof_tests.rs"]
 mod slot_proof_tests;

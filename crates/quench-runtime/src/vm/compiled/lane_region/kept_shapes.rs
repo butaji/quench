@@ -60,8 +60,9 @@ impl EmitFrame<'_> {
     fn hold_kept_shape(&mut self, builder: &mut FunctionBuilder<'_>, register: Register, miss: ir::Block) {
         let Some(shape) = self.state.proofs.kept_shapes.remove(&register) else { return };
         let fact = self.state.values[usize::from(register)];
-        // An unboxed register has no tagged view to keep (`headers::object_header`).
-        if fact.value.ty != Type::DIRECT_OBJECT_FAMILY || !fact.tagged.current() { return; }
+        // An unboxed register has no tagged view to keep (`headers::object_header`); a register
+        // whose type names a shape holds that one (`prove_shape`).
+        if fact.value.ty.object_shape().is_some() || fact.value.representation != Representation::Tagged || !fact.tagged.current() { return; }
         let Some(facts) = self.fields.as_mut() else { return };
         if facts.stable.hold_shape((builder, self.helpers), self.state, miss, shape).is_none() { return; }
         self.state.values[usize::from(register)] = RegisterFact { tagged: fact.tagged,
