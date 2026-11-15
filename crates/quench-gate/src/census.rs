@@ -4,13 +4,13 @@
 
 use crate::{config::Config, lint::LINT, process, runtime_tests, step::Verdict};
 
-const CENSUS_FLAG: &str = "--census";
+const LINT_CENSUS: &str = "--census";
 /// The runtime test that holds the tiers to the interpreter's opcode meanings.
 const HAND_SEMANTICS: &str = "tiers_derive_opcode_meaning_from_the_interpreter";
 
 pub fn run(config: &Config) -> Verdict {
     let lint = config.binary(LINT)?;
-    let census = process::run(config.command(lint).arg(CENSUS_FLAG))?;
+    let census = process::run(config.command(lint).arg(LINT_CENSUS))?;
     if !census.success {
         return Err(census.excerpt());
     }

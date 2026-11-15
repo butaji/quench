@@ -6,13 +6,13 @@
 use crate::{config::Config, process, step::Verdict};
 
 pub const LINT: &str = "quench-lint";
-const LOWER_FLAG: &str = "--lower";
+const LOWERING_FLAG: &str = "--lower";
 /// The prefixes `quench-lint --lower` reports each edit of the list under.
 const EDITS: [&str; 2] = ["lowered ", "dropped "];
 
 pub fn run(config: &Config) -> Verdict {
     let lint = config.binary(LINT)?;
-    let finished = process::run(config.command(lint).arg(LOWER_FLAG))?;
+    let finished = process::run(config.command(lint).arg(LOWERING_FLAG))?;
     if !finished.success {
         return Err(finished.excerpt());
     }

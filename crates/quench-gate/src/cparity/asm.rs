@@ -8,8 +8,8 @@ use crate::process;
 const OBJDUMP: &str = "objdump";
 /// Disassemble a raw binary as x86-64 in AT&T syntax, without the instruction bytes.
 const OBJDUMP_ARGS: [&str; 7] = ["-D", "-b", "binary", "-mi386:x86-64", "-M", "att", "--no-show-raw-insn"];
-const HEX: u32 = 16;
-const HEX_PREFIX: &str = "0x";
+const ADDRESS_RADIX: u32 = 16;
+const ADDRESS_RADIX_PREFIX: &str = "0x";
 const ADDRESS_END: char = ':';
 const JUMP_INITIAL: char = 'j';
 const UNCONDITIONAL_JUMP: &str = "jmp";
@@ -49,14 +49,14 @@ impl Instruction {
         if !self.mnemonic().starts_with(JUMP_INITIAL) {
             return None;
         }
-        let operand = self.operands().split_whitespace().next()?.strip_prefix(HEX_PREFIX)?;
-        u64::from_str_radix(operand, HEX).ok()
+        let operand = self.operands().split_whitespace().next()?.strip_prefix(ADDRESS_RADIX_PREFIX)?;
+        u64::from_str_radix(operand, ADDRESS_RADIX).ok()
     }
 }
 
 fn instruction(line: &str) -> Option<Instruction> {
     let (address, text) = line.trim().split_once(ADDRESS_END)?;
-    let address = u64::from_str_radix(address, HEX).ok()?;
+    let address = u64::from_str_radix(address, ADDRESS_RADIX).ok()?;
     let text = text.trim();
     (!text.is_empty()).then(|| Instruction { address, text: text.to_owned() })
 }

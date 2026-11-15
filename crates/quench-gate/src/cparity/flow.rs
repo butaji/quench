@@ -6,7 +6,7 @@
 
 use crate::cparity::asm::Instruction;
 
-const WORD_BITS: usize = u64::BITS as usize;
+const BITS_PER_WORD: usize = u64::BITS as usize;
 
 /// A loop as the indices of its target (header) and of the backward jump that closes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,13 +20,13 @@ struct Visited(Vec<u64>);
 
 impl Visited {
     fn new(len: usize) -> Self {
-        Self(vec![0; len.div_ceil(WORD_BITS)])
+        Self(vec![0; len.div_ceil(BITS_PER_WORD)])
     }
 
     /// Adds `index`; whether it was new.
     fn insert(&mut self, index: usize) -> bool {
-        let word = &mut self.0[index / WORD_BITS];
-        let bit = 1u64 << (index % WORD_BITS);
+        let word = &mut self.0[index / BITS_PER_WORD];
+        let bit = 1u64 << (index % BITS_PER_WORD);
         let new = *word & bit == 0;
         *word |= bit;
         new

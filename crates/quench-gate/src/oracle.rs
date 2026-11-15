@@ -13,7 +13,7 @@ use crate::{config::Config, runtime_tests, step::Verdict};
 
 const SOURCES: &str = "crates/quench-runtime/src";
 const ORACLE_IMPORT: &str = "test_oracle::";
-const RUST_EXTENSION: &str = "rs";
+const SOURCE_EXTENSION: &str = "rs";
 const MODULE_FILE: &str = "mod";
 const PATH_SEPARATOR: &str = "::";
 
@@ -22,7 +22,7 @@ fn rust_files(directory: &Path, found: &mut Vec<PathBuf>) -> io::Result<()> {
         let path = entry?.path();
         if path.is_dir() {
             rust_files(&path, found)?;
-        } else if path.extension().is_some_and(|extension| extension == RUST_EXTENSION) {
+        } else if path.extension().is_some_and(|extension| extension == SOURCE_EXTENSION) {
             found.push(path);
         }
     }

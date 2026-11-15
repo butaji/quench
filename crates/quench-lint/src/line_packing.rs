@@ -6,8 +6,6 @@
 //! The counts join the shrink-only measures in `oversized.txt`: a new packed line fails, an
 //! old one may only be split.
 
-use std::collections::BTreeMap;
-
 use syn::{spanned::Spanned, visit::Visit};
 
 use crate::shape::{Measures, is_test};
@@ -26,24 +24,25 @@ pub fn scan(file: &str, source: &str, syntax: &syn::File, measures: &mut Measure
     }
     let mut begun = Begun::default();
     begun.visit_file(syntax);
+    begun.0.sort_unstable();
     let lines: Vec<&str> = source.lines().collect();
     let packed = begun
         .0
-        .iter()
-        .filter(|&(&line, &count)| count >= MIN_BEGUN && lines.get(line - 1).is_some_and(|text| text.chars().count() > MAX_LINE_CHARS))
+        .chunk_by(|first, second| first == second)
+        .filter(|line| line.len() >= MIN_BEGUN && lines.get(line[0] - 1).is_some_and(|text| text.chars().count() > MAX_LINE_CHARS))
         .count();
     if packed > 0 {
         measures.insert(format!("{MEASURE} {file}"), packed);
     }
 }
 
-/// How many statements and functions begin on each line (1-based).
+/// The line (1-based) each statement and function begins on.
 #[derive(Default)]
-struct Begun(BTreeMap<usize, usize>);
+struct Begun(Vec<usize>);
 
 impl Begun {
     fn begin(&mut self, node: &impl Spanned) {
-        *self.0.entry(node.span().start().line).or_insert(0) += 1;
+        self.0.push(node.span().start().line);
     }
 }
 

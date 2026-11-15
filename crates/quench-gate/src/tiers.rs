@@ -6,11 +6,11 @@ use quench_tier_corpus::residuals::Tier;
 
 /// The flag that runs the interpreter alone.
 pub const INTERPRETER: &str = "--no-jit";
-const FLAG_PREFIX: &str = "--";
+const TIER_FLAG_PREFIX: &str = "--";
 
 /// The flag that runs `tier` alone.
 pub fn flag(tier: Tier) -> String {
-    format!("{FLAG_PREFIX}{}", tier.name())
+    format!("{TIER_FLAG_PREFIX}{}", tier.name())
 }
 
 /// Every mode: the interpreter, then each JIT tier alone.
