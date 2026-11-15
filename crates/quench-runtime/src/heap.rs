@@ -2821,7 +2821,7 @@ impl Heap {
             // The verifying marks count nothing.
             let rc_marking = std::mem::replace(&mut self.rc_marking, false);
             if full {
-                self.debug_verify_full(&verify_roots, &mut object_roots, closure_reads, environment_reads);
+                self.debug_verify_full(premarked, &verify_roots, &mut object_roots, closure_reads, environment_reads);
             } else {
                 let mut pinned = verify_old_records.unwrap_or_default();
                 pinned.extend(verify_remembered_records);
@@ -3579,6 +3579,7 @@ impl Heap {
     #[cfg(debug_assertions)]
     fn debug_verify_full(
         &mut self,
+        premarked: bool,
         roots: &[Value],
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         closure_reads: Option<&dyn ClosureReadSource>,
@@ -3604,11 +3605,10 @@ impl Heap {
         );
         let sequential_marks = Self::snapshot_marks(&self.marks);
         let sequential_record_marks = self.snapshot_record_marks();
-        assert_eq!(
-            (sequential_marks.as_slice(), &sequential_record_marks),
-            (parallel_marks.as_slice(), &parallel_record_marks),
-            "full mark differs from the single-threaded verifier"
-        );
+        // A collection that finishes a cycle also keeps what the cycle's snapshot reached
+        // (floating garbage): its marks contain the verifier's. A stopped full mark equals them.
+        let agree = |sequential: &[u64], collector: &[u64]| if premarked { sequential.iter().zip(collector).all(|(s, c)| s & !c == 0) } else { sequential == collector };
+        assert!(agree(&sequential_marks, &parallel_marks) && sequential_record_marks.iter().zip(&parallel_record_marks).all(|(s, c)| agree(s, c)), "full mark misses what the single-threaded verifier reaches");
         Self::restore_marks(&self.marks, &parallel_marks);
         self.restore_record_marks(&parallel_record_marks);
         self.collection_state = CollectionState::FullMarking;
