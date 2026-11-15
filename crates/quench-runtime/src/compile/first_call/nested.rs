@@ -59,7 +59,7 @@ pub(crate) struct FirstCallScopes {
 /// references its own analysis leaves unresolved, but its own `arguments`, and a declaration's
 /// own name, which the scope around it binds. None for a function that may reach its scopes
 /// by name (direct `eval`, `with`), whose captures its names do not bound.
-pub(in crate::compile) fn free_names(program: &Program<'_>, scoping: &oxc_semantic::Scoping) -> Option<(u32, Box<[Box<str>]>)> {
+pub(in crate::compile) fn free_names(program: &Program<'_>, scoping: &oxc_semantic::Scoping, released: &[Box<str>]) -> Option<(u32, Box<[Box<str>]>)> {
     let text = program.source_text.get(program.span.start as usize..program.span.end as usize)?;
     if text.contains("eval") || text.contains("with") {
         return None;
@@ -79,10 +79,23 @@ pub(in crate::compile) fn free_names(program: &Program<'_>, scoping: &oxc_semant
         .filter(|name| *name != "arguments")
         .chain(own)
         .map(Box::from)
+        .chain(released.iter().filter(|name| &***name != "arguments").cloned())
         .collect();
     names.sort_unstable();
     names.dedup();
     Some((start, names.into_boxed_slice()))
+}
+
+/// The start of the function `program` holds alone, as `free_names` reads it.
+pub(in crate::compile) fn alone_start(program: &Program<'_>) -> Option<u32> {
+    match program.body.first()? {
+        Statement::FunctionDeclaration(function) => Some(function.span.start),
+        Statement::ExpressionStatement(statement) => match statement.expression.without_parentheses() {
+            Expression::FunctionExpression(function) => Some(function.span.start),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// The free names of the bodies a parse of one function's text releases, added to `found` at
@@ -100,7 +113,7 @@ impl<'f> FreeNameCheck<'f> {
     /// Adds the free names of `body`, as the parser releases it.
     pub(in crate::compile) fn check(&mut self, body: oxc_parser::LazyBody<'_, '_>) {
         let built = crate::compile::semantic_stats::builder(body.program).build(body.program);
-        if let Some((start, names)) = free_names(body.program, built.semantic.scoping()) {
+        if let Some((start, names)) = free_names(body.program, built.semantic.scoping(), &[]) {
             self.found.insert(start.wrapping_add(self.delta), names);
         }
     }

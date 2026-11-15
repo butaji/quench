@@ -58,7 +58,7 @@ impl Compiler<'_> {
         }
         let built = oxc_semantic::SemanticBuilder::new().build(&parsed.program);
         let delta = span.start.wrapping_sub(offset);
-        let facts = super::prototype_unobservable_functions(&built.semantic, &parsed.program);
+        let facts = super::prototype_unobservable_functions(&built.semantic, &parsed.program, &Default::default());
         self.prototype_unobservable.extend(facts.into_iter().map(|start| start.wrapping_add(delta)));
     }
 }

@@ -306,6 +306,15 @@ pub struct ParseOptions {
     /// Default: `None`
     pub lazy_body_check: Option<LazyBodyCheck>,
 
+    /// With `lazy_body_check`, the bodies inside a lazily parsed body are parsed lazily as
+    /// well, each checked and released before the body around it: no body's tree holds the
+    /// trees of the functions inside it. The check of a body then sees each released function
+    /// inside it with its directives only, and composes the facts it found for it. A body
+    /// that names a private member stays whole inside its body.
+    ///
+    /// Default: `false`
+    pub lazy_nested_bodies: bool,
+
     /// The program inherits strict mode (eval code in strict code) without a directive of its
     /// own: lazily parsed bodies are checked as strict code (`lazy_body_check`).
     ///
@@ -361,6 +370,7 @@ impl Default for ParseOptions {
             enable_ident_hashes: true,
             lazy_function_bodies: None,
             lazy_body_check: None,
+            lazy_nested_bodies: false,
             inherited_strict: false,
         }
     }

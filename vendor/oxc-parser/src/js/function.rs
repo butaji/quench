@@ -49,7 +49,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     fn lazy_body_candidate(&self, start: u32, func_kind: FunctionKind) -> bool {
         self.options.lazy_function_bodies.is_some_and(|from| start >= from)
             && !self.is_ts
-            && self.lazy_depth == 0
+            && (self.lazy_depth == 0 || self.options.lazy_nested_bodies && self.options.lazy_body_check.is_some())
             && matches!(func_kind, FunctionKind::Declaration | FunctionKind::Expression)
             && !self.source_text[..start as usize].trim_end().ends_with('(')
     }
@@ -63,10 +63,15 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let marker = std::ptr::NonNull::from(allocator.alloc(0u8));
         let checkpoint = LazyBodyCheckpoint::of(self);
         let call_assignment_targets = self.call_assignment_targets;
+        let nested = self.lazy_depth > 0;
         self.lazy_depth += 1;
         let body = self.parse_function_body();
         self.lazy_depth -= 1;
         let span = body.span;
+        // A private member name checks only inside its class, which a body alone lacks.
+        if nested && self.source_text[span.start as usize..span.end as usize].contains('#') {
+            return body;
+        }
         let source = self.source_text.as_bytes().as_ptr_range();
         let in_source = |text: &str| text.is_empty() || source.contains(&text.as_ptr());
         let directives_in_source = body.directives.iter().all(|directive| {
@@ -105,6 +110,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         // arena data is as it was at the checkpoint, and the escaped strings and templates
         // inside the body are removed.
         unsafe { allocator.set_cursor_ptr(marker) };
+        // The bodies released inside it leave the tree with it.
+        self.lazy_function_bodies.retain(|start| !inside(start));
         self.lazy_function_bodies.push(span.start);
         let directives = ArenaVec::from_iter_in(directives, &self.ast);
         FunctionBody::boxed(span, directives, ArenaVec::new_in(self), self)
