@@ -63,7 +63,10 @@ impl Evidence {
     const fn half_mask(&self) -> u64 { (1 << self.half_bits) - 1 }
 }
 
-/// The entry no body backs: it enters nothing.
+/// The entry no body backs: it enters nothing. Its address is the cell's unpublished state
+/// (`EntryCell::stub`), so it has exactly one instance: a tiny function is otherwise inlinable and
+/// each codegen unit may get its own copy at its own address.
+#[inline(never)]
 unsafe extern "C" fn lane_entry_stub(_: *mut CallContext, _: u64, _: u64, _: *const u64) -> BodyReturn {
     BodyReturn { status: LANE_BODY_NOT_ENTERED, value: 0 }
 }
@@ -71,7 +74,9 @@ unsafe extern "C" fn lane_entry_stub(_: *mut CallContext, _: u64, _: u64, _: *co
 /// A scalar entry: (context, numbers...) -> (status, result word), the status zero for a result.
 pub(in crate::vm) type ScalarEntry = unsafe extern "C" fn(*mut CallContext) -> BodyReturn;
 
-/// The scalar entry no body backs: it enters nothing, so its caller restarts the call.
+/// The scalar entry no body backs: it enters nothing, so its caller restarts the call. One
+/// instance, as `lane_entry_stub`.
+#[inline(never)]
 unsafe extern "C" fn scalar_entry_stub(_: *mut CallContext) -> BodyReturn {
     BodyReturn { status: LANE_BODY_NOT_ENTERED, value: 0 }
 }
