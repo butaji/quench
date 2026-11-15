@@ -579,6 +579,9 @@ impl<H: Host> Vm<H> {
         Vec::<(Atom, Value)>::unsnap(&mut reader)?.into_iter().for_each(|(atom, string)| self.heap.register_string_atom(string, atom, true));
         self.startup_intrinsics = startup_intrinsics::StartupIntrinsics::read_snapshot(&mut reader)?;
         self.with_scope_entered = reader.bool()?;
+        if self.with_scope_entered {
+            self.lane_stack.refuse_cached_calls();
+        }
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_realm");
         self.programs = ProgramStore::read_snapshot(&mut reader, &bytes, &self.atom_sequence)?;

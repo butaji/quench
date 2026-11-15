@@ -1663,6 +1663,11 @@ impl Admission {
         Self(generation as u64 | (program.raw() as u64) << 32)
     }
 
+    /// A bit no target's or memo's admission has: the lane's carries it while a condition
+    /// no cached call may run under holds (`LaneStack::refuse_cached_calls`), so every
+    /// admission fails, and the paths that resolve again decide.
+    const REFUSED: u64 = 1 << 63;
+
     #[inline(always)]
     const fn generation(self) -> ScriptGeneration {
         self.0 as u32
@@ -1927,6 +1932,8 @@ pub(super) struct LaneStack {
     /// `generation` and the running program (`Vm::active_program`), which a cached target's
     /// own admission must equal.
     admission: Admission,
+    /// `Admission::REFUSED` once no cached call may run (`refuse_cached_calls`), else 0.
+    refused: u64,
     /// The epoch and realm `generation` names.
     generation_key: (u64, Value),
     /// The boundary below a deferred native's callback while it runs (`NativeBoundary`).
@@ -1964,6 +1971,7 @@ impl Default for LaneStack {
             activation_limit: std::cell::Cell::new(0),
             generation: NO_SCRIPT_GENERATION,
             admission: Admission::new(NO_SCRIPT_GENERATION, ProgramId::MAIN),
+            refused: 0,
             generation_key: (0, Value::UNDEFINED),
             native_boundary: None,
             body_boundary: None,
@@ -2123,14 +2131,28 @@ impl LaneStack {
                 self.generation = NO_SCRIPT_GENERATION + 1;
             }
             self.generation_key = key;
-            self.admission = Admission::new(self.generation, self.admission.program());
+            self.admission = Admission(Admission::new(self.generation, self.admission.program()).0 | self.refused);
         }
     }
 
     /// Notes the program the lane now runs (`Vm::activate_program`).
     #[inline(always)]
     pub(super) fn enter_program(&mut self, program: ProgramId) {
-        self.admission = Admission::new(self.generation, program);
+        self.admission = Admission(Admission::new(self.generation, program).0 | self.refused);
+    }
+
+    /// From now on no cached target or memo admits a call (`Admission::REFUSED`): a `with`
+    /// scope was entered (`Vm::with_scope_entered`), under which every lane call leaves the
+    /// lane, so the cached paths need not test it.
+    pub(super) fn refuse_cached_calls(&mut self) {
+        self.refused = Admission::REFUSED;
+        self.admission = Admission(self.admission.0 | Admission::REFUSED);
+    }
+
+    /// The admission a target or memo made now holds: the lane's, without `Admission::REFUSED`.
+    #[inline(always)]
+    fn current_admission(&self) -> Admission {
+        Admission(self.admission.0 & !Admission::REFUSED)
     }
 }
 
@@ -12901,7 +12923,10 @@ macro_rules! lane_plain_activation {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-        if (returns && !lane_returning_call_admitted(cx)) || vm.with_scope_entered {
+        // A `with` scope refuses every cached target (`LaneStack::refuse_cached_calls`), and
+        // only an admitted one reaches here.
+        debug_assert!(!vm.with_scope_entered);
+        if returns && !lane_returning_call_admitted(cx) {
             return exit(ip);
         }
         // SAFETY: the record's window of `r` holds its values.
@@ -13441,6 +13466,11 @@ script_handler! {
         }
         if let Some(target) = vm.resolve_script_call_target(code, callee) {
             if target.program() == vm.active_program {
+                // Under a `with` scope no cached target admits a call
+                // (`LaneStack::refuse_cached_calls`): the call leaves the lane, as it would.
+                if vm.with_scope_entered {
+                    return exit(ip);
+                }
                 sibling!(lane_script_call::<H, ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
             }
             // Another program's callee that needs a frame takes it as `lane_frame_call`
@@ -18423,7 +18453,7 @@ fn lane_memoize_read<H: Host>(
     let memo = ReadMemo {
         site,
         callee: target.callee,
-        admission: vm.lane_stack.admission,
+        admission: vm.lane_stack.current_admission(),
         this_binding: target.this_binding,
         read,
     };

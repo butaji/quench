@@ -1140,6 +1140,7 @@ impl<H: Host> Vm<H> {
                 let object = self.box_object(value)?;
                 self.with_stack.push(object);
                 self.with_scope_entered = true;
+                self.lane_stack.refuse_cached_calls();
                 Ok(Value::UNDEFINED)
             }
             Native::WithExit => {

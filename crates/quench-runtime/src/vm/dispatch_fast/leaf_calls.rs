@@ -49,7 +49,9 @@ script_handler! {
         };
         // The cached target is of the running program (`Vm::script_call_holds`).
         debug_assert!(!lane_crosses::<H, true>(cx, target));
-        if vm.with_scope_entered || !lane_admits_window(vm, target, ARGC) {
+        // An admitted target runs under no `with` scope (`LaneStack::refuse_cached_calls`).
+        debug_assert!(!vm.with_scope_entered);
+        if !lane_admits_window(vm, target, ARGC) {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
         vm.programs.record_js_jit_lane_entry(target.program(), target.function);
