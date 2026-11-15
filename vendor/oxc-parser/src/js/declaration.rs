@@ -100,7 +100,17 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     ) -> VariableDeclarator<'a> {
         let start = self.cur_start();
 
+        let declares = match kind {
+            VariableDeclarationKind::Var => crate::early::DeclKind::Var,
+            VariableDeclarationKind::Let | VariableDeclarationKind::Const => crate::early::DeclKind::Lexical,
+            VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing => {
+                self.early.mark_unsure();
+                crate::early::DeclKind::Lexical
+            }
+        };
+        let binding_kind = self.binding_kind.replace(declares);
         let id = self.parse_binding_pattern();
+        self.binding_kind = binding_kind;
 
         let (type_annotation, definite_start) = if self.is_ts {
             // const x!: number = 1

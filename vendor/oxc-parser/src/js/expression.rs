@@ -140,6 +140,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         self.check_identifier(kind, self.ctx);
         let (span, name) = self.parse_identifier_kind(Kind::Ident);
+        self.early.reference(name.as_str());
         IdentifierReference::new(span, name, self)
     }
 
@@ -157,6 +158,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         self.check_identifier(cur, self.ctx);
         let (span, name) = self.parse_identifier_kind(Kind::Ident);
+        self.declare_binding(name.as_str());
         BindingIdentifier::new(span, name, self)
     }
 
@@ -167,6 +169,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         self.check_identifier(kind, self.ctx);
         let (span, name) = self.parse_identifier_kind(Kind::Ident);
+        if reserved_label(name.as_str()) {
+            self.early.mark_unsure();
+        }
         LabelIdentifier::new(span, name, self)
     }
 
@@ -185,6 +190,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         // Fast path: most identifiers are not escaped, so we can slice directly
         // from source text without going through `get_string`'s kind matching.
         let name = if token.escaped() {
+            self.early.escaped_name();
             self.cur_string()
         } else {
             self.token_source(&token)
@@ -240,6 +246,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     ///     # `IdentifierName`
     /// # Panics
     pub(crate) fn parse_private_identifier(&mut self) -> PrivateIdentifier<'a> {
+        // Private names need the analysis' numbering (`LazyBody::early`).
+        self.early.mark_unsure();
         let span = self.cur_token().span();
         let name = self.ident(self.cur_string());
         self.bump_any();
@@ -446,6 +454,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let kind = token.kind();
         let src = self.cur_src();
         let has_separator = token.has_separator();
+        // A legacy octal or leading-zero literal is an early error in strict code.
+        if src.len() >= 2 && src.as_bytes()[0] == b'0' && src.as_bytes()[1].is_ascii_digit() {
+            self.early.mark_unsure();
+        }
         let value = match kind {
             Kind::Decimal | Kind::Binary | Kind::Octal | Kind::Hex => {
                 parse_int(src, kind, has_separator)
@@ -575,6 +587,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         let span = self.cur_token().span();
         let raw = Str::from(self.cur_src());
+        if self.cur_token().escaped() && self.early.active() && legacy_escape(raw.as_str()) {
+            self.early.mark_unsure();
+        }
         let value = self.cur_string();
         let lone_surrogates = self.cur_token().lone_surrogates();
         self.bump_any();
@@ -913,6 +928,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         if !matches!(self.cur_kind(), Kind::Dot | Kind::LBrack | Kind::LParen) {
             self.error(diagnostics::unexpected_super(span));
         }
+        self.early.super_expression(self.at(Kind::LParen));
 
         Expression::new_super(span, self)
     }
@@ -1391,6 +1407,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let operator = map_unary_operator(self.cur_kind());
         self.bump_any();
         let argument = self.parse_simple_unary_expression(self.cur_start());
+        // `delete x` is an early error in strict code.
+        if operator == UnaryOperator::Delete && matches!(argument.get_inner_expression(), Expression::Identifier(_)) {
+            self.early.mark_unsure();
+        }
         Expression::new_unary_expression(self.end_span(start), operator, argument, self)
     }
 
@@ -1822,6 +1842,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         // Case 1: In await context (async function, module top-level, unambiguous mode top-level)
         // Always parse as await expression
         if self.ctx.has_await() {
+            self.early.await_or_yield(true);
             let start = self.cur_start();
             self.bump_any(); // consume `await`
             let argument = self.parse_unary_expression_or_higher(self.cur_start());
@@ -1913,4 +1934,33 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         false
     }
+}
+
+/// Whether a string literal's raw text holds a legacy octal or non-octal decimal escape, an
+/// early error in strict code.
+fn legacy_escape(raw: &str) -> bool {
+    let bytes = raw.as_bytes();
+    let mut index = 0;
+    while index + 1 < bytes.len() {
+        if bytes[index] == b'\\' {
+            match bytes[index + 1] {
+                b'0' => {
+                    if bytes.get(index + 2).is_some_and(u8::is_ascii_digit) {
+                        return true;
+                    }
+                }
+                b'1'..=b'9' => return true,
+                _ => {}
+            }
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    false
+}
+
+/// A label a strict mode rule reads (`early`): a reserved word.
+fn reserved_label(name: &str) -> bool {
+    matches!(name, "await" | "implements" | "interface" | "let" | "package" | "private" | "protected" | "public" | "static" | "yield")
 }

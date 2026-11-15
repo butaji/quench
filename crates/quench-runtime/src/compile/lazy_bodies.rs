@@ -307,8 +307,17 @@ impl BodyFacts {
     /// bodies inside it whole, and adds its facts. The facts are gathered before code
     /// generation: an analysis per function between the records code generation keeps left
     /// the heap their holes (JetStream +2-3% max RSS).
-    pub(super) fn check(&mut self, oxc_parser::LazyBody { program, call_assignment_targets, in_function }: oxc_parser::LazyBody<'_, '_>, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) {
+    pub(super) fn check(&mut self, oxc_parser::LazyBody { program, call_assignment_targets, in_function, early }: oxc_parser::LazyBody<'_, '_>, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) {
         if self.failed {
+            return;
+        }
+        if verify_early() && std::env::var_os("QUENCH_EARLY_STAT").is_some() {
+            eprintln!("early-stat: {} {} {} deferred={} at_load={}", if early.is_some() { "sure" } else { "unsure" }, program.span.start, program.span.end - program.span.start, self.call_only_deferred, super::call_only::compiles_at_load(program, false, false));
+        }
+        if let Some(early) = early
+            && !verify_early()
+            && self.checked_by_parse(program, call_assignment_targets, in_function, early)
+        {
             return;
         }
         // Its early errors are OXC's alone: the program carries the strictness the body
@@ -321,16 +330,64 @@ impl BodyFacts {
             return;
         }
         let built = super::semantic_stats::builder(program).with_check_syntax_error(true).build(program);
+        if verify_early() && early.is_some() && !built.diagnostics.is_empty() {
+            eprintln!("early-verify: parse sure but semantic reports at {}: {:?}", program.span.start, built.diagnostics.iter().map(ToString::to_string).collect::<Vec<_>>());
+        }
         if !built.diagnostics.is_empty() {
             self.failed = true;
             return;
         }
         let inner = self.compose_released(program, built.semantic.scoping());
+        if verify_early()
+            && let Some(early) = early
+        {
+            let semantic = inner.bounded.then(|| super::first_call::free_names(program, built.semantic.scoping(), &inner.free)).flatten();
+            let tracked = parse_free_names(program, early);
+            if semantic.as_ref().map(|names| &names.1) != tracked.as_ref().map(|names| &names.1) {
+                eprintln!("early-verify: free names differ at {}: semantic {:?} parse {:?}", program.span.start, semantic.map(|names| names.1), tracked.map(|names| names.1));
+            }
+        }
         #[cfg(feature = "aot")]
         if let Some((specialized, requests)) = &mut self.native_source_requests {
             requests.extend(super::Engine::native_source_requests(program, built.semantic.scoping(), *specialized, global_script_calls));
         }
         self.add_facts(&built.semantic, program, in_function, &inner);
+    }
+
+    /// Takes the parse's verdict on a body it found no early error could lie in
+    /// (`LazyBody::early`) where its facts need no analysis: no private name, and call-only
+    /// facts waiting for its compilation. Then its free names are the parse's, and no
+    /// semantic analysis runs. False where the full check must run.
+    fn checked_by_parse(&mut self, program: &Program<'_>, call_assignment_targets: bool, in_function: bool, early: &[&str]) -> bool {
+        #[cfg(feature = "aot")]
+        if self.native_source_requests.is_some() {
+            return false;
+        }
+        // A private name makes the parse unsure: its facts need the analysis.
+        if !self.call_only_deferred {
+            return false;
+        }
+        let free_names = parse_free_names(program, early);
+        if super::call_only::compiles_at_load(program, in_function && free_names.is_none(), false) {
+            return false;
+        }
+        if super::stack::validate(program).is_err()
+            || call_assignment_targets && super::annex_b_targets::invalid_target(program).is_some()
+        {
+            self.failed = true;
+            return true;
+        }
+        match free_names {
+            Some((start, names)) => {
+                self.free_names.insert(start, names);
+            }
+            None => {
+                if let Some(start) = super::first_call::alone_start(program) {
+                    self.unbounded.insert(start);
+                }
+            }
+        }
+        true
     }
 
     /// What the bodies released inside `program` (`ParseOptions::lazy_nested_bodies`), each
@@ -378,6 +435,35 @@ impl BodyFacts {
         }
         self.free_names.extend(free_names);
     }
+}
+
+/// Whether each checked body is checked both ways and the parse's verdict compared with the
+/// semantic analysis' (`QUENCH_EARLY_VERIFY`), instead of taking the parse's where it is sure.
+fn verify_early() -> bool {
+    static VERIFY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *VERIFY.get_or_init(|| std::env::var_os("QUENCH_EARLY_VERIFY").is_some())
+}
+
+/// A body's free names from the parse's (`LazyBody::early`), as `first_call::free_names`
+/// gives them: with a declaration's own name, None where the body may reach its scopes by
+/// name.
+fn parse_free_names(program: &Program<'_>, early: &[&str]) -> Option<(u32, Box<[Box<str>]>)> {
+    let text = program.source_text.get(program.span.start as usize..program.span.end as usize)?;
+    if text.contains("eval") || text.contains("with") {
+        return None;
+    }
+    let (start, own) = match program.body.first()? {
+        Statement::FunctionDeclaration(function) => (function.span.start, function.id.as_ref().map(|id| id.name.as_str())),
+        Statement::ExpressionStatement(statement) => match statement.expression.without_parentheses() {
+            Expression::FunctionExpression(function) => (function.span.start, None),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let mut names: Vec<Box<str>> = early.iter().copied().chain(own).map(Box::from).collect();
+    names.sort_unstable();
+    names.dedup();
+    Some((start, names.into_boxed_slice()))
 }
 
 /// What the bodies released inside a checked body reach outside themselves

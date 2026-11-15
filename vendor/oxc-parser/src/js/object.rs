@@ -20,6 +20,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let start = self.cur_start();
         let opening_span = self.cur_token().span();
         self.expect(Kind::LCurly);
+        let protos = std::mem::take(&mut self.early.protos);
         let (object_expression_properties, comma_start) = self.context_add(Context::In, |p| {
             p.parse_delimited_list(
                 Kind::RCurly,
@@ -39,6 +40,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 .insert(start, self.end_span(comma_start));
         }
         self.expect(Kind::RCurly);
+        // Each object inside it counts its own and restores this count.
+        if std::mem::replace(&mut self.early.protos, protos) >= 2 {
+            self.early.mark_unsure();
+        }
         ObjectExpression::boxed(self.end_span(start), object_expression_properties, self)
     }
 
@@ -124,6 +129,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                     );
                     self.state.cover_initialized_name.insert(start, expr);
                 }
+                self.early.reference(identifier_name.name.as_str());
                 let value =
                     Expression::new_identifier(identifier_name.span, identifier_name.name, self);
                 ObjectProperty::boxed(
@@ -162,6 +168,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         computed: bool,
     ) -> ArenaBox<'a, ObjectProperty<'a>> {
         self.expect(Kind::Colon);
+        // Two `__proto__` properties are an early error (`parse_object_expression`).
+        if !computed && self.early.active() && key.is_specific_static_name("__proto__") {
+            self.early.protos += 1;
+        }
         let value = self.parse_assignment_expression_or_higher();
         ObjectProperty::boxed(
             self.end_span(start),

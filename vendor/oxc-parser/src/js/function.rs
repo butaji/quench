@@ -67,6 +67,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.lazy_depth += 1;
         let body = self.parse_function_body();
         self.lazy_depth -= 1;
+        let verdict = self.early.end_body();
         let span = body.span;
         // A private member name checks only inside its class, which a body alone lacks.
         if nested && self.source_text[span.start as usize..span.end as usize].contains('#') {
@@ -90,7 +91,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         if let Some(check) = self.options.lazy_body_check {
             let targets = self.call_assignment_targets != call_assignment_targets;
-            self.check_lazy_body(check, &function, &body, inherited_strict, targets);
+            self.check_lazy_body(check, &function, &body, inherited_strict, targets, verdict.as_ref());
             // The check's nodes lie past the marker unless they took a new arena chunk; then
             // the body stays whole and the program's own checks see it as well.
             if allocator.capacity() != checkpoint.arena_capacity {
@@ -126,6 +127,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         body: &ArenaBox<'a, FunctionBody<'a>>,
         inherited_strict: bool,
         call_assignment_targets: bool,
+        verdict: Option<&crate::early::EarlyVerdict<'a>>,
     ) {
         let end = body.span.end;
         let span = Span::new(function.start, end);
@@ -152,7 +154,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let program = Program::new(span, self.source_type, self.source_text, [], None, directives, statements, self);
         let in_function = self.ctx.has_return();
         // SAFETY: `ParseOptions::lazy_body_check` outlives the parse.
-        unsafe { check.call(crate::LazyBody { program: &program, call_assignment_targets, in_function }) };
+        let early = verdict.filter(|verdict| !verdict.unsure).map(|verdict| verdict.free.as_slice());
+        unsafe { check.call(crate::LazyBody { program: &program, call_assignment_targets, in_function, early }) };
         std::mem::forget(program);
     }
 
@@ -176,7 +179,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         } else {
             None
         };
+        self.early.set_in_params(true);
+        let binding_kind = self.binding_kind.replace(crate::early::DeclKind::Param);
         let (list, rest) = self.parse_formal_parameters_list(func_kind, opening_span);
+        self.binding_kind = binding_kind;
+        self.early.set_in_params(false);
         self.expect(Kind::RParen);
 
         let formal_parameters =
@@ -405,6 +412,27 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         modifiers: &Modifiers,
     ) -> ArenaBox<'a, Function<'a>> {
         let ctx = self.ctx;
+        let lazy = self.lazy_body_candidate(start, func_kind);
+        if let Some(id) = &id
+            && matches!(func_kind, FunctionKind::Declaration | FunctionKind::DefaultExport)
+        {
+            self.declare_function_name(id.name.as_str(), r#async || generator.is_some());
+        }
+        let home = match func_kind {
+            FunctionKind::ClassMethod | FunctionKind::ObjectMethod => crate::early::Home::Method,
+            FunctionKind::Constructor => self.early.method_home(true),
+            _ => crate::early::Home::Plain,
+        };
+        if lazy {
+            self.early.begin_body();
+        } else {
+            self.early.enter_function(Some(home));
+        }
+        if let Some(id) = &id
+            && func_kind == FunctionKind::Expression
+        {
+            self.early.declare(id.name.as_str(), crate::early::DeclKind::OwnName);
+        }
         // `new.target` is allowed in a function's parameters and body (but not arrow
         // functions, which are parsed via `parse_function_body` directly).
         self.ctx = self
@@ -420,8 +448,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         } else {
             None
         };
+        self.early.set_simple_params(crate::early::simple_parameters(&params));
         let body = if self.at(Kind::LCurly) || func_kind == FunctionKind::Expression {
-            Some(if self.lazy_body_candidate(start, func_kind) {
+            Some(if lazy {
                 self.parse_lazy_function_body(LazyFunction {
                     start,
                     id: id.as_ref(),
@@ -431,9 +460,16 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                     expression: func_kind == FunctionKind::Expression,
                 })
             } else {
-                self.parse_function_body()
+                let body = self.parse_function_body();
+                self.early.exit_function();
+                body
             })
         } else {
+            if lazy {
+                self.early.end_body();
+            } else {
+                self.early.exit_function();
+            }
             None
         };
         self.ctx = self
@@ -535,6 +571,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let func_kind = FunctionKind::Declaration;
         let decl = self.parse_function_impl(start, r#async, func_kind);
         if stmt_ctx.is_single_statement() {
+            self.early.mark_unsure();
             if decl.r#async {
                 self.error(diagnostics::async_function_declaration(Span::new(
                     decl.span.start,
@@ -648,7 +685,25 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// yield
     /// yield [no `LineTerminator` here] `AssignmentExpression`
     /// yield [no `LineTerminator` here] * `AssignmentExpression`
+    /// Declares a function declaration's name where it lies (`early`): lexical in a block,
+    /// where a plain function in sloppy code also binds in the function around it (Annex B),
+    /// which the tracker does not model.
+    fn declare_function_name(&mut self, name: &'a str, async_or_generator: bool) {
+        if !self.early.active() {
+            return;
+        }
+        if self.early.in_block() {
+            if !self.strict && !async_or_generator {
+                self.early.mark_unsure();
+            }
+            self.early.declare(name, crate::early::DeclKind::Lexical);
+        } else {
+            self.early.declare(name, crate::early::DeclKind::Var);
+        }
+    }
+
     pub(crate) fn parse_yield_expression(&mut self) -> Expression<'a> {
+        self.early.await_or_yield(false);
         let start = self.cur_start();
         self.bump_any(); // advance `yield`
 
