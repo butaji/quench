@@ -8248,10 +8248,14 @@ fn lane_cached_field_at<H: Host>(
         super::object::FieldCacheProbe::Ineligible if unsafe { vm(cx) }.proxy_parts(object).is_some() => None,
         // An accessor's entry answers before the data lookups, which would walk the chain to
         // reach the same accessor and decline it.
-        probe => unsafe { lane_getter_read(cx, object, atom, site) }.or_else(|| {
+        // A getter the lane cannot answer in place is the activation's to call
+        // (`lane_getter_activation`); only a virtual field may still answer.
+        probe => match unsafe { lane_getter_read(cx, object, atom, site) } {
+            Some(Some(value)) => Some(value),
+            Some(None) => unsafe { vm(cx) }.pure_virtual_field(object, atom),
             // SAFETY: the context outlives the lane run.
-            lane_cached_field_miss(unsafe { vm(cx) }, code, object, atom, site, probe, unsafe { (*cx).registers }.env())
-        }),
+            None => lane_cached_field_miss(unsafe { vm(cx) }, code, object, atom, site, probe, unsafe { (*cx).registers }.env()),
+        },
     }
 }
 

@@ -5,8 +5,8 @@ use super::*;
 /// A read whose site caches an accessor (`Vm::cached_field_getter`) whose getter is a pure
 /// native read (`Vm::pure_native_getter_value`) or a frameless read target, answered as the
 /// getter's call would return (`lane_call_read`): `[[Get]]` calls it on the base with no
-/// arguments, and neither runs guest code. `None` leaves the read to the general path, which
-/// calls the getter.
+/// arguments, and neither runs guest code. `Some(None)` is a cached getter that must be
+/// called (`lane_getter_activation`); `None`, a site with no accessor entry for `object`.
 ///
 /// # Safety
 /// `cx` is the running lane's context.
@@ -16,16 +16,18 @@ pub(super) unsafe fn lane_getter_read<H: Host>(
     object: Value,
     atom: crate::bytecode::Atom,
     site: u16,
-) -> Option<Value> {
+) -> Option<Option<Value>> {
     let vm = unsafe { vm(cx) };
     let index = vm.field_cache_index(site);
     if let Some(value) = vm.memoized_getter_answer(object, index) {
-        return Some(value);
+        return Some(Some(value));
     }
     let getter = vm.cached_field_getter(object, atom, index)?;
-    let value = unsafe { lane_getter_answer(cx, getter, object) }?;
+    let Some(value) = (unsafe { lane_getter_answer(cx, getter, object) }) else {
+        return Some(None);
+    };
     lane_memoize_getter(cx, getter, object, index);
-    Some(value)
+    Some(Some(value))
 }
 
 /// Memoizes at the accessor entry of cache index `site` that `getter`, whose call on
