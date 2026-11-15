@@ -795,6 +795,9 @@ pub(crate) struct Heap {
     /// ones this minor collection made candidates (`Heap::rc_pre_mark`).
     rc_zero: Vec<Value>,
     rc_candidates: Vec<Value>,
+    /// The records old as the running full collection started, per family
+    /// (`Heap::rc_full_start`).
+    rc_old: Vec<Vec<u64>>,
     /// Under `QUENCH_DEV=rc-verify`, the candidates counts would have freed, kept instead
     /// until a full collection's trace checks that none is reachable.
     rc_suspects: Vec<Value>,
@@ -2654,6 +2657,9 @@ impl Heap {
         let premarked = self.complete_cycle_marking();
         debug_assert!(!premarked || full);
         self.last_collection_premarked = premarked;
+        if full && self.rc_active {
+            self.rc_full_start();
+        }
         if full {
             if !premarked {
                 Self::clear_marks(&self.marks);
@@ -2825,9 +2831,9 @@ impl Heap {
         self.clear_unread_environment_slots(environments);
         self.mark_stack = { work.clear(); work };
         let finalization_jobs = self.prune_weak_entries(full, age);
-        if self.rc_active && !full {
+        if self.rc_active {
             let started = std::time::Instant::now();
-            self.rc_epoch();
+            if full { self.rc_full_end() } else { self.rc_epoch() }
             self.rc_trace[1] = started.elapsed().as_micros() as u64;
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
@@ -3261,9 +3267,6 @@ impl Heap {
                 since_previous_full: if full { self.weight_between_fulls } else { 0 },
             },
         );
-        if self.rc_active && full {
-            self.rc_recount();
-        }
         if full {
             let pause_micros = full_started.map_or(0, |started| started.elapsed().as_micros() as u64);
             self.judge_cycles(premarked, full_mark_micros, pause_micros);

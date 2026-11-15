@@ -15,8 +15,11 @@ use records::SatbSnapshot;
 
 /// The record family of a counted value and its id there: the index into
 /// `Heap::record_families`, and the id.
+#[inline(always)]
 fn locate(value: Value) -> Option<(usize, RecordId)> {
-    if let Some(id) = value.direct_object_index() {
+    if !value.is_heap() {
+        None
+    } else if let Some(id) = value.direct_object_index() {
         Some((0, id))
     } else if let Some(id) = value.direct_array_index() {
         Some((1, id))
@@ -144,6 +147,7 @@ impl Heap {
     }
 
     /// Increments the count of `value` if it is a record.
+    #[inline(always)]
     fn rc_increment(&self, value: Value) {
         if let Some((family, id)) = locate(value) {
             with_space!(self, family, |space| space.rc_increment(id));
@@ -306,6 +310,64 @@ impl Heap {
         self.rc_zero = zero;
     }
 
+    /// A full collection's start under counts, before its marks are cleared: the epoch's
+    /// counts change as at a minor collection (no record is unmarked), and the records old
+    /// now are noted (`rc_old`) for `rc_full_end`.
+    pub(super) fn rc_full_start(&mut self) {
+        let mut decrements: Vec<Value> = Vec::new();
+        let mut logged: Vec<Value> = Vec::new();
+        let mut old = Vec::new();
+        for_each_space_mut!(self, |space, handle| {
+            let (copied, written) = space.take_rc_epoch();
+            old.push(space.rc_old_bits(&written));
+            decrements.extend(copied);
+            logged.extend(written.into_iter().map(handle));
+        });
+        let mut children = Vec::new();
+        self.rc_increment_children(logged, &mut children);
+        for value in decrements {
+            if self.rc_decrement(value) {
+                self.rc_zero.push(value);
+            }
+        }
+        self.rc_old = old;
+    }
+
+    /// A full collection's end under counts, after its mark and before its sweep, in place of
+    /// a recount: the old records it frees drop their references, and the young records it
+    /// keeps count theirs, as the survivors of a minor collection do. A record's count then
+    /// stands for its holders among the survivors, as a recount would make it, at the cost of
+    /// the records that changed age, not of every live one.
+    pub(super) fn rc_full_end(&mut self) {
+        let old = std::mem::take(&mut self.rc_old);
+        let mut survivors = Vec::new();
+        let mut dead = Vec::new();
+        let mut olds = old.iter();
+        for_each_space_mut!(self, |space, handle| {
+            space.rc_ensure();
+            if let Some(bits) = olds.next() {
+                space.rc_full_changes(bits, |id, survived| if survived { survivors.push(handle(id)) } else { dead.push(handle(id)) });
+            }
+        });
+        let mut children = Vec::new();
+        self.rc_increment_children(survivors.iter().copied(), &mut children);
+        let mut zero = std::mem::take(&mut self.rc_zero);
+        for owner in dead {
+            self.rc_children(owner, &mut children);
+            for child in children.drain(..) {
+                if self.rc_decrement(child) {
+                    zero.push(child);
+                }
+            }
+        }
+        zero.extend(survivors);
+        zero.retain(|&value| self.rc_is_old(value) && self.rc_count_of(value) == Some(0));
+        zero.sort_unstable_by_key(|value| value.to_bits());
+        zero.dedup();
+        self.rc_zero = zero;
+        self.rc_candidates.clear();
+    }
+
     /// The candidates the minor mark left unmarked: what the sweep would free.
     pub(super) fn rc_unmarked_candidates(&self) -> Vec<Value> {
         self.rc_candidates.iter().copied().filter(|&value| !self.rc_is_old(value)).collect()
@@ -371,8 +433,8 @@ impl Heap {
         }
     }
 
-    /// Recounts every live record's references from scratch, after a full collection's sweep:
-    /// the backup trace resets stuck counts and forgets the epoch's buffers.
+    /// Recounts every live record's references from scratch, as counting starts, and
+    /// forgets the epoch's buffers.
     pub(super) fn rc_recount(&mut self) {
         for_each_space_mut!(self, |space, _handle| {
             space.rc_clear();
