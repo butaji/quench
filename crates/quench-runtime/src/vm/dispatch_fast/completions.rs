@@ -133,7 +133,7 @@ pub(super) fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value:
     let top = &vm.lane_stack.activations[outermost];
     let completion = match &top.kind {
         ActivationKind::Script(script) => script.completion,
-        ActivationKind::Wasm { .. } => unreachable!("a chain holds script activations"),
+        ActivationKind::Wasm { .. } | ActivationKind::WasmEntry { .. } => unreachable!("a chain holds script activations"),
     };
     if completion == Completion::ReturnsToBody {
         return lane_end_body_callee(cx, value);

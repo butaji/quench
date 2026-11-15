@@ -409,7 +409,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn push_wasm_frame_with_registers(
         &mut self,
         p: &ResidualProgram,
-        caller: usize,
+        env: Value,
         id: u32,
         registers: &[Value],
     ) -> crate::stack::GuestCallGuard {
@@ -437,7 +437,7 @@ impl<H: Host> Vm<H> {
         frame.pc = 0;
         frame.pc_is_resume = true;
         frame.binding_site_pc = None;
-        frame.env = self.frames[caller].env;
+        frame.env = env;
         frame.this = Value::UNDEFINED;
         frame.captured = false;
         frame.with_base = with_base;

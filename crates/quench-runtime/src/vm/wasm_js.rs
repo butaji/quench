@@ -1179,6 +1179,29 @@ impl<H: Host> Vm<H> {
         callee: Value,
         args: &[Value],
     ) -> Option<(crate::vm::ProgramId, u32, Value, smallvec::SmallVec<[Value; WASM_INLINE_ARGUMENTS]>, Option<WasmType>)> {
+        let call = match self.lane_stack.wasm_export {
+            Some(call) if call.callee == callee => call,
+            _ => {
+                let call = self.resolve_wasm_export_call(callee)?;
+                self.lane_stack.wasm_export = Some(call);
+                call
+            }
+        };
+        let mut encoded = smallvec::SmallVec::new();
+        for position in 0..usize::from(call.params) {
+            let number = args.get(position).copied().unwrap_or(Value::UNDEFINED).as_number()?;
+            encoded.push(self.encode_wasm_value(if call.f32_params & (1 << position) != 0 {
+                WasmValue::F32((number as f32).to_bits())
+            } else {
+                WasmValue::I32(Self::uint32_from_value(number) as i32)
+            }));
+        }
+        Some((call.program, call.index, call.env, encoded, call.result))
+    }
+
+    /// What `wasm_export_frame_call` reads of `callee` before encoding its arguments: the
+    /// interpreted function behind the wrapper, its instance, and a signature it admits.
+    fn resolve_wasm_export_call(&self, callee: Value) -> Option<WasmExportCall> {
         let closure = self.wasm_exported_closure(callee)?;
         let &FunctionRecord { kind: FunctionKind::User(program, index), env, .. } = self.heap.function(closure)? else {
             return None;
@@ -1190,16 +1213,18 @@ impl<H: Host> Vm<H> {
             &[ty @ (WasmType::I32 | WasmType::F32 | WasmType::F64)] => Some(ty),
             _ => return None,
         };
-        let mut encoded = smallvec::SmallVec::with_capacity(signature.params.len());
-        for (position, &ty) in signature.params.iter().enumerate() {
-            let number = args.get(position).copied().unwrap_or(Value::UNDEFINED).as_number()?;
-            encoded.push(self.encode_wasm_value(match ty {
-                WasmType::I32 => WasmValue::I32(Self::uint32_from_value(number) as i32),
-                WasmType::F32 => WasmValue::F32((number as f32).to_bits()),
-                _ => return None,
-            }));
+        if signature.params.len() > 16 {
+            return None;
         }
-        Some((program, index, env, encoded, result))
+        let mut f32_params = 0u16;
+        for (position, &ty) in signature.params.iter().enumerate() {
+            match ty {
+                WasmType::I32 => {}
+                WasmType::F32 => f32_params |= 1 << position,
+                _ => return None,
+            }
+        }
+        Some(WasmExportCall { callee, program, index, env, params: signature.params.len() as u8, f32_params, result })
     }
 
     /// The Wasm closure behind an exported-function wrapper.
@@ -2009,4 +2034,18 @@ mod tests {
             assert_eq!(*calls.borrow(), [mode]);
         }
     }
+}
+
+/// An exported Wasm function's call as `Vm::wasm_export_frame_call` admits it, for the
+/// wrapper `callee` (`LaneStack::wasm_export`).
+#[derive(Clone, Copy)]
+pub(super) struct WasmExportCall {
+    callee: Value,
+    program: crate::vm::ProgramId,
+    index: u32,
+    env: Value,
+    /// The parameters, each an i32 or, where its bit in `f32_params` is set, an f32.
+    params: u8,
+    f32_params: u16,
+    result: Option<WasmType>,
 }

@@ -1420,6 +1420,12 @@ enum ActivationKind {
     /// A Wasm activation keeps its caller's memory for the return and its requested
     /// register payload for guest-stack accounting, excluding admission padding.
     Wasm { memory: MemoryView, frame_storage_bytes: usize },
+    /// A Wasm activation a JavaScript call of an exported function made
+    /// (`lane_wasm_export_frame`): it runs over `instance`, the export's instance environment
+    /// (`LaneContext::instance`), and its return gives its caller, JavaScript, the result's
+    /// JavaScript form (`CallCompletion::WasmExport`). The caller's receiver and environments
+    /// stay in the context while it runs: no Wasm record reads or writes them.
+    WasmEntry { instance: Value, result: Option<crate::WasmType>, frame_storage_bytes: usize },
 }
 
 impl Activation {
@@ -1427,7 +1433,7 @@ impl Activation {
     #[inline] fn script(&self) -> Option<&ScriptActivation> {
         match &self.kind {
             ActivationKind::Script(script) => Some(script),
-            ActivationKind::Wasm { .. } => None,
+            ActivationKind::Wasm { .. } | ActivationKind::WasmEntry { .. } => None,
         }
     }
 
@@ -1435,7 +1441,7 @@ impl Activation {
     /// whose view carries the context (`MemoryView::script`).
     fn caller_memory<H: Host>(&self, cx: *mut LaneContext<H>) -> MemoryView {
         match self.kind {
-            ActivationKind::Script(_) => MemoryView::script(cx),
+            ActivationKind::Script(_) | ActivationKind::WasmEntry { .. } => MemoryView::script(cx),
             ActivationKind::Wasm { memory, .. } => memory,
         }
     }
@@ -1443,7 +1449,7 @@ impl Activation {
     #[inline] fn frame_storage_bytes(&self) -> usize {
         match self.kind {
             ActivationKind::Script(_) => 0,
-            ActivationKind::Wasm { frame_storage_bytes, .. } => frame_storage_bytes,
+            ActivationKind::Wasm { frame_storage_bytes, .. } | ActivationKind::WasmEntry { frame_storage_bytes, .. } => frame_storage_bytes,
         }
     }
 }
@@ -2000,6 +2006,9 @@ pub(super) struct LaneStack {
     body_boundary: Option<usize>,
     /// The frames the boundary's caller activations became, once a materialization made them.
     boundary_frames: Option<usize>,
+    /// The exported Wasm function a JavaScript call last entered (`Vm::wasm_export_frame_call`),
+    /// so the next call of it reads its closure and signature once. A collection forgets it.
+    pub(super) wasm_export: Option<super::wasm_js::WasmExportCall>,
 }
 
 /// A generation no lane runs under: an empty target entry never matches.
@@ -2033,6 +2042,7 @@ impl Default for LaneStack {
             native_boundary: None,
             body_boundary: None,
             boundary_frames: None,
+            wasm_export: None,
         }
     }
 }
@@ -2176,6 +2186,7 @@ impl LaneStack {
     /// Drops the callees a collection swept from the sites' records before any allocation
     /// reuses their records: a body inlining one would take another function for it.
     pub(super) fn forget_dead_callees(&mut self, live: impl Fn(Value) -> bool) {
+        self.wasm_export = None;
         self.call_sites.get_mut().retain(|_, targets| { targets.retain(|target| target.identity().is_none_or(&live)); !targets.is_empty() });
     }
 
@@ -2323,6 +2334,10 @@ struct LaneContext<H: Host> {
     this: Value,
     /// The running JavaScript activation's environment, or `DELETED` for a VM frame.
     env: Value,
+    /// The instance environment of the Wasm activations above a JavaScript call of an export
+    /// (`ActivationKind::WasmEntry`), or `DELETED` where the frame's environment is the
+    /// instance's (`lane_instance_env`).
+    instance: Value,
     /// The innermost capture storage header of the running function, once a capture read found
     /// it dense (`EnvironmentSlots::dense_storage`); null until then and for sparse storage, which
     /// the walk reads. No collection runs in the lane, so they stay in place. Tagged with
@@ -4304,6 +4319,9 @@ macro_rules! lane_return_value {
 fn lane_return_value_general<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Resumed {
     // Another program's activation, which a program that calls across programs returns from
     // as often as the common return, completes without the frame the other completions need.
+    if let Some(resumed) = lane_complete_wasm_activation(cx, value) {
+        return resumed;
+    }
     if let Some(resumed) = lane_complete_cross_activation(cx, value) {
         return resumed;
     }
@@ -12417,7 +12435,10 @@ impl<H: Host> Vm<H> {
                     let step = steps.next().expect("each array step activation has its entry");
                     CallCompletion::ArrayStep(Box::new(self.array_step_call(step.iteration, step.element, step.index)))
                 }
-                other => setters::frame_completion(other, &mut traps),
+                other => match activation.kind {
+                    ActivationKind::WasmEntry { result, .. } => CallCompletion::WasmExport(result),
+                    _ => setters::frame_completion(other, &mut traps),
+                },
             };
             // A native's callback is the entry frame of the loop that finishes it.
             let to_native = body_calls::enters_as_frame(&mut self.lane_stack, &activation, self.frames.len());
@@ -12538,12 +12559,14 @@ impl<H: Host> Vm<H> {
                 ActivationKind::Wasm { .. } => {
                     // The lane reserved this payload while it was frameless; its materialized
                     // frame holds the same weighted guard until the call returns.
-                    Some(self.push_wasm_frame_with_registers(
-                        code,
-                        caller,
-                        activation.function,
-                        window,
-                    ))
+                    let env = self.frames[caller].env;
+                    Some(self.push_wasm_frame_with_registers(code, env, activation.function, window))
+                }
+                // The export's frame, as `lane_wasm_export_frame` pushes it when it cannot
+                // activate the callee: over the instance environment, with the pending call
+                // that converts its result.
+                ActivationKind::WasmEntry { instance, .. } => {
+                    Some(self.push_wasm_frame_with_registers(code, instance, activation.function, window))
                 }
             };
             if !to_native {
@@ -12584,6 +12607,7 @@ impl<H: Host> Vm<H> {
             (*cx).registers = registers;
             (*cx).this = self.frame_lane_this(caller);
             (*cx).env = Value::DELETED;
+            (*cx).instance = Value::DELETED;
             (*cx).capture = std::ptr::null();
             (*cx).outer = NO_OUTER_WALK;
         }
@@ -15950,6 +15974,18 @@ fn lane_script_target_in<H: Host>(
     resolved.as_ref()
 }
 
+/// The instance environment the running Wasm function reads its bindings from: the
+/// export's (`LaneContext::instance`) above a JavaScript call of it, else its frame's.
+#[inline(always)]
+fn lane_instance_env<H: Host>(cx: *mut LaneContext<H>) -> Value {
+    // SAFETY: the context outlives the lane run.
+    let instance = unsafe { (*cx).instance };
+    if !instance.is_deleted() {
+        return instance;
+    }
+    unsafe { vm(cx).frames[(*cx).frame].env }
+}
+
 /// Make `program` the lane's running program, as a call into or a return to one of its
 /// functions makes it the general loop's executing one: the residual, lane views and
 /// constants its records read, and the VM's active program, whose cache layout its sites
@@ -17855,6 +17891,9 @@ lane_handler! {
     #[inline(never)]
     fn lane_return_general<>(cx, r, ip, i, view) {
         let value = r.get(i.a);
+        if let Some(resumed) = lane_complete_wasm_activation(cx, value) {
+            resume!(cx, resumed)
+        }
         if let Some(resumed) = lane_complete_cross_activation(cx, value) {
             resume!(cx, resumed)
         }
@@ -18025,6 +18064,15 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
             if script.completion == Completion::SettlesPromise {
                 value = lane_settle_promise(cx, value, then);
             }
+        } else if let ActivationKind::WasmEntry { result, .. } = activation.kind {
+            // The export's caller runs its own program again, as the run's JavaScript.
+            lane_enter_program(cx, activation.caller_program);
+            unsafe {
+                (*cx).inline_calls = false;
+                (*cx).script_calls = true;
+                (*cx).instance = Value::DELETED;
+            }
+            value = vm.wasm_export_result(value, result);
         }
         // SAFETY: the call record belongs to the caller's live view.
         if unsafe { (*activation.call).a } & crate::bytecode::RETURN_REGISTER == 0 {
@@ -18037,6 +18085,35 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
         }
         activation = vm.lane_stack.pop_activation().expect("the caller activation is the innermost");
     }
+}
+
+/// The return of the innermost activation, a Wasm one whose call keeps its result: its
+/// caller, Wasm, or JavaScript for an export's activation (`ActivationKind::WasmEntry`),
+/// resumes after the call with `value`, in its JavaScript form for an export. `None`, which
+/// changes nothing, leaves any other return to the general completions.
+#[inline(always)]
+fn lane_complete_wasm_activation<H: Host>(cx: *mut LaneContext<H>, mut value: Value) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    let top = vm.lane_stack.activations.last()?;
+    if matches!(top.kind, ActivationKind::Script(_))
+        // SAFETY: the call record belongs to the caller's live view.
+        || unsafe { (*top.call).a } & crate::bytecode::RETURN_REGISTER != 0
+    {
+        return None;
+    }
+    let activation = vm.lane_stack.pop_activation()?;
+    let (caller_memory, _) = lane_restore_caller(cx, &activation);
+    if let ActivationKind::WasmEntry { result, .. } = activation.kind {
+        // The export's caller runs its own program again, as the run's JavaScript.
+        lane_enter_program(cx, activation.caller_program);
+        unsafe {
+            (*cx).inline_calls = false;
+            (*cx).script_calls = true;
+            (*cx).instance = Value::DELETED;
+        }
+        value = vm.wasm_export_result(value, result);
+    }
+    Some(lane_resume_after_call(&activation, caller_memory, value))
 }
 
 /// The value-producing records that may return their result from the frame
@@ -19223,6 +19300,9 @@ fn lane_wasm_export_frame<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip
     if !vm.lane_admits(&callee_code) || !vm.programs.lane_call_may_derive(program, function) {
         return None;
     }
+    if let Some(resumed) = lane_activate_wasm_export(cx, r, ip, program, function, env, &encoded, result) {
+        return Some(resumed);
+    }
     vm.materialize_lane_activations(cx);
     let caller = unsafe { (*cx).frame };
     // SAFETY: the call record lies in the running view.
@@ -19271,6 +19351,85 @@ fn lane_wasm_export_frame<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip
     // The pushed frame's guard narrows the activations the thread admits.
     vm.lane_stack.refresh_activation_limit();
     Some(lane_enter_frame(cx, caller + 1, 0))
+}
+
+/// `lane_wasm_export_frame`'s call as a frameless Wasm activation of the export
+/// (`ActivationKind::WasmEntry`) over its instance environment, pushed as a Wasm call's
+/// activation is (`wasm_calls::enter_wasm_function`) beside the caller's activations, which
+/// stay activations. The run goes on as a Wasm run (`LaneContext::inline_calls`) until the
+/// activation returns (`lane_complete_activation`). `None`, which changes nothing, where the
+/// callee has no lane view yet or the lane no room for it: the frame call takes it.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn lane_activate_wasm_export<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    program: ProgramId,
+    function: u32,
+    instance: Value,
+    encoded: &[Value],
+    result: Option<crate::WasmType>,
+) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    let lane_view = vm
+        .programs
+        .lane_views(program)?
+        .get(function as usize)
+        .and_then(super::program_store::derived_lane_view)?;
+    let shape = lane_view.activation?;
+    let base = lane_view.records();
+    let stack = &mut vm.lane_stack;
+    let count = usize::from(shape.registers);
+    let frame_storage_bytes = count.saturating_mul(std::mem::size_of::<Value>());
+    if frame_storage_bytes
+        > crate::stack::GuestCallGuard::remaining_storage_bytes().saturating_sub(stack.wasm_storage_bytes)
+        || stack.activations.len() >= stack.activation_limit.get()
+        || vm.frames.len() + stack.activations.len() >= super::dispatch_frame::WASM_ACTIVATION_LIMIT
+        || stack.values.room() < fill_room::<ACTIVATION_FILL_BLOCK>(count)
+    {
+        return None;
+    }
+    let window = stack.values.len();
+    let passed = encoded.len().min(usize::from(shape.params));
+    // SAFETY: capacity holds the window; each slot is written before the length covers it,
+    // and no activation's window moves.
+    let callee_registers = unsafe {
+        let registers = stack.values.as_mut_ptr().add(window);
+        fill_window(registers, count, shape.initial);
+        for (offset, &value) in encoded[..passed].iter().enumerate() {
+            registers.add(usize::from(shape.parameters) + offset).write(value);
+        }
+        stack.values.set_len(window + count);
+        Registers(registers)
+    };
+    let (caller_program, caller_base) = unsafe { ((*cx).program, (*cx).base) };
+    // SAFETY: capacity holds the activation.
+    unsafe {
+        let at = stack.values.as_mut_ptr().wrapping_add(window);
+        stack.push_activation(Activation {
+            native: super::compiled::ShadowFrame::EMPTY,
+            function,
+            call: ip,
+            caller_base,
+            caller_registers: r,
+            caller_program,
+            kind: ActivationKind::WasmEntry { instance, result, frame_storage_bytes },
+        }, at);
+    }
+    lane_enter_program(cx, program);
+    // A fresh activation's memory register holds no memory until the function's instance
+    // binding loads it.
+    unsafe {
+        (*cx).registers = callee_registers;
+        (*cx).base = base;
+        (*cx).memory = MemoryView::NONE;
+        (*cx).instance = instance;
+        (*cx).inline_calls = true;
+        (*cx).script_calls = false;
+    }
+    let view = Carried { memory: MemoryView::NONE, integers: crate::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
+    Some(Resumed::At(callee_registers, base, view))
 }
 
 /// `lane_generator_step` of a generator the general loop would resume in place
@@ -23092,6 +23251,7 @@ impl<H: Host> Vm<H> {
                 .lane_credits_backedges(code, program)
                 .then_some(TIERS.wasm.backedges_per_entry),
             env: Value::DELETED,
+            instance: Value::DELETED,
             capture: std::ptr::null(),
             outer: NO_OUTER_WALK,
             frame_storage: NO_FRAME_STORAGE,
