@@ -14982,6 +14982,9 @@ script_handler! {
         let Some(length) = (unsafe { vm(cx) }).intact_spread_length(list) else {
             return exit(ip);
         };
+        if let Some((registers, base)) = lane_spread_linked_call(cx, r, ip, i, list, length) {
+            next!(cx, registers, base, Carried::script_in(cx, view))
+        }
         if let Some(resumed) = lane_spread_native_call(cx, ip, i, r.get(i.b), r.get(i.c), list) {
             resume!(cx, resumed)
         }
@@ -15013,6 +15016,55 @@ script_handler! {
 
 /// Values an applied frame call copies out without allocating their list.
 const FRAME_CALL_INLINE_ARGUMENTS: usize = 8;
+
+/// `lane_call_spread` of a callee the site links (`Vm::linked_script_call_entry`, as a plain
+/// call's), activated as a plain call is (`lane_push_passed`): a target keeping nothing
+/// (`ScriptCallTarget::forwards`) that takes the `length` elements of the intact `list` as its
+/// parameters, or drops those past them. The elements are read in place from a wide backing,
+/// decoded from a narrow one. `None` for any other call, which the general spread path makes.
+#[inline(always)]
+fn lane_spread_linked_call<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    list: Value,
+    length: usize,
+) -> Option<(Registers, Ip)> {
+    let vm = unsafe { vm(cx) };
+    let callee = r.get(i.b);
+    if !unsafe { (*cx).script_calls } || lane_constructing(vm, callee) {
+        return None;
+    }
+    // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything else runs.
+    let target = vm.linked_script_call_entry(callee, &i.call_link).map(|target| unsafe { *target })?;
+    let argc = u16::try_from(length).ok()?;
+    let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+    if !lane_admits_activation(&target)
+        || target.forwards()
+        || (argc > target.params && !target.drops_extra_arguments())
+        || (returns && !lane_returning_call_admitted(cx))
+        || vm.with_scope_entered
+        || !lane_activation_room(vm, &target)
+    {
+        return None;
+    }
+    let this = lane_call_this(vm, &target, r.get(i.c))?;
+    let argc = argc.min(target.params);
+    let elements = vm.heap.array_elements(list)?;
+    let mut decoded = [Value::UNDEFINED; FRAME_CALL_INLINE_ARGUMENTS];
+    let passed = match elements.wide_values() {
+        Some(values) => values.as_ptr(),
+        None if usize::from(argc) <= FRAME_CALL_INLINE_ARGUMENTS => {
+            for (slot, value) in decoded.iter_mut().zip(elements.iter().take(usize::from(argc))) {
+                *slot = value;
+            }
+            decoded.as_ptr()
+        }
+        None => return None,
+    };
+    Some(lane_push_passed::<H, true, false>(cx, r, ip, &target, passed, argc, this, false))
+}
 
 
 
