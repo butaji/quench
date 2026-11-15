@@ -14090,6 +14090,11 @@ script_handler! {
         if native == Native::ReflectGet {
             sibling!(reflect_get_call_handler::<H>(), r, ip, Carried::script_in(cx, view))
         }
+        if native == Native::WasmExportedFunction
+            && let Some(resumed) = lane_wasm_export_frame(cx, r, ip, i)
+        {
+            resume!(cx, resumed)
+        }
         resume!(cx, lane_native_call_value(cx, r, ip, i, native))
     }
 }
@@ -18863,6 +18868,83 @@ fn lane_push_frame_call<H: Host>(
     }
 }
 
+/// A JavaScript `Call` of an exported Wasm function that `Vm::wasm_export_frame_call`
+/// admits: its frame, over the instance environment, pushed with the pending call that
+/// converts its result (`CallCompletion::WasmExport`) and entered in this lane, as a Wasm
+/// call's frame is (`wasm_calls::lane_call_frame`), so the call nests no native frame and no
+/// run of the general loop. Lane activations become frames first, as for any frame call.
+/// `None` leaves the call to the native: a run that is not a frame's own JavaScript run
+/// (`LaneContext::script_calls`), a callee native code may run, a call completing a caller
+/// the lane does not complete (`lane_returning_call_admitted`), or another program the lane
+/// does not admit.
+#[inline(never)]
+fn lane_wasm_export_frame<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+    if !unsafe { (*cx).script_calls }
+        || (returns && !lane_returning_call_admitted(cx))
+        || vm.execution_mode == ExecutionMode::Compiled
+    {
+        return None;
+    }
+    // SAFETY: the call's window is registers of the running function, read before any
+    // activation becomes a frame.
+    let args = unsafe { lane_call_window(r, i) };
+    let (program, function, env, encoded, result) = vm.wasm_export_frame_call(r.get(i.b), args)?;
+    let callee_code = vm.programs.get(program)?;
+    if !vm.lane_admits(&callee_code) || !vm.programs.lane_call_may_derive(program, function) {
+        return None;
+    }
+    vm.materialize_lane_activations(cx);
+    let caller = unsafe { (*cx).frame };
+    // SAFETY: the call record lies in the running view.
+    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    vm.frames[caller].pc = call_pc + 1;
+    vm.frames[caller].pc_is_resume = true;
+    let previous = vm.replace_active_program(program);
+    let call_guard = match vm.push_wasm_frame_over(&callee_code, function, env, &encoded) {
+        Ok(guard) => guard,
+        Err(error) => {
+            // An exhausted guest stack traps, which reaches the caller as a `RuntimeError`.
+            vm.set_active_program(previous);
+            // SAFETY: the context's program, the caller's, outlives the lane run.
+            vm.lane_raised = Some(vm.trap_raised_in_javascript(unsafe { &*(*cx).code }, error));
+            return Some(Resumed::Exit(exit(ip)));
+        }
+    };
+    // The callee runs in its own program, which the loop's executing one sets aside as a
+    // frame call into another program does (`lane_push_frame_call`).
+    // SAFETY: the general loop's executing program outlives the lane run.
+    let executing = unsafe { &mut *(*cx).executing };
+    let saved = super::dispatch_frame::SavedProgram {
+        id: executing.id,
+        retained: std::mem::replace(&mut executing.retained, Some(callee_code)),
+    };
+    executing.id = program;
+    lane_enter_program(cx, program);
+    // The run goes on as a Wasm run (`LaneContext::inline_calls`) until the frame returns,
+    // which completes on the general path, as it completes any call into another program
+    // (`lane_return_frame`); the caller's lane run starts afresh there.
+    unsafe {
+        (*cx).inline_calls = true;
+        (*cx).script_calls = false;
+    }
+    // SAFETY: the general loop's pending calls outlive the lane run.
+    unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
+        caller,
+        caller_cursor: None,
+        call_pc: call_pc as u32,
+        destination: i.a & crate::bytecode::REGISTER_MASK,
+        completion: CallCompletion::WasmExport(result),
+        returns,
+        call_guard: Some(call_guard),
+        caller_program: Some(saved),
+    });
+    // The pushed frame's guard narrows the activations the thread admits.
+    vm.lane_stack.refresh_activation_limit();
+    Some(lane_enter_frame(cx, caller + 1, 0))
+}
+
 /// `lane_generator_step` of a generator the general loop would resume in place
 /// (`Vm::try_in_loop_generator_step`): lane activations become frames, the generator's frame
 /// is pushed with the pending call its `yield` or return completes with the step's reused
@@ -19119,6 +19201,13 @@ fn lane_return_frame<H: Host>(r: Registers, ip: Ip) -> Resumed {
         return Resumed::Exit(lane_return_script_frame(cx, ip, r.get(i.a), false));
     }
     let pending = unsafe { &mut *(*cx).pending };
+    if unsafe { (*cx).inline_calls }
+        && pending.last().is_some_and(|call| {
+            matches!(call.completion, CallCompletion::WasmExport(_)) && call.caller + 2 == vm.frames.len()
+        })
+    {
+        return lane_return_wasm_export(cx, r.get(i.a));
+    }
     // An in-loop `new` substitutes its receiver for a non-object result;
     // the general path owns that [[Construct]] step.
     if !unsafe { (*cx).inline_calls }
@@ -19139,6 +19228,45 @@ fn lane_return_frame<H: Host>(r: Registers, ip: Ip) -> Resumed {
     drop(call.call_guard);
     let pc = vm.frames[call.caller].pc;
     lane_enter_frame(cx, call.caller, pc)
+}
+
+/// The return of an exported function's frame a JavaScript call pushed
+/// (`lane_wasm_export_frame`) with its encoded `value`: the frame retires, its caller's
+/// program runs again as the run's JavaScript (`LaneContext::script_calls`), and the call's
+/// register takes the value's JavaScript form (`CallCompletion::WasmExport`), or, for a call
+/// that completes its caller, the caller returns it.
+#[cold]
+#[inline(never)]
+fn lane_return_wasm_export<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Resumed {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the general loop's pending calls outlive the lane run.
+    let mut call = unsafe { &mut *(*cx).pending }.pop().expect("the export's frame has its pending call");
+    let CallCompletion::WasmExport(result) = call.completion else {
+        unreachable!("the caller tested the completion");
+    };
+    vm.retire_wasm_frame();
+    let saved = call.caller_program.take().expect("an export's frame runs its own program");
+    // SAFETY: the general loop's executing program outlives the lane run.
+    let executing = unsafe { &mut *(*cx).executing };
+    executing.id = saved.id;
+    executing.retained = saved.retained;
+    lane_enter_program(cx, saved.id);
+    unsafe {
+        (*cx).inline_calls = false;
+        (*cx).script_calls = true;
+    }
+    drop(call.call_guard);
+    let frame = call.caller;
+    vm.active_registers = vm.frames[frame].registers.as_mut_ptr();
+    let value = vm.wasm_export_result(value, result);
+    if call.returns {
+        // The caller completes too, at its call record, as a returning frame call's does
+        // (`lane_return_script_frame`).
+        let (_, call_ip, _) = lane_frame_state(cx, frame, call.call_pc as usize);
+        return Resumed::Exit(lane_return_script_frame(cx, call_ip, value, true));
+    }
+    vm.write(frame, call.destination, value);
+    lane_enter_script_frame(cx, frame)
 }
 
 /// A lane opcode's handler, and whether that handler is an accumulator
