@@ -9955,6 +9955,7 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
         self.execution_mode = mode; super::regexp_native::enable(mode != ExecutionMode::Interpreted);
+        self.heap.set_narrow_runs(mode == ExecutionMode::Interpreted);
     }
 
     /// Lets hot functions reach lane bodies by the tier gate (`Runtime` runs for speed).

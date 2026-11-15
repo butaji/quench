@@ -755,6 +755,10 @@ pub(crate) struct Heap {
     memory_profile: memory_profile::MemoryProfile,
     /// Whether a concurrent cycle is marking (`concurrent_mark`): never set yet.
     satb_active: bool,
+    /// Whether plain objects' property runs take the narrow form (`value_vec::NARROW_FORM`) at
+    /// promotion and compaction: only the interpreter reads one in place, so only a run without
+    /// native tiers (`Heap::set_narrow_runs`) makes them.
+    narrow_runs: bool,
     /// Values the cycle's weak reads handed out (`Heap::shade`), for its mark: a value read
     /// through a weak reference may be one its snapshot does not reach.
     satb_shaded: std::cell::RefCell<Vec<Value>>,
@@ -2048,7 +2052,9 @@ impl Heap {
             // SAFETY: the owners were listed from records the sweep kept.
             let object = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
             let mut vector = object.properties();
-            self.properties.evacuate_young(&mut vector);
+            // A promoted plain object's values may take a narrow run, as at compaction.
+            let narrows = self.narrow_runs && !object.has_extras();
+            self.properties.evacuate_young(&mut vector, narrows);
             object.set_properties(vector, &mut self.properties);
         }
         self.properties.finish_young_cycle();
@@ -2083,6 +2089,7 @@ impl Heap {
             iterator_records,
             slots,
             properties,
+            narrow_runs,
             ..
         } = self;
         for (_, owner) in owners {
@@ -2111,7 +2118,7 @@ impl Heap {
             .expect("property owner remains live during compaction");
             let mut vector = object.properties();
             // A plain object's values may take a narrow run (`value_vec::NARROW_FORM`).
-            let narrows = owner.direct_object_index().is_some() && !object.has_extras() && !object.is_array();
+            let narrows = *narrow_runs && owner.direct_object_index().is_some() && !object.has_extras() && !object.is_array();
             target += properties.compact_vector(&mut vector, target, narrows);
             object.set_properties(vector, properties);
         }
@@ -4091,7 +4098,7 @@ impl Heap {
             return;
         }
         let vector = data.properties();
-        if vector.has_inline_property_storage() {
+        if vector.has_inline_property_storage() || vector.is_narrow() {
             for (slot, value) in values.into_iter().enumerate() {
                 self.property_set(object, slot, value);
             }
@@ -4100,6 +4107,12 @@ impl Heap {
         for (slot, value) in values.into_iter().enumerate() {
             self.properties.set(vector, slot, value);
         }
+    }
+
+    /// Lets promotion and compaction narrow plain objects' property runs: a run whose code
+    /// only the interpreter executes (`ExecutionMode::Interpreted`).
+    pub(crate) fn set_narrow_runs(&mut self, narrow: bool) {
+        self.narrow_runs = narrow;
     }
 
     /// Observes the value before writing the named object's slot.
@@ -4160,9 +4173,25 @@ impl Heap {
             }
         };
         match vector {
+            Some(vector) if vector.is_narrow() => self.narrow_run_set(object, vector, slot, value),
             Some(vector) => self.properties.set(vector, slot, value),
             None => self.widen_inline_property(object, slot, value),
         }
+    }
+
+    /// Stores `value` at `slot` of `object`'s narrow run `vector`: in place when the value has a
+    /// narrow form, else into the run widened first (`object_mut`). The caller passed the
+    /// write barrier.
+    #[inline(never)]
+    fn narrow_run_set(&mut self, object: Value, vector: ValueVec, slot: usize, value: Value) {
+        assert!(slot < self.properties.len(vector), "a property store names a slot of its owner");
+        if let Some(narrow) = value.to_narrow() {
+            // SAFETY: the slot exists (above).
+            unsafe { self.properties.narrow_set(vector, slot, narrow) };
+            return;
+        }
+        let vector = self.object_mut(object).expect("property owner is an object").properties();
+        self.properties.set(vector, slot, value);
     }
 
     /// Stores `value` at inline `slot` of `object`, whose payload word cannot hold it: its
@@ -4190,6 +4219,7 @@ impl Heap {
             }
         };
         match vector {
+            Some(vector) if vector.is_narrow() => self.narrow_run_set(object, vector, slot, value),
             // SAFETY: the caller proves that the property slot exists.
             Some(vector) => unsafe { self.properties.set_unchecked(vector, slot, value) },
             None => self.widen_inline_property(object, slot, value),
@@ -5172,6 +5202,7 @@ impl Heap {
         let mut runs_narrow = 0usize;
         let mut elements = Tally::default();
         let mut element_capacity = 0usize;
+        let mut reasons = [(0usize, 0usize); 3];
         let mut take_object = |object: &Object, own: &mut Tally| {
             let vector = object.properties();
             if vector.is_dictionary() { return; }
@@ -5186,6 +5217,9 @@ impl Heap {
                 own.values += len;
                 return;
             }
+            let all_narrow = (0..len).all(|slot| properties.get(vector, slot).is_some_and(|v| v.to_narrow().is_some()));
+            let idx = if !all_narrow { 0 } else if properties.narrow_class_smaller(len) { 1 } else { 2 };
+            reasons[idx].0 += 1; reasons[idx].1 += len;
             own.take((0..len).filter_map(|slot| properties.get(vector, slot)));
         };
         let (mut objects, mut arrays, mut functions) = (0usize, 0usize, 0usize);
@@ -5224,6 +5258,7 @@ impl Heap {
             }
         }
         let _ = element_capacity;
+        eprintln!("storage census reasons: wide={:?} eligible={:?} same_class={:?}", reasons[0], reasons[1], reasons[2]);
         let rss_kb = std::fs::read_to_string("/proc/self/statm")
             .ok()
             .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<usize>().ok())
