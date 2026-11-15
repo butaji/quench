@@ -5187,6 +5187,38 @@ script_handler! {
 }
 
 script_handler! {
+    /// `lane_typed_address_get` of a store: `base[(x + K) >> S] = v` (or `base[x + K] = v`)
+    /// as one record (`specialize_typed_addresses`), through the view cache
+    /// (`Vm::typed_cached_store`). Any other case runs the addition's own record.
+    fn lane_typed_address_set<SHIFT: bool>(cx, r, ip, i, view) {
+        let Some(x) = r.int(i.b) else {
+            sibling!(lane_operator_integer_constant::<H, { super::operations::ADDITION }>, r, ip, Carried::script_in(cx, view))
+        };
+        let sum = x.wrapping_add(i.imm() as i32);
+        // SAFETY: the pass fused this record with the one or two after it in the view.
+        let (key, store) = if SHIFT {
+            let shift = unsafe { &*following(ip) };
+            (sum >> (shift.imm() & 31), unsafe { &*following(following(ip)) })
+        } else {
+            if i64::from(x) + i64::from(i.imm() as i32) != i64::from(sum) {
+                sibling!(lane_operator_integer_constant::<H, { super::operations::ADDITION }>, r, ip, Carried::script_in(cx, view))
+            }
+            (sum, unsafe { &*following(ip) })
+        };
+        if !(unsafe { vm(cx) }).typed_cached_store::<{ super::typed_array_access::ANY_TYPED_KIND }>(r.get(store.b), Value::integer(key), r.get(store.a)) {
+            sibling!(lane_typed_address_miss::<H, SHIFT>, r, ip, Carried::script_in(cx, view))
+        }
+        r.set(i.a, Value::integer(sum));
+        if SHIFT {
+            // SAFETY: as above.
+            r.set(unsafe { (*following(ip)).a }, Value::integer(key));
+        }
+        let after = if SHIFT { following(following(following(ip))) } else { following(following(ip)) };
+        next!(cx, r, after, Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
     /// `lane_typed_address_get` whose read found no current view entry: a base that is no
     /// typed array (a plain array read `a[i + 1]` has the same shape) makes the record its
     /// addition again for good; either way the addition's own record runs.
@@ -21440,6 +21472,7 @@ fn specialize_typed_addresses<H: Host>(records: &mut [LaneInstruction]) {
     let add = lane_operator_integer_constant::<H, ADDITION> as Handler as *const ();
     let shift = lane_operator_integer_constant::<H, SHIFT_RIGHT> as Handler as *const ();
     let read = lane_get_index_registers::<H> as Handler as *const ();
+    let write = lane_set_index::<H> as Handler as *const ();
     for pc in 0..records.len() {
         if records[pc].handler != add {
             continue;
@@ -21454,6 +21487,26 @@ fn specialize_typed_addresses<H: Host>(records: &mut [LaneInstruction]) {
             && third.b != second.a
         {
             records[pc].handler = lane_typed_address_get::<H, true> as Handler as *const ();
+            continue;
+        }
+        if let (Some(second), Some(third)) = (records.get(pc + 1), records.get(pc + 2))
+            && second.handler == shift
+            && second.b == t
+            && third.handler == write
+            && third.c == second.a
+            && ![t, second.a].contains(&third.b)
+            && ![t, second.a].contains(&third.a)
+        {
+            records[pc].handler = lane_typed_address_set::<H, true> as Handler as *const ();
+            continue;
+        }
+        if let Some(second) = records.get(pc + 1)
+            && second.handler == write
+            && second.c == t
+            && second.b != t
+            && second.a != t
+        {
+            records[pc].handler = lane_typed_address_set::<H, false> as Handler as *const ();
             continue;
         }
         if let Some(second) = records.get(pc + 1)

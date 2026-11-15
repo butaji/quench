@@ -21763,6 +21763,34 @@ var str=o.join(","), hh=0; for (var c=0;c<str.length;c++) hh=(hh*31+str.charCode
 }
 
 #[test]
+fn lane_typed_address_stores_match_the_records_they_fuse() {
+    // `heap[(p + K) >> S] = v` and `heap[p + K] = v` as one record
+    // (`lane_typed_address_set`); every case it leaves runs the records' own path.
+    let source = r#"
+var b=new ArrayBuffer(1<<16), h16=new Int16Array(b), h32=new Int32Array(b), hf=new Float32Array(b), plain=[];
+for (var i=0;i<1000;i++) plain.push(0);
+function g(p, q, v){ for (var k=0;k<300;k++){ h16[(p+k)>>1] = v+k; h32[(p+4)>>2] = v*3; hf[(q+8)>>2] = v/7; h32[p+k] = k-v; plain[(k+3)>>1] = v; } }
+var o=[]; for (var r=0;r<20;r++){ g(r*4, r*8, r*1000+0.5); o.push(h16[r], h32[r+3], hf[r+5], plain[r]); }
+g(-8, 0, 1); g(2147483640, 4, 2); g(0.5, 1, 3); g(0x7ffffff0, 0x7ffffff0, 4); o.push(h32[0], h32[2], hf[3]);
+var t=h32; h32=plain; g(4,4,5); o.push(plain[1], plain[4]); h32=t; var b2=h32.buffer.transfer(); g(4,4,6); o.push(new Int32Array(b2)[1]);
+var str=o.join(","), hh=0; for (var c=0;c<str.length;c++) hh=(hh*31+str.charCodeAt(c))>>>0; globalThis.answer = hh;
+    "#;
+    let program = Engine::specialize(source, "lane-typed-address-store.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(3838761092.0); 2]);
+}
+
+#[test]
 fn lane_outer_captures_read_like_the_interpreter() {
     // A lane body reads a capture of an outer scope by the lane's own lookup, so a
     // reassigned `var`, a `let` and a widened value read as the interpreter's.
