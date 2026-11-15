@@ -257,8 +257,12 @@ pub(crate) struct ValueArena {
     /// it. A child that appends a slot at its parent's chain end shares that chain.
     shape_chains: Vec<u32>,
     chain_owners: Vec<u32>,
-    /// Per owner shape, compact observed content types. Recording writes joins
-    /// them; native raw writes can bypass recording, so this is not a proof.
+    /// Per owner shape, compact content types, maintained by every store: a host write joins its
+    /// value's class before it lands (`note_slot_value`, `note_shape_value`, `note_plan_values`,
+    /// publication's `join_object_slot_values`), a native raw write is admitted before it is
+    /// exposed (`note_slot_type`), and a widening retires the readers first. While tracking, a
+    /// slot holds a value of its owner's type; code subscribed to the observation
+    /// (`subscribe_slot_observation`) is retired before any other value lands.
     owner_types: Vec<SlotType>,
     slot_readers: crate::code_dependencies::CodeReaders,
     /// Numeric shape departures only; heap admission, exotic access and physical
@@ -475,7 +479,7 @@ impl ValueArena {
         self.chain_owners[self.shape_chains[shape as usize] as usize + slot]
     }
 
-    /// The recorded type of `slot` of `shape`, not a write-maintained invariant.
+    /// The type every value `slot` of `shape` holds is of, while tracking (`owner_types`).
     #[inline(always)] pub(crate) fn slot_observation(&self, shape: u32, slot: usize) -> SlotType {
         self.owner_types[self.slot_owner(shape, slot) as usize]
     }

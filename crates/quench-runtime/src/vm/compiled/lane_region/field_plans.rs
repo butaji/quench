@@ -78,6 +78,11 @@ impl Fast {
     }
 }
 
+/// Whether a link's value comes from its loads' native reads, as the VM's own read does not.
+pub(super) fn reads_natively(loads: &[NativeFieldLoad]) -> bool {
+    !matches!(Fast::of(loads), Fast::Host)
+}
+
 /// The values a holder load folds as constants (its prototypes' links and bits), where the
 /// division folds Stable facts and the cache proved them.
 fn inherited_pairs(load: &NativeFieldLoad, folds_stable: bool) -> Vec<(u32, u64)> {

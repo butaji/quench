@@ -1057,25 +1057,6 @@ pub(super) fn leaders(instructions: &[WideInstruction]) -> CompoundBitSet {
     leaders
 }
 
-/// Whether `instruction` reads a field as an int32 (`Lowering::get_field`): a lookup with no
-/// sink or completion whose last read's slots have only held int32 values, its value's tag
-/// tested at the read.
-fn int32_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
-    if !instruction.op().class().eq(Class::GetField) || instruction.returns_from_frame() || instruction.writes_current_this() {
-        return false;
-    }
-    let last = match instruction.field_lookup() {
-        Some(FieldLookup::Atom { cache_site, .. }) => cache_site,
-        Some(FieldLookup::Site(index)) => match program.field_sites.get(index) {
-            Some(site) if site.sink.is_none() => site.second.unwrap_or(site.first).1,
-            _ => return false,
-        },
-        None => return false,
-    };
-    site_loads(fields, last).is_some_and(|shapes| !shapes.is_empty()
-        && shapes.iter().all(|field| field.ty == Type::INT32))
-}
-
 /// The register whose value `register` copies at the comparison at `pc`: following the moves and
 /// nops back to `header` within one block, so copies share the comparison's SSA value.
 fn move_root(instructions: &[WideInstruction], leaders: &CompoundBitSet, (header, pc): (usize, usize), mut register: Register) -> Register {
@@ -3412,7 +3393,7 @@ impl Lowering<'_, '_> {
                         let base = register.map_or(crate::bytecode::FieldBase::THIS, crate::bytecode::FieldBase::register);
                         let lookup = FieldLookup::Atom { atom, base, cache_site };
                         let Some(value) = self.field_value(state, (base, lookup), &[(atom, cache_site)], HeldRead::default(), exit) else { continue };
-                        (value, int32_read(self.program, self.fields, instruction))
+                        (value, field_reads::int32_read(self.program, self.fields, instruction))
                     }
                 }
             };
@@ -4197,3 +4178,6 @@ mod tests;
 #[cfg(test)]
 #[path = "lane_region/lowering_tests.rs"]
 mod lowering_tests;
+#[cfg(test)]
+#[path = "lane_region/slot_proof_tests.rs"]
+mod slot_proof_tests;

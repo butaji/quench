@@ -1,4 +1,4 @@
-//! Compact observations of slot contents. These are not write-maintained proofs.
+//! Compact types of slot contents, joined by every store before it lands (`ValueArena::owner_types`).
 use super::{Type, TypeKind};
 use crate::{Value, ValueType};
 
