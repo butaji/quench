@@ -110,7 +110,28 @@ impl Heap {
         self.rc_active = on;
         for_each_space_mut!(self, |space, _handle| space.set_rc(on));
         if on {
+            self.rc_pin_epoch += 1;
             self.rc_recount();
+        }
+    }
+
+    /// Bumped when counts restart, which drops every pin.
+    pub(crate) fn rc_pin_epoch(&self) -> u64 {
+        self.rc_pin_epoch
+    }
+
+    /// Pins the records among `values`, edges the VM keeps outside the heap and writes once:
+    /// their counts stick, so no epoch makes them candidates, and they are no roots of later
+    /// minor collections. A full collection frees them once nothing names them.
+    pub(crate) fn rc_pin(&mut self, values: &[Value]) {
+        if values.is_empty() {
+            return;
+        }
+        for_each_space_mut!(self, |space, _handle| space.rc_ensure());
+        for &value in values {
+            if let Some((family, id)) = locate(value) {
+                with_space!(self, family, |space| space.rc_pin(id));
+            }
         }
     }
 

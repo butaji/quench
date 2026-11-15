@@ -168,6 +168,8 @@ impl<H: Host> Vm<H> {
             field_cache_writes: Some(Vec::new()),
             megamorphic_fields: vec![],
             holder_hints: Vec::new(),
+            rc_pinned_shapes: 0,
+            rc_pin_epoch: u64::MAX,
             length_atom: u32::MAX,
             prototype_atom: super::builtins::NO_CACHED_ATOM,
             instanceof_constructor_layouts: [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS],

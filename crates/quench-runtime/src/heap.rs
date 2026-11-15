@@ -810,6 +810,8 @@ pub(crate) struct Heap {
     /// and after its mark, its candidates, the zero-count records it carried, its young
     /// survivors, and the candidates it freed.
     rc_trace: [u64; 6],
+    /// Bumped when counts restart (`set_rc`), which drops every pin (`rc_pin`).
+    rc_pin_epoch: u64,
     /// Marks on the parallel pool whatever the heap's size (`Heap::parallel_mark`), so unit
     /// tests reach the parallel path with small heaps.
     #[cfg(test)]

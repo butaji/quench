@@ -22,7 +22,7 @@ const SHARED_DELETIONS: usize = 8;
 /// One slot's live property and attributes (`ShapeLookupIndex::slot_entries`).
 type SlotEntry = Option<(PropertyKey, ShapeAttributes)>;
 
-fn is_owned(shape: &Shape) -> bool {
+pub(in crate::vm) fn is_owned(shape: &Shape) -> bool {
     shape.dictionary_trigger == Some(DictionaryTrigger::DeletionPattern)
 }
 

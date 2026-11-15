@@ -1581,6 +1581,22 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         }
     }
 
+    /// Makes `id`'s count stuck (`Heap::rc_pin`), dropping its overflow entry.
+    pub(super) fn rc_pin(&self, id: RecordId) {
+        let (block_index, record_index) = Self::split_id(id);
+        let block = &self.rc_blocks[block_index];
+        let (word, mask) = (record_index / OCCUPANCY_WORD_BITS, 1_u64 << (record_index % OCCUPANCY_WORD_BITS));
+        if block.stuck[word].load(Ordering::Relaxed) & mask != 0 {
+            return;
+        }
+        if block.lo[word].load(Ordering::Relaxed) & block.hi[word].load(Ordering::Relaxed) & mask != 0 {
+            self.rc_overflow.lock().unwrap_or_else(|poison| poison.into_inner()).remove(&id);
+        }
+        block.lo[word].fetch_or(mask, Ordering::Relaxed);
+        block.hi[word].fetch_or(mask, Ordering::Relaxed);
+        block.stuck[word].fetch_or(mask, Ordering::Relaxed);
+    }
+
     /// Whether `id`'s count is stuck: past the overflow table's limit.
     #[cfg(test)]
     fn rc_stuck(&self, id: RecordId) -> bool {
