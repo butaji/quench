@@ -879,6 +879,8 @@ pub(super) struct LaneTier {
     pinned: std::cell::RefCell<Vec<std::rc::Rc<super::compiled::LaneMethod>>>,
     /// What its bodies cost and earned so far (`LaneBodyHistory`).
     history: std::cell::Cell<LaneBodyHistory>,
+    /// The epochs of its body's audit (`lane_body_audit`).
+    audit_epochs: std::cell::Cell<lane_body_tier::Epochs>,
     /// What its lane bodies did, under `QUENCH_TRACE=js-jit` (`LaneBodyStats`).
     pub(super) body_stats: LaneBodyStats,
     /// Bodies it specialized again past (`LaneView::note_lane_body_end`), whose code the
@@ -897,6 +899,7 @@ impl Default for LaneTier {
             warm_since: std::cell::Cell::new(0),
             pinned: std::cell::RefCell::default(),
             history: Default::default(),
+            audit_epochs: Default::default(),
             body_stats: LaneBodyStats::default(),
             retired: std::cell::RefCell::default(),
             callers: std::cell::RefCell::default(),
@@ -16443,9 +16446,10 @@ script_handler! {
         // SAFETY: the program's views outlive the lane run; this record is the view's.
         let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view)
             .expect("a lane body entry runs in its view");
-        // The body side's clock covers the entry's own work, as the interpreter side's nested run does.
-        let timed = own.audit_entry();
-        let started = (timed == Some(lane_body_tier::Timed::Body)).then(std::time::Instant::now);
+        // An entry of the audit's interpreted epoch runs the function's records (`lane_body_audit`).
+        if own.audit_entry(true) {
+            next!(cx, r, base, Carried::script_in(cx, view))
+        }
         // A body a lifecycle edge retired gives its prologue back and warms again.
         let Some(method) = own.cell_body().or_else(|| own.lane_body()) else {
             own.settle_retired_body();
@@ -16464,11 +16468,8 @@ script_handler! {
         let captures = capture_reads(unsafe { (*cx).registers }.capture());
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        if let Err(next) = body_calls::audited(cx, own, function, base, timed) {
-            return next;
-        }
         let exit = vm.run_lane_method(&method, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
-        let resumed = lane_body_concluded::<H>(cx, r, ip, own, &method, exit, function, started);
+        let resumed = lane_body_concluded::<H>(cx, r, ip, own, &method, exit, function);
         drop(method);
         resume!(cx, resumed)
     }
@@ -16499,7 +16500,6 @@ fn lane_body_concluded<H: Host>(
     method: &super::compiled::LaneMethod,
     left: super::compiled::LaneExit,
     function: u32,
-    started: Option<std::time::Instant>,
 ) -> Resumed {
     let base = unsafe { (*cx).base };
     if let super::compiled::LaneExit::Returned { pc, value } = left
@@ -16508,7 +16508,6 @@ fn lane_body_concluded<H: Host>(
         // SAFETY: as `lane_leave_counts`; a completed run carries no warming callee.
         unsafe { (*cx).callee_warming = false };
         own.note_lane_body_end(left, false, |_| {});
-        own.audit_body_run(started);
         // SAFETY: the record that completes the activation is one of its function's.
         return lane_returned(cx, unsafe { base.add(pc) }, value);
     }
@@ -16517,9 +16516,6 @@ fn lane_body_concluded<H: Host>(
     // Counted once the leave is resolved: a retirement or reoptimization moves the body.
     if counts {
         own.note_lane_body_end(feedback, false, |left| lane_note_leave(cx, function, left));
-    }
-    if matches!(left, super::compiled::LaneExit::Returned { .. }) {
-        own.audit_body_run(started);
     }
     lane_body_resumed(cx, ip, resumed)
 }
@@ -17413,7 +17409,9 @@ fn lane_body_left<H: Host>(
     let base = unsafe { (*cx).base };
     (match exit.resumed() {
         super::compiled::LaneExit::Terminated | super::compiled::LaneExit::Entry | super::compiled::LaneExit::Stub => unreachable!("termination leaves before recovery; an entry leave or an unentered call resumes at its first record"),
-        super::compiled::LaneExit::At(pc) => lane_body_resume_at(cx, r, own, loop_body::header_for_tier_up(cx, own, pc).unwrap_or(pc)),
+        super::compiled::LaneExit::At(pc) => {
+            lane_body_resume_at(cx, r, own, loop_body::header_for_tier_up(cx, own, pc).unwrap_or(pc))
+        }
         super::compiled::LaneExit::Inlined { frame, pc } => {
             let (registers, resume, carried) = lane_body_inlined_activation(cx, r, base, method, frame, pc);
             LaneBodyLeft::Resume(registers, resume, carried)
@@ -17526,6 +17524,11 @@ fn lane_enter_cell_body<H: Host>(
     // SAFETY: the program store keeps a derived view alive with its program.
     let own = unsafe { &*target.view };
     let method = own.cell_method()?;
+    // Most entries of a published body come through its cell: one of the audit's interpreted
+    // epoch activates the call as the lane's own would (`lane_body_audit`).
+    if own.audit_entry(false) {
+        return None;
+    }
     let window = lane_fill_window(vm, target, passed, argc);
     if !lane_body_admits(cx, method, CALLEE_ACTIVATION_PENDING) {
         // SAFETY: the window starts at the stack's top, which the fill moved.
@@ -17586,7 +17589,7 @@ fn lane_cell_body_ended<H: Host>(
         return Resumed::At(registers, next, Carried::script(cx));
     }
     lane_materialize_running_leaf(cx);
-    lane_body_concluded::<H>(cx, window, own.start(), own, method, exit, function, None)
+    lane_body_concluded::<H>(cx, window, own.start(), own, method, exit, function)
 }
 
 /// The window of `target`'s plain activation at the lane stack's top, holding the `argc`

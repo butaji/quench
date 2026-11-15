@@ -123,13 +123,12 @@ pub(in crate::vm) struct LaneBody {
     /// a hot loop while the code compiles (Richards' first body: 300 ms); the code waits at
     /// most this many entries once ready.
     pub(in crate::vm) compile_poll_interval: u16,
-    /// The entries between timed runs of a published body's function, which alternate the body
-    /// and the interpreter (`LaneView::audit_entry`): one in this many entries pays a clock
-    /// read pair, and half of those run interpreted.
+    /// The entries of one epoch of a published body's audit, whose epochs alternate the body and
+    /// the interpreter (`LaneView::audit_entry`): one clock read per epoch.
     pub(in crate::vm) audit_period: u32,
-    /// The timed runs each side needs before the verdict (`LaneView::audit_verdict`).
+    /// The epochs each side needs before the verdict (`LaneView::audit_verdict`).
     pub(in crate::vm) audit_samples: u16,
-    /// How much faster, per thousand, the body's mean timed run must be than the interpreter's
+    /// How much shorter, per thousand, the body's median epoch must be than the interpreter's
     /// for the body to stay: a body only as fast pays its compile and its entry for nothing.
     pub(in crate::vm) audit_margin_permille: u64,
 }
@@ -249,9 +248,9 @@ const MEASURED: Tiers = Tiers {
         late_call_calls: 4096,
         min_instructions: 40,
         compile_poll_interval: 64,
-        audit_period: 16,
+        audit_period: 64,
         audit_samples: 16,
-        audit_margin_permille: 50,
+        audit_margin_permille: 20,
     },
     js_function: JsFunction { promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)] },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
