@@ -112,6 +112,7 @@ impl<H: Host> Vm<H> {
             active_program: ProgramId::MAIN,
             profile: Default::default(),
             shape_slot_memo: Default::default(),
+            shape_attribute_memo: Default::default(),
             plain_copy_shapes: Default::default(),
             plain_assign_shapes: Default::default(),
             embedding_record_shapes: Default::default(),

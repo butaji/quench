@@ -1955,6 +1955,7 @@ pub(crate) struct Vm<H> {
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
     shape_slot_memo: shape_memo::ShapeSlotMemo,
+    shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     plain_copy_shapes: shape_memo::PlainCopyShapeMemo,
     plain_assign_shapes: shape_memo::PlainAssignShapeMemo,
     /// The final shapes of host records, by their names list (`create_embedding_record`).
@@ -2993,6 +2994,7 @@ impl<H: Host> Vm<H> {
         self.shapes[0].last_child.set(NO_LAST_CHILD);
         self.transitions.clear();
         self.shape_slot_memo.clear();
+        self.shape_attribute_memo.clear();
         self.plain_copy_shapes.clear();
         self.plain_assign_shapes.clear();
         self.embedding_record_shapes.clear();

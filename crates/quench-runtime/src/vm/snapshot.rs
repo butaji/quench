@@ -329,6 +329,7 @@ impl<H: Host> Vm<H> {
             shape_accessors,
             transitions,
             shape_slot_memo: _,
+            shape_attribute_memo: _,
             plain_copy_shapes: _,
             plain_assign_shapes: _,
             embedding_record_shapes: _,

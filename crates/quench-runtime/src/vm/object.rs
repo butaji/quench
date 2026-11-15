@@ -402,7 +402,19 @@ impl<H: Host> Vm<H> {
         if layout.facts.default_attributes() && !self.shape_is_dictionary(shape) {
             return (slot < layout.storage_len()).then_some(DEFAULT_SHAPE_ATTRIBUTES);
         }
-        self.walked_shape_attribute(shape, slot)
+        // A non-dictionary shape never changes, so its slot's attributes are a fact of the
+        // pair: memoized, a wide accessor object (mobx observables) does not walk its chain
+        // at every accessor read.
+        if self.shape_is_dictionary(shape) {
+            return self.walked_shape_attribute(shape, slot);
+        }
+        let Ok(key) = u32::try_from(slot) else { return self.walked_shape_attribute(shape, slot) };
+        if let Some(attributes) = self.shape_attribute_memo.get(shape, key) {
+            return attributes;
+        }
+        let attributes = self.walked_shape_attribute(shape, slot);
+        self.shape_attribute_memo.record(shape, key, attributes);
+        attributes
     }
     pub(super) fn shape_keys(&self, shape: u32) -> Vec<PropertyKey> {
         self.shape_entries(shape)
