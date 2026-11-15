@@ -15306,6 +15306,9 @@ script_handler! {
     fn lane_call_spread<>(cx, r, ip, i, view) {
         let list = r.get(ImmediateLayout::call_window_base(i.imm()));
         let Some(length) = (unsafe { vm(cx) }).intact_spread_length(list) else {
+            if let Some(resumed) = list_calls::lane_spread_set_native_call(cx, ip, i, r.get(i.b), r.get(i.c), list) {
+                resume!(cx, resumed)
+            }
             return exit(ip);
         };
         if let Some((registers, base)) = lane_spread_linked_call(cx, r, ip, i, list, length) {

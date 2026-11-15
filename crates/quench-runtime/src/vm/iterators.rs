@@ -171,12 +171,16 @@ impl<H: Host> Vm<H> {
             return (self.fuse_intact(IntactFuse::StringIterator) && self.fuse_intact(IntactFuse::StringIteratorNext))
                 .then_some(IterationSource::String);
         }
-        let (kind, iterator, next) = match self.heap.get(source)? {
-            Cell::Set { object, .. } if object.proto() == self.set_proto && !object.has_side_descriptors() => {
-                (IterationSource::Set, IntactFuse::SetIterator, IntactFuse::SetIteratorNext)
+        // The prototype holds `@@iterator`: the realm's own `Set.prototype` or `Map.prototype`,
+        // or another realm's (a script loaded as its own realm makes its collections there),
+        // whose intrinsic the fuse at that prototype proves. The iterators every realm makes
+        // share one prototype, the realm's `next` fuse.
+        let (kind, holder, iterator, next) = match self.heap.get(source)? {
+            Cell::Set { object, .. } if !object.has_side_descriptors() => {
+                (IterationSource::Set, object.proto(), IntactFuse::SetIterator, IntactFuse::SetIteratorNext)
             }
-            Cell::Map { object, .. } if object.proto() == self.map_proto && !object.has_side_descriptors() => {
-                (IterationSource::Map, IntactFuse::MapIterator, IntactFuse::MapIteratorNext)
+            Cell::Map { object, .. } if !object.has_side_descriptors() => {
+                (IterationSource::Map, object.proto(), IntactFuse::MapIterator, IntactFuse::MapIteratorNext)
             }
             _ => return None,
         };
@@ -190,7 +194,7 @@ impl<H: Host> Vm<H> {
                 self.collection_iteration_shape = Some(shape);
             }
         }
-        (self.fuse_intact(iterator) && self.fuse_intact(next)).then_some(kind)
+        (self.heap.object(holder).is_some() && self.fuse_intact_at(iterator, holder) && self.fuse_intact(next)).then_some(kind)
     }
 
     /// Whether neither `iterator` nor any prototype in its chain has `key`, which the shapes
