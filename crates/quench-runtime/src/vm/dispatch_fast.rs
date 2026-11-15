@@ -14167,6 +14167,53 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// `lane_iterator_step` of a destructuring step (`lane_binding_step`) over a plain array
+    /// or a String, Map or Set iterator: the step's `done` goes to the register its `done`
+    /// read writes and the pattern's done flag the next record moves it to, its `value` to
+    /// the register its `value` read writes, and the step goes on past them. The result
+    /// object only those reads observe is not written. Any other step runs as
+    /// `lane_iterator_step` and the records after it.
+    fn lane_iterator_step_binding<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let (method, iterator) = (r.get(i.b), r.get(i.c));
+        // SAFETY: the view checked the step's records (`lane_binding_step`).
+        let (done_read, flag, value_read) =
+            unsafe { (&*ip.add(BINDING_DONE_READ), &*ip.add(BINDING_DONE_MOVE), &*ip.add(BINDING_VALUE_READ)) };
+        let reads_step = done_read.imm() == vm.runtime_atoms.done && value_read.imm() == vm.runtime_atoms.value;
+        let kind = vm.iteration_step(iterator, method);
+        match kind {
+            super::iterators::IterationStep::Array | super::iterators::IterationStep::Collection if reads_step => {}
+            _ => sibling!(lane_iterator_step::<H>, r, ip, Carried::script_in(cx, view)),
+        }
+        let step = if kind == super::iterators::IterationStep::Array {
+            vm.step_present_array_value(iterator)
+        } else {
+            let step = vm.step_collection(iterator);
+            note_allocation(vm);
+            step
+        };
+        let Some(step) = step else {
+            sibling!(lane_iterator_step::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        match step {
+            Some(value) => {
+                r.set(done_read.a, Value::FALSE);
+                r.set(flag.a, Value::FALSE);
+                r.set(value_read.a, value);
+                // SAFETY: the step's records end at its `value` read, never the view's last.
+                next!(cx, r, unsafe { ip.add(BINDING_VALUE_READ + 1) }, Carried::script_in(cx, view))
+            }
+            None => {
+                r.set(done_read.a, Value::TRUE);
+                r.set(flag.a, Value::TRUE);
+                // The threaded test of the `done` just written leaves the step.
+                next!(cx, r, unsafe { ip.add(BINDING_DONE_TEST) }, Carried::script_in(cx, view))
+            }
+        }
+    }
+}
+
 /// `lane_iterator_step`'s step and result, out of line: the first result allocates.
 #[inline(never)]
 fn lane_array_iteration_result<H: Host>(vm: &mut Vm<H>, iterator: Value) -> Option<Value> {
@@ -21163,6 +21210,46 @@ fn lane_for_of_step(decoded: &[WideInstruction], pc: usize) -> Option<ForOfTest>
     (leaves && enters && reads_result(form.value_read())).then_some(form)
 }
 
+/// The records of a destructuring step after its iteration `Call` (`lane_binding_step`), by
+/// offset from it: the `done` read, its move to the pattern's done flag, the threaded test
+/// leaving the step, and the `value` read.
+const BINDING_DONE_READ: usize = 2;
+const BINDING_DONE_MOVE: usize = 3;
+const BINDING_DONE_TEST: usize = 4;
+const BINDING_VALUE_READ: usize = 5;
+
+/// Whether the iteration step at `pc` (`lane_iteration_step`) is a destructuring step as
+/// `binding_iterator_step` emits it once its test is threaded: a plain read of the result's
+/// `done`, a move of it to another register, a `JumpTrue` of it past the step, and a plain
+/// read of the result's `value`. `lane_iterator_step_binding` then makes the reads and the
+/// move from the step itself; their atoms it tests as it runs.
+fn lane_binding_step(decoded: &[WideInstruction], pc: usize) -> bool {
+    let result = decoded[pc].result_register();
+    let record = |offset: usize| decoded.get(pc + offset).copied();
+    let reads_result = |offset: usize| {
+        record(offset).is_some_and(|read| read.op().is_get_field() && read.result_flags() == 0 && read.b() == result)
+    };
+    let (Some(done), Some(flag), Some(test), Some(value)) =
+        (record(BINDING_DONE_READ), record(BINDING_DONE_MOVE), record(BINDING_DONE_TEST), record(BINDING_VALUE_READ))
+    else {
+        return false;
+    };
+    let done = done.result_register();
+    reads_result(BINDING_DONE_READ)
+        && reads_result(BINDING_VALUE_READ)
+        && flag.op().is_move()
+        && flag.result_flags() == 0
+        && flag.b() == done
+        && flag.a() != done
+        && flag.a() != result
+        && test.op().class().eq(Class::JumpTrue)
+        && test.a() == done
+        && test.jump_target() as usize > pc + BINDING_VALUE_READ
+        && value.result_register() != done
+        && value.result_register() != flag.a()
+        && pc + BINDING_VALUE_READ + 1 < decoded.len()
+}
+
 /// A nested `GetField` whose only result flag stores its value to a field of `this` too
 /// (`lane_get_field_sink`).
 fn lane_sinks_field(instruction: WideInstruction) -> bool {
@@ -21383,6 +21470,7 @@ fn derive_lane_view<'live, H: Host>(
                     handler: match lane_for_of_step(&decoded, pc) {
                         Some(ForOfTest::Emitted) => lane_iterator_step_reads::<H, false> as Handler,
                         Some(ForOfTest::Threaded) => lane_iterator_step_reads::<H, true> as Handler,
+                        None if lane_binding_step(&decoded, pc) => lane_iterator_step_binding::<H> as Handler,
                         None => lane_iterator_step::<H> as Handler,
                     },
                     produces: false,
