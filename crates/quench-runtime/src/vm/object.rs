@@ -3089,7 +3089,7 @@ impl<H: Host> Vm<H> {
                 && !receiver.has_side_descriptors()
                 && self.slot_holds_accessor_part(receiver, slot, setter);
             if own_getter {
-                self.record_accessor_fact(object, atom, receiver_layout, epoch, 0, slot, Value::UNDEFINED);
+                self.record_accessor_fact(object, atom, receiver_layout, 0, slot, Value::UNDEFINED);
                 self.record_accessor_entry(
                     site,
                     AccessorFieldCache {
@@ -3144,7 +3144,7 @@ impl<H: Host> Vm<H> {
         if crate::heap::prototype_layout_epoch() != epoch {
             return;
         }
-        self.record_accessor_fact(object, atom, receiver_layout, epoch, depth, slot, holder);
+        self.record_accessor_fact(object, atom, receiver_layout, depth, slot, holder);
         self.record_accessor_entry(
             site,
             AccessorFieldCache {
@@ -3166,7 +3166,7 @@ impl<H: Host> Vm<H> {
     /// `hops` links above `object` (0: its own), at `slot` of `holder` (`object` itself for an
     /// own one). Only receivers proved reads start from and shapes outside dictionary mode,
     /// whose layout fixes where each name is.
-    fn record_accessor_fact(&self, object: Value, atom: Atom, layout: u32, epoch: u64, hops: u8, slot: usize, holder: Value) {
+    fn record_accessor_fact(&mut self, object: Value, atom: Atom, layout: u32, hops: u8, slot: usize, holder: Value) {
         use super::symbol_load_proof::{KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT};
         let key = PropertyKey::string(atom);
         let Some(receiver) = self.proved_read_receiver(object, key) else {
@@ -3185,7 +3185,11 @@ impl<H: Host> Vm<H> {
             super::SlotAccessor::Attributes => KIND_GETTER,
         };
         let holder_id = if hops == 0 { 0 } else { holder.direct_object_index().map_or(0, |id| id + 1) };
-        self.symbol_load_proofs.record_accessor(layout, key32, epoch, hops, slot32, kind, holder_id);
+        let prototype = receiver.proto();
+        let Some(subjects) = self.fact_chain_subjects(prototype, hops) else { return };
+        if let Some(entry) = self.symbol_load_proofs.record_accessor(layout, key32, hops, slot32, kind, holder_id) {
+            self.hold_fact(entry, &subjects);
+        }
     }
 
     /// The getter (`setter` false) or setter the fact table gives `atom` on the record
@@ -3204,9 +3208,6 @@ impl<H: Host> Vm<H> {
         let holder = if word.hops() == 0 {
             receiver
         } else {
-            if !word.current(crate::heap::prototype_layout_epoch()) {
-                return None;
-            }
             match self.symbol_load_proofs.holder(layout, key32) {
                 Some(id) if id != 0 => self.heap.object_record_by_id(id - 1),
                 _ => self.proof_holder(receiver, word.hops())?,

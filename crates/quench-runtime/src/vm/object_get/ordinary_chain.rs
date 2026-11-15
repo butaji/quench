@@ -80,10 +80,9 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.proved_read_receiver(object, key) else {
             return self.ordinary_chain_read(object, atom);
         };
-        let epoch = crate::heap::prototype_layout_epoch();
         // A proof's shape is an ordinary one; side descriptors could name the key off it.
         let inherits = !data.has_side_descriptors();
-        match self.symbol_load_proofs.answer(data.layout_id(), key, epoch) {
+        match self.symbol_load_proofs.answer(data.layout_id(), key) {
             // SAFETY: the proof recorded this slot for an own data property of this shape.
             Some(SymbolLoadAnswer::Own(slot)) => {
                 return Some(ChainRead::Value(unsafe { self.heap.property_get_unchecked(data, slot as usize) }));
@@ -116,7 +115,7 @@ impl<H: Host> Vm<H> {
             }
             _ => {}
         }
-        match self.prove_load(object, key, epoch) {
+        match self.prove_load(object, key) {
             super::ProvedLoad::Value(value) => Some(ChainRead::Value(value)),
             super::ProvedLoad::Absent => Some(ChainRead::Absent),
             super::ProvedLoad::Getter | super::ProvedLoad::Unproved => self.ordinary_chain_read(object, atom),

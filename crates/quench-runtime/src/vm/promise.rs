@@ -5073,7 +5073,7 @@ impl<H: Host> Vm<H> {
         };
         let (layout, key) = (data.layout_id(), PropertyKey::string(self.runtime_atoms.constructor));
         let Some(SymbolLoadAnswer::Inherited { hops, .. }) =
-            self.symbol_load_proofs.answer(data.layout_id(), key, crate::heap::prototype_layout_epoch())
+            self.symbol_load_proofs.answer(data.layout_id(), key)
         else {
             return;
         };

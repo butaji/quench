@@ -473,13 +473,12 @@ impl<H: Host> Vm<H> {
         use super::symbol_load_proof::SymbolLoadAnswer;
         let data = self.heap.ordinary_object(object)?;
         let (layout, side) = (data.layout_id(), data.has_side_descriptors());
-        let epoch = crate::heap::prototype_layout_epoch();
-        match self.symbol_load_proofs.answer(layout, key, epoch) {
+        match self.symbol_load_proofs.answer(layout, key) {
             Some(SymbolLoadAnswer::Own(_)) => Some(true),
             Some(SymbolLoadAnswer::Absent) if !side => Some(false),
             Some(SymbolLoadAnswer::Inherited { .. } | SymbolLoadAnswer::Getter { .. }) if !side => Some(true),
             Some(_) => None,
-            None => match self.prove_load(object, key, epoch) {
+            None => match self.prove_load(object, key) {
                 super::object_get::ProvedLoad::Value(_) | super::object_get::ProvedLoad::Getter => Some(true),
                 super::object_get::ProvedLoad::Absent => Some(false),
                 super::object_get::ProvedLoad::Unproved => None,
