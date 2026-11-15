@@ -540,8 +540,22 @@ impl<H: Host> Vm<H> {
     #[cold]
     #[inline(never)]
     fn prove_symbol_load(&mut self, object: Value, key: PropertyKey, epoch: u64) -> Option<Value> {
+        match self.prove_load(object, key, epoch) {
+            ProvedLoad::Value(value) => Some(value),
+            ProvedLoad::Absent => Some(Value::UNDEFINED),
+            ProvedLoad::Getter => None,
+            ProvedLoad::Unproved => self.plain_property_get(object, key),
+        }
+    }
+
+    /// The walk of `prove_symbol_load`, recording what it proves: the value, an absent key, a
+    /// getter (which only the general path calls), or a chain no proof covers.
+    fn prove_load(&mut self, object: Value, key: PropertyKey, epoch: u64) -> ProvedLoad {
+        self.prove_load_walk(object, key, epoch).unwrap_or(ProvedLoad::Unproved)
+    }
+
+    fn prove_load_walk(&mut self, object: Value, key: PropertyKey, epoch: u64) -> Option<ProvedLoad> {
         use super::symbol_load_proof::SymbolLoadAnswer;
-        let symbol = key;
         let data = self.proved_read_receiver(object, key)?;
         let (shape, prototype) = (data.shape(), data.proto());
         let mut current = object;
@@ -553,7 +567,7 @@ impl<H: Host> Vm<H> {
                 self.heap.object_record(current)
             };
             let Some(link) = link else {
-                return self.plain_property_get(object, symbol);
+                return Some(ProvedLoad::Unproved);
             };
             let link_shape = link.shape();
             if link.is_module_namespace()
@@ -561,16 +575,16 @@ impl<H: Host> Vm<H> {
                 || link.is_arguments_object()
                 || self.shape_is_dictionary(link_shape)
             {
-                return self.plain_property_get(object, symbol);
+                return Some(ProvedLoad::Unproved);
             }
-            if let Some(slot) = self.property_shape_slot(link_shape, symbol) {
+            if let Some(slot) = self.property_shape_slot(link_shape, key) {
                 let accessors = self.shape_may_have_accessors(link_shape);
                 if accessors && self.slot_attributes(link, slot)?.accessor {
                     if depth > 0 && let Ok(slot) = u32::try_from(slot) {
                         let getter = SymbolLoadAnswer::Getter { prototype, holder: current, slot };
                         self.prove_symbol_chain(shape, key, epoch, prototype, depth, getter);
                     }
-                    return None;
+                    return Some(ProvedLoad::Getter);
                 }
                 let value = self.heap.property_get(link, slot)?;
                 let slot = u32::try_from(slot).ok()?;
@@ -584,20 +598,23 @@ impl<H: Host> Vm<H> {
                 break (answer, value);
             }
             if link.has_side_descriptors() {
-                return self.plain_property_get(object, symbol);
+                return Some(ProvedLoad::Unproved);
             }
             let next = link.proto();
             if next.is_null() {
                 break (SymbolLoadAnswer::Absent { prototype }, Value::UNDEFINED);
             }
             let Some(deeper) = depth.checked_add(1) else {
-                return self.plain_property_get(object, symbol);
+                return Some(ProvedLoad::Unproved);
             };
             depth = deeper;
             current = next;
         };
         self.prove_symbol_chain(shape, key, epoch, prototype, depth, answer);
-        Some(value)
+        Some(match answer {
+            SymbolLoadAnswer::Absent { .. } => ProvedLoad::Absent,
+            _ => ProvedLoad::Value(value),
+        })
     }
 
     /// Records `answer` for `key` on receivers of `shape` once the `depth` prototypes from
@@ -1234,4 +1251,16 @@ impl<H: Host> Vm<H> {
             self.type_error(p, "private member is not present on this object".into())
         })
     }
+}
+
+/// What a proving walk (`Vm::prove_load`) found.
+pub(in crate::vm) enum ProvedLoad {
+    /// The key's data value.
+    Value(Value),
+    /// No link holds the key.
+    Absent,
+    /// The key is an accessor.
+    Getter,
+    /// A link no proof covers: exotic, dictionary or descriptor-held.
+    Unproved,
 }

@@ -240,14 +240,15 @@ impl<H: Host> Vm<H> {
 
     /// `base[key]` of a string `key` that names no array index, where the shapes alone answer:
     /// the slot of the key a for-in just stepped to (`enumerated_key_get`), or a read by its
-    /// atom as a named read is (`plain_named_get`, which refuses index atoms). `None` for any
-    /// other key, or a read those decline.
+    /// atom as a named read is, through the (shape, key) proofs (`plain_named_load`, which
+    /// refuses index atoms). `None` for any other key, or a read those decline.
     #[inline(always)]
-    pub(in crate::vm) fn plain_string_keyed_get(&self, base: Value, key: Value) -> Option<Value> {
+    pub(in crate::vm) fn plain_string_keyed_get(&mut self, base: Value, key: Value) -> Option<Value> {
         if let Some(value) = self.enumerated_key_get(base, key) {
             return Some(value);
         }
-        self.plain_named_get(base, self.lookup_string_atom(key)?)
+        let atom = self.lookup_string_atom(key)?;
+        self.plain_named_load(base, atom)
     }
 }
 

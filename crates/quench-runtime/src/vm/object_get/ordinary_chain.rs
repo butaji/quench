@@ -29,7 +29,7 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         private_name: bool,
     ) -> ControlFlow<Result<Value, JsError>, Value> {
-        let read = if private_name { None } else { self.ordinary_chain_read(object, atom) };
+        let read = if private_name { None } else { self.ordinary_chain_read_proved(object, atom) };
         match read {
             Some(ChainRead::Value(value)) => ControlFlow::Break(Ok(value)),
             Some(ChainRead::Absent) => ControlFlow::Break(Ok(Value::UNDEFINED)),
@@ -67,6 +67,46 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `ordinary_chain_read` through the (shape, key) proofs (`symbol_load_proofs`), which
+    /// answer an ordinary receiver's own, inherited or absent key in one probe; a miss walks
+    /// once, recording what the walk proves (`Vm::prove_load`). Keys no proof covers, and
+    /// receivers no proof starts from, take the plain walk.
+    pub(in crate::vm) fn ordinary_chain_read_proved(&mut self, object: Value, atom: Atom) -> Option<ChainRead> {
+        use super::super::symbol_load_proof::SymbolLoadAnswer;
+        if !self.plain_named_key(atom) {
+            return self.ordinary_chain_read(object, atom);
+        }
+        let key = PropertyKey::string(atom);
+        let Some(data) = self.heap.ordinary_object(object) else {
+            return self.ordinary_chain_read(object, atom);
+        };
+        let epoch = crate::heap::prototype_layout_epoch();
+        // A proof's shape is an ordinary one; side descriptors could name the key off it.
+        let inherits = !data.has_side_descriptors();
+        match self.symbol_load_proofs.answer(data.shape(), key, epoch) {
+            // SAFETY: the proof recorded this slot for an own data property of this shape.
+            Some(SymbolLoadAnswer::Own(slot)) => {
+                return Some(ChainRead::Value(unsafe { self.heap.property_get_unchecked(data, slot as usize) }));
+            }
+            Some(SymbolLoadAnswer::Inherited { prototype, holder, slot }) if inherits && data.proto() == prototype => {
+                let holder = self.heap.ordinary_object(holder)?;
+                // SAFETY: the proof keeps the holder and the shape its slot was recorded in.
+                if let Some(value) = unsafe { self.heap.property_get_shaped(holder, slot as usize) } {
+                    return Some(ChainRead::Value(value));
+                }
+            }
+            Some(SymbolLoadAnswer::Absent { prototype }) if inherits && data.proto() == prototype => {
+                return Some(ChainRead::Absent);
+            }
+            _ => {}
+        }
+        match self.prove_load(object, key, epoch) {
+            super::ProvedLoad::Value(value) => Some(ChainRead::Value(value)),
+            super::ProvedLoad::Absent => Some(ChainRead::Absent),
+            super::ProvedLoad::Getter | super::ProvedLoad::Unproved => self.ordinary_chain_read(object, atom),
+        }
+    }
+
     /// What the shape-held property at `slot` of `data`, the record of `object`, reads as.
     fn chain_slot_read(&self, object: Value, data: &crate::heap::Object, slot: usize) -> ChainRead {
         if self.shape_may_have_accessors(data.shape())
@@ -82,7 +122,7 @@ impl<H: Host> Vm<H> {
     /// where shapes alone decide it: an ordinary record's chain, or an array's `length` and
     /// its non-index names. `None` for any other target or key, and wherever the walk meets an
     /// exotic link.
-    pub(in crate::vm) fn reflect_chain_read(&self, target: Value, key: Value) -> Option<ChainRead> {
+    pub(in crate::vm) fn reflect_chain_read(&mut self, target: Value, key: Value) -> Option<ChainRead> {
         if let Some(array) = self.heap.array(target) {
             let index = super::super::object_static::array_index(self.heap.string(key)?.host_string());
             if let Some(index) = index {
@@ -96,7 +136,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         if self.heap.object_record(target).is_some() {
-            return self.ordinary_chain_read(target, atom).filter(|read| !matches!(read, ChainRead::Exotic(_)));
+            return self.ordinary_chain_read_proved(target, atom).filter(|read| !matches!(read, ChainRead::Exotic(_)));
         }
         self.heap.array(target)?;
         if atom == self.length_atom {

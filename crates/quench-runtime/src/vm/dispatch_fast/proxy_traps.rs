@@ -43,7 +43,7 @@ fn lane_read_forwarded<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, b
         }
         target = inner;
     }
-    match vm.ordinary_chain_read(target, atom) {
+    match vm.ordinary_chain_read_proved(target, atom) {
         Some(ChainRead::Value(value)) => lane_complete_read(r, ip, i, value),
         Some(ChainRead::Absent) => lane_complete_read(r, ip, i, Value::UNDEFINED),
         Some(ChainRead::Getter(Some(getter))) if !getter.is_undefined() => lane_activate_getter(cx, r, ip, getter, base, None),

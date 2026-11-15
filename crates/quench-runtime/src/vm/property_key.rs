@@ -7,7 +7,7 @@ use crate::value::Value;
 /// transitions. This type is the authority at semantic edges: symbol keys
 /// cannot be confused with strings, and private names have their own
 /// namespace even when display text happens to match.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PropertyKey {
     String(Atom),
     Symbol(Value),
@@ -17,15 +17,32 @@ pub(crate) enum PropertyKey {
     Private(Value, Atom),
 }
 
+/// One hash write per key: the shape and proof memos probe by (shape, key) on every
+/// generic lookup, where a derived hash wrote the discriminant and each field in turn. Equal
+/// keys write equal words; distinct keys may share one, as any hash allows.
+impl std::hash::Hash for PropertyKey {
+    #[inline(always)]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(match *self {
+            Self::String(atom) => u64::from(atom),
+            Self::Symbol(value) => value.to_bits().rotate_left(17) ^ 1,
+            Self::Private(home, atom) => home.to_bits() ^ (u64::from(atom) << 32) ^ 2,
+        });
+    }
+}
+
 impl PropertyKey {
+    #[inline(always)]
     pub(crate) fn string(atom: Atom) -> Self {
         Self::String(atom)
     }
 
+    #[inline(always)]
     pub(crate) fn symbol(value: Value) -> Self {
         Self::Symbol(value)
     }
 
+    #[inline(always)]
     pub(crate) fn private(home: Value, atom: Atom) -> Self {
         Self::Private(home, atom)
     }

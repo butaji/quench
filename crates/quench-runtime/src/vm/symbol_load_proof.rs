@@ -67,6 +67,7 @@ struct SiteOwnRead {
 
 
 impl SymbolLoadProofs {
+    #[inline(always)]
     fn index(shape: u32, key: PropertyKey) -> usize {
         super::shape_memo::direct_mapped_index((shape, key), SYMBOL_LOAD_PROOF_ENTRIES)
     }
