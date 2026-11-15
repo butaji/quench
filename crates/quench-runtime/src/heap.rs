@@ -1384,6 +1384,13 @@ impl Heap {
         }
     }
 
+    /// A young run for the `len` elements of an array record the caller makes before any
+    /// collection (`ValueArena::young_elements`, `ArrayElements::young`).
+    #[inline(always)]
+    pub(crate) fn young_elements(&mut self, len: usize) -> Option<std::ptr::NonNull<Value>> {
+        self.properties.young_elements(len)
+    }
+
     /// A new array of `prototype`, with no properties, of the `len` elements `element` gives
     /// for each index, which a young run holds where it can (`ValueArena::young_elements`).
     #[inline(always)]

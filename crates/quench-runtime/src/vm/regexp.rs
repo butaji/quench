@@ -2784,7 +2784,9 @@ impl<H: Host> Vm<H> {
         whole: Value,
     ) -> Result<(crate::heap::ArrayElements, Value), JsError> {
         let length = units.len();
-        let values = crate::heap::ArrayElements::from_fn(1 + matched.captures.len(), |index| {
+        let len = 1 + matched.captures.len();
+        let run = self.heap.young_elements(len);
+        let element = |index: usize| {
             let range = match index.checked_sub(1) {
                 None => Some(matched.range.clone()),
                 Some(capture) => matched.captures[capture].clone(),
@@ -2796,7 +2798,15 @@ impl<H: Host> Vm<H> {
                     self.heap.alloc_string(JsString::from_unit_run(units.slice(range)))
                 }
             })
-        });
+        };
+        // A young run where the nursery has one, as an array literal's: most results die
+        // young. The result array record is made before any collection (`regexp_exec_result`).
+        let values = match run {
+            // SAFETY: the run is the nursery's alone, and string records and the groups
+            // object take no collection before the caller makes the array record.
+            Some(run) => unsafe { crate::heap::ArrayElements::young(run, len, element) },
+            None => crate::heap::ArrayElements::from_fn(len, element),
+        };
         let groups = self.regexp_groups_object(named, units)?;
         Ok((values, groups))
     }
