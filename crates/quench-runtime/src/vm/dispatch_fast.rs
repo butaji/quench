@@ -15618,11 +15618,15 @@ fn lane_native_complete<H: Host>(
     // registers and caller are read again.
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
         let Some(resumed) = lane_complete_activation(cx, ip, value) else {
-            // A frame of a script run retires in place, as its `Return` would.
+            // A chained reaction's frame continues with the queue's next job; a frame of a
+            // script run retires in place, as its `Return` would.
+            if let Some(resumed) = lane_chain_reaction_return(cx, ip, value) {
+                return resumed;
+            }
             if unsafe { !(*cx).inline_calls && (*cx).script_calls } {
                 return Resumed::Exit(lane_return_script_frame(cx, ip, value, true));
             }
-            return lane_frame_return_or_chain(cx, ip, value);
+            return Resumed::Exit(lane_frame_return(unsafe { vm(cx) }, ip, value));
         };
         return resumed;
     }
