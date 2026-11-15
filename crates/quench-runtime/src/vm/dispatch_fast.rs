@@ -13291,13 +13291,13 @@ impl<H: Host> Vm<H> {
             super::lane_exits::record_detail(body);
         }
         // A callee of another program runs its own residual, which the program store keeps
-        // alive with the program for the lane run; only a plain closure of a program the
-        // lane admits activates across programs.
+        // alive with the program for the lane run; a closure of a program the lane admits,
+        // plain or numeric, activates across programs.
         let cross = program != self.active_program;
         let code: &ResidualProgram = if cross {
             // SAFETY: as above; no program is installed or retired while a call resolves.
             let callee_code = unsafe { &*std::ptr::from_ref(self.programs.residual(program)?) };
-            if numeric || !self.lane_admits(callee_code) { return None; }
+            if !self.lane_admits(callee_code) { return None; }
             callee_code
         } else { code };
         // The JavaScript tier enters a frameless activation at its prologue as it enters a
@@ -13497,7 +13497,13 @@ impl<H: Host> Vm<H> {
     fn remember_target(&mut self, target: ScriptCallTarget, numeric: bool, cross: bool) {
         let policy = self.heap.memory_policy();
         if numeric {
-            self.lane_stack.remember_script_target(target, policy);
+            // A numeric body's target is its closure's, held per callee: another program's in
+            // the cross-program set, which its callers activate across programs.
+            if cross {
+                self.lane_stack.remember_cross_target(target, policy);
+            } else {
+                self.lane_stack.remember_script_target(target, policy);
+            }
         } else {
             self.lane_stack.remember_function_target(target, cross, policy);
         }
