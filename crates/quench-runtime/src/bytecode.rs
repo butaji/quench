@@ -1255,6 +1255,8 @@ pub struct SourceSpan {
 
 /// Membership views of a function's declared-name lists, which stay the authority for
 /// their order and serialization: a name's declaration kind is one lookup, not a scan.
+/// Made only for a function with a list longer than `LOCAL_SLOT_SCAN`: a short list is
+/// scanned, where a box of sets per called function held 9.6 MB of jsdom-d3-startup's peak.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DeclaredAtomSets {
     global_lexical: rustc_hash::FxHashSet<Atom>,
@@ -2039,6 +2041,13 @@ impl Function {
 
     /// The declaration kinds of local `slot`'s name (none for a slot outside the function).
     pub(crate) fn slot_declaration(&self, slot: usize) -> SlotDeclaration {
+        let (var, lexical) = (self.global_var_atoms(), self.global_lexical_atoms());
+        if var.len() <= LOCAL_SLOT_SCAN && lexical.len() <= LOCAL_SLOT_SCAN {
+            return self.local_atoms.get(slot).map_or_else(SlotDeclaration::default, |atom| SlotDeclaration {
+                global_var: var.contains(atom),
+                global_lexical: lexical.contains(atom),
+            });
+        }
         self.declared_atoms()
             .slots
             .get(slot)
@@ -2048,21 +2057,37 @@ impl Function {
 
     /// Whether `atom` is among `global_lexical_atoms`.
     pub(crate) fn declares_global_lexical(&self, atom: Atom) -> bool {
+        let atoms: &[Atom] = self.global_lexical_atoms();
+        if atoms.len() <= LOCAL_SLOT_SCAN {
+            return atoms.contains(&atom);
+        }
         self.declared_atoms().global_lexical.contains(&atom)
     }
 
     /// Whether `atom` is among `global_var_atoms`.
     pub(crate) fn declares_global_var(&self, atom: Atom) -> bool {
+        let atoms: &[Atom] = self.global_var_atoms();
+        if atoms.len() <= LOCAL_SLOT_SCAN {
+            return atoms.contains(&atom);
+        }
         self.declared_atoms().global_var.contains(&atom)
     }
 
     /// Whether `atom` is among `global_immutable_atoms`.
     pub(crate) fn declares_global_immutable(&self, atom: Atom) -> bool {
+        let atoms: &[Atom] = self.global_immutable_atoms();
+        if atoms.len() <= LOCAL_SLOT_SCAN {
+            return atoms.contains(&atom);
+        }
         self.declared_atoms().global_immutable.contains(&atom)
     }
 
     /// Whether `atom` is among `environment_atoms`.
     pub(crate) fn declares_environment_atom(&self, atom: Atom) -> bool {
+        let atoms: &[Atom] = &self.environment_atoms[..];
+        if atoms.len() <= LOCAL_SLOT_SCAN {
+            return atoms.contains(&atom);
+        }
         self.declared_atoms().environment.contains(&atom)
     }
 
