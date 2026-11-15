@@ -3501,6 +3501,17 @@ impl AsRef<[u8]> for KeptPrefix {
     }
 }
 
+/// What the host does with a deferred record's bytes once they are decoded, set once by the
+/// embedding: the decoded function lives on the heap, so the bytes are read again only if the
+/// record is released and decoded anew, and a mapped compile-cache entry need not keep them
+/// resident (Air: 94 of a 123-page entry resident at its peak, its records decoded).
+static RECORD_READ: std::sync::OnceLock<fn(&[u8])> = std::sync::OnceLock::new();
+
+/// Sets `RECORD_READ`; the first call wins.
+pub fn set_record_read(action: fn(&[u8])) {
+    let _ = RECORD_READ.set(action);
+}
+
 /// A compile-cache entry split into its encoding and the source text
 /// `binary::append_kept_source` kept after it, when it keeps `source_len` bytes of text whose
 /// checksum holds; the entry itself otherwise.
@@ -3914,9 +3925,18 @@ impl ResidualProgram {
         }
         let deferred = self.encoded_records.as_deref().and_then(|records| binary::decode_deferred_function(records, index));
         let function = match deferred {
-            Some(decoded) => decoded.unwrap_or_else(|error| {
-                panic!("function {index} of {} does not decode: {error}", self.source_name)
-            }),
+            Some(decoded) => {
+                let function = decoded.unwrap_or_else(|error| {
+                    panic!("function {index} of {} does not decode: {error}", self.source_name)
+                });
+                if let (Some(action), Some(bytes)) = (
+                    RECORD_READ.get(),
+                    self.encoded_records.as_deref().and_then(|records| binary::deferred_record_bytes(records, index)),
+                ) {
+                    action(bytes);
+                }
+                function
+            }
             None => {
                 if !crate::DYNAMIC_EXECUTION_ENABLED {
                     panic!("native function {index} of {} has no archived record", self.source_name);

@@ -1373,6 +1373,13 @@ pub(super) fn decode_deferred_function(
     Some(read_function(&mut reader).and_then(|function| reader.finish().map(|()| function)))
 }
 
+/// The bytes of function `index`'s deferred record, when it has one.
+pub(super) fn deferred_record_bytes(records: &super::EncodedRecords, index: usize) -> Option<&[u8]> {
+    let record = (*records.ranges.get(index)?)?;
+    let start = record.start as usize;
+    records.bytes.as_ref().as_ref().get(start..start + record.length as usize)
+}
+
 pub(super) struct BinaryWriter {
     pub(super) bytes: Vec<u8>,
     atoms: AtomEncoding,
