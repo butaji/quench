@@ -13104,7 +13104,7 @@ impl<H: Host> Vm<H> {
             }
             return Some(target);
         }
-        if !self.programs.lane_call_may_derive(program, function) { return None; }
+        if !self.lane_call_may_derive(program, function) { return None; }
         let body = code.function_get(function as usize)?;
         let plan = body.call_plan(code);
         // An arrow binds the `this` of its environment, found once here: one still
@@ -19481,7 +19481,7 @@ fn lane_push_frame_call<H: Host>(
     // A callee that has not made its deferred runs takes the general path, as a lane call's
     // does (`ProgramStore::lane_call_may_derive`): entering its frame here derived its view at
     // its first call, a callee run once included (jiti npm scenario: -2.1% instructions).
-    if !vm.programs.lane_call_may_derive(target.0, target.1) {
+    if !vm.lane_call_may_derive(target.0, target.1) {
         return Resumed::Exit(exit(ip));
     }
     #[cfg(feature = "profile-lane-exits")]
@@ -19606,7 +19606,7 @@ fn lane_wasm_export_frame<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip
     let args = unsafe { lane_call_window(r, i) };
     let (program, function, env, encoded, result) = vm.wasm_export_frame_call(r.get(i.b), args)?;
     let callee_code = vm.programs.get(program)?;
-    if !vm.lane_admits(&callee_code) || !vm.programs.lane_call_may_derive(program, function) {
+    if !vm.lane_admits(&callee_code) || !vm.lane_call_may_derive(program, function) {
         return None;
     }
     if let Some(resumed) = lane_activate_wasm_export(cx, r, ip, program, function, env, &encoded, result) {

@@ -77,7 +77,7 @@ fn an_evals_kept_records_take_their_rewrites_on_first_read_as_the_load_would_hav
             assert_eq!(deferred.functions[index].record().is_some(), index == 0, "function {index} of {source}");
         }
         for index in 0..deferred.functions.len() {
-            assert_eq!(format!("{:?}", deferred.function(index)), format!("{:?}", at_load.function(index)), "function {index} of {source}");
+            assert_eq!(format!("{:?}", deferred.lowered_function(index)), format!("{:?}", at_load.function(index)), "function {index} of {source}");
         }
         assert_eq!(deferred.field_sites.len(), at_load.field_sites.len(), "{source}");
         assert_eq!(deferred.superinstructions.len(), at_load.superinstructions.len(), "{source}");

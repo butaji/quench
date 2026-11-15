@@ -140,7 +140,7 @@ mod data_view;
 mod date;
 mod dispatch;
 mod dispatch_fast; mod lane_values;
-mod dispatch_frame;
+mod dispatch_frame; mod tier0_promotion;
 mod dispatch_wasm;
 mod dynamic_strings;
 #[cfg(feature = "profile-lane-exits")]

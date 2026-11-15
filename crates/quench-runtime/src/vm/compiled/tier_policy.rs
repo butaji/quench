@@ -21,6 +21,12 @@ pub(in crate::vm) const TEST_PRIORS: Priors = Priors {
     region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800,
 };
 
+/// The runs a loop-free function makes unlowered before a later call lowers it
+/// (`bytecode::tier0`): the runs a lane view waits for (`LANE_VIEW_DEFERRED_RUNS`), so the
+/// lowering lands before its view derives. Octane-code-load instructions against lowering
+/// at the first read: -9.8% at four, -8.2% at two; mobx-startup -0.5% at both.
+pub(in crate::vm) const TIER0_RUNS: u8 = 4;
+
 /// Parts per thousand, the unit of a prior's share.
 pub(in crate::vm) const PER_MILLE: u64 = 1000;
 
