@@ -456,6 +456,7 @@ impl Heap {
     /// in the mutator's steps alone.
     pub(super) fn begin_cycle_with(&mut self, roots: impl IntoIterator<Item = Value>, threaded: bool) {
         assert!(self.cycle.is_none() && !self.satb_active, "one cycle at a time");
+        self.retire_bump();
         let begun = std::time::Instant::now();
         // The shared unit strings are handed out with no barrier: a cycle starts them anew,
         // as a collection does.

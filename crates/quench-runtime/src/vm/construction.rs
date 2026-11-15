@@ -25,9 +25,10 @@ pub(super) struct ClosureTemplate {
     function: u32,
     realm: Value,
     function_prototype: Value,
-    /// The closure object's inline header (`InlineObjectHeader`) under its named shape, for a
-    /// closure whose own properties fit its inline slots (`finished_closure_fits`).
+    /// The closure object's headers (`InlineObjectHeader`) under its named shape: inline, for
+    /// own properties that fit its inline slots (`finished_closure_fits`), else over a run.
     header: crate::heap::InlineObjectHeader,
+    run_header: crate::heap::InlineObjectHeader,
     length: Value,
     name: Value,
     kind: FunctionKind,
@@ -370,14 +371,17 @@ impl<H: Host> Vm<H> {
         // the shape its `constructor` add would reach, its slot filled once the closure exists.
         let prototype = template.prototype.map(|header| self.heap.alloc_unfilled_object_under_flagged_prototype(header));
         let named = [template.length, template.name];
-        // A function record's values stay out of the nursery's runs, which only object
-        // records' collection moves: an arena run comes from `finished_closure_object`.
-        let object = finished_closure_fits(prototype)
-            .then(|| crate::heap::Object::from_inline_header(template.header, finished_closure_slots(&named, prototype)))
-            .flatten()
-            .unwrap_or_else(|| {
-                self.finished_closure_object(template.function_prototype, template.header.shape(), named, prototype)
-            });
+        let object = if finished_closure_fits(prototype) {
+            crate::heap::Object::from_inline_header(template.header, finished_closure_slots(&named, prototype))
+        } else {
+            let [length, name] = named;
+            let values = [length, name, prototype.unwrap_or(Value::UNDEFINED), Value::UNDEFINED];
+            let len = FINISHED_CLOSURE_NAMED_SLOTS + usize::from(prototype.is_some());
+            self.heap.finished_run_object(template.run_header, &values, len)
+        };
+        let object = object.unwrap_or_else(|| {
+            self.finished_closure_object(template.function_prototype, template.header.shape(), named, prototype)
+        });
         let function = self.heap.alloc_function_under_flagged_prototype(FunctionRecord {
             object,
             realm: template.realm,
@@ -527,6 +531,7 @@ impl<H: Host> Vm<H> {
                     realm,
                     function_prototype: function_object_prototype,
                     header: crate::heap::InlineObjectHeader::of(function_object_prototype, shape),
+                    run_header: crate::heap::InlineObjectHeader::of_run(function_object_prototype, shape),
                     length: length_value,
                     name: name_value,
                     kind,

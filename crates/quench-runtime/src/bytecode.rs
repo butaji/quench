@@ -1427,7 +1427,7 @@ pub struct Function {
 // once compiled sit behind thin slices. `code`, `wide` and `source_positions` stay as the
 // compiler builds them: its passes rewrite them, and its rewrite loop measured slower when
 // their layout changed.
-const _: () = assert!(size_of::<Function>() == 400);
+const _: () = assert!(size_of::<Function>() == 368);
 
 /// The facts about a function that are read before its first call: when its closure is
 /// made, by `IsConstructor` and brand checks, by `Function.prototype.toString`, and by an
@@ -3956,7 +3956,7 @@ impl ResidualProgram {
             return function;
         }
         if let Some(lazy) = &self.wasm_lazy {
-            let function = lazy.lower(index, self.constants.len());
+            let function = lazy.lower(index, &self.constants);
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
         }

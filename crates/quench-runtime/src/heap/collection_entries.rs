@@ -18,6 +18,11 @@ const LINEAR_SCAN_ENTRIES: usize = 8;
 /// compaction's linear cost is spread over at least as many deletes.
 const MIN_COMPACTED_HOLES: usize = 16;
 
+/// A slot count or position, which a collection keeps in 32 bits as its key index does.
+fn slot_count(count: usize) -> u32 {
+    u32::try_from(count).expect("a collection's slots fit 32 bits")
+}
+
 /// The key a deleted slot holds; no JavaScript value is the deleted sentinel.
 const HOLE: Value = Value::DELETED;
 
@@ -95,20 +100,31 @@ pub(crate) struct CollectionEntries<T> {
     /// Per slot, its key's folded hash (`folded_hash`); a hole keeps its key's. Inline while
     /// a linear scan serves, so a small collection allocates its slots alone.
     hashes: SmallVec<[u32; LINEAR_SCAN_ENTRIES]>,
-    live: usize,
+    live: u32,
     /// No live entry sits before this slot: deleting the oldest entries (a queue, an LRU
     /// cache evicting `map.keys().next()`) leaves holes at the front, which a walk from the
     /// first slot would otherwise step over again on every iteration.
-    head: usize,
+    head: u32,
     /// Present once the slots outnumber `LINEAR_SCAN_ENTRIES`.
     index: Option<index::KeyIndex>,
-    /// Iterators over this collection, renumbered by compaction and reset by `clear`. Not
-    /// traced: an entry whose cell is no longer such an iterator is dropped when visited.
+    /// Its registered iterators and active walks, boxed while it has any: few collections are
+    /// ever iterated (typescript-lib: 1K of 44K Maps), and every one pays this field.
+    walking: Option<Box<Walking>>,
+}
+
+/// Iterators over a collection, renumbered by compaction and reset by `clear` (not traced: an
+/// entry whose cell is no longer such an iterator is dropped when visited), and its active
+/// `forEach`-style walks, which hold slot positions outside any iterator; no compaction runs
+/// while one is active.
+#[derive(Clone, Debug, Default)]
+struct Walking {
     iterators: Vec<Value>,
-    /// Active `forEach`-style walks, which hold slot positions outside any iterator; no
-    /// compaction runs while one is active.
     walks: usize,
 }
+
+// A written Map's or Set's table is its own block (typescript-lib: 22K of them), served from
+// the allocator's 112-byte class; 160 bytes before the rare fields left it.
+const _: () = assert!(size_of::<CollectionEntries<(Value, Value)>>() == 112);
 
 impl<T> Default for CollectionEntries<T> {
     fn default() -> Self {
@@ -118,8 +134,7 @@ impl<T> Default for CollectionEntries<T> {
             live: 0,
             head: 0,
             index: None,
-            iterators: Vec::new(),
-            walks: 0,
+            walking: None,
         }
     }
 }
@@ -146,16 +161,17 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     /// hashes, the live count and the registered iterators, for a snapshot; refused while a
     /// walk holds slot positions outside any iterator.
     pub(crate) fn snapshot_parts(&self) -> crate::snapshot::SnapshotResult<SnapshotParts<'_, T>> {
-        if self.walks != 0 {
+        if self.walks() != 0 {
             return Err(crate::snapshot::SnapshotError::unsupported("a collection being walked"));
         }
-        Ok((&self.slots, &self.hashes, self.live, &self.iterators))
+        Ok((&self.slots, &self.hashes, self.live as usize, self.walking.as_ref().map_or(&[][..], |walking| &walking.iterators[..])))
     }
 
     /// The entries `snapshot_parts` gave; the key index is rebuilt from the hashes.
     pub(crate) fn from_snapshot_parts(slots: Vec<T>, hashes: Vec<u32>, live: usize, iterators: Vec<Value>) -> Self {
         let index = (slots.len() > LINEAR_SCAN_ENTRIES).then(|| index::KeyIndex::of(&hashes));
-        Self { slots, hashes: SmallVec::from_vec(hashes), live, head: 0, index, iterators, walks: 0 }
+        let walking = (!iterators.is_empty()).then(|| Box::new(Walking { iterators, walks: 0 }));
+        Self { slots, hashes: SmallVec::from_vec(hashes), live: slot_count(live), head: 0, index, walking }
     }
 
     /// Entries with distinct keys, each with its key's hash.
@@ -168,16 +184,16 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     /// The live entries as a new collection, slots and hashes copied as they are: no key is
     /// looked up or hashed again, and no iterator is registered with the copy.
     pub(crate) fn duplicate(&self) -> Self {
-        let live = (self.head..self.slots.len()).filter(|&slot| self.slots[slot].key() != HOLE);
+        let live = (self.head as usize..self.slots.len()).filter(|&slot| self.slots[slot].key() != HOLE);
         let slots: Vec<T> = live.clone().map(|slot| self.slots[slot]).collect();
         let hashes: SmallVec<[u32; LINEAR_SCAN_ENTRIES]> = live.map(|slot| self.hashes[slot]).collect();
         let index = (slots.len() > LINEAR_SCAN_ENTRIES).then(|| index::KeyIndex::of(&hashes));
-        Self { live: slots.len(), slots, hashes, head: 0, index, iterators: Vec::new(), walks: 0 }
+        Self { live: slot_count(slots.len()), slots, hashes, head: 0, index, walking: None }
     }
 
     /// The number of live entries.
     pub(crate) fn len(&self) -> usize {
-        self.live
+        self.live as usize
     }
 
     pub(crate) fn capacity(&self) -> usize {
@@ -194,7 +210,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
 
     /// The live entries in insertion order.
     pub(crate) fn iter(&self) -> impl Iterator<Item = T> + '_ {
-        self.slots[self.head..]
+        self.slots[self.head as usize..]
             .iter()
             .copied()
             .filter(|entry| entry.key() != HOLE)
@@ -214,7 +230,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
 
     /// The first live entry at or after `slot`, with its slot.
     pub(crate) fn next_live(&self, slot: usize) -> Option<(usize, T)> {
-        let slot = slot.max(self.head);
+        let slot = slot.max(self.head as usize);
         self.slots
             .get(slot..)?
             .iter()
@@ -256,11 +272,11 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     pub(crate) fn remove(&mut self, slot: usize) -> Option<Compaction> {
         self.slots[slot] = T::hole();
         self.live -= 1;
-        if slot == self.head {
-            self.head += self.slots[slot..].iter().take_while(|entry| entry.key() == HOLE).count();
+        if slot == self.head as usize {
+            self.head += slot_count(self.slots[slot..].iter().take_while(|entry| entry.key() == HOLE).count());
         }
-        let holes = self.slots.len() - self.live;
-        (self.walks == 0 && holes >= MIN_COMPACTED_HOLES && holes > self.live)
+        let holes = self.slots.len() - self.live as usize;
+        (self.walks() == 0 && holes >= MIN_COMPACTED_HOLES && holes > self.live as usize)
             .then(|| self.compact())
     }
 
@@ -286,7 +302,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     /// During a walk the slots become holes instead, so entries added later still follow
     /// the walk's position.
     pub(crate) fn clear(&mut self) {
-        if self.walks == 0 {
+        if self.walks() == 0 {
             self.slots.clear();
             self.hashes.clear();
             self.index = None;
@@ -295,29 +311,43 @@ impl<T: CollectionEntry> CollectionEntries<T> {
             self.slots.fill(T::hole());
         }
         self.live = 0;
-        self.head = self.slots.len();
+        self.head = slot_count(self.slots.len());
     }
 
     /// Registers a new iterator, each registered once (a fresh one, or one `take_iterators`
     /// returned), and returns how many are registered.
     pub(crate) fn register_iterator(&mut self, iterator: Value) -> usize {
-        debug_assert!(!self.iterators.contains(&iterator));
-        self.iterators.push(iterator);
-        self.iterators.len()
+        let walking = self.walking.get_or_insert_with(Box::default);
+        debug_assert!(!walking.iterators.contains(&iterator));
+        walking.iterators.push(iterator);
+        walking.iterators.len()
     }
 
     /// The registered iterators, for the caller to renumber or reset and re-register.
     pub(crate) fn take_iterators(&mut self) -> Vec<Value> {
-        std::mem::take(&mut self.iterators)
+        let Some(walking) = self.walking.as_mut() else { return Vec::new() };
+        let iterators = std::mem::take(&mut walking.iterators);
+        if walking.walks == 0 {
+            self.walking = None;
+        }
+        iterators
+    }
+
+    fn walks(&self) -> usize {
+        self.walking.as_ref().map_or(0, |walking| walking.walks)
     }
 
     /// Starts a walk that holds slot positions; pair with `end_walk`.
     pub(crate) fn begin_walk(&mut self) {
-        self.walks += 1;
+        self.walking.get_or_insert_with(Box::default).walks += 1;
     }
 
     pub(crate) fn end_walk(&mut self) {
-        self.walks -= 1;
+        let walking = self.walking.as_mut().expect("a walk ends after it began");
+        walking.walks -= 1;
+        if walking.walks == 0 && walking.iterators.is_empty() {
+            self.walking = None;
+        }
     }
 }
 

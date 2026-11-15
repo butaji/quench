@@ -66,6 +66,11 @@ pub(crate) enum CallCompletion {
     /// converts to its JavaScript value by the result's scalar type (`None`: no result,
     /// `undefined`); a trap leaving the frame becomes the `RuntimeError` the caller sees.
     WasmExport(Option<crate::WasmType>),
+    /// A Wasm call of a JavaScript-backed import whose JavaScript callee the lane activated
+    /// (`dispatch_fast::wasm_calls::lane_activate_js_import`): the frame's result takes its
+    /// Wasm form by the import's result type (`None`: no result), ToWebAssemblyValue, which
+    /// may run guest code or throw at the Wasm caller's call (`Vm::wasm_import_result`).
+    ToWasm(Option<crate::WasmType>),
 }
 
 /// How a proxy trap's result is checked against its target: a read, a store, or a strict
@@ -102,7 +107,7 @@ impl CallCompletion {
     /// Whether the call's value is made on the general path from what the callee returns:
     /// an async callee's promise settles there, an array step's iteration finishes there.
     #[inline(always)]
-    pub(super) fn completes_on_general_path(&self) -> bool { matches!(self, Self::Promise(_) | Self::ArrayStep(_) | Self::Trapped(_)) }
+    pub(super) fn completes_on_general_path(&self) -> bool { matches!(self, Self::Promise(_) | Self::ArrayStep(_) | Self::Trapped(_) | Self::ToWasm(_)) }
 
     #[inline(always)]
     pub(super) fn take_array_step(&mut self) -> Option<Box<super::array_indexed::ArrayStepCall>> {

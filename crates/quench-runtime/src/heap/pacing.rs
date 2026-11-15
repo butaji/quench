@@ -90,6 +90,9 @@ pub(super) struct GenerationalPacing {
     /// so streaming code that drops one buffer per chunk retains every chunk until a
     /// collection, and this bounds that garbage.
     pub(super) minimum_external_budget: usize,
+    /// The fewest bytes of reclaimable programs that make the next collection full
+    /// (`program_growth_reached`).
+    pub(super) minimum_program_growth: usize,
     /// Growth of the property arena's held values since the last full collection, as a share
     /// of what it left, that makes the next collection full, and its floor in values
     /// (`arena_growth_reached`).
@@ -474,12 +477,12 @@ impl GenerationalPacing {
 
     /// Whether `growth` bytes of reclaimable programs past the `kept` bytes that stayed at the
     /// last full collection make the next collection full: the old growth ratio of what
-    /// stayed, at least the external budget. Programs are memory outside the heap that only a
-    /// collection frees, as external buffers are (`minimum_external_budget`); at the heap's
-    /// old-growth minimum instead, Throughput let a `new Function` loop hold 16 MB of program
-    /// footprint (about 40 MB resident) between full collections.
+    /// stayed, at least `minimum_program_growth`. Programs are memory outside the heap that only
+    /// a collection frees, as external buffers are; at the heap's old-growth minimum instead,
+    /// Throughput let a `new Function` loop hold 16 MB of program footprint (about 40 MB
+    /// resident) between full collections.
     pub(super) fn program_growth_reached(&self, kept: usize, growth: usize) -> bool {
-        growth >= self.old_growth.of(kept).max(self.minimum_external_budget)
+        growth >= self.old_growth.of(kept).max(self.minimum_program_growth)
     }
 
     /// Whether the property arena, holding `held` values against the `settled` values the last
@@ -612,6 +615,7 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
     minimum_external_budget: THROUGHPUT_MINIMUM_EXTERNAL_BUDGET,
+    minimum_program_growth: MINIMUM_PROGRAM_GROWTH,
     arena_growth: Ratio::new(1, 8),
     minimum_arena_growth: MINIMUM_ARENA_GROWTH,
     promotion_age: THROUGHPUT_PROMOTION_AGE,
@@ -659,6 +663,7 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
     minimum_external_budget: MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET,
+    minimum_program_growth: MINIMUM_PROGRAM_GROWTH,
     arena_growth: Ratio::new(1, 8),
     minimum_arena_growth: MINIMUM_ARENA_GROWTH,
     promotion_age: MEMORY_FIRST_PROMOTION_AGE,
@@ -684,6 +689,14 @@ const THROUGHPUT_MINIMUM_EXTERNAL_BUDGET: usize = 4 << 20;
 /// 1 MiB and 39.4-43.1 at 8 MiB); 256 KiB gave no lower peak. Memory-first trades the extra
 /// collections for it.
 const MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET: usize = 512 << 10;
+
+/// The program growth floor (`GenerationalPacing::minimum_program_growth`) under either policy.
+/// At Throughput's 4 MiB external budget, a test that evaluates its source each iteration kept
+/// every iteration's program (0.5-0.7 MB of footprint each) until one full collection a run
+/// (JetStream 3 no-JIT max RSS, x86_64, 2026-11-15, 5-9 runs: mobx-startup 21.8 -> 18.4 MB,
+/// web-ssr 46.0 -> 40.6, prismjs 18.6 -> 18.1; typescript-lib, jsdom, threejs, inspectors and
+/// octane-code-load equal; scores within noise). At 768 KiB mobx-startup kept them.
+const MINIMUM_PROGRAM_GROWTH: usize = 512 << 10;
 
 /// The fewest allocations between collections under memory-first, whatever survived: the
 /// pre-generational minimum headroom.

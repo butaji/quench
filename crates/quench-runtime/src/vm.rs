@@ -600,6 +600,7 @@ enum PendingJob {
     Reaction(promise::PromiseJob),
     Thenable(promise::ThenableJob),
 }
+const _: () = assert!(size_of::<PendingJob>() == 48);
 
 impl PendingJob {
     /// Pushes the values the job holds onto `roots`, which keep them alive while it runs.
@@ -1834,6 +1835,9 @@ pub(crate) struct Vm<H> {
     /// `AwaitChain::frame`, which an await may swap for the queue's next resumption
     /// (`Vm::chain_lane_await`).
     await_chain: Option<promise_async::AwaitChain>,
+    /// The failure of an await the lane chained in place (`Vm::lane_chain_await`), which
+    /// the lane run's frame loop raises.
+    lane_chain_error: Option<JsError>,
     pub(crate) host: H,
     specialized: bool,
     heap: Heap,

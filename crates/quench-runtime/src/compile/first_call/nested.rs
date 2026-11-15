@@ -196,24 +196,20 @@ impl Compiler<'_> {
             && !self.private_name_ids.keys().any(|(start, _)| span.contains(start))
     }
 
-    /// Notes stub `id` of a nested function: its predicted `captures` decide the layouts
-    /// around it, and its chunk compiles against the scopes of `context`.
-    pub(super) fn note_nested_stub(&mut self, id: u32, captures: Box<[(u32, u16)]>, context: &replay::PlainFunctionContext) {
+    /// Notes stub `id` of a nested function starting at `start`: its predicted `captures`
+    /// decide the layouts around it, and its chunk compiles against the scopes of `context`,
+    /// each kept to the bindings of the function's free names, the only ones its subtree
+    /// resolves through them (a chunk interning a whole outer scope cost octane-code-load 8%).
+    pub(super) fn note_nested_stub(&mut self, id: u32, start: u32, captures: Box<[(u32, u16)]>, context: &replay::PlainFunctionContext) {
         self.function_facts.at_mut(id).captures = captures;
-        let levels = context.scopes.levels().iter().map(|scope| self.scope_level(scope)).collect();
+        let free: Vec<u32> = self.first_call.free_names.get(&start).into_iter().flatten().filter_map(|name| self.atoms.find(name)).collect();
+        let levels = context.scopes.levels().iter().map(|scope| self.scope_level(scope, &free)).collect();
         self.first_call.nested.push((id, Rc::new(FirstCallScopes { levels, strict: context.inherited_strict })));
     }
 
-    /// `scope`'s bindings by name, made once per scope and shared by the stubs closing over it.
-    fn scope_level(&mut self, scope: &Rc<CaptureScope>) -> ScopeLevel {
-        let key = Rc::as_ptr(scope) as usize;
-        if let Some((_, level)) = self.first_call.levels.get(&key) {
-            return level.clone();
-        }
-        let level: ScopeLevel = Rc::new(scope.iter().map(|(atom, slot)| (&self.atoms[atom as usize], slot)).collect());
-        // The scope stays alive with the key, so its address names no other scope.
-        self.first_call.levels.insert(key, (scope.clone(), level.clone()));
-        level
+    /// `scope`'s bindings of the atoms `free`, by name.
+    fn scope_level(&self, scope: &CaptureScope, free: &[u32]) -> ScopeLevel {
+        Rc::new(free.iter().filter_map(|&atom| scope.get(&atom).map(|slot| (&self.atoms[atom as usize], slot))).collect())
     }
 
     /// Whether a nested stub lies among the functions after `id` up to `exit`: its layout

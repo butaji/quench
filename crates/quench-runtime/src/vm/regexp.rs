@@ -2728,21 +2728,23 @@ impl<H: Host> Vm<H> {
                 _ => false,
             };
             let named = regexp_named_capture_ranges(&matched);
+            // A match or capture of the whole input is the input itself, as a pattern that
+            // parses a whole line or URL returns: no copy of its text.
+            let input_value = vm.string_value_from(argument, &input);
             // The captures are copied out, so an input rope not yet flat is read through a
             // reused buffer and stays a rope: flattening it gave every input a kept copy of
             // its text (V8-v7 RegExp's check run, whose results are used: 16,661 input variants
             // of 2-4 KB each, 2.3 MB at its peak).
             let (values, groups) = match input.with_ascii_rope_bytes(|bytes| {
-                vm.regexp_result_captures(&matched, &named, super::wtf16::Units::Ascii(bytes))
+                vm.regexp_result_captures(&matched, &named, super::wtf16::Units::Ascii(bytes), input_value)
             }) {
                 Some(captures) => captures?,
                 None => {
                     let units = input.units();
-                    vm.regexp_result_captures(&matched, &named, units)?
+                    vm.regexp_result_captures(&matched, &named, units, input_value)?
                 }
             };
             let index = Value::number(matched.range.start as f64);
-            let input_value = vm.string_value_from(argument, &input);
             let array = crate::heap::ArrayObject::new(Self::empty_object(vm.array_proto), values);
             let result = match vm.regexp_result_layout() {
                 // The recorded layout: the array is allocated with its properties, by the
@@ -2779,13 +2781,21 @@ impl<H: Host> Vm<H> {
         matched: &quench_regexp::Match,
         named: &[(String, Option<std::ops::Range<usize>>)],
         units: super::wtf16::Units<'_>,
+        whole: Value,
     ) -> Result<(crate::heap::ArrayElements, Value), JsError> {
+        let length = units.len();
         let values = crate::heap::ArrayElements::from_fn(1 + matched.captures.len(), |index| {
             let range = match index.checked_sub(1) {
                 None => Some(matched.range.clone()),
                 Some(capture) => matched.captures[capture].clone(),
             };
-            range.map_or(Value::UNDEFINED, |range| self.heap.alloc_string(JsString::from_unit_run(units.slice(range))))
+            range.map_or(Value::UNDEFINED, |range| {
+                if range.start == 0 && range.end == length {
+                    whole
+                } else {
+                    self.heap.alloc_string(JsString::from_unit_run(units.slice(range)))
+                }
+            })
         });
         let groups = self.regexp_groups_object(named, units)?;
         Ok((values, groups))
@@ -3034,7 +3044,14 @@ impl<H: Host> Vm<H> {
         if let Some(matcher) = meta.matcher.0.get() {
             return Ok(Rc::clone(matcher));
         }
-        let matcher = Rc::new(Self::compile_regexp(&meta.source, &meta.flags.text(), PatternValidity::EarlyChecked)?);
+        let matcher = match LAZY_MATCHERS.with_borrow(|matchers| matchers.find(&meta.source, meta.flags)) {
+            Some(matcher) => matcher,
+            None => {
+                let matcher = Rc::new(Self::compile_regexp(&meta.source, &meta.flags.text(), PatternValidity::EarlyChecked)?);
+                LAZY_MATCHERS.with_borrow_mut(|matchers| matchers.insert(&meta.source, meta.flags, &matcher));
+                matcher
+            }
+        };
         Ok(Rc::clone(meta.matcher.0.get_or_init(|| matcher)))
     }
 
@@ -3371,6 +3388,37 @@ pub(super) const REGEXP_FLAG_ACCESSORS: &[(&str, Native, char)] = &[
 /// Upper bound on cached compiled matchers. Compiled automata are the largest per-RegExp
 /// allocation, so the cache is capped; reaching the cap drops every entry and recompiles on demand.
 const REGEXP_MATCHER_CACHE_LIMIT: usize = 64;
+
+thread_local! {
+    /// The matchers of RegExps that compile on first match (literals, snapshot patterns), by
+    /// pattern and flags, held weakly: a program evaluated again (a module loaded per test, a
+    /// bundle re-run) creates new literal sites whose patterns would each compile again while
+    /// the previous evaluation's RegExps still hold theirs. JetStream 3 prismjs-startup-es6
+    /// (2026-11-15) compiled its ~115 patterns once per iteration, 574 compiles holding ~1 MB of
+    /// programs at peak. A weak entry keeps nothing alive; a matcher no RegExp holds compiles again.
+    static LAZY_MATCHERS: std::cell::RefCell<LazyMatchers> = std::cell::RefCell::default();
+}
+
+#[derive(Default)]
+struct LazyMatchers {
+    by_pattern: rustc_hash::FxHashMap<(JsString, u8), std::rc::Weak<quench_regexp::Regex>>,
+    /// Entries at the last sweep of dead ones; the next sweep waits for twice as many.
+    swept: usize,
+}
+
+impl LazyMatchers {
+    fn find(&self, source: &JsString, flags: RegExpFlags) -> Option<Rc<quench_regexp::Regex>> {
+        self.by_pattern.get(&(source.clone(), flags.0))?.upgrade()
+    }
+
+    fn insert(&mut self, source: &JsString, flags: RegExpFlags, matcher: &Rc<quench_regexp::Regex>) {
+        if self.by_pattern.len() >= 2 * self.swept.max(64) {
+            self.by_pattern.retain(|_, matcher| matcher.strong_count() > 0);
+            self.swept = self.by_pattern.len();
+        }
+        self.by_pattern.insert((source.clone(), flags.0), Rc::downgrade(matcher));
+    }
+}
 
 #[derive(Default)]
 pub(super) struct RegExpMatcherCache {
