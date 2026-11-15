@@ -135,10 +135,18 @@ pub fn release_read_only_pages() {
 /// ever touched.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_pages_now() {
+    release_read_only_pages_weighed(true);
+}
+
+/// Releases the read-only pages; `weighed` skips the release when the file pages are a small
+/// share of the resident set (`file_pages_weigh`), which a paced release does not need: at
+/// its pace the refaults stay bounded however large the heap.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn release_read_only_pages_weighed(weighed: bool) {
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
-    if !file_pages_weigh() {
+    if weighed && !file_pages_weigh() {
         return;
     }
     let segments = loaded_segments(ReleasedSegment::Clean);
@@ -182,7 +190,7 @@ pub fn release_at_collection(returns_pages: bool) {
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     if !released_within(RUN_CODE_RELEASE_INTERVAL) {
-        release_read_only_pages_now();
+        release_read_only_pages_weighed(false);
     }
 }
 
