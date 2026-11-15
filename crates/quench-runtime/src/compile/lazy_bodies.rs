@@ -10,7 +10,7 @@
 //! early check alone makes the compilation fail, and the program compiles again eagerly,
 //! so its diagnostics are the eager ones.
 mod reparse;
-pub(super) use reparse::{Nesting, reparse};
+pub(super) use reparse::{Nesting, ReparseFailure, reparse};
 use oxc_allocator::Allocator;
 mod parse_arena;
 pub(super) use parse_arena::{arena, release_after, release_parsed_free_pages};
@@ -311,7 +311,7 @@ impl BodyFacts {
         if self.failed {
             return;
         }
-        if verify_early() && std::env::var_os("QUENCH_EARLY_STAT").is_some() {
+        if verify_early() && crate::trace::Dev::EarlyVerify.value() == Some("stat") {
             eprintln!("early-stat: {} {} {} deferred={} at_load={}", if early.is_some() { "sure" } else { "unsure" }, program.span.start, program.span.end - program.span.start, self.call_only_deferred, super::call_only::compiles_at_load(program, false, false));
         }
         if let Some(early) = early
@@ -371,8 +371,11 @@ impl BodyFacts {
         if super::call_only::compiles_at_load(program, in_function && free_names.is_none(), false) {
             return false;
         }
-        if super::stack::validate(program).is_err()
-            || call_assignment_targets && super::annex_b_targets::invalid_target(program).is_some()
+        // No walk over the body runs here but the call assignment target check, so only that
+        // needs the depth bound; the compilation that parses it again validates its depth
+        // (`reparse`), as V8 reports a body too deep where it compiles it.
+        if call_assignment_targets
+            && (super::stack::validate(program).is_err() || super::annex_b_targets::invalid_target(program).is_some())
         {
             self.failed = true;
             return true;
@@ -438,10 +441,10 @@ impl BodyFacts {
 }
 
 /// Whether each checked body is checked both ways and the parse's verdict compared with the
-/// semantic analysis' (`QUENCH_EARLY_VERIFY`), instead of taking the parse's where it is sure.
+/// semantic analysis' (`QUENCH_DEV=early-verify`), instead of taking the parse's where it is sure.
 fn verify_early() -> bool {
     static VERIFY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *VERIFY.get_or_init(|| std::env::var_os("QUENCH_EARLY_VERIFY").is_some())
+    *VERIFY.get_or_init(|| crate::trace::Dev::EarlyVerify.on())
 }
 
 /// A body's free names from the parse's (`LazyBody::early`), as `first_call::free_names`

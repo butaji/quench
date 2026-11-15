@@ -50,7 +50,7 @@ pub(in crate::compile) fn reparse<'a>(
     delta: u32,
     source_type: SourceType,
     nesting: Nesting<'_>,
-) -> Option<Reparsed<'a>> {
+) -> Result<Reparsed<'a>, ReparseFailure> {
     let (mut names, recorded) = match nesting {
         Nesting::Parse(found) => (Some(FreeNameCheck::new(found, delta)), None),
         Nesting::Recorded(starts) => (None, Some(starts)),
@@ -71,9 +71,21 @@ pub(in crate::compile) fn reparse<'a>(
     }
     // The early checks passed before code generation (`BodyFacts::check`); the depth of the tree
     // is checked again here, where the function compiles.
-    if parsed.stack_exhausted || !parsed.diagnostics.is_empty() || crate::compile::stack::validate(&parsed.program).is_err() {
-        return None;
+    // A body whose check at load took the parse's verdict has its depth checked only here.
+    if parsed.stack_exhausted || crate::compile::stack::validate(&parsed.program).is_err() {
+        return Err(ReparseFailure::StackExhausted);
+    }
+    if !parsed.diagnostics.is_empty() {
+        return Err(ReparseFailure::Diagnostics);
     }
     oxc_ast_visit::VisitMut::visit_program(&mut crate::compile::replay::ShiftSpans(delta), &mut parsed.program);
-    Some(Reparsed { program: parsed.program })
+    Ok(Reparsed { program: parsed.program })
+}
+
+/// Why a function's text does not parse again alone (`reparse`).
+pub(in crate::compile) enum ReparseFailure {
+    /// Its tree is deeper than the stack admits.
+    StackExhausted,
+    /// Its parse reports an error.
+    Diagnostics,
 }
