@@ -54,6 +54,7 @@ mod polls;
 #[path = "lane_region/catches.rs"] mod catches;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
+#[path = "lane_region/arguments.rs"] mod arguments;
 #[path = "lane_region/captures.rs"] mod captures;
 #[path = "lane_region/compare_jumps.rs"] mod compare_jumps;
 #[path = "lane_region/relocs.rs"] pub(super) mod relocs;
@@ -722,6 +723,12 @@ impl<'a, 'f> Lowering<'a, 'f> {
     fn define(&mut self, state: &mut State, register: Register, value: ir::Value, fact: RegisterFact) {
         frame::register_define(&mut self.builder, &mut self.registers, &mut self.written, state,
             register, value, fact);
+    }
+
+    /// Whether `pc` is the entry function's own record: an inlined callee's records read that
+    /// callee's activation, which no window of the entry's holds.
+    fn caller_record(&self, pc: usize) -> bool {
+        matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_)))
     }
 
     fn set_tagged(&mut self, state: &mut State, register: Register, bits: ir::Value) {
@@ -2559,6 +2566,13 @@ impl Lowering<'_, '_> {
                 && instruction.register_b() < self.unit.registers => self.unary(state, pc, instruction),
             _ if self.allocation_row(pc, instruction) => Some(self.allocation(state, pc, instruction)),
             _ if self.is_construction(instruction) => self.construct(state, pc, instruction),
+            // The entry function's own `arguments` binding, whose values the activation kept
+            // or an unmaterialized binding holds; an inlined callee's reads its own, which no
+            // window of this activation holds.
+            _ if plain && instruction.op().class().eq(Class::ArgumentsLength) && self.own_arguments_read(pc, instruction) =>
+                self.arguments_length(state, pc32, instruction),
+            _ if plain && instruction.op().class().eq(Class::ArgumentGet) && self.own_arguments_read(pc, instruction) =>
+                self.arguments_get(state, pc32, instruction),
             _ if plain && self.is_jump(instruction) => return self.jump(state, pc, instruction),
             _ if plain && instruction.op().is_truthiness_jump() => {
                 let target = instruction.jump_target() as usize;
