@@ -240,6 +240,19 @@ impl<'a, C: Config> Lexer<'a, C> {
     }
 
     /// Rewinds the lexer to the same state as when the passed in `checkpoint` was created.
+    /// Moves to `offset`, a char boundary in the source, as if everything before it were read;
+    /// false where it is not one.
+    pub(crate) fn seek(&mut self, offset: u32) -> bool {
+        let whole = self.source.whole();
+        if !whole.is_char_boundary(offset as usize) {
+            return false;
+        }
+        // SAFETY: `offset` is a char boundary in the source text, or its end.
+        let position = unsafe { SourcePosition::new(whole.as_ptr().add(offset as usize)) };
+        self.source.set_position(position);
+        true
+    }
+
     pub fn rewind(&mut self, checkpoint: LexerCheckpoint<'a>) {
         // `token` is always `Token::default()` here, so it does not need to be restored. See `token` field docs.
         debug_assert_eq!(self.token, Token::default());

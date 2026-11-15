@@ -220,8 +220,9 @@ pub(super) fn parse<'a>(
     inherited_strict: bool,
     nested: bool,
     recognize: super::annex_b_targets::Recognize,
+    skip: Option<oxc_parser::LazyBodySkip>,
 ) -> oxc_parser::ParserReturn<'a> {
-    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check, inherited_strict, nested, recognize);
+    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check, inherited_strict, nested, recognize, skip);
     if !parsed.lazy_function_bodies.is_empty() {
         let starts: FxHashSet<u32> = parsed.lazy_function_bodies.iter().copied().collect();
         stand_in(allocator, &mut parsed.program, &starts);
@@ -401,7 +402,7 @@ impl BodyFacts {
         }
         match free_names {
             Some((start, names)) => {
-                self.free_names.insert(start, names);
+                self.free_names.insert(start, names, super::first_call::alone_body_end(program));
             }
             None => {
                 if let Some(start) = super::first_call::alone_start(program) {
@@ -455,7 +456,9 @@ impl BodyFacts {
             }
             self.call_only_found.push((program.span.start, program.span.end));
         }
-        self.free_names.extend(free_names);
+        if let Some((start, names)) = free_names {
+            self.free_names.insert(start, names, super::first_call::alone_body_end(program));
+        }
     }
 }
 

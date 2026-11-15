@@ -66,6 +66,13 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// A function body parsed, then released from the arena and kept as its directives,
     /// unless its parse left state that outlives it (`LazyBodyCheckpoint`).
     fn parse_lazy_function_body(&mut self, function: LazyFunction<'_, 'a>) -> ArenaBox<'a, FunctionBody<'a>> {
+        if let Some(skip) = self.options.lazy_body_skip
+            && !self.recognizing
+            && self.lazy_depth == 0
+            && let Some(body) = self.skip_lazy_body(skip, &function)
+        {
+            return body;
+        }
         // A function its consumer compiles at load needs its tree (`LazyBody::stub`).
         if self.options.lazy_recognize
             && self.options.lazy_body_check.is_some()
@@ -80,6 +87,43 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let body = self.parse_lazy_function_body_whole(&function);
         self.recognizing = recognizing;
         body
+    }
+
+    /// The body at the opening brace skipped unread to the end `skip` gives for it, and
+    /// released (`ParseOptions::lazy_body_skip`), or `None` where it is read.
+    fn skip_lazy_body(&mut self, skip: crate::LazyBodySkip, function: &LazyFunction<'_, 'a>) -> Option<ArenaBox<'a, FunctionBody<'a>>> {
+        let start = self.cur_start();
+        if !self.at(Kind::LCurly) {
+            return None;
+        }
+        // SAFETY: `ParseOptions::lazy_body_skip` outlives the parse.
+        let end = unsafe { skip.call(function.start) }?;
+        let bytes = self.source_text.as_bytes();
+        if end <= start + 1 || end as usize > bytes.len() || bytes[end as usize - 1] != b'}' {
+            return None;
+        }
+        // A directive prologue (or a comment before one) is read.
+        let first = bytes[start as usize + 1..end as usize - 1].iter().find(|byte| !byte.is_ascii_whitespace());
+        if matches!(first, Some(b'"' | b'\'' | b'/')) {
+            return None;
+        }
+        if !self.lexer.seek(end - 1) {
+            return None;
+        }
+        let brace = self.token;
+        self.token = self.lexer.next_token();
+        if !self.at(Kind::RCurly) || self.cur_start() != end - 1 {
+            // Not the body's end after all: it is read from its opening brace.
+            if !self.lexer.seek(brace.end()) {
+                self.set_fatal_error(diagnostics::expect_function_body(Span::new(start, end)));
+            }
+            self.token = brace;
+            return None;
+        }
+        self.bump_any();
+        self.early.end_body();
+        self.release_inside(Span::new(start, end), function.method);
+        Some(FunctionBody::boxed(Span::new(start, end), ArenaVec::new_in(self), ArenaVec::new_in(self), self))
     }
 
     /// A lazily parsed body recognized (`js::recognize`), checked as a stand-in and released,

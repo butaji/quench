@@ -16,7 +16,7 @@ pub(super) fn parse_program<'a>(
     source: &'a str,
     source_type: SourceType,
 ) -> ParserReturn<'a> {
-    parse_program_with(allocator, source, source_type, None, None, false, false, Recognize::No)
+    parse_program_with(allocator, source, source_type, None, None, false, false, Recognize::No, None)
 }
 
 /// Which lazily parsed bodies are recognized without their trees (`ParseOptions::lazy_recognize`).
@@ -41,6 +41,7 @@ pub(super) fn parse_program_with<'a>(
     inherited_strict: bool,
     nested: bool,
     recognize: Recognize,
+    lazy_body_skip: Option<oxc_parser::LazyBodySkip>,
 ) -> ParserReturn<'a> {
     let flat = recognize == Recognize::Flat;
     let recognize = recognize != Recognize::No && lazy_body_check.is_some() && crate::trace::Dev::Recognize.value() != Some("off");
@@ -54,6 +55,7 @@ pub(super) fn parse_program_with<'a>(
             lazy_recognize: recognize,
             lazy_recognize_verify: recognize && crate::trace::Dev::Recognize.value() == Some("verify"),
             lazy_recognize_flat: flat,
+            lazy_body_skip,
             ..ParseOptions::default()
         })
         .parse()
