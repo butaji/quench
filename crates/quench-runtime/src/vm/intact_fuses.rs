@@ -129,9 +129,13 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let shape = array.shape();
-        let elements = array.elements().as_slice();
+        let elements = array.elements();
         let length = elements.len();
-        if elements.iter().any(|value| value.is_deleted()) || self.heap.sparse_length(list).is_some() {
+        // A narrow backing holds no hole; a wide one is scanned in place (`as_slice` would copy
+        // a narrow one out).
+        if elements.wide_values().is_some_and(|values| values.iter().any(|value| value.is_deleted()))
+            || self.heap.sparse_length(list).is_some()
+        {
             return None;
         }
         let intact = (self.array_iteration_shape == Some(shape) || self.array_shape_lacks_iterator(shape))

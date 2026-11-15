@@ -394,6 +394,9 @@ impl ArrayElements {
 
     #[inline(always)]
     fn values(&self) -> *mut Value {
+        // Every wide reader and writer comes through here: a narrow backing's words are not
+        // values, so reaching one here means a caller skipped `widen` or `wide_values`.
+        debug_assert!(!self.is_narrow(), "a narrow array backing read as wide values");
         // SAFETY: the values start right after the header in the same allocation; for the
         // shared empty header the pointer is aligned and never dereferenced.
         unsafe { self.header.as_ptr().cast::<u8>().add(VALUES_OFFSET).cast::<Value>() }

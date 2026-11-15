@@ -29,6 +29,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     }
 
     pub(crate) fn parse_function_body(&mut self) -> ArenaBox<'a, FunctionBody<'a>> {
+        if self.recognizing {
+            return self.recognize_function_body();
+        }
         let start = self.cur_start();
         let opening_span = self.cur_token().span();
         self.expect(Kind::LCurly);
@@ -49,6 +52,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     fn lazy_body_candidate(&self, start: u32, func_kind: FunctionKind) -> bool {
         self.options.lazy_function_bodies.is_some_and(|from| start >= from)
             && !self.is_ts
+            // A body being recognized is released whole: the bodies inside it are only
+            // recognized, and its compilation parses them again.
+            && !self.recognizing
             && (self.lazy_depth == 0 || self.options.lazy_nested_bodies && self.options.lazy_body_check.is_some())
             && (matches!(func_kind, FunctionKind::Declaration | FunctionKind::Expression)
                 // A method's body only inside another lazily parsed body, which compiles from
@@ -60,6 +66,137 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// A function body parsed, then released from the arena and kept as its directives,
     /// unless its parse left state that outlives it (`LazyBodyCheckpoint`).
     fn parse_lazy_function_body(&mut self, function: LazyFunction<'_, 'a>) -> ArenaBox<'a, FunctionBody<'a>> {
+        // A function its consumer compiles at load needs its tree (`LazyBody::stub`).
+        if self.options.lazy_recognize
+            && self.options.lazy_body_check.is_some()
+            && !function.r#async
+            && !function.generator
+            && !(function.expression && function.id.is_some())
+            && let Some(body) = self.recognize_lazy_body(&function)
+        {
+            return body;
+        }
+        let recognizing = std::mem::replace(&mut self.recognizing, false);
+        let body = self.parse_lazy_function_body_whole(&function);
+        self.recognizing = recognizing;
+        body
+    }
+
+    /// A lazily parsed body recognized (`js::recognize`), checked as a stand-in and released,
+    /// or `None` with the parser back at its opening brace where it cannot be.
+    fn recognize_lazy_body(&mut self, function: &LazyFunction<'_, 'a>) -> Option<ArenaBox<'a, FunctionBody<'a>>> {
+        let allocator = self.allocator();
+        let inherited_strict = self.strict;
+        let marker = std::ptr::NonNull::from(allocator.alloc(0u8));
+        let before = LazyBodyCheckpoint::of(self);
+        let snapshot = self.early.snapshot_body()?;
+        let rewind = self.recognizer_checkpoint();
+        let verify = self.options.lazy_recognize_verify && !self.recognizing;
+        let nested = self.lazy_depth > 0;
+        self.lazy_depth += 1;
+        let recognizing = std::mem::replace(&mut self.recognizing, true);
+        let budget = self.rc_budget.is_none();
+        if budget {
+            self.rc_budget = Some(quench_stack::StackBudget::here());
+        }
+        let body = self.parse_function_body();
+        if budget {
+            self.rc_budget = None;
+        }
+        self.recognizing = recognizing;
+        self.lazy_depth -= 1;
+        let span = body.span;
+        let source = self.source_text.as_bytes().as_ptr_range();
+        let in_source = |text: &str| text.is_empty() || source.contains(&text.as_ptr());
+        let directives_in_source = body.directives.iter().all(|directive| {
+            in_source(directive.directive.as_str())
+                && in_source(directive.expression.value.as_str())
+                && directive.expression.raw.is_none_or(|raw| in_source(raw.as_str()))
+        });
+        let escaped_after = self.lexer.escaped_strings.keys().any(|start| *start >= span.end)
+            || self.lexer.escaped_templates.keys().any(|start| *start >= span.end);
+        let after = LazyBodyCheckpoint::of(self);
+        // A private member name checks only inside its class, which a body alone lacks.
+        let private = nested && self.source_text[span.start as usize..span.end as usize].contains('#');
+        let fine = !private
+            && self.fatal_error.is_none()
+            && LazyBodyCheckpoint { arena_capacity: before.arena_capacity, ..after } == before
+            && directives_in_source
+            && !escaped_after
+            && !self.early.body_unsure();
+        if !fine {
+            if verify {
+                eprintln!("recognize-stat: whole {} {} p{} f{} c{} d{} e{} u{}", span.start, span.end - span.start, private, self.fatal_error.is_some(), LazyBodyCheckpoint { arena_capacity: before.arena_capacity, ..after } == before, directives_in_source, escaped_after, self.early.body_unsure());
+            }
+            self.recognizer_rewind(rewind);
+            return None;
+        }
+        let verdict = self.early.end_body()?;
+        if verify {
+            // The parse that follows compares its verdict (`verify_recognized`).
+            self.recognized_verdicts.push((span, verdict.free));
+            self.early.restore_body(snapshot);
+            self.recognizer_rewind(rewind);
+            return None;
+        }
+        let check = self.options.lazy_body_check?;
+        if !self.check_lazy_body(check, function, &body, inherited_strict, false, Some(&verdict), true) {
+            self.early.restore_body(snapshot);
+            self.recognizer_rewind(rewind);
+            return None;
+        }
+        let inside = |start: &u32| (span.start..span.end).contains(start);
+        // The arena still has the chunk it had at `marker`: nothing allocated past the marker
+        // is referenced (the parser state that can hold arena data is as it was before the
+        // body, `fine` above), so it is released as `parse_lazy_function_body_whole` does.
+        if allocator.capacity() == before.arena_capacity {
+            // SAFETY: each directive's strings lie in the source text (`directives_in_source`).
+            let directives: Vec<Directive<'a>> =
+                body.directives.iter().map(|directive| unsafe { std::ptr::read(directive) }).collect();
+            self.lexer.escaped_strings.retain(|start, _| !inside(start));
+            self.lexer.escaped_templates.retain(|start, _| !inside(start));
+            // SAFETY: as in `parse_lazy_function_body_whole`.
+            unsafe { allocator.set_cursor_ptr(marker) };
+            let directives = ArenaVec::from_iter_in(directives, &self.ast);
+            self.release_inside(span, function.method);
+            return Some(FunctionBody::boxed(span, directives, ArenaVec::new_in(self), self));
+        }
+        self.release_inside(span, function.method);
+        Some(body)
+    }
+
+    /// Lists the body at `span` as released (a method's in `lazy_methods`), and drops the
+    /// bodies released inside it, which end each list as they were released in source order.
+    fn release_inside(&mut self, span: Span, method: bool) {
+        let inside = |start: &u32| (span.start..span.end).contains(start);
+        while self.lazy_methods.last().is_some_and(inside) {
+            self.lazy_methods.pop();
+        }
+        while self.lazy_function_bodies.last().is_some_and(inside) {
+            self.lazy_function_bodies.pop();
+        }
+        if method { self.lazy_methods.push(span.start) } else { self.lazy_function_bodies.push(span.start) }
+    }
+
+    /// Prints where the verdict of the body just parsed whole differs from the one recognized
+    /// before it (`ParseOptions::lazy_recognize_verify`).
+    fn verify_recognized(&mut self, span: Span, whole: Option<&crate::early::EarlyVerdict<'a>>, fine: bool) {
+        let Some((_, free)) = self.recognized_verdicts.pop_if(|(recognized, _)| *recognized == span) else { return };
+        match whole {
+            Some(whole) if fine && !whole.unsure && whole.free == free => {}
+            Some(whole) if fine && !whole.unsure => {
+                eprintln!("recognize-verify: free names differ at {}: recognized {free:?} parsed {:?}", span.start, whole.free);
+            }
+            _ => {
+                let end = (span.end as usize).min(span.start as usize + 400);
+                let text = self.source_text.get(span.start as usize..end).unwrap_or_default();
+                let head = self.source_text.get(..(span.start as usize).min(self.source_text.len())).unwrap_or_default();
+                eprintln!("recognize-verify: recognized at {} but the parse is unsure ({:?}) or failed ({fine}, fatal {}): {text} AFTER {head}", span.start, whole.map(|whole| whole.unsure), self.fatal_error.is_some());
+            }
+        }
+    }
+
+    fn parse_lazy_function_body_whole(&mut self, function: &LazyFunction<'_, 'a>) -> ArenaBox<'a, FunctionBody<'a>> {
         let allocator = self.allocator();
         let inherited_strict = self.strict;
         // The arena allocates downward: everything the body allocates lies before this.
@@ -72,6 +209,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.lazy_depth -= 1;
         let verdict = self.early.end_body();
         let span = body.span;
+        if !self.recognized_verdicts.is_empty() {
+            let fine = self.fatal_error.is_none()
+                && LazyBodyCheckpoint { arena_capacity: checkpoint.arena_capacity, ..LazyBodyCheckpoint::of(self) } == checkpoint;
+            self.verify_recognized(span, verdict.as_ref(), fine);
+        }
         // A private member name checks only inside its class, which a body alone lacks.
         if nested && self.source_text[span.start as usize..span.end as usize].contains('#') {
             return body;
@@ -94,7 +236,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         if let Some(check) = self.options.lazy_body_check {
             let targets = self.call_assignment_targets != call_assignment_targets;
-            self.check_lazy_body(check, &function, &body, inherited_strict, targets, verdict.as_ref());
+            self.check_lazy_body(check, function, &body, inherited_strict, targets, verdict.as_ref(), false);
             // The check's nodes lie past the marker unless they took a new arena chunk; then
             // the body stays whole and the program's own checks see it as well.
             if allocator.capacity() != checkpoint.arena_capacity {
@@ -108,25 +250,15 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let inside = |start: &u32| (span.start..span.end).contains(start);
         self.lexer.escaped_strings.retain(|start, _| !inside(start));
         self.lexer.escaped_templates.retain(|start, _| !inside(start));
-        // Released in source order, the bodies inside this one end each list.
-        while self.lazy_methods.last().is_some_and(inside) {
-            self.lazy_methods.pop();
-        }
         // SAFETY: the arena has the same chunk as at `marker` (its capacity is unchanged), the
         // marker lies in it and the arena's alignment is one byte. Nothing allocated after the
         // marker is referenced any more: the body is dropped, the parser state that can hold
         // arena data is as it was at the checkpoint, and the escaped strings and templates
         // inside the body are removed.
         unsafe { allocator.set_cursor_ptr(marker) };
-        // The bodies released inside it leave the tree with it.
-        while self.lazy_function_bodies.last().is_some_and(inside) {
-            self.lazy_function_bodies.pop();
-        }
-        if function.method {
-            self.lazy_methods.push(span.start);
-        } else {
-            self.lazy_function_bodies.push(span.start);
-        }
+        // The bodies released inside it leave the tree with it: they were released after its
+        // body began, so they end each list.
+        self.release_inside(span, function.method);
         let directives = ArenaVec::from_iter_in(directives, &self.ast);
         FunctionBody::boxed(span, directives, ArenaVec::new_in(self), self)
     }
@@ -141,7 +273,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         inherited_strict: bool,
         call_assignment_targets: bool,
         verdict: Option<&crate::early::EarlyVerdict<'a>>,
-    ) {
+        stub: bool,
+    ) -> bool {
         let end = body.span.end;
         let span = Span::new(function.start, end);
         // SAFETY: bitwise copies of the arena boxes and the binding, read only through the
@@ -177,8 +310,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let in_function = self.ctx.has_return();
         // SAFETY: `ParseOptions::lazy_body_check` outlives the parse.
         let early = verdict.filter(|verdict| !verdict.unsure).map(|verdict| verdict.free.as_slice());
-        unsafe { check.call(crate::LazyBody { program: &program, call_assignment_targets, in_function, early }) };
+        let accepted = unsafe { check.call(crate::LazyBody { program: &program, call_assignment_targets, in_function, early, stub }) };
         std::mem::forget(program);
+        accepted
     }
 
     pub(crate) fn parse_formal_parameters(

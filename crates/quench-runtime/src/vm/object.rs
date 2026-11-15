@@ -1500,7 +1500,9 @@ impl<H: Host> Vm<H> {
                 .field_cache_hit(usize::from(hit.tier), hit.depth);
             return FieldCacheProbe::Hit(hit.value);
         }
-        if receiver.is_module_namespace() {
+        // A namespace answers by its bindings and a proxy by its handler: no tier below
+        // records either, so neither walks them.
+        if receiver.has_exotic_access() && (receiver.is_module_namespace() || self.proxy_parts(object).is_some()) {
             return FieldCacheProbe::Ineligible;
         }
         if let Some(hit) = self.cached_ordinary_holder_field_value(index, receiver) {
@@ -3375,10 +3377,12 @@ impl<H: Host> Vm<H> {
         }
         // A shape holds every own name of an ordinary object, every named own property of a
         // direct array (whose elements and virtual length the caller's shape lookup excludes),
-        // and every own name `function_links_answer` admits of a function.
+        // every own name `function_links_answer` admits of a function, and every own name of
+        // a collection, date, regexp, promise or iterator (`ordinary_builtin_object`).
         let shape_holds_own = self.heap.ordinary_object(object).is_some()
             || self.heap.array(object).is_some()
-            || self.heap.function(object).is_some() && self.function_links_answer(atom);
+            || self.heap.function(object).is_some() && self.function_links_answer(atom)
+            || self.heap.ordinary_builtin_object(object).is_some();
         let (cache, value) = self.inherited_field(receiver, shape_holds_own, atom)?;
         #[cfg(feature = "profile-lane-exits")]
         self.record_field_probe_path(site, atom, 5);

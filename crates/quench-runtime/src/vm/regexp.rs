@@ -2784,7 +2784,9 @@ impl<H: Host> Vm<H> {
         whole: Value,
     ) -> Result<(crate::heap::ArrayElements, Value), JsError> {
         let length = units.len();
-        let values = crate::heap::ArrayElements::from_fn(1 + matched.captures.len(), |index| {
+        let len = 1 + matched.captures.len();
+        let run = self.heap.young_elements(len);
+        let element = |index: usize| {
             let range = match index.checked_sub(1) {
                 None => Some(matched.range.clone()),
                 Some(capture) => matched.captures[capture].clone(),
@@ -2796,7 +2798,15 @@ impl<H: Host> Vm<H> {
                     self.heap.alloc_string(JsString::from_unit_run(units.slice(range)))
                 }
             })
-        });
+        };
+        // A young run where the nursery has one, as an array literal's: most results die
+        // young. The result array record is made before any collection (`regexp_exec_result`).
+        let values = match run {
+            // SAFETY: the run is the nursery's alone, and string records and the groups
+            // object take no collection before the caller makes the array record.
+            Some(run) => unsafe { crate::heap::ArrayElements::young(run, len, element) },
+            None => crate::heap::ArrayElements::from_fn(len, element),
+        };
         let groups = self.regexp_groups_object(named, units)?;
         Ok((values, groups))
     }
@@ -3420,24 +3430,38 @@ impl LazyMatchers {
     }
 }
 
+/// The matchers compiled for patterns and flags: the last `REGEXP_MATCHER_CACHE_LIMIT` held,
+/// and every one a live RegExp still holds found weakly (`live`). With only the held ones, a
+/// program that made more patterns than the limit emptied the cache and compiled each pattern
+/// again for its next RegExp, while the RegExps of the earlier pass kept their copies alive:
+/// jsdom-d3-startup held 4.1 MB of matchers at its peak, one set per retained iteration.
 #[derive(Default)]
 pub(super) struct RegExpMatcherCache {
     by_source: rustc_hash::FxHashMap<JsString, Vec<(String, Rc<quench_regexp::Regex>)>>,
     entries: usize,
+    live: rustc_hash::FxHashMap<(JsString, String), std::rc::Weak<quench_regexp::Regex>>,
+    /// The size at which `live` drops its dead entries next.
+    prune_live_at: usize,
 }
 
 impl RegExpMatcherCache {
     fn find(&self, source: &JsString, flags: &str) -> Option<Rc<quench_regexp::Regex>> {
         self.by_source
-            .get(source)?
-            .iter()
-            .find_map(|(cached, matcher)| (cached == flags).then(|| Rc::clone(matcher)))
+            .get(source)
+            .and_then(|matchers| matchers.iter().find_map(|(cached, matcher)| (cached == flags).then(|| Rc::clone(matcher))))
+            .or_else(|| self.live.get(&(source.clone(), flags.to_owned()))?.upgrade())
     }
 
     fn insert(&mut self, source: &JsString, flags: &str, matcher: Rc<quench_regexp::Regex>) {
         if self.entries >= REGEXP_MATCHER_CACHE_LIMIT {
-            self.clear();
+            self.by_source.clear();
+            self.entries = 0;
         }
+        if self.live.len() >= self.prune_live_at {
+            self.live.retain(|_, matcher| matcher.strong_count() > 0);
+            self.prune_live_at = (self.live.len() * 2).max(REGEXP_MATCHER_CACHE_LIMIT);
+        }
+        self.live.insert((source.clone(), flags.to_owned()), Rc::downgrade(&matcher));
         self.by_source
             .entry(source.clone())
             .or_default()
@@ -3448,6 +3472,8 @@ impl RegExpMatcherCache {
     pub(super) fn clear(&mut self) {
         self.by_source.clear();
         self.entries = 0;
+        self.live.clear();
+        self.prune_live_at = 0;
     }
 }
 

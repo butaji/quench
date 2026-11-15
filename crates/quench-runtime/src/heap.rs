@@ -668,7 +668,7 @@ pub(crate) struct Heap {
     free_by_slab: Vec<FreeSlotBitmap>,
     free_slabs: Vec<u32>,
     /// The slots of one free-list word claimed whole (`refill_bump`), which allocations take
-    /// lowest first, and the first slot of that word: claimed slots are young already, so an
+    /// highest first, as the free list hands slots out, and the first slot of that word: claimed slots are young already, so an
     /// allocation is a bit scan. A collection hands back the unused ones first (`retire_bump`).
     bump_bits: u64,
     bump_base: usize,
@@ -768,6 +768,9 @@ pub(crate) struct Heap {
     /// (`finished_run_object`): only then does a minor sweep visit live functions to list
     /// their young survivors (`YoungOwner::Function`).
     young_function_runs: bool,
+    /// The arena length at the last narrowing pass and the fulls since it: the pass reads every
+    /// live run, so it reruns only once the arena grew an eighth or eight fulls went by.
+    narrow_pass: (usize, u32),
     /// Values the cycle's weak reads handed out (`Heap::shade`), for its mark: a value read
     /// through a weak reference may be one its snapshot does not reach.
     satb_shaded: std::cell::RefCell<Vec<Value>>,
@@ -1381,6 +1384,13 @@ impl Heap {
         }
     }
 
+    /// A young run for the `len` elements of an array record the caller makes before any
+    /// collection (`ValueArena::young_elements`, `ArrayElements::young`).
+    #[inline(always)]
+    pub(crate) fn young_elements(&mut self, len: usize) -> Option<std::ptr::NonNull<Value>> {
+        self.properties.young_elements(len)
+    }
+
     /// A new array of `prototype`, with no properties, of the `len` elements `element` gives
     /// for each index, which a young run holds where it can (`ValueArena::young_elements`).
     #[inline(always)]
@@ -1610,6 +1620,46 @@ impl Heap {
             return self.alloc(Cell::Object(object));
         }
         self.insert_admitted_object_record(object)
+    }
+
+    /// `alloc_unfilled_object_under_flagged_prototype` of an object whose first slot holds
+    /// `first` from the start, admitted; `None` where the header cannot hold it inline.
+    #[inline(always)]
+    pub(crate) fn alloc_object_under_flagged_prototype_with_first(&mut self, header: InlineObjectHeader, first: Value) -> Option<Value> {
+        if cfg!(feature = "profile-aggregate") {
+            return None;
+        }
+        let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
+        inline[0] = first;
+        let object = Object::from_inline_header(header, inline)?;
+        debug_assert!(self.prototype_flagged(object.proto()));
+        Some(self.insert_object_record(object))
+    }
+
+    /// A function record claimed before its function exists, as the value that names it, for
+    /// a closure whose `.prototype` names the closure from its creation: written by
+    /// `fill_claimed_function_record` before any collection. `None` where the claim would
+    /// take the record space's slow path.
+    #[inline(always)]
+    pub(crate) fn claim_function_record(&mut self) -> Option<Value> {
+        if cfg!(feature = "profile-aggregate") {
+            return None;
+        }
+        self.function_records.claim_uninit_quick().map(Value::direct_function)
+    }
+
+    /// `alloc_function_under_flagged_prototype` of `function` into the record `claimed`
+    /// (`claim_function_record`) names.
+    #[inline(always)]
+    pub(crate) fn fill_claimed_function_record(&mut self, claimed: Value, function: FunctionRecord) {
+        debug_assert!(self.prototype_flagged(function.object.proto()));
+        let id = claimed.direct_function_index().expect("a claimed function record");
+        self.admit_object_contents(&function.object);
+        self.allocated += 1;
+        // SAFETY: the claim made the id occupied with its record uninitialized, written once here.
+        unsafe { self.function_records.record_ptr(id).write(function) };
+        #[cfg(feature = "profile-memory")]
+        self.profile_allocation(claimed);
     }
 
     /// An object of the run header `header` (`InlineObjectHeader::of_run`) over a new young
@@ -1865,20 +1915,22 @@ impl Heap {
         Value::heap(index)
     }
 
-    /// A free slot's index, claimed and young: the lowest of the claimed word's
+    /// A free slot's index, claimed and young: the highest of the claimed word's
     /// (`bump_bits`), else of a word newly claimed.
     #[inline(always)]
     fn take_free_slot(&mut self) -> Option<usize> {
         let bits = self.bump_bits;
         if bits != 0 {
-            self.bump_bits = bits & (bits - 1);
-            return Some(self.bump_base + bits.trailing_zeros() as usize);
+            let bit = (u64::BITS - 1 - bits.leading_zeros()) as usize;
+            self.bump_bits = bits & !(1 << bit);
+            self.free_slots -= 1;
+            return Some(self.bump_base + bit);
         }
         self.refill_bump()
     }
 
     /// Claims the free slots of the highest word of the last slab with one, makes them young
-    /// in one word operation, and takes the lowest. Allocations then cost a bit scan, not a
+    /// in one word operation, and takes the highest. Allocations then cost a bit scan, not a
     /// free-list pop and a young insert each (BigInt sums, closures, environments).
     #[inline(never)]
     fn refill_bump(&mut self) -> Option<usize> {
@@ -1888,15 +1940,17 @@ impl Heap {
                 self.free_slabs.pop();
                 continue;
             };
-            self.free_slots -= bits.count_ones() as usize;
+            // Claimed slots stay counted free until taken.
+            self.free_slots -= 1;
             if self.free_by_slab[slab_index].is_empty() {
                 self.free_slabs.pop();
             }
             let base = slab_index * SLOTS_PER_SLAB + word * u64::BITS as usize;
             self.young.insert_word(base / u64::BITS as usize, bits);
-            self.bump_bits = bits & (bits - 1);
+            let bit = (u64::BITS - 1 - bits.leading_zeros()) as usize;
+            self.bump_bits = bits & !(1 << bit);
             self.bump_base = base;
-            return Some(base + bits.trailing_zeros() as usize);
+            return Some(base + bit);
         }
         None
     }
@@ -1914,7 +1968,6 @@ impl Heap {
             self.free_slabs.push(slab as u32);
         }
         self.free_by_slab[slab].insert_word((self.bump_base % SLOTS_PER_SLAB) / u64::BITS as usize, bits);
-        self.free_slots += bits.count_ones() as usize;
     }
 
     /// `alloc_in_slot` when no slot is free: a new one past the last.
@@ -2401,7 +2454,18 @@ impl Heap {
     /// settled_reclaimable_bytes`), a large program a process keeps raises its own threshold,
     /// while a stream of short-lived ones keeps the minimum.
     pub(crate) fn charge_reclaimable_program(&mut self, bytes: usize) {
+        /// The least program footprint since the last full collection that makes one due.
+        const MINIMUM_PROGRAM_GROWTH: usize = 256 << 10;
         self.reclaimable_program_bytes_since_full = self.reclaimable_program_bytes_since_full.saturating_add(bytes);
+        // Programs die without allocating on the heap: once as much program as the last full
+        // collection kept has come since, a full collection is due by itself, or a code-load
+        // loop keeps every dead program until heap allocation happens to make one
+        // (octane-code-load: no full collection in a run). Against what was kept, programs
+        // that all stay (one live function per eval) make it due ever less often.
+        if self.reclaimable_program_bytes_since_full >= self.reclaimable_program_bytes_after_full.max(MINIMUM_PROGRAM_GROWTH) {
+            self.full_due = true;
+            self.request_collection();
+        }
     }
     /// Records the footprints of the reclaimable programs that stay, after a full collection.
     pub(crate) fn set_reclaimable_programs_after_full(&mut self, bytes: usize) {
@@ -2811,6 +2875,7 @@ impl Heap {
         // objects' runs move or compaction moves every run.
         let mut young_arrays: Vec<RecordId> = Vec::new();
         let mut narrowable_arrays: Vec<RecordId> = Vec::new();
+        let narrow_arrays = self.narrow_runs;
         let mut direct_property_owners = Vec::with_capacity(if compacts {
             self.property_owner_counts.1
         } else {
@@ -2973,7 +3038,7 @@ impl Heap {
                         }
                         if array.elements().is_young() {
                             young_arrays.push(record_id);
-                        } else if full && array.elements().may_narrow() {
+                        } else if full && narrow_arrays && array.elements().may_narrow() {
                             narrowable_arrays.push(record_id);
                         }
                         if compacts && array.properties().has_compact_range() {
@@ -3086,7 +3151,14 @@ impl Heap {
         }
         for record_id in young_arrays {
             // SAFETY: the sweep listed these from the records it kept.
-            unsafe { self.array_records.get_live_mut_unbarriered(record_id) }.survive_nursery();
+            let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
+            // Native tiers read backings in place as wide values: only an interpreted run
+            // keeps narrow ones (`narrow_runs`).
+            if self.narrow_runs {
+                array.survive_nursery();
+            } else {
+                array.leave_nursery();
+            }
         }
         let (candidates, mut narrowed, mut saved_total) = (narrowable_arrays.len(), 0usize, 0usize);
         for record_id in narrowable_arrays {
@@ -3111,7 +3183,14 @@ impl Heap {
             // The pass visits every object record: it pays where property storage is large
             // (8 MB and up), and is a cost of its own for a small arena of many objects.
             if full && self.narrow_runs && self.properties.resident_words() >= Self::NARROW_PASS_MIN_ARENA_WORDS {
-                self.narrow_live_runs();
+                let resident = self.properties.resident_words();
+                let (last, fulls) = self.narrow_pass;
+                if resident > last + last / 8 || fulls >= 8 {
+                    self.narrow_live_runs();
+                    self.narrow_pass = (resident, 0);
+                } else {
+                    self.narrow_pass.1 = fulls + 1;
+                }
             }
         }
         if full {

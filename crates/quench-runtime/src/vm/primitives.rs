@@ -327,8 +327,14 @@ impl<H: Host> Vm<H> {
                 };
                 Ok(Value::number(result.map_or(-1.0, |index| index as f64)))
             }
-            Native::StringReplace => self.string_replace_native(p, this, args, false),
-            Native::StringReplaceAll => self.string_replace_native(p, this, args, true),
+            Native::StringReplace => match self.replace_in_place(native, this, args) {
+                Some(value) => Ok(value),
+                None => self.string_replace_native(p, this, args, false),
+            },
+            Native::StringReplaceAll => match self.replace_in_place(native, this, args) {
+                Some(value) => Ok(value),
+                None => self.string_replace_native(p, this, args, true),
+            },
             Native::StringSplit => self.string_split_native(p, this, args),
             Native::StringTrim | Native::StringTrimStart | Native::StringTrimEnd => {
                 let Some(receiver) = self.heap.string(this).cloned() else {

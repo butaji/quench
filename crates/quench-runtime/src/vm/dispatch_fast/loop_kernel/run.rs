@@ -228,6 +228,14 @@ impl LoopKernel {
                     let (depth, slot) = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
                     super::super::lane_capture_value::<H>(cx, depth, slot)?.as_number()?
                 }
+                Scalar::Length { register, atom } => {
+                    // SAFETY: the running VM.
+                    let vm = unsafe { vm(cx) };
+                    if atom != vm.length_atom {
+                        return None;
+                    }
+                    super::super::own_length(vm, r.get(register))?.as_number()?
+                }
                 Scalar::Computed { op, a, b } => apply(op, state.scalars[usize::from(a)], state.scalars[usize::from(b)]),
             };
         }
@@ -256,8 +264,12 @@ impl LoopKernel {
     fn chunk_length(&self, state: &State) -> Option<usize> {
         let shape = &self.shape;
         let mut chunk = CHUNK;
-        for store in &shape.stores {
+        for (n, store) in shape.stores.iter().enumerate() {
             let stored = state.spans[usize::from(store.base)].base;
+            // Two stores into one array through two registers would commit out of order.
+            if shape.stores[..n].iter().any(|other| state.spans[usize::from(other.base)].base == stored) {
+                return None;
+            }
             let step = i64::from(shape.affines[usize::from(store.index)].step);
             for &(node, order) in &shape.loads {
                 let NodeOp::Load { base, index } = shape.nodes[usize::from(node)].op else { continue };

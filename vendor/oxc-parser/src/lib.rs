@@ -326,11 +326,24 @@ pub struct ParseOptions {
     ///
     /// Default: `false`
     pub inherited_strict: bool,
+
+    /// With `lazy_body_check`, a body `lazy_function_bodies` releases is first recognized
+    /// without building its tree (`js::recognize`), and checked as a stand-in body with its
+    /// directives only (`LazyBody::stub`); the check may still ask for the tree.
+    ///
+    /// Default: `false`
+    pub lazy_recognize: bool,
+
+    /// With `lazy_recognize`, each recognized body is parsed whole as well, and a verdict that
+    /// differs is printed to standard error (a development check).
+    ///
+    /// Default: `false`
+    pub lazy_recognize_verify: bool,
 }
 
 /// A borrowed check of each lazily parsed function (`ParseOptions::lazy_body_check`).
 #[derive(Clone, Copy)]
-pub struct LazyBodyCheck(std::ptr::NonNull<dyn for<'x> FnMut(LazyBody<'_, 'x>)>);
+pub struct LazyBodyCheck(std::ptr::NonNull<dyn for<'x> FnMut(LazyBody<'_, 'x>) -> bool>);
 
 /// A function whose body `ParseOptions::lazy_function_bodies` releases, alone as a program,
 /// with what its parse registered.
@@ -345,19 +358,23 @@ pub struct LazyBody<'p, 'a> {
     /// and no private name
     /// (bodies released inside it excepted, each checked alone); `None` where it is not sure.
     pub early: Option<&'p [&'a str]>,
+    /// The body was recognized, not built (`ParseOptions::lazy_recognize`): the program holds
+    /// its directives only. The check returns false where it needs the tree; the body is then
+    /// parsed whole and checked again.
+    pub stub: bool,
 }
 
 impl LazyBodyCheck {
     /// # Safety
     /// `check` must outlive every parse given these options.
-    pub unsafe fn new<'c>(check: &'c mut (dyn for<'x> FnMut(LazyBody<'_, 'x>) + 'c)) -> Self {
+    pub unsafe fn new<'c>(check: &'c mut (dyn for<'x> FnMut(LazyBody<'_, 'x>) -> bool + 'c)) -> Self {
         // SAFETY: the caller keeps `check` alive while it is called.
-        Self(unsafe { std::mem::transmute::<std::ptr::NonNull<dyn for<'x> FnMut(LazyBody<'_, 'x>) + 'c>, std::ptr::NonNull<dyn for<'x> FnMut(LazyBody<'_, 'x>)>>(std::ptr::NonNull::from(check)) })
+        Self(unsafe { std::mem::transmute::<std::ptr::NonNull<dyn for<'x> FnMut(LazyBody<'_, 'x>) -> bool + 'c>, std::ptr::NonNull<dyn for<'x> FnMut(LazyBody<'_, 'x>) -> bool>>(std::ptr::NonNull::from(check)) })
     }
 
     /// # Safety
     /// The check given to `new` is alive and not otherwise borrowed.
-    pub(crate) unsafe fn call(self, body: LazyBody<'_, '_>) {
+    pub(crate) unsafe fn call(self, body: LazyBody<'_, '_>) -> bool {
         // SAFETY: the caller's contract.
         unsafe { (*self.0.as_ptr())(body) }
     }
@@ -383,6 +400,8 @@ impl Default for ParseOptions {
             lazy_body_check: None,
             lazy_nested_bodies: false,
             inherited_strict: false,
+            lazy_recognize: false,
+            lazy_recognize_verify: false,
         }
     }
 }
@@ -806,6 +825,20 @@ struct ParserImpl<'a, C: ParserConfig> {
     /// What a binding identifier parsed now declares, for `early`; `None` where the parser
     /// does not say, which makes the tracker unsure.
     binding_kind: Option<early::DeclKind>,
+
+    /// Function bodies are recognized, not built (`js::recognize`): inside a body
+    /// `recognize_lazy_body` recognizes.
+    recognizing: bool,
+
+    /// The verdict of the body just recognized, which its whole parse compares with its own
+    /// (`ParseOptions::lazy_recognize_verify`).
+    recognized_verdicts: Vec<(Span, Vec<&'a str>)>,
+
+    /// The last identifier reference the recognizer read (`js::recognize`).
+    rc_ident: oxc_str::Ident<'a>,
+
+    /// The stack the outermost recognized body may still use (`js::recognize`).
+    rc_budget: Option<quench_stack::StackBudget>,
 }
 
 impl<'a, C: ParserConfig> ParserImpl<'a, C> {
@@ -852,6 +885,10 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             call_assignment_targets: 0,
             early: early::Early::default(),
             binding_kind: None,
+            recognizing: false,
+            recognized_verdicts: Vec::new(),
+            rc_ident: oxc_str::Ident::new_unhashed(""),
+            rc_budget: None,
         }
     }
 

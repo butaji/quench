@@ -1141,6 +1141,38 @@ struct MethodCacheSet {
     len: u8,
     entries: [MethodCache; compiled::tier_policy::POLYMORPHISM],
 }
+/// What making a program the executing one reads (`Vm::program_context`): its residual, lane
+/// views, constants, cache layout and field cache entries, derived once and again only after
+/// something they come from changed (`ProgramStore::context_epoch`), so a switch between
+/// programs, as a cross-program call and its return make, looks nothing up and copies no
+/// layout. Boxed per program (`Vm::program_contexts`), so its address holds.
+pub(crate) struct ProgramContext {
+    /// The `ProgramStore::context_epoch` it was derived at.
+    epoch: u64,
+    /// The program's residual; null for a program the store does not hold.
+    code: *const crate::bytecode::ResidualProgram,
+    /// Its lane views by function; a null slice until the program's view table exists
+    /// (`Vm::lane_program_context`), which a program the lane never enters never makes.
+    views: *const [program_store::LaneViewCell],
+    constants: *const [Value],
+    layout: ProgramCacheLayout,
+    field_entries: *const <FieldCache as site_table::SiteEntry>::Stored,
+}
+
+impl ProgramContext {
+    /// A context no epoch matches: the active one before any program is.
+    fn idle() -> Self {
+        Self {
+            epoch: u64::MAX,
+            code: std::ptr::null(),
+            views: std::ptr::slice_from_raw_parts(std::ptr::null(), 0),
+            constants: &[],
+            layout: ProgramCacheLayout::default(),
+            field_entries: std::ptr::null(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct ProgramCacheLayout {
     field_base: usize,
@@ -1976,11 +2008,13 @@ pub(crate) struct Vm<H> {
     /// The completion of a native's frameless callback (`Completion::ReturnsToNative`), which
     /// its run hands to the native once the lane exits there.
     lane_native_returned: Option<Value>,
-    /// `program_cache_layouts[active_program]`, kept by `set_active_program`.
-    active_layout: ProgramCacheLayout,
-    /// The active program's materialized constants, kept by `set_active_program` and by
-    /// constant installation. A program's constant buffer never moves once installed.
-    active_constants: *const [Value],
+    /// The active program's context (`program_contexts`), kept by `set_active_program`: its
+    /// cache layout and constants are one load from it.
+    active_context: *const ProgramContext,
+    /// Each program's context by its index (`program_context`), derived on its first use.
+    program_contexts: Vec<Box<ProgramContext>>,
+    /// The context active before any program is, which `active_context` names until then.
+    idle_context: Box<ProgramContext>,
     /// The active program's field cache entries (`SiteTable::entries_from` of its
     /// `field_base`), re-derived by `refresh_active_field_entries` whenever the active program
     /// changes or the table grows: a site's entry is then one load from it.
@@ -3160,6 +3194,7 @@ impl<H: Host> Vm<H> {
         self.set_instanceof_has_instance_holder(Value::NULL);
         self.program_cache_layouts.clear();
         self.free_cache_layouts.clear();
+        self.programs.bump_context_epoch();
         self.program_cache_layouts.push(ProgramCacheLayout {
             shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program.cache_sites.capacity()),
             ..ProgramCacheLayout::default()
@@ -3282,6 +3317,7 @@ impl<H: Host> Vm<H> {
     /// the programs before it.
     pub(super) fn append_cache_layout(&mut self, id: ProgramId, sites: crate::bytecode::CacheSiteCounts) {
         debug_assert_eq!(id.raw() as usize, self.program_cache_layouts.len());
+        self.programs.bump_context_epoch();
         if let Some(layout) = self.free_cache_layouts.get_mut(&sites).and_then(Vec::pop) {
             self.empty_cache_ranges(layout);
             self.program_cache_layouts.push(layout);
@@ -3336,8 +3372,67 @@ impl<H: Host> Vm<H> {
     /// index reads. A program's layout is appended before the program can run.
     #[inline(always)]
     pub(super) fn set_active_program(&mut self, program: ProgramId) {
-        let constants = std::ptr::from_ref(self.programs.constants(program));
-        self.activate_program(program, constants);
+        let context = self.program_context(program);
+        self.activate_context(program, context);
+    }
+
+    /// `program`'s context (`ProgramContext`), derived again where something it comes from
+    /// changed since.
+    #[inline(always)]
+    pub(super) fn program_context(&mut self, program: ProgramId) -> *const ProgramContext {
+        let epoch = self.programs.context_epoch();
+        match self.program_contexts.get(program.raw() as usize) {
+            Some(context) if context.epoch == epoch => &**context,
+            _ => self.derive_program_context(program, epoch),
+        }
+    }
+
+    /// `program_context` past its context's epoch, out of line.
+    #[cold]
+    #[inline(never)]
+    fn derive_program_context(&mut self, program: ProgramId, epoch: u64) -> *const ProgramContext {
+        let index = program.raw() as usize;
+        while self.program_contexts.len() <= index {
+            self.program_contexts.push(Box::new(ProgramContext::idle()));
+        }
+        let (code, views, constants) = match self.programs.residual(program) {
+            Some(code) => (
+                std::ptr::from_ref(code),
+                self.programs.made_lane_views(program).map_or(std::ptr::slice_from_raw_parts(std::ptr::null(), 0), std::ptr::from_ref),
+                std::ptr::from_ref(self.programs.constants(program)),
+            ),
+            None => (std::ptr::null(), std::ptr::slice_from_raw_parts(std::ptr::null(), 0), &[][..] as *const [Value]),
+        };
+        let layout = self.program_cache_layouts.get(index).copied().unwrap_or_default();
+        let field_entries = self.field_caches.entries_from(layout.field_base);
+        let context = &mut self.program_contexts[index];
+        **context = ProgramContext { epoch, code, views, constants, layout, field_entries };
+        &**context
+    }
+
+    /// `program_context` of a program the lane runs, whose view table it makes if the
+    /// program has none yet. The program is one the store holds.
+    #[inline(always)]
+    pub(super) fn lane_program_context(&mut self, program: ProgramId) -> *const ProgramContext {
+        let context = self.program_context(program);
+        // SAFETY: a context stays in its box while the VM lives.
+        if unsafe { (*context).views.is_null() } {
+            return self.make_context_views(program);
+        }
+        context
+    }
+
+    /// `lane_program_context` of a program without its view table yet, out of line.
+    #[cold]
+    #[inline(never)]
+    fn make_context_views(&mut self, program: ProgramId) -> *const ProgramContext {
+        let Some((_, views, _)) = self.programs.lane_program(program) else {
+            unreachable!("a lane target names a program the store holds");
+        };
+        let views = std::ptr::from_ref(views);
+        let context = &mut self.program_contexts[program.raw() as usize];
+        context.views = views;
+        &**context
     }
 
     /// Sets the construction whose callee's frame is pending (`construct_target`), which
@@ -3356,14 +3451,14 @@ impl<H: Host> Vm<H> {
         self.lane_stack.set_refused(refused);
     }
 
-    /// `set_active_program` with `program`'s constants (`ProgramStore::constants`) in hand.
+    /// `set_active_program` with `program`'s context (`program_context`) in hand.
     #[inline(always)]
-    pub(super) fn activate_program(&mut self, program: ProgramId, constants: *const [Value]) {
+    pub(super) fn activate_context(&mut self, program: ProgramId, context: *const ProgramContext) {
         self.active_program = program;
         self.lane_stack.enter_program(program);
-        self.active_layout = self.program_cache_layouts[program.raw() as usize];
-        self.active_constants = constants;
-        self.refresh_active_field_entries();
+        self.active_context = context;
+        // SAFETY: a context stays in its box while the VM lives.
+        self.active_field_entries = unsafe { (*context).field_entries };
     }
 
     /// Re-derive `active_field_entries` after the active program or the field cache table
@@ -3376,7 +3471,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn refresh_active_field_entries(&mut self) {
-        self.active_field_entries = self.field_caches.entries_from(self.active_layout.field_base);
+        // Every context's entries point into the table that moved.
+        self.programs.bump_context_epoch();
+        self.set_active_program(self.active_program);
     }
 
     /// The field cache table grew or was replaced: the only events that move its mapping, and so
@@ -3393,14 +3490,12 @@ impl<H: Host> Vm<H> {
     /// Constant `index` of the active program.
     #[inline(always)]
     pub(super) fn active_constant(&self, index: usize) -> Option<Value> {
-        debug_assert!(std::ptr::eq(
-            self.active_constants,
-            self.programs.constants(self.active_program)
-        ));
-        // SAFETY: `active_constants` is re-derived whenever the active program or its constants
-        // change, and an installed constant buffer stays put until the store is reset, which
-        // reactivates the main program.
-        unsafe { (&*self.active_constants).get(index).copied() }
+        // SAFETY: the active context is derived again whenever the active program or its
+        // constants change, and an installed constant buffer stays put until the store is
+        // reset, which reactivates the main program.
+        let constants = unsafe { (*self.active_context).constants };
+        debug_assert!(std::ptr::eq(constants, self.programs.constants(self.active_program)));
+        unsafe { (&*constants).get(index).copied() }
     }
 
     /// Makes `program` the executing program and returns the one it replaces, which
@@ -3425,11 +3520,10 @@ impl<H: Host> Vm<H> {
 
     #[inline(always)]
     fn active_cache_layout(&self) -> ProgramCacheLayout {
-        debug_assert_eq!(
-            self.active_layout,
-            self.program_cache_layouts[self.active_program.raw() as usize]
-        );
-        self.active_layout
+        // SAFETY: a context stays in its box while the VM lives.
+        let layout = unsafe { (*self.active_context).layout };
+        debug_assert_eq!(layout, self.program_cache_layouts[self.active_program.raw() as usize]);
+        layout
     }
     #[inline(always)]
     pub(super) fn field_cache_index(&self, site: u16) -> usize {
@@ -3438,7 +3532,7 @@ impl<H: Host> Vm<H> {
     /// Whether the active program may record cache entries at `index`: every index but its
     /// shared overflow site, if it has one.
     pub(super) fn field_cache_records(&self, index: usize) -> bool {
-        self.active_layout.shared_uncached_field != Some(index)
+        self.active_cache_layout().shared_uncached_field != Some(index)
     }
     pub(super) fn method_cache_index(&self, site: usize) -> usize {
         self.active_cache_layout().method_base + site

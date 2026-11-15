@@ -13,7 +13,7 @@ impl SourceText {
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         match self {
             // A snapshot outlives the entry's mapping, so it keeps its own copy of kept text.
-            Self::Shared(_) | Self::Local(_) | Self::Kept(_) => {
+            Self::Shared(_) | Self::Local(_) | Self::Kept(_) | Self::Rope(_) => {
                 writer.u8(0);
                 writer.str(self);
             }

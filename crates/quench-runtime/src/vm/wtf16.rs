@@ -278,6 +278,18 @@ impl FlatUnits {
         }
     }
 
+    /// The text of ASCII units read in place; `None` for wide or unwritten text.
+    pub(crate) fn ascii_str(&self) -> Option<&str> {
+        Some(match self {
+            Self::Short(text) => text.as_str(),
+            Self::Ascii(text) => text,
+            Self::AsciiSlice(slice) => &slice.text[slice.range.clone()],
+            // SAFETY: an ASCII buffer holds only ASCII bytes, which are UTF-8.
+            Self::AsciiPrefix(buffer, length) => unsafe { std::str::from_utf8_unchecked(buffer.prefix(*length)) },
+            Self::Wide(_) | Self::WideSlice(_) | Self::WidePrefix(..) | Self::Parts(_) => return None,
+        })
+    }
+
     /// The shared ASCII storage these units view and the bytes they cover.
     pub(crate) fn shared_ascii(&self) -> Option<(&Rc<str>, Range<usize>)> {
         match self {
@@ -571,6 +583,9 @@ struct JsStringInner {
     /// a compare of strings compared before decides inequality without reading units. In
     /// the first word's padding beside `length` and `ascii`.
     compare_hash: std::cell::Cell<u16>,
+    /// Unit reads a long rope answered by walking its halves (`JsString::unit_at`) before
+    /// it is made flat; in the first word's last padding byte.
+    rope_reads: std::cell::Cell<u8>,
     flat: OnceCell<FlatUnits>,
     /// What the string holds beside its units, behind one word: see `Aside`. Mutated only
     /// through the methods below, which keep a `Host` in place once made.
@@ -598,6 +613,7 @@ impl JsStringInner {
             length: stored_length(length),
             ascii,
             compare_hash: std::cell::Cell::new(0),
+            rope_reads: std::cell::Cell::new(0),
             flat: OnceCell::from(units),
             aside: UnsafeCell::new(None),
         }
@@ -612,6 +628,7 @@ impl JsStringInner {
             length: stored_length(length),
             ascii: false,
             compare_hash: std::cell::Cell::new(0),
+            rope_reads: std::cell::Cell::new(0),
             flat: OnceCell::new(),
             aside: UnsafeCell::new(Some(Rc::new(Aside::Host(host)))),
         }
@@ -630,6 +647,7 @@ impl JsStringInner {
             length: left.length.saturating_add(right.length),
             ascii: left.ascii && right.ascii,
             compare_hash: std::cell::Cell::new(0),
+            rope_reads: std::cell::Cell::new(0),
             flat: OnceCell::new(),
             aside: UnsafeCell::new(Some(Rc::new(Aside::Rope(left, right)))),
         }
@@ -709,6 +727,11 @@ impl JsStringInner {
         }
     }
 }
+
+/// Ropes at least this long answer their first `ROPE_WALK_READS` unit reads by walking
+/// their halves (`JsString::unit_at`); a shorter one costs less to copy than to walk.
+const ROPE_WALK_MIN_UNITS: usize = 4096;
+const ROPE_WALK_READS: u8 = 8;
 
 /// The largest reused buffer `JsString::with_ascii_rope_bytes` keeps between reads.
 const ROPE_BYTES_KEPT: usize = 64 << 10;
@@ -894,6 +917,53 @@ impl JsString {
     #[inline]
     pub(crate) fn units(&self) -> Units<'_> {
         self.flat().view()
+    }
+
+    /// The unit at `index`. A long rope not yet flat answers its first `ROPE_WALK_READS`
+    /// reads by walking its halves, so a reader that looks at a unit or two (a file-sized
+    /// source built as `prefix + text + suffix` checked at its ends) leaves its leaves shared
+    /// instead of keeping a flat copy for the rope's life; a reader that keeps reading, a
+    /// scan, makes it flat as `units` would and then reads it in place.
+    #[inline]
+    pub(crate) fn unit_at(&self, index: usize) -> Option<u16> {
+        if let Repr::Shared(inner) = &self.repr
+            && inner.flat.get().is_none()
+            && inner.length as usize >= ROPE_WALK_MIN_UNITS
+            && inner.rope_reads.get() < ROPE_WALK_READS
+        {
+            inner.rope_reads.set(inner.rope_reads.get() + 1);
+            return Self::rope_unit(inner, index);
+        }
+        self.units().get(index)
+    }
+
+    /// `unit_at` of a rope, by its halves down to a flat node; a node of decoded text is
+    /// made flat, as its first read makes it.
+    #[cold]
+    fn rope_unit(inner: &Rc<JsStringInner>, index: usize) -> Option<u16> {
+        if index >= inner.length as usize {
+            return None;
+        }
+        let (mut node, mut index) = (inner.clone(), index);
+        loop {
+            if let Some(units) = node.flat.get() {
+                return units.unit(index);
+            }
+            let Some((left, right)) = node.halves() else {
+                return Self { repr: Repr::Shared(node) }.units().get(index);
+            };
+            if index < left.length as usize {
+                node = left;
+            } else {
+                index -= left.length as usize;
+                node = right;
+            }
+        }
+    }
+
+    /// Whether this is a rope of ASCII units not made flat yet.
+    pub(crate) fn is_unflattened_ascii_rope(&self) -> bool {
+        matches!(&self.repr, Repr::Shared(inner) if inner.ascii && inner.flat.get().is_none() && inner.unflattened_host().is_none())
     }
 
     /// The flat units when the string already has them: never flattens a rope, so a

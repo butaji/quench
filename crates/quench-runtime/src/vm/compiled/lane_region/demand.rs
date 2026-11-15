@@ -40,6 +40,8 @@ fn read_demand(instruction: WideInstruction) -> Demand {
     match op.class() {
         Class::JumpBinaryFalse if NumberRelation::from_operator(instruction.binary_operator_field()).is_some()
             && equality_operator(instruction.binary_operator_field()).is_none() => Demand::NUMBER,
+        // A strict (in)equality reads a Number operand's double (`Lowering::number_strict_equality`).
+        Class::JumpBinaryFalse if equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict) => Demand::NUMBER,
         _ if op.js_denotation() == JsDenotation::NumericBinary && !instruction.returns_from_frame() => {
             let operator = instruction.binary_operator();
             if NumberBitwise::from_js_instruction(op, operator).is_some() { Demand::INT32 }

@@ -209,6 +209,9 @@ impl Heap {
         }
         // SAFETY: as in `prove_array_storage`.
         let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
+        // The span is read and written as wide values: a narrow backing widens once, as for
+        // a lane proof.
+        array.widen_elements();
         let replaces = !array.has_indexed_descriptors() && !array.is_frozen() && array.arguments_map().is_none()
             && !array.was_used_as_prototype();
         let length = array.elements().len().min(i32::MAX as usize);

@@ -92,8 +92,14 @@ impl super::Heap {
     /// date, regexp, promise or iterator. No proxy, exotic or integer-indexed object.
     #[inline(never)]
     pub(crate) fn ordinary_builtin_object(&self, value: crate::Value) -> Option<&Object> {
-        if value.direct_promise_index().is_some() || value.direct_iterator_index().is_some() {
-            return self.object(value);
+        // A record family reads its record at once, past `object`'s tests of the others.
+        if let Some(record_id) = value.direct_iterator_index() {
+            // SAFETY: a direct-iterator Value names an initialized iterator record.
+            return Some(&unsafe { self.iterator_records.get_live(record_id) }.object);
+        }
+        if let Some(record_id) = value.direct_promise_index() {
+            // SAFETY: a direct-promise Value names an initialized promise record.
+            return Some(&unsafe { self.promise_records.get_live(record_id) }.object);
         }
         let cell = self.get(value)?;
         matches!(cell, Cell::Map { .. } | Cell::Set { .. } | Cell::WeakMap { .. } | Cell::WeakSet { .. }

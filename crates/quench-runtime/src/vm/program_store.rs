@@ -773,13 +773,17 @@ pub(crate) struct ProgramStore {
     native_call_bindings: std::cell::RefCell<Vec<lane_publication::NativeCallBinding>>,
     /// The bodies published by what they compile from (`lane_publication::LaneKey`).
     /// The compiles each body or loop entry has had (`lane_publication::LaneKey`'s first three).
-    lane_compiles: std::cell::RefCell<std::collections::BTreeMap<(u32, u32), u8>>,
+    lane_compiles: std::cell::RefCell<std::collections::BTreeMap<(u32, u32, Option<u32>), u8>>,
     lane_installed: std::cell::RefCell<std::collections::BTreeMap<lane_publication::LaneKey, Weak<crate::vm::compiled::PublishedLaneMethod>>>,
     /// The ahead-of-time bodies the loaded files hold.
     ahead: std::cell::RefCell<Vec<Rc<crate::vm::compiled::AheadImages>>>,
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,
+    /// Advanced by every change to a program the store holds or to the set it holds, and by
+    /// the VM's changes to cache layouts and tables (`bump_context_epoch`): a program context
+    /// derived at another epoch is derived again (`Vm::program_context`).
+    context_epoch: u64,
     /// Weak compiled-script identities for global eval; contexts are supplied per call.
     global_eval_programs: FxHashMap<super::eval::eval_source::EvalSource, ProgramId>,
     /// Compiled direct evals by text and the caller facts the compilation reads.
@@ -827,6 +831,12 @@ impl Default for ProgramStore {
             ahead: Default::default(),
             lane_compiles: Default::default(),
             programs: Vec::new(),
+            // Each store's epochs start apart from every other's, so a context derived from
+            // a store a snapshot or reset replaced never matches its successor's.
+            context_epoch: {
+                static STORES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                STORES.fetch_add(1 << 40, std::sync::atomic::Ordering::Relaxed)
+            },
             global_eval_programs: FxHashMap::default(),
             direct_eval_programs: FxHashMap::default(),
             strict_direct_eval_code: FxHashMap::default(),
@@ -896,6 +906,7 @@ impl ProgramStore {
 
     /// Every mutation goes through here, so it also marks the program's roots pending.
     fn entry_mut(&mut self, id: ProgramId) -> Option<&mut ProgramEntry> {
+        self.context_epoch += 1;
         let entry = self.programs.get_mut(id.index())?.as_deref_mut()?;
         entry.minor_root_traces = PromotionAge::OLDEST.minors();
         Some(entry)
@@ -1013,6 +1024,7 @@ impl ProgramStore {
                 reclaimed_wasm_baselines.1 += compiled.mapped_bytes();
             }
             *slot = None;
+            self.context_epoch += 1;
             reclaimed.extend(ProgramId::from_index(index));
         }
         self.settled_reclaimable_bytes = settled;
@@ -1050,6 +1062,7 @@ impl ProgramStore {
         self.strict_direct_eval_code.clear();
         self.owned_scripts.clear();
         self.programs.clear();
+        self.context_epoch += 1;
         self.unchecked_reclaimable = 0;
         self.js_jit_tracked_functions = 0;
         self.js_jit_rejected_functions = 0;
@@ -1265,6 +1278,7 @@ impl ProgramStore {
         let lane_views = LaneViews::default();
         let lane_deferred = zeroed_counts(program.functions.capacity());
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
+        self.context_epoch += 1;
         self.programs.push(Some(Box::new(ProgramEntry {
             residual: Residual::decoded(program),
             #[cfg(feature = "native-execution")]
@@ -1442,6 +1456,7 @@ impl ProgramStore {
             .defined_signature(index)
     }
 
+    #[inline]
     pub(crate) fn wasm_signatures(&self, id: ProgramId) -> Option<&crate::wasm::WasmSignatures> {
         self.entry(id)?.wasm_signatures.as_deref()
     }
@@ -2443,6 +2458,23 @@ impl ProgramStore {
         self.jit_code_cache.mapped_bytes + self.jit_code_cache.baseline_mapped_bytes
     }
 
+    /// The epoch program contexts are derived at (`context_epoch`).
+    #[inline(always)]
+    pub(super) fn context_epoch(&self) -> u64 {
+        self.context_epoch
+    }
+
+    /// Makes every program context derive again: the VM changed what they read beside the
+    /// store (a cache layout, the field cache table).
+    pub(super) fn bump_context_epoch(&mut self) {
+        self.context_epoch += 1;
+    }
+
+    /// Program `id`'s lane view table if it was made (`lane_program` makes it).
+    pub(super) fn made_lane_views(&self, id: ProgramId) -> Option<&[LaneViewCell]> {
+        self.entry(id)?.lane_views.table.get().map(|table| &table[..])
+    }
+
     /// What a lane running program `id` reads of it, from one look at its entry: its
     /// residual, lane views (`lane_views`) and constants (`constants`).
     #[inline(always)]
@@ -2515,11 +2547,6 @@ impl ProgramStore {
     /// and lane calls completed its deferred runs (`LANE_VIEW_DEFERRED_RUNS`), as
     /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
     /// general path.
-    /// Whether `function` of program `id` has a derived lane view.
-    pub(super) fn lane_view_derived(&self, id: ProgramId, function: u32) -> bool {
-        self.lane_entry(id).is_some_and(|entry| entry.lane_views.derived(function).is_some())
-    }
-
     pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32) -> bool {
         let Some(entry) = self.lane_entry(id) else {
             return false;
@@ -2810,6 +2837,7 @@ fn derive_lane_view<'s>(
     view.get_or_init(|| {
         // Only a loop tier reads the masks; a collection derives them otherwise.
         let live = || entry.residual.shared_register_root_masks(function);
+        entry.residual.pin_tier0(function as usize);
         let view = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
         #[cfg(feature = "profile-lane-exits")]
         {

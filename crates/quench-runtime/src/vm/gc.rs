@@ -776,20 +776,20 @@ impl<H: Host> Vm<H> {
         roots.extend(self.symbol_registry.values().copied());
         roots.extend(self.well_known_symbols.values());
         roots.extend(self.typeof_names);
-        roots.extend(self.startup_intrinsic_roots());
+        // Old startup roots stay marked until a full collection, which takes them all. Under
+        // counts a minor collection may free old records too, so it takes them (`all_roots`).
+        if all_roots || begin_cycle || !self.startup_roots_old() || self.heap.satb_active() {
+            roots.extend(self.startup_intrinsic_roots());
+        }
         for frame in &self.frames {
             // A missing map means the function uses a register form the liveness pass cannot
             // represent; keep the safe conservative scan for that activation.
-            let register_masks = self
-                .programs
-                .residual(frame.program)
-                .and_then(|program| program.register_root_masks(frame.function));
             roots.extend([frame.env, frame.this]);
             roots.extend(frame.context.callee());
             roots.extend(frame.original_arguments.iter().copied());
             roots.extend(frame.locals.iter().copied());
             roots.extend(frame.dynamic_bindings.iter().map(|(_, value)| *value));
-            match register_masks {
+            match self.programs.residual(frame.program).and_then(|program| crate::compile::liveness::RegisterMasks::for_collection(program, frame.function)) {
                 Some(masks) => masks.extend_live(frame.pc as usize, &frame.registers, &mut roots),
                 None => roots.extend(frame.registers.iter().copied()),
             }
@@ -875,6 +875,13 @@ impl<H: Host> Vm<H> {
             Some(&closure_reads),
             full,
         );
+        // Whether every startup root is old now, so the next minor collection may leave
+        // them out (`StartupIntrinsics::roots_old`).
+        if !self.startup_roots_old() {
+            let heap = &self.heap;
+            let old = self.startup_intrinsic_roots().all(|value| value.heap_reference().is_none() || heap.is_old(value));
+            self.startup_intrinsics.roots_old = old;
+        }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let after_collection_started = std::time::Instant::now();
         let mut live_shapes = shape_trace.live_shapes();

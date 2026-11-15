@@ -109,8 +109,9 @@ impl<H: Host> Vm<H> {
             lane_returned: None,
             lane_native: None,
             lane_native_returned: None,
-            active_layout: Default::default(),
-            active_constants: &[],
+            active_context: std::ptr::null(),
+            program_contexts: Vec::new(),
+            idle_context: Box::new(ProgramContext::idle()),
             active_field_entries: std::ptr::null(),
             field_entries_epoch: 0,
             active_program: ProgramId::MAIN,
@@ -214,6 +215,7 @@ impl<H: Host> Vm<H> {
             construct_target: None,
             random_state: fresh_random_seed(),
         };
+        vm.active_context = &*vm.idle_context;
         if crate::trace::Dev::RcGc.on() {
             vm.heap.set_rc(true);
         }

@@ -247,6 +247,35 @@ static NEW_HIGH: NewHigh = NewHigh {
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const NEW_HIGH_FILE_MARGIN_BYTES: usize = 256 << 10;
 
+/// How often the watch (`watch_new_highs`) looks for a new high of the resident set.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const NEW_HIGH_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Starts a thread that applies the new-high release (`NewHigh`) every
+/// `NEW_HIGH_WATCH_INTERVAL`, for runs that grow without collections: a Wasm program's linear
+/// memory and lowered code grow outside the collected heap, and JetStream 3's sqlite3 ran 3 s
+/// without a collection with its start-up code resident (no-JIT, x86_64, 3 runs, 2026-11-15,
+/// max RSS MB: sqlite3 29.4 -> 27.1; tsf, dotnet-interp, Air, prismjs, bigint-noble, navier
+/// and V8-v7 within 0.2; scores within noise). The test is the collections' own, so a run
+/// whose resident set stays below its high, or whose code is all working set, releases
+/// nothing: an earlier clock thread that released on every tick peaked higher, refaulting
+/// its working set within each interval.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn watch_new_highs() {
+    let watch = || loop {
+        std::thread::sleep(NEW_HIGH_WATCH_INTERVAL);
+        if NEW_HIGH.release_due() {
+            release_read_only_pages_weighed(false);
+        }
+    };
+    // One watch per process, whatever its entries and workers; a small stack, as the loop
+    // holds a few words, and the thread exits with the process.
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        let _ = std::thread::Builder::new().name("quench-pages".into()).stack_size(64 << 10).spawn(watch);
+    });
+}
+
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 impl NewHigh {
     fn release_due(&self) -> bool {
@@ -254,6 +283,7 @@ impl NewHigh {
         let (Some(resident), Some(file)) = (resident_statm_bytes(STATM_RESIDENT_FIELD), resident_file_bytes()) else {
             return false;
         };
+        // A collection boundary or a watch tick (`watch_new_highs`).
         if self.collections_since_release.fetch_add(1, Relaxed) + 1 == 2 {
             self.refaulted.store(file, Relaxed);
         }
@@ -696,6 +726,10 @@ pub fn release_after_entry_compile() {
     let memory_first = crate::shared_run::process_memory_policy() == Some(quench_runtime::MemoryPolicy::MemoryFirst);
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     CODE_STAYS_RESIDENT.store(!memory_first, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    if !memory_first {
+        watch_new_highs();
+    }
 }
 
 /// Set once the main entry has compiled under the default policy: start-up's releases drop the bootstrap's code

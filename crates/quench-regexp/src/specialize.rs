@@ -30,7 +30,7 @@
 //! nested interpreter until an emitting stage inlines it. Matching behaviour is unchanged.
 
 use super::{
-    assertion_holds, equal, AssertionTest, Frame, Inst, Program, Text, UnitTest, UNBOUNDED, UNSET,
+    assertion_holds, equal, AssertionTest, Frame, Inst, Program, Text, UnitTest, NO_START, UNBOUNDED, UNSET,
 };
 
 /// A machine position: the next instruction and the subject position it reads at.
@@ -320,7 +320,7 @@ fn loop_head<S: Stage>(stage: &mut S, (counter, min, max, greedy, exit): (u32, u
 #[inline(always)]
 fn loop_tail<S: Stage>(stage: &mut S, (counter, start, min, head): (u32, u32, u32, u32), at: Cursor) -> Step {
     let count = stage.register(counter);
-    if count >= min as usize && at.position == stage.register(start) {
+    if start != NO_START && count >= min as usize && at.position == stage.register(start) {
         return Step::Fail;
     }
     set(stage, counter, count + 1);

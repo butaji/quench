@@ -457,11 +457,15 @@ impl<H: Host> Vm<H> {
             }
         };
         let (target, receiver, arguments) = match slots {
-            Some([target, this, args]) => (
-                self.heap.property_get(data, usize::from(target))?,
-                self.heap.property_get(data, usize::from(this)).unwrap_or(Value::UNDEFINED),
-                self.heap.property_get(data, usize::from(args)),
-            ),
+            // SAFETY: the environment's shape is the layout's, outside dictionary storage, which
+            // holds the three slots; nothing deletes a bound function's internal properties.
+            Some([target, this, args]) => unsafe {
+                (
+                    self.heap.property_get_flat(data, usize::from(target)),
+                    self.heap.property_get_flat(data, usize::from(this)),
+                    Some(self.heap.property_get_flat(data, usize::from(args))).filter(|list| !list.is_undefined()),
+                )
+            },
             None => (
                 self.own_property(env, self.runtime_atoms.bound_target)?,
                 self.own_property(env, self.runtime_atoms.bound_this).unwrap_or(Value::UNDEFINED),

@@ -246,6 +246,7 @@ impl<H: Host> Vm<H> {
         self.wasm_struct_new(&declarations, i.imm(), values, descriptor).map(Some)
     }
 
+    #[inline(always)]
     fn wasm_cast_step(
         &mut self,
         program: ProgramId,
@@ -279,7 +280,7 @@ impl<H: Host> Vm<H> {
 
     /// Whether a cast to `target` admits `reference` when that is null, an i31 or a GC
     /// object, read from the object's supertype display or kind; `None` otherwise.
-    #[inline]
+    #[inline(always)]
     fn wasm_gc_object_cast(&self, program: ProgramId, target: ReferenceTarget, reference: Value) -> Option<bool> {
         use crate::wasm::reference::TargetHeap;
         let heap = target.heap()?;
