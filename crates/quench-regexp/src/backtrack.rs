@@ -460,6 +460,8 @@ enum Inst {
     /// own open then always writes the temporary again before its close reads it.
     CaptureOpen {
         temporary: u32,
+        /// Groups opening together, as `((a)b)` does, write `count` consecutive temporaries.
+        count: u32,
         restores: bool,
     },
     CaptureClose {
@@ -623,16 +625,30 @@ struct Compiler {
     /// caller keeps across their run: loops with more than one iteration and lookarounds.
     /// Outside them, a group runs at most once per path.
     repeated: u32,
+    /// The latest pc read as a position (`pc`), which a jump may target: an instruction there
+    /// starts afresh rather than joining the one before it.
+    observed: std::cell::Cell<u32>,
 }
 
 impl Compiler {
     fn emit(&mut self, instruction: Inst) -> u32 {
         self.instructions.push(instruction);
-        self.pc() - 1
+        self.instructions.len() as u32 - 1
     }
 
     fn pc(&self) -> u32 {
-        self.instructions.len() as u32
+        let pc = self.instructions.len() as u32;
+        self.observed.set(pc);
+        pc
+    }
+
+    /// The instruction before the next one, where no position read since could target the
+    /// next one, so the next one may join it.
+    fn joinable_last(&mut self) -> Option<&mut Inst> {
+        if self.observed.get() == self.instructions.len() as u32 {
+            return None;
+        }
+        self.instructions.last_mut()
     }
 
     fn register(&mut self) -> u32 {
@@ -705,10 +721,17 @@ impl Compiler {
             Expr::Capture { index, body } => {
                 let capture = u32::try_from(*index).map_err(|_| Unsupported)?;
                 let temporary = self.register();
-                self.emit(Inst::CaptureOpen {
-                    temporary,
-                    restores: self.repeated > 0,
-                });
+                let restores = self.repeated > 0;
+                match self.joinable_last() {
+                    Some(Inst::CaptureOpen { temporary: first, count, restores: joined })
+                        if *first + *count == temporary && *joined == restores =>
+                    {
+                        *count += 1;
+                    }
+                    _ => {
+                        self.emit(Inst::CaptureOpen { temporary, count: 1, restores });
+                    }
+                }
                 self.compile(body, flags)?;
                 self.emit(Inst::CaptureClose { capture, temporary });
             }
@@ -750,18 +773,24 @@ impl Compiler {
                 // quantifier's order; once it is taken no further iteration is tried, so no
                 // counter is kept.
                 if min == 0 && max == 1 {
-                    let start = self.register();
+                    // A body that always consumes a unit never ends where it began, so only a
+                    // nullable one keeps the iteration's start for the empty check.
+                    let start = nullable(body).then(|| self.register());
                     let split = self.emit(Inst::Split { alternative: 0 });
                     let skip = (!*greedy).then(|| self.emit(Inst::Jump(0)));
                     let body_start = self.pc();
-                    self.emit(Inst::LoopIterate { start });
+                    if let Some(start) = start {
+                        self.emit(Inst::LoopIterate { start });
+                    }
                     // Outside repeated bodies the iteration's captures run only here, once per
                     // path, so they are still unset and need no reset.
                     if count > 0 && self.repeated > 0 {
                         self.emit(Inst::ResetCaptures { first, count });
                     }
                     self.compile(body, flags)?;
-                    self.emit(Inst::EmptyCheck { start });
+                    if let Some(start) = start {
+                        self.emit(Inst::EmptyCheck { start });
+                    }
                     let exit = self.pc();
                     match skip {
                         // Greedy: the iteration first, the exit on backtracking.
