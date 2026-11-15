@@ -2641,6 +2641,26 @@ impl Object {
         (self.meta() & OBJECT_INLINE_STORAGE != 0).then(|| self.inline_values())
     }
 
+    /// What a mark visit needs of an object that stores its properties inline and has no
+    /// extras: its prototype link and its inline values' narrow forms, first slot first. Such
+    /// an object holds no extras roots and was never used as a prototype (both live in
+    /// extras), so its visit is its prototype, its shape's roots and these values. `None`
+    /// for any other object.
+    #[inline(always)]
+    pub(crate) fn plain_inline_trace(&self) -> Option<(ProtoLink, [u32; INLINE_PROPERTY_COUNT])> {
+        let meta = self.meta();
+        if meta & OBJECT_INLINE_STORAGE == 0 || self.payload & EXTRAS_TAG_MASK == EXTRAS_TAG {
+            return None;
+        }
+        Some((ProtoLink(meta & PROTO_INDEX_BITS), Self::unpack_narrow(self.payload)))
+    }
+
+    /// The narrow inline values of a payload word that holds them (`unpack_inline`).
+    #[inline(always)]
+    fn unpack_narrow(word: u64) -> [u32; INLINE_PROPERTY_COUNT] {
+        std::array::from_fn(|slot| (word >> (slot as u32 * u32::BITS)) as u32)
+    }
+
     /// The inline property at `slot`, when the object stores its properties inline.
     #[inline(always)]
     pub(crate) fn inline_property(&self, slot: usize) -> Option<Value> {

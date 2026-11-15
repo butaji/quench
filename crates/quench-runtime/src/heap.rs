@@ -4351,13 +4351,28 @@ impl Heap {
         trace_kind: GcTraceKind,
         last_proto: &mut PushedProtos,
     ) {
-        let proto = object.proto();
-        if proto.is_heap() && last_proto.first_push(proto) {
-            work.push(proto);
-        }
-        object_roots(trace_kind, owner, object.shape(), object.was_used_as_prototype(), work);
-        object.visit_extras_roots(|value| work.push(value));
-        if let Some(values) = object.inline_properties() {
+        // The common object: inline values, no extras. Its prototype is tested by link first,
+        // and its values by narrow code, before anything is decoded. One loop takes either
+        // kind of inline values, so `mark_leaf` stays inlined at a single site.
+        let inline = if let Some((link, narrows)) = object.plain_inline_trace() {
+            if last_proto.first_link(link) {
+                let proto = link.prototype();
+                if proto.is_heap() && last_proto.first_push(proto) {
+                    work.push(proto);
+                }
+            }
+            object_roots(trace_kind, owner, object.shape(), false, work);
+            Some(narrows.map(|narrow| if Value::narrow_is_heap(narrow) { Value::from_narrow(narrow) } else { Value::UNDEFINED }))
+        } else {
+            let proto = object.proto();
+            if proto.is_heap() && last_proto.first_push(proto) {
+                work.push(proto);
+            }
+            object_roots(trace_kind, owner, object.shape(), object.was_used_as_prototype(), work);
+            object.visit_extras_roots(|value| work.push(value));
+            object.inline_properties()
+        };
+        if let Some(values) = inline {
             for value in values {
                 if value.is_heap() && !value.is_deleted() && !mark_leaf(value, work, last_proto) {
                     work.push(value);
@@ -4993,15 +5008,28 @@ mod offset_order_tests;
 /// objects alternates between theirs and their arrays' (V8-v7 Splay's leaves: one entry
 /// missed about twice per leaf, a third of the pops of a full collection).
 #[derive(Clone, Copy)]
-pub(crate) struct PushedProtos([Value; 2]);
+pub(crate) struct PushedProtos([Value; 2], ProtoLink);
 
 impl Default for PushedProtos {
     fn default() -> Self {
-        Self([Value::UNDEFINED; 2])
+        Self([Value::UNDEFINED; 2], ProtoLink::NULL)
     }
 }
 
 impl PushedProtos {
+    /// Whether `link` is not the prototype link this walk tested last; it then becomes the
+    /// last. A prototype this walk tested was pushed then (or was not a heap value), and a
+    /// push need happen once per collection, so a run of objects that share a prototype
+    /// decodes it once.
+    #[inline(always)]
+    pub(crate) fn first_link(&mut self, link: ProtoLink) -> bool {
+        if link == self.1 {
+            return false;
+        }
+        self.1 = link;
+        true
+    }
+
     /// Whether `proto` is not one of the two pushed last; it then becomes the newest.
     #[inline(always)]
     pub(crate) fn first_push(&mut self, proto: Value) -> bool {
