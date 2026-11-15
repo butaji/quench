@@ -42,7 +42,7 @@ pub fn print(outcomes: &[Outcome]) {
         let first = outcome.detail.lines().next().unwrap_or_default();
         println!("{:<14}{:<7}{:>8.1}  {first}", outcome.name, result, outcome.elapsed.as_secs_f64());
     }
-    for outcome in outcomes.iter().filter(|outcome| !outcome.passed) {
+    for outcome in outcomes.iter().filter(|outcome| !outcome.passed || outcome.detail.contains('\n')) {
         println!("\n--- {} ---\n{}", outcome.name, outcome.detail);
     }
 }

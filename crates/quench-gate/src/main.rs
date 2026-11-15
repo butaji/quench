@@ -7,6 +7,7 @@
 
 mod build;
 mod config;
+mod lint;
 mod process;
 mod step;
 
@@ -18,7 +19,10 @@ use step::{Outcome, Step};
 /// The exit status of a run that was asked for something it cannot do.
 const USAGE_ERROR: u8 = 2;
 
-const STEPS: [Step; 1] = [Step { name: "build", quick: false, blocking: true, run: build::run }];
+const STEPS: [Step; 2] = [
+    Step { name: "build", quick: false, blocking: true, run: build::run },
+    Step { name: "lint", quick: true, blocking: false, run: lint::run },
+];
 
 /// Runs the selected steps in order, stopping after a blocking step fails.
 fn run(config: &Config) -> Vec<Outcome> {

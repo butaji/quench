@@ -4,9 +4,11 @@
 //! tests a guest program's own names (`guest_names`) or recognizes a function by its bytecode
 //! shape (`fingerprints`), when a body spells an unnamed number
 //! (`magic`), when data is laid out against data-oriented design (`data_layout`), or when
-//! code tests a function's address for identity (`fn_identity`).
+//! code tests a function's address for identity (`fn_identity`), or when statements are packed
+//! onto long lines (`line_packing`).
 //!
-//! usage: quench-lint [--update] [ROOT...]   |   quench-lint --census [--update-census]   (default: crates quench-bench/src tools)
+//! usage: quench-lint [--update | --lower] [ROOT...]   |   quench-lint --census [--update-census]
+//! (default roots: crates quench-bench/src tools; `--lower` reads the whole tree only)
 
 mod catalog;
 mod census;
@@ -18,6 +20,7 @@ mod fn_identity;
 mod fingerprints;
 mod guest_names;
 mod hot_path;
+mod line_packing;
 mod magic;
 mod native_forms;
 mod shape;
@@ -42,6 +45,28 @@ pub(crate) fn is_equality(op: &syn::BinOp) -> bool {
 
 const OVERSIZED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/oversized.txt");
 const UPDATE_FLAG: &str = "--update";
+const LOWER_FLAG: &str = "--lower";
+const FLAG_PREFIX: &str = "--";
+
+/// What a run was asked: how it may rewrite the recorded list, and the roots it reads.
+struct Request {
+    update: bool,
+    lower: bool,
+    roots: Vec<String>,
+}
+
+impl Request {
+    fn parse(args: Vec<String>) -> Result<Self, String> {
+        let (flags, roots): (Vec<String>, Vec<String>) = args.into_iter().partition(|arg| arg.starts_with(FLAG_PREFIX));
+        let asked = |flag: &str| flags.iter().any(|candidate| candidate == flag);
+        let (update, lower) = (asked(UPDATE_FLAG), asked(LOWER_FLAG));
+        if lower && !roots.is_empty() {
+            return Err(format!("{LOWER_FLAG} reads the whole tree: give no ROOT"));
+        }
+        let roots = if roots.is_empty() { DEFAULT_ROOTS.iter().map(|root| root.to_string()).collect() } else { roots };
+        Ok(Self { update, lower, roots })
+    }
+}
 
 fn rust_files(directory: &Path, files: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(directory) else {
@@ -72,15 +97,59 @@ fn scan(files: &[PathBuf]) -> Result<(duplicates::Duplicates, shape::Measures, d
     Ok((repeated, oversized, trees))
 }
 
+/// `listing` with the entries that shrank or no longer offend lowered, written back to the list;
+/// the listing as it was if it needs no lowering or cannot be written.
+fn lower(listing: String, current: &shape::Measures) -> String {
+    let (lowered, changes) = shape::lower(&listing, current);
+    if changes.is_empty() {
+        return listing;
+    }
+    changes.iter().for_each(|change| println!("{change}"));
+    match fs::write(OVERSIZED, &lowered) {
+        Ok(()) => lowered,
+        Err(error) => {
+            eprintln!("quench-lint: cannot write {OVERSIZED}: {error}");
+            listing
+        }
+    }
+}
+
+/// Compares the measures with the recorded list, rewritten first as the request allows;
+/// returns the departures.
+fn settle(oversized: &shape::Measures, request: &Request) -> usize {
+    let mut listing = fs::read_to_string(OVERSIZED).unwrap_or_default();
+    if request.lower {
+        listing = lower(listing, oversized);
+    }
+    // A guest-name test has no allowance: `oversized.txt` cannot grandfather one.
+    let recorded: shape::Measures =
+        shape::parse(&listing).into_iter().filter(|(subject, _)| !subject.starts_with(guest_names::MEASURE)).collect();
+    let mut shrunk: shape::Measures = recorded
+        .iter()
+        .filter_map(|(subject, limit)| Some((subject.clone(), (*oversized.get(subject)?).min(*limit))))
+        .collect();
+    shape::first_baseline(oversized, &recorded, &mut shrunk);
+    let departures = shape::compare(if request.update { &shrunk } else { &recorded }, oversized);
+    if request.update && departures == 0 {
+        let _ = fs::write(OVERSIZED, shape::render(oversized));
+    }
+    departures
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == census::CENSUS_FLAG) {
         return census::run(&args);
     }
-    let (update, roots): (Vec<String>, Vec<String>) = std::env::args().skip(1).partition(|arg| arg == UPDATE_FLAG);
-    let roots = if roots.is_empty() { DEFAULT_ROOTS.iter().map(|root| root.to_string()).collect() } else { roots };
+    let request = match Request::parse(args) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("quench-lint: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let mut files = Vec::new();
-    roots.iter().for_each(|root| rust_files(Path::new(root), &mut files));
+    request.roots.iter().for_each(|root| rust_files(Path::new(root), &mut files));
     files.sort();
     test_paths::declare(&files);
     let (repeated, mut oversized, trees) = match scan(&files) {
@@ -91,20 +160,7 @@ fn main() -> ExitCode {
         }
     };
     native_forms::scan(&files, &mut oversized);
-    // A guest-name test has no allowance: `oversized.txt` cannot grandfather one.
-    let recorded: shape::Measures = shape::parse(&fs::read_to_string(OVERSIZED).unwrap_or_default())
-        .into_iter().filter(|(subject, _)| !subject.starts_with(guest_names::MEASURE)).collect();
-    let mut shrunk: shape::Measures = recorded
-        .iter()
-        .filter_map(|(subject, limit)| Some((subject.clone(), (*oversized.get(subject)?).min(*limit))))
-        .collect();
-    // A native-form measure is born with the rule: `--update` records its first baseline.
-    native_forms::first_baseline(&oversized, &recorded, &mut shrunk);
-    let departures = shape::compare(if update.is_empty() { &recorded } else { &shrunk }, &oversized);
-    if !update.is_empty() && departures == 0 {
-        let _ = fs::write(OVERSIZED, shape::render(&oversized));
-    }
-    let violations = repeated.report() + trees.report() + departures;
+    let violations = repeated.report() + trees.report() + settle(&oversized, &request);
     if violations == 0 {
         return ExitCode::SUCCESS;
     }

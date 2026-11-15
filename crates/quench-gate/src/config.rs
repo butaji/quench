@@ -1,6 +1,7 @@
 //! What a gate run was asked, and where the repository and its build output are.
 
 use std::{
+    env,
     ffi::OsStr,
     num::NonZeroUsize,
     path::{Path, PathBuf},
@@ -10,6 +11,8 @@ use std::{
 
 /// The cargo profile every gate build and test uses: the repository's dev-loop profile.
 pub const PROFILE: &str = "experiment";
+const TARGET_VARIABLE: &str = "CARGO_TARGET_DIR";
+const DEFAULT_TARGET: &str = "target";
 const QUICK_FLAG: &str = "--quick";
 const JOBS_FLAG: &str = "--jobs";
 /// How many directories above this crate's manifest the workspace root lies (`crates/quench-gate`).
@@ -22,13 +25,16 @@ pub struct Config {
     /// Only the lint, census and C-parity steps.
     pub quick: bool,
     pub root: PathBuf,
+    /// Cargo's target directory.
+    pub target: PathBuf,
 }
 
 impl Config {
     pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Self, String> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(ROOT_DEPTH).map(Path::to_path_buf).ok_or("the gate crate lies outside its workspace")?;
+        let target = root.join(env::var_os(TARGET_VARIABLE).unwrap_or_else(|| DEFAULT_TARGET.into()));
         let jobs = thread::available_parallelism().map_or(1, NonZeroUsize::get);
-        let mut config = Self { jobs, quick: false, root };
+        let mut config = Self { jobs, quick: false, root, target };
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -38,6 +44,15 @@ impl Config {
             }
         }
         Ok(config)
+    }
+
+    /// The binary `name` the profile builds, or what to do when it is not built.
+    pub fn binary(&self, name: &str) -> Result<PathBuf, String> {
+        let path = self.target.join(PROFILE).join(name);
+        if path.exists() {
+            return Ok(path);
+        }
+        Err(format!("{} is not built: run the gate without --quick, or `cargo build --profile {PROFILE} --bin {name}`", path.display()))
     }
 
     /// A command that runs in the repository root.
