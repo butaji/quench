@@ -145,14 +145,10 @@ pub(super) fn install_loop_kernels<H: Host>(
     let mut kernels = Vec::new();
     for backedge in 0..decoded.len() {
         let jump = decoded[backedge];
-        // Only a jump's immediate is a target (`ImmediateRole::JumpTarget`).
-        if jump.op().class() != Class::Jump {
+        // Only a jump's immediate is a target (`ImmediateRole::JumpTarget`): a backward one heads a loop.
+        let Some(header) = (jump.op().class() == Class::Jump).then(|| jump.jump_target() as usize).filter(|&header| header < backedge) else {
             continue;
-        }
-        let header = jump.jump_target() as usize;
-        if header >= backedge {
-            continue;
-        }
+        };
         if exits[header] || records[header].call_link.get() != NO_CALL_LINK {
             continue;
         }
