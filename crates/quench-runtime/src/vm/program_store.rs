@@ -384,7 +384,22 @@ enum WasmModuleTier {
     /// The whole-module compile was claimed, eagerly or by escalation; its result is the
     /// program's `compiled`.
     Whole,
+    /// The whole-module compile held code for less than `WASM_MODULE_MIN_COVERAGE` of the
+    /// module's bytecodes: the module runs interpreted for good, its calls pay no tier
+    /// lookups and its functions compile no roots (K-TIER T4a).
+    Declined,
 }
+
+/// The share of a module's bytecodes, in per mille, its whole compile must hold code for to be
+/// kept. Below it most calls cross between native code and the interpreter, and each crossing
+/// (a general-path activation, a callout) costs more than the native function saves: the Wasm
+/// GC modules of JetStream 3 (j2cl-box2d, Dart-flute) compile a few tiny leaves and run 10-40%
+/// slower than with no JIT.
+const WASM_MODULE_MIN_COVERAGE: usize = 500;
+
+/// The fewest functions a module has for its whole compile's coverage to be weighed: a smaller
+/// module compiles in microseconds and makes few crossings, whatever it holds.
+const WASM_MODULE_WEIGHED_FUNCTIONS: usize = 64;
 
 impl Default for WasmModuleTier {
     fn default() -> Self {
@@ -586,7 +601,7 @@ impl JitTierManager {
                 }
                 policy.due(*observed, std::time::Duration::ZERO)
             }
-            Some(WasmModuleTier::Whole) | None => false,
+            Some(WasmModuleTier::Whole | WasmModuleTier::Declined) | None => false,
         }
     }
 
@@ -597,7 +612,11 @@ impl JitTierManager {
     /// package's one source-map parse) runs faster in the interpreter than through root
     /// compiles, and a long one would throw them away at its whole compile.
     fn wasm_promotes_roots(&self, policy: WasmModuleCompile) -> bool {
-        policy == WasmModuleCompile::NEVER || !self.wasm_module_selective()
+        !self.wasm_module_declined() && (policy == WasmModuleCompile::NEVER || !self.wasm_module_selective())
+    }
+
+    fn wasm_module_declined(&self) -> bool {
+        matches!(self, Self::Wasm(tiers) if tiers.module == WasmModuleTier::Declined)
     }
 
     fn wasm_module_selective(&self) -> bool {
@@ -617,7 +636,7 @@ impl JitTierManager {
             Self::Wasm(tiers) => tiers,
             Self::Empty | Self::JavaScript(_) => return None,
         };
-        if tiers.module == WasmModuleTier::Whole {
+        if matches!(tiers.module, WasmModuleTier::Whole | WasmModuleTier::Declined) {
             return None;
         }
         tiers.module = WasmModuleTier::Whole;
@@ -1644,10 +1663,14 @@ impl ProgramStore {
             self.jit_code_cache
                 .release(JitArtifactKind::BaselineWasm, 1, previous_bytes);
         }
+        let declined = compiled.as_ref().is_some_and(|compiled| self.wasm_module_coverage_short(id, compiled));
         let compiled = compiled.filter(|compiled| {
-            self.jit_code_cache
+            !declined && self.jit_code_cache
                 .retain(JitArtifactKind::BaselineWasm, compiled.mapped_bytes())
         });
+        if declined && let Some(tiers) = self.entry_mut(id).and_then(|entry| entry.jit_tiers.wasm_tiers_mut()) {
+            tiers.module = WasmModuleTier::Declined;
+        }
         if let Some(entry) = self.entry_mut(id) {
             entry.compiled = Some(compiled);
         }
@@ -1729,9 +1752,29 @@ impl ProgramStore {
     /// Record that the program's whole-module compile was claimed at its first call (eager
     /// tiering, or a diagnostic root mode), so selective escalation never repeats it.
     pub(super) fn settle_wasm_module_tier(&mut self, id: ProgramId) {
-        if let Some(tiers) = self.entry_mut(id).and_then(|entry| entry.jit_tiers.wasm_tiers_mut()) {
+        if let Some(tiers) = self.entry_mut(id).and_then(|entry| entry.jit_tiers.wasm_tiers_mut())
+            && tiers.module != WasmModuleTier::Declined
+        {
             tiers.module = WasmModuleTier::Whole;
         }
+    }
+
+    /// Whether `compiled`, a whole compile of the Wasm module `id`, holds code for less than
+    /// `WASM_MODULE_MIN_COVERAGE` of its bytecodes. JavaScript programs are never short.
+    fn wasm_module_coverage_short(&self, id: ProgramId, compiled: &super::compiled::CompiledProgram) -> bool {
+        let Some(entry) = self.entry(id) else { return false };
+        if entry.residual.kind != crate::bytecode::ProgramKind::Wasm || entry.residual.functions.len() < WASM_MODULE_WEIGHED_FUNCTIONS {
+            return false;
+        }
+        let (mut held, mut total) = (0usize, 0usize);
+        for index in 0..entry.residual.functions.len() {
+            let Some(function) = entry.residual.function_get(index) else { continue };
+            total += function.code.len();
+            if compiled.has_function(index) {
+                held += function.code.len();
+            }
+        }
+        held * 1000 < total * WASM_MODULE_MIN_COVERAGE
     }
 
     /// Claim a due whole-module compile (`WasmModuleTier::Whole`), releasing the
