@@ -611,6 +611,16 @@ pub(super) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::
 /// The ToInt32 of `number`, natively below 2^63 in magnitude; beyond, infinities and NaN
 /// leave through `exit` (`EXACT_I64_TRUNCATION_LIMIT`).
 pub(super) fn emit_number_to_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value, exit: ir::Block) -> ir::Value {
+    // A double converted from an int32 is that int32's exact value, so its ToInt32 is the
+    // int32 itself: no round trip through the double, no range guard.
+    let number = builder.func.dfg.resolve_aliases(number);
+    if let Some(def) = builder.func.dfg.value_def(number).inst()
+        && builder.func.dfg.insts[def].opcode() == ir::Opcode::FcvtFromSint
+        && let [integer] = builder.func.dfg.inst_args(def)
+        && builder.func.dfg.value_type(*integer) == types::I32
+    {
+        return *integer;
+    }
     let magnitude = builder.ins().fabs(number);
     let bound = builder.ins().f64const(crate::value::EXACT_I64_TRUNCATION_LIMIT);
     let exact = builder.ins().fcmp(FloatCC::LessThan, magnitude, bound);
