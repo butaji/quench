@@ -17449,7 +17449,10 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
     // A construction yields its receiver, the activation's `this`, for a non-object result.
     if CONSTRUCTS && !vm.is_object_like(value) { value = unsafe { (*cx).this }; }
     let stack = &mut vm.lane_stack;
-    let top = stack.activations.last()?;
+    let depth = stack.activations.len().checked_sub(1)?;
+    // SAFETY: `depth` is below the length; a reference, not `last`'s `Option`, so the
+    // address needs no null test.
+    let top = unsafe { stack.activations.get_unchecked(depth) };
     let expected = returning_completion(CROSSES, CONSTRUCTS, SETTLES);
     let ActivationKind::Script(script) = &top.kind else { return None };
     if script.completion != expected { return None; }
@@ -17466,7 +17469,7 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
     let (this, env, capture, caller_program) = (script.caller_this, script.caller_env, script.caller_capture, top.caller_program);
     // SAFETY: a script activation holds no drop glue or Wasm storage; its window is in the values.
     unsafe {
-        stack.activations.set_len(stack.activations.len() - 1);
+        stack.activations.set_len(depth);
         stack.values.set_top(window);
     }
     // The caller's memory view reads its program's records (`MemoryView::script`), which an
