@@ -106,7 +106,7 @@ fn bits(operation: NumberBitwise, a: f64, b: f64) -> f64 {
 }
 
 #[inline(always)]
-fn apply(op: NodeOp, a: f64, b: f64) -> f64 {
+pub(super) fn apply(op: NodeOp, a: f64, b: f64) -> f64 {
     match op {
         NodeOp::Arith(operation) => arith(operation, a, b),
         NodeOp::Bits(operation) => bits(operation, a, b),
@@ -163,8 +163,9 @@ impl LoopKernel {
         let Some(mut state) = self.enter(cx, r) else { return };
         // SAFETY: the kernel's scratch, used by one run at a time.
         let scratch = unsafe { &mut *self.scratch.get() };
-        if scratch.len() < self.shape.nodes.len() * CHUNK {
-            scratch.resize(self.shape.nodes.len() * CHUNK, 0.0);
+        let columns = self.recurrence.columns(&self.shape) * CHUNK;
+        if scratch.len() < columns {
+            scratch.resize(columns, 0.0);
         }
         let mut done = 0u64;
         while done < state.limit {
@@ -195,7 +196,7 @@ impl LoopKernel {
         }
         let counter = shape.affines[usize::from(shape.counter)];
         let start = state.firsts[usize::from(shape.counter)];
-        self.scalars(&mut state, r)?;
+        self.scalars(cx, &mut state, r)?;
         state.trip = trip_count(start as f64, f64::from(counter.step), shape.relation, state.scalars[usize::from(shape.bound)]);
         if state.trip < MIN_TRIP {
             self.declines.set(self.declines.get() + 1);
@@ -218,11 +219,15 @@ impl LoopKernel {
 
     /// The scalars' values at entry: constants, unwritten registers, and the loop-invariant
     /// arithmetic over them.
-    fn scalars(&self, state: &mut State, r: Registers) -> Option<()> {
+    fn scalars<H: Host>(&self, cx: *mut LaneContext<H>, state: &mut State, r: Registers) -> Option<()> {
         for (slot, scalar) in self.shape.scalars.iter().enumerate() {
             state.scalars[slot] = match *scalar {
                 Scalar::Const(value) => value,
                 Scalar::Register(register) => r.get(register).as_number()?,
+                Scalar::Capture(imm) => {
+                    let (depth, slot) = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
+                    super::super::lane_capture_value::<H>(cx, depth, slot)?.as_number()?
+                }
                 Scalar::Computed { op, a, b } => apply(op, state.scalars[usize::from(a)], state.scalars[usize::from(b)]),
             };
         }
@@ -276,6 +281,9 @@ impl LoopKernel {
         }
         let phis = self.shape.phis.len();
         self.recurrence.run(&mut state.phis[..phis], &state.scalars, scratch, len);
+        for &id in self.recurrence.side() {
+            self.operator_column(state, scratch, usize::from(id), len);
+        }
         if !self.stores_present(state, done, len) {
             return false;
         }
@@ -309,22 +317,30 @@ impl LoopKernel {
             if node.seq || node.hoisted {
                 continue;
             }
-            let (prev, rest) = scratch.split_at_mut(id * CHUNK);
-            let out = &mut rest[..len];
-            let column = |arg: Arg| match arg {
-                Arg::Col(n) => Column::Col(&prev[usize::from(n) * CHUNK..][..len]),
-                Arg::Scalar(slot) => Column::Scalar(state.scalars[usize::from(slot)]),
-                Arg::Phi(_) | Arg::Affine(_) => unreachable!("a column operation reads neither"),
-            };
             match node.op {
-                NodeOp::Load { base, index } => numbers &= self.load(state, out, base, index, done),
-                NodeOp::Iota { index } => {
-                    out.iter_mut().enumerate().for_each(|(k, o)| *o = self.index(state, index, done + k as u64) as f64);
+                NodeOp::Load { base, index } => {
+                    numbers &= self.load(state, &mut scratch[id * CHUNK..][..len], base, index, done);
                 }
-                NodeOp::Arith(_) | NodeOp::Bits(_) => operate(node.op, out, column(node.a), column(node.b)),
+                NodeOp::Iota { index } => scratch[id * CHUNK..][..len]
+                    .iter_mut()
+                    .enumerate()
+                    .for_each(|(k, o)| *o = self.index(state, index, done + k as u64) as f64),
+                NodeOp::Arith(_) | NodeOp::Bits(_) => self.operator_column(state, scratch, id, len),
             }
         }
         numbers
+    }
+
+    /// Node `id`'s operator over the columns and scalars it reads, which precede it.
+    fn operator_column(&self, state: &State, scratch: &mut [f64], id: usize, len: usize) {
+        let node = self.shape.nodes[id];
+        let (prev, rest) = scratch.split_at_mut(id * CHUNK);
+        let column = |arg: Arg| match arg {
+            Arg::Col(n) => Column::Col(&prev[usize::from(n) * CHUNK..][..len]),
+            Arg::Scalar(slot) => Column::Scalar(state.scalars[usize::from(slot)]),
+            Arg::Phi(_) | Arg::Affine(_) => unreachable!("a column operation reads neither"),
+        };
+        operate(node.op, &mut rest[..len], column(node.a), column(node.b));
     }
 
     /// Decodes `bases[base][index + step * k]` into `out`; `false` where one is no Number.

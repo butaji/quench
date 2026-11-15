@@ -95,7 +95,10 @@ impl<H: Host> Vm<H> {
                 return Some(ChainRead::Value(unsafe { self.heap.property_get_unchecked(data, slot as usize) }));
             }
             Some(SymbolLoadAnswer::Inherited { hops, slot }) if inherits => {
-                let holder = self.proof_holder(data, hops)?;
+                let holder = match key.key32().and_then(|key32| self.symbol_load_proofs.holder(data.layout_id(), key32)) {
+                    Some(id) if id != 0 => self.heap.object_record_by_id(id - 1),
+                    _ => self.proof_holder(data, hops)?,
+                };
                 // SAFETY: the chain epoch keeps the holder and the shape its slot was recorded in.
                 if let Some(value) = unsafe { self.heap.property_get_shaped(holder, slot as usize) } {
                     return Some(ChainRead::Value(value));

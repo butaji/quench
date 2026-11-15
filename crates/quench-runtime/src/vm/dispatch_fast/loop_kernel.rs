@@ -55,6 +55,13 @@ pub(super) struct LoopKernel {
 }
 
 impl LoopKernel {
+    /// Whether the loop `header..=backedge` has a kernel: `--b-jit` leaves such a loop to it, as
+    /// its stencils run it slower (`install_loop_sites`).
+    pub(super) fn accepts(decoded: &[WideInstruction], constants: &[Value], function: &Function, header: usize, backedge: usize) -> bool {
+        Shape::of(decoded, constants, usize::from(function.registers), header, backedge)
+            .is_some_and(|shape| recur::Recurrence::of(&shape).is_some())
+    }
+
     /// The registered kernel of the loop `header..=backedge`, if it has one.
     fn of(
         decoded: &[WideInstruction],

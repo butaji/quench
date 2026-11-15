@@ -1491,6 +1491,8 @@ pub struct FunctionSlot {
     header: FunctionHeader,
     record: std::cell::OnceCell<std::rc::Rc<Function>>,
     unlowered: std::cell::RefCell<Option<Unlowered>>,
+    /// The unlowered record its first runs execute until it lowers (`tier0`).
+    tier0: std::cell::OnceCell<Box<tier0::Tier0>>,
 }
 
 /// A slot's unlowered record: as compiled, for a function about to run (a first-call chunk's),
@@ -1519,62 +1521,53 @@ impl Unlowered {
 }
 
 impl FunctionSlot {
+    fn new(header: FunctionHeader, record: Option<Function>, unlowered: Option<Unlowered>) -> Self {
+        let record = record.map_or_else(Default::default, |function| std::rc::Rc::new(function).into());
+        Self { header, record, unlowered: unlowered.into(), tier0: Default::default() }
+    }
+
     pub(crate) fn compiled(function: Function) -> Self {
-        Self {
-            header: FunctionHeader::of(&function),
-            record: std::cell::OnceCell::from(std::rc::Rc::new(function)),
-            unlowered: Default::default(),
-        }
+        Self::new(FunctionHeader::of(&function), Some(function), None)
     }
 
     /// A function whose record its program compiles again on the function's first read.
     pub(crate) fn released(header: FunctionHeader) -> Self {
-        Self {
-            header,
-            record: std::cell::OnceCell::new(),
-            unlowered: Default::default(),
-        }
+        Self::new(header, None, None)
     }
 
     /// A function whose load settled its dispatch class, the header's last fact, and left
     /// the rest of its lowering to its first read.
     pub(crate) fn unlowered(function: Function) -> Self {
-        Self {
-            header: FunctionHeader::of(&function),
-            record: std::cell::OnceCell::new(),
-            unlowered: std::cell::RefCell::new(Some(Unlowered::Record(std::rc::Rc::new(function)))),
-        }
+        Self::new(FunctionHeader::of(&function), None, Some(Unlowered::Record(std::rc::Rc::new(function))))
     }
 
     /// An unlowered function its load leaves unread: its record kept packed until its first read.
     pub(crate) fn unlowered_packed(function: Function) -> Self {
-        Self {
-            header: FunctionHeader::of(&function),
-            record: std::cell::OnceCell::new(),
-            unlowered: std::cell::RefCell::new(Some(Unlowered::Packed(binary::pack_unlowered(&function)))),
-        }
+        Self::new(FunctionHeader::of(&function), None, Some(Unlowered::Packed(binary::pack_unlowered(&function))))
     }
 
     /// Whether the slot holds no record, compiled or unlowered: its first read compiles
     /// the record again or decodes it.
     #[cfg(test)]
     pub(crate) fn is_released(&self) -> bool {
-        self.record.get().is_none() && self.unlowered.borrow().is_none()
+        self.record.get().is_none() && self.unlowered.borrow().is_none() && self.tier0.get().is_none()
     }
 
     #[inline(always)] pub(crate) fn header(&self) -> &FunctionHeader {
         &self.header
     }
 
-    /// The compiled record, when it exists.
+    /// The compiled record, when it exists: the lowered one, else the one its first runs
+    /// execute unlowered (`tier0`).
     #[inline(always)] pub(crate) fn record(&self) -> Option<&Function> {
-        self.record.get().map(|function| &**function)
+        self.record.get().map(|function| &**function).or_else(|| self.tier0.get().map(|tier0| tier0.record()))
     }
 
     /// Drops the record, which its program compiles again on the function's next read.
     fn release(&mut self) {
         self.record.take();
         self.unlowered.get_mut().take();
+        self.tier0.take();
     }
 }
 
@@ -1590,6 +1583,8 @@ impl std::ops::Deref for FunctionSlot {
 
 impl std::ops::DerefMut for FunctionSlot {
     fn deref_mut(&mut self) -> &mut Function {
+        // A change to a record still running unlowered makes it the compiled one.
+        self.settle_tier0();
         std::rc::Rc::make_mut(
             self.record
                 .get_mut()
@@ -3927,9 +3922,8 @@ impl ResidualProgram {
     #[cold]
     #[inline(never)]
     fn recompile_function(&self, index: usize) -> &Function {
-        self.functions[index]
-            .record
-            .get_or_init(|| std::rc::Rc::new(self.built_record(index, RecordUse::Kept)))
+        let lowered = || &**self.functions[index].record.get_or_init(|| std::rc::Rc::new(self.built_record(index, RecordUse::Kept)));
+        self.tier0_record(index).unwrap_or_else(lowered)
     }
 
     /// `write` applied to `index`'s record: the record itself when it is compiled, else one
@@ -3937,7 +3931,8 @@ impl ResidualProgram {
     /// record once; compiling its released ones all again for that held them all at once
     /// (typescript.js: 21.7K functions, +38 MB at a cold compile's peak).
     pub(crate) fn with_record<R>(&self, index: usize, write: impl FnOnce(&Function) -> R) -> R {
-        match self.functions[index].record() {
+        // A record running unlowered (`tier0`) is not the lowered one encoding reads.
+        match self.functions[index].record.get() {
             Some(function) => write(function),
             None => write(&self.built_record(index, RecordUse::Transient)),
         }
@@ -4237,6 +4232,7 @@ impl ResidualProgram {
     }
 }
 mod binary;
+mod tier0;
 #[cfg(feature = "native-execution")]
 mod native_metadata;
 #[cfg(feature = "native-execution")]

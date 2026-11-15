@@ -28,8 +28,10 @@ impl<H: Host> Vm<H> {
     /// target out of line.
     #[inline(always)]
     pub(super) fn own_array_length(&self, target: Value) -> Option<usize> {
+        // An array with extras (named properties) has its elements' length too, unless it
+        // ever held sparse elements, whose length the side table keeps.
         if let Some(object) = self.heap.record_array(target)
-            && !object.has_extras()
+            && (!object.has_extras() || (!object.has_sparse_elements() && !object.is_arguments_object()))
         {
             return Some(object.elements().len());
         }

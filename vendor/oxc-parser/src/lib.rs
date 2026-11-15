@@ -218,6 +218,11 @@ pub struct ParserReturn<'a> {
     /// in source order: the program holds it with its directives and no statements.
     pub lazy_function_bodies: Box<[u32]>,
 
+    /// A method body released inside a lazily parsed body (`ParseOptions::lazy_nested_bodies`)
+    /// stayed in the program, because the body around it was kept whole: the program has a
+    /// method without its statements, which only a parse again can compile.
+    pub lazy_methods_kept: bool,
+
     /// The span of every regular expression literal the program's text holds, lazily parsed
     /// bodies' included, in source order.
     pub regexp_literals: Box<[Span]>,
@@ -780,6 +785,9 @@ struct ParserImpl<'a, C: ParserConfig> {
 
     /// The start of each function body parsed lazily, in source order.
     lazy_function_bodies: Vec<u32>,
+    /// The starts of the method bodies released inside lazily parsed bodies, until the body
+    /// around them is released too.
+    lazy_methods: Vec<u32>,
 
     /// Whether the current position is strict mode code, as far as a lazily parsed body's
     /// check needs it: the module goal, a `"use strict"` directive or a class.
@@ -838,6 +846,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             is_ts: source_type.is_typescript(),
             lazy_depth: 0,
             lazy_function_bodies: Vec::new(),
+            lazy_methods: Vec::new(),
             strict: source_type.is_module() || options.inherited_strict,
             regexp_literals: Vec::new(),
             call_assignment_targets: 0,
@@ -947,6 +956,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             tokens,
             fatal_error: has_fatal_error,
             lazy_function_bodies: std::mem::take(&mut self.lazy_function_bodies).into_boxed_slice(),
+            lazy_methods_kept: !self.lazy_methods.is_empty(),
             has_call_assignment_targets: self.call_assignment_targets != 0,
             regexp_literals: {
                 let mut spans = std::mem::take(&mut self.regexp_literals);

@@ -18,16 +18,19 @@ pub(super) enum Half {
     High,
 }
 
+#[inline(always)]
 fn signed(bits: u64, width: u32) -> i64 {
     let shift = u64::BITS - width;
     ((bits << shift) as i64) >> shift
 }
+#[inline(always)]
 fn interpret(bits: u64, width: u32, sign: Signedness) -> i128 {
     match sign {
         Signedness::Signed => i128::from(signed(bits, width)),
         Signedness::Unsigned => i128::from(bits),
     }
 }
+#[inline(always)]
 fn saturate(value: i128, width: u32, sign: Signedness) -> u64 {
     let (minimum, maximum) = match sign {
         Signedness::Signed => {
@@ -38,6 +41,7 @@ fn saturate(value: i128, width: u32, sign: Signedness) -> u64 {
     };
     value.clamp(minimum, maximum) as u64
 }
+#[inline(always)]
 fn numeric(value: WasmValue, width: u32) -> u64 {
     match value {
         WasmValue::I64(value) => value as u64,
@@ -51,6 +55,7 @@ fn numeric(value: WasmValue, width: u32) -> u64 {
         _ => unreachable!("integer scalar projection"),
     }
 }
+#[inline(always)]
 fn binary_lane(left: u64, right: u64, width: u32, op: Binary) -> u64 {
     let sign = matches!(
         op,
@@ -138,6 +143,7 @@ macro_rules! by_width {
     };
 }
 
+#[inline(always)]
 pub(super) fn binary(left: u128, right: u128, width: u32, op: Binary) -> WasmValue {
     if let Some(bits) = by_width!(width, |lanes| lanes.binary(left, right, op)) {
         return WasmValue::V128(bits);
@@ -146,6 +152,7 @@ pub(super) fn binary(left: u128, right: u128, width: u32, op: Binary) -> WasmVal
         binary_lane(a, b.unwrap(), width, op)
     })
 }
+#[inline(always)]
 pub(super) fn shift(value: u128, count: u32, width: u32, op: Binary) -> WasmValue {
     if let Some(bits) = by_width!(width, |lanes| lanes.shift(value, count % width, op)) {
         return WasmValue::V128(bits);
@@ -156,11 +163,13 @@ pub(super) fn shift(value: u128, count: u32, width: u32, op: Binary) -> WasmValu
     })
 }
 
+#[inline(always)]
 pub(super) fn negate(value: u128, width: u32) -> WasmValue {
     map_lanes(value, None, width, |bits, _| {
         binary_lane(0, bits, width, Binary::Subtract)
     })
 }
+#[inline(always)]
 pub(super) fn absolute(value: u128, width: u32) -> WasmValue {
     map_lanes(value, None, width, |bits, _| {
         if signed(bits, width) < 0 {
@@ -170,22 +179,26 @@ pub(super) fn absolute(value: u128, width: u32) -> WasmValue {
         }
     })
 }
+#[inline(always)]
 pub(super) fn population_count(value: u128) -> WasmValue {
     map_lanes(value, None, u8::BITS, |bits, _| {
         numeric(Unary::PopulationCount.apply(bits as i64), u8::BITS)
     })
 }
+#[inline(always)]
 pub(super) fn all_true(value: u128, width: u32) -> WasmValue {
     WasmValue::I32(i32::from(
         (0..u128::BITS / width).all(|index| lane(value, width, index as u8) != 0),
     ))
 }
+#[inline(always)]
 pub(super) fn bitmask(value: u128, width: u32) -> WasmValue {
     let bits = (0..u128::BITS / width).fold(0_u32, |bits, index| {
         bits | (((lane(value, width, index as u8) >> (width - 1)) as u32) << index)
     });
     WasmValue::I32(bits as i32)
 }
+#[inline(always)]
 pub(super) fn extrema(left: u128, right: u128, width: u32, compare: Binary) -> WasmValue {
     map_lanes(left, Some(right), width, |a, b| {
         let b = b.unwrap();
@@ -196,6 +209,7 @@ pub(super) fn extrema(left: u128, right: u128, width: u32, compare: Binary) -> W
         }
     })
 }
+#[inline(always)]
 pub(super) fn saturating(
     left: u128,
     right: u128,
@@ -214,11 +228,13 @@ pub(super) fn saturating(
         saturate(value, width, sign)
     })
 }
+#[inline(always)]
 pub(super) fn average(left: u128, right: u128, width: u32) -> WasmValue {
     map_lanes(left, Some(right), width, |a, b| {
         (a + b.unwrap()).div_ceil(u64::from(PAIR_LANES))
     })
 }
+#[inline(always)]
 pub(super) fn q15(left: u128, right: u128) -> WasmValue {
     map_lanes(left, Some(right), i16::BITS, |a, b| {
         let product = interpret(a, i16::BITS, Signedness::Signed)
@@ -230,12 +246,14 @@ pub(super) fn q15(left: u128, right: u128) -> WasmValue {
         )
     })
 }
+#[inline(always)]
 fn half_start(width: u32, half: Half) -> u32 {
     match half {
         Half::Low => 0,
         Half::High => u128::BITS / width,
     }
 }
+#[inline(always)]
 pub(super) fn extend(value: u128, width: u32, sign: Signedness, half: Half) -> WasmValue {
     let source_width = width / PAIR_LANES;
     let start = half_start(width, half);
@@ -250,6 +268,7 @@ pub(super) fn extend(value: u128, width: u32, sign: Signedness, half: Half) -> W
     }
     WasmValue::V128(result)
 }
+#[inline(always)]
 pub(super) fn extend_multiply(
     left: u128,
     right: u128,
@@ -280,6 +299,7 @@ pub(super) fn extend_multiply(
     }
     WasmValue::V128(result)
 }
+#[inline(always)]
 pub(super) fn pairwise_add(value: u128, width: u32, sign: Signedness) -> WasmValue {
     let source_width = width / PAIR_LANES;
     let mut result = 0;
@@ -303,21 +323,25 @@ pub(super) fn pairwise_add(value: u128, width: u32, sign: Signedness) -> WasmVal
 /// `i32x4.dot_i16x8_s`: each i32 lane the wrapping sum of its signed i16 pairs' products,
 /// computed in i32 as the operator is defined, so the kernel stays a few instructions where
 /// the vector region inlines it.
-#[inline]
+#[inline(always)]
 pub(super) fn dot(left: u128, right: u128) -> WasmValue {
-    let mut result = 0;
-    for index in 0..u128::BITS / u32::BITS {
-        let product = |part: u32| {
-            let source = (index * PAIR_LANES + part) as u8;
-            let a = lane(left, u16::BITS, source) as u16 as i16;
-            let b = lane(right, u16::BITS, source) as u16 as i16;
-            i32::from(a) * i32::from(b)
-        };
-        let sum = (0..PAIR_LANES).fold(0_i32, |sum, part| sum.wrapping_add(product(part)));
-        result = replace(result, u32::BITS, index as u8, u64::from(sum as u32));
+    // The i16 lanes as arrays, so each sum of two products is plain lane arithmetic.
+    let lanes = |bits: u128| {
+        let bytes = bits.to_le_bytes();
+        std::array::from_fn::<i32, 8, _>(|index| i32::from(i16::from_le_bytes([bytes[2 * index], bytes[2 * index + 1]])))
+    };
+    let (a, b) = (lanes(left), lanes(right));
+    let sums: [u32; 4] = std::array::from_fn(|index| {
+        let (low, high) = (PAIR_LANES as usize * index, PAIR_LANES as usize * index + 1);
+        (a[low] * b[low]).wrapping_add(a[high] * b[high]) as u32
+    });
+    let mut bytes = [0u8; 16];
+    for (index, sum) in sums.into_iter().enumerate() {
+        bytes[4 * index..4 * index + 4].copy_from_slice(&sum.to_le_bytes());
     }
-    WasmValue::V128(result)
+    WasmValue::V128(u128::from_le_bytes(bytes))
 }
+#[inline(always)]
 pub(super) fn narrow(left: u128, right: u128, width: u32, sign: Signedness) -> WasmValue {
     let source_width = width * PAIR_LANES;
     let source_count = u128::BITS / source_width;
@@ -336,6 +360,7 @@ pub(super) fn narrow(left: u128, right: u128, width: u32, sign: Signedness) -> W
 }
 
 /// Deterministic relaxed dot: signed byte products with signed pair saturation.
+#[inline(always)]
 pub(super) fn relaxed_dot(left: u128, right: u128) -> WasmValue {
     let mut result = 0;
     for index in 0..u128::BITS / u16::BITS {

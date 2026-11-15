@@ -1,11 +1,13 @@
 //! The scalar pass over a kernel's recurrences (`Recurrence`): the operations that read a
 //! value the previous iteration computed, in body order, once per iteration.
 //!
-//! The recurrence kernels run is one register folded by one operator over a column (`s += x`,
-//! `s = (s + x) | 0`), as a fused loop per operator (`Fold`). A loop with any other recurrence
-//! keeps its own records: an interpreted step list cost more per operation than they do.
+//! A kernel runs one recurrence whose cycle is a chain: each operator reads the one before
+//! and a column or scalar. A one-operator cycle (`s += x`, `s = (s + x) | 0`) is a fused loop
+//! per operator (`Fold`); a longer one runs its links per iteration (`Chain`). Nodes that read
+//! the recurrence without feeding it run as columns after the pass. A loop with any other
+//! recurrence keeps its own records.
 use super::super::super::operations::{NumberArithmetic, NumberBitwise};
-use super::run::{CHUNK, arith};
+use super::run::{CHUNK, apply, arith};
 use super::shape::{Arg, NodeOp, Shape};
 
 /// One recurrence folded by one arithmetic operator, maybe truncated to int32 after
@@ -20,61 +22,180 @@ pub(super) struct Fold {
     outs: [Option<u16>; 2],
 }
 
-pub(super) enum Recurrence {
-    None,
-    Fold(Fold),
+/// The longest chain a kernel runs.
+const MAX_LINKS: usize = 24;
+
+/// One link of a chain: `v = code(v, x)` with `x` the column (or broadcast scalar) at element
+/// offset `operand` of the scratch, the result written at offset `out` (a dump column when no
+/// later reader needs it).
+#[derive(Clone, Copy)]
+struct Link {
+    code: Code,
+    operand: u32,
+    out: u32,
 }
 
-/// Whether node `id`'s column is read by a store or a written register's final value.
-fn read_later(shape: &Shape, id: u16) -> bool {
-    shape.stores.iter().any(|store| store.value == Arg::Col(id))
-        || shape.temps.iter().any(|&(_, arg)| arg == Arg::Col(id))
+/// A link's operator with its operand order: `v op x`, or `x op v` for the reversed forms.
+#[derive(Clone, Copy)]
+enum Code {
+    Add,
+    Multiply,
+    Subtract,
+    SubtractFrom,
+    Divide,
+    DivideInto,
+    Bits { op: NumberBitwise, reversed: bool },
+}
+
+impl Code {
+    fn of(op: NodeOp, left: bool) -> Self {
+        match (op, left) {
+            (NodeOp::Arith(NumberArithmetic::Add), _) => Self::Add,
+            (NodeOp::Arith(NumberArithmetic::Multiply), _) => Self::Multiply,
+            (NodeOp::Arith(NumberArithmetic::Subtract), true) => Self::Subtract,
+            (NodeOp::Arith(NumberArithmetic::Subtract), false) => Self::SubtractFrom,
+            (NodeOp::Arith(NumberArithmetic::Divide), true) => Self::Divide,
+            (NodeOp::Arith(NumberArithmetic::Divide), false) => Self::DivideInto,
+            (NodeOp::Bits(op), left) => Self::Bits { op, reversed: !left },
+            (NodeOp::Load { .. } | NodeOp::Iota { .. }, _) => unreachable!("a recurrence's nodes are operators"),
+        }
+    }
+
+    #[inline(always)]
+    fn apply(self, v: f64, x: f64) -> f64 {
+        match self {
+            Self::Add => v + x,
+            Self::Multiply => v * x,
+            Self::Subtract => v - x,
+            Self::SubtractFrom => x - v,
+            Self::Divide => v / x,
+            Self::DivideInto => x / v,
+            Self::Bits { op, reversed: false } => apply(NodeOp::Bits(op), v, x),
+            Self::Bits { op, reversed: true } => apply(NodeOp::Bits(op), x, v),
+        }
+    }
+}
+
+/// A single recurrence whose cycle is a chain of operators, each reading the previous one's
+/// value and one column or scalar.
+pub(super) struct Chain {
+    links: Vec<Link>,
+    /// Scalars the links read, each broadcast to its column after the nodes' and the dump's:
+    /// (scalar slot, element offset).
+    broadcasts: Vec<(u8, u32)>,
+}
+
+enum Pass {
+    None,
+    Fold(Fold),
+    Chain(Chain),
+}
+
+/// A kernel's recurrence pass, and the nodes that read the recurrence without feeding it
+/// (`side`, in body order), which run as columns after the pass.
+pub(super) struct Recurrence {
+    pass: Pass,
+    side: Vec<u16>,
+}
+
+/// Whether node `id`'s column is read by a store, a written register's final value, or a
+/// side node.
+fn read_later(shape: &Shape, side: &[u16], id: u16) -> bool {
+    let read = Arg::Col(id);
+    shape.stores.iter().any(|store| store.value == read)
+        || shape.temps.iter().any(|&(_, arg)| arg == read)
+        || side.iter().any(|&n| shape.nodes[usize::from(n)].a == read || shape.nodes[usize::from(n)].b == read)
+}
+
+/// Whether `arg` is the recurrence or a value computed from it this iteration.
+fn recurrent(shape: &Shape, arg: Arg) -> bool {
+    match arg {
+        Arg::Phi(_) => true,
+        Arg::Col(n) => shape.nodes[usize::from(n)].seq,
+        _ => false,
+    }
 }
 
 impl Recurrence {
     pub(super) fn of(shape: &Shape) -> Option<Self> {
         if shape.phis.is_empty() {
-            return Some(Self::None);
+            return Some(Self { pass: Pass::None, side: Vec::new() });
         }
-        Self::fold(shape).map(Self::Fold)
-    }
-
-    /// The fold of a single recurrence whose chain is one arithmetic node, maybe followed by
-    /// `| 0`.
-    fn fold(shape: &Shape) -> Option<Fold> {
-        let ([(_, Arg::Col(last))], first) = (shape.phis.as_slice(), *shape.seq.first()?) else { return None };
-        let last = *last;
-        let node = shape.nodes[usize::from(first)];
-        let NodeOp::Arith(op) = node.op else { return None };
-        let (left, operand) = match (node.a, node.b) {
-            (Arg::Phi(0), other) => (true, other),
-            (other, Arg::Phi(0)) => (false, other),
-            _ => return None,
-        };
-        let column_or_scalar = |arg: Arg| match arg {
-            Arg::Col(n) => !shape.nodes[usize::from(n)].seq,
-            Arg::Scalar(_) => true,
-            _ => false,
-        };
-        if !column_or_scalar(operand) {
+        let cycle = cycle(shape)?;
+        let side: Vec<u16> = shape.seq.iter().copied().filter(|id| !cycle.contains(id)).collect();
+        // A side node reads columns only: the recurrence's value before an iteration has none.
+        if side.iter().any(|&n| matches!(shape.nodes[usize::from(n)].a, Arg::Phi(_)) || matches!(shape.nodes[usize::from(n)].b, Arg::Phi(_))) {
             return None;
         }
-        let int32 = match shape.seq.as_slice() {
-            [only] if *only == last => false,
-            [_, second] if *second == last && is_int32_truncation(shape, first, last) => true,
+        let pass = match Self::fold(shape, &cycle, &side) {
+            Some(fold) => Pass::Fold(fold),
+            None => Pass::Chain(Chain::of(shape, &cycle, &side)?),
+        };
+        Some(Self { pass, side })
+    }
+
+    /// The fold of a cycle that is one arithmetic node, maybe followed by `| 0`.
+    fn fold(shape: &Shape, cycle: &[u16], side: &[u16]) -> Option<Fold> {
+        let (&first, &last) = (cycle.first()?, cycle.last()?);
+        let node = shape.nodes[usize::from(first)];
+        let NodeOp::Arith(op) = node.op else { return None };
+        let (left, operand) = if node.a == Arg::Phi(0) { (true, node.b) } else { (false, node.a) };
+        let int32 = match cycle.len() {
+            1 => false,
+            2 if is_int32_truncation(shape, first, last) => true,
             _ => return None,
         };
-        let outs = [first, last].map(|id| read_later(shape, id).then_some(id));
+        let outs = [first, last].map(|id| read_later(shape, side, id).then_some(id));
         Some(Fold { op, left, operand, int32, outs })
+    }
+
+    /// The scratch columns a run needs.
+    pub(super) fn columns(&self, shape: &Shape) -> usize {
+        shape.nodes.len() + match &self.pass { Pass::Chain(chain) => chain.columns(), _ => 0 }
+    }
+
+    /// Side nodes, in body order.
+    pub(super) fn side(&self) -> &[u16] {
+        &self.side
     }
 
     /// The pass over a chunk of `len` iterations: updates `phis`, writes the columns read later.
     pub(super) fn run(&self, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize) {
-        match self {
-            Self::None => {}
-            Self::Fold(fold) => fold.run(phis, scalars, scratch, len),
+        match &self.pass {
+            Pass::None => {}
+            Pass::Fold(fold) => fold.run(phis, scalars, scratch, len),
+            Pass::Chain(chain) => chain.run(phis, scalars, scratch, len),
         }
     }
+}
+
+/// The nodes from the single recurrence to its value at the iteration's end, in order, where
+/// each reads the one before (the first, the recurrence) and otherwise a column or scalar.
+fn cycle(shape: &Shape) -> Option<Vec<u16>> {
+    let [(_, Arg::Col(last))] = shape.phis.as_slice() else { return None };
+    let mut cycle = Vec::new();
+    let mut at = Arg::Col(*last);
+    while let Arg::Col(id) = at {
+        let node = shape.nodes[usize::from(id)];
+        if !node.seq {
+            return None;
+        }
+        cycle.push(id);
+        at = match (recurrent(shape, node.a), recurrent(shape, node.b)) {
+            (true, false) => node.a,
+            (false, true) => node.b,
+            _ => return None,
+        };
+    }
+    let column_or_scalar = |id: &u16| {
+        let node = shape.nodes[usize::from(*id)];
+        let other = if recurrent(shape, node.a) { node.b } else { node.a };
+        matches!(other, Arg::Col(_) | Arg::Scalar(_))
+    };
+    (at == Arg::Phi(0) && cycle.len() <= MAX_LINKS && cycle.iter().all(column_or_scalar)).then(|| {
+        cycle.reverse();
+        cycle
+    })
 }
 
 /// Whether node `last` is `node(first) | 0`.
@@ -156,5 +277,55 @@ impl Fold {
             Arg::Scalar(s) => scalars[usize::from(s)],
             _ => 0.0,
         }
+    }
+}
+
+impl Chain {
+    fn of(shape: &Shape, cycle: &[u16], side: &[u16]) -> Option<Self> {
+        let column = |n: usize| u32::try_from(n * CHUNK).ok();
+        let dump = column(shape.nodes.len())?;
+        let mut broadcasts = Vec::new();
+        let mut links = Vec::with_capacity(cycle.len());
+        for &id in cycle {
+            let node = shape.nodes[usize::from(id)];
+            let left = recurrent(shape, node.a);
+            let operand = match if left { node.b } else { node.a } {
+                Arg::Col(n) => column(usize::from(n))?,
+                Arg::Scalar(slot) => {
+                    let offset = column(shape.nodes.len() + 1 + broadcasts.len())?;
+                    broadcasts.push((slot, offset));
+                    offset
+                }
+                _ => return None,
+            };
+            let out = if read_later(shape, side, id) { column(usize::from(id))? } else { dump };
+            links.push(Link { code: Code::of(node.op, left), operand, out });
+        }
+        Some(Self { links, broadcasts })
+    }
+
+    /// Columns past the nodes' this chain uses: the dump and the broadcasts.
+    fn columns(&self) -> usize {
+        1 + self.broadcasts.len()
+    }
+
+    fn run(&self, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize) {
+        for &(slot, offset) in &self.broadcasts {
+            scratch[offset as usize..][..len].fill(scalars[usize::from(slot)]);
+        }
+        let base = scratch.as_mut_ptr();
+        let mut value = phis[0];
+        for k in 0..len {
+            // SAFETY: every offset is a column's start inside `scratch` (`Recurrence::columns`)
+            // and `k < len <= CHUNK`; no link's operand column is a link's result column.
+            unsafe {
+                let row = base.add(k);
+                for link in &self.links {
+                    value = link.code.apply(value, *row.add(link.operand as usize));
+                    *row.add(link.out as usize) = value;
+                }
+            }
+        }
+        phis[0] = value;
     }
 }

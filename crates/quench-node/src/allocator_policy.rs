@@ -9,9 +9,13 @@ use quench_runtime::MemoryPolicy;
 /// stream chunks then spent its time in page faults (video route, 10 connections, 2026-10-22:
 /// ~600K minor faults per 6 s; express 38 -> 58 and fastify 36 -> 67 requests/s with this
 /// threshold, peak VmHWM within 1-4 MB). Freed memory below it stays in the arena for reuse.
+/// At 16 MiB a run that compiles and frees as it goes kept that much of freed compiler memory
+/// resident at its peak in the worker's arena: JetStream 3 no-JIT (2026-11-15) Sunspider 25.8
+/// -> 22.6 MB and json-parse-inspector 55.0 -> 48.1 MB at 1 MiB, other rows and scores flat;
+/// a 64 KiB-chunk HTTP stream (10 connections) shows no fault or time change at 1 MiB.
 /// The memory-first policy keeps the default, which returns it.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
-const TRIM_THRESHOLD_BYTES: libc::c_int = 16 * 1024 * 1024;
+const TRIM_THRESHOLD_BYTES: libc::c_int = 1024 * 1024;
 /// The glibc variable that sets the trim threshold instead.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 const TRIM_THRESHOLD_VARIABLE: &str = "MALLOC_TRIM_THRESHOLD_";

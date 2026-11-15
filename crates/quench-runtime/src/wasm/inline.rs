@@ -66,6 +66,9 @@ pub(super) fn leaf_budget(mode: crate::ExecutionMode, module_operators: impl FnO
     }
 }
 
+/// Leaf forms a round holds at once (`LeafPlan::built_leaf`).
+const BUILT_LEAVES: usize = 2048;
+
 /// Inlining rounds. A function that only called leaves is call-free after a
 /// round and may be inlined in the next, so code grows by at most this many
 /// nested budgets per call site.
@@ -303,17 +306,30 @@ fn union(into: &mut Vec<u32>, from: &[u32]) {
 /// plan keeps its own copy: lowering adds block types to the module's signature pool.
 struct Callees {
     imports: u32,
-    defined: Vec<Option<WasmSignature>>,
+    /// Each defined function's index into `shapes`, the pool's type index.
+    defined: Box<[u32]>,
+    /// The shapes of the type indices defined functions have; a module has far fewer
+    /// types than functions.
+    shapes: Box<[Option<WasmSignature>]>,
 }
 
 impl Callees {
     fn new(signatures: &WasmSignatures) -> Self {
-        Self {
-            imports: (signatures.function_count() - signatures.defined_count()) as u32,
-            defined: (0..signatures.defined_count() as u32)
-                .map(|index| signatures.defined_signature(index).cloned())
-                .collect(),
+        let imports = signatures.function_count() - signatures.defined_count();
+        let defined: Box<[u32]> = (0..signatures.defined_count())
+            .map(|index| signatures.function_type_index(imports + index).unwrap_or(u32::MAX))
+            .collect();
+        let mut shapes = Vec::new();
+        for &ty in defined.iter().filter(|ty| **ty != u32::MAX) {
+            let ty = ty as usize;
+            if shapes.len() <= ty {
+                shapes.resize(ty + 1, None);
+            }
+            if shapes[ty].is_none() {
+                shapes[ty] = signatures.type_signature(ty as u32).cloned();
+            }
         }
+        Self { imports: imports as u32, defined, shapes: shapes.into() }
     }
 
     fn defined_index(&self, function: u32) -> Option<usize> {
@@ -322,7 +338,7 @@ impl Callees {
     }
 
     fn defined_signature(&self, index: usize) -> Option<&WasmSignature> {
-        self.defined.get(index)?.as_ref()
+        self.shapes.get(*self.defined.get(index)? as usize)?.as_ref()
     }
 }
 
@@ -389,31 +405,23 @@ impl<'m, 'a, I: Operators<'a>> LeafPlan<'m, 'a, I> {
             marker: std::marker::PhantomData,
         };
         for round in 0..INLINE_ROUNDS {
-            let leaves = (0..sources.count())
+            // Only the kinds are kept: a lowering builds the forms it copies.
+            let kinds = (0..sources.count())
                 .map(|index| match plan.rounds.last() {
-                    Some(previous) if previous.kinds[index] == LeafKind::None => Ok(None),
-                    _ => plan.leaf(round, index, budget),
+                    Some(previous) if previous.kinds[index] == LeafKind::None => Ok(LeafKind::None),
+                    _ => plan.leaf(round, index, budget).map(|leaf| match leaf {
+                        None => LeafKind::None,
+                        Some(leaf) if leaf.form.calls => LeafKind::Calls,
+                        Some(_) => LeafKind::CallFree,
+                    }),
                 })
-                .collect::<Result<Vec<_>, _>>()?;
-            if leaves.iter().all(Option::is_none) {
+                .collect::<Result<Box<[_]>, _>>()?;
+            if kinds.iter().all(|kind| *kind == LeafKind::None) {
                 break;
             }
-            let kinds = leaves
-                .iter()
-                .map(|leaf| match leaf {
-                    None => LeafKind::None,
-                    Some(leaf) if leaf.form.calls => LeafKind::Calls,
-                    Some(_) => LeafKind::CallFree,
-                })
-                .collect();
-            let built = leaves
-                .into_iter()
-                .enumerate()
-                .filter_map(|(index, leaf)| Some((index as u32, std::rc::Rc::new(leaf?))))
-                .collect();
             std::rc::Rc::get_mut(&mut plan.rounds)
                 .expect("a plan being made shares no rounds")
-                .push(Round { kinds, built: std::cell::RefCell::new(built) });
+                .push(Round { kinds, built: Default::default() });
         }
         Ok(plan)
     }
@@ -518,7 +526,13 @@ impl<'m, 'a, I: Operators<'a>> LeafPlan<'m, 'a, I> {
             .flatten()
             .unwrap_or_else(|| panic!("Wasm leaf {callee} of {} does not build again", self.name));
         let leaf = std::rc::Rc::new(leaf);
-        self.rounds[round].built.borrow_mut().insert(callee as u32, leaf.clone());
+        let mut built = self.rounds[round].built.borrow_mut();
+        // A module's compile lowers every function, which copies most leaves: the forms
+        // held at once stay bounded, and a dropped one is built again when copied again.
+        if built.len() >= BUILT_LEAVES {
+            built.clear();
+        }
+        built.insert(callee as u32, leaf.clone());
         leaf
     }
 

@@ -45,10 +45,34 @@ struct FactEntry {
     answer: u64,
 }
 
-const KIND_OWN: u64 = 1;
-const KIND_INHERITED: u64 = 2;
-const KIND_ABSENT: u64 = 3;
-const KIND_GETTER: u64 = 5;
+pub(super) const KIND_OWN: u64 = 1;
+pub(super) const KIND_INHERITED: u64 = 2;
+pub(super) const KIND_ABSENT: u64 = 3;
+pub(super) const KIND_GETTER: u64 = 5;
+
+/// The parts of an answer word (`FactEntry`): its kind, slot and hops, and whether it holds
+/// under the chain epoch `epoch` (an own answer holds under any).
+#[derive(Clone, Copy)]
+pub(super) struct FactWord(u64);
+
+impl FactWord {
+    #[inline(always)]
+    pub(super) fn kind(self) -> u64 {
+        (self.0 >> 28) & 0xf
+    }
+    #[inline(always)]
+    pub(super) fn slot(self) -> usize {
+        (self.0 & u64::from(SLOT_LIMIT - 1)) as usize
+    }
+    #[inline(always)]
+    pub(super) fn hops(self) -> u8 {
+        ((self.0 >> 24) & 0xf) as u8
+    }
+    #[inline(always)]
+    pub(super) fn current(self, epoch: u64) -> bool {
+        (self.0 >> 32) as u32 == epoch as u32
+    }
+}
 /// Slots and hops an entry can name; a walk past either is not recorded.
 const SLOT_LIMIT: u32 = 1 << 24;
 const HOPS_LIMIT: u8 = 1 << 4;
@@ -94,7 +118,10 @@ struct FactEntries {
     base: std::cell::OnceCell<std::ptr::NonNull<std::cell::Cell<FactEntry>>>,
 }
 
-const FACT_BYTES: usize = SYMBOL_LOAD_PROOF_ENTRIES * size_of::<FactEntry>();
+/// The entries, then one `u32` per entry: the record id of an inherited or getter answer's
+/// holder (`SymbolLoadProofs::holder`), so a hit names its holder without walking `hops`
+/// links. The chain epoch that keeps the answer keeps its holder, as it keeps its hops.
+const FACT_BYTES: usize = SYMBOL_LOAD_PROOF_ENTRIES * (size_of::<FactEntry>() + size_of::<u32>());
 
 impl FactEntries {
     #[inline(always)]
@@ -102,6 +129,13 @@ impl FactEntries {
         // SAFETY: the mapping holds `SYMBOL_LOAD_PROOF_ENTRIES` entries, zero bits empty ones,
         // and `index` is masked to that range by `SymbolLoadProofs::index`.
         self.base.get().map(|base| unsafe { &*base.as_ptr().add(index) })
+    }
+
+    /// The holder word of entry `index`, beside the entries in the same mapping.
+    #[inline(always)]
+    fn holder(&self, index: usize) -> Option<&std::cell::Cell<u32>> {
+        // SAFETY: the holder words follow the `SYMBOL_LOAD_PROOF_ENTRIES` entries in the mapping.
+        self.base.get().map(|base| unsafe { &*base.as_ptr().add(SYMBOL_LOAD_PROOF_ENTRIES).cast::<std::cell::Cell<u32>>().add(index) })
     }
 
     #[cold]
@@ -175,7 +209,22 @@ impl SymbolLoadProofs {
             .then_some((entry.answer & u64::from(SLOT_LIMIT - 1)) as u32)
     }
 
-    pub(super) fn record(&self, layout: u32, key: PropertyKey, epoch: u64, answer: SymbolLoadAnswer) {
+    /// The answer word of the entry for `key32` on a receiver of `layout`, unchecked for its
+    /// epoch (`FactWord::current`).
+    #[inline(always)]
+    pub(super) fn word(&self, layout: u32, key32: u32) -> Option<FactWord> {
+        let entry = self.entries.slot(Self::index(layout, key32))?.get();
+        (entry.tag == FactEntry::tag(layout, key32)).then_some(FactWord(entry.answer))
+    }
+
+    /// The record id of the holder the entry for `key32` on `layout` names, where its answer
+    /// (checked by the caller) is an inherited one or a getter.
+    #[inline(always)]
+    pub(super) fn holder(&self, layout: u32, key32: u32) -> Option<u32> {
+        self.entries.holder(Self::index(layout, key32)).map(std::cell::Cell::get)
+    }
+
+    pub(super) fn record_with_holder(&self, layout: u32, key: PropertyKey, epoch: u64, answer: SymbolLoadAnswer, holder: u32) {
         let (Some(key32), Some(word)) = (key.key32(), FactEntry::encode(answer, epoch)) else {
             return;
         };
@@ -189,7 +238,11 @@ impl SymbolLoadProofs {
             None => self.entries.allocate(),
         };
         // SAFETY: `index` is below the mapping's entry count.
-        unsafe { &*base.as_ptr().add(Self::index(layout, key32)) }.set(FactEntry { tag: FactEntry::tag(layout, key32), answer: word });
+        let index = Self::index(layout, key32);
+        unsafe { &*base.as_ptr().add(index) }.set(FactEntry { tag: FactEntry::tag(layout, key32), answer: word });
+        if let Some(cell) = self.entries.holder(index) {
+            cell.set(holder);
+        }
     }
 
     /// The own data slot site `site` last read `key` from on a receiver of `layout`.

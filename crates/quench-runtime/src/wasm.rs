@@ -849,8 +849,8 @@ impl Engine {
         }
         let mut constants = ConstantPool::with([Constant::Number(0.0), Constant::Undefined]);
         let lazy_lowering = lazy.is_some();
-        let mut functions = Vec::with_capacity(if lazy_lowering { 1 } else { sources.count() });
-        let mut headers = Vec::with_capacity(if lazy_lowering { sources.count() } else { 0 });
+        let mut functions = Vec::with_capacity(if lazy_lowering { 0 } else { sources.count() });
+        let mut slots = Vec::with_capacity(if lazy_lowering { sources.count() } else { 0 });
         let plan = inline::LeafPlan::new(
             name,
             sources,
@@ -873,13 +873,21 @@ impl Engine {
                 SignaturePool::Building(&mut signature_pool),
                 &mut constants,
             )?;
-            // A lazily lowered module keeps its first record: an environment's root
-            // function is read without a call.
-            if lazy_lowering && position > 0 {
-                // Kept by its first call; this lowering settled what it interns.
-                headers.push(crate::bytecode::FunctionHeader::of(&function));
-            } else {
+            if !lazy_lowering {
                 functions.push(function);
+            } else if position == 0 {
+                // A lazily lowered module keeps its first record: an environment's root
+                // function is read without a call.
+                let mut function = function;
+                let no_method_sites: &[crate::compile::liveness::MethodSite] = &[];
+                function.register_roots =
+                    crate::compile::liveness::register_roots(&function, no_method_sites, &[], &[]);
+                slots.push(crate::bytecode::FunctionSlot::compiled(function));
+            } else {
+                // Kept by its first call; this lowering settled what it interns.
+                slots.push(crate::bytecode::FunctionSlot::released(
+                    crate::bytecode::FunctionHeader::of(&function),
+                ));
             }
         }
         let facts = plan.facts();
@@ -898,11 +906,9 @@ impl Engine {
         } else {
             (constants.into_constants(), None)
         };
-        let slots: Vec<_> = functions
-            .into_iter()
-            .map(crate::bytecode::FunctionSlot::compiled)
-            .chain(headers.into_iter().map(crate::bytecode::FunctionSlot::released))
-            .collect();
+        if !lazy_lowering {
+            slots = functions.into_iter().map(crate::bytecode::FunctionSlot::compiled).collect();
+        }
         let wasm_lazy = lazy.zip(kept_constants).map(|(code, constants)| {
             Rc::new(WasmLazy {
                 name: name.into(),

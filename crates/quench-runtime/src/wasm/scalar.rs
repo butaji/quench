@@ -275,6 +275,7 @@ impl WasmValue {
 
     /// The scalar of type `ty` with bits `bits`, as `bits` reads it back
     /// (the low word for 32-bit types).
+    #[inline(always)]
     pub(crate) fn from_bits(ty: WasmType, bits: u64) -> Self {
         match ty {
             WasmType::I32 => Self::I32(bits as u32 as i32),

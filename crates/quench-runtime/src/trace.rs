@@ -155,5 +155,10 @@ setting! {
         /// analysis, and differences are printed (`lazy_bodies::verify_early`); `=stat` also
         /// prints each body's verdict.
         EarlyVerify = "early-verify",
+        /// Every loop-free function that never suspends runs its unlowered record for good
+        /// (`bytecode::tier0`), the differential that checks tier 0's semantics.
+        Tier0Always = "tier0-always",
+        /// No function runs unlowered: each lowers at its first read.
+        Tier0Off = "tier0-off",
     }
 }

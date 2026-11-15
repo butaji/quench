@@ -218,8 +218,9 @@ pub(super) fn parse<'a>(
     lazy_from: Option<u32>,
     check: Option<oxc_parser::LazyBodyCheck>,
     inherited_strict: bool,
+    nested: bool,
 ) -> oxc_parser::ParserReturn<'a> {
-    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check, inherited_strict);
+    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check, inherited_strict, nested);
     if !parsed.lazy_function_bodies.is_empty() {
         let starts: FxHashSet<u32> = parsed.lazy_function_bodies.iter().copied().collect();
         stand_in(allocator, &mut parsed.program, &starts);
@@ -457,11 +458,7 @@ pub(in crate::compile) fn parse_free_names(program: &Program<'_>, early: &[&str]
     }
     let (start, own) = match program.body.first()? {
         Statement::FunctionDeclaration(function) => (function.span.start, function.id.as_ref().map(|id| id.name.as_str())),
-        Statement::ExpressionStatement(statement) => match statement.expression.without_parentheses() {
-            Expression::FunctionExpression(function) => (function.span.start, None),
-            _ => return None,
-        },
-        _ => return None,
+        _ => (super::first_call::alone_start(program)?, None),
     };
     let mut names: Vec<Box<str>> = early.iter().copied().chain(own).map(Box::from).collect();
     names.sort_unstable();
