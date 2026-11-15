@@ -9,10 +9,10 @@ use super::{
     InlineFrame, InlineGuard, LoopRegion, Op, Origin, Register, RegisterSet, WideInstruction, CALLEE_CAPTURE,
     MAX_INLINE_PARAMS, MAX_REGION_FIELDS,
 };
+mod pc_map;
+pub(super) use pc_map::PcMap;
 use crate::bitset::BitSet;
-use crate::bytecode::Atom;
 use crate::compile::liveness::{register_in, RegisterMasks};
-use std::collections::{BTreeMap, BTreeSet};
 
 /// One inlined call: its frame, its callee and where leaving in its setup resumes.
 pub(super) struct Site<'b> {
@@ -30,7 +30,8 @@ pub(super) struct Site<'b> {
 }
 
 /// The names the loop stores: a receiver read through one changes in the loop.
-pub(super) fn stored_names(caller: &[WideInstruction], sites: &[FieldSite]) -> BTreeSet<Atom> {
+pub(super) fn stored_names(caller: &[WideInstruction], sites: &[FieldSite]) -> BitSet {
+    let mut names = BitSet::new(0);
     caller
         .iter()
         .filter_map(|instruction| match instruction.op().class() {
@@ -42,7 +43,10 @@ pub(super) fn stored_names(caller: &[WideInstruction], sites: &[FieldSite]) -> B
             },
             _ => None,
         })
-        .collect()
+        .for_each(|atom| {
+            names.insert_growing(atom as usize);
+        });
+    names
 }
 
 /// The callee's instructions its entry reaches.
@@ -92,7 +96,7 @@ pub(super) fn bound_parameters(
     callee: &InlineCallee<'_>,
     reached: &BitSet,
     defines: &dyn Fn(Register) -> bool,
-    dropped: &mut BTreeSet<u32>,
+    dropped: &mut PcMap<()>,
 ) -> Option<[Option<Register>; MAX_INLINE_PARAMS]> {
     let mut bound = [None; MAX_INLINE_PARAMS];
     for parameter in 0..callee.params {
@@ -104,7 +108,7 @@ pub(super) fn bound_parameters(
         let moved = run.iter().rposition(|instruction| instruction.defined_register() == Some(argument))?;
         (run[moved].op().is_move() && !defines(run[moved].register_b())).then_some(())?;
         bound[usize::from(parameter)] = Some(run[moved].register_b());
-        dropped.insert(first + moved as u32);
+        dropped.insert(first + moved as u32, ());
     }
     Some(bound)
 }
@@ -114,7 +118,7 @@ pub(super) fn bound_parameters(
 /// the jump past the call). A dropped instruction's PC is the next instruction's.
 pub(super) struct Layout {
     pub(super) caller: Vec<u32>,
-    pub(super) callee: BTreeMap<u32, Vec<u32>>,
+    pub(super) callee: PcMap<Vec<u32>>,
     pub(super) length: u32,
 }
 
@@ -156,18 +160,18 @@ impl Layout {
 pub(super) fn layout(
     caller: &[WideInstruction],
     header: u32,
-    dropped: &BTreeSet<u32>,
-    calls: &BTreeMap<u32, Site<'_>>,
+    dropped: &PcMap<()>,
+    calls: &PcMap<Site<'_>>,
     sites: &[FieldSite],
 ) -> Layout {
-    let mut layout = Layout { caller: Vec::with_capacity(caller.len()), callee: BTreeMap::new(), length: 0 };
+    let mut layout = Layout { caller: Vec::with_capacity(caller.len()), callee: PcMap::new(header, caller.len()), length: 0 };
     for (offset, instruction) in caller.iter().enumerate() {
         let pc = header + offset as u32;
         layout.caller.push(header + layout.length);
-        if dropped.contains(&pc) {
+        if dropped.contains(pc) {
             continue;
         }
-        match calls.get(&pc) {
+        match calls.get(pc) {
             // A fused field read the caller stores into its `this` field runs as its parts,
             // each leaving at the caller's PC, which reruns the pure read.
             None => layout.length += set_this_length(*instruction, sites),
@@ -188,13 +192,13 @@ pub(super) struct Plan<'c, 'a> {
     pub(super) caller: &'c [WideInstruction],
     pub(super) sites: &'c [FieldSite],
     pub(super) live: &'c RegisterMasks,
-    pub(super) calls: &'c BTreeMap<u32, Site<'a>>,
+    pub(super) calls: &'c PcMap<Site<'a>>,
     /// The caller PCs whose instructions drop out.
-    pub(super) dropped: &'c BTreeSet<u32>,
+    pub(super) dropped: &'c PcMap<()>,
     /// The setup PCs by the PC they resume at.
-    pub(super) setup: &'c BTreeMap<u32, u32>,
+    pub(super) setup: &'c PcMap<u32>,
     /// The caller instructions the region runs rewritten.
-    pub(super) rewritten: &'c BTreeMap<u32, WideInstruction>,
+    pub(super) rewritten: &'c PcMap<WideInstruction>,
     pub(super) layout: &'c Layout,
 }
 
@@ -275,13 +279,13 @@ impl<'c, 'a> Emission<'c, 'a> {
         let plan = self.plan;
         for (offset, instruction) in plan.caller.iter().copied().enumerate() {
             let pc = plan.header + offset as u32;
-            if plan.dropped.contains(&pc) {
+            if plan.dropped.contains(pc) {
                 continue;
             }
             // A setup instruction leaves as the first of its run does.
-            let resumes = plan.setup.get(&pc).copied().unwrap_or(pc);
-            let instruction = plan.rewritten.get(&pc).copied().unwrap_or(instruction);
-            match plan.calls.get(&pc) {
+            let resumes = plan.setup.get(pc).copied().unwrap_or(pc);
+            let instruction = plan.rewritten.get(pc).copied().unwrap_or(instruction);
+            match plan.calls.get(pc) {
                 Some(site) => self.call(offset, pc, site)?,
                 None => self.plain(instruction, resumes)?,
             }
@@ -331,8 +335,8 @@ impl<'c, 'a> Emission<'c, 'a> {
         let view = CallView {
             site,
             frame: site.frame,
-            index: plan.calls.keys().position(|key| *key == pc)? as u16,
-            flat: &plan.layout.callee[&pc],
+            index: plan.calls.iter().position(|(key, _)| key == pc)? as u16,
+            flat: plan.layout.callee.get(pc)?,
             after: plan.mask(pc + 1)? & !RegisterSet::bit(usize::from(site.result)),
             continuation,
         };
@@ -420,15 +424,15 @@ impl CallView<'_, '_> {
 
 /// The guard of a callee read through `path`: its field, interned in `fields`, read through
 /// the region's held registers.
-fn field_guard(
+fn field_guard<'h>(
     path: FieldPath,
-    held: &BTreeMap<Register, FieldPath>,
+    held: &'h dyn Fn(Register) -> Option<&'h FieldPath>,
     defines: &dyn Fn(Register) -> bool,
     fields: &mut Vec<FieldUse>,
 ) -> Option<usize> {
     let FieldPath { root, steps } = path;
     let path = match root {
-        FieldReceiver::Register(register) => match held.get(&register) {
+        FieldReceiver::Register(register) => match held(register) {
             Some(path) => FieldPath { root: path.root, steps: path.steps.iter().copied().chain(steps).collect() },
             None => FieldPath { root, steps },
         },
@@ -443,22 +447,22 @@ fn field_guard(
 
 /// Each call's frame with its guard: the callee's field, which the entry reads and guards
 /// still holds it, read through the region's held registers.
-pub(super) fn guarded_frames(
-    calls: BTreeMap<u32, Site<'_>>,
-    checked_reads: &BTreeMap<u32, u32>,
-    held: &BTreeMap<Register, FieldPath>,
+pub(super) fn guarded_frames<'h>(
+    calls: PcMap<Site<'_>>,
+    checked_reads: &PcMap<u32>,
+    held: &'h dyn Fn(Register) -> Option<&'h FieldPath>,
     caller_registers: u16,
     defines: &dyn Fn(Register) -> bool,
     region: &mut LoopRegion,
 ) -> Option<Vec<InlineFrame>> {
-    let mut frames = Vec::with_capacity(calls.len());
-    for (call_pc, site) in calls {
+    let mut frames = Vec::new();
+    for (call_pc, site) in calls.into_entries() {
         let mut frame = site.frame;
-        if checked_reads.contains_key(&call_pc) {
+        if checked_reads.contains(call_pc) {
             frame.guard = InlineGuard::AtRead;
         } else {
             let written = frame.receiver >= caller_registers || defines(frame.receiver);
-            (!written || held.contains_key(&frame.receiver)).then_some(())?;
+            (!written || held(frame.receiver).is_some()).then_some(())?;
             if let Some(path) = site.callee_path {
                 frame.guard = InlineGuard::Field(field_guard(path, held, defines, &mut region.fields)?);
             }

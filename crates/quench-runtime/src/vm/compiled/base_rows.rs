@@ -177,7 +177,7 @@ pub(super) struct HeapRow {
 impl Heap {
     /// The row's code in `quench_bjit::numeric::library`.
     pub(super) fn code(self) -> u8 {
-        self.slot_code().or_else(|| self.object_code()).or_else(|| self.test_code()).or_else(|| self.global_code()).unwrap_or_else(|| self.other_code())
+        self.slot_code().or_else(|| self.element_code()).or_else(|| self.object_code()).or_else(|| self.test_code()).or_else(|| self.global_code()).unwrap_or_else(|| self.other_code())
     }
 
     /// The code of a row addressed by a frame, capture or environment slot.
@@ -196,14 +196,21 @@ impl Heap {
         })
     }
 
-    /// The code of a row that reads or writes an object's fields, elements or sites.
-    fn object_code(self) -> Option<u8> {
+    /// The code of a row that reads or writes an array's or typed array's elements.
+    fn element_code(self) -> Option<u8> {
         Some(match self {
             Heap::Index => library::INDEX_ROW,
             Heap::Store => library::STORE_ROW,
             Heap::TypedIndex(kind) => library::TYPED_INDEX_ROW + kind,
             Heap::TypedStore(kind) => library::TYPED_STORE_ROW + kind,
             Heap::TypedLength => library::TYPED_LENGTH_ROW,
+            _ => return None,
+        })
+    }
+
+    /// The code of a row that reads or writes an object's fields or sites.
+    fn object_code(self) -> Option<u8> {
+        Some(match self {
             Heap::Field => library::FIELD_ROW,
             Heap::Site | Heap::SiteChain => library::SITE_ROW,
             Heap::ThisSite | Heap::ThisChain => library::THIS_SITE_ROW,

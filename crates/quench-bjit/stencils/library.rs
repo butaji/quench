@@ -162,23 +162,55 @@ pub fn library() -> Vec<Code> {
 /// and the two operand places.
 pub type HeapCode = (u8, bool, u8, u8, u8);
 
+/// How a heap row reads its entry flag: it ignores it, keeps the site's, or is always an entry.
+#[derive(Clone, Copy)]
+enum Entry {
+    Never,
+    Kept,
+    Always,
+}
+
+/// The places a heap row reads: its entry flag and which of its destination and operands.
+#[derive(Clone, Copy)]
+struct Uses {
+    entry: Entry,
+    dst: bool,
+    a: bool,
+    b: bool,
+}
+
+const fn uses(entry: Entry, dst: bool, a: bool, b: bool) -> Uses {
+    Uses { entry, dst, a, b }
+}
+
+/// Each group of heap rows with the places it reads; a row in none reads nothing.
+const HEAP_USES: &[(Uses, &[std::ops::RangeInclusive<u8>])] = &[
+    (uses(Entry::Never, true, false, false), &[CAPTURE_ROW..=CAPTURE_ROW, ENV_ROW..=ENV_ROW, FIELD_ROW..=FIELD_ROW, LENGTH_ROW..=LENGTH_ROW, THIS_ROW..=THIS_ROW,
+        LOAD_LOCAL_ROW..=LOAD_LOCAL_ROW, LOAD_CHECKED_ROW..=LOAD_CHECKED_ROW, GLOBAL_READ_ROW..=GLOBAL_READ_ROW, LEXICAL_READ_ROW..=LEXICAL_READ_ROW,
+        CONSTANT_ROW..=CONSTANT_ROW]),
+    (uses(Entry::Kept, false, true, false), &[GLOBAL_STORE_ROW..=GLOBAL_STORE_ROW, IC_SET_ROW..=IC_SET_ROW, IC_SET_INT_ROW..=IC_SET_INT_ROW]),
+    (uses(Entry::Kept, true, false, false), &[SITE_ROW..=SITE_ROW, THIS_SITE_ROW..=THIS_SITE_ROW, HELD_ROW..=HELD_ROW, IC_GET_ROW..=IC_GET_ROW, IC_GET_HOLDER_ROW..=IC_GET_HOLDER_ROW]),
+    (uses(Entry::Kept, true, false, true), &[INDEX_ROW..=INDEX_ROW]),
+    (uses(Entry::Always, true, false, true), &[TYPED_INDEX_ROW..=TYPED_INDEX_LAST]),
+    (uses(Entry::Always, false, true, true), &[TYPED_STORE_ROW..=TYPED_STORE_LAST]),
+    (uses(Entry::Always, true, false, false), &[TYPED_LENGTH_ROW..=TYPED_LENGTH_ROW]),
+    (uses(Entry::Kept, false, true, true), &[STORE_ROW..=STORE_ROW]),
+    (uses(Entry::Never, false, true, false), &[STORE_LOCAL_ROW..=STORE_LOCAL_ROW, STORE_CHECKED_ROW..=STORE_CHECKED_ROW, CAPTURE_SET_ROW..=CAPTURE_SET_ROW,
+        ENV_SET_ROW..=ENV_SET_ROW, ENV_DEFINE_ROW..=ENV_DEFINE_ROW, SITE_STORE_ROW..=SITE_STORE_ROW, THIS_STORE_ROW..=THIS_STORE_ROW,
+        APPEND_ROW..=APPEND_ROW, LEXICAL_WRITE_ROW..=LEXICAL_WRITE_ROW]),
+    (uses(Entry::Kept, false, false, false), &[ADD_PACKED_ROW..=ADD_PACKED_ROW, ADD_ARENA_ROW..=ADD_ARENA_ROW, ADD_EITHER_ROW..=ADD_EITHER_ROW,
+        THIS_ADD_PACKED_ROW..=THIS_ADD_PACKED_ROW, THIS_ADD_ARENA_ROW..=THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW..=THIS_ADD_EITHER_ROW]),
+];
+
 /// The heap row whose stencil computes `code`: the places a row ignores are fixed.
 pub fn heap_canonical((heap, entry, dst, a, b): HeapCode) -> HeapCode {
-    match heap {
-        CAPTURE_ROW | ENV_ROW | FIELD_ROW | LENGTH_ROW | THIS_ROW | LOAD_LOCAL_ROW | LOAD_CHECKED_ROW | GLOBAL_READ_ROW | LEXICAL_READ_ROW | CONSTANT_ROW => (heap, false, dst, MEM, MEM),
-        GLOBAL_STORE_ROW => (heap, entry, MEM, a, MEM),
-        SITE_ROW | THIS_SITE_ROW | HELD_ROW => (heap, entry, dst, MEM, MEM),
-        INDEX_ROW => (heap, entry, dst, MEM, b),
-        TYPED_INDEX_ROW..=TYPED_INDEX_LAST => (heap, true, dst, MEM, b),
-        TYPED_STORE_ROW..=TYPED_STORE_LAST => (heap, true, MEM, a, b),
-        TYPED_LENGTH_ROW => (heap, true, dst, MEM, MEM),
-        IC_GET_ROW | IC_GET_HOLDER_ROW => (heap, entry, dst, MEM, MEM),
-        IC_SET_ROW | IC_SET_INT_ROW => (heap, entry, MEM, a, MEM),
-        STORE_ROW => (heap, entry, MEM, a, b),
-        STORE_LOCAL_ROW | STORE_CHECKED_ROW | CAPTURE_SET_ROW | ENV_SET_ROW | ENV_DEFINE_ROW | SITE_STORE_ROW | THIS_STORE_ROW | APPEND_ROW | LEXICAL_WRITE_ROW => (heap, false, MEM, a, MEM),
-        ADD_PACKED_ROW | ADD_ARENA_ROW | ADD_EITHER_ROW | THIS_ADD_PACKED_ROW | THIS_ADD_ARENA_ROW | THIS_ADD_EITHER_ROW => (heap, entry, MEM, MEM, MEM),
-        _ => (heap, false, MEM, MEM, MEM),
-    }
+    let row = HEAP_USES.iter().find(|(_, rows)| rows.iter().any(|rows| rows.contains(&heap))).map_or(uses(Entry::Never, false, false, false), |(row, _)| *row);
+    let entry = match row.entry {
+        Entry::Never => false,
+        Entry::Kept => entry,
+        Entry::Always => true,
+    };
+    (heap, entry, if row.dst { dst } else { MEM }, if row.a { a } else { MEM }, if row.b { b } else { MEM })
 }
 
 /// The name of a heap row's stencil symbol.

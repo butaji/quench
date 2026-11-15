@@ -39,6 +39,12 @@ impl Heap {
         write_records(writer, &self.string_records, |writer, record: &JsString| Ok(record.write_snapshot(writer)))?;
         self.properties.write_snapshot(writer);
         self.roots.write_snapshot(writer);
+        self.write_sparse_arrays(writer);
+        Ok(())
+    }
+
+    /// The sparse arrays' lengths and present elements.
+    fn write_sparse_arrays(&self, writer: &mut Writer) {
         let sparse = self.sparse_arrays.as_deref();
         writer.len(sparse.map_or(0, |arrays| arrays.len()));
         for (array, elements) in sparse.into_iter().flatten() {
@@ -50,7 +56,6 @@ impl Heap {
                 writer.value(*value);
             }
         }
-        Ok(())
     }
 
     /// A snapshot keeps no policy: the restored heap paces under the restoring runtime's.

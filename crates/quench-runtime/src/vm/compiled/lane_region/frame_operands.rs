@@ -116,6 +116,20 @@ fn tagged_to_int32(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     int32
 }
 
+/// Whether the 32-bit `int` is the whole of the 64-bit `word`.
+fn int_is_word(builder: &mut FunctionBuilder<'_>, int: ir::Value, word: ir::Value) -> ir::Value {
+    let mut stage = emit(builder);
+    let widened = stage.raw_unary(Unary::SignExtend(Lane::I64), int);
+    stage.raw_compare(Relation::Equal, widened, word)
+}
+
+/// Leaves to `otherwise` unless `condition` holds, which a register's proved type makes certain (`proved`).
+fn guard_unless(builder: &mut FunctionBuilder<'_>, condition: ir::Value, proved: bool, otherwise: ir::Block) {
+    if !proved {
+        emit_js_guard(builder, condition, otherwise);
+    }
+}
+
 /// `register`'s int32 value, proving it where the fact does not.
 pub(in crate::vm) fn register_int_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
@@ -130,31 +144,21 @@ pub(in crate::vm) fn register_int_value(builder: &mut FunctionBuilder<'_>, regis
             let variable = register_float(builder, registers, index);
             let number = builder.use_var(variable);
             let (int, exact) = emit_js_exact_int32(builder, number);
-            if !fact.value.ty.is_subtype(Type::INT32) {
-                emit_js_guard(builder, exact, otherwise);
-            }
+            guard_unless(builder, exact, fact.value.ty.is_subtype(Type::INT32), otherwise);
             int
         }
         Representation::Int64 => {
             let variable = register_long(builder, registers, index);
             let word = builder.use_var(variable);
             let int = emit(builder).raw_unary(Unary::Narrow(Lane::I32), word);
-            if !fact.value.ty.is_subtype(Type::INT32) {
-                let exact = {
-                    let mut stage = emit(builder);
-                    let widened = stage.raw_unary(Unary::SignExtend(Lane::I64), int);
-                    stage.raw_compare(Relation::Equal, widened, word)
-                };
-                emit_js_guard(builder, exact, otherwise);
-            }
+            let exact = int_is_word(builder, int, word);
+            guard_unless(builder, exact, fact.value.ty.is_subtype(Type::INT32), otherwise);
             int
         }
         Representation::Tagged | Representation::Float64 => {
             let bits = register_tagged(builder, registers, state, register);
-            if !fact.value.ty.is_subtype(Type::INT32) {
-                let integer = is_int_tagged(builder, bits);
-                emit_js_guard(builder, integer, otherwise);
-            }
+            let integer = is_int_tagged(builder, bits);
+            guard_unless(builder, integer, fact.value.ty.is_subtype(Type::INT32), otherwise);
             super::super::super::object_slots::emit(builder).narrow(bits)
         }
     };

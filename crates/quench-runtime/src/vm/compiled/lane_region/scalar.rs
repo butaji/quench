@@ -36,9 +36,6 @@ const ARGUMENT_WORDS: usize = MAX_PARAMETERS + SCALAR_LEADING_WORDS;
 /// The words a lane body's entry block takes: context, receiver, captures and register file.
 const ENTRY_WORDS: usize = 4;
 
-/// The direct callees of a body's call sites, by PC.
-pub(super) type DirectSites = BTreeMap<usize, *const DirectCallee>;
-
 /// What a scalar entry takes in registers after the context: the function's first `params`
 /// parameters, each a binary64 where its bit of `floats` is set and an int32 otherwise.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

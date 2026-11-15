@@ -116,6 +116,10 @@ struct RuntimeAtoms {
 }
 pub(crate) mod activation;
 mod agent;
+mod atom_set;
+mod pending_job;
+use pending_job::PendingJob;
+use atom_set::AtomSet;
 mod arguments;
 mod array;
 mod array_buffer;
@@ -604,95 +608,6 @@ impl Frame {
 pub(crate) struct ActiveIterator {
     pub(crate) iterator: u16,
     pub(crate) done: u16,
-}
-/// A queued job: a call, or a promise reaction run without a job function to dispatch through.
-enum PendingJob {
-    Call {
-        callback: Value,
-        this: Value,
-        args: Vec<Value>,
-    },
-    Reaction(promise::PromiseJob),
-    Thenable(promise::ThenableJob),
-}
-
-impl PendingJob {
-    /// Pushes the values the job holds onto `roots`, which keep them alive while it runs.
-    fn push_roots(&self, roots: &mut Vec<Value>) {
-        match self {
-            Self::Call {
-                callback,
-                this,
-                args,
-            } => {
-                roots.extend([*callback, *this]);
-                roots.extend_from_slice(args);
-            }
-            Self::Reaction(job) => roots.extend([job.realm, job.handler, job.next, job.value]),
-            Self::Thenable(job) => roots.extend([job.realm, job.then, job.thenable, job.promise]),
-        }
-    }
-}
-/// A set of atoms as one bit per atom index, so membership is a word's bit.
-#[derive(Clone, Default)]
-struct AtomSet {
-    words: Vec<u64>,
-}
-
-impl AtomSet {
-    const WORD_BITS: usize = u64::BITS as usize;
-
-    /// Whether `atom` is in the set; an empty set, a realm with no global lexical name,
-    /// answers with one test.
-    #[inline(always)]
-    fn contains(&self, atom: &Atom) -> bool {
-        let index = *atom as usize;
-        !self.words.is_empty()
-            && self.words.get(index / Self::WORD_BITS).is_some_and(|word| word >> (index % Self::WORD_BITS) & 1 != 0)
-    }
-
-    /// Adds `atom`; whether it was absent.
-    fn insert(&mut self, atom: Atom) -> bool {
-        let index = atom as usize;
-        let word = index / Self::WORD_BITS;
-        if word >= self.words.len() {
-            self.words.resize(word + 1, 0);
-        }
-        let bit = 1 << (index % Self::WORD_BITS);
-        let absent = self.words[word] & bit == 0;
-        self.words[word] |= bit;
-        absent
-    }
-
-    fn clear(&mut self) {
-        self.words.clear();
-    }
-
-    fn iter(&self) -> impl Iterator<Item = Atom> + '_ {
-        self.words.iter().enumerate().flat_map(|(word, &bits)| {
-            (0..Self::WORD_BITS).filter(move |bit| bits >> bit & 1 != 0).map(move |bit| (word * Self::WORD_BITS + bit) as Atom)
-        })
-    }
-}
-
-impl Extend<Atom> for AtomSet {
-    fn extend<I: IntoIterator<Item = Atom>>(&mut self, atoms: I) {
-        atoms.into_iter().for_each(|atom| {
-            self.insert(atom);
-        });
-    }
-}
-
-impl crate::snapshot::Snap for AtomSet {
-    fn snap(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
-        let atoms: Vec<Atom> = self.iter().collect();
-        crate::snapshot::Snap::snap(&atoms, writer)
-    }
-    fn unsnap(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
-        let mut set = Self::default();
-        set.extend(<Vec<Atom> as crate::snapshot::Snap>::unsnap(reader)?);
-        Ok(set)
-    }
 }
 /// A realm's global lexical bindings in insertion order. A binding is never removed while its
 /// realm is active, so its index names it until the realm switches, and a read that holds the
@@ -3093,34 +3008,7 @@ impl<H: Host> Vm<H> {
         for (id, name) in atom_text.iter().enumerate() {
             self.index_atom(Self::atom_hash_str(name), id as Atom, name);
         }
-        let lexical_this = self.intern_atom(LEXICAL_THIS_BINDING);
-        let new_target = self.intern_atom(NEW_TARGET_BINDING);
-        let regexp_flag_accessors =
-            std::array::from_fn(|index| self.intern_atom(regexp::REGEXP_FLAG_ACCESSORS[index].0));
-        self.runtime_atoms = RuntimeAtoms {
-            lexical_this,
-            new_target,
-            regexp_exec: self.intern_atom("exec"),
-            regexp_flags: self.intern_atom("flags"),
-            last_index: self.intern_atom("lastIndex"),
-            regexp_flag_accessors,
-            then: self.intern_atom("then"),
-            constructor: self.intern_atom("constructor"),
-            next: self.intern_atom("next"),
-            name: self.intern_atom("name"),
-            empty: self.intern_atom(""),
-            value: self.intern_atom("value"),
-            done: self.intern_atom("done"),
-            iterator_return: self.intern_atom("return"),
-            writable: self.intern_atom("writable"),
-            enumerable: self.intern_atom("enumerable"),
-            configurable: self.intern_atom("configurable"),
-            get: self.intern_atom("get"),
-            set: self.intern_atom("set"),
-            bound_target: self.intern_atom(BOUND_TARGET_KEY),
-            bound_this: self.intern_atom(BOUND_THIS_KEY),
-            bound_args: self.intern_atom(BOUND_ARGS_KEY),
-        };
+        self.runtime_atoms = self.intern_runtime_atoms();
         self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites));
         self.field_caches_moved();
         self.field_cache_writes = Some(Vec::new());
@@ -3195,6 +3083,38 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("host_bootstrap");
         Ok(())
+    }
+
+    /// The atoms the runtime reads by name, interned in the reset realm.
+    fn intern_runtime_atoms(&mut self) -> RuntimeAtoms {
+        let lexical_this = self.intern_atom(LEXICAL_THIS_BINDING);
+        let new_target = self.intern_atom(NEW_TARGET_BINDING);
+        let regexp_flag_accessors =
+            std::array::from_fn(|index| self.intern_atom(regexp::REGEXP_FLAG_ACCESSORS[index].0));
+        RuntimeAtoms {
+            lexical_this,
+            new_target,
+            regexp_exec: self.intern_atom("exec"),
+            regexp_flags: self.intern_atom("flags"),
+            last_index: self.intern_atom("lastIndex"),
+            regexp_flag_accessors,
+            then: self.intern_atom("then"),
+            constructor: self.intern_atom("constructor"),
+            next: self.intern_atom("next"),
+            name: self.intern_atom("name"),
+            empty: self.intern_atom(""),
+            value: self.intern_atom("value"),
+            done: self.intern_atom("done"),
+            iterator_return: self.intern_atom("return"),
+            writable: self.intern_atom("writable"),
+            enumerable: self.intern_atom("enumerable"),
+            configurable: self.intern_atom("configurable"),
+            get: self.intern_atom("get"),
+            set: self.intern_atom("set"),
+            bound_target: self.intern_atom(BOUND_TARGET_KEY),
+            bound_this: self.intern_atom(BOUND_THIS_KEY),
+            bound_args: self.intern_atom(BOUND_ARGS_KEY),
+        }
     }
 
     /// Only native code (Cranelift's or `--b-jit`'s stencils) reads slot representations, so only a runtime that

@@ -26,17 +26,7 @@ impl Lowering<'_, '_> {
         }
         let destination = instruction.result_register();
         let value = match instruction.field_lookup() {
-            Some(lookup @ FieldLookup::Atom { atom, base, cache_site }) if instruction.op().is_get_field() => {
-                let exit = self.guard_exit(state, pc as u32);
-                let held = HeldRead { hoisted: Some(read), ..HeldRead::default() };
-                let value = self.field_value(state, (base, lookup), &[], held, exit)
-                    .expect("a hoisted read answers from its variable");
-                #[cfg(test)]
-                record_hoisted_field(cache_site, representation);
-                #[cfg(not(test))] let _ = cache_site;
-                state.proofs.fields.push(FieldValue { owner: base.register_index(), atom, value, ty });
-                value
-            }
+            Some(lookup @ FieldLookup::Atom { .. }) if instruction.op().is_get_field() => self.hoisted_field(state, pc, lookup, read),
             _ if representation == Representation::Int32 => int_tagged(&mut self.builder, raw),
             _ => raw,
         };
@@ -46,6 +36,21 @@ impl Lowering<'_, '_> {
             self.define_int_view(state, destination, value, int);
         }
         self.native += 1;
+    }
+
+    /// The value of the field read `lookup` at `pc`, which `read` holds since the preheader: the
+    /// field value the receiver's register proves from here on.
+    fn hoisted_field(&mut self, state: &mut State, pc: usize, lookup: FieldLookup, read: LoopRead) -> ir::Value {
+        let FieldLookup::Atom { atom, base, cache_site } = lookup else { unreachable!("a hoisted field read names an atom") };
+        let exit = self.guard_exit(state, pc as u32);
+        let held = HeldRead { hoisted: Some(read), ..HeldRead::default() };
+        let value = self.field_value(state, (base, lookup), &[], held, exit)
+            .expect("a hoisted read answers from its variable");
+        #[cfg(test)]
+        record_hoisted_field(cache_site, read.representation);
+        #[cfg(not(test))] let _ = cache_site;
+        state.proofs.fields.push(FieldValue { owner: base.register_index(), atom, value, ty: read.ty });
+        value
     }
 }
 

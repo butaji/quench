@@ -25,6 +25,8 @@ use crate::typed_ir::Division;
 use crate::staged::typed_elements::{NativeKind, ViewKind};
 use crate::staged::typed_view::{prove_typed_view, TypedRecords, ViewAccess};
 use std::collections::{BTreeMap, BTreeSet};
+/// The direct callees of a body's call sites, by unit PC.
+pub(super) type DirectSites = BTreeMap<usize, *const DirectCallee>;
 use cranelift_codegen::bitset::CompoundBitSet;
 use cranelift_codegen::entity::EntityRef;
 
@@ -469,8 +471,7 @@ struct Lowering<'a, 'f> {
     /// The shared leave of a failed input proof (`LaneExit::Entry`), made at its first guard
     /// and filled with the other exits.
     entry_exit: Option<ir::Block>,
-    /// The calls, by unit PC, that call a callee's compiled entry (`DirectCallee`).
-    direct: &'a BTreeMap<usize, *const DirectCallee>,
+    direct: &'a DirectSites,
     /// Per inlined frame, its callee's dense capture slots (values and count), fixed by the
     /// callee's identity, which its call guards; null where they are not dense.
     frame_captures: &'a [(usize, usize)],
@@ -1402,7 +1403,7 @@ pub(super) struct RegionSpecializer<'p> {
     pub(super) global_reads: &'p crate::vm::global_facts::GlobalReads,
     pub(super) facts: VmFacts<'p>,
     pub(super) generic: &'p [usize],
-    pub(super) direct: &'p BTreeMap<usize, *const DirectCallee>,
+    pub(super) direct: &'p DirectSites,
     pub(super) frame_captures: &'p [(usize, usize)],
     pub(super) isa: &'p dyn cranelift_codegen::isa::TargetIsa,
     /// An OSR region's field reads answered from the entry record, by unit PC and entry
@@ -1444,7 +1445,7 @@ pub(super) fn lower_body(
     global_reads: &crate::vm::global_facts::GlobalReads,
     vm: VmFacts<'_>,
     generic: &[usize],
-    direct: &BTreeMap<usize, *const DirectCallee>,
+    direct: &DirectSites,
     frame_captures: &[(usize, usize)], entry: Option<usize>,
     number_reads: &[super::facts::ObservedRead],
 ) -> Option<LoweredLane> {
@@ -1480,7 +1481,7 @@ pub(super) fn lower(
     global_reads: &crate::vm::global_facts::GlobalReads,
     vm: VmFacts<'_>,
     generic: &[usize],
-    direct: &BTreeMap<usize, *const DirectCallee>,
+    direct: &DirectSites,
     frame_captures: &[(usize, usize)],
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     entry_fields: &EntryWords,
@@ -2593,7 +2594,6 @@ impl Lowering<'_, '_> {
         state.call_effect();
         self.reload_property_arena();
     }
-
 
     /// A fused `typeof value === name` (`bytecode::typeof_test`): an immediate value's tag
     /// decides it, as `Vm::typeof_test_value` would, and a heap value's cell the VM reads

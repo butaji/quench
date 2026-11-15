@@ -43,22 +43,26 @@ impl Demand {
 /// index where the demand on its result (`after`) is one, any other Number operation or
 /// relation either unboxed view, anything else tagged bits.
 fn read_demand(instruction: WideInstruction, register: usize, after: &dyn Fn() -> Demand) -> Demand {
-    use super::super::operations::{equality_operator, NumberArithmetic, NumberBitwise, NumberRelation};
+    use super::super::operations::{equality_operator, NumberRelation};
     let op = instruction.op();
     match op.class() {
         Class::JumpBinaryFalse if NumberRelation::from_operator(instruction.binary_operator_field()).is_some()
             && equality_operator(instruction.binary_operator_field()).is_none() => Demand::NUMBER,
         _ if op.is_get_index() => element_read_demand(instruction, register),
-        _ if op.js_denotation() == JsDenotation::NumericBinary && !instruction.returns_from_frame() => {
-            let operator = instruction.binary_operator();
-            match NumberArithmetic::from_js_instruction(op, operator) {
-                _ if NumberBitwise::from_js_instruction(op, operator).is_some() => Demand::INT32,
-                Some(arithmetic) if arithmetic.integral() && instruction.result_flags() == 0 && after().index_only() => Demand::INDEX,
-                Some(_) => Demand::NUMBER,
-                None => Demand::TAGGED,
-            }
-        }
+        _ if op.js_denotation() == JsDenotation::NumericBinary && !instruction.returns_from_frame() => binary_read_demand(instruction, after),
         _ => Demand::TAGGED,
+    }
+}
+
+/// The demand of a numeric binary operation's operand: what its operator reads, an index where only an index follows.
+fn binary_read_demand(instruction: WideInstruction, after: &dyn Fn() -> Demand) -> Demand {
+    use super::super::operations::{NumberArithmetic, NumberBitwise};
+    let (op, operator) = (instruction.op(), instruction.binary_operator());
+    match NumberArithmetic::from_js_instruction(op, operator) {
+        _ if NumberBitwise::from_js_instruction(op, operator).is_some() => Demand::INT32,
+        Some(arithmetic) if arithmetic.integral() && instruction.result_flags() == 0 && after().index_only() => Demand::INDEX,
+        Some(_) => Demand::NUMBER,
+        None => Demand::TAGGED,
     }
 }
 

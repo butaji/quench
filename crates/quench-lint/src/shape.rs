@@ -29,7 +29,7 @@ pub fn scan(file: &str, source: &str, syntax: &syn::File, measures: &mut Measure
     }
     crate::data_layout::scan(file, syntax, measures);
     crate::fn_identity::scan(file, syntax, measures);
-    let hot = crate::hot_path::is_hot(file);
+    let hot = crate::hot_path::is_hot(file) && !crate::test_paths::in_test_path(file);
     let mut functions = Functions { file, scope: Vec::new(), measures, trees, seen: BTreeMap::new(), hot, test: false };
     functions.visit_file(syntax);
 }
