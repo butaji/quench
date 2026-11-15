@@ -84,6 +84,7 @@ impl<H: Host> Vm<H> {
             native_root_lists: vec![],
             gc_owned_root_count: 0,
             frame_pool: vec![],
+            lowered_tier0: Default::default(),
             pending_call_stacks: vec![],
             js_native_contexts: Vec::new(),
             lane_stack: Default::default(),

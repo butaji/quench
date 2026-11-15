@@ -385,6 +385,35 @@ impl<H: Host> Vm<H> {
             .retain(|(program, _, _), _| !reclaimed.contains(program));
     }
 
+    /// Drops the unlowered copies of the functions lowered since the last full collection
+    /// that no frame runs (`ResidualProgram::release_lowered_tier0`); one a frame runs waits
+    /// for the next. Frames match by residual: programs share one.
+    fn release_lowered_tier0(&mut self) {
+        let mut lowered = std::mem::take(self.lowered_tier0.get_mut());
+        if lowered.is_empty() {
+            return;
+        }
+        let key = |code: &crate::bytecode::ResidualProgram| std::ptr::from_ref(code) as usize;
+        let live = self.programs.decoded_residuals().map(|code| (key(code), code)).collect::<rustc_hash::FxHashMap<_, _>>();
+        let active = self
+            .frames
+            .iter()
+            .filter_map(|frame| Some((key(self.programs.residual(frame.program)?), frame.function)))
+            .collect::<FxHashSet<_>>();
+        lowered.retain(|&(address, function)| {
+            // A residual no program holds any more was dropped with its copies.
+            let Some(code) = live.get(&address) else { return false };
+            if active.contains(&(address, function)) {
+                return true;
+            }
+            // SAFETY: a full collection, and no frame of any program sharing the residual runs
+            // the function; references into a copy are held only while a frame runs it.
+            unsafe { code.release_lowered_tier0(function as usize) };
+            false
+        });
+        *self.lowered_tier0.get_mut() = lowered;
+    }
+
     pub(super) fn collect_slow(&mut self, program: &ResidualProgram, full: bool) {
         self.collect_inner(program, full, false);
     }
@@ -934,6 +963,9 @@ impl<H: Host> Vm<H> {
         self.private_site_homes.prune_dead(|value| heap.is_live(value));
         if full && self.programs.has_unchecked_reclaimable() {
             self.reclaim_unreferenced_programs();
+        }
+        if full {
+            self.release_lowered_tier0();
         }
         if full {
             self.heap.set_reclaimable_programs_after_full(self.programs.settled_reclaimable_bytes());

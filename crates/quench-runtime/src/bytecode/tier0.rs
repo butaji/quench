@@ -29,6 +29,56 @@ impl Tier0 {
     }
 }
 
+/// A slot's `Tier0`, set once like a `OnceCell`, which a full collection also empties once
+/// the function has lowered and no frame runs the copy (`ResidualProgram::release_lowered_tier0`):
+/// a lowered function kept its unlowered copy beside its record for good (jsdom-d3-startup:
+/// 6K such copies).
+#[derive(Default)]
+pub(crate) struct Tier0Cell(std::cell::UnsafeCell<Option<Box<Tier0>>>);
+
+impl Tier0Cell {
+    #[inline(always)]
+    pub(super) fn get(&self) -> Option<&Tier0> {
+        // SAFETY: the cell is written only while empty (`get_or_init`), or emptied when no
+        // reference from here is live (`release`).
+        unsafe { (*self.0.get()).as_deref() }
+    }
+
+    pub(super) fn get_or_init(&self, init: impl FnOnce() -> Box<Tier0>) -> &Tier0 {
+        if self.get().is_none() {
+            let tier0 = init();
+            // SAFETY: empty, so no reference from `get` exists; `init` does not reach the cell.
+            unsafe { *self.0.get() = Some(tier0) };
+        }
+        self.get().expect("the cell was just set")
+    }
+
+    pub(super) fn take(&mut self) -> Option<Box<Tier0>> {
+        self.0.get_mut().take()
+    }
+
+    /// Drops the copy.
+    ///
+    /// # Safety
+    /// No reference `get` returned is live.
+    unsafe fn release(&self) {
+        // SAFETY: per the contract.
+        drop(unsafe { (*self.0.get()).take() });
+    }
+}
+
+impl Clone for Tier0Cell {
+    fn clone(&self) -> Self {
+        Self(std::cell::UnsafeCell::new(self.get().map(|tier0| Box::new(tier0.clone()))))
+    }
+}
+
+impl std::fmt::Debug for Tier0Cell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.get().fmt(f)
+    }
+}
+
 impl FunctionSlot {
     /// A change to a record still running unlowered makes it the compiled one.
     pub(super) fn settle_tier0(&mut self) {
@@ -101,6 +151,21 @@ impl ResidualProgram {
     pub(crate) fn pin_tier0(&self, index: usize) {
         if let Some(tier0) = self.functions[index].tier0.get().filter(|_| self.runs_tier0(index)) {
             tier0.pinned.set(true);
+        }
+    }
+
+    /// Drops function `index`'s unlowered copy where it has lowered: its calls read the
+    /// lowered record, and it lowered only with no frame of it live.
+    ///
+    /// # Safety
+    /// Called at a full collection with no frame of any program sharing this residual running
+    /// the function, and nothing else holding a reference into the copy.
+    pub(crate) unsafe fn release_lowered_tier0(&self, index: usize) {
+        if let Some(slot) = self.functions.get(index)
+            && slot.record.get().is_some()
+        {
+            // SAFETY: the caller's; a lowered record answers every read of the slot.
+            unsafe { slot.tier0.release() };
         }
     }
 

@@ -1940,6 +1940,10 @@ pub(crate) struct Vm<H> {
     // Boxed: pooled frames are reused as the `Box<Frame>` the stack and generators hold.
     #[allow(clippy::vec_box)]
     frame_pool: Vec<Box<Frame>>,
+    /// Functions lowered from tier 0 whose unlowered copy the next full collection drops
+    /// (`Vm::release_lowered_tier0`).
+    /// By residual address, which the collection matches against the live programs'.
+    lowered_tier0: std::cell::RefCell<Vec<(usize, u32)>>,
     /// Emptied call stacks of finished general loops, one per nesting level reached: a loop
     /// takes one on entry, so running a job allocates no stack of its own.
     pending_call_stacks: Vec<Vec<dispatch_frame::PendingGeneralCall>>,

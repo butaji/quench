@@ -1601,6 +1601,11 @@ impl ProgramStore {
     }
 
     /// Borrows the residual without the reference-count traffic of `get`.
+    /// The decoded residuals of the stored programs, a shared one once per program sharing it.
+    pub(crate) fn decoded_residuals(&self) -> impl Iterator<Item = &ResidualProgram> {
+        self.programs.iter().flatten().filter_map(|entry| entry.residual.if_decoded().map(|program| &**program))
+    }
+
     #[inline] pub(crate) fn residual(&self, id: ProgramId) -> Option<&ResidualProgram> {
         self.entry(id).map(|entry| &**entry.residual)
     }

@@ -1578,7 +1578,7 @@ pub struct FunctionSlot {
     record: std::cell::OnceCell<std::rc::Rc<Function>>,
     unlowered: std::cell::RefCell<Option<Unlowered>>,
     /// The unlowered record its first runs execute until it lowers (`tier0`).
-    tier0: std::cell::OnceCell<Box<tier0::Tier0>>,
+    tier0: tier0::Tier0Cell,
 }
 
 /// A slot's unlowered record: as compiled, for a function about to run (a first-call chunk's),
@@ -2382,8 +2382,10 @@ impl Function {
 
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
     pub(crate) fn suspends(&self) -> bool {
-        self.instructions()
-            .any(|instruction| instruction.op().suspends())
+        // By opcode alone: a wide record's opcode is in the side table.
+        self.code.iter().any(|packed| {
+            if packed.is_wide() { self.wide[packed.wide_index()].op().suspends() } else { packed.op().suspends() }
+        })
     }
 
     /// The function's `CallPlan`, derived on first use.

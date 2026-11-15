@@ -303,6 +303,7 @@ impl<H: Host> Vm<H> {
             native_root_lists: _,
             gc_owned_root_count: _,
             frame_pool: _,
+            lowered_tier0: _,
             pending_call_stacks: _,
             js_native_contexts: _,
             lane_stack: _,
