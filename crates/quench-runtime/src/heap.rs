@@ -2956,7 +2956,13 @@ impl Heap {
             } else {
                 concurrent
             };
-            eprintln!("gc full={full}{concurrent} mark_us={mark_us} sweep_us={sweep_us} records_us={trace_records_us} resident_start={} resident_kept={} weight_between_fulls={} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.resident_at_full_start, self.resident_after_full, self.weight_between_fulls, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state);
+            // Resident set size at this collection's end, so a pacing change can be judged
+            // by its peak from one traced run.
+            let rss_kb = std::fs::read_to_string("/proc/self/statm")
+                .ok()
+                .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<usize>().ok())
+                .map_or(0, |pages| pages * 4);
+            eprintln!("gc rss_kb={rss_kb} live_weight={live_weight} full={full}{concurrent} mark_us={mark_us} sweep_us={sweep_us} records_us={trace_records_us} resident_start={} resident_kept={} weight_between_fulls={} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?}", self.resident_at_full_start, self.resident_after_full, self.weight_between_fulls, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state);
         }
         self.live_weight_after_previous = live_weight;
         self.set_young_budget(next.threshold);

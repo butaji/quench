@@ -566,6 +566,10 @@ impl<H: Host> Vm<H> {
                 }
                 let input =
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                // The protocol path reads the input's units throughout; a rope the program keeps
+                // is read through a copy that leaves it a rope (`unkept_flat`), as the fast
+                // path's is.
+                let input = input.unkept_flat();
                 let replacement = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                 let callable = vm.is_function(replacement);
                 let template = if callable {
@@ -2647,6 +2651,27 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn regexp_search(&mut self, regex: &quench_regexp::Regex, input: &JsString, start: usize, (stateful, sticky): (bool, bool),
         steady: Option<steady::SteadyMatch>) -> Option<quench_regexp::Match> {
+        let prefiltered = steady.is_some_and(|steady| steady.prefiltered);
+        // An ASCII rope not yet flat is searched through a reused buffer and stays a rope:
+        // the match is ranges, which the caller reads out by the same units.
+        if let Some(Some(found)) = input.with_ascii_rope_bytes(|bytes| {
+            let length = bytes.len();
+            if !prefiltered
+                && ((stateful && start > length)
+                    || regex.excludes_search(length, start, sticky, || bytes.get(start).map(|byte| u16::from(*byte))))
+            {
+                return Some(None);
+            }
+            if steady.is_some_and(|steady| !steady.captures) {
+                return regex.find_range_ascii(bytes, start, sticky).map(|found| found.map(quench_regexp::Match::native));
+            }
+            regex.find_ascii(bytes, start, sticky, true)
+        }) {
+            return found;
+        }
+        // Any other rope is searched through a copy that leaves it a rope (`unkept_flat`).
+        let unkept = input.unkept_flat();
+        let input = &unkept;
         let units = input.units();
         if !steady.is_some_and(|steady| steady.prefiltered)
             && ((stateful && start > units.len())
@@ -2702,21 +2727,20 @@ impl<H: Host> Vm<H> {
                 Some(Cell::RegExp { meta, .. }) => meta.flags.contains(RegExpFlags::HAS_INDICES),
                 _ => false,
             };
-            // Each matched substring is copied out (`JsString::from_unit_run`): captures are
-            // short, and a copy measured cheaper than `JsString::substring`'s sharing
-            // (V8-v7 RegExp Score run, callgrind: 50 against 75 instructions a capture).
-            let units = input.units();
-            let values = crate::heap::ArrayElements::from_fn(1 + matched.captures.len(), |index| {
-                let range = match index.checked_sub(1) {
-                    None => Some(matched.range.clone()),
-                    Some(capture) => matched.captures[capture].clone(),
-                };
-                range.map_or(Value::UNDEFINED, |range| vm.heap.alloc_string(JsString::from_unit_run(units.slice(range))))
-            });
             let named = regexp_named_capture_ranges(&matched);
-            // The groups object is made before the result array: no guest code runs and no
-            // collection is taken between them, so the order is unobservable.
-            let groups = vm.regexp_groups_object(&named, units)?;
+            // The captures are copied out, so an input rope not yet flat is read through a
+            // reused buffer and stays a rope: flattening it gave every input a kept copy of
+            // its text (V8-v7 RegExp's check run, whose results are used: 16,661 input variants
+            // of 2-4 KB each, 2.3 MB at its peak).
+            let (values, groups) = match input.with_ascii_rope_bytes(|bytes| {
+                vm.regexp_result_captures(&matched, &named, super::wtf16::Units::Ascii(bytes))
+            }) {
+                Some(captures) => captures?,
+                None => {
+                    let units = input.units();
+                    vm.regexp_result_captures(&matched, &named, units)?
+                }
+            };
             let index = Value::number(matched.range.start as f64);
             let input_value = vm.string_value_from(argument, &input);
             let array = crate::heap::ArrayObject::new(Self::empty_object(vm.array_proto), values);
@@ -2742,6 +2766,29 @@ impl<H: Host> Vm<H> {
             vm.record_regexp_legacy_match(this, input, matched)?;
             Ok(result)
         }
+    }
+
+    /// An exec result's elements and groups object from the input's `units`. Each matched
+    /// substring is copied out (`JsString::from_unit_run`): captures are short, and a copy
+    /// measured cheaper than `JsString::substring`'s sharing (V8-v7 RegExp Score run,
+    /// callgrind: 50 against 75 instructions a capture). The groups object is made before the
+    /// result array: no guest code runs and no collection is taken between them, so the order
+    /// is unobservable.
+    fn regexp_result_captures(
+        &mut self,
+        matched: &quench_regexp::Match,
+        named: &[(String, Option<std::ops::Range<usize>>)],
+        units: super::wtf16::Units<'_>,
+    ) -> Result<(crate::heap::ArrayElements, Value), JsError> {
+        let values = crate::heap::ArrayElements::from_fn(1 + matched.captures.len(), |index| {
+            let range = match index.checked_sub(1) {
+                None => Some(matched.range.clone()),
+                Some(capture) => matched.captures[capture].clone(),
+            };
+            range.map_or(Value::UNDEFINED, |range| self.heap.alloc_string(JsString::from_unit_run(units.slice(range))))
+        });
+        let groups = self.regexp_groups_object(named, units)?;
+        Ok((values, groups))
     }
 
     /// The realm's recorded exec result layout (`RegExpResultTemplate`): the shape its
