@@ -60,7 +60,7 @@ script_handler! {
         // the leaf is materialized: no collection runs before.
         let registers = unsafe {
             let registers = stack.values.as_mut_ptr().add(stack.values.len());
-            fill_admitted_window(registers, usize::from(target.registers));
+            fill_admitted_window(registers, usize::from(target.fill), usize::from(target.registers));
             copy_arguments(registers, r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))), ARGC);
             Registers(registers)
         };

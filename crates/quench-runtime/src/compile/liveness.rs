@@ -78,7 +78,7 @@ pub(crate) fn mark_register_roots<'a>(
 pub(crate) fn register_roots(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction]) -> crate::bytecode::RegisterRoots {
     RegisterMasks::of(function, methods, fields, superinstructions).map_or_else(
         || crate::bytecode::RegisterRoots::new(false),
-        |live| crate::bytecode::RegisterRoots::with_dead_call_results(true, dead_call_results(function, &live)),
+        |live| crate::bytecode::RegisterRoots::with_entry_live(true, entry_live(function, &live), dead_call_results(function, &live)),
     )
 }
 
@@ -94,6 +94,18 @@ pub(super) fn live_masks<M: LiveMask>(
     let transfers: Vec<_> =
         function.instructions().map(|instruction| narrow(transfer(instruction, methods, fields, superinstructions))).collect();
     analyze_transfers(function, &transfers)
+}
+
+/// One past the highest register `live` holds before `function`'s first instruction, and at
+/// least its parameters' registers, which a tier's entry reads whether or not the body does;
+/// or `RegisterRoots::ALL_LIVE_AT_ENTRY` where its masks bound no register there: a body past
+/// the set's width, or one past the liveness budget, whose collection scans every register.
+fn entry_live(function: &Function, live: &RegisterMasks) -> u16 {
+    if function.registers > ROOT_MAP_REGISTERS || live.is_windowed() {
+        return crate::bytecode::RegisterRoots::ALL_LIVE_AT_ENTRY;
+    }
+    let Some(entry) = live.get(0) else { return crate::bytecode::RegisterRoots::ALL_LIVE_AT_ENTRY };
+    (0..function.registers).rev().find(|&register| register_in(entry, usize::from(register))).map_or(0, |register| register + 1).max(function.params)
 }
 
 /// The pcs, in order, of `function`'s `Call`s that write their result to a register (no

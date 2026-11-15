@@ -775,18 +775,20 @@ unsafe fn fill_window(registers: *mut Value, count: usize, initial: Value) {
     }
 }
 
-/// `fill_window` of a plain activation's `count` registers with `undefined`, whose admission
-/// reserved whole `SCRIPT_FILL_BLOCK`s past them (`ScriptCallTarget::room`): a window within
-/// one `WINDOW_FILL_BLOCK` takes that block's fixed stores, the values past the live range
-/// landing in the reserved room, which no frame reads, so it makes no test of its count.
+/// The start of a plain activation of `count` registers, whose admission reserved whole
+/// `SCRIPT_FILL_BLOCK`s past them (`ScriptCallTarget::room`), every one of the first `fill`
+/// `undefined`: a `fill` within one `WINDOW_FILL_BLOCK` takes that block's fixed stores, the
+/// values past it landing in registers no instruction reads before writing or in the reserved
+/// room, so it makes no test of its count; a longer one fills all `count`.
 ///
 /// # Safety
 /// `registers` has writable storage for `fill_room::<SCRIPT_FILL_BLOCK>(count)` values, none
-/// of them live.
+/// of them live, and `fill` covers every register the activation's function reads before
+/// writing (`RegisterRoots::entry_fill`).
 #[inline(always)]
-unsafe fn fill_admitted_window(registers: *mut Value, count: usize) {
+unsafe fn fill_admitted_window(registers: *mut Value, fill: usize, count: usize) {
     const _: () = assert!(WINDOW_FILL_BLOCK <= SCRIPT_FILL_BLOCK);
-    if count > WINDOW_FILL_BLOCK {
+    if fill > WINDOW_FILL_BLOCK {
         // SAFETY: the function's contract.
         return unsafe { fill_window(registers, count, Value::UNDEFINED) };
     }
@@ -1601,10 +1603,13 @@ pub(super) struct ScriptCallTarget {
     /// An arrow's own `this` (`ThisBinding::Lexical`), found in its environment when it was
     /// resolved; unused for any other binding.
     lexical_this: Value,
-    /// `new` may activate it too (`Vm::inline_constructible`).
-    constructs: bool,
-    /// `new` may run its body as the stores alone (`Function::only_initializes_this_fields`).
-    initializes: bool,
+    /// `TARGET_CONSTRUCTS` where `new` may activate it too (`Vm::inline_constructible`), and
+    /// `TARGET_INITIALIZES` where `new` may run its body as the stores alone
+    /// (`Function::only_initializes_this_fields`).
+    forms: u8,
+    /// The registers its plain activation starts `undefined` (`RegisterRoots::entry_fill`),
+    /// at most `u8::MAX`: past one `WINDOW_FILL_BLOCK` it starts every register so.
+    fill: u8,
     /// How a plain call enters it.
     entry: CallEntry,
     /// The dense storage header its depth-0 captures read (`LaneContext::capture`), or null where the walk
@@ -1626,7 +1631,24 @@ use call_entry::CallEntry;
 mod call_body_forms;
 use call_body_forms::{body_entry, leaf_body};
 
+/// `ScriptCallTarget::forms`: `new` may activate it.
+const TARGET_CONSTRUCTS: u8 = 1;
+/// `ScriptCallTarget::forms`: `new` may run its body as the stores alone.
+const TARGET_INITIALIZES: u8 = 2;
+
 impl ScriptCallTarget {
+    /// `new` may activate it too (`Vm::inline_constructible`).
+    #[inline(always)]
+    fn constructs(&self) -> bool {
+        self.forms & TARGET_CONSTRUCTS != 0
+    }
+
+    /// `new` may run its body as the stores alone (`Function::only_initializes_this_fields`).
+    #[inline(always)]
+    fn initializes(&self) -> bool {
+        self.forms & TARGET_INITIALIZES != 0
+    }
+
     /// No legacy `arguments` reflection observes its activation: a strict function's or an
     /// arrow's (`Function::has_restricted_legacy_caller_access`), which its `this` binding
     /// names. A call passing values past its parameters need not keep them, as its frame
@@ -1713,8 +1735,8 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     params: 0,
     this_binding: ThisBinding::Sloppy,
     lexical_this: Value::UNDEFINED,
-    constructs: false,
-    initializes: false,
+    forms: 0,
+    fill: 0,
     entry: CallEntry::Activates,
     capture: std::ptr::null(),
     forwarded_method: NO_FORWARDED_METHOD,
@@ -12711,8 +12733,9 @@ impl<H: Host> Vm<H> {
             // completes across programs as a call does (`Completion::CrossConstructs`); a
             // forwarding one runs its program's keeping construction
             // (`lane_construct_keeping_activation`), which another program's caller does not.
-            constructs: shape.constructs && !environment && !settles && !body.rest && !(cross && plan.keeps_arguments),
-            initializes: shape.initializes && !environment && !settles && !cross && !body.rest,
+            forms: u8::from(shape.constructs && !environment && !settles && !body.rest && !(cross && plan.keeps_arguments)) * TARGET_CONSTRUCTS
+                | u8::from(shape.initializes && !environment && !settles && !cross && !body.rest) * TARGET_INITIALIZES,
+            fill: u8::try_from(body.register_roots.entry_fill(body.registers)).unwrap_or(u8::MAX),
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
             entry: if settles {
@@ -14861,7 +14884,7 @@ script_handler! {
             vm.script_call_entry(callee).or_else(|| vm.cross_call_entry(callee))
         };
         let Some(entry) = entry else {
-            if lane_script_target(cx, callee).is_some_and(|target| target.constructs) {
+            if lane_script_target(cx, callee).is_some_and(|target| target.constructs()) {
                 sibling!(lane_script_construct::<H>, r, ip, Carried::script_in(cx, view))
             }
             sibling!(lane_native_construct::<H>, r, ip, Carried::script_in(cx, view))
@@ -14870,12 +14893,12 @@ script_handler! {
         // target, and any other path copies the target first.
         let target = unsafe { &*entry };
         // A class constructor's target constructs with entry `Frame`, which its calls take.
-        if !target.constructs {
+        if !target.constructs() {
             sibling!(lane_native_construct::<H>, r, ip, Carried::script_in(cx, view))
         }
         // A planned construction, the common `new C(…)` or `return new C(…)`: the receiver
         // is the finished object, and the body completed with `undefined`.
-        if target.initializes
+        if target.initializes()
             && lane_finishes_construction(cx, i)
             && let Some(this) = lane_planned_construction(vm, callee, r, i)
         {
@@ -14900,7 +14923,7 @@ script_handler! {
             requicken::<H>(ip, lane_script_construct_keeping::<H>);
             sibling!(lane_script_construct_keeping::<H>, r, ip, Carried::script_in(cx, view))
         }
-        let built = if target.initializes {
+        let built = if target.initializes() {
             match lane_planned_construction(vm, callee, r, i) {
                 Some(this) => Some((this, true)),
                 // SAFETY: the context's program outlives the lane run.
@@ -15173,7 +15196,7 @@ fn lane_construct_keeping_activation<H: Host>(
     let Some(target) = lane_script_target(cx, callee) else {
         return Err(None);
     };
-    if !(target.constructs && target.forwards()) {
+    if !(target.constructs() && target.forwards()) {
         return Err(None);
     }
     // One look at the plan serves the receiver and the forwarding: a plan the receiver's
@@ -15195,7 +15218,7 @@ fn lane_construct_keeping_activation<H: Host>(
         // activation, where the construction completes in the lane (`lane_finishes_construction`).
         // Its body completes with `undefined`, as the forwarding body then does, so
         // [[Construct]] yields `this`.
-        if forwarded.initializes && finishes {
+        if forwarded.initializes() && finishes {
             // SAFETY: the context's program outlives the lane run, and the forwarded target is
             // one of its functions (`lane_script_target`).
             let code = unsafe { &*(*cx).code };
@@ -16169,7 +16192,7 @@ fn lane_construct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, pc
         // SAFETY: as `Vm::script_call_entry`; both targets are copied before anything resolves one.
         let (constructor, initializer) = unsafe { (*vm.script_call_entry(through)?, *vm.script_call_entry(callee)?) };
         let method = *vm.lane_stack.forwarded_methods.get(constructor.forwarded_method as usize)?;
-        if !constructor.forwards() || !constructor.constructs || holding_construct_plan(vm, through).is_none_or(|plan| plan.forwarded.is_none()) {
+        if !constructor.forwards() || !constructor.constructs() || holding_construct_plan(vm, through).is_none_or(|plan| plan.forwarded.is_none()) {
             return None;
         }
         let mut direct = lane_direct_callee(vm, view, function, pc, argc, initializer)?;
@@ -16629,7 +16652,7 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
     if target.forwards() { return lane_body_forwarded(vm, callee, r, i); }
     // The rest activates the constructor, which native windows below would need shadow frames for.
     if Vm::<H>::lane_shadow_active() { return lane_body_stats::miss(lane_body_stats::Miss::ConstructShadowActive); }
-    if !target.constructs { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNotConstructor); }
+    if !target.constructs() { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNotConstructor); }
     // The activation of the lane's own construction (`lane_script_construct`): a target that
     // keeps or gathers values, or is passed more than it has parameters, by the keeping form.
     let how = match lane_call_activation(&target, argc, i.c) {
@@ -16637,7 +16660,7 @@ pub(super) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual
         Some(how) => how,
     };
     if matches!(how, LaneActivation::Plain) && !lane_activation_room(vm, &target) { return lane_body_stats::miss(lane_body_stats::Miss::ConstructNoActivationRoom); }
-    let built = if target.initializes {
+    let built = if target.initializes() {
         // SAFETY: the context's program outlives the lane run.
         lane_initialize_fields(vm, unsafe { &*(*cx).code }, callee, callee, target.function, lane_construct_argument(r, i))
     } else {
@@ -17033,12 +17056,14 @@ fn lane_cell_body_ended<H: Host>(
 fn lane_fill_window<H: Host>(vm: &mut Vm<H>, target: &ScriptCallTarget, passed: *const Value, argc: u16) -> Registers {
     let count = usize::from(target.registers);
     let stack = &mut vm.lane_stack;
-    // SAFETY: capacity holds the window's admitted room (`ScriptCallTarget::room`); each
-    // slot is written before the length covers it, and no activation's window moves.
+    // SAFETY: capacity holds the window's admitted room (`ScriptCallTarget::room`); the
+    // registers live at entry are written before the length covers them, and no activation's
+    // window moves. A register past `fill` is written before any instruction reads it, and
+    // a collection reads it only where liveness proves it live (`RegisterRoots::entry_fill`).
     // Parameter `k` lives in register `k` of a plain activation (`Vm::place_plain_parameters`).
     unsafe {
         let registers = stack.values.top();
-        fill_admitted_window(registers, count);
+        fill_admitted_window(registers, usize::from(target.fill), count);
         copy_arguments(registers, passed, argc);
         stack.values.set_top(registers.add(count));
         Registers(registers)

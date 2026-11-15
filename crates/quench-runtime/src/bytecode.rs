@@ -1756,11 +1756,21 @@ pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 /// finds the function on the stack. Most of a program's functions never run during a
 /// collection, so their masks are never built. The loop tier's regions share them
 /// (`osr_loop::LoopRegion::live`) rather than copying a function's masks for each loop.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct RegisterRoots {
     covered: bool,
+    /// The registers below which every register live at entry lies (`entry_fill`), or
+    /// `ALL_LIVE_AT_ENTRY` where liveness proves no bound.
+    entry_live: u16,
     dead_call_results: crate::heap::ThinBoxSlice<u32>,
     masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+}
+
+/// Uncovered, which bounds no register live at entry.
+impl Default for RegisterRoots {
+    fn default() -> Self {
+        Self::new(false)
+    }
 }
 
 impl RegisterRoots {
@@ -1768,9 +1778,31 @@ impl RegisterRoots {
         Self::with_dead_call_results(covered, Default::default())
     }
 
-    /// `dead_call_results` in increasing pc order.
+    /// `dead_call_results` in increasing pc order, with no bound on the live entry registers.
     pub(crate) fn with_dead_call_results(covered: bool, dead_call_results: crate::heap::ThinBoxSlice<u32>) -> Self {
-        Self { covered, dead_call_results, masks: std::cell::OnceCell::new() }
+        Self::with_entry_live(covered, Self::ALL_LIVE_AT_ENTRY, dead_call_results)
+    }
+
+    /// `with_dead_call_results`, every register live at entry below `entry_live`.
+    pub(crate) fn with_entry_live(covered: bool, entry_live: u16, dead_call_results: crate::heap::ThinBoxSlice<u32>) -> Self {
+        Self { covered, entry_live, dead_call_results, masks: std::cell::OnceCell::new() }
+    }
+
+    /// An `entry_live` that bounds nothing.
+    pub(crate) const ALL_LIVE_AT_ENTRY: u16 = u16::MAX;
+
+    /// The registers an activation of a function of `registers` registers starts with its
+    /// initial value: those below every register live at its entry. No instruction reads
+    /// another before writing it, and a collection reads a covered function's registers only
+    /// where its masks prove them live, so the rest may hold any value a window held before.
+    #[inline(always)]
+    pub(crate) fn entry_fill(&self, registers: u16) -> u16 {
+        self.entry_live.min(registers)
+    }
+
+    /// The `entry_live` bound as recorded.
+    pub(crate) fn entry_live(&self) -> u16 {
+        self.entry_live
     }
 
     pub(crate) fn covered(&self) -> bool {
