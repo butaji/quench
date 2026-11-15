@@ -31,7 +31,7 @@ impl Engine {
         let (line_starts, utf16_excess) = replay.views.layout(&source.text);
         let stubs = &program.first_call_scopes;
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
-        let window = ChunkWindow { source, start: chunk.start, outer, line_starts, utf16_excess };
+        let window = ChunkWindow { source, start: chunk.start, outer, line_starts, utf16_excess, run: None };
         let allocator = lazy_bodies::sized_arena(&chunk.text);
         let mut parsed = lazy_bodies::parse(&allocator, &chunk.text, SourceType::script(), None, None, false, false, crate::compile::annex_b_targets::Recognize::No, None);
         let name = program.source_name.as_str();

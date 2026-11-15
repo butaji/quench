@@ -152,7 +152,7 @@ impl<H: Host> Vm<H> {
             atom_classes: vec![],
             intrinsic_natives: Vec::new(),
             native_families: Vec::new(),
-            first_chunks: Default::default(),
+            first_chunks: Default::default(), streamed_stubs: Default::default(),
             dynamic_strings: None,
             typeof_names: [Value::UNDEFINED; super::TYPEOF_NAMES],
             symbol_registry: FxHashMap::default(),

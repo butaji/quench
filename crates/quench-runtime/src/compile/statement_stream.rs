@@ -31,6 +31,42 @@ pub(super) struct StreamedBody {
     pub(super) start: u32,
     pub(super) end: u32,
     pub(super) strict: bool,
+    /// Only the first run compiles (`StreamRun`): the body runs a run at a time.
+    pub(super) one_run: bool,
+}
+
+/// A first-call chunk of a function whose body streams, compiled one run of its statements
+/// at a time (`Vm::call_streamed_runs`): each run compiles as a chunk of its own that runs
+/// once and is then dropped, so a body that runs once (mandreel's `global_init`, 614K
+/// instructions) never has its code resident whole.
+pub(crate) struct StreamRun {
+    /// The start of the function in the program's text.
+    pub(crate) start: u32,
+    /// Where the run starts, for a run after the first, whose chunk holds the function's
+    /// header alone; the first run's chunk compiles the function from its text.
+    pub(crate) from: Option<(u32, StreamedRun)>,
+    /// What the chunk's compilation found: the body, when it streams, and where its next run
+    /// starts, if any.
+    pub(crate) found: std::cell::Cell<Option<(StreamedRun, Option<u32>)>>,
+}
+
+/// The body of a function whose runs compile one at a time.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StreamedRun {
+    /// The offset of the body's opening brace, and of its closing one.
+    pub(crate) open: u32,
+    pub(crate) close: u32,
+    pub(crate) strict: bool,
+}
+
+impl StreamRun {
+    pub(crate) fn first(start: u32) -> Self {
+        Self { start, from: None, found: std::cell::Cell::new(None) }
+    }
+
+    pub(crate) fn after(start: u32, from: u32, body: StreamedRun) -> Self {
+        Self { start, from: Some((from, body)), found: std::cell::Cell::new(None) }
+    }
 }
 
 /// The function `program` holds alone (as `BodyFacts::check` sees it) when its body may
@@ -74,7 +110,7 @@ pub(super) fn body_streams(text: &str, source_type: oxc_span::SourceType, body: 
         .statement_stream();
     let mut fine = true;
     loop {
-        match stream.next(RUN_STATEMENTS, RUN_BYTES, &mut |_| {}, &mut |statements| fine &= straight_line(statements)) {
+        match stream.next(RUN_STATEMENTS, RUN_BYTES, &mut |_| {}, &mut |statements, _| fine &= straight_line(statements)) {
             oxc_parser::StreamStep::More if fine => {}
             oxc_parser::StreamStep::Done => return fine,
             _ => return false,
@@ -161,16 +197,31 @@ impl FunctionCompiler<'_, '_> {
         let options = oxc_parser::ParseOptions { inherited_strict: body.strict, allow_return_outside_function: true, ..Default::default() };
         let mut stream = oxc_parser::Parser::new(&allocator, text, self.owner.source_type).with_options(options).statement_stream();
         let mut shift = super::replay::ShiftSpans(body.start);
+        let mut last_end = body.start;
         loop {
             let step = stream.next(
                 RUN_STATEMENTS,
                 RUN_BYTES,
                 &mut |statement| oxc_ast_visit::VisitMut::visit_statement(&mut shift, statement),
-                &mut |statements| self.statements(statements),
+                &mut |statements, _| {
+                    if let Some(last) = statements.last() {
+                        last_end = oxc_span::GetSpan::span(last).end;
+                    }
+                    self.statements(statements)
+                },
             );
             match step {
+                oxc_parser::StreamStep::More if body.one_run => {
+                    self.owner.found_next_run(Some(last_end));
+                    return true;
+                }
                 oxc_parser::StreamStep::More => {}
-                oxc_parser::StreamStep::Done => return true,
+                oxc_parser::StreamStep::Done => {
+                    if body.one_run {
+                        self.owner.found_next_run(None);
+                    }
+                    return true;
+                }
                 oxc_parser::StreamStep::Failed => return false,
             }
         }

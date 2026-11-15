@@ -38,7 +38,8 @@ impl<'a> StatementStream<'a> {
     }
 
     /// Parses the next statements, up to `max` of them or past `budget` arena bytes, passes each
-    /// to `prepare` (which must keep nothing of it) and then the run to `read`, then releases
+    /// to `prepare` (which must keep nothing of it) and then the run to `read`, with the
+    /// comments read so far, then releases
     /// them from the arena unless the parse left state that outlives them
     /// (`LazyBodyCheckpoint`) or took a new arena chunk.
     pub fn next(
@@ -46,7 +47,7 @@ impl<'a> StatementStream<'a> {
         max: usize,
         budget: usize,
         prepare: &mut dyn FnMut(&mut Statement<'a>),
-        read: &mut dyn FnMut(&[Statement<'_>]),
+        read: &mut dyn FnMut(&[Statement<'_>], &[oxc_ast::Comment]),
     ) -> StreamStep {
         if self.failed() {
             return StreamStep::Failed;
@@ -74,7 +75,7 @@ impl<'a> StatementStream<'a> {
         let parser = &mut self.parser;
         let end = parser.prev_token_end;
         statements.iter_mut().for_each(&mut *prepare);
-        read(&statements);
+        read(&statements, &parser.lexer.trivia_builder.comments);
         drop(statements);
         let escaped_after = parser.lexer.escaped_strings.keys().any(|key| *key >= end)
             || parser.lexer.escaped_templates.keys().any(|key| *key >= end);

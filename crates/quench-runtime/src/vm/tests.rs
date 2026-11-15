@@ -23962,6 +23962,22 @@ fn forwarded_calls_cross_into_cell_bodies() {
 /// statements at a time (`compile::statement_stream`) and runs as the whole body would: calls,
 /// member writes, positions in errors.
 #[test]
+fn streamed_root_function_runs_a_run_at_a_time_then_whole_when_called_again() {
+    // `big`'s first call compiles and runs its body a run of statements at a time; its second
+    // compiles it whole. Both read the script's lexical `k` and the caller's `this`-free scope.
+    let mut source = String::from("let k = 3; var acc = 0; function add(x) { acc += x; }\nfunction big(p) {\n");
+    for _ in 0..24_000 {
+        source.push_str("add(p + k);\n");
+    }
+    source.push_str("}\nbig(1); var first = acc; big(2); print(first + ' ' + acc + ' ' + big.length + ' ' + big.name);\n");
+    let program = Engine::specialize(&source, "streamed-runs.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["96000 216000 1 big".to_string()]);
+}
+
+#[test]
 fn straight_line_body_past_the_stream_size_runs_as_written() {
     let mut source = String::from("var acc = []; var o = { a: 0, b: { c: 0 } }; function emit(x, y) { acc.push(x + (y === undefined ? 0 : y)); }\nfunction big(p) {\n");
     let mut expected_sum = 0i64;

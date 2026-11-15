@@ -83,7 +83,7 @@ mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIEL
 mod rewrite;
 mod sequence;
 pub(crate) mod stack;
-mod statement_stream;
+pub(crate) mod statement_stream;
 mod string;
 mod template;
 mod typescript;
@@ -1082,7 +1082,9 @@ impl Engine {
         // not compile with them compiles eagerly, which reports its own diagnostics.
         // TypeScript admission currently validates runtime-changing syntax over the
         // complete AST, including declarations inside functions, before execution.
-        if expected_shape.replayable(private_name_overrides, annex_b_forbidden_names)
+        // A streamed body's first run parses the body lazily, to compile one run of it.
+        let first_run = matches!(expected_shape, ParsedProgramShape::FirstCallChunk(window) if window.first_run());
+        if (expected_shape.replayable(private_name_overrides, annex_b_forbidden_names) || first_run)
             && !source_type.is_typescript()
             && let Ok(program) = compile(true)
         {
@@ -1368,6 +1370,12 @@ impl Engine {
         compiler.first_call.plan(expected_shape, compiler.replayable_source, &parsed.program, inherited_strict, (std::mem::take(&mut facts.free_names), std::mem::take(&mut facts.call_only_found)));
         compiler.streamed = std::mem::take(&mut facts.streamed);
         compiler.stream_candidates = std::mem::take(&mut facts.stream_candidates);
+        if let ParsedProgramShape::FirstCallChunk(window) = expected_shape {
+            // The chunk's text parsed alone; its functions now lie at their place.
+            let delta = window.start();
+            compiler.streamed = compiler.streamed.iter().map(|start| start + delta).collect();
+            compiler.stream_candidates = compiler.stream_candidates.iter().map(|start| start + delta).collect();
+        }
         compiler.load_encoding =
             (compiler.replayable_source && released == ReleasedRecords::Encoded).then(Default::default);
         compiler.private_name_labels = private_name_labels;
@@ -1877,6 +1885,8 @@ struct Compiler<'a> {
     streamed: FxHashSet<u32>,
     stream_candidates: FxHashSet<u32>,
     body_stream: Option<statement_stream::StreamedBody>,
+    /// The run of a streamed function's body this chunk compiles (`StreamRun`).
+    stream_run: Option<&'a statement_stream::StreamRun>,
     /// Each function's free names (`free_names`), which `verify_predicted_captures` checks
     /// against what the function's compilation captured.
     #[cfg(feature = "verify-replay")]
@@ -2449,6 +2459,7 @@ impl<'a> Compiler<'a> {
             streamed: FxHashSet::default(),
             stream_candidates: FxHashSet::default(),
             body_stream: None,
+            stream_run: None,
             #[cfg(feature = "verify-replay")]
             free_names: FxHashMap::default(),
             private_name_labels: FxHashMap::default(),
@@ -2761,9 +2772,29 @@ impl<'a> Compiler<'a> {
     /// text with an empty body parsed again, and its body compiled from its text a run of
     /// statements at a time; None where the text with an empty body does not parse alone.
     /// Whether the body of `function`, a stream candidate checked without its tree, streams.
+    /// The run a chunk compiles of a streamed function after its first: the function at
+    /// `span`, compiled with its header alone, takes its body from where the run starts.
+    fn later_run(&self, parent: Option<u32>, span: Option<crate::bytecode::SourceSpan>) -> Option<statement_stream::StreamedBody> {
+        let run = self.stream_run?;
+        let (from, body) = run.from?;
+        (parent.is_some() && span?.start == run.start).then(|| {
+            run.found.set(Some((body, None)));
+            statement_stream::StreamedBody { start: from, end: body.close, strict: body.strict, one_run: true }
+        })
+    }
+
+    /// Where the run after the one a chunk compiled starts, if any.
+    fn found_next_run(&self, next: Option<u32>) {
+        if let Some(run) = self.stream_run
+            && let Some((body, _)) = run.found.get()
+        {
+            run.found.set(Some((body, next)));
+        }
+    }
+
     fn body_streams(&self, function: &oxc_ast::ast::Function<'_>, context: &replay::PlainFunctionContext) -> bool {
         let Some(body) = function.body.as_ref().map(|body| body.span) else { return false };
-        statement_stream::body_streams(self.text, self.source_type, statement_stream::StreamedBody { start: body.start + 1, end: body.end - 1, strict: context.inherited_strict })
+        statement_stream::body_streams(self.text, self.source_type, statement_stream::StreamedBody { start: body.start + 1, end: body.end - 1, strict: context.inherited_strict, one_run: false })
     }
 
     fn compile_streamed_function(&mut self, function: &oxc_ast::ast::Function<'_>, context: &replay::PlainFunctionContext) -> Option<u32> {
@@ -2784,7 +2815,11 @@ impl<'a> Compiler<'a> {
         let again = reparsed.function_mut().filter(|again| again.span.start == function.span.start)?;
         again.span.end = function.span.end;
         again.body.as_mut()?.span = body;
-        self.body_stream = Some(statement_stream::StreamedBody { start: body.start + 1, end: body.end - 1, strict });
+        let one_run = self.stream_run.is_some_and(|run| run.start == function.span.start && run.from.is_none());
+        if one_run && let Some(run) = self.stream_run {
+            run.found.set(Some((statement_stream::StreamedRun { open: body.start, close: body.end - 1, strict }, None)));
+        }
+        self.body_stream = Some(statement_stream::StreamedBody { start: body.start + 1, end: body.end - 1, strict, one_run });
         let again = reparsed.function().expect("checked above");
         Some(self.compile_plain_function(again, context.clone()))
     }
@@ -3954,7 +3989,7 @@ impl<'a> Compiler<'a> {
             FunctionBody::Statements(body) => (body, None),
             FunctionBody::Expression(expression) => (&[][..], Some(expression)),
         };
-        let streamed = self.body_stream.take();
+        let streamed = self.body_stream.take().or_else(|| self.later_run(parent, options.source_span));
         if let Some(id) = self.skip_replayed_child() {
             return id;
         }

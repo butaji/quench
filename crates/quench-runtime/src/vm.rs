@@ -2091,6 +2091,7 @@ pub(crate) struct Vm<H> {
     native_families: Vec<operations::NativeFamily>,
     /// The compiled chunk of each first-call stub, by its program and function, while both live.
     first_chunks: first_call_chunk::FirstChunks,
+    streamed_stubs: first_call_chunk::StreamedStubs,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
     /// The `typeof` result string of each value type, made on first use; `undefined` until
     /// then. Rooted, so `typeof` neither hashes nor allocates once warm.
