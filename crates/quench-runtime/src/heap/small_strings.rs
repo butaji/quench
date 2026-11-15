@@ -176,7 +176,7 @@ impl SmallParts {
     /// The string parts not yet written out: what a collector traces. Every shape keeps an id
     /// in `head`; all but the wide shapes one in `tail`, and only `SHAPE_TEXTS` a third in `extra`.
     #[inline(always)]
-    fn for_each_text(&self, mut visit: impl FnMut(u32)) {
+    pub(super) fn for_each_text(&self, mut visit: impl FnMut(u32)) {
         if self.is_written() {
             return;
         }

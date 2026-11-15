@@ -9,7 +9,7 @@ impl<H: Host> Vm<H> {
         host: H,
         execution_interrupt: crate::ExecutionInterrupt,
     ) -> Self {
-        Self {
+        let mut vm = Self {
             host,
             typed_views: Default::default(),
             native_microtask_running: false,
@@ -205,6 +205,10 @@ impl<H: Host> Vm<H> {
             deferred_dependency_batch: false,
             construct_target: None,
             random_state: fresh_random_seed(),
+        };
+        if crate::trace::Dev::RcGc.on() {
+            vm.heap.set_rc(true);
         }
+        vm
     }
 }

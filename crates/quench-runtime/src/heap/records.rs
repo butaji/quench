@@ -17,7 +17,7 @@ use std::mem::MaybeUninit;
 #[cfg(feature = "profile-memory")]
 use std::mem::size_of;
 use std::ptr::NonNull;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(super) type RecordId = u32;
 
@@ -222,6 +222,16 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY, 
     /// The first id of each occupancy word whose free ids the cycle's allocation pre-marked
     /// (`satb_blacken_free_word`), which `end_satb` unmarks where no claim took them.
     satb_reused_words: Vec<RecordId>,
+    /// Whether counts are kept (`QUENCH_DEV=rc-gc`, `super::rc`): the barrier then copies an
+    /// old record's children before its first write in an epoch (`rc_note`) and logs every
+    /// store into an old record.
+    rc: bool,
+    /// The counts, a block of them per record block while `rc` (`rc_ensure`).
+    rc_blocks: Vec<RcBlock>,
+    /// The children the barrier copied this epoch, for decrements, and the records it logged,
+    /// for increments of their children at the epoch's end.
+    rc_decrements: Vec<Value>,
+    rc_logged: Vec<RecordId>,
 }
 
 impl<T, const CAPACITY: usize, const HOLE: usize> Default for RecordSpace<T, CAPACITY, HOLE> {
@@ -249,6 +259,10 @@ impl<T, const CAPACITY: usize, const HOLE: usize> Default for RecordSpace<T, CAP
             satb_frontier: 0,
             satb_values: Vec::new(),
             satb_reused_words: Vec::new(),
+            rc: false,
+            rc_blocks: Vec::new(),
+            rc_decrements: Vec::new(),
+            rc_logged: Vec::new(),
         }
     }
 }
@@ -278,6 +292,28 @@ struct RecordBlock {
     /// Freed ids no allocation takes until `RecordSpace::release_withheld`
     /// (`RecordSpace::withhold`).
     withheld: [u64; BLOCK_WORDS],
+}
+
+/// A block's reference counts under `QUENCH_DEV=rc-gc` (`super::rc`), beside its
+/// `RecordBlock` (whose layout native code reads): two bits per record, a saturating count of
+/// 0..=3 where 3 is stuck. Atomic only so a count changes through a shared view of the space
+/// (one thread; relaxed loads and stores, no read-modify-write).
+struct RcBlock {
+    lo: [AtomicU64; BLOCK_WORDS],
+    hi: [AtomicU64; BLOCK_WORDS],
+}
+
+impl RcBlock {
+    fn new() -> Self {
+        Self { lo: [const { AtomicU64::new(0) }; BLOCK_WORDS], hi: [const { AtomicU64::new(0) }; BLOCK_WORDS] }
+    }
+
+    /// Clears the counts of the ids of `word_index` that `kept` leaves out.
+    #[inline(always)]
+    fn keep(&mut self, word_index: usize, kept: u64) {
+        *self.lo[word_index].get_mut() &= kept;
+        *self.hi[word_index].get_mut() &= kept;
+    }
 }
 
 /// Authoritative record-mark layout for native write-barrier guards.
@@ -756,6 +792,8 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     {
         if self.satb {
             self.satb_note(id, properties);
+        } else if self.rc {
+            self.rc_barrier(id, properties);
         } else if stored.heap_index().is_some() {
             self.remember(id);
         }
@@ -772,9 +810,39 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     {
         if self.satb {
             self.satb_note(id, properties);
+        } else if self.rc {
+            self.rc_barrier(id, properties);
         } else {
             self.remember(id);
         }
+    }
+
+    /// The barrier under counts: an old record's first write in the epoch unmarks and logs it,
+    /// as `remember` does, and copies the children it holds before the write.
+    #[inline(always)]
+    fn rc_barrier(&mut self, id: RecordId, properties: &crate::value_vec::ValueArena)
+    where
+        T: SatbSnapshot,
+    {
+        let (block_index, record_index) = Self::split_id(id);
+        // SAFETY: a live id belongs to an initialized block.
+        let block = unsafe { self.blocks.get_unchecked(block_index) };
+        if block.marked[record_index / OCCUPANCY_WORD_BITS] & (1_u64 << (record_index % OCCUPANCY_WORD_BITS)) != 0 {
+            self.rc_note(id, properties);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn rc_note(&mut self, id: RecordId, properties: &crate::value_vec::ValueArena)
+    where
+        T: SatbSnapshot,
+    {
+        self.remember(id);
+        self.rc_logged.push(id);
+        // SAFETY: a barrier runs only for a live record of this family.
+        let record = unsafe { (*self.base.as_ptr().add(id as usize)).assume_init_ref() };
+        record.snapshot(properties, &mut self.rc_decrements);
     }
 
     /// The snapshot barrier: before the first write in this cycle to a record older than the
@@ -876,7 +944,8 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         if self.satb {
             return true;
         }
-        if stored.heap_index().is_none() {
+        // Under counts, overwriting a reference with any value deletes an edge.
+        if stored.heap_index().is_none() && !self.rc {
             return false;
         }
         let (block_index, record_index) = Self::split_id(id);
@@ -1220,6 +1289,9 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
             live &= live - 1;
         }
         block.occupied[word_index] = marked;
+        if let Some(counts) = self.rc_blocks.get_mut(block_index) {
+            counts.keep(word_index, marked);
+        }
         (marked.count_ones() as usize, self.release(id_base, dead, visit))
     }
 
@@ -1252,6 +1324,9 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         block.aged[word_index] = stays;
         block.marked[word_index] = marked & !stays;
         block.occupied[word_index] &= !dead;
+        if let Some(counts) = self.rc_blocks.get_mut(block_index) {
+            counts.keep(word_index, !dead);
+        }
         if stays != 0 {
             self.aged_words.push(base);
         }
@@ -1418,3 +1493,110 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
 
 #[cfg(test)]
 mod tests;
+
+/// Reference counts (`super::rc`).
+impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE> {
+    /// Turns counting on or off; off forgets the epoch's buffers.
+    pub(super) fn set_rc(&mut self, on: bool) {
+        self.rc = on;
+        self.rc_decrements.clear();
+        self.rc_logged.clear();
+        if on {
+            self.rc_ensure();
+        } else {
+            self.rc_blocks = Vec::new();
+        }
+    }
+
+    /// Gives every record block its counts, zero for the blocks made since the last call: the
+    /// collector calls it before it reads or changes counts.
+    pub(super) fn rc_ensure(&mut self) {
+        while self.rc_blocks.len() < self.blocks.len() {
+            self.rc_blocks.push(RcBlock::new());
+        }
+    }
+
+    /// The count of live record `id`: 0..=3, 3 stuck.
+    #[inline(always)]
+    pub(super) fn rc_count(&self, id: RecordId) -> u8 {
+        let (block_index, record_index) = Self::split_id(id);
+        let block = &self.rc_blocks[block_index];
+        let (word, bit) = (record_index / OCCUPANCY_WORD_BITS, record_index % OCCUPANCY_WORD_BITS);
+        let lo = (block.lo[word].load(Ordering::Relaxed) >> bit) & 1;
+        let hi = (block.hi[word].load(Ordering::Relaxed) >> bit) & 1;
+        (hi << 1 | lo) as u8
+    }
+
+    #[inline(always)]
+    fn rc_store(&self, id: RecordId, count: u8) {
+        let (block_index, record_index) = Self::split_id(id);
+        let block = &self.rc_blocks[block_index];
+        let (word, mask) = (record_index / OCCUPANCY_WORD_BITS, 1_u64 << (record_index % OCCUPANCY_WORD_BITS));
+        let set = |bits: &AtomicU64, on: bool| {
+            let value = bits.load(Ordering::Relaxed);
+            bits.store(if on { value | mask } else { value & !mask }, Ordering::Relaxed);
+        };
+        set(&block.lo[word], count & 1 != 0);
+        set(&block.hi[word], count & 2 != 0);
+    }
+
+    /// Adds a reference to live record `id`; a stuck count stays.
+    #[inline(always)]
+    pub(super) fn rc_increment(&self, id: RecordId) {
+        let count = self.rc_count(id);
+        if count < RC_STUCK {
+            self.rc_store(id, count + 1);
+        }
+    }
+
+    /// Drops a reference to live record `id`; whether its count reached 0. A stuck count
+    /// stays, and a count of 0 (an over-decrement, which a deletion the barrier missed cannot
+    /// cause: those only over-count) stays 0.
+    #[inline(always)]
+    pub(super) fn rc_decrement(&self, id: RecordId) -> bool {
+        let count = self.rc_count(id);
+        if count == 0 || count == RC_STUCK {
+            return false;
+        }
+        self.rc_store(id, count - 1);
+        count == 1
+    }
+
+    /// Every count becomes 0, as a recount starts.
+    pub(super) fn rc_clear(&mut self) {
+        self.rc_ensure();
+        for block in &mut self.rc_blocks {
+            for word in 0..BLOCK_WORDS {
+                block.keep(word, 0);
+            }
+        }
+    }
+
+    /// The children the barrier copied and the records it logged this epoch, emptied.
+    pub(super) fn take_rc_epoch(&mut self) -> (Vec<Value>, Vec<RecordId>) {
+        self.rc_ensure();
+        (std::mem::take(&mut self.rc_decrements), std::mem::take(&mut self.rc_logged))
+    }
+
+    /// Under `PromotionAge::First`, after a minor collection's mark and before its sweep: the
+    /// young records the mark reached (the marked aged ones of the young words), which the
+    /// sweep makes old.
+    pub(super) fn for_each_young_survivor(&self, mut visit: impl FnMut(RecordId)) {
+        // A word reloaded for allocation is listed once per load.
+        let mut bases: Vec<RecordId> = Self::young_word_bases(&self.young_words, self.young_floor, self.next_id).collect();
+        bases.sort_unstable();
+        bases.dedup();
+        for base in bases {
+            let (block_index, word_index) = Self::word_position(base);
+            let block = &self.blocks[block_index];
+            let mut survivors = block.aged[word_index] & block.marked[word_index];
+            while survivors != 0 {
+                visit(base + survivors.trailing_zeros());
+                survivors &= survivors - 1;
+            }
+        }
+    }
+}
+
+/// The saturated count: references past it are not counted, and only a trace frees the record.
+pub(super) const RC_STUCK: u8 = 3;

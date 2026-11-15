@@ -2005,3 +2005,83 @@ fn an_incremental_cycle_keeps_what_its_snapshot_reached_under_interleaved_mutati
         }
     }
 }
+
+#[test]
+fn reference_counts_match_the_heap_references_after_each_collection() {
+    use std::collections::{HashMap, HashSet};
+    let reachable = |roots: &[Value], fields: &HashMap<Value, Vec<Value>>| {
+        let (mut seen, mut stack) = (HashSet::new(), roots.to_vec());
+        while let Some(node) = stack.pop() {
+            if node.is_heap() && seen.insert(node) {
+                stack.extend(fields.get(&node).into_iter().flatten().copied());
+            }
+        }
+        seen
+    };
+    for seed in 1..=24_u64 {
+        let mut state = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+        let mut next = move |bound: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % bound as u64) as usize
+        };
+        let mut heap = Heap::new();
+        // Two-slot objects keep their values inline; four-slot ones in an arena run.
+        heap.register_property_shape(1, 2, None);
+        heap.register_property_shape(2, 4, None);
+        heap.set_rc(true);
+        let mut fields: HashMap<Value, Vec<Value>> = HashMap::new();
+        let make = |heap: &mut Heap, fields: &mut HashMap<Value, Vec<Value>>, wide: bool| {
+            let node = if wide {
+                heap.alloc_object_with_properties(Value::NULL, 2, &[Value::NULL; 4])
+            } else {
+                heap.alloc_object_pair(Value::NULL, 1, Value::NULL, Value::NULL)
+            };
+            fields.insert(node, vec![Value::NULL; if wide { 4 } else { 2 }]);
+            node
+        };
+        let store = |heap: &mut Heap, fields: &mut HashMap<Value, Vec<Value>>, node: Value, slot: usize, value: Value| {
+            heap.property_set(node, slot, value);
+            fields.get_mut(&node).unwrap()[slot] = value;
+        };
+        let roots: Vec<Value> = (0..3).map(|index| make(&mut heap, &mut fields, index == 0)).collect();
+        for step in 0..600 {
+            let mut now: Vec<Value> = reachable(&roots, &fields).into_iter().collect();
+            now.sort_by_key(|value| value.to_bits());
+            match next(8) {
+                0 | 1 => {
+                    let node = make(&mut heap, &mut fields, next(3) == 0);
+                    let owner = now[next(now.len())];
+                    let slot = next(fields[&owner].len());
+                    store(&mut heap, &mut fields, owner, slot, node);
+                    store(&mut heap, &mut fields, node, 0, now[next(now.len())]);
+                }
+                2..=5 => {
+                    let owner = now[next(now.len())];
+                    let slot = next(fields[&owner].len());
+                    let value = if next(3) == 0 { Value::NULL } else { now[next(now.len())] };
+                    store(&mut heap, &mut fields, owner, slot, value);
+                }
+                full => {
+                    if full == 7 && next(4) == 0 {
+                        heap.collect(roots.iter().copied());
+                    } else {
+                        collect_minor(&mut heap, roots.iter().copied());
+                    }
+                    let live = reachable(&roots, &fields);
+                    for &node in &live {
+                        assert!(heap.is_live(node), "seed {seed} step {step}: a reachable node was freed");
+                        let object = heap.object(node).unwrap();
+                        for (slot, &value) in fields[&node].iter().enumerate() {
+                            assert_eq!(heap.property_get(object, slot), Some(value), "seed {seed} step {step}");
+                        }
+                    }
+                    fields.retain(|node, _| live.contains(node));
+                    let mismatches = heap.rc_mismatches();
+                    assert!(mismatches.is_empty(), "seed {seed} step {step}: counts differ from references: {mismatches:?}");
+                }
+            }
+        }
+    }
+}
