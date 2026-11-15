@@ -92,7 +92,7 @@ pub(super) fn lane_read_get_trap<H: Host>(
         return Err(exit(ip));
     };
     let activated = lane_activate_trap(cx, r, ip, target, handler, &arguments)?;
-    owe_invariants(vm, Completion::ReadsTrapped, TrapCheck { target: arguments[0], atom, access: TrapAccess::Read });
+    owe_invariants(vm, Completion::ReadsTrapped, arguments[0], atom, TrapAccess::Read);
     Ok(activated)
 }
 
@@ -146,14 +146,19 @@ pub(super) fn lane_keyed_get_trap<H: Host>(cx: *mut LaneContext<H>, r: Registers
     lane_materialize_running_leaf(cx);
     let target = lane_trap_target(cx, trap)?;
     Some(lane_activate_trap(cx, r, ip, target, handler, &arguments).map(|activated| {
-        owe_invariants(vm, Completion::ReadsTrapped, TrapCheck { target: arguments[0], atom, access: TrapAccess::Read });
+        owe_invariants(vm, Completion::ReadsTrapped, arguments[0], atom, TrapAccess::Read);
         activated
     }))
 }
 
 /// Records that the trap activation `lane_activate_keeping` just pushed completes as
-/// `completion` says and owes `check` its target's invariants.
-fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, check: TrapCheck) {
+/// `completion` says and owes `target` its invariants for `atom` (`TrapCheck`).
+fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, target: Value, atom: crate::bytecode::Atom, access: TrapAccess) {
+    // An array's `length` and elements are answered by its element facts too, which its
+    // layout does not name; any other name by its shape, which its layout does.
+    let by_layout = vm.heap.array(target).is_none() || (atom != vm.length_atom && !vm.atom_class(atom).contains(crate::vm::object::AtomClass::ARRAY_INDEX));
+    let layout = if by_layout { vm.object_data(target).map_or(0, |data| data.layout_id()) } else { 0 };
+    let check = TrapCheck { target, atom, access, layout };
     let depth = vm.lane_stack.activations.len() - 1;
     if let Some(Activation { kind: ActivationKind::Script(script), .. }) = vm.lane_stack.activations.last_mut() {
         script.completion = completion;
@@ -180,7 +185,9 @@ pub(super) fn trap_result_needs_general_path<H: Host>(vm: &Vm<H>, activation: Op
     match check.access {
         TrapAccess::StrictStore if !vm.truthy(value) => true,
         TrapAccess::Store | TrapAccess::StrictStore if !vm.truthy(value) => false,
-        _ => !vm.shape_leaves_atom_unconstrained(check.target, check.atom),
+        // A target whose layout the trap left as it was leaves the key unconstrained still.
+        _ => !(check.layout != 0 && vm.object_data(check.target).is_some_and(|data| data.layout_id() == check.layout))
+            && !vm.shape_leaves_atom_unconstrained(check.target, check.atom),
     }
 }
 
@@ -243,7 +250,7 @@ pub(super) fn lane_store_set_trap<H: Host>(
     Some(match lane_activate_trap(cx, r, ip, target, handler, &arguments) {
         Ok((registers, next)) => {
             let access = if strict { TrapAccess::StrictStore } else { TrapAccess::Store };
-            owe_invariants(vm, Completion::AssignsTrapped, TrapCheck { target: arguments[0], atom, access });
+            owe_invariants(vm, Completion::AssignsTrapped, arguments[0], atom, access);
             Resumed::At(registers, next, Carried::script(cx))
         }
         Err(next) => Resumed::Exit(next),

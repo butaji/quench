@@ -85,6 +85,10 @@ pub(crate) struct TrapCheck {
     pub(super) target: Value,
     pub(super) atom: crate::bytecode::Atom,
     pub(super) access: TrapAccess,
+    /// The target's layout id when the pre-check ran, for a key its layout alone answers
+    /// (a name other than an array's `length`): the same layout after the trap answers as
+    /// the pre-check did. 0, which no object's layout is, where the check is made again.
+    pub(super) layout: u32,
 }
 
 impl CallCompletion {
