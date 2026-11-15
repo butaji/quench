@@ -1910,6 +1910,21 @@ struct ObjectExtras {
     /// any other object. Native code reads it at a fixed offset, so it follows the fields that
     /// native code reads, which keep theirs.
     elements: super::ArrayElements,
+    /// What has been recorded about the object's properties beside its shape; bits are set
+    /// once and never cleared (`ElementFacts`).
+    element_facts: ElementFacts,
+    /// A prototype's subject in its heap's dependency table, which its layout and element
+    /// changes retire (`Object::note_prototype_layout_change`).
+    watch: super::dependencies::Watch,
+    /// What few objects carry (`RareExtras`), behind one more pointer: most extras belong to
+    /// arrays with named properties (typescript-lib's NodeArrays with `pos` and `end`), which
+    /// carry none of it, and the whole set inline made each such array's extras 368 bytes.
+    rare: Option<Box<RareExtras>>,
+}
+
+/// The extras of exotic, branded, host and module objects (`ObjectExtras::rare`).
+#[derive(Clone, Debug, Default)]
+struct RareExtras {
     arguments_map: Option<Vec<u16>>,
     brand: ObjectBrand,
     external_address: Option<usize>,
@@ -1920,14 +1935,22 @@ struct ObjectExtras {
     deferred_module: Option<crate::ModuleSource>,
     private_elements: Vec<PrivateElement>,
     stack_data: Option<StackData>,
-    /// What has been recorded about the object's properties beside its shape; bits are set
-    /// once and never cleared (`ElementFacts`).
-    element_facts: ElementFacts,
-    /// A prototype's subject in its heap's dependency table, which its layout and element
-    /// changes retire (`Object::note_prototype_layout_change`).
-    watch: super::dependencies::Watch,
     /// A global object's table of the values code read from it by name (`global_values`).
     global_values: Option<Box<global_values::GlobalValues>>,
+}
+
+impl ObjectExtras {
+    #[inline] fn rare(&self) -> Option<&RareExtras> {
+        self.rare.as_deref()
+    }
+
+    #[inline] fn rare_mut_existing(&mut self) -> Option<&mut RareExtras> {
+        self.rare.as_deref_mut()
+    }
+
+    fn rare_mut(&mut self) -> &mut RareExtras {
+        self.rare.get_or_insert_with(Box::default)
+    }
 }
 /// How structured serialization treats an object (HTML [[Serializable]] and
 /// [[Transferable]] host objects).
@@ -1943,6 +1966,12 @@ pub(crate) enum StructuredSerialization {
 }
 
 impl ObjectExtras {
+    fn allocated_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.rare().map_or(0, RareExtras::allocated_bytes)
+    }
+}
+
+impl RareExtras {
     fn allocated_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + self
@@ -2776,26 +2805,26 @@ impl Object {
     /// Presence of [[ErrorData]] is the unforgeable Error brand.
     pub(crate) fn error(proto: Value) -> Self {
         let mut object = Self::new(proto);
-        object.extras_mut().brand = ObjectBrand::Error;
+        object.extras_mut().rare_mut().brand = ObjectBrand::Error;
         object
     }
 
     /// How structured serialization treats this object.
     pub(crate) fn set_structured_serialization(&mut self, policy: StructuredSerialization) {
-        self.extras_mut().structured_serialization = policy;
+        self.extras_mut().rare_mut().structured_serialization = policy;
     }
 
     pub(crate) fn structured_serialization(&self) -> StructuredSerialization {
-        self.extras().map_or(StructuredSerialization::Ordinary, |extras| extras.structured_serialization)
+        self.extras().and_then(ObjectExtras::rare).map_or(StructuredSerialization::Ordinary, |rare| rare.structured_serialization)
     }
 
     pub(crate) fn forbid_structured_transfer(&mut self) {
-        self.extras_mut().structured_transfer_forbidden = true;
+        self.extras_mut().rare_mut().structured_transfer_forbidden = true;
     }
 
     pub(crate) fn is_structured_transfer_forbidden(&self) -> bool {
         self.extras()
-            .is_some_and(|extras| extras.structured_transfer_forbidden)
+            .and_then(ObjectExtras::rare).is_some_and(|rare| rare.structured_transfer_forbidden)
     }
 
     pub(crate) fn has_error_data(&self) -> bool {
@@ -2804,26 +2833,26 @@ impl Object {
 
     /// Genuine primitive-wrapper data; guest properties cannot supply this slot.
     pub(crate) fn boxed_primitive(&self) -> Option<Value> {
-        self.extras()?.boxed_primitive
+        self.extras()?.rare()?.boxed_primitive
     }
 
     pub(crate) fn set_boxed_primitive(&mut self, value: Value) {
-        self.extras_mut().boxed_primitive = Some(value);
+        self.extras_mut().rare_mut().boxed_primitive = Some(value);
     }
 
     pub(crate) fn stack_data(&self) -> Option<&StackData> {
-        self.extras()?.stack_data.as_ref()
+        self.extras()?.rare()?.stack_data.as_ref()
     }
 
     pub(crate) fn set_stack_data(&mut self, data: StackData) {
-        self.extras_mut().stack_data = Some(data);
+        self.extras_mut().rare_mut().stack_data = Some(data);
     }
 
     /// Visit internal primitive data, private-name homes and captured stack roots.
     #[inline(always)] pub(crate) fn visit_extras_roots(&self, visit: impl FnMut(Value)) { if self.extras_pointer().is_some() { self.visit_extras_values(visit) } }
 
     #[inline(never)] fn visit_extras_values(&self, mut visit: impl FnMut(Value)) {
-        let Some(extras) = self.extras() else { return };
+        let Some(extras) = self.extras().and_then(ObjectExtras::rare) else { return };
         if let Some(value) = extras.boxed_primitive {
             visit(value);
         }
@@ -2914,7 +2943,7 @@ impl Object {
         self.aux() & crate::value_vec::EXOTIC_ACCESS != 0
     }
     #[inline] fn brand(&self) -> ObjectBrand {
-        self.extras().map_or(ObjectBrand::Ordinary, |extras| extras.brand)
+        self.extras().and_then(ObjectExtras::rare).map_or(ObjectBrand::Ordinary, |rare| rare.brand)
     }
     #[inline(always)]
     fn element_facts(&self) -> ElementFacts {
@@ -2942,10 +2971,10 @@ impl Object {
     }
     #[inline]
     pub(crate) fn arguments_map(&self) -> Option<&[u16]> {
-        self.extras()?.arguments_map.as_deref()
+        self.extras()?.rare()?.arguments_map.as_deref()
     }
     pub(crate) fn arguments_map_mut(&mut self) -> Option<&mut Vec<u16>> {
-        self.extras_mut_existing()?.arguments_map.as_mut()
+        self.extras_mut_existing()?.rare_mut_existing()?.arguments_map.as_mut()
     }
     pub(crate) fn mapped_argument_slot(&self, index: usize) -> Option<usize> {
         self.arguments_map()?
@@ -2956,10 +2985,10 @@ impl Object {
     }
     pub(crate) fn set_arguments_map(&mut self, mapping: Vec<u16>) {
         super::array_proofs::retire_array_storage_proofs();
-        self.extras_mut().arguments_map = Some(mapping);
+        self.extras_mut().rare_mut().arguments_map = Some(mapping);
     }
     pub(crate) fn set_arguments_object(&mut self) {
-        self.extras_mut().brand = ObjectBrand::Arguments;
+        self.extras_mut().rare_mut().brand = ObjectBrand::Arguments;
         self.set_aux(self.aux() | crate::value_vec::EXOTIC_ACCESS);
     }
     /// Whether the object's elements are ordinary and all dense, as `dense_array_length`
@@ -3010,14 +3039,14 @@ impl Object {
         self.brand() == ObjectBrand::RawJson
     }
     pub(crate) fn set_raw_json(&mut self) {
-        self.extras_mut().brand = ObjectBrand::RawJson;
+        self.extras_mut().rare_mut().brand = ObjectBrand::RawJson;
     }
 
     pub(crate) fn external_address(&self) -> Option<usize> {
-        self.extras()?.external_address
+        self.extras()?.rare()?.external_address
     }
     pub(crate) fn set_external_address(&mut self, address: usize) {
-        let extras = self.extras_mut();
+        let extras = self.extras_mut().rare_mut();
         extras.external_address = Some(address);
         extras.structured_serialization = StructuredSerialization::Forbidden;
     }
@@ -3033,25 +3062,25 @@ impl Object {
         object
     }
     pub(crate) fn set_module_namespace(&mut self) {
-        self.extras_mut().brand = ObjectBrand::ModuleNamespace;
+        self.extras_mut().rare_mut().brand = ObjectBrand::ModuleNamespace;
         self.set_aux(self.aux() | crate::value_vec::EXOTIC_ACCESS);
     }
     pub(crate) fn module_bindings(&self) -> &[(Atom, ProgramId, u16)] {
-        self.extras().map_or(&[], |extras| &extras.module_bindings)
+        self.extras().and_then(ObjectExtras::rare).map_or(&[], |rare| &rare.module_bindings)
     }
     pub(crate) fn set_module_bindings(&mut self, bindings: Vec<(Atom, ProgramId, u16)>) {
-        self.extras_mut().module_bindings = bindings;
+        self.extras_mut().rare_mut().module_bindings = bindings;
     }
     pub(crate) fn deferred_module(&self) -> Option<&crate::ModuleSource> {
-        self.extras()?.deferred_module.as_ref()
+        self.extras()?.rare()?.deferred_module.as_ref()
     }
     pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
-        self.extras_mut().deferred_module = module;
+        self.extras_mut().rare_mut().deferred_module = module;
     }
     pub(crate) fn private_names(&self) -> impl Iterator<Item = PrivateBrand> + '_ {
         self.extras()
             .into_iter()
-            .flat_map(|extras| extras.private_elements.iter().map(|element| element.brand))
+            .flat_map(|extras| extras.rare().into_iter().flat_map(|rare| rare.private_elements.iter()).map(|element| element.brand))
     }
     pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
         self.private_names().any(|candidate| candidate == brand)
@@ -3059,24 +3088,24 @@ impl Object {
     pub(crate) fn add_private_name(&mut self, brand: PrivateBrand) {
         if !self.has_private_name(brand) {
             self.extras_mut()
-                .private_elements
+                .rare_mut().private_elements
                 .push(PrivateElement { brand, data: None });
         }
     }
     pub(crate) fn private_field(&self, brand: PrivateBrand) -> Option<Value> {
-        self.extras()?
+        self.extras()?.rare()?
             .private_elements
             .iter()
             .find(|element| element.brand == brand)?
             .data
     }
     pub(crate) fn set_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
-        let Some(element) = self.extras_mut_existing().and_then(|extras| extras.private_elements.iter_mut().find(|element| element.brand == brand && element.data.is_some())) else { return false; };
+        let Some(element) = self.extras_mut_existing().and_then(ObjectExtras::rare_mut_existing).and_then(|rare| rare.private_elements.iter_mut().find(|element| element.brand == brand && element.data.is_some())) else { return false; };
         element.data = Some(value);
         true
     }
     pub(crate) fn initialize_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
-        let elements = &mut self.extras_mut().private_elements;
+        let elements = &mut self.extras_mut().rare_mut().private_elements;
         if let Some(element) = elements.iter_mut().find(|element| element.brand == brand) {
             if element.data.is_some() {
                 return false;

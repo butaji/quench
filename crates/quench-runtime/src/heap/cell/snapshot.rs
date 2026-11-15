@@ -170,6 +170,15 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         prototype_lookup: lookup,
         inline_properties,
         arena_start,
+        element_facts,
+        // A restored heap gives each prototype a new watch (`Heap::register_restored_prototypes`).
+        watch: _,
+        // An array's elements are written with its record (`ArrayObject::write_snapshot`).
+        elements: _,
+        rare,
+    } = extras;
+    let default_rare = RareExtras::default();
+    let RareExtras {
         arguments_map,
         brand,
         external_address,
@@ -180,12 +189,9 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         deferred_module,
         private_elements,
         stack_data,
-        element_facts,
-        // A restored heap gives each prototype a new watch (`Heap::register_restored_prototypes`); its code holds no global value.
-        watch: _, global_values: _,
-        // An array's elements are written with its record (`ArrayObject::write_snapshot`).
-        elements: _,
-    } = extras;
+        // Its code holds no global value.
+        global_values: _,
+    } = rare.as_deref().unwrap_or(&default_rare);
     if external_address.is_some() {
         return Err(SnapshotError::unsupported("an object whose address an embedder observed"));
     }
@@ -250,10 +256,7 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
         })
     })?;
     let stack_data = if reader.bool()? { Some(read_stack_data(reader)?) } else { None };
-    Ok(ObjectExtras {
-        prototype_lookup,
-        inline_properties,
-        arena_start,
+    let rare = RareExtras {
         arguments_map,
         brand,
         external_address: None,
@@ -264,9 +267,17 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
         deferred_module,
         private_elements,
         stack_data,
+        global_values: None,
+    };
+    let rare = Some(Box::new(rare));
+    Ok(ObjectExtras {
+        prototype_lookup,
+        inline_properties,
+        arena_start,
         element_facts,
-        watch: Default::default(), global_values: None,
+        watch: Default::default(),
         elements: Default::default(),
+        rare,
     })
 }
 
