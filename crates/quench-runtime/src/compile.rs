@@ -1125,7 +1125,7 @@ impl Engine {
         let mut check = |body: oxc_parser::LazyBody<'_, '_>| facts.check(body, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
         // SAFETY: `check` lives through the parse, which alone calls it.
         let check = lazy.then(|| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) });
-        let mut parsed = lazy_bodies::parse(&allocator, parsed_text, source_type, lazy.then_some(0), check, inherited_strict);
+        let mut parsed = lazy_bodies::parse(&allocator, parsed_text, source_type, lazy.then_some(0), check, inherited_strict, true);
         lazy_bodies::release_parsed_free_pages(&allocator);
         let data_literal = match &located {
             Some(literal) if parsed.diagnostics.is_empty()
@@ -1306,7 +1306,7 @@ impl Engine {
         if lazy {
             // The lazily parsed bodies, checked and analyzed one at a time as the parser
             // released them (`lazy_bodies::BodyFacts::check`).
-            if facts.failed {
+            if facts.failed || parsed.lazy_methods_kept {
                 return Err(vec![Diagnostic::unsupported(name, "SyntaxError: a lazily parsed function body does not check alone")]);
             }
             let first_private_id = private_name_ids.values().max().map_or(0, |id| id + 1);
