@@ -1834,6 +1834,7 @@ struct Compiler<'a> {
     /// line's start.
     last_utf16_excess: [std::cell::Cell<usize>; 2],
     source_comments: Vec<Span>,
+    directives: crate::bytecode::SourceDirectives,
     /// Byte offset of each non-ASCII character with the running excess of
     /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
     source_utf16_excess: std::borrow::Cow<'a, [(usize, usize)]>,
@@ -2403,7 +2404,7 @@ impl<'a> Compiler<'a> {
             source_line_starts,
             last_source_line: std::cell::Cell::new(0),
             last_utf16_excess: Default::default(),
-            source_comments: Vec::new(),
+            source_comments: Vec::new(), directives: Default::default(),
             source_utf16_excess,
             mode,
             root_strict: false,
@@ -2960,6 +2961,13 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Reads the parse's comment table once: the spans that delimiter scans skip, and the
+    /// magic comments the program's source keeps.
+    fn read_comments(&mut self, comments: &[oxc_ast::ast::Comment]) {
+        self.source_comments = comments.iter().map(|comment| comment.span).collect();
+        self.directives = crate::bytecode::SourceDirectives::of_comments(self.text, comments);
+    }
+
     /// The index of the line holding `offset` (`source_line_index`).
     fn source_line_index(&self, offset: usize) -> usize {
         source_line_index(&self.source_line_starts, &self.last_source_line, offset)
@@ -2973,7 +2981,7 @@ impl<'a> Compiler<'a> {
         module_goal: bool,
         inherited_strict: bool,
     ) -> Result<(Self, ModuleParts), Vec<Diagnostic>> {
-        self.source_comments = program.comments.iter().map(|comment| comment.span).collect();
+        self.read_comments(&program.comments);
         self.module_goal = module_goal;
         let module_requests = if module_goal {
             module_requests(&program.body)
@@ -3427,6 +3435,7 @@ impl<'a> Compiler<'a> {
                 column_offset: 0,
                 line_starts: Default::default(),
                 call_sites: Default::default(),
+                directives: self.directives,
             })),
             atoms,
             constants: crate::bytecode::append_vec::AppendVec::with_headroom(constants, room.constants()),

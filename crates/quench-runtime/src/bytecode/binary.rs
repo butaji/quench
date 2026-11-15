@@ -1,5 +1,7 @@
 mod abi;
 mod closure_tables;
+mod source_facts;
+use source_facts::{read_source_facts, write_source_facts};
 use closure_tables::{read_closure_tables, write_closure_tables};
 use super::{
     AtomTable, BindingSite, Constant, DerivedFact, DispatchClass, FactTables, EvalBinding, EvalBindingDeclaration,
@@ -207,24 +209,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         source => write_optional_string(&mut out, source.as_ref().map(|source| source.text.as_ref())),
     }
     if let Some(source) = &program.source {
-        out.bool(source.typescript);
-        out.u32(source.base);
-        out.u32(source.line_offset);
-        out.u32(source.column_offset);
-        out.bool(source.call_sites.get().is_some());
-        if let Some(sites) = source.call_sites.get() {
-            out.u32(sites.len() as u32);
-            for site in sites.iter() {
-                out.u32(site.offset);
-                out.bool(site.construct);
-                out.string(&site.callee);
-                out.bool(site.expression.is_some());
-                if let Some(span) = site.expression {
-                    out.u32(span.start);
-                    out.u32(span.end);
-                }
-            }
-        }
+        write_source_facts(&mut out, source);
     }
     write_module_requests(&mut out, &program.module_requests);
     out.u32(program.module_imports.len() as u32);
@@ -525,28 +510,7 @@ fn decode_program(
         _ => return Err("invalid optional residual string".into()),
     };
     let source = match text {
-        Some(text) => Some(super::ProgramSource {
-            text,
-            typescript: input.bool()?,
-            base: input.u32()?,
-            line_offset: input.u32()?,
-            column_offset: input.u32()?,
-            line_starts: Default::default(),
-            call_sites: if input.bool()? {
-                std::cell::OnceCell::from(std::sync::Arc::from(input.list(|input| {
-                    Ok(super::CallSiteDescription {
-                        offset: input.u32()?,
-                        construct: input.bool()?,
-                        callee: input.string()?,
-                        expression: if input.bool()? {
-                            Some(super::SourceSpan { start: input.u32()?, end: input.u32()? })
-                        } else { None },
-                    })
-                })?))
-            } else {
-                Default::default()
-            },
-        }),
+        Some(text) => Some(read_source_facts(&mut input, text)?),
         None => None,
     };
     let module_requests = read_module_requests(&mut input)?;

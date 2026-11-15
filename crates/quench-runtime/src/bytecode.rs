@@ -3480,6 +3480,8 @@ pub(crate) struct ProgramSource {
     /// Complete static call-printing facts for native images. An unset cell
     /// leaves the dynamic error-path renderer in charge; an empty table is final.
     pub(crate) call_sites: std::cell::OnceCell<std::sync::Arc<[CallSiteDescription]>>,
+    /// The magic comments, found once by the parse that loaded the source.
+    pub(crate) directives: SourceDirectives,
 }
 
 impl ProgramSource {
@@ -3504,12 +3506,13 @@ impl ProgramSource {
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // `line_starts` is a memo of `text`, made again on the first line read.
         crate::vm::freeze_source_call_sites(self);
-        let Self { text, typescript, base, line_offset, column_offset, line_starts: _, call_sites } = self;
+        let Self { text, typescript, base, line_offset, column_offset, line_starts: _, call_sites, directives } = self;
         text.write_snapshot(writer);
         writer.bool(*typescript);
         writer.u32(*base);
         writer.u32(*line_offset);
         writer.u32(*column_offset);
+        directives.write_snapshot(writer);
         writer.bool(call_sites.get().is_some());
         if let Some(sites) = call_sites.get() {
             writer.len(sites.len());
@@ -3535,6 +3538,7 @@ impl ProgramSource {
             column_offset: reader.u32()?,
             line_starts: std::cell::OnceCell::new(),
             call_sites: Default::default(),
+            directives: SourceDirectives::read_snapshot(reader)?,
         };
         if reader.bool()? {
             let count = reader.len()?;
@@ -4099,6 +4103,7 @@ impl ResidualProgram {
     }
 }
 mod binary;
+mod source_directives; pub(crate) use source_directives::SourceDirectives;
 #[cfg(feature = "native-execution")]
 mod native_metadata;
 #[cfg(feature = "native-execution")]

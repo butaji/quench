@@ -222,6 +222,7 @@ pub(crate) mod operations;
 mod primitive_bench;
 pub(crate) use operations::number_is_truthy;
 mod primitives;
+pub(crate) use primitives::is_ecma_whitespace_character;
 pub(crate) mod program_store;
 mod promise;
 mod promise_aggregate;

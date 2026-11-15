@@ -2,7 +2,7 @@ use super::*;
 
 mod in_place;
 mod whitespace;
-pub(super) use whitespace::is_ecma_whitespace_character;
+pub(crate) use whitespace::is_ecma_whitespace_character;
 use whitespace::is_ecma_whitespace;
 
 impl<H: Host> Vm<H> {
