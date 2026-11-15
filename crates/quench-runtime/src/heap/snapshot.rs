@@ -9,6 +9,9 @@ use crate::snapshot::{read_list, Reader, SnapshotError, SnapshotResult, Writer};
 impl Heap {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
         self.write_out_all_strings();
+        if self.properties.float_slots() {
+            return Err(SnapshotError::unsupported("a heap whose number slots hold raw doubles"));
+        }
         if !self.abandoned_contexts.is_empty() {
             return Err(SnapshotError::unsupported("host contexts awaiting release"));
         }

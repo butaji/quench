@@ -31,7 +31,7 @@ fn metadata_is_compact_and_ranges_preserve_values() {
     let mut values = ValueVec::new();
     for value in 0..9 {
         arena.register_shape(value + 1, value as usize + 1);
-        arena.push(&mut values, Value::number(f64::from(value)));
+        arena.push(&mut values, Value::number(f64::from(value)), value + 1);
         values.set_auxiliary(value + 1);
     }
     assert_eq!(arena.get(values, 8).unwrap().as_number(), Some(8.0));
@@ -56,7 +56,7 @@ fn young_values(n: f64) -> [Value; 4] {
 }
 
 fn young(arena: &mut ValueArena, n: f64) -> ValueVec {
-    ValueVec { start: arena.young_run_padded(&young_values(n), 3).unwrap(), auxiliary: 1 }
+    ValueVec { start: arena.young_run_padded(&young_values(n), 3, 1).unwrap(), auxiliary: 1 }
 }
 
 /// Survivors 3 and 6 move down to the floor in start order; the rest is reclaimed.

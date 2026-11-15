@@ -3,8 +3,7 @@
 //! interpreter runs it on `Concrete`; a specializer emits it from the same rows.
 
 use super::narrow::{NOT_NARROW, UPPER_WORD};
-use super::object::{inline_storage, HALF_BYTES};
-use super::object::Rep;
+use super::object::{inline_storage, Rep, HALF_BYTES};
 use super::slot_store::{admitted_payload, gate_open, gated_payload, store_flat};
 use super::Stage;
 use super::region::Region;
