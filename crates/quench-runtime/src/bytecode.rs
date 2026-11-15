@@ -2808,6 +2808,10 @@ impl Function {
                 && load.result_flags() == 0
                 && matches!(constants.get(load.constant_index()), Some(Constant::Undefined))
         };
+        // Only a construction's immediate holds its arguments (`ImmediateLayout::ConstructCountAndFlags`).
+        if construct.op() != Op::Construct {
+            return None;
+        }
         let crate::bytecode::ConstructArguments::Registers(window) = construct.construct_arguments() else {
             return None;
         };
@@ -2820,7 +2824,6 @@ impl Function {
             });
         let shaped = parent_of(active, base, receiver, parent)
             && undefined_load(spare)
-            && construct.op() == Op::Construct
             && construct.is_super_construct()
             && construct.result_flags() == 0
             && construct.b() == parent.result_register()

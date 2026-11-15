@@ -919,7 +919,9 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         let start = out.bytes.len();
         out.option_u32(function.parent);
         out.option_atom(function.name);
-        debug_assert_eq!(out.bytes.len() - start, RECORD_INFERRED_NAME_AT);
+        // A fixed-width record keeps its inferred name where `LoadEncoding::name` patches it;
+        // a packed one (`pack_unlowered`) is never patched.
+        debug_assert!(out.packed || out.bytes.len() - start == RECORD_INFERRED_NAME_AT);
         out.option_atom(function.inferred_name);
         out.u8(u8::from(function.is_arrow));
         out.u16(function.self_binding_slot.unwrap_or(u16::MAX));
