@@ -387,6 +387,7 @@ impl<H: Host> Vm<H> {
             instanceof_proofs: _,
             closure_shapes: _,
             resolver_function_shape: _,
+            bound_function_shape: _,
             iterator_result_header: _,
             reused_iterator_result: _,
             descriptor_shapes: _,

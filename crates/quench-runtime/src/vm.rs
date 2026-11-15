@@ -2116,6 +2116,10 @@ pub(crate) struct Vm<H> {
     /// The shape a promise's resolving function's own `length` and `name` reach
     /// (`Vm::native_with_realm`); derived from shapes, so field-cache invalidation clears it.
     resolver_function_shape: Option<u32>,
+    /// The shapes a bound function's own `length` and `name` and its environment's target,
+    /// receiver and bound values reach (`Vm::bind_function`), the first one's adds recorded;
+    /// derived from shapes, so field-cache invalidation clears it.
+    bound_function_shape: Option<(u32, u32)>,
     /// The parts of a recorded closure that depend on its function and realm alone
     /// (`construction::ClosureTemplate`); derived from shapes, so field-cache invalidation
     /// clears it.
