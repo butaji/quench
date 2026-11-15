@@ -277,6 +277,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             Kind::Await if self.is_using_statement() => Err(()),
             Kind::Using if self.is_using_declaration() => Err(()),
             Kind::Function if !stmt_ctx.is_single_statement() => self.rc_function(false),
+            Kind::Class if !stmt_ctx.is_single_statement() => self.rc_class(false),
             Kind::Function
             | Kind::Class
             | Kind::Export
@@ -598,6 +599,114 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         let ctx = self.ctx;
         self.ctx = ctx.and_in(true).and_await(false).and_yield(false).and_new_target(true);
+        self.parse_function_body();
+        self.early.exit_function();
+        self.ctx = ctx;
+        self.rc_live()
+    }
+
+    /// A class (`parse_class` in JavaScript), its plain methods recognized here
+    /// (`rc_class_method`) and every other element read by the parser.
+    fn rc_class(&mut self, expression: bool) -> Rc<()> {
+        let strict = std::mem::replace(&mut self.strict, true);
+        self.bump_any();
+        let binding_kind = self.binding_kind.take();
+        let id = (self.cur_kind().is_binding_identifier()
+            && !(self.at(Kind::Implements) && self.lexer.peek_token().kind().is_identifier_or_keyword()))
+        .then(|| self.parse_binding_identifier().name);
+        self.binding_kind = binding_kind;
+        self.rc_live()?;
+        if let Some(name) = id
+            && !expression
+        {
+            self.early.declare(name, DeclKind::Lexical);
+        }
+        self.early.enter(crate::early::ScopeKind::Block);
+        if let Some(name) = id {
+            self.early.declare(name, DeclKind::OwnName);
+        }
+        let (extends, implements) = self.parse_class_heritage_clause();
+        self.rc_live()?;
+        if implements.is_some() {
+            return Err(());
+        }
+        self.early.enter_class_body(extends.is_some_and(|extends| !extends.is_empty()));
+        self.rc_eat(Kind::LCurly)?;
+        loop {
+            while self.rc_take(Kind::Semicolon) {}
+            if self.at(Kind::RCurly) || self.fatal_error.is_some() {
+                break;
+            }
+            let checkpoint = self.recognizer_checkpoint();
+            if self.rc_class_method().is_err() {
+                self.recognizer_rewind(checkpoint);
+                self.parse_class_element();
+                self.rc_live()?;
+            }
+        }
+        self.rc_eat(Kind::RCurly)?;
+        self.early.exit_class_body();
+        self.early.exit();
+        self.strict = strict;
+        Ok(())
+    }
+
+    /// `[static] [get|set] name(a, b) { ... }`, its name a plain identifier (no keyword,
+    /// accessor or modifier word) and its parameters identifiers (`parse_method` with a body that is not
+    /// lazy); Err on anything else, which the parser then reads.
+    fn rc_class_method(&mut self) -> Rc<()> {
+        let named = |p: &mut Self| !p.cur_token().escaped() && p.lexer.peek_token().kind() == Kind::Ident;
+        let r#static = self.at(Kind::Static) && named(self);
+        if r#static {
+            self.bump_any();
+        }
+        let accessor = (matches!(self.cur_kind(), Kind::Get | Kind::Set) && named(self)).then(|| self.cur_kind());
+        if accessor.is_some() {
+            self.bump_any();
+        }
+        let home = if !r#static && accessor.is_none() && self.at(Kind::Constructor) {
+            // `parse_constructor_declaration`.
+            self.bump_any();
+            if !self.at(Kind::LParen) {
+                return Err(());
+            }
+            self.early.method_home(true)
+        } else {
+            if !self.at(Kind::Ident) {
+                return Err(());
+            }
+            let name = self.rc_name();
+            if r#static && name == "prototype" || !self.at(Kind::LParen) {
+                return Err(());
+            }
+            crate::early::Home::Method
+        };
+        self.early.enter_function(Some(home));
+        let ctx = self.ctx;
+        self.ctx = ctx.and_in(true).and_await(false).and_yield(false).and_new_target(true);
+        self.bump_any();
+        // A getter takes no parameter and a setter exactly one (`check_method_definition_accessor`).
+        if accessor != Some(Kind::Get) && !self.at(Kind::RParen) {
+            self.early.set_in_params(true);
+            loop {
+                self.rc_binding_identifier(DeclKind::Param)?;
+                if accessor.is_some() || !self.rc_take(Kind::Comma) || self.at(Kind::RParen) {
+                    break;
+                }
+            }
+            self.early.set_in_params(false);
+        } else if accessor == Some(Kind::Set) {
+            return Err(());
+        }
+        self.rc_eat(Kind::RParen)?;
+        self.early.set_simple_params(true);
+        if !self.at(Kind::LCurly) {
+            return Err(());
+        }
+        // Marked once nothing can rewind it: a rewind keeps the innermost class's mark.
+        if matches!(home, crate::early::Home::BaseConstructor | crate::early::Home::DerivedConstructor) {
+            self.early.constructor();
+        }
         self.parse_function_body();
         self.early.exit_function();
         self.ctx = ctx;
@@ -1001,8 +1110,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 self.rc_function(true)?;
                 Ok(Shape::Other)
             }
+            Kind::Class => {
+                self.rc_class(true)?;
+                Ok(Shape::Other)
+            }
             Kind::Async
-            | Kind::Class
             | Kind::NoSubstitutionTemplate
             | Kind::TemplateHead
             | Kind::Import
