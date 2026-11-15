@@ -10,6 +10,9 @@ impl Heap {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
         debug_assert!(!self.satb_active(), "a snapshot is written of a heap no cycle is marking (`finish_cycle_now`)");
         self.write_out_all_strings();
+        if self.properties.float_slots() {
+            return Err(SnapshotError::unsupported("a heap whose number slots hold raw doubles"));
+        }
         if !self.abandoned_contexts.is_empty() {
             return Err(SnapshotError::unsupported("host contexts awaiting release"));
         }
@@ -39,6 +42,12 @@ impl Heap {
         write_records(writer, &self.small_strings, |writer, record| Ok(record.written_text().write_snapshot(writer)))?;
         self.properties.write_snapshot(writer);
         self.roots.write_snapshot(writer);
+        self.write_sparse_arrays(writer);
+        Ok(())
+    }
+
+    /// The sparse arrays' lengths and present elements.
+    fn write_sparse_arrays(&self, writer: &mut Writer) {
         let sparse = self.sparse_arrays.as_deref();
         writer.len(sparse.map_or(0, |arrays| arrays.len()));
         for (array, elements) in sparse.into_iter().flatten() {
@@ -50,7 +59,6 @@ impl Heap {
                 writer.value(*value);
             }
         }
-        Ok(())
     }
 
     /// A snapshot keeps no policy: the restored heap paces under the restoring runtime's.

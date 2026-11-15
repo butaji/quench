@@ -54,8 +54,9 @@ pub(crate) fn checked_int32_arithmetic<M: MachineScalar>(machine: &mut M, operat
     machine.raw_binary_overflow(integer_row(operation), left, right)
 }
 
-/// `operation` of two int32 words as their wrapping low bits, which a caller that proved
-/// projecting the Number result commutes with wrapping arithmetic selects.
+/// `operation` of two integer words of one lane as their wrapping bits: int32 words, where a caller
+/// that proved projecting the Number result commutes with wrapping arithmetic selects it, or 64-bit
+/// words, where a caller that proved the exact result inside the lane does.
 pub(crate) fn wrapping_int32_arithmetic<M: MachineScalar>(machine: &mut M, operation: NumberArithmetic,
     left: M::Word, right: M::Word) -> M::Word {
     machine.raw_binary(integer_row(operation), left, right)

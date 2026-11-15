@@ -142,6 +142,39 @@ pub(crate) const NATIVE_TYPED_ARRAY_LAYOUT: NativeTypedArrayLayout = NativeTyped
     stamp_offset: 8,
 };
 
+/// Where a loop entry record keeps an array's element count, after the elements' address (`LoopEntry::push_array`).
+pub(crate) const LOOP_ENTRY_ARRAY_COUNT_AT: u64 = size_of::<u64>() as u64;
+
+/// The runtime's `TypedArrayKind`, in its order (`stencil_layout_matches` checks both).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TypedArrayKind {
+    Uint8,
+    Uint8Clamped,
+    Uint16,
+    Uint32,
+    Int8,
+    Int16,
+    Int32,
+    BigInt64,
+    BigUint64,
+    Float16,
+    Float32,
+    Float64,
+}
+impl TypedArrayKind {
+    /// Every kind, in discriminant order.
+    pub(crate) const ALL: [Self; 12] = [Self::Uint8, Self::Uint8Clamped, Self::Uint16, Self::Uint32, Self::Int8, Self::Int16, Self::Int32, Self::BigInt64, Self::BigUint64, Self::Float16, Self::Float32, Self::Float64];
+    /// The element width in bytes.
+    pub(crate) const fn width(self) -> usize {
+        match self {
+            Self::Uint8 | Self::Uint8Clamped | Self::Int8 => size_of::<u8>(),
+            Self::Uint16 | Self::Int16 | Self::Float16 => size_of::<u16>(),
+            Self::Uint32 | Self::Int32 | Self::Float32 => size_of::<u32>(),
+            Self::BigInt64 | Self::BigUint64 | Self::Float64 => size_of::<u64>(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeEnvironmentLayout {
     pub(crate) header_pointer_offset: i32,

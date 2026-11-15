@@ -6,7 +6,7 @@
 use super::*;
 use crate::staged::flow::FlowStage;
 use crate::staged::machine::{Lane, MachineScalar, Relation, Unary};
-use super::frame::{calls, operand_int, register_tagged};
+use super::frame::{calls, held_long, operand_int, register_tagged};
 use crate::bytecode::{Operand, OperandKind};
 use crate::staged::element_rows::ElementView;
 use crate::staged::elements::DenseView;
@@ -65,9 +65,11 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         }
     }
 
-    /// The key's int32, from the representation its fact proved (`operand_int`).
+    /// The key's index word, from the representation its fact proved: a 64-bit integer word as it
+    /// is (`held_long`), else its int32 (`operand_int`), which the rows zero-extend.
     fn index_key(&mut self, stage: &mut Emit<'b, 'c>, key: Operand, miss: ir::Block) -> Option<ir::Value> {
-        operand_int(stage.builder, self.registers, self.state, self.constants, key, miss)
+        let long = key.register_index().and_then(|register| held_long(stage.builder, self.registers, self.state, register));
+        long.or_else(|| operand_int(stage.builder, self.registers, self.state, self.constants, key, miss))
     }
 
     /// The view an earlier access of the same array value proved, which no storage change has

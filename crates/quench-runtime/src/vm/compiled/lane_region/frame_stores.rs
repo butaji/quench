@@ -27,8 +27,7 @@ impl EmitFrame<'_> {
         };
         let facts = self.fields.as_ref()?;
         let admitted = facts.held.admitted?;
-        let header = self.proof_key(owner).map(|key| headers::object_header(stage.builder, self.registers, self.state,
-            (entry, self.payload), key, false, miss));
+        let header = self.proof_key(owner).map(|key| self.object_header(stage.builder, entry, key, false, miss));
         let (slow, done, packed) = (stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block());
         let packed_address = stage.builder.append_block_param(packed, types::I64);
         if let Some(bound) = binding.admitted { emit_js_guard(stage.builder, bound, slow); }

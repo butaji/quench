@@ -102,11 +102,17 @@ fn number_frame(left: NumberWord, right: NumberWord) -> NumberFrame {
 /// The arithmetic result, or `None` where the operation left at its miss edge.
 fn concrete_arithmetic(left: NumberWord, right: NumberWord, operation: NumberArithmetic,
     domain: Domain, overflow: Overflow) -> Option<NumberWord> {
+    concrete_arithmetic_zero(left, right, operation, (domain, overflow), NegativeZero::Exit)
+}
+
+/// `concrete_arithmetic` with `zero` for the product's negative zero.
+fn concrete_arithmetic_zero(left: NumberWord, right: NumberWord, operation: NumberArithmetic,
+    (domain, overflow): (Domain, Overflow), zero: NegativeZero) -> Option<NumberWord> {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = number_frame(left, right);
     let operation = Operation::Number(NumberOperation::Arithmetic {
         destination: 2, left: Operand::register(0), right: Operand::register(1),
-        operation, domain, overflow,
+        operation, domain, overflow, zero,
     });
     match step(&mut stage, &mut frame, operation) {
         Step::Value(_) => Some(frame.values[2]),
@@ -258,4 +264,15 @@ fn staged_int32_remainder_is_the_number_remainder_or_leaves() {
                 expected, "{left} % {right}");
         }
     }
+}
+
+#[test]
+fn an_int32_product_keeps_its_zero_only_where_its_sign_is_ignored() {
+    let product = |zero, overflow| concrete_arithmetic_zero(NumberWord::Int(-1), NumberWord::Int(0),
+        NumberArithmetic::Multiply, (Domain::Int32, overflow), zero);
+    assert_eq!(product(NegativeZero::Exit, Overflow::Exit), None, "a negative zero is no int32");
+    assert_eq!(product(NegativeZero::Ignore, Overflow::Exit), Some(NumberWord::Int(0)));
+    assert_eq!(product(NegativeZero::Ignore, Overflow::Wrap), Some(NumberWord::Int(0)));
+    let widened = product(NegativeZero::Ignore, Overflow::Widen);
+    assert!(matches!(widened, Some(NumberWord::Float(bits)) if bits.is_sign_negative()), "widening keeps the Number's sign: {widened:?}");
 }

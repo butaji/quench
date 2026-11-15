@@ -14662,7 +14662,7 @@ fn shared_osr_captured_and_parameter_callees_preserve_gc_throw_and_coercion_once
             assert!(
                 diagnostics.compile_successes > 0
                     && diagnostics.native_region_runs > 0
-                    && diagnostics.exits > 0,
+                    && diagnostics.sites.iter().any(|site| !site.call_boundary_pcs.is_empty()),
                 "scoped={scoped} captured={captured}: exact-PC call boundary must run natively: {diagnostics:?}"
             );
             assert_eq!(

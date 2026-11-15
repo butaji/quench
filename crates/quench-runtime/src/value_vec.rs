@@ -1,11 +1,52 @@
 use crate::Value;
+use crate::staged::object::Rep;
 use crate::typed_ir::SlotType;
+use crate::vm::switches;
 use rustc_hash::FxHashMap;
 
 mod buffer; mod plan_values;
 mod subscribe;
 use buffer::PropertyBuffer;
 pub(crate) use buffer::NATIVE_PROPERTY_BUFFER_LAYOUT;
+
+/// The word of an arena slot that holds `value`, where the slot's owner has type `owner`: the one
+/// place a stored word is encoded. A slot of `Rep::Float64` holds its Number as the IEEE double (an
+/// integer as the integral double; NaN is already canonical, so the word is a valid `Value` the
+/// collector reads as a non-reference); any other slot holds the `Value` as it is.
+#[inline(always)]
+pub(crate) fn encode_slot(owner: SlotType, value: Value) -> Value {
+    match owner.rep() {
+        Rep::Float64 => value.as_int().map_or(value, |int| Value::from_bits(f64::from(int).to_bits())),
+        Rep::Int32 | Rep::Tagged => value,
+    }
+}
+
+/// The `Value` that the arena word `word` holds, where the slot's owner has type `owner`: the one
+/// place a stored word is decoded, `encode_slot`'s inverse. A double word is a Number as
+/// `Value::number` makes it (an integral double in int32 range is an int32, `-0` stays a double);
+/// a word that is no Number (the deleted marker a removed property leaves) is itself.
+#[inline(always)]
+pub(crate) fn decode_slot(owner: SlotType, word: Value) -> Value {
+    match owner.rep() {
+        Rep::Float64 => word.as_number().map_or(word, Value::number),
+        Rep::Int32 | Rep::Tagged => word,
+    }
+}
+
+/// The `Value` of a word a staged read took from an arena run, whose owner the reader does not know
+/// (`decode_slot` of `read_type`).
+#[inline(always)]
+pub(crate) fn decode_staged_word(word: u64) -> Value {
+    decode_slot(read_type(), Value::from_bits(word))
+}
+
+/// The type a word of a slot is decoded as where its owner is unknown to the reader (`decode_slot`):
+/// Number where slots of that type hold raw doubles (`switches::float_slots`), whose decoding is the
+/// identity on every canonical `Value`, so it reads the word of any owner; else the type of tagged words.
+#[inline(always)]
+fn read_type() -> SlotType {
+    if switches::float_slots() { SlotType::Number } else { SlotType::Tagged }
+}
 
 pub(crate) const START_MASK: u32 = 0x3fff_ffff;
 const NON_EXTENSIBLE: u32 = 1 << 30;
@@ -343,8 +384,12 @@ pub(crate) struct ValueArena {
     /// it. A child that appends a slot at its parent's chain end shares that chain.
     shape_chains: Vec<u32>,
     chain_owners: Vec<u32>,
-    /// Per owner shape, compact observed content types. Recording writes joins
-    /// them; native raw writes can bypass recording, so this is not a proof.
+    /// Per owner shape, compact content types, maintained by every store: a host write joins its
+    /// value's class before it lands (`note_slot_value`, `note_shape_value`, `note_plan_values`,
+    /// publication's `join_object_slot_values`), a native raw write is admitted before it is
+    /// exposed (`note_slot_type`), and a widening retires the readers first. While tracking, a
+    /// slot holds a value of its owner's type; code subscribed to the observation
+    /// (`subscribe_slot_observation`) is retired before any other value lands.
     owner_types: Vec<SlotType>,
     slot_readers: crate::code_dependencies::CodeReaders,
     /// Numeric shape departures only; heap admission, exotic access and physical
@@ -353,6 +398,11 @@ pub(crate) struct ValueArena {
     /// Whether writes join their values' classes (`ValueArena::track`): only a runtime whose
     /// native code reads representations keeps them.
     tracking: bool,
+    /// Whether a slot whose owner's type is Number holds its Number as a raw double
+    /// (`encode_slot`): tracking under `switches::float_slots`. The words of an owner that left or
+    /// entered that type wait in `widened` for the heap to recode them (`recode_owned_run`).
+    float: bool,
+    widened: Vec<u32>,
     dictionaries: FxHashMap<u32, FxHashMap<u32, Value>>,
     free_dictionaries: Vec<u32>,
     next_dictionary: u32,
@@ -377,6 +427,8 @@ impl Default for ValueArena {
             slot_readers: crate::code_dependencies::CodeReaders::default(),
             shape_readers: crate::code_dependencies::CodeReaders::default(),
             tracking: false,
+            float: false,
+            widened: Vec::new(),
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
             next_dictionary: 0,
@@ -413,7 +465,7 @@ impl ValueArena {
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
-        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _, widened_shapes: _ } = self;
+        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, float: _, widened: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _, widened_shapes: _ } = self;
         writer.values(values);
         for bucket in 0..BUCKETS {
             writer.u32s(&self.free_starts(bucket));
@@ -507,6 +559,8 @@ impl ValueArena {
         self.shape_readers.reset();
         self.slot_readers.reset();
         self.tracking = false;
+        self.float = false;
+        self.widened.clear();
         self.shape_lengths.clear();
         self.shape_lengths.push(0);
         self.shape_chains.clear();
@@ -575,7 +629,31 @@ impl ValueArena {
     pub(crate) fn track(&mut self) {
         self.slot_readers.reset();
         self.tracking = true;
+        self.float = switches::float_slots();
+        self.widened.clear();
         self.owner_types.fill(SlotType::None);
+    }
+
+    /// Whether slots of Number owners hold raw doubles.
+    #[inline(always)] pub(crate) fn float_slots(&self) -> bool {
+        self.float
+    }
+
+    /// Whether the word of `slot` of an object of `shape` is a raw double, which only a native reader
+    /// that knows its owner's type may read (`Rep::Float64`).
+    #[inline(always)] pub(crate) fn holds_raw_doubles(&self, shape: u32, slot: usize) -> bool {
+        self.word_type(shape, slot).rep() == Rep::Float64
+    }
+
+    /// The type whose encoding the word of `slot` of an object of `shape` has (`encode_slot`): its
+    /// owner's where Number slots hold doubles, else the type of tagged words. Defined for the
+    /// slots of a registered shape; any other slot is tagged.
+    #[inline(always)] pub(crate) fn word_type(&self, shape: u32, slot: usize) -> SlotType {
+        if self.float && slot < self.shape_length(shape) && (shape as usize) < self.shape_chains.len() {
+            self.slot_observation(shape, slot)
+        } else {
+            SlotType::Tagged
+        }
     }
 
     /// Whether writes join their values' classes.
@@ -593,7 +671,7 @@ impl ValueArena {
         self.chain_owners[self.shape_chains[shape as usize] as usize + slot]
     }
 
-    /// The recorded type of `slot` of `shape`, not a write-maintained invariant.
+    /// The type every value `slot` of `shape` holds is of, while tracking (`owner_types`).
     #[inline(always)] pub(crate) fn slot_observation(&self, shape: u32, slot: usize) -> SlotType {
         self.owner_types[self.slot_owner(shape, slot) as usize]
     }
@@ -621,8 +699,59 @@ impl ValueArena {
     #[inline(never)]
     fn widen_owner(&mut self, owner: u32, class: SlotType) -> bool {
         self.slot_readers.retire(owner);
-        self.owner_types[owner as usize] = class;
+        let held = std::mem::replace(&mut self.owner_types[owner as usize], class);
+        if self.float && (held == SlotType::Number) != (class == SlotType::Number) {
+            self.widened.push(owner);
+        }
         true
+    }
+
+    /// Whether an owner changed the encoding of its words since the heap last recoded them.
+    #[inline(always)] pub(crate) fn has_widened(&self) -> bool {
+        !self.widened.is_empty()
+    }
+
+    /// The owners whose words wait for recoding (`recode_owned_run`), sorted, each once.
+    pub(crate) fn take_widened(&mut self) -> Vec<u32> {
+        let mut owners = std::mem::take(&mut self.widened);
+        owners.sort_unstable();
+        owners.dedup();
+        owners
+    }
+
+    /// Recodes the `len` slots of the run at `start`, the values of an object of `shape`, whose
+    /// owners are in `owners` (sorted), to the encodings the owners hold now. A word is decoded as
+    /// any owner's, then encoded as its own, so a recoding of a word already in its encoding
+    /// changes nothing.
+    pub(crate) fn recode_owned_run(&mut self, (start, shape, len): (usize, u32, usize), owners: &[u32]) {
+        if shape as usize >= self.shape_chains.len() { return; }
+        for slot in 0..len {
+            if owners.binary_search(&self.slot_owner(shape, slot)).is_ok() {
+                self.recode_word(start + slot, self.word_type(shape, slot));
+            }
+        }
+    }
+
+    /// `recode_owned_run` of every slot, for a run written in the encoding of tagged values
+    /// (`with_values`, `young_run_padded`), which the heap recodes once the values are admitted.
+    #[inline(always)] pub(crate) fn recode_run(&mut self, start: usize, shape: u32, len: usize) {
+        if self.float { self.recode_run_words(start, shape, len); }
+    }
+
+    #[inline(never)]
+    fn recode_run_words(&mut self, start: usize, shape: u32, len: usize) {
+        for slot in 0..len {
+            self.recode_word(start + slot, self.word_type(shape, slot));
+        }
+    }
+
+    fn recode_word(&mut self, at: usize, ty: SlotType) {
+        self.values[at] = encode_slot(ty, decode_slot(SlotType::Number, self.values[at]));
+    }
+
+    /// `len` values of the run at `start` as values (`decode_slot`), for storage that holds them so.
+    fn decoded_run(&self, start: usize, len: usize) -> Vec<Value> {
+        self.values[start..start + len].iter().map(|word| decode_slot(read_type(), *word)).collect()
     }
 
     /// Admits the possible writes of a no-reentry raw slot capability before exposing it.
@@ -659,7 +788,7 @@ impl ValueArena {
             // SAFETY: a narrow vector's run holds its length's values.
             return Some(unsafe { self.narrow_get(vector, index) });
         }
-        Some(self.values[vector.start() + index])
+        Some(decode_slot(read_type(), self.values[vector.start() + index]))
     }
 
     /// # Safety
@@ -677,7 +806,7 @@ impl ValueArena {
         }
         // SAFETY: caller provides the initialized-range invariant; every
         // vector range was allocated from `values` and remains reserved.
-        unsafe { *self.values.get_unchecked(vector.start() + index) }
+        unsafe { self.get_flat_at(vector.start(), index) }
     }
 
     /// `get_flat` of the vector whose storage starts at `start` (`ValueVec::start`).
@@ -687,7 +816,7 @@ impl ValueArena {
     #[inline(always)]
     pub(crate) unsafe fn get_flat_at(&self, start: usize, index: usize) -> Value {
         // SAFETY: the caller's vector range was allocated from `values` and remains reserved.
-        unsafe { *self.values.get_unchecked(start + index) }
+        decode_slot(read_type(), unsafe { *self.values.get_unchecked(start + index) })
     }
 
     /// `get_unchecked` of a vector outside dictionary mode; `None` for a dictionary, whose
@@ -707,7 +836,7 @@ impl ValueArena {
             return Some(unsafe { self.narrow_get(vector, index) });
         }
         // SAFETY: as for `get_unchecked`.
-        Some(unsafe { *self.values.get_unchecked(vector.start() + index) })
+        Some(unsafe { self.get_flat_at(vector.start(), index) })
     }
 
     /// The value at `index` of the narrow vector `vector` (`NARROW_FORM`).
@@ -784,7 +913,8 @@ impl ValueArena {
                 .insert(index as u32, value);
             return;
         }
-        self.values[vector.start() + index] = value;
+        let ty = self.word_type(vector.auxiliary(), index);
+        self.values[vector.start() + index] = encode_slot(ty, value);
     }
 
     /// # Safety
@@ -799,10 +929,11 @@ impl ValueArena {
             return;
         }
         // SAFETY: caller provides the same initialized-range invariant as get.
-        unsafe { self.set_flat_unchecked(vector, index, value) };
+        unsafe { self.set_flat_unchecked(vector, index, value, self.word_type(vector.auxiliary(), index)) };
     }
 
-    /// `set_unchecked` of a vector known not to be a dictionary.
+    /// `set_unchecked` of a vector known not to be a dictionary, whose slot's words have the
+    /// encoding of `ty` (`word_type`).
     ///
     /// # Safety
     /// As for `set_unchecked`, and `vector` is not a dictionary.
@@ -812,10 +943,11 @@ impl ValueArena {
         vector: ValueVec,
         index: usize,
         value: Value,
+        ty: SlotType,
     ) {
         debug_assert!(!vector.is_dictionary() && !vector.is_narrow());
         // SAFETY: caller provides the same initialized-range invariant as get.
-        unsafe { self.set_flat_at(vector.start(), index, value) }
+        unsafe { self.set_flat_at(vector.start(), index, value, ty) }
     }
 
     /// `set_flat_unchecked` of the vector whose storage starts at `start` (`ValueVec::start`).
@@ -823,9 +955,9 @@ impl ValueArena {
     /// # Safety
     /// As for `get_flat_at`.
     #[inline(always)]
-    pub(crate) unsafe fn set_flat_at(&mut self, start: usize, index: usize, value: Value) {
+    pub(crate) unsafe fn set_flat_at(&mut self, start: usize, index: usize, value: Value, ty: SlotType) {
         // SAFETY: the caller's vector range was allocated from `values` and remains reserved.
-        unsafe { *self.values.get_unchecked_mut(start + index) = value }
+        unsafe { *self.values.get_unchecked_mut(start + index) = encode_slot(ty, value) }
     }
 
     /// The address of an initialized flat slot, for a native no-allocation region that holds
@@ -843,9 +975,9 @@ impl ValueArena {
         unsafe { self.values.as_mut_ptr().add(vector.start() + index) }
     }
 
-    /// Append `value` past `vector`'s values, which an add of one property makes. Inline:
-    /// an append that fits its range is the store alone; growing is out of line.
-    #[inline(always)] pub(crate) fn push(&mut self, vector: &mut ValueVec, value: Value) {
+    /// Append `value` past `vector`'s values, which an add of one property makes, moving to
+    /// `shape`. Inline: an append that fits its range is the store alone; growing is out of line.
+    #[inline(always)] pub(crate) fn push(&mut self, vector: &mut ValueVec, value: Value, shape: u32) {
         debug_assert!(!vector.has_inline_property_storage());
         assert!(!vector.is_narrow(), "an add widens a narrow vector first");
         let len = self.len(*vector);
@@ -866,7 +998,8 @@ impl ValueArena {
                 return;
             }
         }
-        self.values[vector.start() + len] = value;
+        let ty = self.word_type(shape, len);
+        self.values[vector.start() + len] = encode_slot(ty, value);
     }
 
     pub(crate) fn with_values(&mut self, shape: u32, values: &[Value]) -> ValueVec {
@@ -880,6 +1013,7 @@ impl ValueArena {
         }
         if let Some(start) = self.run_of(values) {
             vector.start = start;
+            self.recode_run(start as usize, shape, values.len());
         } else {
             vector.use_dictionary(self.allocate_dictionary(values.to_vec()));
         }
@@ -901,7 +1035,7 @@ impl ValueArena {
     /// the sweep shows. The run's whole capacity is copied, as the smallest class and then the
     /// pairs of values each larger class adds (`capacity_class`), moves of fixed size rather
     /// than a copy of variable length, which is a call.
-    #[inline(always)] pub(crate) fn young_run_padded<const N: usize>(&mut self, values: &[Value; N], len: usize) -> Option<u32> {
+    #[inline(always)] pub(crate) fn young_run_padded<const N: usize>(&mut self, values: &[Value; N], len: usize, shape: u32) -> Option<u32> {
         let capacity = capacity_class(len);
         debug_assert!(len <= N && capacity <= N && values[len..].iter().all(|value| *value == Value::UNDEFINED));
         let start = self.young_run(capacity)?;
@@ -914,6 +1048,7 @@ impl ValueArena {
             copied += CAPACITY_CLASS_STEP;
             rest = tail;
         }
+        self.recode_run(start, shape, len);
         Some(start as u32)
     }
 
@@ -1184,7 +1319,7 @@ impl ValueArena {
                 copy.relocate(start);
             }
             None => {
-                let values = self.values[vector.start()..vector.start() + len].to_vec();
+                let values = self.decoded_run(vector.start(), len);
                 copy.use_dictionary(self.allocate_dictionary(values));
             }
         }
@@ -1422,7 +1557,7 @@ impl ValueArena {
         let start = if young { self.young_run(next) } else { self.allocate(next, max_start) };
         let Some(start) = start else {
             let values = if self.has_compact_range(*vector) {
-                self.values[vector.start()..vector.start() + len].to_vec()
+                self.decoded_run(vector.start(), len)
             } else {
                 vec![Value::UNDEFINED; len]
             };
@@ -1502,18 +1637,18 @@ impl ValueArena {
         !vector.is_narrow() && len < Self::ordered_capacity(vector, len)
     }
 
-    /// `push` of `value` to `vector` of `len` values where `appends_in_place` holds: the
-    /// store alone.
+    /// `push` of `value` to `vector` of `len` values, moving to `shape`, where `appends_in_place`
+    /// holds: the store alone.
     ///
     /// # Safety
     /// `vector` is an arena vector outside dictionary storage of `len` values, whose range has
     /// room for one more (`appends_in_place`).
     #[inline(always)]
-    pub(crate) unsafe fn push_in_place(&mut self, vector: ValueVec, len: usize, value: Value) {
+    pub(crate) unsafe fn push_in_place(&mut self, vector: ValueVec, len: usize, value: Value, shape: u32) {
         debug_assert!(!vector.has_inline_property_storage() && !vector.is_dictionary());
         debug_assert!(len == self.len(vector) && Self::appends_in_place(vector, len));
         // SAFETY: the range from `start` holds its capacity, past `len`, reserved in `values`.
-        unsafe { *self.values.get_unchecked_mut(vector.start() + len) = value };
+        unsafe { self.set_flat_at(vector.start(), len, value, self.word_type(shape, len)) };
     }
 
     /// A range of `capacity`: a released one of its size class, else, out of line, one past

@@ -1,9 +1,60 @@
 //! How a named field read defines its register (`Lowering::get_field`): a whole-program
 //! prototype value folded under its guard, or the read value with the int32 view a slot
-//! that has only held int32 values proves.
+//! that has only held int32 values proves: by the code's dependency on the slot's observation
+//! (an online body), else by a tag test.
 use super::*;
 
+/// The cache site of the last read of `instruction`'s lookup, whose slots the value comes from;
+/// `None` for a lookup with a sink.
+fn last_read_site(program: &ResidualProgram, instruction: WideInstruction) -> Option<u16> {
+    match instruction.field_lookup()? {
+        FieldLookup::Atom { cache_site, .. } => Some(cache_site),
+        FieldLookup::Site(index) => {
+            let site = program.field_sites.get(index)?;
+            site.sink.is_none().then_some(site.second.unwrap_or(site.first).1)
+        }
+    }
+}
+
+/// The type every slot the last read of `instruction`'s lookup reads has held: int32 or
+/// direct object (`NativeFieldLoad::ty`), for a lookup with no sink or completion.
+fn held_slot_type(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> Option<Type> {
+    agreed_slot_type(program, fields, instruction).filter(|ty| *ty == Type::INT32 || *ty == Type::DIRECT_OBJECT_FAMILY)
+}
+
+/// The slot type every load of `instruction`'s plain field read observed, where they agree.
+fn agreed_slot_type(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> Option<Type> {
+    if !instruction.op().class().eq(Class::GetField) || instruction.returns_from_frame() || instruction.writes_current_this() {
+        return None;
+    }
+    let loads = last_read_site(program, instruction).and_then(|last| site_loads(fields, last))?;
+    let ty = loads.first()?.ty;
+    loads.iter().all(|load| load.ty == ty).then_some(ty)
+}
+
+/// Whether `instruction` reads a field whose slots have held Numbers, not only int32s: the read
+/// proves Number once and keeps the double view, so its arithmetic takes the double operation.
+pub(super) fn number_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
+    agreed_slot_type(program, fields, instruction) == Some(Type::NUMBER)
+}
+
+/// Whether `instruction` reads a field as an int32 (`Lowering::get_field`): its last read's slots
+/// have only held int32 values.
+pub(super) fn int32_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
+    held_slot_type(program, fields, instruction) == Some(Type::INT32)
+}
+
 impl Lowering<'_, '_> {
+    /// Whether the value of `instruction`'s read of held slots (`held_slot_type`) comes only from its
+    /// loads' native reads, whose slot dependencies cover it: not a read the VM's caches stand
+    /// in for (a probe of a miss, a link no native read admits), which no dependency covers.
+    fn reads_covered_slots(&self, state: &State, instruction: WideInstruction) -> bool {
+        let Some(base) = self.field_base(self.at, instruction) else { return false };
+        last_read_site(self.program, instruction).and_then(|last| site_loads(self.fields, last))
+            .is_some_and(|loads| field_plans::reads_natively(loads) && !self.probes_field_misses(loads)
+                && !self.inherited_off_record(state, base, loads))
+    }
+
     /// Whether a reached instruction reads or stores a named field: only then does the body
     /// look at the receiver's record and the property arena at entry.
     pub(super) fn accesses_fields(&self, instructions: &[WideInstruction]) -> bool {
@@ -38,20 +89,16 @@ impl Lowering<'_, '_> {
         true
     }
 
-    /// Defines `instruction`'s register as the `value` it read: `field` names the slot a
-    /// one-read lookup (`single`) reads, whose proof `known` held before. A slot that has
-    /// only held int32 values is read as one: its value's tag is tested here, once, and a
-    /// value it no longer holds leaves through `exit` before the read is defined.
+    /// Defines `instruction`'s register as the `value` it read, typed as the slots it reads
+    /// have held where that is proved (`prove_held_slot`): `field` names the slot a one-read
+    /// lookup (`single`) reads, whose proof `known` held before.
     pub(super) fn define_field_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, value: ir::Value,
         (field, single, known): (Option<(Option<Register>, Atom)>, bool, Option<FieldValue>), exit: ir::Block) {
-        let integer = single && known.is_some_and(|field| field.ty == Type::INT32);
-        let ty = if integer || int32_read(self.program, self.fields, instruction) {
-            if !integer {
-                let integer = is_int_tagged(&mut self.builder, value);
-                emit_js_guard(&mut self.builder, integer, exit);
-            }
-            Type::INT32
-        } else { Type::ANY };
+        let held = known.filter(|field| single && field.ty != Type::ANY).map(|field| field.ty);
+        let ty = match held {
+            Some(ty) => ty,
+            None => self.prove_held_slot(state, instruction, (value, known.is_none()), exit),
+        };
         // A fused chain can consume an existing first-slot proof, but its guest
         // result names the final slot. Do not retain a new anonymous intermediate
         // solely for forwarding; the existing proof needs no duplicate update.
@@ -63,7 +110,8 @@ impl Lowering<'_, '_> {
             }
         }
         let destination = instruction.result_register();
-        self.set_tagged(state, destination, value);
+        let described = if ty == Type::INT32 { Type::ANY } else { ty };
+        self.define(state, destination, value, RegisterFact::definition(described, Representation::Tagged));
         // A slot that has held doubles, read only by Number operations: prove Number here,
         // once, and keep the double view, so its arithmetic takes the double operation first.
         if ty != Type::INT32 && number_read(self.program, self.fields, instruction)
@@ -74,6 +122,26 @@ impl Lowering<'_, '_> {
             let int = self.raw_unary(Unary::Narrow(Lane::I32), value);
             self.define_int_view(state, destination, value, int);
         }
+    }
+
+    /// The type of `value`, read from slots that have held one type (`held_slot_type`), proved: an
+    /// online body depends on the slots' observations, which every write joins before it lands
+    /// (`ValueArena::note_slot_value`) and retires the body at a widening
+    /// (`LaneDependencies`), so a read of the covered slots alone (`fresh`: no earlier proof stands
+    /// in for them) reads the invalidation word (`hold_stable`) and tests no tag; otherwise an
+    /// int32 tag is tested, leaving through `exit` where it fails, and anything else is untyped.
+    fn prove_held_slot(&mut self, state: &mut State, instruction: WideInstruction, (value, fresh): (ir::Value, bool),
+        exit: ir::Block) -> Type {
+        let Some(ty) = held_slot_type(self.program, self.fields, instruction) else { return Type::ANY };
+        if fresh && self.division().folds(BindingTime::Site) && self.reads_covered_slots(state, instruction) {
+            self.hold_stable(state, exit);
+        } else if ty == Type::INT32 {
+            let integer = is_int_tagged(&mut self.builder, value);
+            emit_js_guard(&mut self.builder, integer, exit);
+        } else {
+            return Type::ANY;
+        }
+        ty
     }
 
     /// Gives `destination`, defined as the tagged `value`, the int32 view `int` of it.

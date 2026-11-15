@@ -30,12 +30,21 @@ impl Value {
 }
 
 pub(crate) mod typed_ir {
+    /// An element kind's integer range, which only the runtime's seeds read.
+    #[derive(Clone, Copy)]
+    pub(crate) struct IntRange {
+        pub(crate) min: i64,
+        pub(crate) max: i64,
+    }
     /// The fact a stage keeps of a word: a stencil keeps none.
     #[derive(Clone, Copy)]
     pub(crate) struct Type;
     impl Type {
         pub(crate) const ANY: Self = Self;
         pub(crate) const IMMEDIATE: Self = Self;
+        pub(crate) const NUMBER: Self = Self;
+        pub(crate) const fn int(_range: IntRange) -> Self { Self }
+        pub(crate) const fn is_int32(self) -> bool { false }
         /// A stencil proves no subtype: every gate is the stage's.
         pub(crate) const fn is_subtype(self, _of: Self) -> bool { false }
     }
@@ -86,23 +95,20 @@ pub(crate) mod value {
     }
 }
 
-/// ToInt32, as the staged Number rows name it (`units::to_int32`).
-pub(crate) mod units {
-    /// The modulus ToInt32 reduces by: 2^32.
-    const INT32_MODULUS: f64 = (1_u64 << u32::BITS) as f64;
-
-    pub(crate) fn to_int32(value: f64) -> i32 {
-        if !value.is_finite() { return 0; }
-        (core::f64::math::trunc(value) % INT32_MODULUS) as i64 as u32 as i32
-    }
-}
+/// ToInt32 and the clamp the staged rows convert by (`units.rs`).
+#[path = "units.rs"]
+pub(crate) mod units;
 
 pub(crate) mod value_vec {
     pub(crate) use crate::layout::INLINE_PROPERTIES as INLINE_PROPERTY_COUNT;
+    /// What the shared rows' interpreter-side readers ask of an arena word; no stencil row calls it.
+    pub(crate) const fn decode_staged_word(word: u64) -> super::Value {
+        super::Value::from_bits(word)
+    }
 }
 
 pub(crate) mod heap {
-    pub(crate) use crate::layout::{DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, NARROW_LEN, NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, SMALL_STRING_ID_BASE, SMALL_STRING_ID_MASK};
+    pub(crate) use crate::layout::{DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, NARROW_LEN, NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, SMALL_STRING_ID_BASE, SMALL_STRING_ID_MASK, TypedArrayKind};
     #[derive(Clone, Copy)]
     pub(crate) enum PlainPropertyStorage {
         PackedInline,

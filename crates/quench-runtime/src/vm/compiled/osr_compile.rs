@@ -306,8 +306,8 @@ impl LoopPlanner<'_> {
             global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts { tiers: self.tiers, ..VmFacts::STATIC }, generic,
             direct: &BTreeMap::new(), frame_captures: &[], isa: self.isa,
             entry_fields,
-            plan: super::lane_region::RegionPlan { entry_bounds: self.observation.entry_bounds,
-                coverage: super::lane_region::Coverage::Loop { header, backedge, poll: false },
+            plan: super::lane_region::RegionPlan {
+                coverage: super::lane_region::Coverage::Loop { header, backedge, poll: true },
                 completion: super::lane_region::Completion::Body, views: self.views,
             },
         }.specialize(self.program).ok().filter(|lowered| self.views == super::ElementViews::Dense || lowered.hoists_arrays)
@@ -332,7 +332,7 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::b
     let registers = known.program.function(function as usize).registers;
     let spec = BodySpec { function, registers, known, realm: calls.realm, widened, seen: [observation.int_registers, observation.double_registers], kinds: observation.operand_kinds };
     // SAFETY: `calls` was made of the call sites' records this compile (`Vm::region_calls`), whose entry cells are live.
-    let built = unsafe { build_region(region, &spec, views == super::ElementViews::Dense, &calls.callees, helpers) };
+    let built = unsafe { build_region(region, &spec, views, &calls.callees, helpers) };
     let Ok(Body { code, bare, frames, records, stable, atoms, holders, layouts, slot_types, resumes, .. }) = built else { return base_only.then_some(None) };
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, region.header, &code, None, "");

@@ -1117,9 +1117,7 @@ impl<H: Host> Vm<H> {
         if (metadata.declares_environment_atom(atom)
             || metadata.declares_global_lexical(atom)
             || self.root_local_var_binding(p, activation.function, atom))
-            && self
-                .local_binding_slot(p, activation.function, atom)
-                .is_some()
+            && self.local_binding_slot(p, activation.function, atom).is_some()
         {
             return Some(false);
         }
@@ -1136,9 +1134,7 @@ impl<H: Host> Vm<H> {
             return Some(false);
         }
         let mut env = self.frames[frame].env;
-        let static_owner = self
-            .outer_environment_binding(env, atom)
-            .map(|(env, _)| env);
+        let static_owner = self.outer_environment_binding(env, atom).map(|(env, _)| env);
         while let Some(Cell::Environment { parent, .. }) = self.heap.get(env) {
             let dynamic_bindings = self.heap.environment_bindings(env)?;
             if static_owner == Some(env) {
@@ -1217,47 +1213,22 @@ impl<H: Host> Vm<H> {
     }
 
     fn has_name_binding(&mut self, p: &ResidualProgram, atom: Atom) -> Result<bool, JsError> {
-        let name = self.atom_name(atom);
-        if name.starts_with('\0') {
+        if self.atom_name(atom).starts_with('\0') {
             return Ok(true);
         }
-        if let Some(frame) = self.frames.len().checked_sub(1)
+        let frame = self.frames.len().checked_sub(1);
+        if let Some(frame) = frame
             && self.find_with_binding(p, VarOwner::Frame(frame), atom)?.is_some()
         {
             return Ok(true);
         }
-        if self
-            .frames
-            .len()
-            .checked_sub(1)
-            .and_then(|frame| self.dynamic_binding(self.frame_caller(frame), atom))
-            .is_some()
+        let caller = frame.map(|frame| self.frame_caller(frame));
+        Ok(caller.and_then(|caller| self.dynamic_binding(caller, atom)).is_some()
             || self.realm.global_lexical_declarations.contains(&atom)
-        {
-            return Ok(true);
-        }
-        if self
-            .frames
-            .last()
-            .is_some_and(|frame| self.function_environment_binding(p, frame.function, atom))
-        {
-            return Ok(true);
-        }
-        if let Some(frame) = self.frames.len().checked_sub(1)
-            && self.name_binding(self.frame_caller(frame), atom).is_some()
-        {
-            return Ok(true);
-        }
-        if self
-            .outer_environment_binding(
-                self.captured_parent_environment(self.frame_caller(self.frames.len().saturating_sub(1))),
-                atom,
-            )
-            .is_some()
-        {
-            return Ok(true);
-        }
-        self.has_global_object_binding(p, atom)
+            || self.frames.last().is_some_and(|frame| self.function_environment_binding(p, frame.function, atom))
+            || caller.is_some_and(|caller| self.name_binding(caller, atom).is_some())
+            || self.outer_environment_binding(self.captured_parent_environment(self.frame_caller(self.frames.len().saturating_sub(1))), atom).is_some()
+            || self.has_global_object_binding(p, atom)?)
     }
 
     pub(super) fn has_global_object_binding(
@@ -1270,6 +1241,23 @@ impl<H: Host> Vm<H> {
         }
         let key = self.heap.alloc_string(self.atom_name(atom).into());
         self.has_property(p, self.realm.globals, key)
+    }
+
+    /// The reference object to the eval-declared `binding` that frame `frame` names.
+    fn eval_binding_reference(&mut self, frame: usize, binding: crate::bytecode::EvalBinding) -> Result<Value, JsError> {
+        let (environment, slot) = match binding.location {
+            crate::bytecode::EvalBindingLocation::Local(slot) => (self.promote_frame_environment(frame), slot),
+            crate::bytecode::EvalBindingLocation::Capture { depth, slot } => (
+                self.owner_capture_env(VarOwner::Frame(frame), depth)
+                    .ok_or_else(|| JsError("invalid named reference".into()))?,
+                slot,
+            ),
+        };
+        let environment = self
+            .heap
+            .environment_slot_owner(environment, usize::from(slot))
+            .ok_or_else(|| JsError("invalid named reference slot".into()))?;
+        Ok(self.heap.alloc(Cell::BindingReference { environment, slot, kind: binding.kind }))
     }
 
     fn resolve_name_reference(
@@ -1299,26 +1287,7 @@ impl<H: Host> Vm<H> {
         if let Some(frame) = self.frames.len().checked_sub(1)
             && let Some(binding) = self.name_binding(self.frame_caller(frame), atom)
         {
-            let (environment, slot) = match binding.location {
-                crate::bytecode::EvalBindingLocation::Local(slot) => {
-                    (self.promote_frame_environment(frame), slot)
-                }
-                crate::bytecode::EvalBindingLocation::Capture { depth, slot } => (
-                    self.owner_capture_env(VarOwner::Frame(frame), depth)
-                        .ok_or_else(|| JsError("invalid named reference".into()))?,
-                    slot,
-                ),
-            };
-            let environment = self
-                .heap
-                .environment_slot_owner(environment, usize::from(slot))
-                .ok_or_else(|| JsError("invalid named reference slot".into()))?;
-            let reference = self.heap.alloc(Cell::BindingReference {
-                environment,
-                slot,
-                kind: binding.kind,
-            });
-            return Ok((reference, true));
+            return Ok((self.eval_binding_reference(frame, binding)?, true));
         }
         if self.realm.global_lexical_declarations.contains(&atom) {
             return Ok((GLOBAL_LEXICAL_NAME_REFERENCE, false));

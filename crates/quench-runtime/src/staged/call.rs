@@ -178,6 +178,10 @@ pub(crate) struct EntryCellLayoutWords {
     pub(crate) recovery: u64,
     /// Leaves (low half) and completions (high half), the tier machine's run statistics (`EntryCell::evidence`).
     pub(crate) counters: u64,
+    /// The published body's scalar entry, which takes its numeric arguments in registers and answers a
+    /// status and a number (`NumberReturn`); the stub, which answers a status that entered nothing, where
+    /// the body has none. Written with `entry`.
+    pub(crate) scalar: u64,
 }
 
 pub(crate) struct CellLayout {
@@ -187,6 +191,7 @@ pub(crate) struct CellLayout {
     pub(crate) facts_offset: i32,
     pub(crate) recovery_offset: i32,
     pub(crate) counters_offset: i32,
+    pub(crate) scalar_offset: i32,
 }
 pub(crate) const ENTRY_CELL: CellLayout = CellLayout {
     entry_offset: std::mem::offset_of!(EntryCellLayoutWords, entry) as i32,
@@ -195,6 +200,7 @@ pub(crate) const ENTRY_CELL: CellLayout = CellLayout {
     facts_offset: std::mem::offset_of!(EntryCellLayoutWords, facts) as i32,
     recovery_offset: std::mem::offset_of!(EntryCellLayoutWords, recovery) as i32,
     counters_offset: std::mem::offset_of!(EntryCellLayoutWords, counters) as i32,
+    scalar_offset: std::mem::offset_of!(EntryCellLayoutWords, scalar) as i32,
 };
 const CELL: CellLayout = ENTRY_CELL;
 const _: () = assert!(std::mem::size_of::<EntryCellLayoutWords>() == 64 && std::mem::align_of::<EntryCellLayoutWords>() == 64);
@@ -355,7 +361,7 @@ mod tests {
 
     fn cell(validity: u64, registers: u64, room: u64, params: u64, entry: u64) -> EntryCellLayoutWords {
         let facts = registers | room << ROOM_SHIFT | params << PARAMS_SHIFT | entry << ENTRY_SHIFT;
-        EntryCellLayoutWords { entry: 1, body: 0, facts, epoch: validity, recovery: 0, counters: 0 }
+        EntryCellLayoutWords { entry: 1, body: 0, facts, epoch: validity, recovery: 0, counters: 0, scalar: 0 }
     }
 
     /// Each word sits at the offset the layout names, in one 64-byte line, and the layout's words are
@@ -363,8 +369,8 @@ mod tests {
     #[test]
     fn the_entry_cell_is_one_line_with_the_contract_offsets() {
         let offsets = [ENTRY_CELL.entry_offset, ENTRY_CELL.body_offset, ENTRY_CELL.facts_offset, ENTRY_CELL.validity_offset,
-            ENTRY_CELL.recovery_offset, ENTRY_CELL.counters_offset];
-        assert_eq!(offsets, [0, 8, 16, 24, 32, 40]);
+            ENTRY_CELL.recovery_offset, ENTRY_CELL.counters_offset, ENTRY_CELL.scalar_offset];
+        assert_eq!(offsets, [0, 8, 16, 24, 32, 40, 48]);
         assert_eq!((std::mem::size_of::<EntryCellLayoutWords>(), std::mem::align_of::<EntryCellLayoutWords>()), (64, 64));
     }
 

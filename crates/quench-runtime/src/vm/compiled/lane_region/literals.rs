@@ -74,7 +74,7 @@ impl Lowering<'_, '_> {
     /// Whether `register` holds `ty` at an edge to `target`: proved, or guarded there as a
     /// string or BigInt (`guard_heap_primitive`).
     pub(super) fn proves(&mut self, state: &mut State, register: Register, ty: Type, target: usize) -> bool {
-        if state.values[usize::from(register)].value.ty.is_subtype(ty) { return true; }
+        if state.values[usize::from(register)].value.ty.is_subtype(ty.machine()) { return true; }
         let exit = self.guard_exit(state, target as u32);
         self.guard_heap_primitive(state, register, ty, exit)
     }
@@ -98,7 +98,7 @@ impl Lowering<'_, '_> {
 /// from `entry`, which ask no Number of the function's parameters.
 pub(super) fn heap_primitive_pcs(entry: usize, initial: &[Type], instructions: &[WideInstruction], leaders: &CompoundBitSet,
     constants: &[crate::bytecode::Constant], native_calls: bool) -> CompoundBitSet {
-    let facts = super::super::facts::analyze(entry, initial, instructions, leaders, constants, &writes, &|_| None, native_calls, &[], super::super::facts::Observed::NONE);
+    let facts = super::super::facts::analyze(entry, initial, instructions, leaders, constants, &writes, &|_| None, native_calls, super::super::facts::Seeds::observing(super::super::facts::Observed::NONE));
     let mut pcs = CompoundBitSet::with_capacity(instructions.len());
     for (pc, instruction) in instructions.iter().enumerate().filter(|(pc, instruction)| super::super::facts::generic_operator(**instruction) && facts.reached(*pc)) {
         let operand = |operand| super::super::facts::operand_type(constants, operand, |register|

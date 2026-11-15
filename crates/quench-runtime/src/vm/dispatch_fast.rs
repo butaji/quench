@@ -868,7 +868,7 @@ enum LaneBody {
     /// Counting its entries toward specialization; `recompiles` bodies before it left too
     /// often for their feedback (`LaneView::note_lane_body_end`), the last of them, where
     /// `stuck`, at those few leaves only.
-    Unspecialized { entries: u16, recompiles: u8, stuck: LaneLeaves },
+    Unspecialized { entries: u32, recompiles: u8, stuck: LaneLeaves },
     /// Its body's code compiling on the code generator's thread; the function runs in the
     /// lane meanwhile, and looks for the code (`Vm::lane_body_work`) at entries spaced twice
     /// as far apart after each of its `looks`, up to `TIERS.lane_body.compile_poll_interval`:
@@ -958,7 +958,7 @@ impl LaneView {
     /// Its body's state, the entries it counted, and whether the tier claimed its prologue and
     /// is still warming, for the diagnostics report of a view that never compiled
     /// (`QUENCH_LANE_STATE`).
-    pub(super) fn lane_body_detail(&self) -> (&'static str, Option<u16>, bool, bool) {
+    pub(super) fn lane_body_detail(&self) -> (&'static str, Option<u32>, bool, bool) {
         // SAFETY: as `lane_body`.
         let entries = match unsafe { &*self.tier().tier_lane.get() } {
             LaneBody::Unspecialized { entries, .. } => Some(*entries),
@@ -10184,12 +10184,13 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     unsafe { (*ip.cast_mut()).operand = LaneOperand { jump: site.jump }; }
     requicken::<H>(ip, lane_jump_always::<H, true>);
     // The site kept the update before the jump from fusing with it (`install_loop_sites`
-    // runs before `specialize_update_jumps`): the plain jump takes that fusion now.
+    // runs before `specialize_update_jumps`): the plain jump takes the loader's fusion now.
     if site.backedge > site.header {
-        // SAFETY: the record before the backedge is the loop body's, in the same view.
+        // SAFETY: the record before the backedge is the loop body's, in the same view as the jump and the header;
+        // the record after the header is read only for a fused load, whose test record it is.
         let update = unsafe { ip.sub(1) };
-        if let Some(decrement) = update_direction::<H>(unsafe { (*update).handler }) {
-            requicken::<H>(update, update_jump::<H>(decrement, true));
+        if let Some(fused) = update_fusion::<H>(unsafe { &*update }, unsafe { &*ip }, |offset| Some(unsafe { &*header.add(offset) })) {
+            requicken::<H>(update, fused);
         }
     }
 }
@@ -10363,7 +10364,7 @@ fn lane_loop_run<H: Host>(
     match outcome {
         // An entry guard missed: registers are untouched, so the backward jump runs in
         // the interpreter.
-        LoopOutcome::NotEntered => { site.tier.borrow_mut().missed_entry(site.tiers); LoopContinuation::Jump }
+        LoopOutcome::NotEntered => LoopContinuation::Jump,
         // A run pays for its entry with the iterations it completed, wherever it leaves.
         LoopOutcome::Resume(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Resume(pc) }
         LoopOutcome::Exit(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Exit(pc) }
@@ -10399,9 +10400,9 @@ unsafe fn lane_region_run<H: Host>(
     if code.needs_frame() && !unsafe { &*cx }.has_frame() {
         return super::compiled::LoopOutcome::NotEntered;
     }
-    if !lane_region_admits(cx, function, code) {
+    if !lane_region_admits(cx, code) {
         // A run the lane lacks room for grows it and leaves at the loop's header, so the next entry admits.
-        let grown = !lane_locals_in_window(cx, function) && lane_room_prepare(cx, code.calls.recovery_space());
+        let grown = !unsafe { lane_context_locals_in_window::<H>(cx as usize) } && lane_room_prepare(cx, code.calls.recovery_space());
         return if grown { super::compiled::LoopOutcome::Exit(region.header) } else { super::compiled::LoopOutcome::NotEntered };
     }
     // SAFETY: the caller's contract.
@@ -10413,17 +10414,26 @@ unsafe fn lane_region_run<H: Host>(
 /// (`lane_room_admits`), and the activation keeps its locals apart from the window past its
 /// registers, which the registers of those callees occupy (`CompiledOsrRegion::run_lane`).
 #[inline(always)]
-fn lane_region_admits<H: Host>(cx: *mut LaneContext<H>, function: u32, code: &super::compiled::CompiledOsrRegion) -> bool {
+fn lane_region_admits<H: Host>(cx: *mut LaneContext<H>, code: &super::compiled::CompiledOsrRegion) -> bool {
     let room = code.calls.recovery_space();
-    room.activations == 0 || (lane_room_admits(cx, room, NO_PENDING_ACTIVATIONS) && !lane_locals_in_window(cx, function))
+    room.activations == 0 || (lane_room_admits(cx, room, NO_PENDING_ACTIVATIONS) && !unsafe { lane_context_locals_in_window::<H>(cx as usize) })
 }
 
-/// Whether the running activation, of `function`, keeps its locals in its window past the register
-/// file (`CompiledOsrRegion::run_lane`), where its frame's own storage does not cover them.
-fn lane_locals_in_window<H: Host>(cx: *mut LaneContext<H>, function: u32) -> bool {
-    // SAFETY: the context's program and VM outlive the lane run.
-    let (vm, code) = unsafe { (vm(cx), &*(*cx).code) };
-    code.function_get(function as usize).is_some_and(|body| vm.frames[unsafe { (*cx).frame() }].locals.len() < usize::from(body.locals))
+/// Whether the running activation keeps its locals in the window past its registers, as
+/// `lane_body_locals` finds them: an environment activation does, and so does a VM frame whose
+/// own storage does not cover the function.
+/// # Safety
+/// `context` is the running lane's context.
+pub(super) unsafe fn lane_context_locals_in_window<H: Host>(context: usize) -> bool {
+    let cx = context as *mut LaneContext<H>;
+    let vm = unsafe { vm(cx) };
+    if let Some(activation) = vm.lane_stack.activations.last() {
+        return activation.script().is_some_and(|script| script.environment);
+    }
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    vm.frames.get(unsafe { (*cx).frame() }).is_some_and(|frame| code.function_get(frame.function as usize)
+        .is_some_and(|body| frame.locals.len() < usize::from(body.locals)))
 }
 
 /// Where the lane goes after a region of the loop of `function` left inside the callee of a call it
@@ -13540,7 +13550,7 @@ impl<H: Host> Vm<H> {
     /// registers (`CallPlan::registers_only`), else a `CallEntry::Frame` entry, so its calls
     /// take a frame without resolving it again.
     #[inline(never)]
-    fn resolve_script_call_target(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
+    pub(in crate::vm) fn resolve_script_call_target(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
         callee.heap_index()?;
         let (program, function, env) = self.same_realm_user_target(callee)?;
         // Only plain closures' functions are known (`remember_target`): a hit needs no class or admission.
@@ -17569,7 +17579,7 @@ fn lane_construct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, pc
 
 /// The `compiled::DirectCallee` of `target`, the callee the call at `pc` of `view` passes
 /// `argc` arguments, where the lane would activate it in place.
-fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, pc: usize, argc: u16, target: ScriptCallTarget) -> Option<super::compiled::DirectCallee> {
+pub(in crate::vm) fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, pc: usize, argc: u16, target: ScriptCallTarget) -> Option<super::compiled::DirectCallee> {
     let sloppy = match target.this_binding {
         ThisBinding::Sloppy => Some(vm.realm.globals),
         ThisBinding::Strict => None,
@@ -22492,7 +22502,7 @@ fn derive_lane_view<'live, H: Host>(
             &mut records,
         )
     } else {
-        (Box::default(), Vec::new())
+        Default::default()
     };
     // The fused records are script handlers; Wasm bodies run none.
     if !wasm {
@@ -23549,43 +23559,46 @@ fn specialize_nullish_back_edges<H: Host>(decoded: &[WideInstruction], records: 
     }
 }
 
-/// Gives each `IncDec` that an unconditional jump follows the fused update and jump
-/// (`lane_inc_dec_jump`), or, when the jump goes back to the loop's forward integer register
-/// test, the update, jump and test (`lane_inc_dec_loop`). The jump and test records stay, for
-/// a jump that enters them and for the update's own slow path.
+/// Gives each `IncDec` that an unconditional jump follows the fusion `update_fusion` makes of it. The
+/// jump and test records stay, for a jump that enters them and for the update's own slow path.
 fn specialize_update_jumps<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
-    let jumps = [lane_jump_always::<H, false> as Handler as *const (), lane_jump_always::<H, true> as Handler as *const ()];
     for pc in 0..records.len().saturating_sub(1) {
-        let (Some(decrement), Some(backward)) = (
-            update_direction::<H>(records[pc].handler),
-            jumps.iter().position(|&jump| jump == records[pc + 1].handler),
-        ) else {
-            continue;
-        };
-        let fused = update_jump::<H>(decrement, backward == 1);
-        let test = decoded[pc + 1].imm() as usize;
-        let looped = (backward == 1)
-            .then(|| records.get(test))
-            .flatten()
-            .filter(|test| test.handler == relation_jump_handler::<H, false>(u32::from(test.a), false) as *const ())
-            .map(|test| update_loop_handler::<H>(u32::from(test.a), decrement, test.b == records[pc].a))
-            .or_else(|| {
-                // A back edge to a test against a constant in the record.
-                let test = records.get(test).filter(|_| backward == 1)?;
-                let operator = u32::from(test.a);
-                (test.handler == relation_jump_handler::<H, true>(operator, false) as *const ())
-                    .then(|| update_small_loop_handler::<H>(operator, decrement))
-            })
-            .or_else(|| {
-                // A back edge to a fused load and test (`specialize_load_branch_pairs`).
-                let load = records.get(test).filter(|_| backward == 1)?;
-                let operator = u32::from(records.get(test + 1)?.a);
-                [false, true].into_iter()
-                    .find(|&capture| load.handler == load_relation_jump_handler::<H>(operator, false, capture) as *const ())
-                    .map(|capture| update_load_loop_handler::<H>(operator, decrement, capture))
-            });
-        records[pc].handler = looped.unwrap_or(fused) as *const ();
+        let fused = update_fusion::<H>(&records[pc], &records[pc + 1], |offset| records.get(decoded[pc + 1].imm() as usize + offset));
+        if let Some(fused) = fused {
+            records[pc].handler = fused as *const ();
+        }
     }
+}
+
+/// The handler of the `IncDec` record `update` that the record `jump` follows, where `jump` is an unconditional
+/// jump: the fused update and jump (`lane_inc_dec_jump`), or, when the jump goes back to the loop's forward integer
+/// register test (`test`, read only then), the update, jump and test (`lane_inc_dec_loop`). `None` for any other
+/// pair. The loader (`specialize_update_jumps`) and a loop site that retires (`lane_loop_retire`) fuse by it, so a
+/// declined loop runs what the interpreter's own does.
+fn update_fusion<'a, H: Host>(update: &LaneInstruction, jump: &LaneInstruction, at: impl Fn(usize) -> Option<&'a LaneInstruction>) -> Option<Handler> {
+    let decrement = update_direction::<H>(update.handler)?;
+    let backward = match jump.handler {
+        plain if plain == lane_jump_always::<H, true> as Handler as *const () => true,
+        plain if plain == lane_jump_always::<H, false> as Handler as *const () => false,
+        _ => return None,
+    };
+    let looped = || -> Option<Handler> {
+        let test = at(0).filter(|_| backward)?;
+        let operator = u32::from(test.a);
+        if test.handler == relation_jump_handler::<H, false>(operator, false) as *const () {
+            return Some(update_loop_handler::<H>(operator, decrement, test.b == update.a));
+        }
+        // A test against a constant in the record.
+        if test.handler == relation_jump_handler::<H, true>(operator, false) as *const () {
+            return Some(update_small_loop_handler::<H>(operator, decrement));
+        }
+        // A fused load and test (`specialize_load_branch_pairs`), whose test record follows.
+        let operator = u32::from(at(1)?.a);
+        [false, true].into_iter()
+            .find(|&capture| test.handler == load_relation_jump_handler::<H>(operator, false, capture) as *const ())
+            .map(|capture| update_load_loop_handler::<H>(operator, decrement, capture))
+    };
+    Some(looped().unwrap_or_else(|| update_jump::<H>(decrement, backward)))
 }
 
 /// Whether a record running `handler`, an `IncDec`'s own (`lane_inc_dec`), decrements;
@@ -25122,6 +25135,8 @@ fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
 mod instruction_set_tests;
 #[cfg(test)]
 mod call_site_history_tests;
+#[cfg(test)]
+mod update_fusion_tests;
 mod on_demand_metadata;
 use on_demand_metadata::{lane_completes_return, lane_note_late_call};
 

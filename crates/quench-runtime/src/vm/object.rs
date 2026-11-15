@@ -1675,7 +1675,7 @@ impl<H: Host> Vm<H> {
         let cache = self.field_cache_entry(site);
         if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER { return None; }
         let storage_len = self.shapes.get(cache.receiver as usize)?.storage_len();
-        if usize::from(cache.slot) >= storage_len { return None; }
+        if usize::from(cache.slot) >= storage_len || self.heap.slot_holds_raw_doubles(cache.receiver, usize::from(cache.slot)) { return None; }
         let storage = receiver.and_then(|receiver| self.heap.object_record(receiver))
             .filter(|object| object.exact_shape() == cache.receiver)
             .and_then(Object::plain_property_storage);
@@ -1791,7 +1791,8 @@ impl<H: Host> Vm<H> {
         if entry.receiver == NO_FIELD_RECEIVER { return None; }
         let holder = (entry.holder != NO_FIELD_HOLDER).then_some(entry.holder);
         let storage_len = self.shapes.get(holder.unwrap_or(entry.receiver) as usize)?.storage_len();
-        (usize::from(entry.slot) < storage_len).then(|| super::compiled::NativeFieldLoad {
+        let owner = holder.unwrap_or(entry.receiver);
+        (usize::from(entry.slot) < storage_len && !self.heap.slot_holds_raw_doubles(owner, usize::from(entry.slot))).then(|| super::compiled::NativeFieldLoad {
             shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None,
             ty: self.heap.slot_type(holder.unwrap_or(entry.receiver), usize::from(entry.slot)),
             inherited: holder.and_then(|holder| self.inherited_constant(holder, entry.slot)), function_shape: false,

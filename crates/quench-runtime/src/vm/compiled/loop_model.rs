@@ -73,7 +73,7 @@ pub(in crate::vm) fn body_taken(tiers: &Tiers, span: u64, ir: usize, unplanned: 
     if tiers.admits_all { return 0; }
     let priors = &tiers.priors;
     let plan = if unplanned { priors.plan_ns_per_ir } else { 0 };
-    let outlay = priors.region_entry_ns + super::tier_model::outlay_ns(ir, plan, priors.compile_ns_per_ir, compile_wall_permille(priors));
+    let outlay = priors.region_entry_ns + ir as u64 * (plan + priors.compile_ns_per_ir * compile_wall_permille(priors) / PER_MILLE);
     body_required_taken(priors, body_work(&tiers.loops, span, ir), outlay)
 }
 
