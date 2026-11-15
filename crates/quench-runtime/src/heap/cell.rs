@@ -921,6 +921,8 @@ impl Native {
                 | Self::IteratorSelf
                 | Self::ArrayConcat
                 | Self::ObjectIsExtensible
+                | Self::ArrayReverse
+                | Self::MathRandom
                 | Self::ArraySlice
                 | Self::ArrayMap
                 | Self::ArrayForEach
