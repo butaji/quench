@@ -1234,12 +1234,11 @@ impl<H: Host> Vm<H> {
             return Ok(true);
         }
         let caller = frame.map(|frame| self.frame_caller(frame));
-        let top_caller = self.frame_caller(self.frames.len().saturating_sub(1));
         Ok(caller.and_then(|caller| self.dynamic_binding(caller, atom)).is_some()
             || self.realm.global_lexical_declarations.contains(&atom)
             || self.frames.last().is_some_and(|frame| self.function_environment_binding(p, frame.function, atom))
             || caller.is_some_and(|caller| self.name_binding(caller, atom).is_some())
-            || self.outer_environment_binding(self.captured_parent_environment(top_caller), atom).is_some()
+            || self.outer_environment_binding(self.captured_parent_environment(self.frame_caller(self.frames.len().saturating_sub(1))), atom).is_some()
             || self.has_global_object_binding(p, atom)?)
     }
 
