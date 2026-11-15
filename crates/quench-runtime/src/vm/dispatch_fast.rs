@@ -29,6 +29,7 @@ use smallvec::SmallVec;
 use crate::heap::InlineObjectHeader;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::*;
+use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
 use crate::bytecode::index as opc;
 use crate::bytecode::{Class, Traits};
 use crate::bytecode::{
@@ -647,7 +648,7 @@ mod body_calls;
 mod lane_leaves;
 #[path = "operand_feedback.rs"]
 pub(super) mod operand_feedback;
-use operand_feedback::{has_operand_feedback, note_bigint_kinds, note_first_miss, note_number_kinds, note_operands, note_pair_result, Records};
+use operand_feedback::{has_operand_feedback, note_bigint_kinds, note_first_miss, note_number_kinds, note_operands, note_pair_result, note_widened, Records};
 #[path = "lane_body_tier.rs"]
 mod lane_body_tier;
 #[path = "loop_tier.rs"]
@@ -4230,22 +4231,19 @@ fn lane_read_operator<H: Host, const OP: u32, const RAW: bool>(cx: *mut LaneCont
     let operator = unsafe { &*following(following(ip)) };
     // Arithmetic on two Numbers first, the register operands read in memory
     // (`Registers::number`); bitwise operators and other values take the shared operation.
-    {
-        use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
-        if matches!(OP, ADDITION | SUBTRACTION | MULTIPLICATION | DIVISION) {
-            let numbers = if super::operations::number_result_is_commutative(OP) {
-                // SAFETY: specialization stores the other register in the fused update's unused c.
-                match element.as_number() { Some(left) => r.number(unsafe { (*ip).c }).map(|right| (left, right)), None => None }
-            } else {
-                match r.number(operator.b) { Some(left) => r.number(operator.c).map(|right| (left, right)), None => None }
-            };
-            if let Some((left, right)) = numbers
-                && let Some(number) = super::operations::number_operator::<OP>(left, right)
-            {
-                let value = if RAW { raw_results::raw_number(number) } else { Value::number(number) };
-                r.set(operator.a, value);
-                return Resumed::At(r, following(following(following(ip))), Carried::script(cx));
-            }
+    if matches!(OP, ADDITION | SUBTRACTION | MULTIPLICATION | DIVISION) {
+        let numbers = if super::operations::number_result_is_commutative(OP) {
+            // SAFETY: specialization stores the other register in the fused update's unused c.
+            match element.as_number() { Some(left) => r.number(unsafe { (*ip).c }).map(|right| (left, right)), None => None }
+        } else {
+            match r.number(operator.b) { Some(left) => r.number(operator.c).map(|right| (left, right)), None => None }
+        };
+        if let Some((left, right)) = numbers
+            && let Some(number) = super::operations::number_operator::<OP>(left, right)
+        {
+            let value = if RAW { raw_results::raw_number(number) } else { Value::number(number) };
+            r.set(operator.a, value);
+            return Resumed::At(r, following(following(following(ip))), Carried::script(cx));
         }
     }
     // SAFETY: specialization stores the other register in the fused update's unused c.
@@ -5106,19 +5104,18 @@ script_handler! {
     /// so this handler saves no registers for them.
     #[inline(never)]
     fn lane_operator_numbers<OP: u32>(cx, r, ip, i, view) {
-        // Arithmetic on two Numbers not both int32, its operands read in memory
-        // (`Registers::number`): such a pair notes no widening, so the feedback is untouched.
+        // Arithmetic on two Numbers, its operands read in memory (`Registers::number`), an
+        // overflowing int32 sum (SJCL's `w[i] + k[i] + h7`) included, past the general path.
+        if matches!(OP, ADDITION | SUBTRACTION | MULTIPLICATION | DIVISION)
+            && let Some((left, left_int)) = r.number_kind(i.b)
+            && let Some((right, right_int)) = r.number_kind(i.c)
+            && let Some(number) = super::operations::number_operator::<OP>(left, right)
         {
-            use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
-            if matches!(OP, ADDITION | SUBTRACTION | MULTIPLICATION | DIVISION)
-                && let Some((left, left_int)) = r.number_kind(i.b)
-                && let Some((right, right_int)) = r.number_kind(i.c)
-                && !(left_int && right_int)
-                && let Some(number) = super::operations::number_operator::<OP>(left, right)
-            {
-                r.set(i.a, Value::number(number));
-                next!(cx, r, following(ip), Carried::script_in(cx, view))
-            }
+            let value = Value::number(number);
+            // SAFETY: an arithmetic record of the running view; only two int32 can widen.
+            if left_int && right_int { unsafe { note_widened(cx, ip, value) } }
+            r.set(i.a, value);
+            next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
         let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), r.get(i.c))
         else {
@@ -23103,7 +23100,6 @@ mod loop_kernel;
 /// or `lane_operator_numbers`) that the lane fuses (`fused_arithmetic`); `None` for any other
 /// handler.
 fn arithmetic_operator<H: Host>(handler: *const ()) -> Option<u32> {
-    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
     macro_rules! find {
         ($($operator:ident),*) => {
             $(if handler == lane_operator::<H, $operator> as Handler as *const ()
@@ -23120,7 +23116,6 @@ fn arithmetic_operator<H: Host>(handler: *const ()) -> Option<u32> {
 /// The operator of a `lane_operator_double_constant` record (`fused_arithmetic`); `None` for
 /// any other handler.
 fn double_constant_operator<H: Host>(handler: *const ()) -> Option<u32> {
-    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
     macro_rules! find {
         ($($operator:ident),*) => {
             $(if handler == lane_operator_double_constant::<H, $operator> as Handler as *const () {
@@ -23137,7 +23132,6 @@ fn double_constant_operator<H: Host>(handler: *const ()) -> Option<u32> {
 /// operation (`lane_update_get_index_operator`). The read and operator records stay as they
 /// are, for a jump that enters them and for a step the fused record leaves to them.
 fn specialize_updated_index_operators<H: Host>(records: &mut [LaneInstruction]) {
-    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
     let increment = lane_update_get_index::<H, false> as Handler as *const ();
     let decrement = lane_update_get_index::<H, true> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(2) {
@@ -23178,7 +23172,6 @@ fn specialize_updated_index_operators<H: Host>(records: &mut [LaneInstruction]) 
 /// Liveness (`live`) selects the variant that leaves a first result dead after the pair
 /// unstored on the fast path (`lane_operator_pair`'s `FIRST_DEAD`).
 fn specialize_operator_pairs<H: Host>(decoded: &[WideInstruction], handlers: &[crate::bytecode::Handler], records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>) {
-    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
     let mut pc = 0;
     while pc + 1 < records.len() {
         let covered = fused_width::<H>(records[pc].handler);
@@ -23261,7 +23254,6 @@ fn specialize_int32_truncations<H: Host>(records: &mut [LaneInstruction], live: 
 /// `lane_operator_numbers_raw`): as `a*b + c*d + e*f`'s first product, which waits for the
 /// next product's pair. A record a fused record before it covers runs inside that record.
 fn specialize_raw_operators<H: Host>(decoded: &[WideInstruction], handlers: &[crate::bytecode::Handler], records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>) {
-    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
     if !handlers.is_empty() || live.is_none() {
         return;
     }
@@ -23342,7 +23334,6 @@ fn specialize_typed_addresses<H: Host>(records: &mut [LaneInstruction]) {
 /// How many records a fused record at the head of a run executes on its fast path: three for
 /// `lane_update_get_index_operator`, two for `lane_update_get_index`, one for any other.
 fn fused_width<H: Host>(handler: *const ()) -> usize {
-    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
     macro_rules! triple {
         ($($operator:ident),*) => {
             [$(lane_update_get_index_operator::<H, false, $operator> as Handler as *const (),
@@ -23368,7 +23359,6 @@ fn fused_width<H: Host>(handler: *const ()) -> usize {
 /// read's, after a fused update): the one table both directions read (`proved_handler`,
 /// `generic_handler`).
 fn proved_records<H: Host>() -> impl Iterator<Item = (Handler, Handler, usize)> {
-    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
     macro_rules! updated_operators {
         ($($operator:ident),*) => {
             [$((lane_update_get_index_operator::<H, false, $operator> as Handler,
@@ -24098,7 +24088,6 @@ fn operator_handler<H: Host, const CONSTANT: bool>(operator: u32) -> Option<Hand
 /// its record carries: an integer as the immediate, its tag proved here once
 /// (`lane_operator_integer_constant`); any other value as the constant.
 fn constant_operator_handler<H: Host>(operator: u32, constant: Value) -> Option<(Handler, LaneOperand)> {
-    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
     let Some(integer) = constant.as_int() else {
         macro_rules! double {
             ($($op:ident),*) => {
