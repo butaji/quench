@@ -1001,36 +1001,16 @@ fn page_size() -> usize {
     unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
 }
 
-/// Collections the host has seen, and the count at the last release before output.
-static COLLECTIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static COLLECTIONS_AT_OUTPUT_RELEASE: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(u64::MAX);
-
-/// Records a collection boundary, after which the next output releases the read-only pages.
+/// Notes a collection boundary: the run's first marks the start-up phase's peak.
+///
+/// Console output no longer releases the read-only pages around itself: the release before
+/// and after each output refaulted the run's own code at its next iteration, where output
+/// falls once per iteration (JetStream 3 no-JIT, x86_64, 3 alternating runs, 2026-11-15:
+/// octane-code-load 1,682 minor faults per extra iteration, prismjs-startup +31.6% and
+/// octane-code-load +21.6% score without it, max RSS within 1 MB, inspector code-load 2 MB lower).
 pub fn note_collection() {
     static FIRST: std::sync::Once = std::sync::Once::new();
     FIRST.call_once(|| phase_peak("run to collection"));
-    COLLECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Runs console `output` between two releases of the read-only pages when a collection has
-/// run since the last such release. Before: a run that prints its result once at the end
-/// touches the output code while its own code is resident, at the peak of its heap (V8-v7
-/// RegExp max RSS, bolted static x86_64, 2026-10-19: 6316-6524 -> 6244-6300 KiB). After: the
-/// output code would otherwise stay resident while the run's code refaults until the next
-/// collection releases both. Output in a loop that allocates little releases nothing more.
-pub fn around_output<R>(output: impl FnOnce() -> R) -> R {
-    use std::sync::atomic::Ordering::Relaxed;
-    let collections = COLLECTIONS.load(Relaxed);
-    let releases = COLLECTIONS_AT_OUTPUT_RELEASE.swap(collections, Relaxed) != collections;
-    if releases {
-        release_read_only_pages_at_boundary();
-    }
-    let result = output();
-    if releases {
-        release_read_only_pages_at_boundary();
-    }
-    result
 }
 
 /// Returns the allocator's free pages to the system: a compilation frees its syntax tree
