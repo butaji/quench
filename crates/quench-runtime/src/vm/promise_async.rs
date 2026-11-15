@@ -282,7 +282,7 @@ impl<H: Host> Vm<H> {
         // `source` is a Promise, or a primitive standing for the fulfilled one an `await`
         // never materializes.
         let (source_state, result) = match self.promise_record(source) {
-            Some(record) => (record.state, record.result),
+            Some(record) => (record.state(), record.result()),
             None if !self.is_object_like(source) => (PromiseState::Fulfilled, source),
             None => return Err(JsError("await source is not a Promise".into())),
         };
@@ -296,8 +296,7 @@ impl<H: Host> Vm<H> {
         if source_state == PromiseState::Pending {
             self.promise_record_mut(source)
                 .expect("await source Promise record exists")
-                .reactions
-                .push(reaction);
+                .push_reaction(reaction);
         } else {
             self.enqueue_promise_reaction(p, reaction, source_state, result);
         }

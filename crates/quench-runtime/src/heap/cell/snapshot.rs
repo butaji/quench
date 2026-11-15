@@ -483,24 +483,19 @@ impl IteratorRecord {
 
 impl crate::heap::PromiseCell {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        let crate::heap::PromiseRecord {
-            state,
-            result,
-            reactions,
-            rejection,
-            host_context,
-            module_evaluation,
-        } = &self.record;
+        let record = &self.record;
+        let (state, result, rejection, host_context) =
+            (record.state(), record.result(), record.rejection(), record.host_context);
         // A snapshot holds no module record (`PromiseRuntime::write_snapshot`), so no promise
         // is a module's evaluation promise.
-        if *module_evaluation {
+        if record.module_evaluation {
             return Err(SnapshotError::unsupported("a module evaluation promise"));
         }
         write_object(writer, &self.object)?;
-        promise_state::write(writer, *state);
-        writer.value(*result);
-        writer.len(reactions.len());
-        for reaction in reactions {
+        promise_state::write(writer, state);
+        writer.value(result);
+        writer.len(record.reactions().count());
+        for reaction in record.reactions() {
             writer.value(reaction.on_fulfilled);
             writer.value(reaction.on_rejected);
             writer.value(reaction.next);
@@ -535,17 +530,9 @@ impl crate::heap::PromiseCell {
         let rejection = crate::heap::PromiseRejectionState::from_parts(phase, std::num::NonZeroU64::new(reader.u64()?))
             .ok_or_else(|| SnapshotError("a reported promise rejection has no identifier".into()))?;
         let host_context = if reader.bool()? { Some(crate::HostExecutionContext(reader.u64()?)) } else { None }.into();
-        Ok(Self {
-            object,
-            record: crate::heap::PromiseRecord {
-                state,
-                result,
-                reactions: reactions.into(),
-                rejection,
-                host_context,
-                module_evaluation: false,
-            },
-        })
+        let record = crate::heap::PromiseRecord::from_parts(state, result, reactions.into(), rejection, host_context)
+            .ok_or_else(|| SnapshotError("a promise's state contradicts its result or reactions".into()))?;
+        Ok(Self { object, record })
     }
 }
 

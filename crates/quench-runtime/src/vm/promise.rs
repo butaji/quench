@@ -809,14 +809,7 @@ impl<H: Host> Vm<H> {
         };
         let promise = self.heap.alloc_promise(crate::heap::PromiseCell {
             object: Self::empty_object(prototype),
-            record: PromiseRecord {
-                state: PromiseState::Pending,
-                result: Value::UNDEFINED,
-                reactions: Default::default(),
-                rejection: PromiseRejectionState::Unobserved,
-                host_context: host_context.into(),
-                module_evaluation: false,
-            },
+            record: PromiseRecord::pending(host_context.into()),
         });
         if let Some(identity) = host_context {
             let mut context = crate::NativeContext::new(self);
@@ -1480,7 +1473,7 @@ impl<H: Host> Vm<H> {
         let Some(completion) = self.promise_record(promise).cloned() else {
             return Err(self.type_error(p, "module completion promise is unavailable".into()));
         };
-        match completion.state {
+        match completion.state() {
             PromiseState::Pending => {
                 let Some(record) = self.realm.promise.modules.get_mut(key) else {
                     return Ok(());
@@ -1499,9 +1492,9 @@ impl<H: Host> Vm<H> {
             }
             PromiseState::Fulfilled => self.complete_main_module(p, key),
             PromiseState::Rejected => {
-                self.fail_main_module(p, key, completion.result)?;
+                self.fail_main_module(p, key, completion.result())?;
                 Err(JsError::thrown(
-                    completion.result,
+                    completion.result(),
                     "main module evaluation rejected".into(),
                 ))
             }
@@ -3330,7 +3323,7 @@ impl<H: Host> Vm<H> {
                 .and_then(ModuleRecord::evaluation_promise)
                 .is_some_and(|promise| {
                     self.promise_record(promise)
-                        .is_some_and(|record| record.state == PromiseState::Pending)
+                        .is_some_and(|record| record.state() == PromiseState::Pending)
                 })
         {
             let Some(record) = self.realm.promise.modules.get_mut(cache_key) else {
@@ -3491,7 +3484,7 @@ impl<H: Host> Vm<H> {
     fn watch_module_evaluation(&mut self, promise: Value) {
         let settled = self.promise_record_mut(promise).is_none_or(|record| {
             record.module_evaluation = true;
-            record.state != PromiseState::Pending
+            record.state() != PromiseState::Pending
         });
         self.realm.promise.async_module_settled |= settled;
     }
@@ -3542,7 +3535,7 @@ impl<H: Host> Vm<H> {
             let promise = module.evaluation_promise()?;
             let settled = self
                 .promise_record(promise)
-                .is_some_and(|record| record.state != PromiseState::Pending);
+                .is_some_and(|record| record.state() != PromiseState::Pending);
             settled.then_some((key, promise, module.pending_namespace()?))
         })
     }
@@ -3566,14 +3559,14 @@ impl<H: Host> Vm<H> {
             let Some(record) = self.promise_record(promise).cloned() else {
                 continue;
             };
-            match record.state {
+            match record.state() {
                 PromiseState::Pending => {}
                 PromiseState::Fulfilled => self.settle_static_module(p, &key, Ok(namespace))?,
                 PromiseState::Rejected => self.settle_static_module(
                     p,
                     &key,
                     Err(JsError::thrown(
-                        record.result,
+                        record.result(),
                         "module evaluation rejected".into(),
                     )),
                 )?,
@@ -3747,7 +3740,7 @@ impl<H: Host> Vm<H> {
             {
                 let pending = self
                     .promise_record(evaluation)
-                    .is_some_and(|record| record.state == PromiseState::Pending);
+                    .is_some_and(|record| record.state() == PromiseState::Pending);
                 if pending && self.deferred_dependency_batch {
                     let key = module_cache_key(&module.name, "javascript");
                     let Some(module_record) = self.realm.promise.modules.get_mut(&key) else {
@@ -3766,11 +3759,11 @@ impl<H: Host> Vm<H> {
                         self.type_error(p, "module evaluation promise is unavailable".into())
                     );
                 };
-                match record.state {
+                match record.state() {
                     PromiseState::Fulfilled => {}
                     PromiseState::Rejected => {
                         return Err(JsError::thrown(
-                            record.result,
+                            record.result(),
                             "module evaluation rejected".into(),
                         ));
                     }
@@ -5101,10 +5094,10 @@ impl<H: Host> Vm<H> {
         // Species selection and capability construction may settle the source.
         // Read its authoritative state only when installing this reaction.
         let record = self.promise_record_mut(promise).unwrap();
-        if record.state == PromiseState::Pending {
-            record.reactions.push(reaction);
+        if record.state() == PromiseState::Pending {
+            record.push_reaction(reaction);
         } else {
-            let (state, result) = (record.state, record.result);
+            let (state, result) = (record.state(), record.result());
             self.enqueue_promise_reaction(p, reaction, state, result);
         }
     }

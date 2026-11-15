@@ -601,13 +601,12 @@ impl<H: Host> Vm<H> {
             next: target,
             execution_context: self.host.capture_job_context(self.promise_record(target).and_then(|record| record.host_context.get())).into(),
         };
-        if record.state == PromiseState::Pending {
+        if record.state() == PromiseState::Pending {
             self.promise_record_mut(source)
                 .expect("source Promise record exists")
-                .reactions
-                .push(reaction);
+                .push_reaction(reaction);
         } else {
-            self.enqueue_promise_reaction(p, reaction, record.state, record.result);
+            self.enqueue_promise_reaction(p, reaction, record.state(), record.result());
         }
         Ok(())
     }
@@ -1096,11 +1095,11 @@ impl<H: Host> Vm<H> {
                 .promise_record(resolved)
                 .cloned()
                 .ok_or_else(|| JsError("async-from-sync value lost its Promise".into()))?;
-            match state.state {
-                PromiseState::Fulfilled => state.result,
+            match state.state() {
+                PromiseState::Fulfilled => state.result(),
                 PromiseState::Rejected => {
                     return Err(JsError::thrown(
-                        state.result,
+                        state.result(),
                         "async-from-sync value rejected".into(),
                     ));
                 }

@@ -3417,7 +3417,7 @@ fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     assert!(vm.heap.is_live(result));
     assert_eq!(
         vm.promise_record(promise)
-            .map(|record| record.result),
+            .map(|record| record.result()),
         Some(result)
     );
     let (resolve, _) = vm.promise_resolving_functions(promise);
@@ -6825,7 +6825,7 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
         for (promise, weak) in &promises {
             assert_eq!(vm.heap.weak_value(*weak), Some(*promise));
             assert_eq!(
-                vm.promise_record(*promise).expect("promise record").state,
+                vm.promise_record(*promise).expect("promise record").state(),
                 PromiseState::Fulfilled
             );
         }

@@ -1206,8 +1206,8 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         loop {
             self.run_job_queue(program, |vm| vm.promise_record(promise)
-                .is_some_and(|record| record.state == PromiseState::Pending))?;
-            if self.promise_record(promise).is_none_or(|record| record.state != PromiseState::Pending)
+                .is_some_and(|record| record.state() == PromiseState::Pending))?;
+            if self.promise_record(promise).is_none_or(|record| record.state() != PromiseState::Pending)
                 || !self.realm.jobs.is_empty() { return Ok(()); }
             self.advance_static_module_jobs(program)?;
             self.advance_dynamic_import_jobs(program, true)?;

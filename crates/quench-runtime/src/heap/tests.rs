@@ -1625,11 +1625,7 @@ fn named_property_publication_retires_readers_for_every_record_family() {
                     object, realm: Value::NULL, env: Value::NULL,
                     kind: FunctionKind::User(crate::vm::ProgramId::MAIN, 0),
                 })),
-                Family::Promise => Cell::Promise(Box::new(PromiseCell { object, record: PromiseRecord {
-                    state: PromiseState::Pending, result: Value::UNDEFINED,
-                    reactions: Default::default(), rejection: PromiseRejectionState::Unobserved,
-                    host_context: None.into(), module_evaluation: false,
-                } })),
+                Family::Promise => Cell::Promise(Box::new(PromiseCell { object, record: PromiseRecord::pending(None.into()) })),
                 Family::Iterator => Cell::Iterator(Box::new(IteratorRecord {
                     object, source: Value::NULL, kind: IteratorKind::Array, index: 0, done: false,
                     ext: IteratorExt::default(),
