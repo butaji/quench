@@ -3509,9 +3509,13 @@ fn lane_in_place<H: Host, T>(
         vm.frames[frame].pc = pc;
         vm.frames[frame].pc_is_resume = false;
     }
+    let generation_key = (vm.heap.collection_epoch(), vm.realm.globals);
     let result = operation(vm, code);
     // The operation may allocate, which can make a collection due.
     note_allocation(vm);
+    if (vm.heap.collection_epoch(), vm.realm.globals) != generation_key {
+        lane_after_nested_collection(cx);
+    }
     let unobserved = beside && vm.lane_deferred.take().is_some();
     match result {
         Ok(value) => Some(value),
@@ -3523,6 +3527,23 @@ fn lane_in_place<H: Host, T>(
             vm.lane_raised = Some(error);
             None
         }
+    }
+}
+
+/// A lane run continues past guest code an operation made in place (`lane_in_place`), and
+/// that code collected or switched realms: everything the run resolved under its generation (call targets, read
+/// memos, capture and frame-storage pointers) assumed no collection runs in the lane, so it
+/// names cells the collection may have swept. The run takes a new generation, which retires
+/// every cached target, and drops its storage pointers, as a fresh run would start.
+#[cold]
+#[inline(never)]
+fn lane_after_nested_collection<H: Host>(cx: *mut LaneContext<H>) {
+    let vm = unsafe { vm(cx) };
+    vm.lane_stack.enter_generation((vm.heap.collection_epoch(), vm.realm.globals));
+    unsafe {
+        (*cx).capture = std::ptr::null();
+        (*cx).outer = NO_OUTER_WALK;
+        (*cx).frame_storage = NO_FRAME_STORAGE;
     }
 }
 

@@ -3179,6 +3179,7 @@ impl<H: Host> Vm<H> {
                 .is_some_and(|attributes| if stores { attributes.setter } else { attributes.getter }.is_some())
     }
 
+
     /// Records `cache` as the site's newest inherited entry. An entry for its receiver shape
     /// is replaced in place; a site holding `INHERITED_FIELD_CACHE_WAYS` entries reuses its
     /// oldest one's storage, so a site's entries stay bounded however many shapes reach it.

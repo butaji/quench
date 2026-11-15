@@ -139,6 +139,9 @@ pub(crate) enum CycleRefusal {
     ProfilingMemory,
     /// Cycles are adaptive and this heap's measures say they do not pay (`CycleGate`).
     NotPaying,
+    /// Old records keep reference counts (`super::rc`), whose barrier the snapshot barrier
+    /// would replace.
+    ReferenceCounting,
 }
 
 impl Heap {
@@ -165,6 +168,8 @@ impl Heap {
             Some(CycleRefusal::LegacyCells)
         } else if cfg!(feature = "profile-memory") {
             Some(CycleRefusal::ProfilingMemory)
+        } else if self.rc_active {
+            Some(CycleRefusal::ReferenceCounting)
         } else if mode == CycleMode::Adaptive && !self.cycle_gate.cycles {
             Some(CycleRefusal::NotPaying)
         } else {

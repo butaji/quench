@@ -39,6 +39,7 @@ mod parallel_mark; mod planned;
 mod promise_record;
 pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionPhase, PromiseRejectionState, PromiseState};
 mod rc_drop;
+mod rc;
 mod records;
 mod root;
 mod slots;
@@ -762,6 +763,8 @@ pub(crate) struct Heap {
     /// What decides whether the next full collection runs as a cycle when cycles are adaptive
     /// (`concurrent_mark::CycleGate`).
     cycle_gate: concurrent_mark::CycleGate,
+    /// Whether old records keep reference counts (`rc`, `QUENCH_DEV=rc-gc`).
+    rc_active: bool,
     /// Marks on the parallel pool whatever the heap's size (`Heap::parallel_mark`), so unit
     /// tests reach the parallel path with small heaps.
     #[cfg(test)]
@@ -1014,6 +1017,10 @@ impl Heap {
         #[cfg(test)]
         if let Some(age) = self.promotion_age_for_test {
             return age;
+        }
+        if self.rc_active {
+            // Under counts every survivor of a minor collection is old, and counted, at once.
+            return PromotionAge::First;
         }
         self.pacing_state.promotion_age(&self.pacing())
     }
@@ -2556,6 +2563,9 @@ impl Heap {
         self.clear_unread_environment_slots(environments);
         self.mark_stack = { work.clear(); work };
         let finalization_jobs = self.prune_weak_entries(full, age);
+        if self.rc_active && !full {
+            self.rc_epoch();
+        }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
             let mark_nanos = mark_started.elapsed().as_nanos() as u64;
@@ -2940,6 +2950,9 @@ impl Heap {
                 since_previous_full: if full { self.weight_between_fulls } else { 0 },
             },
         );
+        if self.rc_active && full {
+            self.rc_recount();
+        }
         if full {
             let pause_micros = full_started.map_or(0, |started| started.elapsed().as_micros() as u64);
             self.judge_cycles(premarked, full_mark_micros, pause_micros);
