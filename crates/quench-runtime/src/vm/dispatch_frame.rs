@@ -40,7 +40,7 @@ mod tests {
 #[derive(Clone, Copy)]
 pub(super) struct GeneralCodeCursor {
     program: ProgramId,
-    function: u32,
+    pub(super) function: u32,
     code: *const Instr,
     wide: *const WideInstruction,
     /// Fixed-width expansion of `code`; null while the function is cold.
@@ -1613,7 +1613,7 @@ impl<H: Host> Vm<H> {
                     // An await the queue's next job follows resumes that job's activation here
                     // (`Vm::chain_lane_await`), with no return to the job loop.
                     if let FrameOutcome::Await { value, destination, frame: None } = outcome
-                        && let Some(next) = self.chain_lane_await(p, program, frame, value, destination)
+                        && let Some(next) = self.chain_lane_await(p, program, frame, &cursor, value, destination)
                     {
                         (cursor, function, pc) = next?;
                         continue;
