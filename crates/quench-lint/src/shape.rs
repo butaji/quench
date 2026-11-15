@@ -29,7 +29,6 @@ pub fn scan(file: &str, source: &str, syntax: &syn::File, measures: &mut Measure
     }
     crate::data_layout::scan(file, syntax, measures);
     crate::fn_identity::scan(file, syntax, measures);
-    crate::line_packing::scan(file, source, syntax, measures);
     let hot = crate::hot_path::is_hot(file);
     let mut functions = Functions { file, scope: Vec::new(), measures, trees, seen: BTreeMap::new(), hot, test: false };
     functions.visit_file(syntax);
@@ -184,15 +183,15 @@ pub fn lower(listing: &str, current: &Measures) -> (String, Vec<String>) {
     (lowered, changes)
 }
 
-/// Rules a measure is born with: `--update` records the first baseline of such a measure that
+/// The rule a measure is born with: `--update` records the first baseline of such a measure that
 /// the list has never held, where any other new measure fails until it is fixed.
-const BORN_WITH_RULE: &[&str] = &["native_", crate::line_packing::MEASURE];
+const BORN_WITH_RULE: &str = "native_";
 
 /// Adds the measures of a newly born rule that the baseline has never recorded to `baseline`.
 pub fn first_baseline(found: &Measures, recorded: &Measures, baseline: &mut Measures) {
     found
         .iter()
-        .filter(|(subject, _)| BORN_WITH_RULE.iter().any(|rule| subject.starts_with(rule)) && !recorded.contains_key(*subject))
+        .filter(|(subject, _)| subject.starts_with(BORN_WITH_RULE) && !recorded.contains_key(*subject))
         .for_each(|(subject, count)| {
             baseline.insert(subject.clone(), *count);
         });
@@ -216,8 +215,6 @@ fn remedy(subject: &str) -> &'static str {
         "a dense id indexes a flat array; pack frequent flags into the index's high bits"
     } else if subject.starts_with("dod-cache ") {
         "a cache hides a slow core path: make the core path cheap and delete the cache"
-    } else if subject.starts_with(crate::line_packing::MEASURE) {
-        "one statement or function per line: packing hides it from the function-length law"
     } else if subject.starts_with("hot-") {
         "hot paths do O(1) work and allocate nothing: decide earlier, index a flat array, reuse a buffer"
     } else {
@@ -261,13 +258,13 @@ mod tests {
 
     #[test]
     fn a_born_rule_records_only_measures_the_list_never_held() {
-        let found: Measures = [("line-packing a.rs", 2), ("line-packing b.rs", 1), ("magic a::f", 1)]
+        let found: Measures = [("native_ir a.rs", 2), ("native_ir b.rs", 1), ("magic a::f", 1)]
             .into_iter()
             .map(|(subject, measure)| (subject.to_owned(), measure))
             .collect();
-        let recorded: Measures = [("line-packing b.rs".to_owned(), 1)].into_iter().collect();
+        let recorded: Measures = [("native_ir b.rs".to_owned(), 1)].into_iter().collect();
         let mut baseline = Measures::new();
         first_baseline(&found, &recorded, &mut baseline);
-        assert_eq!(baseline.keys().collect::<Vec<_>>(), ["line-packing a.rs"]);
+        assert_eq!(baseline.keys().collect::<Vec<_>>(), ["native_ir a.rs"]);
     }
 }

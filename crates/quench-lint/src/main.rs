@@ -5,9 +5,9 @@
 //! shape (`fingerprints`), when a body spells an unnamed number
 //! (`magic`), when data is laid out against data-oriented design (`data_layout`), or when
 //! code tests a function's address for identity (`fn_identity`), or when statements are packed
-//! onto long lines (`line_packing`).
+//! onto long lines (`line_packing`, reported by `--packing`, never gating).
 //!
-//! usage: quench-lint [--update | --lower] [ROOT...]   |   quench-lint --census [--update-census]
+//! usage: quench-lint [--update | --lower] [--packing] [ROOT...]   |   quench-lint --census [--update-census]
 //! (default roots: crates quench-bench/src tools; `--lower` reads the whole tree only)
 
 mod catalog;
@@ -46,12 +46,14 @@ pub(crate) fn is_equality(op: &syn::BinOp) -> bool {
 const OVERSIZED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/oversized.txt");
 const UPDATE_FLAG: &str = "--update";
 const LOWER_FLAG: &str = "--lower";
+const PACKING_FLAG: &str = "--packing";
 const FLAG_PREFIX: &str = "--";
 
 /// What a run was asked: how it may rewrite the recorded list, and the roots it reads.
 struct Request {
     update: bool,
     lower: bool,
+    packing: bool,
     roots: Vec<String>,
 }
 
@@ -59,12 +61,12 @@ impl Request {
     fn parse(args: Vec<String>) -> Result<Self, String> {
         let (flags, roots): (Vec<String>, Vec<String>) = args.into_iter().partition(|arg| arg.starts_with(FLAG_PREFIX));
         let asked = |flag: &str| flags.iter().any(|candidate| candidate == flag);
-        let (update, lower) = (asked(UPDATE_FLAG), asked(LOWER_FLAG));
+        let (update, lower, packing) = (asked(UPDATE_FLAG), asked(LOWER_FLAG), asked(PACKING_FLAG));
         if lower && !roots.is_empty() {
             return Err(format!("{LOWER_FLAG} reads the whole tree: give no ROOT"));
         }
         let roots = if roots.is_empty() { DEFAULT_ROOTS.iter().map(|root| root.to_string()).collect() } else { roots };
-        Ok(Self { update, lower, roots })
+        Ok(Self { update, lower, packing, roots })
     }
 }
 
@@ -82,7 +84,7 @@ fn rust_files(directory: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-fn scan(files: &[PathBuf]) -> Result<(duplicates::Duplicates, shape::Measures, decision_trees::DecisionTrees), String> {
+fn scan(files: &[PathBuf], packed: &mut shape::Measures) -> Result<(duplicates::Duplicates, shape::Measures, decision_trees::DecisionTrees), String> {
     let mut repeated = duplicates::Duplicates::default();
     let mut oversized = shape::Measures::new();
     let mut trees = decision_trees::DecisionTrees::default();
@@ -92,6 +94,7 @@ fn scan(files: &[PathBuf]) -> Result<(duplicates::Duplicates, shape::Measures, d
         let syntax =
             syn::parse_file(&source).map_err(|error| format!("{file}:{}: {error}", error.span().start().line))?;
         repeated.scan(&file, &syntax);
+        line_packing::scan(&file, &source, &syntax, packed);
         shape::scan(&file, &source, &syntax, &mut oversized, &mut trees);
     }
     Ok((repeated, oversized, trees))
@@ -152,7 +155,8 @@ fn main() -> ExitCode {
     request.roots.iter().for_each(|root| rust_files(Path::new(root), &mut files));
     files.sort();
     test_paths::declare(&files);
-    let (repeated, mut oversized, trees) = match scan(&files) {
+    let mut packed = shape::Measures::new();
+    let (repeated, mut oversized, trees) = match scan(&files, &mut packed) {
         Ok(found) => found,
         Err(error) => {
             eprintln!("quench-lint: cannot read {error}");
@@ -160,6 +164,9 @@ fn main() -> ExitCode {
         }
     };
     native_forms::scan(&files, &mut oversized);
+    if request.packing {
+        line_packing::report(&packed);
+    }
     let violations = repeated.report() + trees.report() + settle(&oversized, &request);
     if violations == 0 {
         return ExitCode::SUCCESS;

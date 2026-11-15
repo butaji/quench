@@ -3,8 +3,8 @@
 //! evade it; a line longer than [`MAX_LINE_CHARS`] that begins two or more statements or
 //! functions (`fn f() { a(); b() }`, `let x = 1; let y = 2;`) is counted once.
 //!
-//! The counts join the shrink-only measures in `oversized.txt`: a new packed line fails, an
-//! old one may only be split.
+//! The counts are reported (`quench-lint --packing`), not gated: nothing is recorded in
+//! `oversized.txt` for them.
 
 use syn::{spanned::Spanned, visit::Visit};
 
@@ -37,6 +37,12 @@ pub fn scan(file: &str, source: &str, syntax: &syn::File, measures: &mut Measure
 }
 
 /// The line (1-based) each statement and function begins on.
+/// Prints each file's count and the total.
+pub fn report(packed: &Measures) {
+    packed.iter().for_each(|(subject, count)| println!("{subject} {count}"));
+    println!("{MEASURE} total {}", packed.values().sum::<usize>());
+}
+
 #[derive(Default)]
 struct Begun(Vec<usize>);
 
