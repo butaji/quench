@@ -1,6 +1,6 @@
 //! The run of a stencil region that needs no activation: `Crossing::Bare`.
 
-use super::{enter_body, BodyEntry, BodyReturn, CallContext, LaneExit, LoopEntry, LoopOutcome, LoopRegion, Raised};
+use super::{enter_body, BodyEntry, BodyReturn, CallContext, LaneExit, LoopEntry, RegionRun, Raised};
 
 
 /// A bare run's payload is the entry record's address alone, where the dispatch holds it.
@@ -26,9 +26,8 @@ pub(super) unsafe fn run_bare(
     (entry_code, resume): (BodyEntry, u64),
     registers: *mut crate::value::Value,
     entry: &mut LoopEntry,
-    region: &LoopRegion,
     interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
-) -> LoopOutcome {
+) -> RegionRun {
     // The code reads the interrupt flag and the entry record's address (word 0 of its payload, `JsStepDispatch::loop_entry`).
     let mut payload = entry.words_mut() as usize;
     let mut context = CallContext::interrupt_only(unsafe { &*interrupt });
@@ -39,6 +38,6 @@ pub(super) unsafe fn run_bare(
     if let Some(Raised::Panic(panic)) = context.raised.take() {
         std::panic::resume_unwind(panic);
     }
-    LoopOutcome::of(LaneExit::read(status, word, || unreachable!("a bare region reads no heap row, so it completes no activation")), region)
+    RegionRun::own(LaneExit::read(status, word, || unreachable!("a bare region reads no heap row, so it completes no activation")))
 }
 

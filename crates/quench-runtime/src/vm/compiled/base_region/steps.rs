@@ -46,8 +46,8 @@
 //! rows where the stitch inlines it (`function::parts`): a call that completes continues the region,
 //! one that missed leaves at the call, and one that left the lane in its callee's activation, or
 //! whose callee left, or that ended in termination, ends the run with the (status, word) it left
-//! with, which the region's entry returns as a body's does (`LoopOutcome::Left`,
-//! `LoopOutcome::Terminated`), the registers already spilled.
+//! with, which the region's entry returns as a body's does (`RegionRun::nested`,
+//! `LaneExit::Terminated`), the registers already spilled.
 //!
 //! Which class an instruction is in follows from the opcode catalog's traits and layouts
 //! (`lowering`), never from a table of opcodes here.

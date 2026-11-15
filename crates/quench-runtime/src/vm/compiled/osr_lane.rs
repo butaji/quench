@@ -98,16 +98,16 @@ unsafe fn payload_for<H: Host>(vm: &mut Vm<H>, dispatch: &mut JsStepDispatch, le
 /// Enters the region's body over the activation's dispatch and maps its exit. A region that calls
 /// callees by their entries (`lend`: whether the lane may make their activations) runs on the lane
 /// frame's payload, which is named to the lane's helpers for the run (`dispatch_fast::lane_region_payload`):
-/// a leave inside a callee stays on the lane stack as its native frames (`LoopOutcome::Left`).
+/// a leave inside a callee stays on the lane stack as its native frames (`RegionRun::nested`).
 ///
 /// # Safety
 /// As `CompiledOsrRegion::run`: `registers` is the live register file, and `vm` and
 /// `interrupt` belong to this lane activation.
 pub(super) unsafe fn enter<H: Host>(
-    native: &mut JsNativeActivation, vm: &mut Vm<H>, region: &LoopRegion, program: ProgramId,
+    native: &mut JsNativeActivation, vm: &mut Vm<H>, program: ProgramId,
     (code, resume): (BodyEntry, u64), registers: *mut crate::value::Value,
     interrupt: *const crate::execution_interrupt::ExecutionInterrupt, (lane_context, lend): (usize, Option<bool>),
-) -> LoopOutcome {
+) -> RegionRun {
     let mut context = CallContext::interrupt_only(unsafe { &*interrupt });
     context.vm = std::ptr::from_mut(vm).cast();
     context.program = program;
@@ -133,5 +133,5 @@ pub(super) unsafe fn enter<H: Host>(
     }
     let exit = LaneExit::read(status, word, || native.dispatch.returned_pc);
     // A leave with native frames on the lane stack is read in the innermost of them.
-    if vm.lane_stack.activations.native_depth() != 0 { LoopOutcome::Left { exit } } else { LoopOutcome::of(exit, region) }
+    RegionRun { exit, nested: vm.lane_stack.activations.native_depth() != 0 }
 }
