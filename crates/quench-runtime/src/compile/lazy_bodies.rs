@@ -458,11 +458,7 @@ pub(in crate::compile) fn parse_free_names(program: &Program<'_>, early: &[&str]
     }
     let (start, own) = match program.body.first()? {
         Statement::FunctionDeclaration(function) => (function.span.start, function.id.as_ref().map(|id| id.name.as_str())),
-        Statement::ExpressionStatement(statement) => match statement.expression.without_parentheses() {
-            Expression::FunctionExpression(function) => (function.span.start, None),
-            _ => return None,
-        },
-        _ => return None,
+        _ => (super::first_call::alone_start(program)?, None),
     };
     let mut names: Vec<Box<str>> = early.iter().copied().chain(own).map(Box::from).collect();
     names.sort_unstable();
