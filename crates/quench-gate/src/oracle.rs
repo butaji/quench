@@ -62,8 +62,8 @@ fn known(path: &Path) -> io::Result<BTreeSet<String>> {
     Ok(fs::read_to_string(path)?.lines().map(str::trim).filter(|line| !line.is_empty()).map(str::to_owned).collect())
 }
 
-/// The ratchet: a failure outside the list fails the step, and a listed test that no longer
-/// fails leaves the list, which only shrinks.
+/// The ratchet: a failure outside the list fails the step, and a listed test seen passing
+/// leaves the list, which only shrinks.
 pub fn run(config: &Config) -> Verdict {
     let sources = config.root.join(SOURCES);
     let filters = filters(&sources).map_err(|error| format!("{}: {error}", sources.display()))?;
@@ -75,7 +75,8 @@ pub fn run(config: &Config) -> Verdict {
     if !new.is_empty() {
         return Err(format!("{} oracle tests fail that are not known failures:\n{}", new.len(), new.iter().map(|name| format!("  {name}")).collect::<Vec<_>>().join("\n")));
     }
-    let remaining: Vec<&String> = listed.intersection(&failed).collect();
+    let passed: BTreeSet<&String> = tally.passed.iter().collect();
+    let remaining: Vec<&String> = listed.iter().filter(|name| !passed.contains(name)).collect();
     let fixed = listed.len() - remaining.len();
     if fixed > 0 {
         let text: String = remaining.iter().map(|name| format!("{name}\n")).collect();

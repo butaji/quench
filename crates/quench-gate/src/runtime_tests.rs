@@ -8,6 +8,8 @@ const TEST_PREFIX: &str = "test ";
 const RESULT_SEPARATOR: &str = " ... ";
 const PASSED: &str = "ok";
 const FAILED: &str = "FAILED";
+/// The line libtest ends a finished run with; a run without it died before reporting every test.
+const SUMMARY: &str = "test result: ";
 
 /// What one run of the selected tests reported, by test name.
 pub struct Tally {
@@ -28,14 +30,17 @@ fn named(output: &str, outcome: &str) -> Vec<String> {
 }
 
 /// Runs the library tests whose names contain any of `filters`. A run that matched no test, or
-/// whose build failed, is an error; test failures are the caller's to judge.
+/// that ended without its summary (a failed build, a crashed test binary), is an error; test failures are the caller's to judge.
 pub fn tally(config: &Config, filters: &[String]) -> Result<Tally, String> {
     let mut command = config.cargo("test");
     command.args(["-p", PACKAGE, "--lib", "--"]).args(filters);
     let finished = process::run(&mut command)?;
     let (passed, failed) = (named(&finished.stdout, PASSED), named(&finished.stdout, FAILED));
+    if !finished.stdout.lines().any(|line| line.starts_with(SUMMARY)) {
+        return Err(format!("the {PACKAGE} test run ended without its summary:\n{}", finished.excerpt()));
+    }
     if passed.is_empty() && failed.is_empty() {
-        return Err(if finished.success { format!("no {PACKAGE} test matched {filters:?}") } else { finished.excerpt() });
+        return Err(format!("no {PACKAGE} test matched {filters:?}"));
     }
     Ok(Tally { passed, failed, excerpt: finished.excerpt() })
 }
