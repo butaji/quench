@@ -1625,6 +1625,41 @@ enum Completion {
     ReturnsToBody,
     /// `ReturnsToBody` of a body's `new`. Made a frame, it is a construction's.
     ConstructsToBody,
+    /// A Wasm call of a JavaScript-backed import (`wasm_calls::lane_activate_js_import`), of
+    /// another program than its Wasm caller's: its return gives the caller the value's Wasm
+    /// form and runs the caller's program and instance again, as `LaneStack::to_wasm` keeps
+    /// them (`lane_complete_to_wasm`). Made a frame, its pending call converts the value
+    /// (`CallCompletion::ToWasm`).
+    ToWasm,
+}
+
+/// A JavaScript-backed import's call facts, fixed by its wrapper (`Cell::WasmHostFunction`):
+/// the wrapper and its realm, the JavaScript callee, the scalar kind of each parameter
+/// (`JS_IMPORT_I32`, `_F32`, `_F64`) and the result type.
+#[derive(Clone, Copy)]
+pub(super) struct JsImportPlan {
+    pub(super) wrapper: Value,
+    pub(super) realm: Value,
+    pub(super) callee: Value,
+    pub(super) argc: u8,
+    pub(super) kinds: [u8; JS_IMPORT_ARGUMENTS],
+    pub(super) result: Option<crate::WasmType>,
+}
+
+/// The most parameters an activated import passes (`JsImportPlan`).
+pub(super) const JS_IMPORT_ARGUMENTS: usize = 8;
+pub(super) const JS_IMPORT_I32: u8 = 0;
+pub(super) const JS_IMPORT_F32: u8 = 1;
+pub(super) const JS_IMPORT_F64: u8 = 2;
+
+/// What a `Completion::ToWasm` activation's return restores of its Wasm caller: the instance
+/// it ran over (`LaneContext::instance`), the memory binding its view was of, read again on
+/// return since the callee may grow the memory, and the import's result type.
+#[derive(Clone, Copy)]
+pub(super) struct ToWasmCall {
+    pub(super) instance: Value,
+    pub(super) memory: Option<Value>,
+    pub(super) result: Option<crate::WasmType>,
 }
 
 impl Completion {
@@ -2038,6 +2073,12 @@ pub(super) struct LaneStack {
     /// invariants, each with the index of its activation, innermost last; its frame takes it
     /// when it materializes (`CallCompletion::Trapped`).
     trap_checks: Vec<(usize, TrapCheck)>,
+    /// What each `Completion::ToWasm` activation restores of its caller, innermost last; each
+    /// activation's frame takes its result type when it materializes (`CallCompletion::ToWasm`).
+    pub(super) to_wasm: Vec<ToWasmCall>,
+    /// The JavaScript-backed import a Wasm call last activated (`wasm_calls::lane_activate_js_import`),
+    /// read off its wrapper once; a collection forgets it (`forget_dead_callees`).
+    pub(super) js_import: Option<JsImportPlan>,
     /// The forwarding constructor bodies call targets name (`ScriptCallTarget::forwarded_method`),
     /// each once: a program's bodies are fixed, so the table only grows with distinct ones.
     forwarded_methods: Vec<crate::bytecode::ForwardedThisMethod>,
@@ -2092,6 +2133,8 @@ impl Default for LaneStack {
             steps: Vec::new(),
             iterators: Vec::new(),
             trap_checks: Vec::new(),
+            to_wasm: Vec::new(),
+            js_import: None,
             forwarded_methods: Vec::new(),
             activation_limit: std::cell::Cell::new(0),
             generation: NO_SCRIPT_GENERATION,
@@ -2246,6 +2289,7 @@ impl LaneStack {
     /// reuses their records: a body inlining one would take another function for it.
     pub(super) fn forget_dead_callees(&mut self, live: impl Fn(Value) -> bool) {
         self.wasm_export = None;
+        self.js_import = None;
         self.call_sites.get_mut().retain(|_, targets| { targets.retain(|target| target.identity().is_none_or(&live)); !targets.is_empty() });
     }
 
@@ -12751,6 +12795,7 @@ impl<H: Host> Vm<H> {
         let mut forwarders = std::mem::take(&mut self.lane_stack.forwarders).into_iter();
         let (mut settling, mut steps, mut traps) = (std::mem::take(&mut self.lane_stack.settling).into_iter(), std::mem::take(&mut self.lane_stack.steps).into_iter(), std::mem::take(&mut self.lane_stack.trap_checks).into_iter());
         let iterators = std::mem::take(&mut self.lane_stack.iterators);
+        let mut to_wasm = std::mem::take(&mut self.lane_stack.to_wasm).into_iter();
         let states = ActivationState::of(&activations, cx);
         // A deferred native's caller activations below its callback take the lane's outer
         // pending calls and executing program (`NativeBoundary`).
@@ -12802,6 +12847,7 @@ impl<H: Host> Vm<H> {
                     let step = steps.next().expect("each array step activation has its entry");
                     CallCompletion::ArrayStep(Box::new(self.array_step_call(step.iteration, step.element, step.index)))
                 }
+                Some(Completion::ToWasm) => CallCompletion::ToWasm(to_wasm.next().expect("each import activation has its entry").result),
                 other => match activation.kind {
                     ActivationKind::WasmEntry { result, .. } => CallCompletion::WasmExport(result),
                     _ => setters::frame_completion(other, &mut traps),
@@ -18412,6 +18458,9 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
         return Some(resumed);
     }
     let vm = unsafe { vm(cx) };
+    if let Some(Activation { kind: ActivationKind::Script(ScriptActivation { completion: Completion::ToWasm, .. }), .. }) = vm.lane_stack.activations.last() {
+        return Some(lane_complete_to_wasm(cx, ip, value));
+    }
     if proxy_traps::trap_result_needs_general_path(vm, vm.lane_stack.activations.last(), value) {
         return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
     }
@@ -18473,6 +18522,46 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
         }
         activation = vm.lane_stack.pop_activation().expect("the caller activation is the innermost");
     }
+}
+
+/// The return with `value` of the innermost activation, a JavaScript import's callee
+/// (`Completion::ToWasm`): its Wasm caller resumes after the call with the value's Wasm form,
+/// in its own program, instance and memory, which the callee may have grown. A value whose
+/// conversion could run guest code or throw returns from the callee's frame, whose pending
+/// call converts it (`CallCompletion::ToWasm`).
+#[inline(never)]
+fn lane_complete_to_wasm<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Resumed {
+    let vm = unsafe { vm(cx) };
+    let call = *vm.lane_stack.to_wasm.last().expect("an import activation has its entry");
+    let encoded = match call.result {
+        None => Some(Value::UNDEFINED),
+        Some(crate::WasmType::I32) => value.as_number().map(|number| Value::integer(crate::value::number_to_u32(number) as i32)),
+        Some(crate::WasmType::F32) => value.as_number().map(|number| Value::integer((number as f32).to_bits() as i32)),
+        Some(crate::WasmType::F64) => value.as_number().map(|number| vm.encode_bits64(number.to_bits())),
+        Some(_) => None,
+    };
+    let Some(encoded) = encoded else {
+        return Resumed::Exit(lane_frame_return(vm, ip, value));
+    };
+    vm.lane_stack.to_wasm.pop();
+    let activation = vm.lane_stack.pop_activation().expect("the import's activation is the innermost");
+    lane_restore_caller(cx, &activation);
+    lane_enter_program(cx, activation.caller_program);
+    let memory = match call.memory {
+        Some(binding) => {
+            let fresh = memory_view(vm, binding);
+            unsafe { (*cx).resolved = (binding, fresh) };
+            fresh
+        }
+        None => MemoryView::NONE,
+    };
+    unsafe {
+        (*cx).inline_calls = true;
+        (*cx).script_calls = false;
+        (*cx).instance = call.instance;
+        (*cx).memory = memory;
+    }
+    lane_resume_after_call(&activation, memory, encoded)
 }
 
 /// The return of the innermost activation, a Wasm one whose call keeps its result: its

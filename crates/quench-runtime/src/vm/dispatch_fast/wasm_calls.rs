@@ -137,6 +137,12 @@ lane_handler! {
         let callee = match vm.heap.function(r.get(i.b)) {
             Some(FunctionRecord { kind: FunctionKind::User(program, function), env, .. })
                 if (*program, Some(*env)) == running => u16::try_from(*function).ok(),
+            Some(FunctionRecord { kind: FunctionKind::Native(Native::WasmHost), .. }) => {
+                if let Some(resumed) = lane_call_js_import::<H>(cx, r, ip, view.memory) {
+                    resume!(cx, resumed)
+                }
+                None
+            }
             _ => None,
         };
         let Some(function) = callee else { return exit(ip) };
@@ -228,4 +234,178 @@ fn lane_call_compiled<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, fu
     r.set(i.a, value);
     let view = Carried { memory, integers: crate::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
     Some(Resumed::At(r, following(ip), view))
+}
+
+/// A Wasm reference call of a JavaScript-backed import, made from the lane beside its
+/// activations (`lane_in_place`) through the import's shared conversion path
+/// (`Vm::call_compiled_js_wasm_import`), so the Wasm callers stay activations unless the
+/// JavaScript callee makes them frames. The caller resumes as `lane_call_compiled`'s does.
+/// `None` for a host-backed import, which leaves for the general loop.
+#[cold]
+#[inline(never)]
+fn lane_call_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, memory: MemoryView) -> Option<Resumed> {
+    if let Some(resumed) = lane_activate_js_import(cx, r, ip, memory) {
+        return Some(resumed);
+    }
+    // SAFETY: called only from the call handler of the record at `ip`, while the lane runs.
+    let i = unsafe { &*ip };
+    let vm = unsafe { vm(cx) };
+    let callee = r.get(i.b);
+    let env = vm.heap.function(callee)?.env;
+    let (target, capture, signature) = match vm.heap.get(env) {
+        Some(Cell::WasmHostFunction { target, signature }) => match target {
+            crate::heap::WasmHostTarget::Js(target) => (*target, None, signature.clone()),
+            crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target) => {
+                (target.function, Some((target.view_environment, target.view_slot)), signature.clone())
+            }
+            crate::heap::WasmHostTarget::Host(_) => return None,
+        },
+        _ => return None,
+    };
+    // SAFETY: the window is the caller's registers, copied before guest code runs.
+    let args: smallvec::SmallVec<[Value; 8]> = unsafe { lane_call_window(r, i) }.iter().copied().collect();
+    if args.len() != signature.params.len() {
+        return None;
+    }
+    let program = unsafe { (*cx).program };
+    let Some(called) = lane_in_place(cx, ip, |vm, code| {
+        vm.call_compiled_js_wasm_import(
+            program, code, callee, target, capture, &signature, Value::UNDEFINED, &args,
+            Value::UNDEFINED, std::ptr::null_mut(),
+        )
+    }) else {
+        return Some(Resumed::Exit(exit(ip)));
+    };
+    let (binding, resolved) = unsafe { (*cx).resolved };
+    let memory = if memory.bytes == resolved.bytes {
+        let fresh = memory_view(vm, binding);
+        unsafe { (*cx).resolved = (binding, fresh) };
+        fresh
+    } else {
+        MemoryView::NONE
+    };
+    // SAFETY: guest code the callee ran may have made the activations frames, whose
+    // registers the context then names.
+    let r = unsafe {
+        (*cx).memory = memory;
+        (*cx).registers
+    };
+    r.set(i.a, called);
+    let view = Carried { memory, integers: crate::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
+    Some(Resumed::At(r, following(ip), view))
+}
+
+/// A Wasm reference call of a JavaScript-backed import whose callee the lane activates as a
+/// JavaScript call of another program would (`lane_script_call_cross`): the scalar arguments
+/// in their JavaScript form (ToJSValue, which allocates nothing for i32, f32 and f64), an
+/// `undefined` receiver, and a return that gives the Wasm caller the result's Wasm form
+/// (`Completion::ToWasm`). The import's wrapper is of the running realm and its native
+/// boundary is never observed: the callee runs as the wrapper's call of it would. `None`,
+/// which changes nothing, for any other import, callee or call.
+#[inline(always)]
+fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, memory: MemoryView) -> Option<Resumed> {
+    // SAFETY: called only from the call handler of the record at `ip`, while the lane runs.
+    let i = unsafe { &*ip };
+    let vm = unsafe { vm(cx) };
+    // A tier that may run the callee enters it natively from the general call, which a
+    // lane activation would bypass.
+    if i.a & crate::bytecode::RETURN_REGISTER != 0 || vm.tier_may_run(crate::jit_mode::Tier::ANY) {
+        return None;
+    }
+    let wrapper = r.get(i.b);
+    let plan = match vm.lane_stack.js_import {
+        Some(plan) if plan.wrapper == wrapper => plan,
+        _ => {
+            let plan = js_import_plan(vm, wrapper)?;
+            vm.lane_stack.js_import = Some(plan);
+            plan
+        }
+    };
+    if plan.realm != vm.realm.globals {
+        return None;
+    }
+    let (callee, result) = (plan.callee, plan.result);
+    // SAFETY: the window is the caller's registers.
+    let window = unsafe { lane_call_window(r, i) };
+    if window.len() != usize::from(plan.argc) {
+        return None;
+    }
+    let mut args = [Value::UNDEFINED; JS_IMPORT_ARGUMENTS];
+    for ((slot, &value), &kind) in args.iter_mut().zip(window).zip(&plan.kinds) {
+        *slot = match kind {
+            JS_IMPORT_I32 => Value::number(f64::from(value.as_int()?)),
+            JS_IMPORT_F32 => Value::number(f64::from(f32::from_bits(value.as_int()? as u32))),
+            _ => Value::number(f64::from_bits(vm.decode_bits64(value)?)),
+        };
+    }
+    let argc = window.len();
+    // The caller's view is of the run's resolved binding, which its return reads again.
+    let (binding, resolved) = unsafe { (*cx).resolved };
+    let memory_binding = if memory.bytes.is_null() {
+        None
+    } else if memory.bytes == resolved.bytes {
+        Some(binding)
+    } else {
+        return None;
+    };
+    if lane_constructing(vm, callee) || vm.with_scope_entered {
+        return None;
+    }
+    let target = match vm.cross_call_entry(callee) {
+        // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves.
+        Some(entry) => unsafe { *entry },
+        None => vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee)?,
+    };
+    let argc16 = argc as u16;
+    if target.program() == unsafe { (*cx).program }
+        || !target.entry.activates_across()
+        || target.forwards()
+        || !(argc16 <= target.params || target.drops_extra_arguments())
+        || !lane_activation_room(vm, &target)
+    {
+        return None;
+    }
+    let this = lane_call_this(vm, &target, Value::UNDEFINED)?;
+    let instance = unsafe { (*cx).instance };
+    let (registers, start) = lane_push_passed::<H, true, false>(cx, r, ip, &target, args.as_ptr(), argc16.min(target.params), this, false);
+    if let Some(Activation { kind: ActivationKind::Script(script), .. }) = vm.lane_stack.activations.last_mut() {
+        script.completion = Completion::ToWasm;
+    }
+    vm.lane_stack.to_wasm.push(ToWasmCall { instance, memory: memory_binding, result });
+    unsafe {
+        (*cx).inline_calls = false;
+        (*cx).script_calls = true;
+        (*cx).instance = Value::DELETED;
+    }
+    let view = Carried::script(cx);
+    unsafe { (*cx).memory = view.memory };
+    Some(Resumed::At(registers, start, view))
+}
+
+/// The call facts of the import `wrapper` (`JsImportPlan`): `None` for any other callee, a
+/// host-backed or memcpy import, or a signature past the scalars the activation converts.
+#[inline(never)]
+fn js_import_plan<H: Host>(vm: &Vm<H>, wrapper: Value) -> Option<JsImportPlan> {
+    let record = vm.heap.function(wrapper)?;
+    let Some(Cell::WasmHostFunction { target: crate::heap::WasmHostTarget::Js(callee), signature }) = vm.heap.get(record.env) else {
+        return None;
+    };
+    let result = match signature.results.as_slice() {
+        [] => None,
+        [ty @ (crate::WasmType::I32 | crate::WasmType::F32 | crate::WasmType::F64)] => Some(*ty),
+        _ => return None,
+    };
+    if signature.params.len() > JS_IMPORT_ARGUMENTS {
+        return None;
+    }
+    let mut kinds = [JS_IMPORT_I32; JS_IMPORT_ARGUMENTS];
+    for (kind, ty) in kinds.iter_mut().zip(&signature.params) {
+        *kind = match ty {
+            crate::WasmType::I32 => JS_IMPORT_I32,
+            crate::WasmType::F32 => JS_IMPORT_F32,
+            crate::WasmType::F64 => JS_IMPORT_F64,
+            _ => return None,
+        };
+    }
+    Some(JsImportPlan { wrapper, realm: record.realm, callee: *callee, argc: signature.params.len() as u8, kinds, result })
 }

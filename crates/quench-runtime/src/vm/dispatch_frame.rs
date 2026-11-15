@@ -2490,6 +2490,13 @@ impl<H: Host> Vm<H> {
                         // SAFETY: as for `p` at the top of the loop.
                         settle_error = self.trap_result_error(unsafe { &*executing_residual }, &pending, frame, value);
                         value = self.completed_call_value(&pending.completion, frame, pending.destination, value);
+                        if let CallCompletion::ToWasm(result) = pending.completion {
+                            // SAFETY: as for `p` at the top of the loop.
+                            match self.wasm_import_result(unsafe { &*executing_residual }, value, result) {
+                                Ok(converted) => value = converted,
+                                Err(error) => settle_error = Some((pending.call_pc, error)),
+                            }
+                        }
                         if let Some(root) = pending.completion.take_promise() {
                             let promise = self.release_settled_call_root(root);
                             // SAFETY: as for `p` at the top of the loop.
