@@ -52,12 +52,14 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     fn lazy_body_candidate(&self, start: u32, func_kind: FunctionKind) -> bool {
         self.options.lazy_function_bodies.is_some_and(|from| start >= from)
             && !self.is_ts
+            // A body being recognized is released whole: the bodies inside it are only
+            // recognized, and its compilation parses them again.
+            && !self.recognizing
             && (self.lazy_depth == 0 || self.options.lazy_nested_bodies && self.options.lazy_body_check.is_some())
             && (matches!(func_kind, FunctionKind::Declaration | FunctionKind::Expression)
                 // A method's body only inside another lazily parsed body, which compiles from
-                // its text again; never a constructor, whose `super()` its class decides. A
-                // body being recognized is released whole, so its methods are only recognized.
-                || self.lazy_depth > 0 && !self.recognizing && matches!(func_kind, FunctionKind::ClassMethod | FunctionKind::ObjectMethod))
+                // its text again; never a constructor, whose `super()` its class decides.
+                || self.lazy_depth > 0 && matches!(func_kind, FunctionKind::ClassMethod | FunctionKind::ObjectMethod))
             && !self.source_text[..start as usize].trim_end().ends_with('(')
     }
 
