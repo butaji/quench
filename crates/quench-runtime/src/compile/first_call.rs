@@ -221,8 +221,6 @@ pub(super) struct Stubs<'a> {
     pub(super) free_names: FreeNames,
     /// The nested stubs by id, in order, with the scopes their chunks compile against.
     pub(super) nested: Vec<(u32, std::rc::Rc<FirstCallScopes>)>,
-    /// The scope levels named so far, by scope (`Compiler::scope_level`).
-    levels: FxHashMap<usize, (std::rc::Rc<capture_scope::CaptureScope>, nested::ScopeLevel)>,
     /// In a chunk, its stub's function start and the scopes it compiles against.
     pub(super) outer: Option<(u32, std::rc::Rc<FirstCallScopes>)>,
     /// The room the stubs' chunks may append to the program in.
@@ -255,7 +253,7 @@ impl Compiler<'_> {
         }
         if let Some(captures) = self.nested_stub_captures(function, &context) {
             let id = self.compile_first_call_stub(function, context.clone());
-            self.note_nested_stub(id, captures, &context);
+            self.note_nested_stub(id, function.span.start, captures, &context);
             return id;
         }
         self.lazy_compiled.push(body);
