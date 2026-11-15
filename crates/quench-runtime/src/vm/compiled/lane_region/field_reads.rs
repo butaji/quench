@@ -42,7 +42,7 @@ impl Lowering<'_, '_> {
     /// one-read lookup (`single`) reads, whose proof `known` held before. A slot that has
     /// only held int32 values is read as one: its value's tag is tested here, once, and a
     /// value it no longer holds leaves through `exit` before the read is defined.
-    pub(super) fn define_field_read(&mut self, state: &mut State, instruction: WideInstruction, value: ir::Value,
+    pub(super) fn define_field_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, value: ir::Value,
         (field, single, known): (Option<(Option<Register>, Atom)>, bool, Option<FieldValue>), exit: ir::Block) {
         let integer = single && known.is_some_and(|field| field.ty == Type::INT32);
         let ty = if integer || int32_read(self.program, self.fields, instruction) {
@@ -64,6 +64,12 @@ impl Lowering<'_, '_> {
         }
         let destination = instruction.result_register();
         self.set_tagged(state, destination, value);
+        // A slot that has held doubles, read only by Number operations: prove Number here,
+        // once, and keep the double view, so its arithmetic takes the double operation first.
+        if ty != Type::INT32 && number_read(self.program, self.fields, instruction)
+            && self.demand_from(pc + 1, usize::from(destination)).numeric_only() {
+            self.number(state, destination, exit);
+        }
         if ty == Type::INT32 {
             let int = self.ins().ireduce(types::I32, value);
             self.define_int_view(state, destination, value, int);

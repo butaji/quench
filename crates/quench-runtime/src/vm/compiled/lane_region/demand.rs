@@ -26,6 +26,9 @@ impl Demand {
 
     pub(super) fn tagged(self) -> bool { self.0 & Self::TAGGED.0 != 0 }
 
+    /// Whether the next uses read a Number's double or int32 view and never its tagged bits.
+    pub(super) fn numeric_only(self) -> bool { self.0 & Self::FLOAT64.0 != 0 && !self.tagged() }
+
     fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
 }
 

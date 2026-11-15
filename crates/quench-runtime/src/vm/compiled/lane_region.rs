@@ -1122,19 +1122,31 @@ pub(super) fn leaders(instructions: &[WideInstruction]) -> CompoundBitSet {
 /// sink or completion whose last read's slots have only held int32 values, its value's tag
 /// tested at the read.
 fn int32_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
+    read_slot_type(program, fields, instruction) == Some(Type::INT32)
+}
+
+/// Whether `instruction` reads a field whose slots have held Numbers, not only int32s: the read
+/// proves Number once and keeps the double view, so its arithmetic takes the double operation.
+fn number_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
+    read_slot_type(program, fields, instruction) == Some(Type::NUMBER)
+}
+
+/// The slot type every shape of `instruction`'s plain field read observed, if they agree.
+fn read_slot_type(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> Option<Type> {
     if !instruction.op().class().eq(Class::GetField) || instruction.returns_from_frame() || instruction.writes_current_this() {
-        return false;
+        return None;
     }
     let last = match instruction.field_lookup() {
         Some(FieldLookup::Atom { cache_site, .. }) => cache_site,
         Some(FieldLookup::Site(index)) => match program.field_sites.get(index) {
             Some(site) if site.sink.is_none() => site.second.unwrap_or(site.first).1,
-            _ => return false,
+            _ => return None,
         },
-        None => return false,
+        None => return None,
     };
-    site_loads(fields, last).is_some_and(|shapes| !shapes.is_empty()
-        && shapes.iter().all(|field| field.ty == Type::INT32))
+    let shapes = site_loads(fields, last)?;
+    let ty = shapes.first()?.ty;
+    shapes.iter().all(|field| field.ty == ty).then_some(ty)
 }
 
 /// Whether `instruction` can change no heap value natively: anything else it would do (a
@@ -4193,7 +4205,7 @@ impl Lowering<'_, '_> {
             self.return_value(record, value);
             return Some(false);
         }
-        self.define_field_read(state, instruction, value, (field, rest.is_empty(), known), exit);
+        self.define_field_read(state, pc, instruction, value, (field, rest.is_empty(), known), exit);
         Some(true)
     }
 
