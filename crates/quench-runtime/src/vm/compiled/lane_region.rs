@@ -209,6 +209,9 @@ struct LocalProofs {
     readable: CompoundBitSet,
     /// A fixed receiver (`None`) or register's complete own-slot projection.
     layouts: BTreeMap<(Option<Register>, u32), CheckedObject>,
+    /// The exact shape a register's object had before a call (`kept_shapes.rs`), which the code
+    /// holds again at the register's next use where the VM holds the shape stable.
+    kept_shapes: BTreeMap<Register, u32>,
     /// Registers holding the receiver, whose facts the entry proved.
     receivers: BTreeSet<Register>,
     /// Immutable reads; receiver definitions and memory effects retire these facts.
@@ -248,7 +251,7 @@ impl State {
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), proofs: LocalProofs {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
-            layouts: BTreeMap::new(), receivers: BTreeSet::new(),
+            layouts: BTreeMap::new(), kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), stable: false, realm: false,
             arrays: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
     }
@@ -273,6 +276,7 @@ impl State {
     /// Native reentry retires shape/storage and function-body admission proofs;
     /// object records and language families stay.
     fn call_effect(&mut self) {
+        self.proofs.keep_shapes(&self.values);
         self.proofs.fields.clear();
         self.proofs.int32_projections.clear();
         self.proofs.arrays.clear();
@@ -530,6 +534,8 @@ struct Lowering<'a, 'f> {
     hoisted: BTreeMap<usize, LoopRead>,
     /// Loop-invariant array bases whose views their loop's entry proves (`loop_arrays`).
     loop_arrays: Vec<LoopArray>,
+    /// The shapes loops proved of their invariant receivers on their entering edges (`loop_receivers`).
+    loop_shapes: Vec<loop_receivers::LoopShape>,
     /// Whether no operation of the unit may move an array's backing or the array record table
     /// (`arrays_stay_put`), so the record table's base is read-only throughout.
     arrays_fixed: bool,
@@ -1062,25 +1068,6 @@ pub(super) fn leaders(instructions: &[WideInstruction]) -> CompoundBitSet {
         }
     }
     leaders
-}
-
-/// Whether `instruction` reads a field as an int32 (`Lowering::get_field`): a lookup with no
-/// sink or completion whose last read's slots have only held int32 values, its value's tag
-/// tested at the read.
-fn int32_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
-    if !instruction.op().class().eq(Class::GetField) || instruction.returns_from_frame() || instruction.writes_current_this() {
-        return false;
-    }
-    let last = match instruction.field_lookup() {
-        Some(FieldLookup::Atom { cache_site, .. }) => cache_site,
-        Some(FieldLookup::Site(index)) => match program.field_sites.get(index) {
-            Some(site) if site.sink.is_none() => site.second.unwrap_or(site.first).1,
-            _ => return false,
-        },
-        None => return false,
-    };
-    site_loads(fields, last).is_some_and(|shapes| !shapes.is_empty()
-        && shapes.iter().all(|field| field.ty == Type::INT32))
 }
 
 /// The register whose value `register` copies at the comparison at `pc`: following the moves and
@@ -1643,7 +1630,7 @@ pub(super) fn lower(
         hoists: BTreeMap::new(),
         intrinsics: Vec::new(),
         hoisted: BTreeMap::new(),
-        loop_arrays: Vec::new(), arrays_fixed: false,
+        loop_arrays: Vec::new(), loop_shapes: Vec::new(), arrays_fixed: false,
         array_vars: BTreeMap::new(),
         views,
         loop_fields: Vec::new(),
@@ -1831,6 +1818,7 @@ pub(super) fn lower(
             lowering.switch_to(block, lowering.sealable.contains(pc));
             state = lowering.entry_state(pc, count);
             lowering.keep_shared_proofs(&mut state, pc);
+            lowering.seed_loop_shapes(&mut state, pc);
             reachable = true;
         }
         if !reachable {
@@ -1934,6 +1922,7 @@ impl Lowering<'_, '_> {
     fn join_states(&mut self, state: &mut State, incoming: &State, pc: usize) {
         // Only the same pre-branch SSA definition can survive both numeric arms.
         state.proofs.fields.retain(|field| incoming.proofs.fields.contains(field));
+        state.join_kept_shapes(incoming);
         state.proofs.int32_projections.retain(|projection| incoming.proofs.int32_projections.contains(projection));
         state.proofs.meet_homed(&incoming.proofs.homed);
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
@@ -2687,7 +2676,7 @@ impl Lowering<'_, '_> {
         let mut stage = Emit { builder: &mut self.builder, property_values, gate };
         let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
             held,
-            stable: StableHold { holders: &mut self.stable.holders, loops: &self.stable.stable_loops, online: self.vm.online, at: self.at } });
+            stable: StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, loops: &self.stable.stable_loops, online: self.vm.online, at: self.at } });
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
             payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls,
@@ -3323,7 +3312,7 @@ impl Lowering<'_, '_> {
                         let base = register.map_or(crate::bytecode::FieldBase::THIS, crate::bytecode::FieldBase::register);
                         let lookup = FieldLookup::Atom { atom, base, cache_site };
                         let Some(value) = self.field_value(state, (base, lookup), &[(atom, cache_site)], HeldRead::default(), exit) else { continue };
-                        (value, int32_read(self.program, self.fields, instruction))
+                        (value, field_reads::int32_read(self.program, self.fields, instruction))
                     }
                 }
             };
@@ -4108,3 +4097,8 @@ mod tests;
 #[cfg(test)]
 #[path = "lane_region/lowering_tests.rs"]
 mod lowering_tests;
+#[path = "lane_region/kept_shapes.rs"] mod kept_shapes;
+#[path = "lane_region/loop_receivers.rs"] mod loop_receivers;
+#[cfg(test)]
+#[path = "lane_region/slot_proof_tests.rs"]
+mod slot_proof_tests;

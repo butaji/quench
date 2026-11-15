@@ -9,6 +9,7 @@ impl Heap {
     pub(crate) fn alloc_planned_object<const N: usize>(&mut self, header: InlineObjectHeader, prototype: Value, values: &[Value; N], len: usize) -> Value {
         debug_assert!(self.prototype_flagged(prototype));
         self.properties.note_plan_values(header.shape(), &values[..len]);
+        self.settle_widened();
         let object = if len <= INLINE_PROPERTY_COUNT {
             let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
             inline[..len].copy_from_slice(&values[..len]);
@@ -16,7 +17,7 @@ impl Heap {
         } else if cfg!(feature = "profile-aggregate") {
             None
         } else {
-            self.properties.young_run_padded(values, len).map(|start| Object::from_run_header(header, start))
+            self.properties.young_run_padded(values, len, header.shape()).map(|start| Object::from_run_header(header, start))
         };
         match object {
             Some(object) => match self.claim_object_record() {

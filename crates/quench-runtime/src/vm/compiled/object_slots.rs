@@ -167,8 +167,9 @@ pub(crate) struct NativeFieldLoad {
     pub(crate) slot: u16,
     pub(crate) storage_len: usize,
     pub(crate) storage: Option<PlainPropertyStorage>,
-    /// The observed slot type (`Heap::slot_type`), not a write-maintained
-    /// invariant: a read speculates on it and leaves where its check fails.
+    /// The slot's type when the plan was made (`Heap::slot_type`), which every store maintains:
+    /// an online body subscribes to it (`LaneDependencies`) and reads the slot at it with no tag
+    /// test; code that does not subscribe tests the tag and leaves where it fails.
     pub(crate) ty: crate::typed_ir::Type,
     /// For a holder read, the value its proved immediate prototype holds when the code was
     /// compiled (`Vm::inherited_constant`): a Stable fact. A read takes it while the receiver's

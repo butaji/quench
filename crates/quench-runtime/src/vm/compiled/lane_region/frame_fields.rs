@@ -51,6 +51,8 @@ pub(super) struct HeldRead {
 pub(super) struct StableHold<'a> {
     /// Exact shapes of the prototypes whose values the code holds (`StableUses::holders`).
     pub(super) holders: &'a mut crate::bitset::BitSet,
+    /// Exact shapes of the objects whose shape the code holds past a call (`StableUses::shapes`).
+    pub(super) shapes: &'a mut crate::bitset::BitSet,
     /// The loops that hold every Stable fact (`StableUses::stable_loops`).
     pub(super) loops: &'a [(usize, usize)],
     /// The facts of the VM the code depends on; none for code shared across VMs.
@@ -128,9 +130,8 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
                 let functions = emit_js_record_base(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
                 ObjectHeader::prove_readable(stage.builder, object, records, functions, miss)
             }
-            Owner::This => headers::object_header(stage.builder, self.registers, self.state, (entry, self.payload), None, readable, miss),
-            Owner::Register(register) => headers::object_header(stage.builder, self.registers, self.state,
-                (entry, self.payload), Some(register), readable, miss),
+            Owner::This => self.object_header(stage.builder, entry, None, readable, miss),
+            Owner::Register(register) => self.object_header(stage.builder, entry, Some(register), readable, miss),
         };
         Some(Reached { record: header.address, shape: Some(header.shape), inline: Some(header.inline) })
     }
@@ -244,8 +245,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         let (Some(entry), Some(binding)) = (entry, bound) else {
             return self.field_get_host(stage, object, atom, site, miss);
         };
-        let header = self.proof_key(owner).map(|key| headers::object_header(stage.builder, self.registers, self.state,
-            (entry, self.payload), key, true, miss));
+        let header = self.proof_key(owner).map(|key| self.object_header(stage.builder, entry, key, true, miss));
         let builder = &mut *stage.builder;
         let (slow, done, packed) = (builder.create_block(), builder.create_block(), builder.create_block());
         builder.set_cold_block(slow);

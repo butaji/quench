@@ -13,7 +13,8 @@
 use super::region::Region;
 use super::add::{Edge, admitted};
 use super::entry::plain_value;
-use super::object::{Form, store_slot};
+use super::object::{Form, Rep};
+use super::slot_store::store_slot;
 use super::{RecordSpace, Stage};
 use crate::heap::{NATIVE_FUNCTION_LAYOUT as FUNCTION, NATIVE_OBJECT_LAYOUT as OBJECT};
 
@@ -38,7 +39,7 @@ pub(crate) fn set_function_name<S: Stage>(stage: &mut S, record: S::Word, record
     let moved = stage.sub(current, empty);
     let unnamed = stage.eq_imm(moved, 0u32);
     stage.guard(unnamed, miss)?;
-    store_slot(stage, record, payload, edge.slot, form, name, miss)?;
+    store_slot(stage, record, payload, edge.slot, form, (name, Rep::Tagged), miss)?;
     stage.store_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32, edge.after);
     Some(())
 }

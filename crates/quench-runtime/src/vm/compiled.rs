@@ -1207,6 +1207,8 @@ pub(super) struct OnlineFacts<'a> {
     pub(super) constants: &'a [Value],
     /// What the VM proved of a constructor's `instanceof` (`Vm::instanceof_fact`), by its identity.
     pub(super) instanceofs: &'a dyn Fn(Value) -> Option<crate::code_dependencies::InstanceofFact>,
+    /// Whether code may hold an object's exact shape past a call (`Vm::shape_is_stable`).
+    pub(super) shape_stable: &'a dyn Fn(u32) -> bool,
     /// The naming a cache site recorded for a `SetFunctionName`'s atom and the word of the name's string
     /// (`Vm::native_function_name`), whose staged row names a function; `None` where none may be held.
     pub(super) names: Option<&'a dyn Fn(u16, Atom) -> Option<(crate::staged::add_plan::Transition, u64)>>,

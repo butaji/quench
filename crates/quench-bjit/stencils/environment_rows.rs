@@ -85,7 +85,7 @@ fn global_read_row<const D: u8>(s: S, payload: usize) -> Out {
     let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
     let mut stage = StencilStage::with_values(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE));
     let layout = need!(s, global_layout(&mut stage, payload, hole::<HOLE_A>() as u64));
-    deliver::<D>(s, object::read_slot(&mut stage, layout, 0))
+    deliver::<D>(s, object::read_slot(&mut stage, layout, 0, object::Rep::Tagged))
 }
 
 /// The first operand stored to the global object's slot (hole 0: the record id), through the store

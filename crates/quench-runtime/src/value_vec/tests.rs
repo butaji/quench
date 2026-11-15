@@ -31,7 +31,7 @@ fn metadata_is_compact_and_ranges_preserve_values() {
     let mut values = ValueVec::new();
     for value in 0..9 {
         arena.register_shape(value + 1, value as usize + 1);
-        arena.push(&mut values, Value::number(f64::from(value)));
+        arena.push(&mut values, Value::number(f64::from(value)), value + 1);
         values.set_auxiliary(value + 1);
     }
     assert_eq!(arena.get(values, 8).unwrap().as_number(), Some(8.0));
@@ -56,7 +56,7 @@ fn young_values(n: f64) -> [Value; 4] {
 }
 
 fn young(arena: &mut ValueArena, n: f64) -> ValueVec {
-    ValueVec { start: arena.young_run_padded(&young_values(n), 3).unwrap(), auxiliary: 1 }
+    ValueVec { start: arena.young_run_padded(&young_values(n), 3, 1).unwrap(), auxiliary: 1 }
 }
 
 /// Survivors 3 and 6 move down to the floor in start order; the rest is reclaimed.
@@ -254,4 +254,98 @@ fn snapshot_preserves_offsets_free_ranges_and_value_bits_after_compaction() {
     let replacement = restored.with_values(1, &[Value::TRUE; 3]);
     assert_eq!(replacement.start(), released.start());
     assert_eq!(restored.get(live, 2), Some(expected[2]));
+}
+
+/// The calls that reach arena words without a decode: a flat read or write at a run's start, the
+/// arena's base address, or the address of a slot. Outside `staged` and `value_vec`, each is a
+/// second reader of the encoding `encode_slot` and `decode_slot` own.
+const RAW_WORD_ACCESS: &[&str] = &[
+    "get_flat_at(", "set_flat_at(", "set_flat_unchecked(", "flat_mut_ptr_unchecked(", "values_base(",
+    "native_values(", "native_property_values(", "arena_values_base(",
+];
+
+/// Raw arena word accesses per production file outside `staged` and `value_vec`. The counts only
+/// go down; a new access belongs in `staged` or `value_vec`, or goes through `decode_slot`.
+const RAW_WORD_ACCESS_ALLOWED: &[(&str, usize)] = &[
+    ("heap.rs", 6),
+    ("heap/access.rs", 2),
+    ("heap/store_gate.rs", 3),
+    ("vm/dispatch_fast.rs", 1),
+    ("vm/loop_tier.rs", 1),
+    ("vm/object.rs", 4),
+    ("vm/primitive_bench.rs", 1),
+    ("vm/private_slots.rs", 2),
+];
+
+/// Whether `file` (relative to `src`) holds only tests: a `tests` or `*_tests` module file or directory.
+fn holds_only_tests(file: &str) -> bool {
+    file.split('/').map(|part| part.strip_suffix(".rs").unwrap_or(part)).any(|part| part == "tests" || part.ends_with("_tests"))
+}
+
+/// The raw word accesses of every production file outside `staged` and `value_vec`.
+fn raw_word_accesses() -> std::collections::BTreeMap<String, usize> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut pending = vec![root.clone()];
+    let mut found = std::collections::BTreeMap::new();
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory).unwrap().map(Result::unwrap) {
+            let path = entry.path();
+            if path.is_dir() { pending.push(path); continue; }
+            let file = path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
+            if !file.ends_with(".rs") || file.starts_with("staged/") || file.starts_with("value_vec") || holds_only_tests(&file) { continue; }
+            let source = std::fs::read_to_string(&path).unwrap();
+            let code = source.split("\n#[cfg(test)]\nmod ").next().unwrap();
+            let code = code.split("#[cfg(test)]\nmod ").next().unwrap();
+            let count: usize = RAW_WORD_ACCESS.iter().map(|call| code.matches(call).count()).sum();
+            if count != 0 { found.insert(file, count); }
+        }
+    }
+    found
+}
+
+#[test]
+fn raw_arena_word_accesses_outside_staged_and_value_vec_only_shrink() {
+    let allowed: std::collections::BTreeMap<_, _> = RAW_WORD_ACCESS_ALLOWED.iter().copied().collect();
+    let found = raw_word_accesses();
+    for (file, count) in &found {
+        let limit = allowed.get(file.as_str()).copied().unwrap_or(0);
+        assert!(*count <= limit, "{file} reads or writes arena words raw {count} times (allowed {limit}): \
+            go through `decode_slot` and `encode_slot`, or `staged`");
+    }
+    for (file, limit) in &allowed {
+        let count = found.get(*file).copied().unwrap_or(0);
+        assert!(count >= *limit, "{file} now makes {count} raw word accesses: lower its line in RAW_WORD_ACCESS_ALLOWED to {count}");
+    }
+}
+
+/// Every value a slot of owner type `ty` holds, per type: encoding then decoding returns the value.
+#[test]
+fn a_slot_word_decodes_to_the_value_it_encodes() {
+    let numbers = [0.0, -0.0, 1.0, -1.0, 0.5, 2_147_483_647.0, 2_147_483_648.0, -2_147_483_648.0, -2_147_483_649.0,
+        1e300, f64::INFINITY, f64::NEG_INFINITY, f64::NAN, f64::MIN_POSITIVE, 4_503_599_627_370_496.0];
+    let integers = [0, 1, -1, i32::MAX, i32::MIN, 1 << 30];
+    for ty in SlotType::ALL.iter().copied() {
+        let values = numbers.map(Value::number).into_iter().chain(integers.map(Value::integer))
+            .chain([Value::NULL, Value::UNDEFINED, Value::TRUE, Value::direct_object(3), Value::DELETED]);
+        for value in values.filter(|value| crate::typed_ir::Type::immediate(*value).is_subtype(ty.ty()) || ty == SlotType::Tagged) {
+            assert_eq!(decode_slot(ty, encode_slot(ty, value)), value, "{ty:?} {value:?}");
+        }
+    }
+    // A NaN carrying a payload is no word a Number slot holds: the canonical NaN is.
+    assert!(encode_slot(SlotType::Number, Value::number(f64::from_bits(0xfff8_dead_beef_0001))).as_number().is_some_and(f64::is_nan));
+}
+
+/// A Number slot holds the IEEE double of its Number, an integer as the integral double.
+#[test]
+fn a_number_slot_holds_raw_doubles_that_keep_their_identity_when_read() {
+    let word = encode_slot(SlotType::Number, Value::integer(7));
+    assert_eq!(word.to_bits(), 7.0_f64.to_bits());
+    assert_eq!(decode_slot(SlotType::Number, word), Value::integer(7));
+    assert_ne!(Value::number(-0.0).to_bits(), Value::integer(0).to_bits());
+    assert_eq!(decode_slot(SlotType::Number, encode_slot(SlotType::Number, Value::number(-0.0))).to_bits(), (-0.0_f64).to_bits());
+    // 2^31 is no int32: it stays a double through the round trip, and an integral double that is
+    // one comes back as the int32 every other Number slot holds, so `===` and index tests agree.
+    assert_eq!(decode_slot(SlotType::Number, Value::number(2_147_483_648.0)).as_int(), None);
+    assert_eq!(decode_slot(SlotType::Number, Value::number(3.0)).as_int(), Some(3));
+    assert_eq!(decode_slot(SlotType::Number, Value::from_bits(3.0_f64.to_bits())).as_int(), Some(3));
 }
