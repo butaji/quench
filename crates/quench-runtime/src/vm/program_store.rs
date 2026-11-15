@@ -1442,6 +1442,7 @@ impl ProgramStore {
             .defined_signature(index)
     }
 
+    #[inline]
     pub(crate) fn wasm_signatures(&self, id: ProgramId) -> Option<&crate::wasm::WasmSignatures> {
         self.entry(id)?.wasm_signatures.as_deref()
     }
