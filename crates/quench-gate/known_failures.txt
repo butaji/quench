@@ -5,6 +5,7 @@ vm::compiled::base_body::forms::a_numeric_operator_with_a_local_target_is_a_help
 vm::compiled::base_body::forms::a_ten_deep_call_chain_makes_its_steps_in_the_callees
 vm::compiled::base_body::forms::an_environment_binding_in_its_dead_zone_raises_as_the_interpreter_does
 vm::compiled::base_body::forms::initialize_this_publishes_the_receiver_to_the_rows_after_it
+vm::compiled::base_body::forms::instanceof_of_a_held_constructor_is_a_row_and_a_prototype_change_retires_it
 vm::compiled::base_body::tests::class_construction_and_super_print_what_the_interpreter_prints
 vm::compiled::base_body::tests::global_counter_loops_run_in_a_body_without_leaving
 vm::compiled::base_body::tests::inlined::a_callee_with_a_loop_and_two_returns_runs_inlined
