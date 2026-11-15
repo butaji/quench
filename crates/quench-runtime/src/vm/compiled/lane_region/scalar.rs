@@ -3,7 +3,9 @@
 //! binary64, and its result is the status and the number a `Number` return joins to. A call
 //! of the function by itself whose arguments are proved those numbers calls the entry through
 //! the function's cell (`EntryCell::scalar`): no frame is pushed, no register is filled and
-//! nothing is boxed. A status other than zero (an overflow, a miss of any guard, an interrupt,
+//! nothing is boxed. The entry takes the closure's dense capture slots in the one word a body's
+//! entry takes them in (`entry_cell::capture_word`): the function's own binding is a capture
+//! read, whose value the entry compares with the callee its call was linked for. A status other than zero (an overflow, a miss of any guard, an interrupt,
 //! the stack's end, a retired body's stub) leaves at the call, so the function's own generic
 //! call restarts it, as a restartable numeric call does (`CallRecovery::RestartCall`).
 //!
@@ -25,11 +27,17 @@ const CELL: Access = Region::EntryCell.mutable();
 /// The parameters a scalar entry takes: one bit of `floats` each.
 const MAX_PARAMETERS: usize = u8::BITS as usize;
 
-/// The words a scalar call passes: the context and the parameters.
-const ARGUMENT_WORDS: usize = MAX_PARAMETERS + 1;
+/// The words a scalar entry takes before its parameters: the context and the captures' word.
+const SCALAR_LEADING_WORDS: usize = 2;
+
+/// The words a scalar call passes: those and the parameters.
+const ARGUMENT_WORDS: usize = MAX_PARAMETERS + SCALAR_LEADING_WORDS;
 
 /// The words a lane body's entry block takes: context, receiver, captures and register file.
 const ENTRY_WORDS: usize = 4;
+
+/// The direct callees of a body's call sites, by PC.
+pub(super) type DirectSites = BTreeMap<usize, *const DirectCallee>;
 
 /// What a scalar entry takes in registers after the context: the function's first `params`
 /// parameters, each a binary64 where its bit of `floats` is set and an int32 otherwise.
@@ -44,7 +52,7 @@ impl ScalarAbi {
     /// is numeric but for those calls and the binding loads they take their callee from. A
     /// parameter is an int32 where an operation of the unit requires one (`require_entry_types`).
     pub(super) fn of(program: &ResidualProgram, function_id: u32, unit: &super::super::lane_unit::Unit,
-        direct: &BTreeMap<usize, *const DirectCallee>) -> Option<Self> {
+        direct: &DirectSites) -> Option<Self> {
         let function = program.function_get(function_id as usize)?;
         let params = u8::try_from(function.params).ok().filter(|params| usize::from(*params) <= MAX_PARAMETERS)?;
         // SAFETY: the body owns its direct callees for as long as its code runs.
@@ -70,10 +78,11 @@ impl ScalarAbi {
         if self.is_float(index) { Type::NUMBER } else { Type::INT32 }
     }
 
-    /// The signature of the entry: the context, the parameters, then a status and a result word.
+    /// The signature of the entry: the context, the captures' word, the parameters, then a status
+    /// and a result word.
     pub(super) fn signature(self, pointer: ir::Type, call_conv: cranelift_codegen::isa::CallConv) -> Signature {
         let mut signature = Signature::new(call_conv);
-        signature.params.push(AbiParam::new(pointer));
+        signature.params.extend([AbiParam::new(pointer), AbiParam::new(types::I64)]);
         signature.params.extend((0..self.params()).map(|index| AbiParam::new(if self.is_float(index) { types::F64 } else { types::I32 })));
         signature.returns.extend([AbiParam::new(types::I32), AbiParam::new(types::I64)]);
         signature
@@ -118,12 +127,12 @@ pub(super) fn lowered(program: &ResidualProgram, specializer: RegionSpecializer<
 }
 
 /// The words an entry block's parameters are: the context, the receiver, the captures and the
-/// register file, of which a scalar entry has the context alone.
+/// register file, of which a scalar entry has the context and the captures.
 pub(super) fn entry_words(builder: &mut FunctionBuilder<'_>, completion: Completion, parameters: &[ir::Value]) -> Option<[ir::Value; ENTRY_WORDS]> {
     match (completion, parameters) {
-        (Completion::Scalar(_), [context, ..]) => {
+        (Completion::Scalar(_), [context, captures, ..]) => {
             let none = emit(builder).raw_const(Lane::I64, 0);
-            Some([*context, none, none, none])
+            Some([*context, none, *captures, none])
         }
         (_, [context, this, captures, registers]) => Some([*context, *this, *captures, *registers]),
         _ => None,
@@ -134,10 +143,22 @@ pub(super) fn entry_words(builder: &mut FunctionBuilder<'_>, completion: Complet
 /// could repeat: no inlined frame, and only numeric instructions, but for a scalar entry's
 /// direct calls and the loads of their callees' bindings.
 pub(super) fn numeric_unit(program: &ResidualProgram, unit: &super::super::lane_unit::Unit, scalar: bool,
-    direct: &BTreeMap<usize, *const DirectCallee>) -> bool {
+    direct: &DirectSites) -> bool {
     unit.frames.is_empty() && unit.instructions.iter().enumerate().all(|(pc, instruction)|
         numeric_instruction(program, *instruction)
-            || scalar && (direct.contains_key(&pc) || instruction.op().is_throwing_name_load()))
+            || scalar && (direct.contains_key(&pc) || instruction.op().is_throwing_name_load()
+                || callee_capture(unit, direct, pc).is_some()))
+}
+
+/// The self-call that takes the callee the capture read at `pc` loads: the first direct call
+/// after it whose callee register the read defines, where the read is of the activation's own scope.
+fn callee_capture<'a>(unit: &super::super::lane_unit::Unit, direct: &'a DirectSites, pc: usize) -> Option<&'a DirectCallee> {
+    let read = unit.instructions[pc];
+    let own = |at: usize| matches!(unit.origins[at], super::super::lane_unit::Origin::Caller(_));
+    if !read.op().is_load_capture() || read.capture_depth() != 0 || read.result_flags() != 0 || !own(pc) { return None; }
+    let call = direct.range(pc..).find(|(call, _)| own(**call) && unit.instructions[**call].register_b() == read.result_register())?.1;
+    // SAFETY: the body owns its direct callees for as long as its code runs.
+    Some(unsafe { &**call })
 }
 
 /// The registers an instruction of the unit reads as numbers, and the type each needs where it is
@@ -203,7 +224,7 @@ pub(super) fn require_entry_types(program: &ResidualProgram, function: &crate::b
 impl Lowering<'_, '_> {
     /// The scalar entry the lowering calls and defines: its own, or the one its body's plan
     /// found (`VmFacts::scalar`).
-    fn scalar_abi(&self) -> Option<ScalarAbi> {
+    pub(super) fn scalar_abi(&self) -> Option<ScalarAbi> {
         match self.completion {
             Completion::Scalar(abi) => Some(abi),
             _ => self.vm.scalar,
@@ -221,7 +242,8 @@ impl Lowering<'_, '_> {
             return;
         };
         self.check_native_stack(state, pc);
-        for (index, value) in parameters.iter().skip(1).enumerate() {
+        self.hold_callee_slots(state, pc);
+        for (index, value) in parameters.iter().skip(SCALAR_LEADING_WORDS).enumerate() {
             if abi.is_float(index) { self.set_number(state, index as Register, *value); } else { self.set_int(state, index as Register, *value); }
         }
     }
@@ -230,23 +252,23 @@ impl Lowering<'_, '_> {
     /// the one depth check of a run: its recursion calls entries that make their own.
     fn check_native_stack(&mut self, state: &State, pc: usize) {
         let limit = self.raw_load(Lane::I64, super::super::invariant(), self.context, super::super::CONTEXT_STACK_LIMIT);
-        let stack = self.builder.ins().get_stack_pointer(types::I64);
+        let stack = emit(&mut self.builder).stack_pointer();
         let room = self.raw_compare(Relation::UnsignedGreaterEqual, stack, limit);
         let miss = self.guard_exit(state, pc as u32);
         super::super::emit_js_guard(&mut self.builder, room, miss);
     }
 
-    /// The cell and callee of the direct call at `pc` if it is of this function itself.
-    fn scalar_target(&self, pc: usize) -> Option<(usize, Value)> {
+    /// The callee of the direct call at `pc` if it is of this function itself.
+    fn scalar_target(&self, pc: usize) -> Option<&DirectCallee> {
         // SAFETY: the body owns its direct callees for as long as its code runs.
         let callee = self.direct.get(&pc).map(|callee| unsafe { &**callee })?;
-        (callee.target.function == self.function_id && callee.forwarder.is_none()).then_some((callee.cell, callee.callee))
+        (callee.target.function == self.function_id && callee.forwarder.is_none()).then_some(callee)
     }
 
     /// Whether the call at `pc` is one of this function by its scalar entry: the callee register
     /// holds the function as a Stable fact, and the arguments are proved the numbers the entry takes.
     pub(super) fn scalar_call_admitted(&self, state: &State, pc: usize, instruction: WideInstruction) -> bool {
-        let (Some(abi), Some((_, callee))) = (self.scalar_abi(), self.scalar_target(pc)) else { return false };
+        let (Some(abi), Some(callee)) = (self.scalar_abi(), self.scalar_target(pc).map(|callee| callee.callee)) else { return false };
         if !instruction.op().is_call() || instruction.result_flags() != 0 { return false; }
         let window = usize::from(ImmediateLayout::call_window_base(instruction.imm()));
         let held = state.values[usize::from(instruction.register_b())].value.ty.function_identity();
@@ -259,11 +281,13 @@ impl Lowering<'_, '_> {
     /// result is an int32 where it returned, else the call leaves at `pc` for the generic call to run.
     pub(super) fn scalar_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let abi = self.scalar_abi().expect("an admitted scalar call has its entry");
-        let (cell, _) = self.scalar_target(pc).expect("an admitted scalar call has its callee");
+        let callee = self.scalar_target(pc).expect("an admitted scalar call has its callee");
+        let (cell, captures) = (callee.cell, callee.capture_word());
         let miss = self.guard_exit(state, pc as u32);
         let window = ImmediateLayout::call_window_base(instruction.imm());
         let mut arguments = smallvec::SmallVec::<[ir::Value; ARGUMENT_WORDS]>::new();
         arguments.push(self.context);
+        arguments.push(self.reloc(RelocKind::CaptureWords, self.function_id, captures));
         for index in 0..abi.params() {
             let register = window + index as Register;
             arguments.push(if abi.is_float(index) { self.number(state, register, miss) } else { self.int(state, register, miss) });
@@ -281,10 +305,69 @@ impl Lowering<'_, '_> {
         true
     }
 
+    /// The dense capture slots (address, count) in the entry's captures word (`entry_cell::capture_word`).
+    pub(super) fn entry_capture_slots(&mut self) -> (ir::Value, ir::Value) {
+        let word = self.entry_words.1;
+        let mask = self.raw_const(Lane::I64, super::super::entry_cell::CAPTURE_ADDRESS_MASK);
+        let values = self.raw_binary(Binary::And, word, mask);
+        (values, self.raw_binary_imm(Binary::ShiftRightUnsigned, word, i64::from(super::super::entry_cell::CAPTURE_ADDRESS_BITS)))
+    }
+
+    /// Whether `instruction` at `pc` loads the callee of a self-call by the scalar entry: its
+    /// capture, in the entry or in the body that calls it, or its global binding, in the entry.
+    pub(super) fn is_scalar_callee_load(&self, pc: usize, instruction: WideInstruction) -> bool {
+        if instruction.op().is_load_capture() { return self.scalar_abi().is_some() && callee_capture(self.unit, self.direct, pc).is_some(); }
+        instruction.op().is_throwing_name_load() && matches!(self.completion, Completion::Scalar(_))
+    }
+
+    /// The load `is_scalar_callee_load` admits.
+    pub(super) fn scalar_callee_load(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+        if instruction.op().is_load_capture() { self.scalar_callee_capture(state, pc, instruction) } else { self.scalar_callee(state, pc, instruction) }
+    }
+
+    /// The address of each capture slot a callee read names, from the entry's dense slots: their
+    /// bounds are checked here once, so a read is one load and its comparison with the callee.
+    fn hold_callee_slots(&mut self, state: &State, pc: usize) {
+        let mut slots: Vec<u16> = (0..self.unit.instructions.len())
+            .filter(|read| callee_capture(self.unit, self.direct, *read).is_some()).map(|read| self.unit.instructions[read].capture_slot()).collect();
+        slots.sort_unstable();
+        slots.dedup();
+        if slots.is_empty() { return; }
+        let (values, len) = self.entry_capture_slots();
+        let miss = self.guard_exit(state, pc as u32);
+        for slot in slots {
+            let address = crate::staged::environment::slot_address(&mut emit(&mut self.builder), values, len, slot, miss)
+                .expect("the emit stage continues past its guards");
+            self.callee_slots.push((slot, address));
+        }
+    }
+
+    /// The capture read of the callee a scalar entry's call was linked for, in the entry or in the body
+    /// that calls it: its value (one load from the entry's held slot, in the entry) compared with that
+    /// callee, which the register then holds as a constant. A closure the binding names otherwise leaves the entry to the generic call.
+    fn scalar_callee_capture(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+        let callee = callee_capture(self.unit, self.direct, pc).expect("a callee capture read has its call").callee;
+        let miss = self.guard_exit(state, pc as u32);
+        let loaded = match self.completion {
+            Completion::Scalar(_) => {
+                let address = self.callee_slots.iter().find(|(slot, _)| *slot == instruction.capture_slot()).map(|(_, address)| *address)
+                    .expect("a callee's capture slot is held at entry");
+                emit(&mut self.builder).load_u64(Region::Cells.mutable(), address, 0)
+            }
+            _ => self.load_capture(state, pc, instruction, miss, None, RootedRead::No),
+        };
+        let same = self.is_identity(loaded, callee);
+        super::super::emit_js_guard(&mut self.builder, same, miss);
+        let constant = self.identity_constant(callee);
+        let ty = Type::function(callee).expect("a direct callee is a function");
+        self.define(state, instruction.result_register(), constant, RegisterFact::definition(ty, Representation::Tagged));
+        true
+    }
+
     /// The load of the binding a scalar entry's callee is named by: its Stable value, which the body's
     /// own load holds as a dependency (`global_read`), is the register's constant. A binding no
     /// dependency holds leaves the entry to the generic call.
-    pub(super) fn scalar_callee(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
+    fn scalar_callee(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let Some(&GlobalRead::Stable { value, ty, .. }) = self.global_reads.get(&pc) else {
             self.valid = false;
             return true;
@@ -319,7 +402,7 @@ mod tests {
         let signature = abi.signature(types::I64, cranelift_codegen::isa::CallConv::SystemV);
         let params: Vec<_> = signature.params.iter().map(|param| param.value_type).collect();
         let returns: Vec<_> = signature.returns.iter().map(|ret| ret.value_type).collect();
-        assert_eq!((params, returns), (vec![types::I64, types::I32, types::F64], vec![types::I32, types::I64]));
+        assert_eq!((params, returns), (vec![types::I64, types::I64, types::I32, types::F64], vec![types::I32, types::I64]));
         assert_eq!(Completion::Scalar(abi).initial_types(3, 2), [Type::INT32, Type::NUMBER, Type::ANY]);
     }
 }

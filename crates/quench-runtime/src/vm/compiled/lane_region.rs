@@ -490,6 +490,7 @@ struct Lowering<'a, 'f> {
     registers_base: ir::Value,
     /// The running body's receiver and capture words its caller passes (`entry_cell::capture_word`).
     entry_words: (ir::Value, ir::Value),
+    callee_slots: Vec<(u16, ir::Value)>,
     registers: Registers,
     written: CompoundBitSet,
     /// Source operations already consumed by an exact, unobservable scalar pair.
@@ -1606,6 +1607,7 @@ pub(super) fn lower(
         payload,
         registers_base,
         entry_words: (entry_this, entry_captures),
+        callee_slots: Vec::new(),
         registers,
         written: CompoundBitSet::with_capacity(count),
         consumed: CompoundBitSet::with_capacity(unit.instructions.len()),
@@ -2041,10 +2043,7 @@ impl Lowering<'_, '_> {
             let values = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_values));
             return (values, emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_len)));
         }
-        let word = self.entry_words.1;
-        let mask = self.raw_const(Lane::I64, super::entry_cell::CAPTURE_ADDRESS_MASK);
-        let values = self.raw_binary(Binary::And, word, mask);
-        (values, self.raw_binary_imm(Binary::ShiftRightUnsigned, word, i64::from(super::entry_cell::CAPTURE_ADDRESS_BITS)))
+        self.entry_capture_slots()
     }
 
     /// Whether this run is a lane body, whose callers pass its receiver and captures as the
@@ -2433,7 +2432,7 @@ impl Lowering<'_, '_> {
             // A call, a construction in the caller's window and a return: the staged operations
             // the tier's facts admit (`call_rows`).
             _ if self.scalar_call_admitted(state, pc, instruction) => Some(self.scalar_call(state, pc, instruction)),
-            opcode if opcode.is_throwing_name_load() && plain && matches!(self.completion, Completion::Scalar(_)) => Some(self.scalar_callee(state, pc, instruction)),
+            _ if plain && self.is_scalar_callee_load(pc, instruction) => Some(self.scalar_callee_load(state, pc, instruction)),
             _ if self.is_call_row(instruction) => self.call_row_step(state, pc, instruction),
             _ if self.is_call_out(instruction) => Some(self.call_out_step(state, pc, instruction)),
             _ if self.is_register_row(instruction) => Some(self.register_step(state, pc, instruction)),

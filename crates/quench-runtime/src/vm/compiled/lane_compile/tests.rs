@@ -80,7 +80,7 @@ fn a_recursive_numeric_function_lowers_a_frameless_scalar_entry() {
         lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, None, &[]).expect("fib plans");
     let scalar = plan.lowered.scalar.as_ref().expect("fib has a scalar entry");
     let clif = scalar.to_string();
-    assert!(clif.contains("(i64, i32) -> i32, i64"), "the entry takes the context and an int32: {clif}");
+    assert!(clif.contains("(i64, i64, i32) -> i32, i64"), "the entry takes the context, the captures' word and an int32: {clif}");
     assert!(clif.contains("call_indirect"), "its recursion calls the entry of its cell: {clif}");
     assert!(!clif.contains("store"), "a scalar entry stores nothing to a frame or a register file: {clif}");
     let hot: usize = scalar.layout.blocks().filter(|block| !scalar.layout.is_cold(*block)).map(|block| scalar.layout.block_insts(block).count()).sum();

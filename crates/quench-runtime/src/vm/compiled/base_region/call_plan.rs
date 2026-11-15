@@ -37,7 +37,6 @@
 pub(super) mod inline;
 use super::{Exit, SLOT};
 use super::super::direct_callee::DirectCallee;
-use super::super::entry_cell::capture_word;
 use super::super::{FRAME_BYTES, LaneHelper, LaneHelpers};
 use crate::bytecode::{Class, ImmediateLayout, Register, WideInstruction};
 use crate::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
@@ -163,7 +162,7 @@ impl DirectFacts {
             validity: word(ENTRY_CELL.validity_offset),
             facts: CellFacts::of_word(word(ENTRY_CELL.facts_offset)),
             descriptor: std::ptr::from_ref(callee).addr(),
-            captures: capture_word(callee.capture_values, callee.capture_len, callee.capture_stores),
+            captures: callee.capture_word(),
             global_this: callee.sloppy.map(|global| global.to_bits()),
             registers: callee.registers,
             construction: callee.forwarder.is_some(),

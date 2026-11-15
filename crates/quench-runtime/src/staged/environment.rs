@@ -8,7 +8,7 @@ use crate::value::ValueLayout;
 /// The address of `slot` of the dense run of `len` environment values at `values`, or `None` (leaving at `miss`) past
 /// the run.
 #[inline(always)]
-fn slot_address<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
+pub(crate) fn slot_address<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
     let slot = u64::from(slot);
     // The slot is a per-site operand: one hole for the bounds test, one for the address.
     let bound = stage.site(slot);

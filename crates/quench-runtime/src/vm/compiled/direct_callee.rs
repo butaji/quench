@@ -36,6 +36,13 @@ pub(in crate::vm) struct DirectCallee {
     pub(in crate::vm) forwarder: Option<super::super::dispatch_fast::SkippedForwarder>,
 }
 
+impl DirectCallee {
+    /// The callee's dense capture slots, in the one word a body's entry takes them in.
+    pub(in crate::vm) fn capture_word(&self) -> u64 {
+        super::entry_cell::capture_word(self.capture_values, self.capture_len, self.capture_stores)
+    }
+}
+
 /// The callees a call site reached that a body may call by their entries, the latest first.
 pub(in crate::vm) type DirectCandidates = smallvec::SmallVec<[DirectCallee; tier_policy::POLYMORPHISM]>;
 

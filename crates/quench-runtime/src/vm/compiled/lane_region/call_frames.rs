@@ -10,7 +10,7 @@ use crate::staged::flow::FlowStage;
 use crate::staged::machine::{Lane, MachineScalar, Relation};
 use super::frame::{Edges, EmitFrame, FRAME};
 use super::relocs::address;
-use super::super::entry_cell::{capture_word, EntryCell, LANE_BODY_NOT_ENTERED, RAISED_RUN};
+use super::super::entry_cell::{EntryCell, LANE_BODY_NOT_ENTERED, RAISED_RUN};
 use super::super::super::dispatch_fast::{LaneRecoverySpace, KIND_NATIVE, KIND_OFFSET};
 use crate::staged::call::admit_room;
 use crate::staged::{Access, Region};
@@ -205,7 +205,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let signature = lane_body_signature(types::I64, stage.builder.func.signature.call_conv);
         let signature = stage.builder.import_signature(signature);
         let captures = address(self.helpers, stage.builder, RelocKind::CaptureWords, callee.target.function,
-            capture_word(callee.capture_values, callee.capture_len, callee.capture_stores));
+            callee.capture_word());
         let (status, word) = stage.call_entry(signature, entry, &[call.context, this, captures, room.top]);
         Some(Entered { status, word, unfinished: stage.builder.create_block() })
     }
