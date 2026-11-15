@@ -2600,6 +2600,10 @@ impl Heap {
         } else {
             self.sweep_serial(full, compacts, age, &mut remembered_owners)
         };
+        if freed_cells > 0 {
+            // A freed slot may next hold another cell (`view_epoch`): one bump for the sweep.
+            buffer_bytes::bump_view_epoch();
+        }
         // The direct objects whose young runs survive, by start (`ValueArena::evacuate_young`),
         // where no compaction moves every run.
         let mut young_owners: Vec<(usize, RecordId)> = Vec::new();
@@ -3056,8 +3060,6 @@ impl Heap {
                     }
                     slab_free.merge(&free_slots);
                     self.free_slots += freed_cells;
-                    // A freed slot may next hold another cell (`view_epoch`).
-                    buffer_bytes::bump_view_epoch();
                     for properties in released_properties {
                         self.properties.release(properties);
                     }
@@ -3163,8 +3165,6 @@ impl Heap {
             };
             // Lists the slots `bits` names in the heap's word `word` of slots as free.
             let mut free_word = |word: usize, bits: u64| {
-                // A freed slot may next hold another cell (`view_epoch`).
-                buffer_bytes::bump_view_epoch();
                 let slab = word / FREE_SLOT_WORDS;
                 let slab_free = &mut free_by_slab[slab];
                 if slab_free.is_empty() {
