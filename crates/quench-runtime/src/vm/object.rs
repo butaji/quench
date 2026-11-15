@@ -2619,6 +2619,21 @@ impl<H: Host> Vm<H> {
             self.profile.field_cache(false);
             return self.get_field_miss(p, object, atom, self.field_cache_index(site));
         }
+        if heap_reference.is_none() && object.as_number().is_some() && self.number_proto.is_heap() {
+            let lookup = if self.specialized && p.specialized {
+                match self.primitive_field_cache_read(self.number_proto, atom, site) {
+                    Some(Some(hit)) => FieldCacheRead::Hit(hit),
+                    Some(None) => FieldCacheRead::StringMiss {
+                        prototype: self.number_proto,
+                        site: self.field_cache_index(site),
+                    },
+                    None => FieldCacheRead::Generic,
+                }
+            } else {
+                FieldCacheRead::Generic
+            };
+            return self.finish_field_cache_read(p, object, atom, lookup);
+        }
         let legacy_cell = match heap_reference {
             Some(HeapReference::LegacySlot(index)) => self.heap.get_legacy(index),
             // Function and iterator records have no cell; their shape answers like the
@@ -2708,10 +2723,16 @@ impl<H: Host> Vm<H> {
     /// hit, if any.
     #[inline(always)]
     fn string_field_cache_read(&self, atom: Atom, site: u16) -> Option<Option<FieldCacheHit>> {
+        self.primitive_field_cache_read(self.string_proto, atom, site)
+    }
+
+    /// `string_field_cache_read` for a primitive whose reads `prototype` answers.
+    #[inline(always)]
+    fn primitive_field_cache_read(&self, prototype: Value, atom: Atom, site: u16) -> Option<Option<FieldCacheHit>> {
         if !self.field_cache_atom_eligible(atom) {
             return None;
         }
-        let receiver = self.shape_property_lookup(self.string_proto, atom)?;
+        let receiver = self.shape_property_lookup(prototype, atom)?;
         Some(self.cached_field_value(self.field_cache_index(site), receiver))
     }
 
@@ -2775,7 +2796,26 @@ impl<H: Host> Vm<H> {
     /// `string_field_site_cacheable` admits.
     #[inline(always)]
     pub(super) fn string_prototype_field_hit(&self, site: u16) -> Option<Value> {
-        let prototype = self.heap.object_record(self.string_proto)?;
+        self.prototype_field_hit(self.string_proto, site)
+    }
+
+    /// Whether a number primitive's read of `atom` in `p` can take the `Number.prototype`
+    /// data property its site caches (`number_prototype_field_hit`): a number has no own
+    /// properties, so any name the field cache admits.
+    pub(super) fn number_field_site_cacheable(&self, p: &ResidualProgram, atom: Atom) -> bool {
+        self.specialized && p.specialized && self.number_proto.is_heap() && self.field_cache_atom_eligible(atom)
+    }
+
+    /// The `Number.prototype` data property site `site` caches.
+    #[inline(always)]
+    pub(super) fn number_prototype_field_hit(&self, site: u16) -> Option<Value> {
+        self.prototype_field_hit(self.number_proto, site)
+    }
+
+    /// The data property of `prototype`'s own storage that site `site` caches.
+    #[inline(always)]
+    fn prototype_field_hit(&self, prototype: Value, site: u16) -> Option<Value> {
+        let prototype = self.heap.object_record(prototype)?;
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = self.field_cache_entry(site);
         // An entry records only a non-dictionary shape, which the exact shape matches only

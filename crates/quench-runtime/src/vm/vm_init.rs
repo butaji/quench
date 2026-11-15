@@ -34,6 +34,7 @@ impl<H: Host> Vm<H> {
             function_proto: Value::NULL,
             array_proto: Value::NULL,
             string_proto: Value::NULL,
+            number_proto: Value::NULL,
             array_buffer_proto: Value::NULL,
             shared_array_buffer_proto: Value::NULL,
             array_iterator_proto: Value::NULL,

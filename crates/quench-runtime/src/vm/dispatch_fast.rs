@@ -7086,6 +7086,24 @@ script_handler! {
 }
 
 script_handler! {
+    /// `GetField` of a number primitive, which `Number.prototype` answers through the site's
+    /// cache (`Vm::number_prototype_field_hit`), a method read as `n.toString`, at a site
+    /// `Vm::number_field_site_cacheable` admits. A miss moves the record on as
+    /// `lane_get_field_miss` decides, whose general read records the site's entry.
+    fn lane_get_field_number<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
+            .filter(|object| object.as_number().is_some())
+            .and_then(|_| vm.number_prototype_field_hit(i.c))
+        else {
+            sibling!(lane_get_field_miss::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
     /// `lane_get_field_string` of a register base whose read the record's hint answers
     /// (`Vm::string_hint_hit`): one tag test and the hint's name, prototype and epoch. Any
     /// other read takes `lane_get_field_string_refresh` out of line.
@@ -7354,6 +7372,11 @@ script_handler! {
                 ))
             }
             _ if string_base => Some(lane_get_field::<H>),
+            _ if base.is_some_and(|base| base.as_number().is_some())
+                && (unsafe { vm(cx) }).number_field_site_cacheable(code, i.imm()) =>
+            {
+                Some(lane_get_field_number::<H>)
+            }
             FieldSiteTier::Nested => Some(lane_get_field_nested::<H>),
             FieldSiteTier::General => Some(lane_get_field::<H>),
             FieldSiteTier::Getter => Some(lane_get_field_getter::<H>),

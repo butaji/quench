@@ -1839,6 +1839,9 @@ pub(crate) struct Vm<H> {
     /// %String.prototype% of the current realm; primitive string property
     /// reads use it directly, so realm switches re-derive it.
     string_proto: Value,
+    /// %Number.prototype% of the main realm: a number primitive's field read takes it
+    /// through the site's cache as a string's takes `string_proto`.
+    number_proto: Value,
     array_buffer_proto: Value,
     shared_array_buffer_proto: Value,
     array_iterator_proto: Value,

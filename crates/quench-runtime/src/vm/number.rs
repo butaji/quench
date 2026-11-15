@@ -102,6 +102,7 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .builtin_prototypes
             .insert((self.realm.globals, Native::Number), prototype);
+        self.number_proto = prototype;
         self.set_builtin_value_named(number, "prototype", prototype)?;
         let prototype_key = self.prototype_atom();
         self.set_property_attributes(
