@@ -18847,7 +18847,13 @@ unsafe fn lane_memo_read<H: Host, const SHAPE: u8>(
     {
         return None;
     }
-    let this = lane_receiver_this(vm, held.this_binding, r.get(i.c))?;
+    // A memo's steps read `this` only as a field base, which hits on a direct object alone: the
+    // receiver binds itself then (`lane_receiver_this`), and any other receiver, whatever it
+    // binds, misses the step as its binding would, so the receiver stands for `this` untested.
+    if held.this_binding == ThisBinding::Lexical {
+        return None;
+    }
+    let this = r.get(i.c);
     let arguments = ReadArguments {
         registers: r,
         base: ImmediateLayout::call_window_base(i.imm()),
