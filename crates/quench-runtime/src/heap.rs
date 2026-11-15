@@ -2817,6 +2817,7 @@ impl Heap {
         // objects' runs move or compaction moves every run.
         let mut young_arrays: Vec<RecordId> = Vec::new();
         let mut narrowable_arrays: Vec<RecordId> = Vec::new();
+        let narrow_arrays = self.narrow_runs;
         let mut direct_property_owners = Vec::with_capacity(if compacts {
             self.property_owner_counts.1
         } else {
@@ -2979,7 +2980,7 @@ impl Heap {
                         }
                         if array.elements().is_young() {
                             young_arrays.push(record_id);
-                        } else if full && array.elements().may_narrow() {
+                        } else if full && narrow_arrays && array.elements().may_narrow() {
                             narrowable_arrays.push(record_id);
                         }
                         if compacts && array.properties().has_compact_range() {
@@ -3092,7 +3093,14 @@ impl Heap {
         }
         for record_id in young_arrays {
             // SAFETY: the sweep listed these from the records it kept.
-            unsafe { self.array_records.get_live_mut_unbarriered(record_id) }.survive_nursery();
+            let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
+            // Native tiers read backings in place as wide values: only an interpreted run
+            // keeps narrow ones (`narrow_runs`).
+            if self.narrow_runs {
+                array.survive_nursery();
+            } else {
+                array.leave_nursery();
+            }
         }
         let (candidates, mut narrowed, mut saved_total) = (narrowable_arrays.len(), 0usize, 0usize);
         for record_id in narrowable_arrays {
