@@ -10,11 +10,13 @@ use std::rc::Rc;
 
 use super::{Function, FunctionSlot, ProgramKind, RecordUse, RegisterRoots, ResidualProgram};
 
-/// A function's unlowered record and the runs it made.
+/// A function's unlowered record, the runs it made, and whether a lane view derived from it,
+/// in any program sharing the record (`ResidualProgram::pin_tier0`).
 #[derive(Clone, Debug)]
 pub(crate) struct Tier0 {
     record: Rc<Function>,
     runs: Cell<u8>,
+    pinned: Cell<bool>,
 }
 
 impl Tier0 {
@@ -60,23 +62,25 @@ impl ResidualProgram {
         // unlowered record stays as the load left it for the lowering.
         let mut function = slot.unlowered.borrow().as_ref().map(super::Unlowered::function)?;
         if !runs_unlowered(self, index, &function) {
+            // The lowering this read goes on to takes the record unpacked here, not again.
+            *slot.unlowered.borrow_mut() = Some(super::Unlowered::Record(Rc::new(function)));
             return None;
         }
         // Every register is a root and starts `undefined`: no liveness runs for it.
         function.register_roots = RegisterRoots::new(false);
         function.decoded.prime_loop(&function.code, &function.wide);
-        let tier0 = slot.tier0.get_or_init(|| Box::new(Tier0 { record: Rc::new(function), runs: Cell::new(1) }));
+        let tier0 = slot.tier0.get_or_init(|| Box::new(Tier0 { record: Rc::new(function), runs: Cell::new(1), pinned: Cell::new(false) }));
         Some(tier0.record())
     }
 
-    /// Whether function `index` runs unlowered and made its `runs`, counting the one asked
-    /// for.
+    /// Whether function `index` runs unlowered, unpinned, and made its `runs`, counting the
+    /// one asked for.
     pub(crate) fn tier0_due(&self, index: usize, runs: u8) -> bool {
         let slot = &self.functions[index];
         if slot.record.get().is_some() {
             return false;
         }
-        let Some(tier0) = slot.tier0.get() else { return false };
+        let Some(tier0) = slot.tier0.get().filter(|tier0| !tier0.pinned.get()) else { return false };
         let made = tier0.runs.get();
         if made >= runs {
             return true;
@@ -90,6 +94,14 @@ impl ResidualProgram {
     pub(crate) fn runs_tier0(&self, index: usize) -> bool {
         let slot = &self.functions[index];
         slot.record.get().is_none() && slot.tier0.get().is_some()
+    }
+
+    /// Keeps function `index` unlowered for good where it runs unlowered: a lane view of some
+    /// program sharing this record derived from it, and views name code by pc.
+    pub(crate) fn pin_tier0(&self, index: usize) {
+        if let Some(tier0) = self.functions[index].tier0.get().filter(|_| self.runs_tier0(index)) {
+            tier0.pinned.set(true);
+        }
     }
 
     /// Lowers function `index` from the load's unlowered record. Its frames, none live,
