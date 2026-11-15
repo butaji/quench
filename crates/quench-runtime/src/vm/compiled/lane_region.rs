@@ -2830,7 +2830,14 @@ impl Lowering<'_, '_> {
         if operator == oxc_ast::ast::BinaryOperator::Instanceof as u32 {
             return helpers.then(|| self.instance_of(state, pc, left, right)).flatten();
         }
+        let typed = |operand: Operand| super::facts::operand_type(&self.program.constants, operand,
+            |register| state.values[usize::from(register)].value.ty).is_subtype(Type::NUMBER);
         match super::operations::equality_operator(operator) {
+            Some((true, negated)) if !numbers && (typed(left) || typed(right)) && self.operand_supported(left) && self.operand_supported(right) => {
+                let (number, other) = if typed(left) { (left, right) } else { (right, left) };
+                let equal = self.number_strict_equality(state, pc, number, other)?;
+                Some(if negated { self.ins().bxor_imm_u(equal, 1) } else { equal })
+            }
             Some((strict, negated)) if !numbers && helpers && self.operand_supported(left) && self.operand_supported(right) => {
                 let equal = self.equality(state, pc, left, right, strict)?;
                 Some(if negated { self.ins().bxor_imm_u(equal, 1) } else { equal })
@@ -3023,6 +3030,30 @@ impl Lowering<'_, '_> {
         let decided = self.ins().icmp_imm_u(IntCC::NotEqual, holds, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, decided, exit);
         Some(self.ins().ireduce(types::I8, holds))
+    }
+
+    /// `number === other` where `number` is a Number: equal only where `other` is a Number too
+    /// and the two compare equal as Numbers; nothing leaves.
+    fn number_strict_equality(&mut self, state: &mut State, pc: u32, number: Operand, other: Operand) -> Option<ir::Value> {
+        use crate::value::ValueLayout;
+        let exit = self.guard_exit(state, pc);
+        let number = self.operand_number(state, number, exit)?;
+        let bits = self.operand_tagged(state, other)?;
+        let [decode, join] = std::array::from_fn(|_| self.builder.create_block());
+        let equal = self.builder.append_block_param(join, types::I8);
+        let field = self.ins().ushr_imm_u(bits, i64::from(ValueLayout::TAG_SHIFT));
+        let offset = self.ins().iadd_imm_s(field, -(ValueLayout::FIRST_TAG_FIELD as i64));
+        let double = self.ins().icmp_imm_u(IntCC::UnsignedGreaterThan, offset, ValueLayout::TAG_FIELD_SPAN as i64);
+        let int = is_int_tagged(&mut self.builder, bits);
+        let is_number = self.ins().bor(double, int);
+        let unequal = self.ins().iconst(types::I8, 0);
+        self.ins().brif(is_number, decode, &[], join, &[ir::BlockArg::Value(unequal)]);
+        self.builder.switch_to_block(decode);
+        let value = emit_known_number(&mut self.builder, bits);
+        let same = self.ins().fcmp(FloatCC::Equal, number, value);
+        self.ins().jump(join, &[ir::BlockArg::Value(same)]);
+        self.builder.switch_to_block(join);
+        Some(equal)
     }
 
     /// `Vm::strict_equal` (`strict`) or `==` of two tagged operands. Identical bits are equal
