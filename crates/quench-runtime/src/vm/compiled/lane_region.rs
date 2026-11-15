@@ -3360,15 +3360,6 @@ impl Lowering<'_, '_> {
         false
     }
 
-    /// The reads `header`'s loop repeats unchanged, made on its entry edge from `state`: a
-    /// guard that fails there leaves at the header, before the loop runs.
-    fn hoist_loop_entry(&mut self, state: &mut State, header: usize) {
-        self.hoist_arrays(state, header, false);
-        self.hoist_stable(state, header);
-        self.hoist_reads(state, header);
-        self.hoist_arrays(state, header, true);
-    }
-
     /// Whether an enclosing loop's entry hoisted the capture read at `pc` already (its body holds
     /// this loop's, so the read is invariant there too): reading it again at each entry here would
     /// be a helper call inside the outer loop, spilling every value live across it.
@@ -3566,7 +3557,6 @@ impl Lowering<'_, '_> {
                 ElementViews::Typed(_) => self.hoist_typed_view(array, bits, variables, exit),
             }
         }
-        if !captured { self.version_bounds(state, header, exit); }
     }
 
     /// The tagged value of `array`'s source on the loop's entry edge: its register's, or its

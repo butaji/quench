@@ -265,6 +265,25 @@ fn an_index_that_adds_an_invariant_base_to_a_counter_compares_base_and_bound_onc
     assert_eq!(bounds_compares(&function, &body), 0, "{function}");
 }
 
+/// The comparison of the entering edge: instructions of `function` outside its loops.
+fn before_loops(function: &ir::Function) -> Vec<ir::Inst> {
+    let body = loop_body(function);
+    function.layout.blocks().flat_map(|block| function.layout.block_insts(block)).filter(|inst| !body.contains(inst)).collect()
+}
+
+#[test]
+fn matmul_k_loop_compares_no_index_with_a_length_and_the_entry_compares_each_reach() {
+    use crate::heap::TypedArrayKind as Kind;
+    let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
+    let body = loop_body(&function);
+    let products = wide_operations(&function, &body, ir::Opcode::Imul, |_, _| true);
+    assert_eq!(products, 1, "`i * n` is evaluated on the entering edge: only `k * n` is left: {function}");
+    assert_eq!(bounds_compares(&function, &body), 0, "both accesses carry the entry's proof: {function}");
+    let entry = before_loops(&function);
+    assert!(wide_operations(&function, &entry, ir::Opcode::Imul, |_, _| true) >= 1, "the entry holds `i * n`: {function}");
+    assert!(version_compares(&function, &entry) >= 2, "the entry compares the reach of each access with its length: {function}");
+}
+
 #[test]
 fn a_loop_invariant_product_is_one_word_the_entry_evaluates_once() {
     use crate::heap::TypedArrayKind as Kind;

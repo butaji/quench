@@ -1,13 +1,18 @@
-//! The loops around an instruction of the unit, and the integer operations in them (`hoists`).
+//! The expression an element access's index is made of, and the loop whose entry can prove it
+//! (`Lowering::resolve`): a counter below a bound, scaled and added to a base, all of them
+//! invariant but the counter.
 
 use super::super::*;
+use super::{Hoist, Reach, Term, Version};
+use super::super::super::facts::{IndexProof, Model, Point};
 use super::super::super::operations::NumberArithmetic;
 
-/// The unit's instructions, and the loops of it the region lowers whole.
+/// The unit's instructions, the loops of it the region lowers whole, and the operations hoisted out of them.
 #[derive(Clone, Copy)]
 pub(in super::super) struct Nest<'a> {
     pub(in super::super) instructions: &'a [WideInstruction],
     pub(in super::super) loops: &'a [(usize, usize)],
+    pub(in super::super) hoists: &'a [Hoist],
 }
 
 impl Nest<'_> {
@@ -24,6 +29,41 @@ impl Nest<'_> {
     }
 }
 
+/// An element access whose index reads as `base + counter * scale`, before the loop that proves it is chosen.
+pub(in super::super) struct Shape {
+    pc: usize,
+    array: Register,
+    /// The addition that forms the index, where the index is a sum.
+    add: Option<usize>,
+    counter: Register,
+    bound: Register,
+    /// The counter's least value.
+    low: i64,
+    base: Option<Operand>,
+    /// The scale and the PC of the product it multiplies the counter in.
+    scale: Option<(Operand, usize)>,
+}
+
+/// An access proved by the entry of a loop: that proof and the addition it bounds the sum of.
+pub(in super::super) struct Resolved {
+    pub(in super::super) version: Version,
+    pub(in super::super) add: Option<usize>,
+}
+
+/// The counter an operand of an index's sum counts: its bound and the scale it is multiplied by.
+struct Counted {
+    operand: Register,
+    counter: Register,
+    bound: Register,
+    scale: Option<(Operand, usize)>,
+}
+
+/// The array and index registers of an element access.
+fn access_registers(access: WideInstruction) -> Option<(Register, Register)> {
+    if access.op().is_get_index() { Some((access.operand_b().register_index()?, access.operand_c().register_index()?)) }
+    else if access.op().is_set_index() { Some((access.register_b(), access.register_c())) } else { None }
+}
+
 /// The Number arithmetic `instruction` is, where it is a plain binary one.
 pub(super) fn arithmetic_of(instruction: WideInstruction) -> Option<NumberArithmetic> {
     (instruction.op().js_denotation() == JsDenotation::NumericBinary && !instruction.returns_from_frame()
@@ -33,6 +73,106 @@ pub(super) fn arithmetic_of(instruction: WideInstruction) -> Option<NumberArithm
 }
 
 impl Lowering<'_, '_> {
+    /// The expression the index of the access at `pc` is made of, where `proof` leaves it to its loop's
+    /// entry (`IndexProof::Versioned`) or it is a sum of a counter below a bound (`counted`).
+    pub(in super::super) fn shape(&self, instructions: &[WideInstruction], pc: usize, point: &Point, proof: IndexProof) -> Option<Shape> {
+        let (array, index) = access_registers(instructions[pc])?;
+        match proof {
+            IndexProof::Proven => None,
+            IndexProof::Versioned { bound, .. } => Some(Shape { pc, array, add: None, counter: index, bound,
+                low: point.int_range(index)?.min, base: None, scale: None }),
+            IndexProof::Check => self.sum_shape(instructions, pc, point, (array, index)),
+        }
+    }
+
+    /// The shape of the access at `pc` whose index is the sum, just before it in its block, of a base
+    /// and a counter or a product of one.
+    fn sum_shape(&self, instructions: &[WideInstruction], pc: usize, point: &Point, (array, index): (Register, Register)) -> Option<Shape> {
+        let add = self.local_definition(instructions, pc, index)?;
+        let sum = instructions[add];
+        if arithmetic_of(sum)? != NumberArithmetic::Add { return None; }
+        let [left, right] = [sum.operand_b(), sum.operand_c()];
+        let (counted, base) = [(left, right), (right, left)].into_iter()
+            .find_map(|(operand, base)| self.counted(instructions, add, operand, point).map(|counted| (counted, base)))?;
+        let from = counted.scale.map_or(add, |(_, multiply)| multiply);
+        let (base_register, scale_register) = (base.register_index(), counted.scale.and_then(|(scale, _)| scale.register_index()));
+        let low = point.int_range(counted.counter)?.min;
+        let sound = low >= 0 && counted.counter != index && counted.bound != array && Some(counted.bound) != base_register
+            && [base_register, scale_register].into_iter().flatten().all(|register| register != counted.counter && register != counted.operand)
+            && !instructions[from + 1..pc].iter().any(|between| between.written_registers().any(|written| written == counted.counter));
+        sound.then_some(Shape { pc, array, add: Some(add), counter: counted.counter, bound: counted.bound, low, base: Some(base), scale: counted.scale })
+    }
+
+    /// The counter the sum's `operand` counts: the operand itself below a bound, or a product of one and a scale.
+    fn counted(&self, instructions: &[WideInstruction], add: usize, operand: Operand, point: &Point) -> Option<Counted> {
+        let register = operand.register_index()?;
+        if let Some(bound) = point.under_of(register) {
+            return Some(Counted { operand: register, counter: register, bound, scale: None });
+        }
+        let multiply = self.local_definition(instructions, add, register)?;
+        let product = instructions[multiply];
+        if arithmetic_of(product)? != NumberArithmetic::Multiply { return None; }
+        let [left, right] = [product.operand_b(), product.operand_c()];
+        [(left, right), (right, left)].into_iter().find_map(|(counted, scale)| {
+            let counter = counted.register_index()?;
+            Some(Counted { operand: register, counter, bound: point.under_of(counter)?, scale: Some((scale, multiply)) })
+        })
+    }
+
+    /// The PC of the latest write of `register` before `pc`, within `pc`'s block.
+    fn local_definition(&self, instructions: &[WideInstruction], pc: usize, register: Register) -> Option<usize> {
+        let mut at = pc;
+        while at > 0 && self.blocks[at].is_none() {
+            at -= 1;
+            if instructions[at].written_registers().any(|written| written == register) { return Some(at); }
+        }
+        None
+    }
+
+    /// The proof of `shape` by the entry of the outermost loop it can be made in, where its array's
+    /// view is hoisted a register's.
+    pub(in super::super) fn resolve(&self, nest: Nest<'_>, model: &Model<'_>, shape: &Shape) -> Option<Resolved> {
+        let array = self.loop_array(shape.pc, Some(shape.array)).filter(|array| matches!(array.source, ArraySource::Register(_)))?;
+        let base = match (shape.base, shape.add) { (Some(operand), Some(add)) => Some(self.term(nest, add, operand, true)?), _ => None };
+        let scale = match shape.scale { Some((operand, multiply)) => Some(self.term(nest, multiply, operand, false)?), None => None };
+        let header = self.checking_loop((nest, model), shape, array, [base, scale])?;
+        Some(Resolved { version: Version { pc: shape.pc, header, reach: Reach { bound: shape.bound, low: shape.low, base, scale } },
+            add: shape.add })
+    }
+
+    /// The term `operand` read at `at` is: a constant, the word of the hoisted operation that last wrote its
+    /// register (where `hoisted` admits one), or the register's own.
+    fn term(&self, nest: Nest<'_>, at: usize, operand: Operand, hoisted: bool) -> Option<Term> {
+        if let Some(value) = self.int32_constant(operand) { return Some(Term::Constant(value)); }
+        let register = operand.register_index()?;
+        let definition = self.local_definition(nest.instructions, at, register)
+            .filter(|definition| nest.hoists.iter().any(|hoist| hoist.pc == *definition));
+        match definition {
+            Some(pc) => hoisted.then_some(Term::Hoisted(pc)),
+            None => Some(Term::Register(register)),
+        }
+    }
+
+    /// The header of the outermost loop around `shape`'s access, within its array's loop and the loops
+    /// that hoisted its terms, that writes no register it reads, holds each of them an int32 and
+    /// has no instruction that may change a length: the array's length on its entering edge is its
+    /// length at the access.
+    fn checking_loop(&self, (nest, model): (Nest<'_>, &Model<'_>), shape: &Shape, array: LoopArray, terms: [Option<Term>; 2]) -> Option<usize> {
+        let terms = terms.into_iter().flatten();
+        let registers: Vec<Register> = std::iter::once(shape.bound).chain(terms.clone().filter_map(Term::register)).collect();
+        let floor = terms.filter_map(Term::hoisted).filter_map(|pc| nest.hoists.iter().find(|hoist| hoist.pc == pc))
+            .map(|hoist| hoist.header).fold(array.header, usize::max);
+        nest.around(shape.pc).into_iter().find(|&span| span.0 >= floor && !self.generic.contains(&span.0)
+            && nest.unwritten(span, &registers) && registers.iter().all(|register| self.int32_at(span.0, *register))
+            && !(span.0..=span.1).any(|at| model.disturbs_lengths(at, nest.instructions[at])))
+            .map(|(header, _)| header)
+    }
+
+    /// Whether the register holds an int32 on entry to the block led by `header`.
+    fn int32_at(&self, header: usize, register: Register) -> bool {
+        self.facts.at(header).and_then(|types| types.get(usize::from(register))).is_some_and(|ty| ty.is_subtype(Type::INT32))
+    }
+
     /// The int32 `operand` is, where it is a constant one.
     pub(super) fn int32_constant(&self, operand: Operand) -> Option<i32> {
         let value = super::super::super::facts::constant_number(&self.program.constants, operand)?;
