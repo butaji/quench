@@ -4514,12 +4514,17 @@ unsafe extern "C" fn lane_strict_equal_cells<H: Host>(vm: u64, _residual: u64, l
     u64::from(vm.heap_values_strictly_equal(Value::from_bits(left), Value::from_bits(right)))
 }
 
-/// A lane body's `value instanceof constructor` (`Vm::steady_instanceof`): 1 or 0, or
-/// `Value::DELETED` where the full algorithm decides, which leaves the body at the test.
+/// A lane body's `value instanceof constructor`, decided as the interpreter's own record
+/// decides it (`lane_instanceof_jump_true`): the constructor's proof (`Vm::record_instanceof`),
+/// else the ordinary walk (`Vm::ordinary_instanceof`), which calls nothing. 1 or 0, or
+/// `Value::DELETED` where only the full algorithm decides, which leaves the body at the test.
 unsafe extern "C" fn lane_instance_of<H: Host>(vm: u64, _residual: u64, value: u64, constructor: u64) -> u64 {
-    // SAFETY: as `lane_field_get`; the steady case reads the heap, calls nothing and allocates nothing.
-    let vm = unsafe { &*(vm as *const Vm<H>) };
-    vm.steady_instanceof(Value::from_bits(value), Value::from_bits(constructor))
+    // SAFETY: as `lane_field_get`; both reads walk the heap, call nothing and allocate nothing
+    // (the walk only fills the constructor-layout memo).
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    let (value, constructor) = (Value::from_bits(value), Value::from_bits(constructor));
+    vm.record_instanceof(value, constructor)
+        .or_else(|| vm.ordinary_instanceof(value, constructor))
         .map_or_else(|| Value::DELETED.to_bits(), u64::from)
 }
 
