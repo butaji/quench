@@ -1,5 +1,17 @@
 # kernel tier instructions tag_tests guards spills polls counter_stores cvt_round_trips overflow_checks: ceilings of the hottest loop's machine code per iteration; `-` is not recorded yet, `none` has no loop; the gate only lowers them
-crc u-jit 45 - - - - - - -
-dot u-jit 9 - - - - - - -
-matmul u-jit 12 - - - - - - -
-sum u-jit 7 - - - - - - -
+crc b-jit 402 45 30 0 1 1 15 13
+crc u-jit 45 0 2 1 0 0 1 1
+dot b-jit 89 4 7 0 1 1 2 1
+dot u-jit 9 0 0 0 0 0 0 0
+fib b-jit none
+fib u-jit none
+matmul b-jit 119 4 13 0 1 1 2 5
+matmul u-jit 12 0 0 0 0 0 0 0
+nbody b-jit 17 4 2 0 0 0 0 0
+nbody u-jit 276 8 19 47 1 0 0 1
+qsort b-jit 43 2 5 0 1 1 1 1
+qsort u-jit 52 0 4 1 1 0 2 3
+structs b-jit 19 4 2 0 0 0 0 0
+structs u-jit 349 19 32 63 1 0 0 2
+sum b-jit 51 2 5 0 1 1 1 1
+sum u-jit 7 0 0 0 0 0 0 0
