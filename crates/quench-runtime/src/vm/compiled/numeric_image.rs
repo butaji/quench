@@ -73,7 +73,7 @@ impl NumericImage {
             crate::vm::jit_backend::relocatable_code::RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
         }).ok()?;
         if let (Some(directory), Some(clif)) = (native_dump_directory(), dump) {
-            dump_native_bytes(directory, function_id, &code.code, None, &clif);
+            dump_native_bytes(directory, DumpSite::Body { function: function_id, scalar: None }, &code.code, None, &clif);
         }
         Some(Self { code, params, number_result })
     }

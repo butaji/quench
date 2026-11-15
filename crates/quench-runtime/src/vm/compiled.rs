@@ -3197,31 +3197,50 @@ fn process_peak_rss_kib() -> i64 {
     }
 }
 
-/// The directory the `jit-dump` trace channel names: each loop region
+/// The directory the `jit-dump` trace channel names: each loop region and body
 /// compiled writes its machine code and its CLIF there (`dump_native_code`), for attaching
 /// instruction-level profiles to native code.
 fn native_dump_directory() -> Option<&'static std::path::Path> {
     crate::trace::Channel::JitDump.value().map(std::path::Path::new)
 }
 
-/// Writes a compiled loop region's executable mapping as `loop-<n>.bin` and its CLIF as
-/// `loop-<n>.clif` into `directory`, numbered in compilation order, and reports where the
-/// mapping lives on stderr. A failed write leaves the run as it is.
-fn dump_native_code(directory: &std::path::Path, header: u32, code: &CodeMemory, clif: &str) {
+/// What a dumped piece of native code was compiled for: a loop region, named by its header's
+/// bytecode position, or a function's body, named by its function and, where it has one, the
+/// byte offset of its scalar entry (the per-call path the C-parity gate measures).
+#[derive(Clone, Copy)]
+pub(super) enum DumpSite {
+    Loop { header: u32 },
+    Body { function: u32, scalar: Option<usize> },
+}
+
+impl std::fmt::Display for DumpSite {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Self::Loop { header } => write!(out, "loop header={header}"),
+            Self::Body { function, scalar: None } => write!(out, "body function={function}"),
+            Self::Body { function, scalar: Some(at) } => write!(out, "body function={function} scalar={at}"),
+        }
+    }
+}
+
+/// Writes compiled code's executable mapping as `code-<n>.bin` and its CLIF as `code-<n>.clif`
+/// into `directory`, numbered in compilation order, and reports what it was compiled for and
+/// where the mapping lives on stderr. A failed write leaves the run as it is.
+fn dump_native_code(directory: &std::path::Path, site: DumpSite, code: &CodeMemory, clif: &str) {
     // SAFETY: the mapping is `code.length` readable bytes while `code` lives.
     let bytes = unsafe { std::slice::from_raw_parts(code.pointer(), code.length()) };
-    dump_native_bytes(directory, header, bytes, Some(code.pointer()), clif);
+    dump_native_bytes(directory, site, bytes, Some(code.pointer()), clif);
 }
 
 /// Publication is diagnostic data, not a reason to allocate executable memory.
-fn dump_native_bytes(directory: &std::path::Path, header: u32, bytes: &[u8], address: Option<*mut u8>, clif: &str) {
+fn dump_native_bytes(directory: &std::path::Path, site: DumpSite, bytes: &[u8], address: Option<*mut u8>, clif: &str) {
     static COMPILED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let number = COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let _ = std::fs::write(directory.join(format!("loop-{number:03}.bin")), bytes);
-    let _ = std::fs::write(directory.join(format!("loop-{number:03}.clif")), clif);
+    let _ = std::fs::write(directory.join(format!("code-{number:03}.bin")), bytes);
+    let _ = std::fs::write(directory.join(format!("code-{number:03}.clif")), clif);
     match address {
-        Some(address) => eprintln!("QUENCH_JS_JIT_DUMP loop-{number:03} header={header} address={address:p} bytes={}", bytes.len()),
-        None => eprintln!("QUENCH_JS_JIT_DUMP loop-{number:03} header={header} unpublished bytes={}", bytes.len()),
+        Some(address) => eprintln!("QUENCH_JS_JIT_DUMP code-{number:03} {site} address={address:p} bytes={}", bytes.len()),
+        None => eprintln!("QUENCH_JS_JIT_DUMP code-{number:03} {site} unpublished bytes={}", bytes.len()),
     }
 }
 
