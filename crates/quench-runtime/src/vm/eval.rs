@@ -553,6 +553,12 @@ impl<H: Host> Vm<H> {
         let entry = self.host.kept_compiled_program(name, &[self.specialization_part(), goal, source])?;
         let (bytes, text) = crate::bytecode::split_kept_source(entry, source.len())
             .unwrap_or_else(|entry| (entry, crate::bytecode::SourceText::Shared(std::sync::Arc::from(source))));
+        // Checking the kept text's checksum read every page of it, and the run reads it again
+        // only for a function's source text or a lazily compiled body: Air kept four sources'
+        // pages (1.5 MB of compile-cache pages) resident at its peak.
+        if let crate::bytecode::SourceText::Kept(kept) = &text {
+            H::kept_bytes_read(kept.as_bytes());
+        }
         let specialized = self.specialized;
         let mut kept = self.decode_cached_program(bytes, text, 0, name, specialized).ok()?;
         if let (Some(source), Some((line_offset, column_offset))) = (&mut kept.source, origin) {
