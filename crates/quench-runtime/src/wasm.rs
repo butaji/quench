@@ -19,7 +19,7 @@ pub(crate) use constant::{WasmArrayInitializer, WasmInitializerEffect};
 pub(crate) mod tag;
 pub use tag::WasmTag;
 mod element;
-pub use element::{WasmElement, WasmElementMode};
+pub use element::{WasmElement, WasmElementItems, WasmElementMode};
 pub use table::{WasmTable, WasmTableInitializer};
 pub(crate) mod atomic;
 pub(crate) mod memory;

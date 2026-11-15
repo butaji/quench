@@ -21,7 +21,55 @@ pub enum WasmElementMode {
 pub struct WasmElement {
     pub mode: WasmElementMode,
     pub element_type: wasmparser::RefType,
-    pub items: Rc<[WasmReferenceInitializer]>,
+    pub items: WasmElementItems,
+}
+
+/// A segment's items: a function-index list, as toolchains emit for their indirect-call
+/// tables (dotnet-aot-wasm: 33K items), is held at 4 bytes an item.
+#[derive(Clone)]
+pub enum WasmElementItems {
+    Functions(Rc<[u32]>),
+    Initializers(Rc<[WasmReferenceInitializer]>),
+}
+
+impl WasmElementItems {
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Functions(functions) => functions.len(),
+            Self::Initializers(items) => items.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = std::borrow::Cow<'_, WasmReferenceInitializer>> {
+        let (functions, items) = match self {
+            Self::Functions(functions) => (&functions[..], &[][..]),
+            Self::Initializers(items) => (&[][..], &items[..]),
+        };
+        functions
+            .iter()
+            .map(|function| std::borrow::Cow::Owned(WasmReferenceInitializer::Function(*function)))
+            .chain(items.iter().map(std::borrow::Cow::Borrowed))
+    }
+}
+
+impl From<Vec<WasmReferenceInitializer>> for WasmElementItems {
+    fn from(items: Vec<WasmReferenceInitializer>) -> Self {
+        let functions: Option<Rc<[u32]>> = items
+            .iter()
+            .map(|item| match item {
+                WasmReferenceInitializer::Function(function) => Some(*function),
+                _ => None,
+            })
+            .collect();
+        match functions {
+            Some(functions) => Self::Functions(functions),
+            None => Self::Initializers(items.into()),
+        }
+    }
 }
 
 impl Lowering<'_> {
