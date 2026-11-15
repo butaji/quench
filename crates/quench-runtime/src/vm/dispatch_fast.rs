@@ -5149,6 +5149,59 @@ script_handler! {
 }
 
 script_handler! {
+    /// An address computed as C computes one and its typed array read, three records as one
+    /// (`specialize_typed_addresses`): `t = x + K` (`lane_operator_integer_constant` of
+    /// addition), with `SHIFT` `u = t >> S` (of right shift), then `base[u]` (or `base[t]`)
+    /// through the view cache (`Vm::typed_cached_element`), as mandreel's `heapU16[(p+K)>>1]`.
+    /// The intermediates are written as their records write them. Any other case (a non-int
+    /// `x`, a sum past int32 unshifted, a view with no current entry) runs the addition's own
+    /// record and the records after it.
+    fn lane_typed_address_get<SHIFT: bool>(cx, r, ip, i, view) {
+        let Some(x) = r.int(i.b) else {
+            sibling!(lane_operator_integer_constant::<H, { super::operations::ADDITION }>, r, ip, Carried::script_in(cx, view))
+        };
+        let sum = x.wrapping_add(i.imm() as i32);
+        // SAFETY: the pass fused this record with the one or two after it in the view.
+        let (key, read) = if SHIFT {
+            let shift = unsafe { &*following(ip) };
+            (sum >> (shift.imm() & 31), unsafe { &*following(following(ip)) })
+        } else {
+            // An unshifted sum past int32 is a double key: the records' own path reads it.
+            if i64::from(x) + i64::from(i.imm() as i32) != i64::from(sum) {
+                sibling!(lane_operator_integer_constant::<H, { super::operations::ADDITION }>, r, ip, Carried::script_in(cx, view))
+            }
+            (sum, unsafe { &*following(ip) })
+        };
+        let Some(value) = (unsafe { vm(cx) }).typed_cached_element::<{ super::typed_array_access::ANY_TYPED_KIND }>(r.get(read.b), Value::integer(key)) else {
+            sibling!(lane_typed_address_miss::<H, SHIFT>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, Value::integer(sum));
+        if SHIFT {
+            // SAFETY: as above.
+            r.set(unsafe { (*following(ip)).a }, Value::integer(key));
+        }
+        r.set(read.a, value);
+        let after = if SHIFT { following(following(following(ip))) } else { following(following(ip)) };
+        next!(cx, r, after, Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `lane_typed_address_get` whose read found no current view entry: a base that is no
+    /// typed array (a plain array read `a[i + 1]` has the same shape) makes the record its
+    /// addition again for good; either way the addition's own record runs.
+    #[inline(never)]
+    fn lane_typed_address_miss<SHIFT: bool>(cx, r, ip, i, view) {
+        // SAFETY: the pass fused this record with the one or two after it in the view.
+        let read = unsafe { &*if SHIFT { following(following(ip)) } else { following(ip) } };
+        if (unsafe { vm(cx) }).typed_array_kind_of(r.get(read.b)).is_none() {
+            requicken::<H>(ip, lane_operator_integer_constant::<H, { super::operations::ADDITION }>);
+        }
+        sibling!(lane_operator_integer_constant::<H, { super::operations::ADDITION }>, r, ip, Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
     /// A kind variant's miss (`lane_get_index_typed_kind`): the site becomes any-kind.
     #[inline(never)]
     fn lane_get_index_typed_mixed<>(cx, r, ip, i, view) {
@@ -20630,6 +20683,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_operator_pairs::<H>(&decoded, &function.handlers, &mut records, live().map(|masks| &**masks));
         specialize_int32_truncations::<H>(&mut records, live().map(|masks| &**masks));
         specialize_raw_operators::<H>(&decoded, &function.handlers, &mut records, live().map(|masks| &**masks));
+        specialize_typed_addresses::<H>(&mut records);
         specialize_capture_updates::<H>(&mut records);
         specialize_constant_returns::<H>(&mut records);
         specialize_script_calls::<H>(&mut records, function.undefined_register);
@@ -21370,6 +21424,42 @@ fn specialize_raw_operators<H: Host>(decoded: &[WideInstruction], handlers: &[cr
         };
         if raw_results::raw_result_allowed(decoded, handlers, live, pc) {
             records[pc].handler = raw as *const ();
+        }
+    }
+}
+
+/// Gives each address computation `t = x + K; [u = t >> S;] r = base[u or t]` whose read is
+/// a register-operand element read (`lane_get_index_registers`) the fused record
+/// `lane_typed_address_get`, on the addition. The records after it keep their handlers, for
+/// jumps into them and for the cases the fused record leaves to them. The read's base must
+/// not be an intermediate, which the fused record writes only after reading the element.
+fn specialize_typed_addresses<H: Host>(records: &mut [LaneInstruction]) {
+    use super::operations::{ADDITION, SHIFT_RIGHT};
+    let add = lane_operator_integer_constant::<H, ADDITION> as Handler as *const ();
+    let shift = lane_operator_integer_constant::<H, SHIFT_RIGHT> as Handler as *const ();
+    let read = lane_get_index_registers::<H> as Handler as *const ();
+    for pc in 0..records.len() {
+        if records[pc].handler != add {
+            continue;
+        }
+        let t = records[pc].a;
+        if let (Some(second), Some(third)) = (records.get(pc + 1), records.get(pc + 2))
+            && second.handler == shift
+            && second.b == t
+            && third.handler == read
+            && third.c == second.a
+            && third.b != t
+            && third.b != second.a
+        {
+            records[pc].handler = lane_typed_address_get::<H, true> as Handler as *const ();
+            continue;
+        }
+        if let Some(second) = records.get(pc + 1)
+            && second.handler == read
+            && second.c == t
+            && second.b != t
+        {
+            records[pc].handler = lane_typed_address_get::<H, false> as Handler as *const ();
         }
     }
 }

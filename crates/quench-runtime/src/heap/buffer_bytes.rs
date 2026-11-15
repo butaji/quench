@@ -15,26 +15,26 @@ use std::sync::{Arc, MutexGuard};
 #[derive(Debug)]
 pub(crate) struct BufferBytes(Rc<BufferStore>);
 
-thread_local! {
-    /// The typed array view epoch (`view_epoch`): it changes whenever a typed array's
-    /// element bytes may have moved, been unshared or detached, or a slot a view occupied may
-    /// hold another cell, so a view's element address and length cached at one epoch
-    /// (`Vm::typed_cached_element`) hold while the epoch is unchanged. One per thread, as each
-    /// heap is.
-    static VIEW_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
+/// The typed array view epoch (`view_epoch`): it changes whenever a typed array's element
+/// bytes may have moved, been unshared or detached, or a slot a view occupied may hold another
+/// cell, so a view's element address and length cached at one epoch
+/// (`Vm::typed_cached_element`) hold while the epoch is unchanged. One counter for the process:
+/// another thread's heap ending an epoch only makes this one's entries refill, and every end
+/// is an atomic increment, so no end is lost. A plain load reads it (no thread-local access
+/// on the element hit path).
+static VIEW_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The current typed array view epoch (`VIEW_EPOCH`).
 #[inline(always)]
 pub(crate) fn view_epoch() -> u64 {
-    VIEW_EPOCH.with(std::cell::Cell::get)
+    VIEW_EPOCH.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Ends the current typed array view epoch: every store made, dropped, cloned or written
 /// other than in place (`BufferBytes::lane_mut`), and every sweep that frees slots.
 #[inline]
 pub(crate) fn bump_view_epoch() {
-    VIEW_EPOCH.with(|epoch| epoch.set(epoch.get().wrapping_add(1)));
+    VIEW_EPOCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 impl Default for BufferBytes {

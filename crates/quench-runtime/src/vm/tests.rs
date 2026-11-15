@@ -21734,6 +21734,35 @@ globalThis.answer = h;
 }
 
 #[test]
+fn lane_typed_address_reads_match_the_records_they_fuse() {
+    // `heap[(p + K) >> S]` and `heap[p + K]` run as one record (`lane_typed_address_get`);
+    // plain arrays, sums past int32, non-int bases, a reassigned global and a detached
+    // buffer take the records' own path, so the results are the unfused program's.
+    let source = r#"
+var b=new ArrayBuffer(1<<16), h16=new Uint16Array(b), h32=new Int32Array(b), hf=new Float32Array(b), plain=[];
+for (var i=0;i<1000;i++){ h32[i]=i*2654435761|0; plain.push(i*3); }
+function f(p, q){ var s=0; for (var k=0;k<500;k++){ s += h16[(p+k)>>1]; s += h32[(p+4)>>2]; s += hf[(q+8)>>2]; s += h32[p+k]; s+= plain[(k+3)>>1]; } return s; }
+var o=[]; for (var r=0;r<20;r++){ o.push(f(r*4, r*8)); }
+o.push(f(-8, 0), f(2147483640, 4), f(0.5, 1), f(0x7ffffff0, 0x7ffffff0));
+var t=h32; h32=plain; o.push(f(4,4)); h32=t; var b2=h32.buffer.transfer(); o.push(f(4,4));
+var str=o.join(","), hh=0; for (var c=0;c<str.length;c++) hh=(hh*31+str.charCodeAt(c))>>>0; globalThis.answer = hh;
+    "#;
+    let program = Engine::specialize(source, "lane-typed-address.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(3967282668.0); 2]);
+}
+
+#[test]
 fn lane_outer_captures_read_like_the_interpreter() {
     // A lane body reads a capture of an outer scope by the lane's own lookup, so a
     // reassigned `var`, a `let` and a widened value read as the interpreter's.
