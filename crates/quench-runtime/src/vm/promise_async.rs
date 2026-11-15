@@ -864,8 +864,8 @@ impl<H: Host> Vm<H> {
             Some(PendingJob::Thenable(_)) => true,
             Some(PendingJob::Reaction(job)) => {
                 let handler = job.handler;
-                if self.heap.await_state_mut(handler).is_some() {
-                    return false;
+                if let Some(state) = self.heap.await_state_mut(handler) {
+                    return !job.rejected && matches!(state, AwaitState::Pending { kind: AwaitKind::AsyncGeneratorYield { .. }, .. });
                 }
                 !self.is_function(handler) || self.plain_reaction_handler(handler).is_some()
             }
@@ -959,11 +959,32 @@ impl<H: Host> Vm<H> {
                     if !job.rejected && job.execution_context.is_none() && job.realm == realm =>
                 {
                     let (handler, value, next) = (job.handler, job.value, job.next);
-                    if self.is_function(handler) || self.heap.await_state_mut(handler).is_some() {
+                    if self.is_function(handler) {
                         return Ok(());
                     }
-                    self.realm.jobs.pop_front();
-                    self.settle_reaction(p, next, PromiseState::Fulfilled, value)?;
+                    match self.heap.await_state_mut(handler) {
+                        None => {
+                            self.realm.jobs.pop_front();
+                            self.settle_reaction(p, next, PromiseState::Fulfilled, value)?;
+                        }
+                        // A fulfilled `yield`'s await runs no frame: it completes the request and
+                        // resumes the generator's queue (`resume_await`), as its job would.
+                        Some(state @ AwaitState::Pending { kind: AwaitKind::AsyncGeneratorYield { .. }, .. }) => {
+                            let taken = state.resume();
+                            self.realm.jobs.pop_front();
+                            let roots = self.active_call_roots.len();
+                            self.active_call_roots.extend([handler, value]);
+                            let resumed = self.resume_await(p, handler, taken, false, value);
+                            self.active_call_roots.truncate(roots);
+                            // As the reaction job: an await settles no capability, so only a
+                            // termination leaves it.
+                            match resumed {
+                                Err(error) if error.is_execution_terminated() => return Err(error),
+                                _ => {}
+                            }
+                        }
+                        Some(_) => return Ok(()),
+                    }
                 }
                 _ => return Ok(()),
             }
