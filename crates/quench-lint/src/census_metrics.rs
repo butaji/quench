@@ -25,6 +25,7 @@ const FACT_HOME_SUFFIXES: &[&str] = &["Memo", "Memos", "Cache", "Hint", "Hints",
 const EPOCH_SUFFIX: &str = "epoch";
 const GUEST_REENTRY: &str = "call_value";
 const WALL_CLOCK: [&str; 2] = ["Instant", "now"];
+const STABLE_EPOCH_READS: [&str; 2] = ["prototype_layout_epoch", "intrinsic_epoch"];
 
 /// The items of a module tree, nested inline modules flattened, test modules left out.
 pub fn module_items(items: &[Item]) -> Vec<&Item> {
@@ -299,6 +300,21 @@ pub fn wall_clock_reads(file: &syn::File) -> usize {
     })
 }
 
+/// Reads of a stable-fact epoch: a per-use re-check that a code dependency replaces (P1).
+pub fn stable_epoch_reads(file: &syn::File) -> usize {
+    count_calls(file, |expr| match expr {
+        syn::Expr::MethodCall(call) => STABLE_EPOCH_READS.iter().any(|name| call.method == *name),
+        syn::Expr::Call(call) => match &*call.func {
+            syn::Expr::Path(callee) => {
+                let last = callee.path.segments.last();
+                last.is_some_and(|last| STABLE_EPOCH_READS.iter().any(|name| last.ident == *name))
+            }
+            _ => false,
+        },
+        _ => false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,5 +416,15 @@ mod tests {
         );
         assert_eq!(guest_reentries(&file), 1);
         assert_eq!(wall_clock_reads(&file), 2);
+    }
+
+    #[test]
+    fn stable_epoch_reads_count_method_and_path_calls_outside_tests() {
+        let file = parse(
+            "fn prototype_layout_epoch() {}
+             fn f() { self.heap.prototype_layout_epoch(); crate::heap::cell::intrinsic_epoch(); prototype_layout_epoch(); x.intrinsic_epochs(); }
+             #[cfg(test)] mod tests { fn g() { x.prototype_layout_epoch(); intrinsic_epoch(); } }",
+        );
+        assert_eq!(stable_epoch_reads(&file), 3);
     }
 }

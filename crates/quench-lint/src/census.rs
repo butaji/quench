@@ -147,6 +147,12 @@ const METRICS: &[Metric] = &[
         extract: Extract::Syntax(extract::wall_clock_reads),
     },
     Metric {
+        name: "stable_epoch_reads",
+        direction: Direction::Down,
+        sources: &[Source::Tree(RUNTIME, &[])],
+        extract: Extract::Syntax(extract::stable_epoch_reads),
+    },
+    Metric {
         name: "lane_dispatch_lines",
         direction: Direction::Down,
         sources: &[Source::File("crates/quench-runtime/src/vm/dispatch_fast.rs"), Source::Tree(LANE_DISPATCH, &[])],
