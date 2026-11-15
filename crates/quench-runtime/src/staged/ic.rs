@@ -150,22 +150,27 @@ pub(crate) const HINTED_FORM: u32 = u32::MAX;
 /// auxiliary word (`Object::hint_shape`): one compare proves the exact shape and the storage
 /// form, which the hint's form bits, equal to the record's, then tell.
 ///
+/// A fixed `FORM` is the form of every hint a record of it holds whole: its handler is
+/// chosen from the hint it is installed with (`own_formed_handler`), and a later hint either
+/// re-chooses it or names no object's word (a cleared hint), so equality proves `FORM` too.
+///
 /// # Safety
-/// As for `concrete_own_field_hit`.
+/// As for `concrete_own_field_hit`; for a fixed `FORM`, a hint some object's word equals
+/// names `FORM`.
 #[inline(always)]
 pub(crate) unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &crate::heap::Object,
     property_values: *const crate::Value, hint: u32, slot: u16) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
     let record = object as *const crate::heap::Object as u64;
     let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
-    // A fixed form replaces the hint's form bits: equality then proves that form, so its
-    // layout is read without testing the bits, whatever form the hint names.
-    // A narrow hint's bit is replaced too, so a fixed form never matches a narrow run.
+    // A fixed form's hint names it (the caller's contract), so equality proves that form
+    // and its layout is read without testing the bits; no narrow run's word matches it.
     let forms = OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form;
-    let hint = if FORM == HINTED_FORM { hint } else { hint & !forms | FORM };
+    let named = hint;
     let hint = stage.site(u64::from(hint));
     let same = stage.eq_imm(word, hint);
     stage.guard(same, ())?;
+    debug_assert!(FORM == HINTED_FORM || named & forms == FORM, "a fixed form's matched hint names it");
     let formed = if FORM == HINTED_FORM { hint } else { stage.constant(u64::from(FORM)) };
     let layout = formed_own_layout(&mut stage, record, formed, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, ())?;
     Some(crate::Value::from_bits(read_slot(&mut stage, layout, slot)))
