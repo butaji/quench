@@ -8,7 +8,7 @@ use crate::heap::{AwaitKind, AwaitRole, AwaitState, ResumedAwait};
 /// three call roots from `roots` hold what its job held.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct AwaitChain {
-    frame: usize,
+    pub(super) frame: usize,
     task: ChainTask,
     roots: usize,
 }
@@ -813,6 +813,47 @@ impl<H: Host> Vm<H> {
             return None;
         }
         Some(self.suspend_and_continue_chain(p, program, frame, chain.roots, resume, current, value, destination))
+    }
+
+    /// `chain_lane_await` made by the lane itself at the `Await` record at `pc` of slot
+    /// `frame`'s activation, where the queue's next job resumes another activation of
+    /// `program`: the await suspends as `lane_stop_awaits` makes it and that activation takes
+    /// the slot (`chain_await_into_slot`), so the lane continues there with no exit. `None`
+    /// changes nothing and leaves the record to the lane's exit.
+    pub(super) fn lane_chain_await(
+        &mut self,
+        p: &ResidualProgram,
+        program: ProgramId,
+        frame: usize,
+        pc: usize,
+    ) -> Option<Result<(), JsError>> {
+        let chain = self.await_chain.filter(|chain| chain.frame == frame && frame + 1 == self.frames.len())?;
+        let ChainTask::Await(resume) = chain.task else {
+            return None;
+        };
+        // The front job's await state first: an async generator's await (`AwaitKind`) ends the
+        // check before the gates.
+        let Some(PendingJob::Reaction(job)) = self.realm.jobs.front() else {
+            return None;
+        };
+        let (realm, handler) = (self.realm.globals, job.handler);
+        match self.heap.await_state_mut(handler) {
+            Some(AwaitState::Pending { kind: AwaitKind::AsyncFunction(continuation), realm: resumes, .. })
+                if *resumes == realm && continuation.frame.program == program => {}
+            _ => return None,
+        }
+        let (_, _, next) = self.chain_gates()?;
+        if !next.is_undefined() {
+            return None;
+        }
+        let body = p.function(self.frames[frame].function as usize);
+        let instruction = super::dispatch_fast::decoded_instruction(body, *body.code.get(pc)?);
+        let Some(FrameOutcome::Await { value, destination, frame: None }) =
+            self.lane_stop_awaits(p, frame, Some(instruction), pc)
+        else {
+            return None;
+        };
+        Some(self.chain_await_into_slot(p, frame, chain.roots, resume, value, destination))
     }
 
     /// Whether the queue's front job is one `continue_chain` runs or starts: a thenable job, a

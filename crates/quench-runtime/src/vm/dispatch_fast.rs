@@ -3000,6 +3000,52 @@ lane_handler! {
     }
 }
 
+lane_handler! {
+    /// An `Await` record, which the general path executes, unless the run's frame is the slot
+    /// of a chained job run whose next job resumes another activation: the await suspends and
+    /// that activation continues here (`lane_chained_await`).
+    fn lane_await<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        if vm.await_chain.is_none_or(|chain| chain.frame != unsafe { (*cx).frame })
+            || !vm.lane_stack.activations.is_empty()
+            || !matches!(vm.realm.jobs.front(), Some(super::PendingJob::Reaction(_)))
+        {
+            return exit(ip);
+        }
+        resume!(cx, lane_chained_await::<H>(cx, ip))
+    }
+}
+
+/// `Vm::lane_chain_await` from the lane's own frame, with no activation, call or leaf above
+/// it: the frame's slot now holds the resumed activation, which continues at its resume
+/// point. Anything else exits at the record, as `lane_exit` does.
+#[cold]
+#[inline(never)]
+fn lane_chained_await<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Resumed {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context and the run's pending calls and executing program outlive the run.
+    let frame = unsafe { (*cx).frame };
+    if !unsafe { (*cx).leaf.call }.is_null()
+        || !unsafe { (*cx).script_calls }
+        || !unsafe { &*(*cx).pending }.is_empty()
+        || unsafe { (*(*cx).executing).id != (*cx).program }
+        || vm.lane_raised.is_some()
+        || vm.lane_returned.is_some()
+    {
+        return Resumed::Exit(exit(ip));
+    }
+    // SAFETY: the context's program outlives the run; `ip` is a record of the frame's view.
+    let (code, program, pc) = unsafe { (&*(*cx).code, (*cx).program, ip.offset_from((*cx).base) as usize) };
+    match vm.lane_chain_await(code, program, frame, pc) {
+        None => Resumed::Exit(exit(ip)),
+        Some(Ok(())) => lane_enter_script_frame(cx, frame),
+        Some(Err(error)) => {
+            vm.lane_chain_error = Some(error);
+            Resumed::Exit(exit(ip))
+        }
+    }
+}
+
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
 mod loop_body;
@@ -20882,7 +20928,10 @@ fn derive_lane_view<'live, H: Host>(
             accumulator_registers.push(
                 carried.filter(|_| selected.is_some() && acc != ACC_NONE).unwrap_or(NO_ACCUMULATOR),
             );
-            let handler = selected.map_or(lane_exit::<H> as Handler, |selected| selected.handler) as *const ();
+            // An `Await` stays an exit; its record chains the next await resumption in place
+            // where the run's frame is a chained job slot (`lane_await`).
+            let exit_handler = if instruction.op().is_await() { lane_await::<H> as Handler } else { lane_exit::<H> as Handler };
+            let handler = selected.map_or(exit_handler, |selected| selected.handler) as *const ();
             LaneInstruction {
                 handler,
                 operand: operand.unwrap_or(LaneOperand { imm: 0 }),

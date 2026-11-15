@@ -1604,6 +1604,15 @@ impl<H: Host> Vm<H> {
                 let mut executing = ExecutingProgram { id: program, retained: None };
                 let mut running = frame;
                 let stop = self.run_fast_lane(p, program, cursor.lane, &mut running, pc, &mut pending_calls, &mut executing, true);
+                // An await the lane chained in place (`lane_await`) left another activation in
+                // the slot, or failed.
+                if let Some(error) = self.lane_chain_error.take() {
+                    return Err(error);
+                }
+                if running == frame && self.frames[frame].function != function {
+                    function = self.frames[frame].function;
+                    cursor = self.general_cursor(program, p, function, true);
+                }
                 let body = p.function(function as usize);
                 let stops_here = running == frame
                     && pending_calls.is_empty()
@@ -1693,7 +1702,7 @@ impl<H: Host> Vm<H> {
     /// value's conversion observes nothing: a non-object as it is, or an object
     /// `lane_promise_resolve` converts without running guest code. `None` leaves any other
     /// stop, or a conversion that could throw into the frame's handlers, to the general loop.
-    fn lane_stop_awaits(
+    pub(super) fn lane_stop_awaits(
         &mut self,
         p: &ResidualProgram,
         frame: usize,

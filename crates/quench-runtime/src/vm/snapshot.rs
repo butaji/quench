@@ -245,6 +245,7 @@ impl<H: Host> Vm<H> {
             unobserved_jobs_entered: _,
             chain_await_jobs: _,
             await_chain: _,
+            lane_chain_error: _,
             host,
             specialized,
             heap,
