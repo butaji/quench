@@ -65,6 +65,56 @@ pub(super) fn integer_digits_value(digits: &str, radix: u32) -> f64 {
     value
 }
 
+/// `fixed_decimal` when the exact product significand * 10^digits, and its shift by the
+/// binary exponent, fit 128 bits (every finite |x| < 1e21 with a few digits and a binary
+/// exponent above -128): the nearest integer, a tie taking the larger, by integer arithmetic,
+/// written on the stack. `None` leaves any other value to the exact big-integer path.
+fn fixed_decimal_short(number: f64, digits: usize) -> Option<super::wtf16::JsString> {
+    const POWERS: [u128; 21] = {
+        let mut powers = [1u128; 21];
+        let mut index = 1;
+        while index < 21 {
+            powers[index] = powers[index - 1] * 10;
+            index += 1;
+        }
+        powers
+    };
+    let (significand, exponent) = crate::float_layout::binary64_parts(number);
+    let scaled = u128::from(significand).checked_mul(*POWERS.get(digits)?)?;
+    let rounded = if exponent >= 0 {
+        let shift = exponent as u32;
+        (shift < scaled.leading_zeros()).then(|| scaled << shift)?
+    } else {
+        let shift = (-exponent) as u32;
+        if shift >= 127 {
+            return None;
+        }
+        (scaled + (1u128 << (shift - 1))) >> shift
+    };
+    // 39 integer digits at most, a point, `digits` zeros of padding and a sign.
+    let mut buffer = [b'0'; 64];
+    let mut integer = itoa::Buffer::new();
+    let text = integer.format(rounded).as_bytes();
+    let mut at = 1;
+    if number.is_sign_negative() && number != 0.0 {
+        buffer[0] = b'-';
+    } else {
+        at = 0;
+    }
+    if digits == 0 {
+        buffer[at..at + text.len()].copy_from_slice(text);
+        return Some(super::wtf16::JsString::from_ascii_bytes(&buffer[..at + text.len()]));
+    }
+    // At least one integer digit: leading zeros pad a short text.
+    let width = text.len().max(digits + 1);
+    let start = at + width - text.len();
+    buffer[start..start + text.len()].copy_from_slice(text);
+    let point = at + width - digits;
+    buffer.copy_within(point..at + width, point + 1);
+    buffer[point] = b'.';
+    Some(super::wtf16::JsString::from_ascii_bytes(&buffer[..at + width + 1]))
+}
+
 fn fixed_decimal(number: f64, digits: usize) -> String {
     let (significand, exponent) = crate::float_layout::binary64_parts(number);
     let scaled = BigInt::from(significand) * BigInt::from(10_u8).pow(digits as u32);
@@ -289,6 +339,8 @@ impl<H: Host> Vm<H> {
             Native::NumberFixed => {
                 if number.abs() >= 1e21 {
                     number_to_decimal(number)
+                } else if let Some(text) = fixed_decimal_short(number, digits.unwrap_or(0)) {
+                    return Ok(self.heap.alloc_string(text));
                 } else {
                     fixed_decimal(number, digits.unwrap_or(0))
                 }
