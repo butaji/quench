@@ -62,19 +62,19 @@ fn read_closure_reads(input: &mut BinaryReader<'_>) -> Result<Option<std::rc::Rc
 }
 
 /// The scopes of a program's nested first-call stubs (`ResidualProgram::first_call_scopes`):
-/// per stub its id, inherited strictness and levels, innermost first, of names and slots.
+/// per stub its id, inherited strictness, scope level count, and the names it reads with each
+/// one's level and slot.
 fn write_first_call_scopes(out: &mut BinaryWriter, stubs: &crate::compile::first_call::FirstCallStubs) {
     out.u32(stubs.len() as u32);
     for (stub, scopes) in stubs.iter() {
         out.u32(*stub);
         out.bool(scopes.strict());
-        out.u32(scopes.levels().len() as u32);
-        for level in scopes.levels() {
-            out.u32(level.len() as u32);
-            for (name, slot) in level.iter() {
-                out.string(name);
-                out.u16(slot);
-            }
+        out.u16(scopes.levels());
+        out.u32(scopes.names().len() as u32);
+        for (name, level, slot) in scopes.names().iter() {
+            out.string(name);
+            out.u16(level);
+            out.u16(slot);
         }
     }
 }
@@ -83,14 +83,16 @@ fn read_first_call_scopes(input: &mut BinaryReader<'_>, functions: usize) -> Res
     let stubs = input.list(|input| {
         let stub = input.u32()?;
         let strict = input.bool()?;
-        let levels = input.list(|input| {
-            let level = input.list(|input| Ok((input.string()?.to_owned(), input.u16()?)))?;
-            Ok(std::rc::Rc::new(level.iter().map(|(name, slot)| (name.as_str(), *slot)).collect()))
-        })?;
-        Ok((stub, std::rc::Rc::new(crate::compile::first_call::FirstCallScopes::new(levels.into_boxed_slice(), strict))))
+        let levels = input.u16()?;
+        let names = input.list(|input| Ok((input.string()?.to_owned(), input.u16()?, input.u16()?)))?;
+        if names.iter().any(|(_, level, _)| *level >= levels) {
+            return Err("invalid residual first-call scope level".into());
+        }
+        let names = names.iter().map(|(name, level, slot)| (name.as_str(), *level, *slot)).collect();
+        Ok((stub, std::rc::Rc::new(crate::compile::first_call::FirstCallScopes::new(levels, names, strict))))
     })?;
     if stubs.iter().any(|(stub, _)| *stub as usize >= functions) || !stubs.is_sorted_by_key(|(stub, _)| *stub) {
         return Err("invalid residual first-call stub".into());
     }
-    Ok(stubs.into_boxed_slice())
+    Ok(stubs.into())
 }

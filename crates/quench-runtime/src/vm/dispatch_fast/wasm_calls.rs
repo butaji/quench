@@ -170,7 +170,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Resumed {
     let full = stack.full(window);
     vm.materialize_lane_activations(cx);
     vm.lane_stack.grow(full, window);
-    let caller = unsafe { (*cx).frame };
+    let caller = unsafe { (*cx).frame() };
     // SAFETY: `ip` is a record of the active view.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     let window = crate::bytecode::RegisterWindow {

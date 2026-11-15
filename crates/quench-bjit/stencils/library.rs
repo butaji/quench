@@ -17,9 +17,9 @@ fn read_operands(kind: u8, dst: u8, a: u8, b: u8) -> (u8, u8, u8) {
     match kind {
         _ if is_copy(kind) => (dst, a, MEM),
         _ if is_compare(kind) => (MEM, a, b),
-        JUMP | JUMP_POLL | TAG_INIT => (MEM, MEM, MEM),
-        GUARD => (dst, a, MEM),
-        SPILL => (MEM, a, MEM),
+        JUMP | JUMP_POLL | JUMP_WATCH | POLL | TAG_INIT => (MEM, MEM, MEM),
+        GUARD | NOT | NEG => (dst, a, MEM),
+        JUMP_TRUE | JUMP_FALSE | SPILL => (MEM, a, MEM),
         _ => (dst, a, b),
     }
 }
@@ -123,7 +123,7 @@ fn products(places: &Places, rows: &mut BTreeSet<Code>) {
 /// Jumps, entry tagging, guards and spills (of a pinned double to a canonical word, of a pinned
 /// int32 back to a tagged int word).
 fn control(places: &Places, rows: &mut BTreeSet<Code>) {
-    for kind in [JUMP, JUMP_POLL, TAG_INIT] {
+    for kind in [JUMP, JUMP_POLL, JUMP_WATCH, POLL, TAG_INIT] {
         rows.insert(canonical((kind, MEM, MEM, MEM, true)));
     }
     for &dst in places.floats_dst.iter().chain(&places.ints_dst) {
@@ -134,6 +134,19 @@ fn control(places: &Places, rows: &mut BTreeSet<Code>) {
     }
 }
 
+/// The truthiness jumps over every operand a truthiness is read from, the logical negation into
+/// a frame slot, and the Number negation over every destination.
+fn truthiness(places: &Places, rows: &mut BTreeSet<Code>) {
+    let tested: Vec<u8> = [MEM, MEMINT].into_iter().chain(int_pins()).chain(double_pins()).collect();
+    for &a in &tested {
+        rows.extend([JUMP_TRUE, JUMP_FALSE].map(|kind| canonical((kind, MEM, a, MEM, true))));
+        rows.insert(canonical((NOT, MEM, a, MEM, true)));
+    }
+    let dsts: Vec<u8> = places.ints_dst.iter().chain(&places.floats_dst).copied().collect();
+    let srcs: Vec<u8> = places.ints_src.iter().copied().chain(double_pins()).collect();
+    product(rows, &[NEG], &dsts, &srcs, &[true]);
+}
+
 /// Every row the library holds, canonical, once.
 pub fn library() -> Vec<Code> {
     let places = Places::all();
@@ -141,6 +154,7 @@ pub fn library() -> Vec<Code> {
     bitwise_over_doubles(&places, &mut rows);
     products(&places, &mut rows);
     control(&places, &mut rows);
+    truthiness(&places, &mut rows);
     rows.into_iter().collect()
 }
 
@@ -151,11 +165,15 @@ pub type HeapCode = (u8, bool, u8, u8, u8);
 /// The heap row whose stencil computes `code`: the places a row ignores are fixed.
 pub fn heap_canonical((heap, entry, dst, a, b): HeapCode) -> HeapCode {
     match heap {
-        CAPTURE_ROW | FIELD_ROW => (heap, false, dst, MEM, MEM),
+        CAPTURE_ROW | ENV_ROW | FIELD_ROW | LENGTH_ROW | THIS_ROW | LOAD_LOCAL_ROW | LOAD_CHECKED_ROW | GLOBAL_READ_ROW | LEXICAL_READ_ROW | CONSTANT_ROW => (heap, false, dst, MEM, MEM),
+        GLOBAL_STORE_ROW => (heap, entry, MEM, a, MEM),
+        SITE_ROW | THIS_SITE_ROW | HELD_ROW => (heap, entry, dst, MEM, MEM),
         INDEX_ROW => (heap, entry, dst, MEM, b),
         IC_GET_ROW | IC_GET_HOLDER_ROW => (heap, entry, dst, MEM, MEM),
         IC_SET_ROW | IC_SET_INT_ROW => (heap, entry, MEM, a, MEM),
         STORE_ROW => (heap, entry, MEM, a, b),
+        STORE_LOCAL_ROW | STORE_CHECKED_ROW | CAPTURE_SET_ROW | ENV_SET_ROW | ENV_DEFINE_ROW | SITE_STORE_ROW | THIS_STORE_ROW | APPEND_ROW | LEXICAL_WRITE_ROW => (heap, false, MEM, a, MEM),
+        ADD_PACKED_ROW | ADD_ARENA_ROW | ADD_EITHER_ROW | THIS_ADD_PACKED_ROW | THIS_ADD_ARENA_ROW | THIS_ADD_EITHER_ROW => (heap, entry, MEM, MEM, MEM),
         _ => (heap, false, MEM, MEM, MEM),
     }
 }
@@ -186,15 +204,26 @@ pub fn heap_library() -> Vec<HeapCode> {
     let mut rows = BTreeSet::new();
     for entry in [false, true] {
         for &dst in &dsts {
-            for heap in [CAPTURE_ROW, INDEX_ROW, FIELD_ROW] {
+            for heap in [CAPTURE_ROW, INDEX_ROW, FIELD_ROW, SITE_ROW, LENGTH_ROW, THIS_SITE_ROW, HELD_ROW, GLOBAL_READ_ROW, CONSTANT_ROW] {
                 rows.extend(srcs.iter().map(|&b| heap_canonical((heap, entry, dst, MEM, b))));
             }
         }
         for (&a, &b) in srcs.iter().flat_map(|a| srcs.iter().map(move |b| (a, b))) {
             rows.insert(heap_canonical((STORE_ROW, entry, MEM, a, b)));
         }
+        rows.extend(srcs.iter().map(|&a| heap_canonical((GLOBAL_STORE_ROW, entry, MEM, a, MEM))));
     }
-    rows.insert(heap_canonical((ARRAY_ROW, false, MEM, MEM, MEM)));
+    for &dst in &dsts {
+        rows.extend([THIS_ROW, LOAD_LOCAL_ROW, LOAD_CHECKED_ROW, ENV_ROW, LEXICAL_READ_ROW].map(|heap| heap_canonical((heap, false, dst, MEM, MEM))));
+    }
+    for heap in [STORE_LOCAL_ROW, STORE_CHECKED_ROW, CAPTURE_SET_ROW, ENV_SET_ROW, ENV_DEFINE_ROW, SITE_STORE_ROW, THIS_STORE_ROW, APPEND_ROW, LEXICAL_WRITE_ROW] {
+        rows.extend(srcs.iter().map(|&a| heap_canonical((heap, false, MEM, a, MEM))));
+    }
+    for heap in ADD_ROWS {
+        rows.extend([false, true].map(|chained| heap_canonical((heap, chained, MEM, MEM, MEM))));
+    }
+    rows.extend(NAME_ROWS.map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
+    rows.extend([ARRAY_ROW, IDENTITY_ROW, LIVE_ROW, REALM_ROW, OBJECT_ROW, KEY_ROW, FOR_IN_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, INSTANCEOF_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW].map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
     cache_rows(&dsts, &srcs, &mut rows);
     rows.into_iter().collect()
 }

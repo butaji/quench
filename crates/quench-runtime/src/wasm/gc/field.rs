@@ -15,6 +15,7 @@ const STORAGE_BITS: u32 = PACKED.len().ilog2() + 1;
 const STORAGE_MASK: u32 = (1 << STORAGE_BITS) - 1;
 
 impl GcField {
+    #[inline(always)]
     pub(crate) fn new(index: u32, storage: StorageType) -> Option<Self> {
         let packed = PACKED.iter().position(|(packed, _)| *packed == storage);
         let storage = packed.map_or(0, |at| at + 1) as u32;
@@ -26,6 +27,7 @@ impl GcField {
         ((tag & STORAGE_MASK) as usize <= PACKED.len()).then_some(Self(tag))
     }
 
+    #[inline(always)]
     pub(crate) fn tag(self) -> u32 {
         self.0
     }
@@ -43,6 +45,7 @@ impl GcField {
 
     /// What the field stores for `value`: a packed field keeps its low bits, so an unsigned
     /// read returns what is stored.
+    #[inline(always)]
     pub(crate) fn store(self, value: Value) -> Value {
         match self.mask() {
             Some(mask) => Value::integer(value.as_int().expect("validated packed Wasm field") & mask),

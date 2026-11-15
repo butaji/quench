@@ -7,10 +7,11 @@ use quench_runtime::{
     WasmType, WasmValue,
 };
 use wasmparser::{Encoding, ExternalKind, Parser, Payload, WasmFeatures};
-use wast::core::{WastArgCore, WastRetCore};
-use wast::{QuoteWat, WastArg, WastExecute, WastInvoke};
+use wast::core::WastRetCore;
+use wast::{QuoteWat, WastExecute, WastInvoke};
 
 use crate::wast_protocol::{LinkError, Outcome};
+use crate::wast_values::{scalar_matches, shared_arg};
 use quench_wasm::Module;
 
 const SPECTEST_FUNCTIONS: &[(&str, &[WasmType])] = &[
@@ -97,12 +98,45 @@ const SPECTEST_TABLE_MAX: u32 = 20;
 /// its per-file workers.
 pub const EXECUTION_MODE_VARIABLE: &str = "QUENCH_EXECUTION_MODE";
 
+/// The execution mode `name` selects, as `execution_mode_name` spells it: `no-jit`, a JIT tier alone
+/// (`b-jit`, `u-jit`, `q-jit`), `jit` (every tier) or `aot`; the tier choice becomes the process's.
+pub fn mode_named(name: &str) -> Option<quench_runtime::ExecutionMode> {
+    use quench_runtime::JitMode;
+    #[cfg(feature = "aot")]
+    if name == "aot" {
+        return Some(quench_runtime::ExecutionMode::NativeOnly);
+    }
+    let jit = JitMode::FLAGGED.iter().map(|(mode, _)| *mode).chain([JitMode::default()]).find(|mode| mode.name() == name)?;
+    jit.set_process_mode();
+    Some(jit.execution_mode())
+}
+
+/// The host resources every wast module may import (the `spectest` module): both memory kinds, tables and globals.
+fn spectest_module() -> Module<'static> {
+    let source = format!(
+        "(module (table (export \"table\") {SPECTEST_TABLE_MIN} {SPECTEST_TABLE_MAX} funcref) (table (export \"table64\") i64 {SPECTEST_TABLE_MIN} {SPECTEST_TABLE_MAX} funcref) (memory (export \"memory\") {SPECTEST_MEMORY_MIN} {SPECTEST_MEMORY_MAX}) (memory (export \"shared_memory\") {SPECTEST_MEMORY_MIN} {SPECTEST_MEMORY_MAX} shared) (global (export \"global_i32\") i32 (i32.const {SPECTEST_INTEGER_GLOBAL})) (global (export \"global_i64\") i64 (i64.const {SPECTEST_INTEGER_GLOBAL})) (global (export \"global_f32\") f32 (f32.const {SPECTEST_FLOAT_GLOBAL})) (global (export \"global_f64\") f64 (f64.const {SPECTEST_FLOAT_GLOBAL})))"
+    );
+    let buffer =
+        wast::parser::ParseBuffer::new(&source).expect("static spectest resource text");
+    let mut wat: wast::Wat<'_> =
+        wast::parser::parse(&buffer).expect("static spectest resource module");
+    let bytes = wat.encode().expect("static spectest resource encoding");
+    // Host resources include both memory kinds. This fixture's features do
+    // not broaden the independently validated feature set of guest modules.
+    assert_eq!(
+        quench_wasm::inspect_binary_with(&bytes, quench_wasm::core_features() | WasmFeatures::THREADS),
+        quench_wasm::ModuleStatus::Valid
+    );
+    Module::from_validated(bytes)
+}
+
 impl Store {
     pub(crate) fn new() -> Self {
         let mut runtime = Runtime::new(ScriptHost);
         // The spec runner selects the execution mode for its workers.
-        if std::env::var_os(EXECUTION_MODE_VARIABLE).is_some_and(|mode| mode == "jit") {
-            runtime.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
+        let mode = std::env::var(EXECUTION_MODE_VARIABLE).ok().and_then(|name| mode_named(&name));
+        if let Some(mode) = mode.filter(|mode| *mode != quench_runtime::ExecutionMode::Interpreted) {
+            runtime.set_execution_mode(mode);
             // Every module's compiled code, not only its hot roots: a conformance run.
             runtime.compile_wasm_eagerly();
         }
@@ -113,21 +147,7 @@ impl Store {
             definitions: Vec::new(),
             host_references: HashMap::new(),
         };
-        let source = format!(
-            "(module (table (export \"table\") {SPECTEST_TABLE_MIN} {SPECTEST_TABLE_MAX} funcref) (table (export \"table64\") i64 {SPECTEST_TABLE_MIN} {SPECTEST_TABLE_MAX} funcref) (memory (export \"memory\") {SPECTEST_MEMORY_MIN} {SPECTEST_MEMORY_MAX}) (memory (export \"shared_memory\") {SPECTEST_MEMORY_MIN} {SPECTEST_MEMORY_MAX} shared) (global (export \"global_i32\") i32 (i32.const {SPECTEST_INTEGER_GLOBAL})) (global (export \"global_i64\") i64 (i64.const {SPECTEST_INTEGER_GLOBAL})) (global (export \"global_f32\") f32 (f32.const {SPECTEST_FLOAT_GLOBAL})) (global (export \"global_f64\") f64 (f64.const {SPECTEST_FLOAT_GLOBAL})))"
-        );
-        let buffer =
-            wast::parser::ParseBuffer::new(&source).expect("static spectest resource text");
-        let mut wat: wast::Wat<'_> =
-            wast::parser::parse(&buffer).expect("static spectest resource module");
-        let bytes = wat.encode().expect("static spectest resource encoding");
-        // Host resources include both memory kinds. This fixture's features do
-        // not broaden the independently validated feature set of guest modules.
-        assert_eq!(
-            quench_wasm::inspect_binary_with(&bytes, quench_wasm::core_features() | WasmFeatures::THREADS),
-            quench_wasm::ModuleStatus::Valid
-        );
-        let module = Module::from_validated(bytes);
+        let module = spectest_module();
         let mut instance = store.prepare(Rc::new(module)).unwrap_or_else(|_| {
             panic!("static spectest resources must instantiate on the shared VM")
         });
@@ -620,112 +640,6 @@ impl Store {
             self.runtime.release_wasm(instance);
         }
         Ok(())
-    }
-}
-
-fn scalar_arg(arg: &WastArg<'_>) -> Option<WasmValue> {
-    match arg {
-        WastArg::Core(WastArgCore::I32(v)) => Some(WasmValue::I32(*v)),
-        WastArg::Core(WastArgCore::I64(v)) => Some(WasmValue::I64(*v)),
-        WastArg::Core(WastArgCore::F32(v)) => Some(WasmValue::F32(v.bits)),
-        WastArg::Core(WastArgCore::F64(v)) => Some(WasmValue::F64(v.bits)),
-        _ => None,
-    }
-}
-
-fn shared_arg(arg: &WastArg<'_>) -> Option<WasmValue> {
-    use wast::core::{AbstractHeapType, HeapType};
-    scalar_arg(arg).or_else(|| match arg {
-        WastArg::Core(WastArgCore::V128(value)) => Some(WasmValue::V128(v128_bits(value))),
-        WastArg::Core(WastArgCore::RefNull(HeapType::Abstract {
-            shared: false,
-            ty: AbstractHeapType::Func | AbstractHeapType::NoFunc,
-        })) => Some(WasmValue::FuncRef(quench_runtime::Value::NULL)),
-        WastArg::Core(WastArgCore::RefNull(HeapType::Abstract {
-            shared: false,
-            ty: AbstractHeapType::Extern | AbstractHeapType::NoExtern,
-        })) => Some(WasmValue::ExternRef(quench_runtime::Value::NULL)),
-        WastArg::Core(WastArgCore::RefNull(HeapType::Abstract {
-            shared: false,
-            ty:
-                AbstractHeapType::Any
-                | AbstractHeapType::Eq
-                | AbstractHeapType::Struct
-                | AbstractHeapType::Array
-                | AbstractHeapType::I31
-                | AbstractHeapType::None,
-        })) => Some(WasmValue::GcRef(quench_runtime::Value::NULL)),
-        _ => None,
-    })
-}
-
-fn v128_bits(value: &wast::core::V128Const) -> u128 {
-    u128::from_le_bytes(value.to_le_bytes())
-}
-
-fn v128_matches(pattern: &wast::core::V128Pattern, bits: u128) -> bool {
-    let b = bits.to_le_bytes();
-    match pattern {
-        wast::core::V128Pattern::I8x16(vals) => {
-            vals.iter().enumerate().all(|(i, lane)| *lane == b[i] as i8)
-        }
-        wast::core::V128Pattern::I16x8(vals) => vals
-            .iter()
-            .enumerate()
-            .all(|(i, lane)| *lane == i16::from_le_bytes([b[i * 2], b[i * 2 + 1]])),
-        wast::core::V128Pattern::I32x4(vals) => vals
-            .iter()
-            .enumerate()
-            .all(|(i, lane)| *lane == i32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap())),
-        wast::core::V128Pattern::I64x2(vals) => vals
-            .iter()
-            .enumerate()
-            .all(|(i, lane)| *lane == i64::from_le_bytes(b[i * 8..i * 8 + 8].try_into().unwrap())),
-        wast::core::V128Pattern::F32x4(vals) => vals.iter().enumerate().all(|(i, lane)| {
-            let got = u32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
-            nan_f32(lane, got)
-        }),
-        wast::core::V128Pattern::F64x2(vals) => vals.iter().enumerate().all(|(i, lane)| {
-            let got = u64::from_le_bytes(b[i * 8..i * 8 + 8].try_into().unwrap());
-            nan_f64(lane, got)
-        }),
-    }
-}
-
-fn scalar_matches(want: &WastRetCore<'_>, got: WasmValue) -> bool {
-    match (want, got) {
-        (WastRetCore::Either(options), got) => options.iter().any(|v| scalar_matches(v, got)),
-        (WastRetCore::V128(want), WasmValue::V128(got)) => v128_matches(want, got),
-        (WastRetCore::I32(want), WasmValue::I32(got)) => *want == got,
-        (WastRetCore::I64(want), WasmValue::I64(got)) => *want == got,
-        (WastRetCore::F32(want), WasmValue::F32(got)) => nan_f32(want, got),
-        (WastRetCore::F64(want), WasmValue::F64(got)) => nan_f64(want, got),
-        (
-            WastRetCore::RefNull(_),
-            WasmValue::FuncRef(value) | WasmValue::ExternRef(value) | WasmValue::GcRef(value),
-        ) => value.is_null(),
-        (WastRetCore::RefExtern(None), WasmValue::ExternRef(value)) => !value.is_null(),
-        (WastRetCore::RefExtern(Some(id)), WasmValue::ExternRef(value)) => {
-            value.as_number() == Some(f64::from(*id))
-        }
-        (WastRetCore::RefFunc(None), WasmValue::FuncRef(value)) => !value.is_null(),
-        _ => false,
-    }
-}
-
-fn nan_f32(pattern: &wast::core::NanPattern<wast::token::F32>, bits: u32) -> bool {
-    match pattern {
-        wast::core::NanPattern::CanonicalNan => WasmValue::F32(bits).is_canonical_nan(),
-        wast::core::NanPattern::ArithmeticNan => WasmValue::F32(bits).is_arithmetic_nan(),
-        wast::core::NanPattern::Value(v) => v.bits == bits,
-    }
-}
-
-fn nan_f64(pattern: &wast::core::NanPattern<wast::token::F64>, bits: u64) -> bool {
-    match pattern {
-        wast::core::NanPattern::CanonicalNan => WasmValue::F64(bits).is_canonical_nan(),
-        wast::core::NanPattern::ArithmeticNan => WasmValue::F64(bits).is_arithmetic_nan(),
-        wast::core::NanPattern::Value(v) => v.bits == bits,
     }
 }
 

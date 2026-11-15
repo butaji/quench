@@ -1,11 +1,11 @@
 //! The tier decision rule for a lane body's compile (`tier-decision-rule-v1`, sections 1, 3, 5):
 //! a compile is admitted where the model's net gain in nanoseconds is positive under the
 //! credible lower bound of the entries to come. The thresholds it replaced are gone; the
-//! numbers it reads are `TIERS.priors`. The compile and the plan are priced by their work (IR
+//! numbers it reads are the VM's `Tiers::priors`. The compile and the plan are priced by their work (IR
 //! instructions), not timed: what is compiled then repeats from run to run, under callgrind and
 //! the virtual clock alike (policies follow work, not wall time).
 
-use super::tier_policy::{Priors, PER_MILLE, TIERS};
+use super::tier_policy::{Priors, Tiers, PER_MILLE};
 
 /// What the model knows of one function at a decision point.
 pub(super) struct Observed {
@@ -27,21 +27,11 @@ pub(super) struct Observed {
 /// has one (the compile then takes the program's own time).
 const SINGLE_CORE: usize = 1;
 
-pub(super) fn compile_wall_permille() -> u64 {
-    static SHARE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *SHARE.get_or_init(|| match std::thread::available_parallelism() {
-        Ok(cores) if cores.get() > SINGLE_CORE => TIERS.priors.compile_wall_permille,
-        _ => PER_MILLE,
-    })
+pub(super) fn compile_wall_permille(priors: &Priors) -> u64 {
+    static SECOND_CORE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let second_core = *SECOND_CORE.get_or_init(|| std::thread::available_parallelism().is_ok_and(|cores| cores.get() > SINGLE_CORE));
+    if second_core { priors.compile_wall_permille } else { PER_MILLE }
 }
-
-/// The compile nanoseconds per IR instruction: a price on the compile's work.
-pub(super) fn compile_ns_per_ir() -> u64 { TIERS.priors.compile_ns_per_ir }
-
-/// The plan nanoseconds per IR instruction: a price on the plan's work (the instructions it
-/// builds), not a reading of its wall time, so that what is planned and compiled is the same
-/// from run to run, under callgrind and the virtual clock alike (policies follow work).
-pub(super) fn plan_ns_per_ir() -> u64 { TIERS.priors.plan_ns_per_ir }
 
 /// What a body of `ir` instructions costs the running program before it runs: its plan
 /// (`plan_ns`, all on the program's thread; 0 once the plan is made) and the wall share of its compile.
@@ -68,19 +58,20 @@ pub(super) fn net_planned_ns(priors: &Priors, share: u64, (plan_ns_per_ir, compi
 }
 
 /// Whether the model admits the compile of `observed`, whose plan is made already unless
-/// `unplanned` (its plan is then charged too); under `tier-stress` every eligible compile is
-/// admitted (`TIERS` floor row).
-pub(super) fn admits(observed: &Observed, unplanned: bool, diagnostics: bool) -> bool {
-    let plan = if unplanned { plan_ns_per_ir() } else { 0 };
-    let net = net_planned_ns(&TIERS.priors, TIERS.priors.body_share, (plan, compile_ns_per_ir()), compile_wall_permille(), observed);
-    if diagnostics { shadow_log(observed, net); }
-    super::tier_policy::admits_every_compile() || net > 0
+/// `unplanned` (its plan is then charged too); where `tiers` admits every eligible compile
+/// (`Tiers::admits_all`, the floor row), it is admitted.
+pub(super) fn admits(tiers: &Tiers, observed: &Observed, unplanned: bool, diagnostics: bool) -> bool {
+    let priors = &tiers.priors;
+    let plan = if unplanned { priors.plan_ns_per_ir } else { 0 };
+    let net = net_planned_ns(priors, priors.body_share, (plan, priors.compile_ns_per_ir), compile_wall_permille(priors), observed);
+    if diagnostics { shadow_log(priors, observed, net); }
+    tiers.admits_all || net > 0
 }
 
 /// The decision under `QUENCH_TRACE=js-jit`.
-fn shadow_log(observed: &Observed, net: i64) {
+fn shadow_log(priors: &Priors, observed: &Observed, net: i64) {
     eprintln!("QUENCH_TIER_MODEL entries={} ir={} region={} compile_ns_per_ir={} net_ns={net} pick={}",
-        observed.entries, observed.ir, observed.region, compile_ns_per_ir(), if net > 0 { "u-jit" } else { "interp" });
+        observed.entries, observed.ir, observed.region, priors.compile_ns_per_ir, if net > 0 { "u-jit" } else { "interp" });
 }
 
 #[cfg(test)]

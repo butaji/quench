@@ -72,6 +72,7 @@ impl ConstructedShape {
         (handle ^ self.shape as usize) & (CONSTRUCTED_SHAPE_ENTRIES - 1)
     }
 
+    #[inline]
     fn same_construction(&self, other: &Self) -> bool {
         self.shape == other.shape
             && self.constructor == other.constructor
@@ -145,6 +146,53 @@ impl<H: Host> Vm<H> {
             self.constructed_shapes.fill(ConstructedShape::EMPTY);
         }
         self.append_function_name(function, shape, name);
+    }
+
+    /// Names `function` along the edge cache `site` recorded for `name` (`record_function_name_edge`):
+    /// the staged naming row, which proves the function's before-shape, plain storage, empty name and
+    /// the store gate. False changes nothing and leaves the naming to the general path.
+    pub(super) fn named_by_transition(&mut self, function: Value, name: Atom, site: u16) -> bool {
+        let Some(record_id) = function.direct_function_index() else {
+            return false;
+        };
+        let Some(shape) = self.object_data(function).map(Object::shape) else {
+            return false;
+        };
+        let Some((_, cache)) = self.field_add_entry(self.field_cache_index(site), shape, name) else {
+            return false;
+        };
+        let transition = cache.transition();
+        let (empty, word) = (self.empty_string_word().to_bits(), self.atom_string(name));
+        // SAFETY: a direct function value names a live function record, whose shape the row proves.
+        unsafe { concrete_set_function_name(&mut self.heap, record_id, transition, empty, word) }
+    }
+
+    /// The naming cache `site` recorded for `name` that compiled code may run (`staged::naming`): its edge
+    /// and the word of the name's string, which the interpreter's own run found (`atom_string`). `None`
+    /// where the site recorded none.
+    pub(super) fn native_function_name(&self, site: u16, name: Atom) -> Option<(Transition, u64)> {
+        let word = self.heap.atom_string(name, true)?;
+        let edge = self.native_field_add(site, name, false)?;
+        Some((edge.transition, word.to_bits()))
+    }
+
+    /// Records the naming of `function` to `name` as the edge of cache `site` from `before` (its shape
+    /// then, with the `name` slot) to the shape it has now, where a row can repeat it: both shapes are
+    /// plain layouts, and `before` already records an original name, so the naming moves no
+    /// construction memo (`capture_function_name_atom`).
+    pub(super) fn record_function_name_edge(&mut self, site: u16, function: Value, name: Atom, ((before, layout), slot): ((u32, u32), usize)) {
+        let Some(after) = self.object_data(function).map(Object::shape) else {
+            return;
+        };
+        let Ok(slot) = u16::try_from(slot) else {
+            return;
+        };
+        let plain = |vm: &Self, shape: u32| !vm.shape_is_dictionary(shape);
+        if after != before && plain(self, before) && plain(self, after) && shape_names(&self.shapes, before).0.is_some() {
+            let layouts = Object::add_layouts(layout, after);
+            let edge = FieldAddCache { atom: name, source_shape: before, target_shape: after, slot, layouts, ..FieldAddCache::EMPTY };
+            self.record_field_add_cache(self.field_cache_index(site), edge);
+        }
     }
 
     /// `capture_function_name` of a closure `closure_in_realm` just made with the plan's

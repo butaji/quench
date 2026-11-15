@@ -27,10 +27,10 @@ type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 /// Wasm module compilation, one per optimization level.
 /// Whether Cranelift verifies the IR of every compile, and regalloc2 checks every allocation
 /// it makes: in debug builds, where tests check each lowering, and in the tier-stress build,
-/// which compiles everything it can; not in release, where the verifier cost about a quarter
+/// which compiles everything it can (the ISA is shared by every VM of the process); not in release, where the verifier cost about a quarter
 /// of every JIT compile's instructions (npm semver/browserslist `--jit`, 2026-10-24).
 #[cfg(any(feature = "jit", feature = "aot"))]
-const VERIFY_IR: bool = cfg!(debug_assertions) || super::compiled::tier_policy::STRESS;
+fn verify_ir() -> bool { cfg!(debug_assertions) || cfg!(feature = "tier-stress") }
 
 /// Publication determines relocation policy and code-generation effort, not language
 /// semantics or lowering.
@@ -109,7 +109,7 @@ const JS_JIT_OPT_LEVEL: &str = "speed";
 /// Declares the symbol `(namespace, key)` in `function`, a relocation the loader patches: the
 /// one form every position-independent constant takes (stencil holes, `lane_region::relocs`).
 #[cfg(any(feature = "jit", feature = "aot"))]
-fn declare_symbol(function: &mut cranelift_codegen::ir::Function, namespace: u32, key: u32) -> cranelift_codegen::ir::GlobalValue {
+pub(super) fn declare_symbol(function: &mut cranelift_codegen::ir::Function, namespace: u32, key: u32) -> cranelift_codegen::ir::GlobalValue {
     use cranelift_codegen::ir;
     let name = function.declare_imported_user_function(ir::UserExternalName::new(namespace, key));
     function.create_global_value(ir::GlobalValueData::Symbol {
@@ -120,12 +120,12 @@ fn declare_symbol(function: &mut cranelift_codegen::ir::Function, namespace: u32
     })
 }
 
-/// The address of symbol `(namespace, key)`, as a value of type `ty` built at `builder`.
+/// The address of symbol `(namespace, key)`, as a 64-bit value built at `builder`.
 #[cfg(any(feature = "jit", feature = "aot"))]
-pub(super) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'_>, ty: cranelift_codegen::ir::Type, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
-    use cranelift_codegen::ir::InstBuilder;
+pub(super) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'_>, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
+    use crate::staged::machine::MachineAccess;
     let symbol = declare_symbol(builder.func, namespace, key);
-    builder.ins().symbol_value(ty, symbol)
+    builder.symbol_address(symbol)
 }
 
 /// The address of symbol `(namespace, key)` as a 64-bit value built at `cursor`.
@@ -187,7 +187,7 @@ fn target_isa_with(
         flags.set(name, value).ok()?;
     }
     for check in ["enable_verifier", "regalloc_checker"] {
-        flags.set(check, if VERIFY_IR { "true" } else { "false" }).ok()?;
+        flags.set(check, if verify_ir() { "true" } else { "false" }).ok()?;
     }
     let isa = cranelift_native::builder()
         .ok()?
@@ -298,6 +298,9 @@ pub(super) fn compile_function<T>(
 
 #[cfg(all(test, feature = "jit", target_arch = "x86_64"))]
 mod vendor_patch_tests;
+
+#[cfg(all(test, feature = "jit"))]
+mod branch_shape_tests;
 
 #[cfg(all(test, feature = "jit"))]
 mod tests {

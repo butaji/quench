@@ -32,8 +32,7 @@ impl std::hash::Hash for PropertyKey {
 }
 
 impl PropertyKey {
-    #[inline(always)]
-    pub(crate) fn string(atom: Atom) -> Self {
+    #[inline(always)] pub(crate) fn string(atom: Atom) -> Self {
         Self::String(atom)
     }
 

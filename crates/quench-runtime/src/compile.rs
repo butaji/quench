@@ -40,7 +40,7 @@ mod atoms;
 #[cfg(feature = "aot")]
 mod native_sources;
 #[cfg(feature = "aot")]
-pub use native_sources::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation};
+pub use native_sources::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, SourceDemands};
 /// The parse goal shared by module compile-cache and linked native source keys.
 pub const STATIC_MODULE_GOAL: &str = "static-module";
 pub const STATIC_TYPESCRIPT_MODULE_GOAL: &str = "static-module:typescript";
@@ -54,7 +54,7 @@ mod capture_layout;
 mod capture_profile;
 mod call_only;
 mod capture_scope;
-mod class;
+mod class; mod class_private;
 mod early;
 mod frame_registers;
 pub(crate) mod lazy_bodies;
@@ -1084,7 +1084,7 @@ impl Engine {
         // complete AST, including declarations inside functions, before execution.
         // A streamed body's first run parses the body lazily, to compile one run of it.
         let first_run = matches!(expected_shape, ParsedProgramShape::FirstCallChunk(window) if window.first_run());
-        if (expected_shape.replayable(private_name_overrides, annex_b_forbidden_names) || first_run)
+        if (expected_shape.lazy_functions(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len()) || first_run)
             && !source_type.is_typescript()
             && let Ok(program) = compile(true)
         {
@@ -1122,17 +1122,16 @@ impl Engine {
         .flatten();
         let parsed_text = located.as_ref().map_or(&*normalized, |literal| literal.substituted.as_str());
         let allocator = lazy_bodies::sized_arena(parsed_text);
-        let mut facts = lazy_bodies::BodyFacts::deferring(expected_shape.stubs_functions(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names)));
+        let stubbing = expected_shape.stubbing(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len());
         // A recognized body's check needs its call-only facts deferred, or none to find
         // (`BodyFacts::check`): only bodies with no function inside are recognized then.
-        let recognize = if facts.call_only_deferred { annex_b_targets::Recognize::All } else { annex_b_targets::Recognize::Flat };
+        let recognize = if stubbing.functions { annex_b_targets::Recognize::All } else { annex_b_targets::Recognize::Flat };
+        let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(stubbing.functions, stubbing.arrows));
         #[cfg(feature = "aot")]
-        { facts.native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
-        let mut check = |body: oxc_parser::LazyBody<'_, '_>| facts.check(body, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
-        // SAFETY: `check` lives through the parse, which alone calls it.
-        let check = lazy.then(|| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) });
-        let mut parsed = lazy_bodies::parse(&allocator, parsed_text, source_type, lazy.then_some(0), check, inherited_strict, true, recognize, None);
+        { facts.borrow_mut().native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
+        let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, lazy, &facts, inherited_strict, recognize, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
         lazy_bodies::release_parsed_free_pages(&allocator);
+        let mut facts = facts.into_inner();
         let data_literal = match &located {
             Some(literal) if parsed.diagnostics.is_empty()
                 && data_literal::is_top_level_value(&parsed.program, literal.start) => Some(literal.start),
@@ -1835,6 +1834,8 @@ enum NamedAccess {
 enum NameSharedSites<'a> {
     Load { sites: NameSharedSiteMap, next: u16 },
     Replay(&'a NameSharedSiteMap),
+    /// A first-call chunk's: the load's sites, then those its program's chunks gave out.
+    Chunk(&'a NameSharedSiteMap, &'a replay::ChunkNameSites),
 }
 
 type NameSharedSiteMap = FxHashMap<(NamedAccess, u32), u16>;
@@ -2676,7 +2677,7 @@ impl<'a> Compiler<'a> {
         function: &oxc_ast::ast::Function<'_>,
         mut context: replay::PlainFunctionContext,
     ) -> u32 {
-        self.take_outer_scopes(function.span.start, &mut context);
+        self.take_outer(function.span.start, |scopes, strict| (context.scopes, context.inherited_strict, context.with_depth) = (scopes, strict, 0));
         // A released body holds its stand-in wherever the function is compiled, and a node
         // may be compiled more than once (the right operand of `??`); the function parsed
         // again holds its own statements.
@@ -2837,7 +2838,7 @@ impl<'a> Compiler<'a> {
         let nesting = if self.replay_target.is_some() {
             lazy_bodies::Nesting::Recorded(&self.lazy_bodies)
         } else {
-            lazy_bodies::Nesting::Parse(&mut self.first_call.free_names)
+            lazy_bodies::Nesting::Parse(&mut self.first_call.free_names, self.first_call.direct)
         };
         let reparsed = lazy_bodies::reparse(
             allocator,
@@ -3034,12 +3035,13 @@ impl<'a> Compiler<'a> {
         arrow: &oxc_ast::ast::ArrowFunctionExpression<'_>,
         mut context: replay::ArrowContext,
     ) -> u32 {
+        self.take_outer(arrow.span.start, |scopes, strict| (context.scopes, context.inherited_strict, context.with_depth) = (scopes, strict, 0));
         if self.replayable_source {
             context.scopes = context.scopes.recording();
         }
         let entry = self.cursors();
         let private_names = (self.private_name_references, self.private_name_ids.len());
-        let id = self.compile_arrow_function(arrow, &context);
+        let id = if lazy_bodies::is_released_arrow(arrow) { self.compile_released_arrow(arrow, &context) } else { self.compile_arrow_function(arrow, &context) };
         context.scopes = context.scopes.into_memo();
         self.record_replay_call(id, entry, private_names, replay::ReplayCall::Arrow(context));
         id
@@ -3567,18 +3569,19 @@ impl<'a> Compiler<'a> {
                     source_type: self.source_type,
                     root_strict: self.root_strict,
                     module_goal: self.module_goal,
-                    lazy_bodies: {
-                        let mut starts = std::mem::take(&mut self.lazy_compiled);
-                        starts.sort_unstable(); starts.dedup();
-                        starts.into_boxed_slice()
-                    },
+                    lazy_bodies: lazy_bodies::sorted(std::mem::take(&mut self.lazy_compiled)),
                     specialized: self.mode == SpecializationMode::Enabled,
                     template_sites: self.template_sites,
                     atoms,
                     exits: std::mem::take(&mut self.function_exits).into_vec().into_boxed_slice(),
+                    direct_stubs: self.first_call.direct,
+                    chunk_name_sites: replay::ChunkNameSites::new(match &self.name_shared_sites {
+                        NameSharedSites::Load { next, .. } => *next,
+                        _ => crate::bytecode::SHARED_UNCACHED_SITE,
+                    }),
                     name_shared_sites: match &mut self.name_shared_sites {
                         NameSharedSites::Load { sites, .. } => std::mem::take(sites),
-                        NameSharedSites::Replay(sites) => (*sites).clone(),
+                        NameSharedSites::Replay(sites) | NameSharedSites::Chunk(sites, _) => (*sites).clone(),
                     },
                     functions: replays,
                     #[cfg(feature = "verify-replay")]
@@ -3589,7 +3592,7 @@ impl<'a> Compiler<'a> {
                     views: replay::ReplayViews::default(),
                 })
             }),
-            first_call_scopes: std::mem::take(&mut self.first_call.nested).into_boxed_slice(),
+            first_call_scopes: crate::bytecode::append_vec::AppendVec::with_headroom(std::mem::take(&mut self.first_call.nested), room.nested_stubs()),
             encoded_records: None,
             validated: Default::default(),
             undefined_constant: Default::default(),
@@ -3757,6 +3760,7 @@ impl<'a> Compiler<'a> {
         const SHARED: u16 = crate::bytecode::SHARED_UNCACHED_SITE;
         match &mut self.name_shared_sites {
             NameSharedSites::Replay(sites) => sites.get(&(access, atom)).copied().unwrap_or(SHARED),
+            NameSharedSites::Chunk(load, chunks) => load.get(&(access, atom)).copied().unwrap_or_else(|| chunks.site(access, atom)),
             NameSharedSites::Load { sites, next } => {
                 if let Some(&site) = sites.get(&(access, atom)) {
                     return site;

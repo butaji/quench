@@ -4,16 +4,16 @@ impl<H: Host> Vm<H> {
     pub(super) fn mapped_argument_load(
         &self,
         p: &ResidualProgram,
-        frame: usize,
+        owner: VarOwner,
         slot: usize,
         fallback: Value,
     ) -> Value {
-        let function = &p.function(self.frames[frame].function as usize);
+        let function = &p.function(self.owner_view(owner).function() as usize);
         let Some(argument_slot) = mapped_arguments_slot(function, slot) else {
             return fallback;
         };
         let arguments = self
-            .frame_binding(p, frame, argument_slot)
+            .owner_binding(p, owner, argument_slot)
             .unwrap_or(Value::UNDEFINED);
         let Some(index) = self.mapped_argument_index(arguments, slot) else {
             return fallback;
@@ -28,16 +28,16 @@ impl<H: Host> Vm<H> {
     pub(super) fn mapped_argument_store(
         &mut self,
         p: &ResidualProgram,
-        frame: usize,
+        owner: VarOwner,
         slot: usize,
         value: Value,
     ) {
-        let function = &p.function(self.frames[frame].function as usize);
+        let function = &p.function(self.owner_view(owner).function() as usize);
         let Some(argument_slot) = mapped_arguments_slot(function, slot) else {
             return;
         };
         let arguments = self
-            .frame_binding(p, frame, argument_slot)
+            .owner_binding(p, owner, argument_slot)
             .unwrap_or(Value::UNDEFINED);
         self.store_mapped_argument(arguments, slot, value);
     }
@@ -104,6 +104,14 @@ impl<H: Host> Vm<H> {
             .iter()
             .rposition(|frame| self.frame_owns_arguments(frame, object))
         else {
+            // A suspended function's lane activation holds the parameters in its window.
+            let home = self
+                .programs
+                .residual(self.active_program)
+                .and_then(|code| self.lane_stack.window_parameter(&self.heap, code, object, slot));
+            if let Some(home) = home {
+                home.write(self, value);
+            }
             return;
         };
         if self.frames[owner].captured {

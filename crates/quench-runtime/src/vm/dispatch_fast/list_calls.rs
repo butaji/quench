@@ -108,10 +108,11 @@ pub(super) fn lane_list_activation<H: Host>(
     Some(lane_activate_passed(cx, r, ip, &target, elements, this))
 }
 
-/// `lane_call_spread` of a native other than a forwarding one or `eval`, whose record's
-/// eval flag would read as an unused result: the native's call in place with the array's
-/// elements, copied out first, as a forwarded call passes its values (`lane_native_value`).
-/// `None` for any other callee.
+/// `lane_call_spread` of a native other than a forwarding one or `eval`: the native's call
+/// in place with the array's elements, copied out first, as a forwarded call passes its
+/// values (`lane_native_value`). A lane call record carries no eval flag (`lane_call_fits`),
+/// so one whose result is unused (`ImmediateLayout::lane_call_result_used`) is made too: the
+/// value goes to its dead register. `None` for any other callee.
 #[inline(never)]
 pub(super) fn lane_spread_native_call<H: Host>(
     cx: *mut LaneContext<H>,
@@ -122,18 +123,52 @@ pub(super) fn lane_spread_native_call<H: Host>(
     list: Value,
 ) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
+    let native = lane_spread_native(vm, callee)?;
+    if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
+        return Some(Resumed::Exit(exit(ip)));
+    }
+    let args = vm.heap.array_elements(list)?.iter().collect::<smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]>>();
+    let value = lane_native_value(cx, ip, i, native, callee, receiver, &args);
+    Some(lane_native_complete(cx, ip, i, value))
+}
+
+/// The native `lane_spread_native_call` calls in place: any but a forwarding one or `eval`.
+#[inline(always)]
+fn lane_spread_native<H: Host>(vm: &Vm<H>, callee: Value) -> Option<Native> {
     let FunctionKind::Native(native) = vm.heap.function(callee)?.kind else {
         return None;
     };
-    if matches!(native, Native::FunctionCall | Native::FunctionBoundCall | Native::FunctionApply | Native::ReflectApply | Native::Eval)
-        || !ImmediateLayout::lane_call_result_used(i.imm())
-    {
+    (!matches!(native, Native::FunctionCall | Native::FunctionBoundCall | Native::FunctionApply | Native::ReflectApply | Native::Eval)).then_some(native)
+}
+
+/// `lane_spread_native_call` of a spread of a Set that iterates intact
+/// (`Vm::intact_iteration_kind`), as Vue's effect trigger spreads a dependency's Set into
+/// `push`: its live values, which iterating it yields and no step's code can change, copied
+/// out first. `None` for any other spread or callee, which the general path makes.
+#[inline(never)]
+pub(super) fn lane_spread_set_native_call<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    i: &LaneInstruction,
+    callee: Value,
+    receiver: Value,
+    list: Value,
+) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    if !matches!(vm.heap.get(list), Some(Cell::Set { .. })) {
+        return None;
+    }
+    let native = lane_spread_native(vm, callee)?;
+    if vm.intact_iteration_kind(list) != Some(crate::vm::iterators::IterationSource::Set) {
         return None;
     }
     if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
         return Some(Resumed::Exit(exit(ip)));
     }
-    let args = vm.heap.array_elements(list)?.iter().collect::<smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]>>();
+    let args = match vm.heap.get(list)? {
+        Cell::Set { entries, .. } => entries.to_vec(),
+        _ => return None,
+    };
     let value = lane_native_value(cx, ip, i, native, callee, receiver, &args);
     Some(lane_native_complete(cx, ip, i, value))
 }

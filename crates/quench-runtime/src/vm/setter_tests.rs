@@ -71,3 +71,121 @@ print(run(8) + ":" + cnt);
 "#;
     assert_eq!(printed(source, "setter_frame.js"), ["8:8"]);
 }
+
+/// A store's setter is cached at its site under the receiver's shape, prototype and the
+/// prototype layout epoch (`Vm::cached_field_accessor`): a receiver that gains a field, an own
+/// property that shadows the setter, a prototype whose accessor is redefined or deleted or
+/// gains a getter-only form, an accessor defined after data stores, `Object.setPrototypeOf`
+/// moving the receiver or its prototype, a pair redefined in its slot, a proxy inserted up the
+/// chain and a frozen receiver each leave the store Node's (the same program prints the same
+/// The program of `cached_setter_stores_follow_invalidation_like_node`.
+const CACHED_SETTERS: &str = r#"const out = [];
+const log = (...a) => out.push(a.join(","));
+class A { constructor(){ this.f = 0; } get v(){ return this.f; } set v(x){ this.f = x + 1; } }
+function store(o, n) { for (let i = 0; i < n; i++) o.v = i; return o.f; }
+const a = new A(); log(store(a, 3000));
+// shape transition after cached store: receiver gains a field
+a.extra = 1; log(store(a, 300));
+// own data property shadows the setter
+const b = new A(); store(b, 3000); Object.defineProperty(b, "v", { value: 5, writable: true, configurable: true }); log(store(b, 10), b.v);
+// prototype mutation: setter replaced by another accessor
+store(new A(), 3000);
+Object.defineProperty(A.prototype, "v", { set(x){ this.f = -x; }, get(){ return 0; }, configurable: true });
+log(store(new A(), 5));
+// setter removed from prototype: plain data store
+const c = new A(); store(c, 3000);
+delete A.prototype.v; log(store(c, 4), c.v, Object.keys(c).join());
+// getter-only accessor defined later on the prototype, sloppy no-op and strict throw
+Object.defineProperty(A.prototype, "v", { get(){ return 42; }, configurable: true });
+log(store(c, 4) + ":" + c.v);
+function strictStore(o){ "use strict"; try { for (let i = 0; i < 3; i++) o.v = i; } catch (e) { return e.constructor.name; } }
+log(strictStore(new A()));
+// accessor defined later, after the site cached a data-property store
+class B {} const bs = [new B(), new B()];
+function setX(o, n){ for (let i = 0; i < n; i++) o.x = i; return o.x; }
+log(setX(bs[0], 3000));
+Object.defineProperty(B.prototype, "x", { set(v){ this._x = v * 2; }, get(){ return this._x; }, configurable: true });
+log(setX(bs[1], 5), Object.keys(bs[1]).join());
+// Object.setPrototypeOf moves a receiver between a setter and no setter
+const p1 = { set s(v){ this.a = "p1" + v; } }, p2 = { set s(v){ this.a = "p2" + v; } }, p3 = {};
+const r = Object.create(p1);
+function setS(o, n){ for (let i = 0; i < n; i++) o.s = i; return o.a; }
+log(setS(r, 3000)); Object.setPrototypeOf(r, p2); log(setS(r, 5)); Object.setPrototypeOf(r, p3); log(setS(r, 5), Object.keys(r).join());
+Object.setPrototypeOf(p3, p1); log(setS(r, 5));
+// setter on prototype redefined to a different function on the same shape (pair slot)
+const q = { set z(v){ this.w = 1; }, get z(){ return 0; } }; const qc = Object.create(q);
+function setZ(o, n){ for (let i = 0; i < n; i++) o.z = i; return o.w; }
+log(setZ(qc, 3000)); Object.defineProperty(q, "z", { set(v){ this.w = 2; }, get(){ return 0; } }); log(setZ(qc, 5));
+// a proxy inserted up the chain mid-loop
+const traps = [];
+const prx = new Proxy({}, { set(t, k, v, rcv){ traps.push(k); return Reflect.set(t, k, v, rcv); } });
+const base = { set y(v){ this.yy = v; } }; const leaf = Object.create(base);
+function setY(o, n){ for (let i = 0; i < n; i++) o.y = i; return o.yy; }
+log(setY(leaf, 3000)); Object.setPrototypeOf(base, prx); delete base.y; log(setY(leaf, 3), traps.join());
+// frozen receiver
+const fz = Object.create({ set k(v){ this.kk = v; } }); function setK(o, n){ for (let i = 0; i < n; i++) o.k = i; return o.kk; }
+log(setK(fz, 3000)); Object.freeze(fz); log(setK(fz, 3));
+// symbol-keyed setter
+const sym = Symbol("s"); const so = { set [sym](v){ this.t = v; } }; function setSym(o, n){ for (let i = 0; i < n; i++) o[sym] = i; return o.t; } log(setSym(so, 3000));
+print(out.join("|"));
+"#;
+
+/// line under Node 24).
+#[test]
+fn cached_setter_stores_follow_invalidation_like_node() {
+    assert_eq!(printed(CACHED_SETTERS, "setter_cache.js"), ["3000|300|3000,9|-4|-2999,3,f,v|-2999:3|TypeError|2999|8,_x|p12999|p24|p24,a,s|p24|1|2|2999|2999,y|2999|2999|2999"]);
+}
+
+/// A prototype holder's accessor read from a cached entry (`Vm::cached_field_accessor`)
+/// keeps following the holder: a getter redefined with other attributes, turned into data and
+/// back, deleted, shadowed by a nearer accessor, an intermediate prototype gaining one,
+/// `Object.setPrototypeOf` on the receiver, a subclass override defined later, a receiver
+/// that gains or loses fields, a proxy inserted up the chain and a function receiver each
+/// The program of `cached_getter_reads_follow_invalidation_like_node`.
+const CACHED_GETTERS: &str = r#"const out = [];
+const log = (...a) => out.push(a.join(","));
+function read(o, n) { let s = 0; for (let i = 0; i < n; i++) s += o.v; return s; }
+// accessors with non-default attributes on a prototype (shape-held attributes)
+const P = {}; Object.defineProperty(P, "v", { get() { return 1; }, enumerable: false, configurable: true });
+const c = Object.create(P);
+log(read(c, 3000));
+// getter replaced on the same holder
+Object.defineProperty(P, "v", { get() { return 2; }, enumerable: false, configurable: true }); log(read(c, 5));
+Object.defineProperty(P, "v", { get() { return 3; }, enumerable: true, configurable: true }); log(read(c, 5));
+// turned into a data property, then an accessor again, then deleted
+Object.defineProperty(P, "v", { value: 4, writable: true, configurable: true }); log(read(c, 5));
+Object.defineProperty(P, "v", { get() { return 5; }, configurable: true }); log(read(c, 5));
+delete P.v; log(read(c, 3));
+// accessor appears later closer to the receiver
+const Q = {}; Object.defineProperty(Q, "v", { get() { return 6; }, configurable: true });
+const q2 = Object.create(Q); log(read(q2, 3000));
+Object.defineProperty(q2, "v", { get() { return 7; }, configurable: true }); log(read(q2, 5));
+// intermediate prototype gains the accessor
+const R = {}; const M = Object.create(R); const r = Object.create(M);
+Object.defineProperty(R, "v", { get() { return 8; }, configurable: true }); log(read(r, 3000));
+Object.defineProperty(M, "v", { get() { return 9; }, configurable: true }); log(read(r, 5));
+// setPrototypeOf moves the receiver
+const S1 = {}, S2 = {};
+Object.defineProperty(S1, "v", { get() { return 10; }, configurable: true }); Object.defineProperty(S2, "v", { get() { return 11; }, configurable: true });
+const s = Object.create(S1); log(read(s, 3000)); Object.setPrototypeOf(s, S2); log(read(s, 5)); Object.setPrototypeOf(s, null); log(read(s, 5));
+// class accessors, getter calling with the right receiver, subclass override later
+class A { constructor() { this.n = 1; } get v() { return this.n; } }
+class B extends A { constructor() { super(); this.n = 2; } }
+const b = new B(); log(read(b, 3000));
+Object.defineProperty(B.prototype, "v", { get() { return this.n * 10; }, configurable: true }); log(read(b, 5));
+// receiver shape changes after the cache
+b.extra = 1; log(read(b, 5)); delete b.n; log(read(b, 5));
+// proxy inserted into the chain
+const T = {}; Object.defineProperty(T, "v", { get() { return 12; }, configurable: true });
+const U = Object.create(T); const u = Object.create(U); log(read(u, 3000));
+const seen = []; Object.setPrototypeOf(U, new Proxy({}, { get(t, k, r) { seen.push(String(k)); return 13; } })); log(read(u, 3), seen.join());
+// getter on a function receiver and a symbol key
+function F() {} Object.defineProperty(F, "v", { get() { return 14; }, configurable: true }); log(read(F, 3000));
+print(out.join("|"));
+"#;
+
+/// read what Node 24 prints for the same program.
+#[test]
+fn cached_getter_reads_follow_invalidation_like_node() {
+    assert_eq!(printed(CACHED_GETTERS, "getter_cache.js"), ["3000|10|15|20|25|NaN|18000|35|24000|45|30000|55|NaN|6000|100|100|NaN|36000|39,v,v,v|42000"]);
+}

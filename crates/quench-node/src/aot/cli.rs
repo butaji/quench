@@ -163,15 +163,13 @@ fn compile(options: Options) -> Result<(), String> {
     }
     let mut manifest = SourceManifest::default();
     let graph = manifest.add_module_graph(&entry)?;
-    // Both eval references and known constructor flows may receive runtime
-    // source. Other dynamic-source forms still require explicit support until
-    // source-capability closure is complete.
-    let support = match options.support {
-        SourceSupport::Dynamic => NativeImageSupport::DynamicSource,
-        SourceSupport::Static => NativeImageSupport::Static,
-        SourceSupport::Automatic if !graph.dynamic_eval_sites.is_empty() || !graph.dynamic_function_sites.is_empty() => NativeImageSupport::DynamicSource,
-        SourceSupport::Automatic => NativeImageSupport::Static,
+    // The explicit choice wins; otherwise the runtime's source demands decide.
+    let explicit = match options.support {
+        SourceSupport::Dynamic => Some(NativeImageSupport::DynamicSource),
+        SourceSupport::Static => Some(NativeImageSupport::Static),
+        SourceSupport::Automatic => None,
     };
+    let support = NativeImageSupport::select(explicit, graph.requires_dynamic_source);
     let report_path = options.report.as_deref().map(absolute_output).transpose()?;
     if report_path.as_ref().is_some_and(|path| path.is_dir()) {
         return Err("report destination is a directory".into());
@@ -209,8 +207,9 @@ fn compile(options: Options) -> Result<(), String> {
         "jit": support.allows_dynamic_source(),
         "dynamic_eval_sites": graph.dynamic_eval_sites.iter().map(|(from, offset)| json!({"from": from, "offset": offset})).collect::<Vec<_>>(),
         "dynamic_function_sites": graph.dynamic_function_sites.iter().map(|(from, offset)| json!({"from": from, "offset": offset})).collect::<Vec<_>>(),
+        "dynamic_reflective_sites": graph.dynamic_reflective_sites.iter().map(|(from, offset)| json!({"from": from, "offset": offset})).collect::<Vec<_>>(),
         "source_support_selection": match options.support { SourceSupport::Automatic => "automatic", SourceSupport::Dynamic => "dynamic", SourceSupport::Static => "static" },
-        "automatic_dynamic_source_coverage": "unshadowed eval references and discovered Function-constructor calls with nonliteral source; other forms require explicit support",
+        "automatic_dynamic_source_coverage": "quench_runtime::SourceDemands: eval, Function-family constructor flows, constructor/Function/Reflect references and nonliteral member keys; other forms require explicit support",
         "files": graph.files.keys().collect::<Vec<_>>(),
         "requirements": graph.requirements.iter().map(super::GraphRequirement::report).collect::<Vec<_>>(),
     });

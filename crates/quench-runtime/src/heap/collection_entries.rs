@@ -9,7 +9,6 @@
 //! and kept current by every mutation here. The collector reads only the slots.
 
 use crate::value::Value;
-use smallvec::SmallVec;
 
 /// Collections up to this size are searched by a linear scan: comparing a few keys costs
 /// less than hashing the probe key and building an index.
@@ -27,6 +26,7 @@ fn slot_count(count: usize) -> u32 {
 const HOLE: Value = Value::DELETED;
 
 mod index;
+mod table;
 mod lazy;
 mod weak;
 pub(crate) use lazy::Entries;
@@ -96,20 +96,24 @@ impl super::Heap {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CollectionEntries<T> {
-    slots: Vec<T>,
-    /// Per slot, its key's folded hash (`folded_hash`); a hole keeps its key's. Inline while
-    /// a linear scan serves, so a small collection allocates its slots alone.
-    hashes: SmallVec<[u32; LINEAR_SCAN_ENTRIES]>,
+    /// The slots and, per slot, its key's folded hash (`folded_hash`); a hole keeps its key's.
+    table: table::Table<T>,
     live: u32,
     /// No live entry sits before this slot: deleting the oldest entries (a queue, an LRU
     /// cache evicting `map.keys().next()`) leaves holes at the front, which a walk from the
     /// first slot would otherwise step over again on every iteration.
     head: u32,
+    /// The key index and the iterators and walks, boxed while there are any: a collection of
+    /// `LINEAR_SCAN_ENTRIES` or fewer has no index, and few collections are ever iterated
+    /// (typescript-lib: 1K of 44K Maps).
+    rare: Option<Box<Rare>>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct Rare {
     /// Present once the slots outnumber `LINEAR_SCAN_ENTRIES`.
     index: Option<index::KeyIndex>,
-    /// Its registered iterators and active walks, boxed while it has any: few collections are
-    /// ever iterated (typescript-lib: 1K of 44K Maps), and every one pays this field.
-    walking: Option<Box<Walking>>,
+    walking: Walking,
 }
 
 /// Iterators over a collection, renumbered by compaction and reset by `clear` (not traced: an
@@ -122,20 +126,19 @@ struct Walking {
     walks: usize,
 }
 
-// A written Map's or Set's table is its own block (typescript-lib: 22K of them), served from
-// the allocator's 112-byte class; 160 bytes before the rare fields left it.
-const _: () = assert!(size_of::<CollectionEntries<(Value, Value)>>() == 112);
+impl Walking {
+    fn is_empty(&self) -> bool {
+        self.walks == 0 && self.iterators.is_empty()
+    }
+}
+
+// A written Map's or Set's table is its own 32-byte block (typescript-lib: 22K of them), with
+// its slots and hashes in a second one; 112 bytes before slots and hashes shared a block.
+const _: () = assert!(size_of::<CollectionEntries<(Value, Value)>>() == 32);
 
 impl<T> Default for CollectionEntries<T> {
     fn default() -> Self {
-        Self {
-            slots: Vec::new(),
-            hashes: SmallVec::new(),
-            live: 0,
-            head: 0,
-            index: None,
-            walking: None,
-        }
+        Self { table: table::Table::new(), live: 0, head: 0, rare: None }
     }
 }
 
@@ -164,14 +167,20 @@ impl<T: CollectionEntry> CollectionEntries<T> {
         if self.walks() != 0 {
             return Err(crate::snapshot::SnapshotError::unsupported("a collection being walked"));
         }
-        Ok((&self.slots, &self.hashes, self.live as usize, self.walking.as_ref().map_or(&[][..], |walking| &walking.iterators[..])))
+        let iterators = self.rare.as_ref().map_or(&[][..], |rare| &rare.walking.iterators[..]);
+        Ok((self.table.slots(), self.table.hashes(), self.live as usize, iterators))
     }
 
     /// The entries `snapshot_parts` gave; the key index is rebuilt from the hashes.
     pub(crate) fn from_snapshot_parts(slots: Vec<T>, hashes: Vec<u32>, live: usize, iterators: Vec<Value>) -> Self {
-        let index = (slots.len() > LINEAR_SCAN_ENTRIES).then(|| index::KeyIndex::of(&hashes));
-        let walking = (!iterators.is_empty()).then(|| Box::new(Walking { iterators, walks: 0 }));
-        Self { slots, hashes: SmallVec::from_vec(hashes), live: slot_count(live), head: 0, index, walking }
+        let mut table = table::Table::with_capacity(slots.len());
+        slots.into_iter().zip(hashes).for_each(|(slot, hash)| table.push(slot, hash));
+        let mut entries = Self { table, live: slot_count(live), head: 0, rare: None };
+        entries.reindex();
+        if !iterators.is_empty() {
+            entries.rare_mut().walking.iterators = iterators;
+        }
+        entries
     }
 
     /// Entries with distinct keys, each with its key's hash.
@@ -184,11 +193,36 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     /// The live entries as a new collection, slots and hashes copied as they are: no key is
     /// looked up or hashed again, and no iterator is registered with the copy.
     pub(crate) fn duplicate(&self) -> Self {
-        let live = (self.head as usize..self.slots.len()).filter(|&slot| self.slots[slot].key() != HOLE);
-        let slots: Vec<T> = live.clone().map(|slot| self.slots[slot]).collect();
-        let hashes: SmallVec<[u32; LINEAR_SCAN_ENTRIES]> = live.map(|slot| self.hashes[slot]).collect();
-        let index = (slots.len() > LINEAR_SCAN_ENTRIES).then(|| index::KeyIndex::of(&hashes));
-        Self { live: slot_count(slots.len()), slots, hashes, head: 0, index, walking: None }
+        let (slots, hashes) = (self.table.slots(), self.table.hashes());
+        let mut table = table::Table::with_capacity(self.live as usize);
+        (self.head as usize..slots.len())
+            .filter(|&slot| slots[slot].key() != HOLE)
+            .for_each(|slot| table.push(slots[slot], hashes[slot]));
+        let mut copy = Self { live: slot_count(table.len()), table, head: 0, rare: None };
+        copy.reindex();
+        copy
+    }
+
+    fn rare_mut(&mut self) -> &mut Rare {
+        self.rare.get_or_insert_with(Box::default)
+    }
+
+    #[inline(always)]
+    fn index(&self) -> Option<&index::KeyIndex> {
+        self.rare.as_ref()?.index.as_ref()
+    }
+
+    /// Rebuilds the key index from the hashes, or drops it for a linear scan.
+    fn reindex(&mut self) {
+        if self.table.len() > LINEAR_SCAN_ENTRIES {
+            let index = index::KeyIndex::of(self.table.hashes());
+            self.rare_mut().index = Some(index);
+        } else if let Some(rare) = self.rare.as_mut() {
+            rare.index = None;
+            if rare.walking.is_empty() {
+                self.rare = None;
+            }
+        }
     }
 
     /// The number of live entries.
@@ -197,20 +231,18 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     }
 
     pub(crate) fn capacity(&self) -> usize {
-        self.slots.capacity()
+        self.table.capacity()
     }
 
     /// The entry storage this collection owns, which allocation and live weight charge
     /// (`Cell::payload_bytes`).
     pub(crate) fn payload_bytes(&self) -> usize {
-        self.slots.capacity() * size_of::<T>()
-            + if self.hashes.spilled() { self.hashes.capacity() * size_of::<u32>() } else { 0 }
-            + self.index.as_ref().map_or(0, index::KeyIndex::bytes)
+        self.table.bytes() + self.index().map_or(0, index::KeyIndex::bytes)
     }
 
     /// The live entries in insertion order.
     pub(crate) fn iter(&self) -> impl Iterator<Item = T> + '_ {
-        self.slots[self.head as usize..]
+        self.table.slots()[self.head as usize..]
             .iter()
             .copied()
             .filter(|entry| entry.key() != HOLE)
@@ -222,7 +254,8 @@ impl<T: CollectionEntry> CollectionEntries<T> {
 
     /// The entry at `slot`, if it is live.
     pub(crate) fn get(&self, slot: usize) -> Option<T> {
-        self.slots
+        self.table
+            .slots()
             .get(slot)
             .copied()
             .filter(|entry| entry.key() != HOLE)
@@ -231,11 +264,12 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     /// The first live entry at or after `slot`, with its slot.
     pub(crate) fn next_live(&self, slot: usize) -> Option<(usize, T)> {
         let slot = slot.max(self.head as usize);
-        self.slots
+        let slots = self.table.slots();
+        slots
             .get(slot..)?
             .iter()
             .position(|entry| entry.key() != HOLE)
-            .map(|offset| (slot + offset, self.slots[slot + offset]))
+            .map(|offset| (slot + offset, slots[slot + offset]))
     }
 
     /// The slot of the entry whose key is `key` or one `same` accepts. `key_hash` is `key`'s
@@ -244,24 +278,28 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     #[inline]
     pub(crate) fn position(&self, key: Value, key_hash: u64, same: impl Fn(Value) -> bool) -> Option<usize> {
         let hash = folded_hash(key_hash);
+        let slots = self.table.slots();
         let matches = |slot: usize| {
-            let candidate = self.slots[slot].key();
+            let candidate = slots[slot].key();
             candidate == key || (candidate != HOLE && same(candidate))
         };
-        match &self.index {
+        match self.index() {
             Some(index) => index.find(hash, matches),
-            None => (0..self.slots.len()).find(|&slot| self.hashes[slot] == hash && matches(slot)),
+            None => {
+                let hashes = self.table.hashes();
+                (0..slots.len()).find(|&slot| hashes[slot] == hash && matches(slot))
+            }
         }
     }
 
     /// Appends an entry whose key is absent; `key_hash` is its key's hash.
     pub(crate) fn push(&mut self, entry: T, key_hash: u64) {
-        self.slots.push(entry);
-        self.hashes.push(folded_hash(key_hash));
+        self.table.push(entry, folded_hash(key_hash));
         self.live += 1;
-        match &mut self.index {
-            Some(index) => index.push(&self.hashes),
-            None if self.slots.len() > LINEAR_SCAN_ENTRIES => self.index = Some(index::KeyIndex::of(&self.hashes)),
+        let hashes = self.table.hashes();
+        match self.rare.as_mut().and_then(|rare| rare.index.as_mut()) {
+            Some(index) => index.push(hashes),
+            None if hashes.len() > LINEAR_SCAN_ENTRIES => self.reindex(),
             None => {}
         }
     }
@@ -270,30 +308,29 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     /// no probe). Returns the compaction it triggered, which the caller applies to the
     /// registered iterators (`take_iterators`).
     pub(crate) fn remove(&mut self, slot: usize) -> Option<Compaction> {
-        self.slots[slot] = T::hole();
+        let slots = self.table.slots_mut();
+        slots[slot] = T::hole();
         self.live -= 1;
         if slot == self.head as usize {
-            self.head += slot_count(self.slots[slot..].iter().take_while(|entry| entry.key() == HOLE).count());
+            self.head += slot_count(slots[slot..].iter().take_while(|entry| entry.key() == HOLE).count());
         }
-        let holes = self.slots.len() - self.live as usize;
+        let holes = self.table.len() - self.live as usize;
         (self.walks() == 0 && holes >= MIN_COMPACTED_HOLES && holes > self.live as usize)
             .then(|| self.compact())
     }
 
     fn compact(&mut self) -> Compaction {
-        let mut live_before = Vec::with_capacity(self.slots.len() + 1);
+        let mut live_before = Vec::with_capacity(self.table.len() + 1);
         let mut live = 0;
-        for entry in &self.slots {
+        for entry in self.table.slots() {
             live_before.push(live);
             if entry.key() != HOLE {
                 live += 1;
             }
         }
         live_before.push(live);
-        let mut kept = self.slots.iter().map(|entry| entry.key() != HOLE);
-        self.hashes.retain(|_| kept.next().unwrap_or(false));
-        self.slots.retain(|entry| entry.key() != HOLE);
-        self.index = (self.slots.len() > LINEAR_SCAN_ENTRIES).then(|| index::KeyIndex::of(&self.hashes));
+        self.table.retain(|entry| entry.key() != HOLE);
+        self.reindex();
         self.head = 0;
         Compaction { live_before }
     }
@@ -303,21 +340,20 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     /// the walk's position.
     pub(crate) fn clear(&mut self) {
         if self.walks() == 0 {
-            self.slots.clear();
-            self.hashes.clear();
-            self.index = None;
+            self.table.clear();
+            self.reindex();
         } else {
             // Holes match no probe, so the index stays valid for the slots that follow.
-            self.slots.fill(T::hole());
+            self.table.slots_mut().fill(T::hole());
         }
         self.live = 0;
-        self.head = slot_count(self.slots.len());
+        self.head = slot_count(self.table.len());
     }
 
     /// Registers a new iterator, each registered once (a fresh one, or one `take_iterators`
     /// returned), and returns how many are registered.
     pub(crate) fn register_iterator(&mut self, iterator: Value) -> usize {
-        let walking = self.walking.get_or_insert_with(Box::default);
+        let walking = &mut self.rare_mut().walking;
         debug_assert!(!walking.iterators.contains(&iterator));
         walking.iterators.push(iterator);
         walking.iterators.len()
@@ -325,29 +361,31 @@ impl<T: CollectionEntry> CollectionEntries<T> {
 
     /// The registered iterators, for the caller to renumber or reset and re-register.
     pub(crate) fn take_iterators(&mut self) -> Vec<Value> {
-        let Some(walking) = self.walking.as_mut() else { return Vec::new() };
-        let iterators = std::mem::take(&mut walking.iterators);
-        if walking.walks == 0 {
-            self.walking = None;
-        }
+        let Some(rare) = self.rare.as_mut() else { return Vec::new() };
+        let iterators = std::mem::take(&mut rare.walking.iterators);
+        self.drop_empty_rare();
         iterators
     }
 
+    fn drop_empty_rare(&mut self) {
+        if self.rare.as_ref().is_some_and(|rare| rare.index.is_none() && rare.walking.is_empty()) {
+            self.rare = None;
+        }
+    }
+
     fn walks(&self) -> usize {
-        self.walking.as_ref().map_or(0, |walking| walking.walks)
+        self.rare.as_ref().map_or(0, |rare| rare.walking.walks)
     }
 
     /// Starts a walk that holds slot positions; pair with `end_walk`.
     pub(crate) fn begin_walk(&mut self) {
-        self.walking.get_or_insert_with(Box::default).walks += 1;
+        self.rare_mut().walking.walks += 1;
     }
 
     pub(crate) fn end_walk(&mut self) {
-        let walking = self.walking.as_mut().expect("a walk ends after it began");
-        walking.walks -= 1;
-        if walking.walks == 0 && walking.iterators.is_empty() {
-            self.walking = None;
-        }
+        let rare = self.rare.as_mut().expect("a walk ends after it began");
+        rare.walking.walks -= 1;
+        self.drop_empty_rare();
     }
 }
 
@@ -359,8 +397,9 @@ impl CollectionEntries<(Value, Value)> {
 
     /// Replaces the value of the live Map entry at `slot`, keeping its key.
     pub(crate) fn set_value(&mut self, slot: usize, value: Value) {
-        debug_assert!(self.slots[slot].0 != HOLE);
-        self.slots[slot].1 = value;
+        let entry = &mut self.table.slots_mut()[slot];
+        debug_assert!(entry.0 != HOLE);
+        entry.1 = value;
     }
 }
 

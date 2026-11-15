@@ -2,6 +2,31 @@
 //! interpreter (`Concrete`, `vm::number`) and for native code (`Emit`).
 use super::numeric::NumericStage;
 
+/// The `f64` rounding and root operations as machine primitives: the standard library's methods in the
+/// runtime, `core`'s float math in the stencil build, which has no standard library.
+#[cfg(not(stencil_build))]
+mod machine {
+    #[inline(always)]
+    pub(super) fn floor(value: f64) -> f64 { value.floor() }
+    #[inline(always)]
+    pub(super) fn ceil(value: f64) -> f64 { value.ceil() }
+    #[inline(always)]
+    pub(super) fn trunc(value: f64) -> f64 { value.trunc() }
+    #[inline(always)]
+    pub(super) fn sqrt(value: f64) -> f64 { value.sqrt() }
+}
+#[cfg(stencil_build)]
+mod machine {
+    #[inline(always)]
+    pub(super) fn floor(value: f64) -> f64 { core::f64::math::floor(value) }
+    #[inline(always)]
+    pub(super) fn ceil(value: f64) -> f64 { core::f64::math::ceil(value) }
+    #[inline(always)]
+    pub(super) fn trunc(value: f64) -> f64 { core::f64::math::trunc(value) }
+    #[inline(always)]
+    pub(super) fn sqrt(value: f64) -> f64 { core::f64::math::sqrt(value) }
+}
+
 /// A Math function of one Number that is a machine primitive or a short composition of them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum FloatUnary {
@@ -20,11 +45,11 @@ pub(crate) enum FloatUnary {
 #[inline(always)]
 pub(crate) fn float_unary(operation: FloatUnary, value: f64) -> f64 {
     match operation {
-        FloatUnary::Floor => value.floor(),
-        FloatUnary::Ceil => value.ceil(),
-        FloatUnary::Trunc => value.trunc(),
+        FloatUnary::Floor => machine::floor(value),
+        FloatUnary::Ceil => machine::ceil(value),
+        FloatUnary::Trunc => machine::trunc(value),
         FloatUnary::Abs => value.abs(),
-        FloatUnary::Sqrt => value.sqrt(),
+        FloatUnary::Sqrt => machine::sqrt(value),
         FloatUnary::Fround => f64::from(value as f32),
         FloatUnary::Round => round_half_up(value),
     }
@@ -41,7 +66,7 @@ fn round_half_up(value: f64) -> f64 {
     } else if (-ROUND_HALF..0.0).contains(&value) {
         -0.0
     } else {
-        let floor = value.floor();
+        let floor = machine::floor(value);
         if value - floor < ROUND_HALF { floor } else { floor + 1.0 }
     }
 }

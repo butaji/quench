@@ -34,9 +34,33 @@ impl ParsedProgramShape<'_> {
             && private_names.is_empty() && annex_b_forbidden.is_empty())
     }
 
-    /// Whether functions of a source of this shape, `replayable` or not, may compile on first
-    /// call (`first_call`): an eval's.
-    pub(super) fn stubs_functions(self, replayable: bool) -> bool {
-        replayable && matches!(self, Self::Eval(..))
+    /// Which functions of a source of this shape of `source_bytes` compile on first call
+    /// (`first_call`): an eval's that compile again from their text alone, and a direct eval's
+    /// of a source of megabytes, which its caller's scopes complete when its chunk compiles. A chunk
+    /// costs more than the function's compile at load (its text is parsed and checked again),
+    /// so only a source that mostly goes uncalled gains: a large bundle, as engines' lazy
+    /// parsing assumes of a script.
+    pub(super) fn stubbing(self, replayable: bool, source_bytes: usize) -> Stubbing {
+        let eval = matches!(self, Self::Eval(..));
+        let direct = eval && !replayable && (source_bytes >= DIRECT_EVAL_STUB_BYTES || crate::trace::Dev::DirectEvalStubs.on());
+        Stubbing { functions: eval && replayable || direct, arrows: direct }
     }
+
+    /// Whether function bodies of a source of this shape parse lazily (`lazy_bodies`): each
+    /// compiles again from its own text (`replayable`), or compiles on first call.
+    pub(super) fn lazy_functions(self, replayable: bool, source_bytes: usize) -> bool {
+        replayable || self.stubbing(replayable, source_bytes).functions
+    }
+}
+
+/// Source bytes from which a direct eval's functions compile on first call (`stubbing`): below
+/// it most of a bundle's code runs and the chunks cost more than they save.
+const DIRECT_EVAL_STUB_BYTES: usize = 4 << 20;
+
+/// Which functions of a source compile on first call.
+#[derive(Clone, Copy)]
+pub(super) struct Stubbing {
+    pub(super) functions: bool,
+    /// Arrow functions too, and the parser leaves the bodies it does not skim whole.
+    pub(super) arrows: bool,
 }

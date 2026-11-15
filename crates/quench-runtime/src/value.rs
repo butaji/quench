@@ -34,8 +34,7 @@ use number_conversion::truncate_to_i32;
 const FIRST_TAG: u64 = TAG_UNDEFINED;
 /// The tag field's position: above the payload.
 const TAG_SHIFT: u32 = PAYLOAD_MASK.count_ones();
-/// ECMAScript Word32 shifts use the low log2(Word32::BITS) count bits.
-pub(crate) const WORD32_SHIFT_MASK: u32 = u32::BITS - 1;
+pub(crate) use crate::vm::operations::WORD32_SHIFT_MASK;
 const LAST_TAG: u64 = TAG_DELETED;
 const _: () = {
     let tags = [
@@ -138,8 +137,8 @@ impl NarrowLayout {
     pub(crate) const CODE_MASK: u32 = (1 << NARROW_CODE_BITS) - 1;
     pub(crate) const INDEX_SHIFT: u32 = NARROW_INDEX_SHIFT;
     pub(crate) const INDEX_BITS: u32 = NARROW_INDEX_BITS;
-    pub(crate) const DIRECT_OBJECT_UPPER: u64 = DIRECT_OBJECT_UPPER;
-    pub(crate) const DIRECT_OBJECT_CODE: u32 = DIRECT_OBJECT_NARROW_CODE;
+    #[cfg(test)] pub(crate) const DIRECT_OBJECT_UPPER: u64 = DIRECT_OBJECT_UPPER;
+    #[cfg(test)] pub(crate) const DIRECT_OBJECT_CODE: u32 = DIRECT_OBJECT_NARROW_CODE;
 
     /// Only codes selected by the decoder belong in a native image.
     #[cfg(feature = "aot")]
@@ -284,9 +283,6 @@ pub struct Value(u64);
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub(crate) struct IntegerEncoding(u64);
-
-/// The tag bits an encoded i32 carries; compiled code encodes in place.
-pub(crate) const INTEGER_TAG_BITS: u64 = TAG_INT;
 
 /// The encoding facts compiled code tests and builds values with (`Value::number`,
 /// `Value::is_tagged`).
@@ -484,6 +480,9 @@ impl Value {
     #[inline(always)] pub(crate) fn bits64(self) -> Option<u64> {
         (!self.is_tagged()).then_some(self.0)
     }
+
+    /// Whether the value is a Number stored as a double: no tag claims its bits.
+    #[inline(always)] pub(crate) fn is_double(self) -> bool { !self.is_tagged() }
 
     #[inline(always)] pub(crate) fn as_int(self) -> Option<i32> {
         ((self.0 & TAG_MASK) == TAG_INT).then_some(self.0 as u32 as i32)
@@ -764,12 +763,11 @@ impl Value {
         self.0 & TAG_MASK == TAG_DELETED
     }
 
-    #[inline(always)]
-    pub(crate) fn is_tagged(self) -> bool {
-        // The tag field, shifted down, compared as one small range.
-        let field = (self.0 >> TAG_SHIFT) as u32;
-        field.wrapping_sub((FIRST_TAG >> TAG_SHIFT) as u32)
-            <= ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as u32
+    #[inline(always)] pub(crate) fn is_tagged(self) -> bool { Self::tagged_field((self.0 >> TAG_SHIFT) as u32) }
+
+    /// Whether a tag field (`bits >> TAG_SHIFT`) lies in the tag range: one small range test.
+    #[inline(always)] fn tagged_field(field: u32) -> bool {
+        field.wrapping_sub((FIRST_TAG >> TAG_SHIFT) as u32) <= ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as u32
     }
 
     #[cfg(feature = "profile-aggregate")]

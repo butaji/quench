@@ -5,45 +5,57 @@ use super::*;
 impl Lowering<'_, '_> {
     /// `instruction`, whose value `read` holds since the loop's preheader: its register
     /// takes the held value and facts, and the receiver the facts the read proved.
-    pub(super) fn hoisted_read(&mut self, state: &mut State, instruction: WideInstruction, read: LoopRead) {
+    pub(super) fn hoisted_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, read: LoopRead) {
         let LoopRead { value: variable, ty, representation, receiver, header } = read;
         if let Some(receiver) = receiver {
             prove_receiver(state, instruction, receiver, header);
         }
         let raw = self.builder.use_var(variable);
-        if representation == Representation::Int32 && instruction.op().class().eq(Class::LoadCapture) {
+        if representation == Representation::Int32 && instruction.op().is_load_capture() {
             // Captures have no tagged field-cache consumer. Preserve the
             // admitted view; recovery or a tagged use boxes it on demand.
             self.set_int(state, instruction.result_register(), raw);
             self.native += 1;
             return;
         }
-        let value = if representation == Representation::Int32 { int_tagged(&mut self.builder, raw) } else { raw };
         let destination = instruction.result_register();
-        if instruction.op().class().eq(Class::GetField)
-            && let Some(FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup() {
-            #[cfg(test)]
-            record_hoisted_field(cache_site, representation);
-            #[cfg(not(test))] let _ = cache_site;
-            state.proofs.fields.push(FieldValue { owner: base.register_index(), atom, value, ty });
-        }
+        let value = match field_lookup(instruction) {
+            Some(lookup @ FieldLookup::Atom { atom, base, cache_site }) if instruction.op().is_get_field() => {
+                let exit = self.guard_exit(state, pc as u32);
+                let held = HeldRead { hoisted: Some(read), ..HeldRead::default() };
+                let value = self.field_value(state, (base, lookup), &[], held, exit)
+                    .expect("a hoisted read answers from its variable");
+                #[cfg(test)]
+                record_hoisted_field(cache_site, representation);
+                #[cfg(not(test))] let _ = cache_site;
+                state.proofs.fields.push(FieldValue { owner: base.register_index(), atom, value, ty });
+                value
+            }
+            _ if representation == Representation::Int32 => int_tagged(&mut self.builder, raw),
+            _ => raw,
+        };
         self.define(state, destination, value, RegisterFact::definition(ty, Representation::Tagged));
         if ty == Type::INT32 {
-            let int = if representation == Representation::Int32 { raw } else { self.ins().ireduce(types::I32, value) };
+            let int = if representation == Representation::Int32 { raw } else { self.raw_unary(Unary::Narrow(Lane::I32), value) };
             self.define_int_view(state, destination, value, int);
         }
         self.native += 1;
     }
 }
 
+/// The field `instruction` reads, where it reads one: a hoisted capture read names none.
+fn field_lookup(instruction: WideInstruction) -> Option<FieldLookup> {
+    (instruction.op().immediate_role() == crate::bytecode::ImmediateRole::FieldLookup).then(|| instruction.field_lookup()).flatten()
+}
+
 /// The receiver `instruction` reads takes the type, and the header, its hoisted read proved.
 fn prove_receiver(state: &mut State, instruction: WideInstruction, (owner, ty): (Register, Type), header: Option<ObjectHeader>) {
-    let owner = match instruction.field_lookup() {
+    let owner = match field_lookup(instruction) {
         Some(FieldLookup::Atom { base, .. }) => base.register_index().unwrap_or(owner),
         _ => owner,
     };
     let fact = &mut state.values[usize::from(owner)];
-    // An unboxed register has no tagged view to keep (`Lowering::refine_owner`).
+    // An unboxed register has no tagged view to keep (`headers::object_header`).
     if fact.tagged.current() { *fact = RegisterFact { tagged: fact.tagged, ..RegisterFact::definition(ty, Representation::Tagged) }; }
     if let Some(header) = header {
         state.proofs.headers[usize::from(owner)] = Some(header);

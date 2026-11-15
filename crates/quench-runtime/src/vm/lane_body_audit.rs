@@ -4,7 +4,7 @@
 //! the body; the plain activation of the interpreter), and each epoch's clock time from its
 //! first entry to the next epoch's is booked to its side. Once each side has `audit_samples`
 //! epochs, a body whose median epoch is not `audit_margin_permille` below the interpreter's
-//! retires, and its function stays interpreted (`TIERS.lane_body`). An epoch holds everything
+//! retires, and its function stays interpreted (`Tiers::lane_body`). An epoch holds everything
 //! the program did between those entries, so the comparison prices what the body costs where it
 //! is entered (the entry's binding of the lane frame, its helpers' calls back into the VM) and
 //! not only its own instructions; the median keeps a collection that lands in one epoch from
@@ -13,7 +13,7 @@
 
 use std::time::Instant;
 
-use super::{LaneBody, LaneView, TIERS};
+use super::{LaneBody, LaneView};
 use super::super::compiled::tier_policy::PER_MILLE;
 
 /// The most epochs a side keeps (`audit_samples` is capped by it).
@@ -51,7 +51,7 @@ impl LaneView {
         if history.audit.done {
             return false;
         }
-        let period = TIERS.lane_body.audit_period;
+        let period = self.tiers.lane_body.audit_period;
         let seen = history.audit.seen;
         let interpreted = (seen / period) % SIDES as u32 == INTERPRETER as u32;
         if interpreted && !counts_interpreted {
@@ -83,7 +83,7 @@ impl LaneView {
         }
         epochs.started = Some(now);
         self.tier().audit_epochs.set(epochs);
-        let samples = usize::from(TIERS.lane_body.audit_samples).min(MAX_EPOCHS);
+        let samples = usize::from(self.tiers.lane_body.audit_samples).min(MAX_EPOCHS);
         if epochs.filled.iter().all(|&filled| usize::from(filled) >= samples) {
             self.audit_verdict(&epochs, samples);
         }
@@ -100,7 +100,7 @@ impl LaneView {
             nanos.sort_unstable();
             u64::from(nanos[samples / 2])
         };
-        let verdict = Verdict::of(median(BODY), median(INTERPRETER), TIERS.lane_body.audit_margin_permille);
+        let verdict = Verdict::of(median(BODY), median(INTERPRETER), self.tiers.lane_body.audit_margin_permille);
         self.tier().body_stats.audit.set(Some(verdict));
         if !verdict.retire {
             return;

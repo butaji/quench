@@ -2,14 +2,16 @@ use super::object_descriptors::PropertyDescriptorRecord;
 use super::atom_keys::AtomText;
 use super::wtf16::{JsString, Units};
 use super::*;
-use crate::unicode;
+use crate::{number_to_string::AppendBytes as _, unicode};
 use std::hash::BuildHasher as _;
 use std::io::Write as _;
 use std::ops::Range;
 
 mod heap_builder;
+mod error_message;
 mod plain_write;
 pub(crate) use plain_write::JsonPlainCache;
+use error_message::json_syntax_message;
 use heap_builder::{short_run_ends, JsonBuildError, JsonHeapBuilder};
 pub(super) use heap_builder::JsonParseCache;
 
@@ -181,7 +183,7 @@ enum JsonKey {
 
 /// An integer's decimal digits, as Number::toString writes them.
 fn write_json_integer(value: i32, output: &mut JsonText) {
-    output.extend_from_slice(itoa::Buffer::new().format(value).as_bytes());
+    output.append_bytes(itoa::Buffer::new().format(value).as_bytes());
 }
 
 /// The JSON text a stringification writes: UTF-8 bytes, decoded once when it completes.
@@ -255,14 +257,14 @@ fn write_json_utf8(text: &[u8], output: &mut JsonText) {
         let end = (index + WORD_BYTES).min(text.len());
         for (offset, byte) in text[index..end].iter().enumerate() {
             if json_escape_needed(*byte) {
-                output.extend_from_slice(&text[run..index + offset]);
+                output.append_bytes(&text[run..index + offset]);
                 write_json_scalar(char::from(*byte), output);
                 run = index + offset + 1;
             }
         }
         index = end;
     }
-    output.extend_from_slice(&text[run..]);
+    output.append_bytes(&text[run..]);
     output.push(b'"');
 }
 
@@ -331,10 +333,10 @@ fn write_json_scalar(scalar: char, output: &mut JsonText) {
         }
         scalar => {
             let mut buffer = [0; char::MAX_LEN_UTF8];
-            return output.extend_from_slice(scalar.encode_utf8(&mut buffer).as_bytes());
+            return output.append_bytes(scalar.encode_utf8(&mut buffer).as_bytes());
         }
     };
-    output.extend_from_slice(escape);
+    output.append_bytes(escape);
 }
 
 /// The `\uXXXX` escape of `code`.
@@ -344,7 +346,7 @@ fn write_unicode_escape(code: u32, output: &mut JsonText) {
 
 fn write_indent(output: &mut JsonText, gap: &str, depth: usize) {
     for _ in 0..depth {
-        output.extend_from_slice(gap.as_bytes());
+        output.append_bytes(gap.as_bytes());
     }
 }
 
@@ -403,74 +405,7 @@ impl JsonSyntax {
 /// (`MessageTemplate::kInvalidRawJsonValue`).
 const JSON_INVALID_RAW_TEXT: &str = "Invalid value for JSON.rawJSON";
 
-/// Units V8 quotes on each side of an unexpected token (`JsonParser::kMaxContextCharacters`).
-const JSON_ERROR_CONTEXT_UNITS: usize = 10;
-/// Sources shorter than this are quoted whole (`kMinOriginalSourceLengthForContext`).
-const JSON_ERROR_CONTEXT_MIN_SOURCE: usize = 2 * JSON_ERROR_CONTEXT_UNITS + 1;
-/// Sources V8 names whole instead of quoting a token of (`JsonParser::IsSpecialString`):
-/// what `undefined`, `NaN`, `Infinity` and a plain object convert to.
-const JSON_ERROR_SPECIAL_SOURCES: [&str; 4] = ["[object Object]", "undefined", "Infinity", "NaN"];
-/// The last unit an escape may name and be a bad escape rather than an unexpected token
-/// (`unibrow::Latin1::kMaxChar`).
-const LATIN1_MAX: u16 = 0xFF;
 use crate::units::{CARRIAGE_RETURN, LINE_FEED};
-
-/// The message V8 gives `syntax` at `position` of `source`, its UTF-16 units.
-fn json_syntax_message(source: &[u16], syntax: JsonSyntax, position: usize) -> String {
-    let unexpected = syntax == JsonSyntax::Unexpected
-        || syntax == JsonSyntax::BadEscape && source.get(position).is_some_and(|&unit| unit > LATIN1_MAX);
-    let message = if unexpected {
-        match source.get(position) {
-            None => return "Unexpected end of JSON input".into(),
-            Some(&JSON_QUOTE) => "Unexpected string in JSON",
-            Some(&(JSON_MINUS | JSON_DIGIT_START..=JSON_DIGIT_END)) => "Unexpected number in JSON",
-            Some(&unit) => return json_unexpected_token_message(source, unit, position),
-        }
-    } else {
-        syntax.positioned_message()
-    };
-    let (line, column) = json_line_column(&source[..position]);
-    format!("{message} at position {position} (line {line} column {column})")
-}
-
-/// `Unexpected token` of `unit` at `position`, quoting the source around it
-/// (`JsonParser::GetErrorMessageWithEllipses`).
-fn json_unexpected_token_message(source: &[u16], unit: u16, position: usize) -> String {
-    let whole = String::from_utf16_lossy(source);
-    if JSON_ERROR_SPECIAL_SOURCES.contains(&whole.as_str()) {
-        return format!("\"{whole}\" is not valid JSON");
-    }
-    let token = String::from_utf16_lossy(&[unit]);
-    if source.len() < JSON_ERROR_CONTEXT_MIN_SOURCE {
-        return format!("Unexpected token '{token}', \"{whole}\" is not valid JSON");
-    }
-    let before = position >= JSON_ERROR_CONTEXT_UNITS;
-    let after = !before || position + JSON_ERROR_CONTEXT_UNITS < source.len();
-    let start = if before { position - JSON_ERROR_CONTEXT_UNITS } else { 0 };
-    let end = if after { position + JSON_ERROR_CONTEXT_UNITS } else { source.len() };
-    let context = String::from_utf16_lossy(&source[start..end]);
-    let (open, close) = (if before { "..." } else { "" }, if after { "..." } else { "" });
-    format!("Unexpected token '{token}', {open}\"{context}\"{close} is not valid JSON")
-}
-
-/// The one-based line and column after `prefix`: JSON's line terminators are CR and LF, and
-/// CR LF is one (`JsonParser::CalculateFileLocation`).
-fn json_line_column(prefix: &[u16]) -> (usize, usize) {
-    let mut line = 1;
-    let mut line_start = 0;
-    let mut index = 0;
-    while index < prefix.len() {
-        if prefix[index] == CARRIAGE_RETURN && index + 1 < prefix.len() && prefix[index + 1] == LINE_FEED {
-            index += 1;
-        }
-        if prefix[index] == CARRIAGE_RETURN || prefix[index] == LINE_FEED {
-            line += 1;
-            line_start = index + 1;
-        }
-        index += 1;
-    }
-    (line, 1 + prefix.len() - line_start)
-}
 
 /// Number literals at most this long parse from a stack buffer.
 const JSON_INLINE_NUMBER_LENGTH: usize = 64;
@@ -547,8 +482,7 @@ trait JsonUnit: Copy {
 }
 
 impl JsonUnit for u8 {
-    #[inline(always)]
-    fn unit(self) -> u16 {
+    #[inline(always)] fn unit(self) -> u16 {
         u16::from(self)
     }
     #[inline(always)]
@@ -592,8 +526,7 @@ impl JsonUnit for u8 {
 }
 
 impl JsonUnit for u16 {
-    #[inline(always)]
-    fn unit(self) -> u16 {
+    #[inline(always)] fn unit(self) -> u16 {
         self
     }
     #[inline(always)]
@@ -632,8 +565,7 @@ impl Utf8Byte {
 }
 
 impl JsonUnit for Utf8Byte {
-    #[inline(always)]
-    fn unit(self) -> u16 {
+    #[inline(always)] fn unit(self) -> u16 {
         u16::from(self.0)
     }
     #[inline(always)]
@@ -1151,7 +1083,7 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
             let magnitude = if scale < 0 { mantissa as f64 / power } else { mantissa as f64 * power };
             return Ok(JsonNumber::Float(if negative { -magnitude } else { magnitude }));
         }
-        // The literal is ASCII by construction.
+        // SAFETY: the literal is ASCII by construction.
         let literal = &self.units[start..self.index];
         let mut inline = [0_u8; JSON_INLINE_NUMBER_LENGTH];
         let long;
@@ -1164,7 +1096,7 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
             long = literal.iter().map(|unit| unit.unit() as u8).collect::<Vec<_>>();
             &long
         };
-        let text = std::str::from_utf8(bytes).expect("a number literal is ASCII");
+        let text = unsafe { std::str::from_utf8_unchecked(bytes) };
         Ok(JsonNumber::Float(text.parse::<f64>().expect("the grammar admits only decimal literals")))
     }
 
@@ -1832,24 +1764,8 @@ impl<H: Host> Vm<H> {
         value: Value,
         state: &mut JsonSerialization,
     ) -> Result<bool, JsError> {
-        if value.is_undefined() || value.is_deleted() || self.is_function(value) {
-            return Ok(false);
-        }
-        if value.is_null() {
-            state.output.extend_from_slice(b"null");
-            return Ok(true);
-        }
-        if let Some(value) = value.as_bool() {
-            state.output.extend_from_slice(if value { b"true" } else { b"false" });
-            return Ok(true);
-        }
-        if let Some(value) = value.as_number() {
-            if value.is_finite() {
-                crate::number_to_string::write(value, &mut state.output);
-            } else {
-                state.output.extend_from_slice(b"null");
-            }
-            return Ok(true);
+        if let Some(serialized) = self.json_serialize_primitive(value, &mut state.output) {
+            return Ok(serialized);
         }
         let unboxed = self.json_unbox(p, value)?;
         if unboxed != value {
@@ -1857,7 +1773,7 @@ impl<H: Host> Vm<H> {
         }
         let value = unboxed;
         if let Some(raw) = self.json_raw_text(value) {
-            state.output.extend_from_slice(raw.as_bytes());
+            state.output.append_bytes(raw.as_bytes());
             return Ok(true);
         }
         if self.heap.object_record(value).is_some() || self.heap.promise(value).is_some() {
@@ -1925,6 +1841,7 @@ impl<H: Host> Vm<H> {
             | Some(Cell::PromiseResolvingState { .. })
             | Some(Cell::WasmElements(_))
             | Some(Cell::WasmBits64(_))
+            | Some(Cell::WasmInstance(_))
             | Some(Cell::WasmGc { .. })
             | Some(Cell::WasmExtern(_))
             | Some(Cell::AccessorPair { .. })
@@ -1934,6 +1851,31 @@ impl<H: Host> Vm<H> {
             | Some(Cell::BindingReference { .. })
             | Some(Cell::WasmHostFunction { .. }) => Ok(false),
         }
+    }
+
+    /// Whether `value` serializes, where it is undefined, a function, null, a boolean or a number,
+    /// whose text is appended to `output`; `None` for any other value.
+    fn json_serialize_primitive(&self, value: Value, output: &mut JsonText) -> Option<bool> {
+        if value.is_undefined() || value.is_deleted() || self.is_function(value) {
+            return Some(false);
+        }
+        if value.is_null() {
+            output.extend_from_slice(b"null");
+            return Some(true);
+        }
+        if let Some(value) = value.as_bool() {
+            output.extend_from_slice(if value { b"true" } else { b"false" });
+            return Some(true);
+        }
+        if let Some(value) = value.as_number() {
+            if value.is_finite() {
+                crate::number_to_string::write(value, output);
+            } else {
+                output.extend_from_slice(b"null");
+            }
+            return Some(true);
+        }
+        None
     }
 
     fn json_unbox(&mut self, p: &ResidualProgram, value: Value) -> Result<Value, JsError> {
@@ -1977,7 +1919,7 @@ impl<H: Host> Vm<H> {
                     .present_dense_elements(array, index..index + 1)
                     .map(|element| element[0]);
                 if !self.json_member(p, array, JsonKey::Index(index), element, state)? {
-                    state.output.extend_from_slice(b"null");
+                    state.output.append_bytes(b"null");
                 }
             }
             state.depth -= 1;
@@ -2024,7 +1966,7 @@ impl<H: Host> Vm<H> {
                 state.begin_member(written);
                 let key = match &plan {
                     Some(plan) => {
-                        state.output.extend_from_slice(&plan[index].quoted);
+                        state.output.append_bytes(&plan[index].quoted);
                         plan[index].key
                     }
                     None => {
@@ -2032,7 +1974,7 @@ impl<H: Host> Vm<H> {
                         keys[index]
                     }
                 };
-                state.output.extend_from_slice(if state.gap.is_empty() { b":" } else { b": " });
+                state.output.append_bytes(if state.gap.is_empty() { b":" } else { b": " });
                 // A plan read for this object holds while no member took the property steps.
                 let planned = plan.as_ref().filter(|_| state.steps == planned_steps).and_then(|plan| {
                     self.heap

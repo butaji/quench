@@ -64,7 +64,24 @@ pub enum NativeImageSupport {
 }
 
 #[cfg(feature = "native-execution")]
+impl From<bool> for NativeImageSupport {
+    fn from(dynamic_source: bool) -> Self {
+        if dynamic_source { Self::DynamicSource } else { Self::Static }
+    }
+}
+
+#[cfg(feature = "native-execution")]
 impl NativeImageSupport {
+    /// An explicit choice wins; otherwise a program that can reach dynamic source
+    /// (`SourceDemands::requires_dynamic_source`) keeps the interpreter and JIT.
+    pub const fn select(explicit: Option<Self>, requires_dynamic_source: bool) -> Self {
+        match explicit {
+            Some(support) => support,
+            None if requires_dynamic_source => Self::DynamicSource,
+            None => Self::Static,
+        }
+    }
+
     pub const fn allows_dynamic_source(self) -> bool {
         matches!(self, Self::DynamicSource)
     }

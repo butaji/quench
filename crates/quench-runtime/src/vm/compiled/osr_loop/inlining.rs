@@ -2,8 +2,9 @@
 //! region PCs every kept instruction takes, the instructions each takes there, and the
 //! guards the frames end with.
 
+use crate::bytecode::Class;
 use super::{
-    admitted_store, field_base, inlined_returning, inlined_set_this, inlinable, intern_field, object_reads, renamed, Class,
+    admitted_store, field_base, inlined_returning, inlined_set_this, inlinable, intern_field, object_reads, renamed,
     FieldBase, FieldLookup, FieldPath, FieldReceiver, FieldSite, FieldUse, ImmediateLayout, ImmediateRole, InlineCallee,
     InlineFrame, InlineGuard, LoopRegion, Op, Origin, Register, RegisterSet, WideInstruction, CALLEE_CAPTURE,
     MAX_INLINE_PARAMS, MAX_REGION_FIELDS,
@@ -121,12 +122,16 @@ fn set_this_length(instruction: WideInstruction, sites: &[FieldSite]) -> u32 {
     inlined_set_this(instruction, sites).map_or(1, |parts| parts.len() as u32)
 }
 
+/// The region instructions that complete a call (`Emission::complete`): the move of the result and the jump past the call.
+const COMPLETION_LENGTH: u32 = 2;
+
 /// How many region instructions a reached callee instruction becomes.
 fn callee_length(instruction: WideInstruction, sites: &[FieldSite]) -> u32 {
     if instruction.op().is_return() {
-        2
+        COMPLETION_LENGTH
     } else if inlined_returning(instruction) {
-        3
+        // The computation, then the completion of the call.
+        1 + COMPLETION_LENGTH
     } else {
         set_this_length(instruction, sites)
     }

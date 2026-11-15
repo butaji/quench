@@ -69,6 +69,7 @@ pub(super) fn cell_rc_drop_lock(cell: &Cell) -> Option<&'static Mutex<()>> {
         Cell::Iterator { .. }
         | Cell::WasmGc { .. }
         | Cell::WasmGlobal { .. }
+        | Cell::WasmInstance(_)
         | Cell::WasmTable { .. }
         | Cell::WasmTag { .. }
         | Cell::RegExp { .. } => Some(&SHARED_RC_DROP_LOCK),
@@ -84,6 +85,7 @@ fn cell_has_shared_rc_payload(cell: &Cell) -> bool {
         Cell::Iterator { .. }
         | Cell::WasmGc { .. }
         | Cell::WasmGlobal { .. }
+        | Cell::WasmInstance(_)
         | Cell::WasmTable { .. }
         | Cell::WasmTag { .. }
         | Cell::RegExp { .. } => true,
@@ -91,6 +93,9 @@ fn cell_has_shared_rc_payload(cell: &Cell) -> bool {
     }
 }
 
+/// Cells are allocated 16-byte aligned, so an address's low bits carry nothing a stripe could use.
+const RC_DROP_ADDRESS_ALIGN_BITS: u32 = 4;
+
 fn rc_drop_lock_index(address: usize) -> usize {
-    (address >> 4) & (RC_DROP_LOCK_STRIPES - 1)
+    (address >> RC_DROP_ADDRESS_ALIGN_BITS) & (RC_DROP_LOCK_STRIPES - 1)
 }

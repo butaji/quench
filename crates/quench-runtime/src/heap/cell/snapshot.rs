@@ -188,8 +188,9 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         module_bindings,
         deferred_module,
         stack_data,
-        // Its code holds no global value.
+        // Its code holds no global value; a restored heap runs no lane activation.
         global_values: _,
+        window_depth: _,
     } = rare.as_deref().unwrap_or(&default_rare);
     if external_address.is_some() {
         return Err(SnapshotError::unsupported("an object whose address an embedder observed"));
@@ -254,6 +255,7 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
         deferred_module,
         stack_data,
         global_values: None,
+        window_depth: None,
     };
     let rare = Some(Box::new(rare));
     Ok(ObjectExtras {
@@ -549,9 +551,9 @@ impl Cell {
                 writer.bool(*resizable);
                 writer.bool(*immutable);
             }
-            Self::TypedArray { kind, object, buffer, length } => {
+            Self::TypedArray { object, buffer, length } => {
                 writer.u8(tag::TYPED_ARRAY);
-                typed_array_kind::write(writer, *kind);
+                typed_array_kind::write(writer, object.native.kind());
                 write_object(writer, &object.object)?;
                 writer.u64(object.offset as u64);
                 writer.value(*buffer);
@@ -708,9 +710,7 @@ impl Cell {
             Self::WasmTag { object, declarations, ty } if crate::vm::js_tag_type() == (declarations.clone(), *ty) => {
                 writer.u8(tag::JS_TAG); write_object(writer, object)?;
             }
-            Self::WasmBits64(_)
-            | Self::WasmV128(_)
-            | Self::WasmExtern(_)
+            Self::WasmBits64(_) | Self::WasmInstance(_) | Self::WasmV128(_) | Self::WasmExtern(_)
             | Self::WasmException { .. }
             | Self::WasmTag { .. }
             | Self::WasmGc { .. }
@@ -754,14 +754,13 @@ impl Cell {
             tag::TYPED_ARRAY => {
                 let kind = typed_array_kind::read(reader)?;
                 Self::TypedArray {
-                    kind,
-                    object: Box::new(BufferViewObject { object: read_object(reader)?, offset: reader.u64()? as usize }),
+                    object: Box::new(BufferViewObject { native: crate::heap::NativeView::typed(kind), object: read_object(reader)?, offset: reader.u64()? as usize }),
                     buffer: reader.value()?,
                     length: read_view_length(reader)?,
                 }
             }
             tag::DATA_VIEW => Self::DataView {
-                object: Box::new(BufferViewObject { object: read_object(reader)?, offset: reader.u64()? as usize }),
+                object: Box::new(BufferViewObject { native: Default::default(), object: read_object(reader)?, offset: reader.u64()? as usize }),
                 buffer: reader.value()?,
                 length: read_view_length(reader)?,
             },

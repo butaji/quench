@@ -2,7 +2,8 @@ use oxc_allocator::{ArenaBox, ArenaVec, GetAllocator};
 use oxc_ast::ast::*;
 use oxc_span::{GetSpan, Span};
 
-use super::FunctionKind;
+use super::{FunctionKind, skim::{LazyForm, Skimmed}};
+use crate::cursor::ParserCheckpoint;
 use crate::{
     Context, ParserConfig as Config, ParserImpl, StatementContext, diagnostics,
     lexer::Kind,
@@ -50,27 +51,62 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// Whether the body of the function starting at `start` parses lazily
     /// (`ParseOptions::lazy_function_bodies`).
     fn lazy_body_candidate(&self, start: u32, func_kind: FunctionKind) -> bool {
+        (matches!(func_kind, FunctionKind::Declaration | FunctionKind::Expression)
+            // A method's body only inside another lazily parsed body, which compiles from
+            // its text again; never a constructor, whose `super()` its class decides.
+            || self.lazy_depth > 0 && matches!(func_kind, FunctionKind::ClassMethod | FunctionKind::ObjectMethod))
+            && self.lazy_start(start)
+    }
+
+    /// Whether a function starting at `start` may parse lazily where it lies (outside every
+    /// lazily parsed body, or inside one where nested bodies are) and, by the text before it,
+    /// is not about to be called where it is made.
+    pub(super) fn lazy_start(&self, start: u32) -> bool {
         self.options.lazy_function_bodies.is_some_and(|from| start >= from)
             && !self.is_ts
             // A body being recognized is released whole: the bodies inside it are only
             // recognized, and its compilation parses them again.
             && !self.recognizing
             && (self.lazy_depth == 0 || self.options.lazy_nested_bodies && self.options.lazy_body_check.is_some())
-            && (matches!(func_kind, FunctionKind::Declaration | FunctionKind::Expression)
-                // A method's body only inside another lazily parsed body, which compiles from
-                // its text again; never a constructor, whose `super()` its class decides.
-                || self.lazy_depth > 0 && matches!(func_kind, FunctionKind::ClassMethod | FunctionKind::ObjectMethod))
             && !self.source_text[..start as usize].trim_end().ends_with('(')
+    }
+
+    /// The block body of the arrow function starting at `start`, at its `{`: kept as its
+    /// directives when the skim decides it (`ParseOptions::lazy_body_skim`), else parsed whole.
+    pub(crate) fn parse_arrow_block_body(
+        &mut self,
+        start: u32,
+        params: &ArenaBox<'a, FormalParameters<'a>>,
+        r#async: bool,
+        head: Option<ParserCheckpoint<'a>>,
+    ) -> ArenaBox<'a, FunctionBody<'a>> {
+        if !r#async && self.options.lazy_body_skim.is_some() && self.lazy_start(start) {
+            let arrow = LazyFunction { start, id: None, params, r#async, generator: false, expression: false, form: LazyForm::Arrow, method: false };
+            if let Some(body) = self.skim_lazy_function_body(&arrow, head) {
+                return body;
+            }
+        }
+        self.context_add(Context::In, Self::parse_function_body)
     }
 
     /// A function body parsed, then released from the arena and kept as its directives,
     /// unless its parse left state that outlives it (`LazyBodyCheckpoint`).
-    fn parse_lazy_function_body(&mut self, function: LazyFunction<'_, 'a>) -> ArenaBox<'a, FunctionBody<'a>> {
+    fn parse_lazy_function_body(&mut self, function: LazyFunction<'_, 'a>, head: Option<ParserCheckpoint<'a>>) -> ArenaBox<'a, FunctionBody<'a>> {
         if let Some(skip) = self.options.lazy_body_skip
             && !self.recognizing
             && self.lazy_depth == 0
             && let Some(body) = self.skip_lazy_body(skip, &function)
         {
+            return body;
+        }
+        if let Some(body) = self.skim_lazy_function_body(&function, head) {
+            return body;
+        }
+        if self.options.lazy_body_check.is_none() && self.options.lazy_body_skim.is_some() {
+            // Without a check to settle it alone, a body the skim does not decide parses whole,
+            // and the functions inside it may still be skimmed.
+            let body = self.parse_function_body();
+            self.early.end_body();
             return body;
         }
         // A function its consumer compiles at load needs its tree (`LazyBody::stub`).
@@ -335,6 +371,78 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.release_inside(span, function.method);
         let directives = ArenaVec::from_iter_in(directives, &self.ast);
         FunctionBody::boxed(span, directives, ArenaVec::new_in(self), self)
+    }
+
+    /// The body kept as its directives after one scan of its tokens (`ParseOptions::lazy_body_skim`),
+    /// when the scan finds it valid, leaves no state behind and the consumer takes the function.
+    /// Otherwise the parser is as it was and the body parses whole.
+    fn skim_lazy_function_body(&mut self, function: &LazyFunction<'_, 'a>, head: Option<ParserCheckpoint<'a>>) -> Option<ArenaBox<'a, FunctionBody<'a>>> {
+        let skim = self.options.lazy_body_skim?;
+        if function.r#async || function.generator || function.method || function.expression && function.id.is_some() || !self.at(Kind::LCurly) {
+            return None;
+        }
+        let allocator = self.allocator();
+        let marker = std::ptr::NonNull::from(allocator.alloc(0u8));
+        let mut before = LazyBodyCheckpoint::of(self);
+        let capacity = before.arena_capacity;
+        let checkpoint = self.checkpoint();
+        let inherited_strict = self.strict;
+        let start = self.cur_start();
+        let skimmed = self.skim_function_body(function.params, function.form, head);
+        before.arena_capacity = allocator.capacity();
+        let taken = skimmed.filter(|_| before == LazyBodyCheckpoint::of(self)).filter(|skimmed| {
+            let end = self.prev_token_end;
+            let body = crate::SkimmedBody {
+                start: function.start,
+                end,
+                id: function.id.map(|id| id.name.as_str()),
+                free_names: &skimmed.free_names,
+                names_exact: skimmed.names_exact,
+                in_function: self.ctx.has_return(),
+                arrow: function.form == LazyForm::Arrow,
+            };
+            // SAFETY: `ParseOptions::lazy_body_skim` outlives the parse.
+            unsafe { skim.call(body) }
+        });
+        self.strict = inherited_strict;
+        let Some(Skimmed { directives: skimmed_directives, .. }) = taken else {
+            self.rewind(checkpoint);
+            return None;
+        };
+        let span = Span::new(start, self.prev_token_end);
+        self.release_skimmed_strings(span, marker, capacity);
+        // The early-error tracker saw none of the body's tokens: a plain function's tracked body
+        // ends here, and the body around it, missing what it reads, is unsure.
+        if function.form == LazyForm::Plain {
+            self.early.end_body();
+        }
+        self.early.mark_unsure();
+        self.release_inside(span, false);
+        let mut directives = ArenaVec::new_in(self);
+        for (start, literal_end, end) in skimmed_directives {
+            let text = &self.source_text[start as usize + 1..literal_end as usize - 1];
+            let literal = StringLiteral::new(Span::new(start, literal_end), text, None, self);
+            directives.push(Directive::new(Span::new(start, end), literal, text, self));
+        }
+        Some(FunctionBody::boxed(span, directives, ArenaVec::new_in(self), self))
+    }
+
+    /// The arena the skim used is released, with the escaped strings and templates it decoded
+    /// inside `span`, unless one past it shares the arena region.
+    fn release_skimmed_strings(&mut self, span: Span, marker: std::ptr::NonNull<u8>, capacity: usize) {
+        let escaped_after = self.lexer.escaped_strings.keys().any(|start| *start >= span.end)
+            || self.lexer.escaped_templates.keys().any(|start| *start >= span.end);
+        if escaped_after {
+            return;
+        }
+        let inside = |start: &u32| (span.start..span.end).contains(start);
+        self.lexer.escaped_strings.retain(|start, _| !inside(start));
+        self.lexer.escaped_templates.retain(|start, _| !inside(start));
+        if self.allocator().capacity() == capacity {
+            // SAFETY: as in `parse_lazy_function_body`: the arena has the chunk of `marker`, and
+            // nothing allocated after it is referenced any more.
+            unsafe { self.allocator().set_cursor_ptr(marker) };
+        }
     }
 
     /// Calls `check` with `function` and its `body` alone as a program, as its source
@@ -673,6 +781,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             .and_yield(generator.is_some())
             .and_new_target(true);
         let type_parameters = self.parse_ts_type_parameters();
+        let head = lazy.then(|| self.checkpoint());
         let (this_param, params) = self.parse_formal_parameters(func_kind, param_kind);
         let return_type = if self.is_ts {
             self.parse_ts_return_type_annotation()
@@ -689,8 +798,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                     r#async,
                     generator: generator.is_some(),
                     expression: func_kind == FunctionKind::Expression,
+                    form: LazyForm::Plain,
                     method: matches!(func_kind, FunctionKind::ClassMethod | FunctionKind::ObjectMethod),
-                })
+                }, head)
             } else {
                 let body = self.parse_function_body();
                 self.early.exit_function();
@@ -1010,6 +1120,8 @@ struct LazyFunction<'f, 'a> {
     r#async: bool,
     generator: bool,
     expression: bool,
+    /// What kind of function it is; the body of an arrow only the skim takes.
+    form: LazyForm,
     /// A class or object method's: it checks alone as an object literal's method.
     method: bool,
 }

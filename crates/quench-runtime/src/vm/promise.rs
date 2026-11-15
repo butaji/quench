@@ -1578,8 +1578,8 @@ impl<H: Host> Vm<H> {
                     immutable: true,
                 });
                 let value = self.heap.alloc(Cell::TypedArray {
-                    kind,
                     object: Box::new(crate::heap::BufferViewObject {
+                        native: crate::heap::NativeView::typed(kind),
                         object: Self::empty_object(self.typed_array_proto(kind)),
                         offset: 0,
                     }),

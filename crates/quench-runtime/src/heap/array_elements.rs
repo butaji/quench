@@ -35,7 +35,6 @@ struct Header {
 /// updates preserve it until the backing's values are counted again.
 pub(crate) const OTHERS_UNKNOWN: u32 = u32::MAX;
 
-
 use crate::staged::elements::{concrete_other as other, concrete_recount as recounted};
 
 fn others(values: &[Value]) -> u32 {
@@ -165,7 +164,6 @@ static EMPTY: Header = Header {
 };
 
 /// The `Header::capacity` flag of a backing whose header moved past dropped front values.
-/// Native code never reads the capacity word, so the flag changes no native layout.
 pub(super) const BIASED: u32 = 1 << 31;
 
 /// The `Header::capacity` flag of a wide backing made from a narrow one (`widened`): its
@@ -263,6 +261,11 @@ pub(super) const NATIVE_HEADER_POINTER_OFFSET: usize =
     std::mem::offset_of!(ArrayElements, header);
 pub(super) const NATIVE_HEADER_LENGTH_OFFSET: usize = std::mem::offset_of!(Header, len);
 pub(super) const NATIVE_HEADER_OWNERS_OFFSET: usize = std::mem::offset_of!(Header, owners);
+/// The byte offset of the `u32` capacity word, which only the backing's allocator and growth change.
+pub(super) const NATIVE_HEADER_CAPACITY_OFFSET: usize = std::mem::offset_of!(Header, capacity);
+/// The capacity word's bits that count values: those left once the `BIASED` and `KEEP_WIDE`
+/// flags are dropped.
+pub(super) const NATIVE_HEADER_CAPACITY_MASK: u32 = !(BIASED | KEEP_WIDE);
 pub(super) const NATIVE_HEADER_VALUES_OFFSET: usize = VALUES_OFFSET;
 
 const _: () = assert!(NATIVE_HEADER_POINTER_OFFSET == 0);
@@ -329,12 +332,16 @@ impl ArrayElements {
         debug_assert!(len > 0);
         let header = run.cast::<Header>();
         let elements = Self { header };
+        // The header is written last, so the values are addressed past it, not through it
+        // (`values` reads the header's form).
+        // SAFETY: the run starts with room for a header and holds `len` values after it.
+        let values = unsafe { run.as_ptr().cast::<u8>().add(VALUES_OFFSET).cast::<Value>() };
         let mut counted = 0;
         for slot in 0..len {
             let written = value(slot);
             counted += other(written);
             // SAFETY: the run holds `len` values after the header.
-            unsafe { elements.values().add(slot).write(written) };
+            unsafe { values.add(slot).write(written) };
         }
         // SAFETY: the run starts with room for a header, which no owner counts.
         unsafe {
@@ -655,7 +662,6 @@ impl ArrayElements {
             _ => self.allocation().1.size(),
         }
     }
-
 
     /// Whether every value is an int32 (so none is a hole, and none a heap reference).
     #[inline]

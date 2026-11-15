@@ -504,7 +504,7 @@ impl<H: Host> Vm<H> {
     /// An object `plain_property_lookup` walks through as ordinary for `key`: what a proved
     /// read starts from (`proved_read_receiver`), or an array where `array_ordinary` says
     /// the key is none of its exotic ones.
-    fn plain_link(&self, object: Value, key: PropertyKey, array_ordinary: bool) -> Option<&Object> {
+    #[inline(always)] fn plain_link(&self, object: Value, key: PropertyKey, array_ordinary: bool) -> Option<&Object> {
         self.proved_read_receiver(object, key)
             .or_else(|| (array_ordinary && self.heap.array(object).is_some()).then(|| self.heap.object(object)).flatten())
     }
@@ -1192,7 +1192,8 @@ impl<H: Host> Vm<H> {
     /// so a found home is memoized while that environment lives.
     pub(super) fn private_name_home(&mut self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
         let frame_index = self.frames.len().checked_sub(1)?;
-        let start = self.captured_parent_environment(frame_index);
+        let owner = VarOwner::Frame(frame_index);
+        let start = self.captured_parent_environment(self.owner_view(owner));
         let key = PrivateHomeKey {
             environment: start,
             program: self.frames[frame_index].program,
@@ -1208,10 +1209,10 @@ impl<H: Host> Vm<H> {
         if static_bindings && let Some(home) = self.private_homes.get(&key) {
             return Some(*home);
         }
-        if let Some(binding) = self.name_binding(frame_index, atom)
+        if let Some(binding) = self.name_binding(self.owner_view(owner), atom)
             && binding.kind == crate::bytecode::LexicalBindingKind::PrivateName
         {
-            let home = self.load_name_binding(p, frame_index, binding).ok();
+            let home = self.load_name_binding(p, owner, binding).ok();
             if static_bindings && let Some(home) = home {
                 self.private_homes.insert(key, home);
             }

@@ -1,7 +1,5 @@
 //! The run of a stencil region that needs no activation: `Crossing::Bare`.
 
-#[cfg(test)]
-use super::LANE_OSR_RUNS;
 use super::{enter_body, BodyEntry, BodyReturn, CallContext, LaneExit, LoopEntry, LoopOutcome, LoopRegion, Raised};
 
 
@@ -31,8 +29,6 @@ pub(super) unsafe fn run_bare(
     region: &LoopRegion,
     interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
 ) -> LoopOutcome {
-    #[cfg(test)]
-    LANE_OSR_RUNS.with(|count| count.set(count.get() + 1));
     // The code reads the interrupt flag and the entry record's address (word 0 of its payload, `JsStepDispatch::loop_entry`).
     let mut payload = entry.words_mut() as usize;
     let mut context = CallContext::interrupt_only(unsafe { &*interrupt });

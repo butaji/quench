@@ -37,46 +37,6 @@ pub(super) enum Inline {
 const UNARY_ARGUMENTS: u16 = 1;
 const BINARY_ARGUMENTS: u16 = 2;
 
-/// `operation` of the binary64 value, as machine code (`staged::math::float_unary`).
-pub(in crate::vm::compiled) fn emit_float_unary(builder: &mut FunctionBuilder<'_>, operation: FloatUnary, value: ir::Value) -> ir::Value {
-    let mut ins = |build: &dyn for<'a, 'b> Fn(cranelift_frontend::FuncInstBuilder<'a, 'b>) -> ir::Value| build(builder.ins());
-    match operation {
-        FloatUnary::Floor => ins(&|i| i.floor(value)),
-        FloatUnary::Ceil => ins(&|i| i.ceil(value)),
-        FloatUnary::Trunc => ins(&|i| i.trunc(value)),
-        FloatUnary::Abs => ins(&|i| i.fabs(value)),
-        FloatUnary::Sqrt => ins(&|i| i.sqrt(value)),
-        FloatUnary::Fround => { let single = ins(&|i| i.fdemote(types::F32, value)); ins(&|i| i.fpromote(types::F64, single)) }
-        FloatUnary::Round => {
-            let floor = ins(&|i| i.floor(value));
-            let excess = ins(&|i| i.fsub(value, floor));
-            let half = ins(&|i| i.f64const(crate::staged::math::ROUND_HALF));
-            let up = ins(&|i| i.fcmp(FloatCC::GreaterThanOrEqual, excess, half));
-            let one = ins(&|i| i.f64const(1.0));
-            let zero = ins(&|i| i.f64const(0.0));
-            let step = ins(&|i| i.select(up, one, zero));
-            let rounded = ins(&|i| i.fadd(floor, step));
-            // A negative that rounds to zero is `-0`.
-            let is_zero = ins(&|i| i.fcmp(FloatCC::Equal, rounded, zero));
-            let negative = ins(&|i| i.fcmp(FloatCC::LessThan, value, zero));
-            let negative_zero = ins(&|i| i.band(is_zero, negative));
-            let minus_zero = ins(&|i| i.f64const(-0.0));
-            ins(&|i| i.select(negative_zero, minus_zero, rounded))
-        }
-    }
-}
-
-/// The larger (`maximum`) or smaller of two binary64 values (`staged::math::float_extreme`).
-pub(in crate::vm::compiled) fn emit_float_extreme(builder: &mut FunctionBuilder<'_>, maximum: bool, left: ir::Value, right: ir::Value) -> ir::Value {
-    let ins = builder.ins();
-    if maximum { ins.fmax(left, right) } else { ins.fmin(left, right) }
-}
-
-/// The wrapping product of two int32 values (`staged::math::int_multiply`).
-pub(in crate::vm::compiled) fn emit_int_multiply(builder: &mut FunctionBuilder<'_>, left: ir::Value, right: ir::Value) -> ir::Value {
-    builder.ins().imul(left, right)
-}
-
 impl Inline {
     /// The operation `native` runs inline, if any.
     fn of(native: Native) -> Option<Self> {
@@ -104,7 +64,7 @@ impl Inline {
 
     /// The operation on `numbers`: a Float64 value; `Imul` is lowered by the caller.
     fn emit(self, builder: &mut FunctionBuilder<'_>, numbers: &[ir::Value]) -> ir::Value {
-        let mut stage = super::super::object_slots::Emit { builder, property_values: None };
+        let mut stage = super::super::object_slots::emit(builder);
         match (self, numbers) {
             (Self::Unary(operation), &[value]) => crate::staged::math::unary(&mut stage, operation, value),
             (Self::Extreme(maximum), &[left, right]) => crate::staged::math::extreme(&mut stage, maximum, left, right),
@@ -129,7 +89,7 @@ pub(super) fn keeps_arrays(intrinsics: &Intrinsics, pc: usize) -> bool {
 /// that function's argument count, and no direct callee is bound to it. Each with the function it held, whose identity the call guards.
 pub(super) fn intrinsic_calls(unit: &super::super::lane_unit::Unit, global_reads: &crate::vm::global_facts::GlobalReads,
     direct: impl Fn(usize) -> bool) -> Intrinsics {
-    unit.instructions.iter().enumerate().map(|(pc, instruction)| Some((pc, instruction)).filter(|(pc, instruction)| instruction.op().class().eq(Class::Call)
+    unit.instructions.iter().enumerate().map(|(pc, instruction)| Some((pc, instruction)).filter(|(pc, instruction)| instruction.op().is_call()
         && !direct(*pc) && !instruction.returns_from_frame()
         && !instruction.direct_eval() && !instruction.parameter_eval() && instruction.result_flags() == 0)
         .and_then(|(pc, instruction)| {
@@ -171,7 +131,7 @@ impl Lowering<'_, '_> {
         let result = instruction.result_register();
         if let Inline::Imul = inline {
             let [left, right] = [numbers[0], numbers[1]].map(|number| self.number_to_int32(number, exit));
-            let mut stage = super::super::object_slots::Emit { builder: &mut self.builder, property_values: None };
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
             let product = crate::staged::math::multiply(&mut stage, left, right);
             self.set_int(state, result, product);
         } else {

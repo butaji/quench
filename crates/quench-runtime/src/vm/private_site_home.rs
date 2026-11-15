@@ -56,6 +56,7 @@ pub(super) struct PrivateSiteHomes {
 
 
 impl PrivateSiteHomes {
+    #[inline(always)]
     fn index(site: usize) -> usize {
         super::shape_memo::direct_mapped_index(site, PRIVATE_SITE_HOME_ENTRIES)
     }

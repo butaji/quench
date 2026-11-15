@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 /// Node's `kSubtestsFailed`: a parent failing only through its children.
 pub(crate) const SUBTESTS_FAILED: &str = "subtestsFailed";
+/// Number::toString switches from integer digits to exponent form from 10^21.
+const EXPONENT_FORM_FROM: f64 = 1e21;
 const TAP_VERSION: u32 = 13;
 const TAP_INDENT: &str = "    ";
 const SPEC_INDENT: &str = "  ";
@@ -279,7 +281,7 @@ fn palette(colors: bool) -> Palette {
 
 /// A JavaScript Number's shortest round-trip text, as Node prints durations.
 pub(crate) fn number(value: f64) -> String {
-    if value.fract() == 0.0 && value.abs() < 1e21 {
+    if value.fract() == 0.0 && value.abs() < EXPONENT_FORM_FROM {
         format!("{}", value as i64)
     } else {
         format!("{value}")

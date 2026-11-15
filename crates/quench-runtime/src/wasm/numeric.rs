@@ -1,6 +1,6 @@
 //! Shared typed numeric results and macro-derived selector views.
 
-use super::WasmValue;
+use super::{ScalarBits, WasmValue};
 
 pub(super) enum NumericResult<T> {
     Value(T),
@@ -16,6 +16,17 @@ impl<T> NumericResult<T> {
     }
 }
 
+impl WasmValue {
+    /// The word `from_bits` reads back: a 32-bit scalar's payload, zero-extended.
+    pub(crate) fn word(self) -> u64 {
+        match self.bits() {
+            Some(ScalarBits::Bits32(bits)) => u64::from(bits),
+            Some(ScalarBits::Bits64(bits)) => bits,
+            _ => unreachable!("numeric scalar"),
+        }
+    }
+}
+
 macro_rules! selectors {
     ($enum:ident; $($name:ident, $wasm:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,8 +37,11 @@ macro_rules! selectors {
             // are never decoded from a selector.
             #[allow(dead_code)]
             pub(super) const ALL: &'static [Self] = &[$(Self::$name,)+];
+            #[allow(dead_code)] #[inline(always)]
+            pub(crate) const fn from_tag(tag: u32) -> Option<Self> { if (tag as usize) < Self::ALL.len() { Some(Self::ALL[tag as usize]) } else { None } }
+            /// How many selectors the family has.
             #[allow(dead_code)]
-            pub(crate) fn from_tag(tag: u32) -> Option<Self> { Self::ALL.get(tag as usize).copied() }
+            pub(crate) const COUNT: usize = Self::ALL.len();
             pub(crate) fn from_wasm(operator: &wasmparser::Operator<'_>) -> Option<Self> {
                 match operator { $(wasmparser::Operator::$wasm => Some(Self::$name),)+ _ => None }
             }
@@ -39,7 +53,7 @@ pub(super) use selectors;
 
 const IEEE_IMPLICIT_SIGNIFICAND_BITS: u32 = 1;
 
-pub(super) const fn sign_mask(bit_width: u32) -> u64 {
+pub(crate) const fn sign_mask(bit_width: u32) -> u64 {
     1 << (bit_width - 1)
 }
 

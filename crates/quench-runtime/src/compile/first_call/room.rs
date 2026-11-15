@@ -11,7 +11,7 @@ const BYTES_PER_CONSTANT: usize = 24;
 const BYTES_PER_FIELD_SITE: usize = 24;
 const BYTES_PER_METHOD_SITE: usize = 48;
 const BYTES_PER_OBJECT_SITE: usize = 160;
-const BYTES_PER_REGEXP_SITE: usize = 800;
+const BYTES_PER_REGEXP_SITE: usize = 64;
 const BYTES_PER_LITERAL_TEMPLATE: usize = 320;
 const BYTES_PER_CACHE_SITE: usize = 12;
 /// Source bytes of one instruction a function compiles to, which bounds the sites the rewrites
@@ -47,6 +47,11 @@ impl ChunkRoom {
     /// Each stub's chunk makes its own function, and the functions nested in it.
     pub(in crate::compile) fn functions(&self) -> usize {
         self.stubs + self.entries(BYTES_PER_FUNCTION)
+    }
+
+    /// The stubs the chunks' functions nest, which each of their functions may be.
+    pub(in crate::compile) fn nested_stubs(&self) -> usize {
+        self.functions()
     }
 
     pub(in crate::compile) fn constants(&self) -> usize {
@@ -85,7 +90,9 @@ impl ChunkRoom {
     /// within the sites it numbers one per instruction.
     pub(in crate::compile) fn cache_capacity(&self, used: u16) -> u16 {
         let room = u16::try_from(self.cache_sites()).unwrap_or(u16::MAX);
-        used.max(used.saturating_add(room).min(crate::bytecode::UNIQUE_CACHE_SITES))
+        let wanted = used.saturating_add(room);
+        // A program whose chunks run out of unique sites spans the whole site space.
+        if !self.reserves() || wanted < crate::bytecode::UNIQUE_CACHE_SITES { used.max(wanted) } else { crate::bytecode::SHARED_UNCACHED_SITE + 1 }
     }
 
     /// The instructions the stubs' functions may compile to, whose rewrites add the sites the

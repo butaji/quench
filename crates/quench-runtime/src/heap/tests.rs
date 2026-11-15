@@ -1749,7 +1749,7 @@ fn the_snapshot_barrier_copies_an_old_record_once_before_its_first_write() {
     heap.set_satb(true);
     assert!(heap.satb_active());
     // Every store takes the barriered path, a store of no reference too.
-    assert!(!heap.store_unlogged(owner_id, Value::NULL));
+    assert!(!heap.store_unlogged(crate::staged::RecordSpace::Object, owner_id, Value::NULL));
     assert!(unsafe { heap.flat_property_mut_ptr_unchecked(run_owner, 0, crate::typed_ir::Type::ANY) }.is_none());
     let fresh = heap.alloc_object_pair(Value::NULL, 1, a, b);
     // Deleting an edge snapshots the old owner's children as they were.

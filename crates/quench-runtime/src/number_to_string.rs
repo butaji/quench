@@ -25,11 +25,31 @@ pub(crate) trait Output {
 }
 
 impl Output for Vec<u8> {
-    fn push(&mut self, byte: u8) {
+    #[inline(always)] fn push(&mut self, byte: u8) {
         Vec::push(self, byte);
     }
-    fn extend_from_slice(&mut self, bytes: &[u8]) {
-        Vec::extend_from_slice(self, bytes);
+    #[inline(always)] fn extend_from_slice(&mut self, bytes: &[u8]) {
+        self.append_bytes(bytes);
+    }
+}
+
+/// Appending bytes where the std call (`Vec::extend_from_slice`) is shared across codegen
+/// units and so runs out of line: the copy into spare capacity is written here, and only
+/// growth calls out.
+pub(crate) trait AppendBytes {
+    fn append_bytes(&mut self, bytes: &[u8]);
+}
+
+impl AppendBytes for Vec<u8> {
+    #[inline(always)] fn append_bytes(&mut self, bytes: &[u8]) {
+        if self.capacity() - self.len() < bytes.len() {
+            self.reserve(bytes.len());
+        }
+        // SAFETY: the spare capacity holds `bytes.len()` bytes, which `bytes` does not alias.
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.as_mut_ptr().add(self.len()), bytes.len());
+            self.set_len(self.len() + bytes.len());
+        }
     }
 }
 

@@ -3,7 +3,8 @@
 //! dies, the realm or heap is replaced).
 use super::*;
 use crate::code_dependencies::PublishedCode;
-use crate::vm::compiled::{LaneMethod, PublishedLaneMethod};
+use crate::vm::compiled::{CompiledOsrRegion, LaneMethod, PublishedLaneMethod};
+use crate::vm::tier_events::Event;
 
 /// Code that names callees by identity: a published body, or a body's plan whose code still
 /// compiles (`PendingLaneMethod`), whose `watch` the poll reads. Both hold their callees
@@ -11,7 +12,33 @@ use crate::vm::compiled::{LaneMethod, PublishedLaneMethod};
 /// inventory retires them at the lifecycle edges a callee's body or the realm changes at.
 pub(in crate::vm) enum NativeCallBinding {
     Published(Weak<PublishedLaneMethod>),
+    Region(Weak<PublishedCode<CompiledOsrRegion>>),
     Pending { watch: Weak<PublishedCode<()>>, callees: Box<[Value]> },
+}
+
+/// Whether `code` still stands after a collection: it is published and `dead` finds no callee of it
+/// that died; code that names one is retired.
+fn stands<T>(code: Option<Rc<PublishedCode<T>>>, dead: impl Fn(&T) -> bool) -> bool {
+    let Some(code) = code else { return false };
+    let Some(inner) = code.lease() else { return false };
+    let died = dead(&inner);
+    if died {
+        code.retire();
+    }
+    !died
+}
+
+impl NativeCallBinding {
+    /// Whether the code still stands after a collection that kept the callees `live` names. Function
+    /// bindings depend on the owned program definition, not a particular closure locator; realm/reset
+    /// retirement still uses this inventory for every binding kind.
+    fn stands(&self, live: &impl Fn(Value) -> bool) -> bool {
+        match self {
+            Self::Published(method) => stands(method.upgrade(), |method| crate::vm::compiled::names_dead_callee(&method.inlined, &method.direct, live) || method.constructors.iter().any(|constructor| !live(*constructor))),
+            Self::Region(region) => stands(region.upgrade(), |region| region.calls.names_dead(live)),
+            Self::Pending { watch, callees } => stands(watch.upgrade().filter(|watch| watch.is_published()), |_| callees.iter().any(|callee| !live(*callee))),
+        }
+    }
 }
 
 /// What a lane body compiles from: its program and function, the entry it starts at, and its
@@ -86,7 +113,26 @@ impl ProgramStore {
             return None;
         }
         if calls { self.native_call_bindings.borrow_mut().push(NativeCallBinding::Published(Rc::downgrade(&published))); }
+        self.tier_events.record(Event::Published);
+        self.tier_events.add(Event::Inlined, method.inlined.len());
         Some(published)
+    }
+
+    /// Publishes a loop region's code under the dependencies its code took (`OsrFacts::subscribe`): a
+    /// change of one retires it and sets its invalidation word, and a collection that frees a callee
+    /// it names does (`NativeCallBinding::Region`).
+    pub(in crate::vm) fn publish_region(&self, region: CompiledOsrRegion, heap: &mut crate::heap::Heap,
+        method_atoms: &mut crate::code_dependencies::CodeReaders) -> Rc<PublishedCode<CompiledOsrRegion>> {
+        let invalidation = region.calls.invalidation.clone();
+        let published = Rc::new(PublishedCode::with_invalidation(region, invalidation));
+        let code: Rc<dyn crate::code_dependencies::DependentCode> = published.clone();
+        let region = published.lease().expect("new publication");
+        if !region.facts.subscribe(&code, heap, method_atoms) {
+            published.retire();
+        } else if !region.calls.inlined.is_empty() || !region.calls.direct.is_empty() {
+            self.native_call_bindings.borrow_mut().push(NativeCallBinding::Region(Rc::downgrade(&published)));
+        }
+        published
     }
 
     /// Retires `watch`, a plan's, should a collection free any of `callees` before its code
@@ -97,8 +143,8 @@ impl ProgramStore {
         }
     }
 
-    /// Retires each published body whose code names a callee that died: an inlined one, or a
-    /// direct one, whose body's own retirement retires its direct callers in turn.
+    /// Retires each published body or region whose code names a callee that died: an inlined one, or
+    /// a direct one, whose body's own retirement retires its direct callers in turn.
     ///
     /// # Safety
     /// Collection has stopped native execution before guest locators can be reused.
@@ -106,28 +152,7 @@ impl ProgramStore {
         let mut bindings = self.native_call_bindings.borrow_mut();
         loop {
             let before = bindings.len();
-            bindings.retain(|binding| {
-                let weak = match binding {
-                    NativeCallBinding::Published(weak) => weak,
-                    NativeCallBinding::Pending { watch, callees } => {
-                        let Some(watch) = watch.upgrade().filter(|watch| watch.is_published()) else { return false; };
-                        let dead = callees.iter().any(|callee| !live(*callee));
-                        if dead { watch.retire(); }
-                        return !dead;
-                    }
-                };
-                let Some(code) = weak.upgrade() else { return false; };
-                let Some(method) = code.lease() else { return false; };
-                // Function bindings depend on the owned program definition,
-                // not a particular closure locator. Realm/reset retirement
-                // still uses this inventory for both binding kinds.
-                let dead = method.inlined.iter().any(|call| call.target.identity().is_some_and(|callee| !live(callee)))
-                    || method.direct.iter().any(|callee| !live(callee.callee) || callee.method.as_ref().is_some_and(|method| !method.is_published()));
-                if dead {
-                    code.retire();
-                }
-                !dead
-            });
+            bindings.retain(|binding| binding.stands(&live));
             if bindings.len() == before { break; }
         }
     }
@@ -138,6 +163,7 @@ impl ProgramStore {
         for binding in self.native_call_bindings.borrow_mut().drain(..) {
             match binding {
                 NativeCallBinding::Published(weak) => if let Some(code) = weak.upgrade() { code.retire() },
+                NativeCallBinding::Region(weak) => if let Some(code) = weak.upgrade() { code.retire() },
                 NativeCallBinding::Pending { watch, .. } => if let Some(watch) = watch.upgrade() { watch.retire() },
             }
         }

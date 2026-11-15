@@ -332,7 +332,29 @@ impl<H: Host> Vm<H> {
         key: Value,
         value: Value,
     ) -> bool {
-        self.try_replace_element_of::<true>(object, key, value, crate::heap::Heap::array_store_mut)
+        let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) else {
+            return false;
+        };
+        let Some(array) = self.heap.array_store_mut(object, value) else {
+            return false;
+        };
+        if array.has_indexed_descriptors() || array.is_frozen() || array.arguments_map().is_some() {
+            return false;
+        }
+        if !array.elements().get(index).is_some_and(|value| !value.is_deleted()) {
+            return false;
+        }
+        #[cfg(feature = "profile-aggregate")]
+        self.profile
+            .array_write_ownership(array.elements().owner_count() != 1);
+        // A backing the array owns alone is written in place, which changes no backing (so
+        // no array storage proof retires); a shared one is copied first.
+        if !array.replace_in_place(index, value) {
+            mutable_array_elements(array.elements_mut()).set(index, value);
+        }
+        #[cfg(feature = "profile-aggregate")]
+        self.profile.index_set(0);
+        true
     }
 
     /// `object[key] = value` that appends to a dense array at its length
@@ -350,7 +372,7 @@ impl<H: Host> Vm<H> {
 
     /// `object[key] = value` that fills a hole of a dense array (`fill_dense_hole`); `false`
     /// leaves the store, unobserved, to the general path.
-    pub(super) fn try_fill_dense_hole(&mut self, object: Value, key: Value, value: Value) -> bool {
+    #[inline(always)] pub(super) fn try_fill_dense_hole(&mut self, object: Value, key: Value, value: Value) -> bool {
         key.as_int()
             .and_then(|index| usize::try_from(index).ok())
             .is_some_and(|index| self.fill_dense_hole(object, index, value))
@@ -382,7 +404,9 @@ impl<H: Host> Vm<H> {
 
     /// `try_replace_dense_element` of an array whose object is a record and whose elements no
     /// other array shares, for a value the write barrier passes without logging; `false` for
-    /// any other write, so the write calls nothing.
+    /// any other write, so the write calls nothing. The replacement is the staged store's dense
+    /// arm (`element_rows::concrete_record_replace`), whose ownership, integrity and extras
+    /// proofs every tier shares.
     #[inline(always)]
     pub(super) fn try_replace_record_element(
         &mut self,
@@ -390,12 +414,20 @@ impl<H: Host> Vm<H> {
         key: Value,
         value: Value,
     ) -> bool {
-        self.try_replace_element_of::<false>(
-            object,
-            key,
-            value,
-            crate::heap::Heap::record_array_store_mut_unlogged,
-        )
+        let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) else {
+            return false;
+        };
+        if self.heap.record_array_store_mut_unlogged(object, value).is_none() {
+            return false;
+        }
+        let replaced = self.heap.array_record_base().is_some_and(|records| {
+            crate::staged::element_rows::concrete_record_replace(records, object, index, value)
+        });
+        #[cfg(feature = "profile-aggregate")]
+        if replaced {
+            self.profile.index_set(0);
+        }
+        replaced
     }
 
     /// The lane's store of `value` at an index a record array does not hold, as [[Set]] adds
@@ -416,44 +448,6 @@ impl<H: Host> Vm<H> {
             && self.property_attributes(object, PropertyKey::string(self.length_atom)).is_none_or(|attributes| attributes.writable)
             && self.inherited_index_unclaimed(object, index);
         adds && self.store_validated_array_element(object, index, value)
-    }
-
-    /// `try_replace_dense_element` of the array `array` finds for `object`; with `DETACH`, also
-    /// of shared elements, which the write first copies.
-    #[inline(always)]
-    fn try_replace_element_of<const DETACH: bool>(
-        &mut self,
-        object: Value,
-        key: Value,
-        value: Value,
-        array: fn(&mut crate::heap::Heap, Value, Value) -> Option<&mut crate::heap::ArrayObject>,
-    ) -> bool {
-        let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) else {
-            return false;
-        };
-        let Some(array) = array(&mut self.heap, object, value) else {
-            return false;
-        };
-        if array.has_indexed_descriptors() || array.is_frozen() || array.arguments_map().is_some() {
-            return false;
-        }
-        if !array.elements().get(index).is_some_and(|value| !value.is_deleted()) {
-            return false;
-        }
-        #[cfg(feature = "profile-aggregate")]
-        self.profile
-            .array_write_ownership(array.elements().owner_count() != 1);
-        // A backing the array owns alone is written in place, which changes no backing (so
-        // no array storage proof retires); a shared one is copied first, with `DETACH`.
-        if !array.replace_in_place(index, value) {
-            if !DETACH {
-                return false;
-            }
-            mutable_array_elements(array.elements_mut()).set(index, value);
-        }
-        #[cfg(feature = "profile-aggregate")]
-        self.profile.index_set(0);
-        true
     }
 
     /// Overwrites a present dense array element after every guard has passed.

@@ -1152,8 +1152,8 @@ impl<H: Host> Vm<H> {
         view: Value,
     ) -> Result<(), JsError> {
         let (subtag, offset, byte_length, length_tracking, buffer) = match self.heap.get(view) {
-            Some(Cell::TypedArray { kind, object, buffer, length }) => {
-                let (kind, offset, length, buffer) = (*kind, object.offset, *length, *buffer);
+            Some(Cell::TypedArray { object, buffer, length }) => {
+                let (kind, offset, length, buffer) = (object.native.kind(), object.offset, *length, *buffer);
                 // Only views on live resizable buffers can be out of bounds (V8's
                 // `IsOutOfBounds`).
                 let out_of_bounds = !self.array_buffer_detached(buffer)
@@ -1648,7 +1648,7 @@ impl<H: Host> Vm<H> {
         let view = if subtag == DATA_VIEW_TAG {
             let prototype = self.intrinsic_builtin_prototype(Native::DataView);
             self.heap.alloc(Cell::DataView {
-                object: Box::new(crate::heap::BufferViewObject { object: Self::empty_object(prototype), offset }),
+                object: Box::new(crate::heap::BufferViewObject { native: Default::default(), object: Self::empty_object(prototype), offset }),
                 buffer,
                 length: crate::heap::ViewLength::new(byte_length, length_tracking),
             })
@@ -1659,8 +1659,7 @@ impl<H: Host> Vm<H> {
             }
             let prototype = self.typed_array_proto(kind);
             self.heap.alloc(Cell::TypedArray {
-                kind,
-                object: Box::new(crate::heap::BufferViewObject { object: Self::empty_object(prototype), offset }),
+                object: Box::new(crate::heap::BufferViewObject { native: crate::heap::NativeView::typed(kind), object: Self::empty_object(prototype), offset }),
                 buffer,
                 length: crate::heap::ViewLength::new(byte_length / kind.width(), length_tracking),
             })
@@ -1889,11 +1888,11 @@ impl<H: Host> Vm<H> {
             return "Array";
         }
         match self.heap.get(value) {
-            Some(Cell::TypedArray { kind, buffer, .. }) => {
+            Some(Cell::TypedArray { object, buffer, .. }) => {
                 if self.array_buffer_resizable(*buffer) {
                     return "Object";
                 }
-                kind.name()
+                object.native.kind().name()
             }
             Some(Cell::DataView { .. }) => "DataView",
             Some(Cell::ArrayBuffer { shared: true, .. }) => "SharedArrayBuffer",

@@ -161,16 +161,12 @@ pub(crate) fn pop_record<S: Stage>(stage: &mut S, top: S::Word) -> (S::Word, Rec
 /// call stencil. `entry` is also the native validity (the stub means not entered); the
 /// interpreter's validity is `epoch` (generation and program, a never-matching value once
 /// retired), compared once against the lane's expected word. `facts` packs registers, room,
-/// params and the entry kind, one load. An arrow's own `this` lives in `env` (found there when
-/// the cell was resolved).
+/// params and the entry kind, one load.
 ///
-/// Per-closure facts: `env`, `capture` and `view` belong to one callee closure (one function runs
-/// under many closures). The interpreter's cell is per callee closure (`ScriptCallTarget`), so it
-/// fills them; the native per-function cell leaves `env`/`capture` zero and a native call reads
-/// them from the callee closure, so only per-function constants (`view`, `facts`) are shared.
-/// Writers: `entry` and `body` by publish/withdraw (thread 13's one API), `epoch` bumped by
-/// publish/withdraw and by program replacement through that same API (tier machine, thread 2),
-/// `counters` relaxed by calls; nothing else writes a cell.
+/// The cell is per function: the callee closure's `env`, `capture` and view are read from the
+/// closure (`ScriptCallTarget`), so only per-function constants (`facts`) live here.
+/// Writers: `entry`, `recovery` and `body` by publish/withdraw (`tier_machine`), `facts` once when the
+/// function's view resolves its call shape (`CellFacts::of_function`), `counters` only on cold paths.
 #[repr(C, align(64))]
 pub(crate) struct EntryCellLayoutWords {
     pub(crate) entry: u64,
@@ -178,10 +174,8 @@ pub(crate) struct EntryCellLayoutWords {
     pub(crate) body: u64,
     pub(crate) facts: u64,
     pub(crate) epoch: u64,
-    /// The callee's lane view (records base and start behind it).
-    pub(crate) view: u64,
-    pub(crate) env: u64,
-    pub(crate) capture: u64,
+    /// The address of the published body's recovery space (`LaneMethod::recovery_space`).
+    pub(crate) recovery: u64,
     /// Leaves (low half) and completions (high half), the tier machine's run statistics (`EntryCell::evidence`).
     pub(crate) counters: u64,
 }
@@ -191,9 +185,7 @@ pub(crate) struct CellLayout {
     pub(crate) body_offset: i32,
     pub(crate) validity_offset: i32,
     pub(crate) facts_offset: i32,
-    pub(crate) view_offset: i32,
-    pub(crate) env_offset: i32,
-    pub(crate) capture_offset: i32,
+    pub(crate) recovery_offset: i32,
     pub(crate) counters_offset: i32,
 }
 pub(crate) const ENTRY_CELL: CellLayout = CellLayout {
@@ -201,9 +193,7 @@ pub(crate) const ENTRY_CELL: CellLayout = CellLayout {
     body_offset: std::mem::offset_of!(EntryCellLayoutWords, body) as i32,
     validity_offset: std::mem::offset_of!(EntryCellLayoutWords, epoch) as i32,
     facts_offset: std::mem::offset_of!(EntryCellLayoutWords, facts) as i32,
-    view_offset: std::mem::offset_of!(EntryCellLayoutWords, view) as i32,
-    env_offset: std::mem::offset_of!(EntryCellLayoutWords, env) as i32,
-    capture_offset: std::mem::offset_of!(EntryCellLayoutWords, capture) as i32,
+    recovery_offset: std::mem::offset_of!(EntryCellLayoutWords, recovery) as i32,
     counters_offset: std::mem::offset_of!(EntryCellLayoutWords, counters) as i32,
 };
 const CELL: CellLayout = ENTRY_CELL;
@@ -215,6 +205,8 @@ const ROOM_SHIFT: u32 = FACT_BITS;
 const PARAMS_SHIFT: u32 = 2 * FACT_BITS;
 const ENTRY_SHIFT: u32 = 3 * FACT_BITS;
 pub(crate) const ENTRY_ACTIVATES: u64 = 0;
+/// The entry kind of a function whose calls take a frame or an environment window, not a plain activation.
+pub(crate) const ENTRY_FRAMED: u8 = ENTRY_ACTIVATES as u8 + 1;
 
 /// Whether `needed` fits within `limit`, both unsigned (equal fits): the one compare every
 /// admission is made of (parameters against arguments, stack words against a window).
@@ -249,6 +241,12 @@ pub(crate) struct CellFacts {
 }
 
 impl CellFacts {
+    /// The facts of a function whose body needs `registers` words and takes `params` parameters: a plain
+    /// activation (`plain`) or one whose calls take a frame or a window.
+    pub(crate) const fn of_function(registers: u16, params: u16, plain: bool) -> Self {
+        Self { registers, room: registers, params, entry: if plain { ENTRY_ACTIVATES as u8 } else { ENTRY_FRAMED } }
+    }
+
     pub(crate) const fn word(self) -> u64 {
         self.registers as u64 | (self.room as u64) << ROOM_SHIFT | (self.params as u64) << PARAMS_SHIFT | (self.entry as u64) << ENTRY_SHIFT
     }
@@ -357,7 +355,7 @@ mod tests {
 
     fn cell(validity: u64, registers: u64, room: u64, params: u64, entry: u64) -> EntryCellLayoutWords {
         let facts = registers | room << ROOM_SHIFT | params << PARAMS_SHIFT | entry << ENTRY_SHIFT;
-        EntryCellLayoutWords { entry: 1, body: 0, facts, epoch: validity, view: 0, env: 0, capture: 0, counters: 0 }
+        EntryCellLayoutWords { entry: 1, body: 0, facts, epoch: validity, recovery: 0, counters: 0 }
     }
 
     /// Each word sits at the offset the layout names, in one 64-byte line, and the layout's words are
@@ -365,8 +363,8 @@ mod tests {
     #[test]
     fn the_entry_cell_is_one_line_with_the_contract_offsets() {
         let offsets = [ENTRY_CELL.entry_offset, ENTRY_CELL.body_offset, ENTRY_CELL.facts_offset, ENTRY_CELL.validity_offset,
-            ENTRY_CELL.view_offset, ENTRY_CELL.env_offset, ENTRY_CELL.capture_offset, ENTRY_CELL.counters_offset];
-        assert_eq!(offsets, [0, 8, 16, 24, 32, 40, 48, 56]);
+            ENTRY_CELL.recovery_offset, ENTRY_CELL.counters_offset];
+        assert_eq!(offsets, [0, 8, 16, 24, 32, 40]);
         assert_eq!((std::mem::size_of::<EntryCellLayoutWords>(), std::mem::align_of::<EntryCellLayoutWords>()), (64, 64));
     }
 

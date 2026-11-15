@@ -37,6 +37,14 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn fuse_intact(&mut self, fuse: IntactFuse) -> bool {
         let holder = self.fuse_holder(fuse);
+        self.fuse_intact_at(fuse, holder)
+    }
+
+    /// `fuse_intact` of `holder`, an object that may keep `fuse`'s method as the realm's own
+    /// holder does: another realm's prototype, such as the `Set.prototype` of a realm whose
+    /// prototypes the VM's fields do not follow (`REALM_FOLLOWING_PROTOTYPES`). It holds only
+    /// while `holder` keeps the intrinsic as an own data property (`fuse_slot`).
+    pub(super) fn fuse_intact_at(&mut self, fuse: IntactFuse, holder: Value) -> bool {
         match self.heap.dependencies().fuses().intact(fuse, holder) {
             Some(intact) => intact,
             None => self.prove_fuse(fuse, holder),

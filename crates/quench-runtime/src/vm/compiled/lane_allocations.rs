@@ -1,4 +1,4 @@
-//! The lane helpers that allocate (`LaneHelper::NewArray`, `Binary`, the staged claim's
+//! The lane helpers that allocate (`LaneHelper::NewArray`, `NewRegExp`, `Binary`, the staged claim's
 //! finish and cold paths): each
 //! leaves for a due collection first, and the dispatch then reads the moved arena bases again.
 
@@ -67,4 +67,91 @@ pub(super) unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64,
     super::dispatch_fast::note_allocation(vm);
     dispatch.refresh_object_bases(vm);
     array.to_bits()
+}
+
+/// A lane body's regexp literal at `site`, as the lane makes it (`dispatch_fast::lane_regexp_literal_value`):
+/// a fresh object of the site's compiled template; `DELETED` where a collection is due or the pattern
+/// fails to compile, which the interpreter raises at the instruction.
+pub(super) unsafe extern "C" fn lane_new_regexp<H: Host>(vm: u64, residual: u64, payload: u64, site: u64) -> u64 {
+    // SAFETY: as `lane_new_object`; the residual is the running program.
+    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    let Ok(object) = vm.regexp_literal_of(residual, dispatch.program_id, site as usize) else { return Value::DELETED.to_bits() };
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    object.to_bits()
+}
+
+/// A lane body's object literal of literal `site`'s shape over the `count` values at `parts`,
+/// as the lane makes it (`dispatch_fast::lane_make_object_literal`); `DELETED` where a
+/// collection is due.
+pub(super) unsafe extern "C" fn lane_new_object_literal<H: Host>(vm: u64, residual: u64, payload: u64, site: u64, parts: u64, count: u64) -> u64 {
+    // SAFETY: as `lane_new_object`; the residual is the running program, and `parts` addresses
+    // `count` values the code wrote.
+    let (vm, residual, dispatch, properties) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
+        &mut *(payload as *mut JsStepDispatch), std::slice::from_raw_parts(parts as *const Value, count as usize)) };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    let shape = vm.object_site_shape(residual, site as usize);
+    let object = vm.heap.alloc_object_with_properties(vm.object_proto, shape, properties);
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    object.to_bits()
+}
+
+/// A lane body's closure of function `id` over the frame's own environment, as the lane makes
+/// it (`dispatch_fast::lane_closure_value_of`): only a function that is not a module's root and
+/// has no binding sites, whose closures share the frame's environment; `DELETED` for any other,
+/// inside a frameless or lane activation, or with a collection due, which the exact step makes.
+/// Promotion moves the frame's captured locals into its environment, so the dispatch takes its
+/// views again.
+pub(super) unsafe extern "C" fn lane_new_closure<H: Host>(vm: u64, residual: u64, payload: u64, id: u64) -> u64 {
+    // SAFETY: as `lane_new_object`; the residual is the running program.
+    let (vm, program, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
+        &mut *(payload as *mut JsStepDispatch)) };
+    // A lane or frameless activation has no frame of the payload's to read.
+    if dispatch.lane_context != 0 || vm.frameless.inside(dispatch) || vm.heap.should_collect() {
+        return Value::DELETED.to_bits();
+    }
+    let function = vm.frames[dispatch.frame].function;
+    let shares_frame_environment = function != crate::vm::ROOT_FUNCTION_ID
+        && program.function_get(function as usize).is_some_and(|body| body.binding_sites.is_empty());
+    if !shares_frame_environment {
+        return Value::DELETED.to_bits();
+    }
+    let captured = vm.frames[dispatch.frame].captured;
+    let env = vm.promote_frame_environment(dispatch.frame);
+    let closure = vm.closure(program, id as u32, env).unwrap_or(Value::DELETED);
+    super::dispatch_fast::note_allocation(vm);
+    // The allocation moves only the record bases; the frame's views change where this closure first captured it.
+    if captured { dispatch.refresh_object_bases(vm) } else { dispatch.refresh_heap_bases(vm, program) }
+    closure.to_bits()
+}
+
+/// A lane body's literal template `template` in its frame, as the interpreter builds it
+/// (`Vm::literal_template`); `DELETED` inside a frameless or lane activation, whose frame is
+/// not the payload's, where the template fails, or where a collection is due.
+pub(super) unsafe extern "C" fn lane_new_template<H: Host>(vm: u64, residual: u64, payload: u64, template: u64) -> u64 {
+    // SAFETY: as `lane_new_object`; the residual is the running program.
+    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
+    if vm.heap.should_collect() || vm.frameless.inside(dispatch) || dispatch.lane_context != 0 { return Value::DELETED.to_bits(); }
+    let Ok(value) = vm.literal_template(residual, dispatch.frame, template as usize) else { return Value::DELETED.to_bits() };
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    value.to_bits()
+}
+
+/// A lane body's string concatenation of the `count` parts at `parts`, where each converts to a
+/// string without guest code (`Vm::pure_string_concat`, the lane's `lane_string_concat`);
+/// `DELETED` for any other part, a result past the string limit, or a due collection.
+pub(super) unsafe extern "C" fn lane_new_concat<H: Host>(vm: u64, residual: u64, payload: u64, parts: u64, count: u64) -> u64 {
+    // SAFETY: as `lane_new_object`; the residual is the running program, and `parts` addresses
+    // `count` values the code wrote.
+    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    // SAFETY: as above.
+    let part = |_: &Vm<H>, index: usize| Value::from_bits(unsafe { *(parts as *const u64).add(index) });
+    let Some(value) = vm.pure_string_concat(residual, count as usize, part) else { return Value::DELETED.to_bits() };
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    value.to_bits()
 }

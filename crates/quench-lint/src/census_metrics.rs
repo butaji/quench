@@ -1,18 +1,21 @@
 //! The census's extraction functions: each reads one parsed source file and counts one thing.
 
 use std::collections::BTreeSet;
+use std::sync::OnceLock;
 
 use proc_macro2::{TokenStream, TokenTree};
 use syn::{Item, visit::Visit};
 
+use crate::catalog::{self, is_punct};
 use crate::shape::is_test;
 
 const OPCODE_OWNERS: &[&str] = &["Op", "Class"];
-const BYTECODE_OWNER: &[&str] = &["Op"];
+const OPCODE_CATALOG: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../quench-runtime/src/bytecode/op_catalog.rs"));
+const PREDICATE_TABLE_MACRO: &str = "op_predicates";
+const OPCODE_RECEIVERS: &[&str] = &["op", "opcode"];
+const OPCODE_ACCESSOR: &str = "op";
 const CLASS_OWNER: &[&str] = &["Class"];
-const DECODER_ROW_FUNCTIONS: &[&str] = &["numeric_row", "heap_row"];
-const OPCODE_TABLE_MACRO: &str = "opcodes";
-const STAGED_OPERATION: &str = "Operation";
+const DECODER_ROW_FUNCTIONS: &[&str] = &["numeric_row", "heap_row", "named_row"];
 const LANE_EXIT: &str = "LaneExit";
 const TIER_TABLE: &str = "MEASURED";
 const ENTRY_ALIAS: &str = "Entry";
@@ -84,37 +87,14 @@ impl<'ast> Visit<'ast> for Arms<'_> {
     }
 }
 
-/// The opcodes the `opcodes!` table declares: each entry is `Name => ...` after a separator.
+/// The opcodes the `opcodes!` table declares: one row each.
 pub fn opcode_variants(file: &syn::File) -> usize {
-    let tables = file.items.iter().filter_map(|item| match item {
-        Item::Macro(call) if call.mac.path.is_ident(OPCODE_TABLE_MACRO) => Some(&call.mac.tokens),
-        _ => None,
-    });
-    tables.map(entry_names).sum()
+    catalog::table(file).len()
 }
 
-fn entry_names(tokens: &TokenStream) -> usize {
-    let trees: Vec<TokenTree> = tokens.clone().into_iter().collect();
-    let is_punct = |tree: Option<&TokenTree>, mark: char| matches!(tree, Some(TokenTree::Punct(punct)) if punct.as_char() == mark);
-    (0..trees.len())
-        .filter(|&at| {
-            let starts = at == 0 || is_punct(trees.get(at - 1), ',') || is_punct(trees.get(at - 1), ';');
-            starts && matches!(trees[at], TokenTree::Ident(_)) && is_punct(trees.get(at + 1), '=')
-        })
-        .count()
-}
-
-/// The distinct opcodes on the left of an arm in `impl Operation`.
+/// The opcodes the catalog gives a staged operation: the rows that declare a `staged` decoder.
 pub fn staged_opcodes(file: &syn::File) -> usize {
-    let mut arms = Arms::new(BYTECODE_OWNER);
-    for item in module_items(&file.items) {
-        if let Item::Impl(block) = item
-            && matches!(&*block.self_ty, syn::Type::Path(path) if path.path.segments.last().is_some_and(|last| last.ident == STAGED_OPERATION))
-        {
-            arms.visit_item_impl(block);
-        }
-    }
-    arms.variants.len()
+    catalog::table(file).iter().filter(|row| row.declares(catalog::STAGED)).count()
 }
 
 /// Non-empty lines that are not `#` comments.
@@ -122,11 +102,71 @@ pub fn text_lines(text: &str) -> usize {
     text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with(COMMENT_PREFIX)).count()
 }
 
-/// Match arms that decide by opcode or opcode class.
+/// The opcode-identity predicates the catalog generates (`is_load_capture`, ...): the left of each
+/// `name => Opcode | ...` entry of its `op_predicates!` table.
+fn catalog_predicates() -> &'static BTreeSet<String> {
+    static NAMES: OnceLock<BTreeSet<String>> = OnceLock::new();
+    NAMES.get_or_init(|| {
+        let catalog = syn::parse_file(OPCODE_CATALOG).expect("the opcode catalog parses");
+        let tables = catalog.items.iter().filter_map(|item| match item {
+            Item::Macro(call) if call.mac.path.is_ident(PREDICATE_TABLE_MACRO) => Some(&call.mac.tokens),
+            _ => None,
+        });
+        tables.flat_map(predicate_names).collect()
+    })
+}
+
+/// The identifiers an `op_predicates!` table names before a `=>`.
+fn predicate_names(tokens: &TokenStream) -> Vec<String> {
+    let trees: Vec<TokenTree> = tokens.clone().into_iter().collect();
+    (0..trees.len())
+        .filter(|&at| is_punct(trees.get(at + 1), '=') && (at == 0 || is_punct(trees.get(at - 1), ',')))
+        .filter_map(|at| match &trees[at] {
+            TokenTree::Ident(name) => Some(name.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether `receiver` is an opcode: a variable named like one, or an instruction's `.op()`.
+fn opcode_receiver(receiver: &syn::Expr) -> bool {
+    match receiver {
+        syn::Expr::Path(path) => OPCODE_RECEIVERS.iter().any(|name| path.path.is_ident(name)),
+        syn::Expr::MethodCall(call) => call.args.is_empty() && call.method == OPCODE_ACCESSOR,
+        _ => false,
+    }
+}
+
+/// Calls of the catalog's opcode-identity predicates on an opcode (`opcode.is_load_capture()`,
+/// `instruction.op().is_return()`): a branch on one opcode's identity written as a call, which
+/// a renamed arm must not hide.
+struct Predicates {
+    calls: usize,
+}
+
+impl<'ast> Visit<'ast> for Predicates {
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        self.calls += usize::from(
+            call.args.is_empty() && catalog_predicates().contains(&call.method.to_string()) && opcode_receiver(&call.receiver),
+        );
+        syn::visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
+        if !is_test(&module.attrs) {
+            syn::visit::visit_item_mod(self, module);
+        }
+    }
+}
+
+/// Match arms that decide by opcode or opcode class, and calls of the catalog's opcode-identity
+/// predicates (`is_<opcode>()`), which decide by one opcode without naming it as a pattern.
 pub fn opcode_arms(file: &syn::File) -> usize {
     let mut arms = Arms::new(OPCODE_OWNERS);
     arms.visit_file(file);
-    arms.arms
+    let mut predicates = Predicates { calls: 0 };
+    predicates.visit_file(file);
+    arms.arms + predicates.calls
 }
 
 /// Structs named like a frame or an activation.
@@ -330,10 +370,10 @@ mod tests {
     }
 
     #[test]
-    fn staged_opcodes_are_distinct_arms_of_operation_impls() {
+    fn staged_opcodes_are_the_rows_that_declare_a_decoder() {
         let file = parse(
-            "impl<W> Operation<W> { fn a(i: I) { match i.op() { Op::A | Op::B => 1, Op::A => 2, _ => 3 } } }
-             impl Other { fn b(i: I) { match i { Op::C => 1, _ => 2 } } }",
+            "opcodes!($; Nop => Effect::PURE; layout Scalar, @ R, Add => X::Y; layout Scalar; staged Flow; step Body, @ R,
+             Sub => X::Y; layout Scalar; staged Value, @ R);",
         );
         assert_eq!(staged_opcodes(&file), 2);
     }
@@ -350,6 +390,24 @@ mod tests {
              #[cfg(test)] mod tests { fn g() { match x { Op::A => 1, _ => 2 } } }",
         );
         assert_eq!(opcode_arms(&file), 2);
+    }
+
+    #[test]
+    fn opcode_arms_count_identity_predicates_on_opcodes_outside_tests() {
+        let file = parse(
+            "fn f(i: I) { match i.op() { opcode if opcode.is_return() && x.is_nop() => 1, _ if i.op().is_load_capture() => 2,
+                 _ if cell.is_return() => 3, _ => 4 } }
+             fn g(op: Op) -> bool { op.is_jump() || op.allocates() }
+             #[cfg(test)] mod tests { fn h(op: Op) -> bool { op.is_jump() } }",
+        );
+        assert_eq!(opcode_arms(&file), 3);
+    }
+
+    #[test]
+    fn the_catalog_names_its_identity_predicates() {
+        let names = catalog_predicates();
+        assert!(names.contains("is_load_capture") && names.contains("is_jump_binary_false"));
+        assert!(!names.contains("allocates"));
     }
 
     #[test]
@@ -382,9 +440,10 @@ mod tests {
         let file = parse(
             "fn numeric_row(i: I) { match i.class() { Class::A | Class::B => 1, _ => 2 } }
              fn heap_row(i: I) { match i.class() { Class::B => 1, Class::C if x => 2, _ => 3 } }
+             fn named_row(i: I) { match i.class() { Class::E => 1, _ => 2 } }
              fn reject(i: I) { match i.class() { Class::D => 1, _ => 2 } }",
         );
-        assert_eq!(decoder_classes(&file), 3);
+        assert_eq!(decoder_classes(&file), 4);
     }
 
     #[test]

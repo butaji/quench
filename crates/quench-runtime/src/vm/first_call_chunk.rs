@@ -83,6 +83,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Forgets the chunks whose programs are gone, which a collection finds out.
+    pub(super) fn prune_first_chunks(&mut self) {
+        self.first_chunks.retain(|_, (stub, chunk, _)| stub.strong_count() > 0 && chunk.strong_count() > 0);
+    }
+
     /// The first call of stub `stub` of program `p` (`stub.0`), callee `callee`, when its
     /// function's body streams (`StreamRun`): each run of its statements compiles as a chunk
     /// of its own, which a function of the callee's environment runs once, and is dropped.
@@ -139,6 +144,7 @@ impl<H: Host> Vm<H> {
             .position(|slot| slot.header().parent == Some(0) && slot.header().source_span.is_some_and(|own| own.start == span.start))
             .ok_or_else(|| JsError::validation("a first-call chunk holds no function".into()))?;
         let chunk = self.store_dynamic_program(residual).ok_or_else(|| self.type_error(p, "dynamic program store is full".into()))?;
+        self.programs.inherit_scope(chunk, program);
         if let Some(caller) = self.programs.eval_origin(program) {
             self.programs.set_origin(chunk, program_store::CompilationOrigin::Eval { caller: Some(caller) });
         }
@@ -152,3 +158,7 @@ impl<H: Host> Vm<H> {
 #[cfg(test)]
 #[path = "first_call_chunk_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "first_call_direct_tests.rs"]
+mod direct_tests;

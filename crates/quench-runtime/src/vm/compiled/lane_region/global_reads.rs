@@ -6,10 +6,10 @@ use crate::staged::GlobalBinding;
 impl Lowering<'_, '_> {
     /// `LoadName` or `LoadNameCall` at `pc` of a name the global scope resolves: an immutable
     /// global's constant (`builtins::immutable_globals`); a global cell's value, held as a
-    /// Stable fact while the realm compiled against is the active one (`hold_global`); else
-    /// the lane's own read, which leaves where it misses.
+    /// Stable fact while the realm compiled against is the active one (`hold_global`); a global
+    /// lexical binding no code folds, read live from its word under the global layout
+    /// (`hold_lexical`); else the lane's own read, which leaves where it misses.
     pub(super) fn global_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
-        let register = instruction.result_register();
         let (binding, held) = self.global_binding(pc);
         let exit = (!matches!(binding, GlobalBinding::Constant(_))).then(|| self.guard_exit(state, pc as u32));
         if let (Some((fact, global, realm_offset)), Some(exit)) = (held, exit) {
@@ -18,14 +18,13 @@ impl Lowering<'_, '_> {
         if let (GlobalBinding::Typed { .. }, Some(&GlobalRead::Slot(slot)), Some(exit)) = (binding, self.global_reads.get(&pc), exit) {
             self.hold_global_slot(state, exit, slot);
         }
-        let proof = super::EmitProof::GlobalRead { miss: exit };
-        let edges = exit.map_or(frame::Edges::Value, |miss| frame::Edges::ValueGuarded { miss });
-        self.step(state, edges, crate::staged::Operation::GlobalRead { destination: register,
-            atom: instruction.atom_index(), site: instruction.cache_site_index(), binding, proof });
-        // A call's receiver is `undefined` for a binding of the global scope.
-        if instruction.op().is_load_name_call() {
-            self.define_immediate(state, instruction.register_b(), Value::UNDEFINED);
+        if let (GlobalBinding::Lexical { .. }, Some(&GlobalRead::Lexical(slot)), Some(exit)) = (binding, self.global_reads.get(&pc), exit) {
+            self.hold_lexical(state, exit, slot);
         }
+        let proof = super::EmitProof::GlobalRead { miss: exit, binding };
+        let edges = exit.map_or(frame::Edges::Value, |miss| frame::Edges::ValueGuarded { miss });
+        let row = crate::staged::Operation::decode_load_name(instruction, proof).expect("a global read is a name read");
+        self.step(state, edges, row);
         true
     }
 
@@ -37,8 +36,9 @@ impl Lowering<'_, '_> {
             GlobalRead::Stable { value, ty, fact, global, realm_offset } =>
                 (GlobalBinding::Held { value, ty }, Some((fact, global, realm_offset))),
             GlobalRead::Frozen { value, ty } => (GlobalBinding::Frozen { value, ty }, None),
+            GlobalRead::Lexical(slot) => (GlobalBinding::Lexical { address: slot.address as u64 }, None),
             GlobalRead::Slot(slot) if slot.dependency.is_some() => (GlobalBinding::Typed { ty: slot.ty }, None),
-            GlobalRead::Slot(_) | GlobalRead::Dynamic | GlobalRead::NativeMember { .. } => (GlobalBinding::Dynamic, None),
+            GlobalRead::Slot(_) | GlobalRead::Held(_) | GlobalRead::Dynamic | GlobalRead::NativeMember { .. } => (GlobalBinding::Dynamic, None),
         };
         if self.division().folds(binding.time()) { (binding, held) } else { (GlobalBinding::Dynamic, None) }
     }
@@ -57,12 +57,6 @@ impl Lowering<'_, '_> {
             emit_js_guard(&mut self.builder, admitted, exit);
         }
         Some(slot)
-    }
-
-    /// Defines `register` as the immediate `value`, of its own type.
-    fn define_immediate(&mut self, state: &mut State, register: Register, value: Value) {
-        let bits = self.ins().iconst(types::I64, value.to_bits() as i64);
-        self.define(state, register, bits, RegisterFact::definition(Type::immediate(value), Representation::Tagged));
     }
 
     /// Before loop `header`, the proofs its blocks would otherwise make each iteration: the

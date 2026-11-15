@@ -39,6 +39,11 @@ pub const MAX_VARIANTS: usize = 2500;
 /// The operand slots of a row, and the hole role each is read through: the destination is role
 /// 0, the first operand 1, the second 2 (`numeric.rs`, `heap_rows.rs`).
 const ROLES: usize = 3;
+/// The hole roles as bits of a role mask: the destination, the first operand and the second.
+const DESTINATION_ROLE: u8 = 1 << 0;
+const FIRST_ROLE: u8 = 1 << 1;
+const SECOND_ROLE: u8 = 1 << 2;
+const ALL_ROLES: u8 = DESTINATION_ROLE | FIRST_ROLE | SECOND_ROLE;
 const LABEL_SEPARATOR: &str = " ; ";
 const LINKS_OPEN: &str = " [";
 const LINKS_CLOSE: char = ']';
@@ -191,17 +196,17 @@ pub fn parse(pattern: &str) -> Option<Shape> {
 pub fn roles(node: &Node) -> u8 {
     let (used, places) = match *node {
         Node::Number((kind, dst, a, b, _)) => (read_roles(kind), [dst, a, b]),
-        Node::Heap((_, _, dst, a, b)) => ([true; ROLES], [dst, a, b]),
+        Node::Heap((_, _, dst, a, b)) => (ALL_ROLES, [dst, a, b]),
     };
-    (0..ROLES).filter(|&role| used[role] && places[role] < PIN).fold(0, |mask, role| mask | 1 << role)
+    (0..ROLES).filter(|&role| used >> role & 1 != 0 && places[role] < PIN).fold(0, |mask, role| mask | 1 << role)
 }
 
-/// Which of (destination, first, second) a Number kind reads or writes.
-fn read_roles(kind: u8) -> [bool; ROLES] {
+/// Which of (destination, first, second) a Number kind reads or writes, as a role mask.
+fn read_roles(kind: u8) -> u8 {
     match kind {
-        _ if is_compare(kind) => [false, true, true],
-        _ if is_copy(kind) => [true, true, false],
-        _ => [true; ROLES],
+        _ if is_compare(kind) => FIRST_ROLE | SECOND_ROLE,
+        _ if is_copy(kind) => DESTINATION_ROLE | FIRST_ROLE,
+        _ => ALL_ROLES,
     }
 }
 

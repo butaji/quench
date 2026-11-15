@@ -1,79 +1,15 @@
 use super::*;
 use crate::bytecode::Operand;
 use crate::heap::{Cell, Heap, Object};
-use crate::value_vec::INLINE_PROPERTY_COUNT;
 use crate::Value;
-use crate::value::NarrowLayout;
-use super::object::decode_narrow;
 
-/// The storage forms an exact-shape object can take, by how the interpreter's object API
-/// (independent of `staged`) describes it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum Observed {
-    Packed,
-    Arena,
-    DisplacedInline,
-    DisplacedArena,
-}
-
-fn observed(object: &Object) -> Observed {
-    match (object.inline_properties().is_some(), object.plain_property_storage().is_some()) {
-        (true, true) => Observed::Packed,
-        (false, true) => Observed::Arena,
-        (true, false) => Observed::DisplacedInline,
-        (false, false) => Observed::DisplacedArena,
-    }
-}
-
-/// Objects of every storage form, each with its values: narrow integers, narrow references,
-/// a double (no narrow form), and enough values to spill past the inline ones.
-fn objects_of_every_form(heap: &mut Heap) -> Vec<(Value, Vec<Value>)> {
-    let wide = INLINE_PROPERTY_COUNT + 2;
-    for shape in 1..=wide {
-        heap.register_property_shape(shape as u32, shape, None);
-    }
-    let reference = heap.alloc(Cell::Error("reference".into()));
-    let value_sets: Vec<Vec<Value>> = vec![
-        vec![Value::number(7.0), Value::number(-3.0)],
-        vec![reference, Value::TRUE],
-        vec![Value::number(0.5), Value::NULL],
-        (0..wide).map(|index| Value::number(index as f64)).collect(),
-    ];
-    let mut objects = Vec::new();
-    for prototype in [false, true] {
-        for values in &value_sets {
-            let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
-            for (slot, value) in values.iter().enumerate() {
-                heap.property_add(object, *value, slot as u32 + 1);
-            }
-            if prototype {
-                heap.object_record_mut(object).unwrap().mark_as_prototype();
-            }
-            objects.push((object, values.clone()));
-        }
-    }
-    objects
-}
-
-#[test]
-fn the_interpreter_reading_of_own_layout_matches_the_object_model_in_every_form() {
-    let mut heap = Heap::new();
-    let objects = objects_of_every_form(&mut heap);
-    let mut forms = std::collections::HashSet::new();
-    for (object, values) in objects {
-        let data = heap.object(object).unwrap();
-        forms.insert(observed(data));
-        for (slot, expected) in values.iter().enumerate() {
-            // SAFETY: the object's exact shape holds every slot it was given.
-            let reference = unsafe { heap.property_get_unchecked(data, slot) };
-            assert_eq!(reference, *expected, "{:?} slot {slot}", observed(data));
-            // SAFETY: as above; the heap's arena holds the object's run.
-            let staged = unsafe { concrete_own_read(data, heap.property_values_base(), slot) };
-            assert_eq!(staged, *expected, "{:?} slot {slot}", observed(data));
-        }
-    }
-    for form in [Observed::Packed, Observed::Arena, Observed::DisplacedInline, Observed::DisplacedArena] {
-        assert!(forms.contains(&form), "the corpus covers {form:?}: {forms:?}");
+/// The registers an allocation row reads from its window.
+fn window_values(allocation: Allocation) -> i32 {
+    match allocation {
+        Allocation::ObjectLiteral { window, .. } | Allocation::Concat { window } => i32::from(window.count),
+        Allocation::ObjectPair { .. } => 2,
+        Allocation::ArrayOf { elements } => elements.registers().len() as i32,
+        Allocation::Empty | Allocation::Array { .. } | Allocation::RegExp { .. } | Allocation::ConstArray { .. } | Allocation::Closure { .. } | Allocation::Template { .. } => 0,
     }
 }
 
@@ -109,11 +45,13 @@ impl Frame<Concrete> for ConcreteFrame<'_> {
         (constant.value.to_bits(), ())
     }
 
-    fn field_read(&mut self, _stage: &mut Concrete, base: Register, slot: u16, _ty: Type, _proof: ()) -> Option<(u64, ())> {
-        let heap = self.heap?;
-        let object = heap.object_record(Value::from_bits(self.registers[usize::from(base)]))?;
-        // SAFETY: the object is live in this frame's heap and the caller proved the slot.
-        Some((unsafe { concrete_own_read(object, heap.property_values_base(), usize::from(slot)) }.to_bits(), ()))
+    /// A frame with a heap allocates the value `window_values` names: the number of registers
+    /// the allocation reads, written to the destination.
+    fn allocate_value(&mut self, _stage: &mut Concrete, destination: Register, allocation: Allocation, _proof: ()) -> Option<u64> {
+        self.heap?;
+        let value = Value::integer(window_values(allocation)).to_bits();
+        self.registers[usize::from(destination)] = value;
+        Some(value)
     }
 
     fn truthiness(&mut self, stage: &mut Concrete, register: Register) -> Option<bool> {
@@ -136,14 +74,24 @@ impl Frame<Concrete> for ConcreteFrame<'_> {
 
 impl GlobalFrame<Concrete> for ConcreteFrame<'_> {}
 
+impl crate::staged::CallFrame<Concrete> for ConcreteFrame<'_> {}
+
+impl PropertyFrame<Concrete> for ConcreteFrame<'_> {
+    type Plans = NoPlans;
+
+    fn plans(&self) -> NoPlans { NoPlans }
+}
+
+impl ElementFrame<Concrete> for ConcreteFrame<'_> {}
+
 impl NumericFrame<Concrete> for ConcreteFrame<'_> {
-    fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
+    fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let register = operand.register_index().expect("a numeric operand is a register");
-        u64::from(Value::from_bits(self.read(stage, register)).as_int().expect("a proved int") as u32)
+        Some(u64::from(Value::from_bits(self.read(stage, register)).as_int().expect("a proved int") as u32))
     }
-    fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
+    fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let register = operand.register_index().expect("a numeric operand is a register");
-        Value::from_bits(self.read(stage, register)).as_number().expect("a proved Number").to_bits()
+        Some(Value::from_bits(self.read(stage, register)).as_number().expect("a proved Number").to_bits())
     }
     fn prove_number(&mut self, stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
         Value::from_bits(self.read(stage, register)).as_number().map(|_| ())
@@ -239,26 +187,31 @@ fn staged_bitwise_not_of_an_int32_is_its_complement() {
     }
 }
 
-/// The catalog's staged set and `Operation::decode` agree: every opcode the catalog marks
-/// `Staged` decodes to one operation, and every other opcode is explicitly `Exact`.
+/// The catalog's staged column and `Operation::decode` agree: every opcode that always decodes
+/// has a decoder, one decoded by a tier's proof (`Decoder::Proved`) decodes through
+/// `decode_load_name`, and no opcode without a decoder decodes at all.
 #[test]
 fn every_staged_opcode_decodes_to_one_operation() {
-    use crate::bytecode::{Op, Semantics, WideInstruction};
+    use crate::bytecode::{Decoder, Op, WideInstruction};
     let constants = [Constant::untyped(Value::number(1.0))];
-    let staged = [Op::Move, Op::LoadConst, Op::LoadLocalPlain, Op::StoreLocalPlain,
+    let context = crate::staged::DecodeContext::of_constants(&constants);
+    let always = [Op::Move, Op::LoadConst, Op::LoadLocalPlain, Op::StoreLocalPlain,
         Op::Jump, Op::JumpFalse, Op::JumpTrue, Op::LoadThis, Op::RequireObjectCoercible,
         Op::ToNumeric, Op::ToPropertyKey, Op::LoadEnvLocal, Op::StoreEnvLocal, Op::ArgumentsLength, Op::LoadNameTypeof,
-        Op::StoreName, Op::ForInNext, Op::ForInStart, Op::GetIterator, Op::IteratorClose, Op::AppendArray, Op::LoadCapture, Op::Return];
-    for op in staged {
-        assert_eq!(op.semantics(), Semantics::Staged, "{op:?}");
+        Op::StoreName, Op::ForInNext, Op::ForInStart, Op::GetIterator, Op::IteratorClose, Op::AppendArray,
+        Op::LoadCapture, Op::StoreCapture, Op::JumpBinaryFalse, Op::Return];
+    for op in always {
         let instruction = WideInstruction::new(op, 1, 1, 1, 0);
-        assert!(Operation::<u64, ()>::decode(instruction, |index| constants.get(index).copied()).is_some(),
-            "{op:?} must decode to a staged operation");
+        assert!(op.staged().is_some(), "{op:?}");
+        assert!(Operation::<u64, ()>::decode(instruction, context).is_some(), "{op:?} must decode to a staged operation");
     }
     for index in 0..Op::COUNT {
         let op = Op::from_index(index).unwrap();
-        if !staged.contains(&op) {
-            assert_eq!(op.semantics(), Semantics::Exact, "{op:?} must be an explicit exact path");
+        let instruction = WideInstruction::new(op, 1, 1, 1, 0);
+        let decoded = Operation::<u64, ()>::decode(instruction, context).is_some();
+        assert!(op.staged().is_some() || !decoded, "{op:?} decodes though the catalog names no decoder");
+        if op.staged() == Some(Decoder::Proved) {
+            assert!(!decoded && Operation::<u64, ()>::decode_load_name(instruction, ()).is_some(), "{op:?}");
         }
     }
 }
@@ -300,35 +253,6 @@ fn step_jumps_on_the_javascript_truthiness_of_every_value_kind() {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = ConcreteFrame { registers: vec![0], heap: None };
     assert!(matches!(step(&mut stage, &mut frame, Operation::Jump), Step::Control(Edge::Target)));
-}
-
-#[test]
-fn a_narrow_decode_inverts_every_narrow_encoding() {
-    let mut heap = Heap::new();
-    let reference = heap.alloc(Cell::Error("reference".into()));
-    let limit = 1_i32 << (NarrowLayout::INTEGER_BITS - 1);
-    let values = [Value::number(0.0), Value::number(f64::from(limit - 1)), Value::number(f64::from(-limit)),
-        Value::UNDEFINED, Value::NULL, Value::TRUE, Value::FALSE, Value::DELETED, reference];
-    let mut stage = Concrete::new(std::ptr::null());
-    for value in values {
-        let narrow = value.to_narrow().unwrap_or_else(|| panic!("{value:?} has a narrow form"));
-        let decoded = decode_narrow(&mut stage, u64::from(narrow));
-        assert_eq!(Value::from_bits(decoded), Value::from_narrow(narrow), "{value:?}");
-        assert_eq!(Value::from_bits(decoded), value);
-    }
-}
-
-/// The interpreter's u32 reading of a prototype link (`ProtoLink::object_record_id`) names
-/// the record the staged rule names, at and around every range boundary.
-#[test]
-fn a_prototype_link_names_the_object_record_the_staged_rule_names() {
-    use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-    let edges = [0, OBJECT.proto_record_base, OBJECT.proto_record_end, OBJECT.proto_mask];
-    for link in edges.iter().flat_map(|edge| [edge.wrapping_sub(1), *edge, edge + 1]).filter(|link| *link <= OBJECT.proto_mask) {
-        let staged = super::object::proto_object_record_id(&mut Concrete::new(std::ptr::null()), u64::from(link), ());
-        let interpreter = crate::heap::ProtoLink::from_bits(link).object_record_id();
-        assert_eq!(interpreter.map(u64::from), staged, "link {link:#x}");
-    }
 }
 
 /// The staged ToBoolean decides every value the interpreter's `Value::truthiness` decides
@@ -396,32 +320,64 @@ fn staged_load_this_leaves_where_the_activation_holds_no_this() {
 
 
 #[test]
-fn a_proven_slot_field_read_is_one_staged_operation() {
-    let mut heap = Heap::new();
-    let objects = objects_of_every_form(&mut heap);
-    let (object, values) = &objects[0];
-    let mut stage = Concrete::new(heap.property_values_base());
-    let mut frame = ConcreteFrame { registers: vec![object.to_bits(), 0], heap: Some(&heap) };
-    let step = super::step(&mut stage, &mut frame,
-        Operation::ReadField { base: 0, slot: 0, ty: Type::ANY, proof: () });
-    match step {
-        Step::Value(value) => assert_eq!(Value::from_bits(value), values[0]),
-        _ => panic!("a proven slot reads"),
-    }
-}
-
-#[test]
 fn an_allocation_is_a_staged_operation_with_a_host_boundary() {
     // The interpreter stage has no allocator of its own: an allocation is the host callout
     // boundary, so the frame declines it and the lane's Emit stage provides the semantics.
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = ConcreteFrame { registers: vec![0; 3], heap: None };
     for operation in [
-        Operation::MakeObject { destination: 0, proof: () },
-        Operation::MakeArray { destination: 0, length: 0, elements: 0, proof: () },
+        Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () },
     ] {
         assert!(matches!(step(&mut stage, &mut frame, operation), Step::Unresolved));
     }
+}
+
+/// The window, closure, template and concatenation rows are one staged operation over the
+/// frame's allocator: a frame with none declines each, writing nothing, and one with a heap
+/// defines the destination with the word it made.
+#[test]
+fn an_allocation_row_defines_its_destination_through_the_frame_or_declines() {
+    use crate::bytecode::{RegisterList, RegisterWindow};
+    let window = RegisterWindow { base: 1, count: 2 };
+    let rows = [
+        (Allocation::ObjectLiteral { site: 4, window }, 2),
+        (Allocation::Concat { window }, 2),
+        (Allocation::Closure { function: 1 }, 0),
+        (Allocation::Template { template: 0 }, 0),
+        (Allocation::Empty, 0),
+        (Allocation::Array { length: 3 }, 0),
+        (Allocation::RegExp { site: 0 }, 0),
+        (Allocation::ConstArray { constant: 0, count: 2 }, 0),
+        (Allocation::ObjectPair { site: 1, first: 1, second: 2 }, 2),
+        (Allocation::ArrayOf { elements: RegisterList::collect(2, |index| 2 - index as u16).expect("two fit") }, 2),
+    ];
+    let heap = Heap::new();
+    let mut stage = Concrete::new(std::ptr::null());
+    for (allocation, made) in rows {
+        let operation = Operation::Allocate { destination: 0, allocation, proof: () };
+        let mut bare = ConcreteFrame { registers: vec![0; 3], heap: None };
+        assert!(matches!(step(&mut stage, &mut bare, operation), Step::Unresolved), "{allocation:?}");
+        assert_eq!(bare.registers[0], 0, "a declined row writes nothing");
+        let mut held = ConcreteFrame { registers: vec![0; 3], heap: Some(&heap) };
+        let Step::Value(word) = step(&mut stage, &mut held, operation) else { panic!("{allocation:?} allocates") };
+        assert_eq!(Value::from_bits(word), Value::integer(made), "{allocation:?}");
+        assert_eq!(held.registers[0], word, "the row defines its destination");
+    }
+}
+
+/// Only a closure writes the frame (its promotion), only concatenation may run guest code,
+/// and every allocation row may allocate: the rows a specializer keeps facts across.
+#[test]
+fn allocation_rows_declare_their_effects() {
+    use crate::bytecode::RegisterWindow;
+    let window = RegisterWindow { base: 0, count: 1 };
+    let row = |allocation| Operation::<u64, ()>::Allocate { destination: 0, allocation, proof: () }.effects();
+    let (literal, closure) = (row(Allocation::ObjectLiteral { site: 0, window }), row(Allocation::Closure { function: 0 }));
+    assert!(literal.may_alloc && !literal.may_call_js && !literal.writes.contains(Region::Frame));
+    let elements = row(Allocation::ArrayOf { elements: crate::bytecode::RegisterList::collect(1, |_| 0).expect("one fits") });
+    assert!(elements.may_alloc && !elements.may_call_js && !elements.writes.contains(Region::Frame), "its elements are stored fresh, with no barrier");
+    assert!(closure.may_alloc && closure.writes.contains(Region::Frame));
+    assert!(row(Allocation::Concat { window }).may_call_js, "ToString of an object runs guest code");
 }
 
 #[test]
@@ -442,7 +398,7 @@ fn a_global_name_read_is_the_host_callout_boundary() {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = ConcreteFrame { registers: vec![0], heap: None };
     let step = step(&mut stage, &mut frame,
-        Operation::GlobalRead { destination: 0, atom: 0, site: 0, binding: GlobalBinding::Dynamic, proof: () });
+        Operation::LoadName { destination: 0, atom: 0, site: 0, receiver: None, proof: () });
     assert!(matches!(step, Step::Unresolved));
 }
 
@@ -463,14 +419,37 @@ fn every_host_callout_operation_has_a_concrete_reading() {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = ConcreteFrame { registers: vec![0; 4], heap: None };
     let declines = [
-        Operation::MakeObject { destination: 0, proof: () },
-        Operation::MakeArray { destination: 0, length: 0, elements: 0, proof: () },
+        Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () },
+        Operation::Allocate { destination: 0, allocation: Allocation::Closure { function: 0 }, proof: () },
         Operation::IndexSetHelper { base: 0, key: 1, value: 2, proof: () },
-        Operation::GlobalRead { destination: 0, atom: 0, site: 0, binding: GlobalBinding::Dynamic, proof: () },
+        Operation::LoadName { destination: 0, atom: 0, site: 0, receiver: None, proof: () },
         Operation::FieldStoreMiss { object: 0, atom: 0, site: 0, value: 1, proof: () },
     ];
     for operation in declines {
         assert!(matches!(step(&mut stage, &mut frame, operation), Step::Unresolved));
     }
     assert!(matches!(step(&mut stage, &mut frame, Operation::Safepoint { proof: () }), Step::Value(_)));
+}
+
+/// The fast arms of `RequireIteratorResult` and `ToPropertyKey` answer from the register's word
+/// alone: an object or array record passes, a direct string is its own key, and every other
+/// value leaves for the full operation, writing nothing.
+#[test]
+fn the_key_and_iterator_fast_arms_decide_from_the_word_alone() {
+    let mut heap = Heap::new();
+    let mut stage = Concrete::new(std::ptr::null());
+    let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+    let string = heap.alloc_string(crate::vm::wtf16::JsString::from_str("key"));
+    for (value, passes) in [(object, true), (string, false), (Value::UNDEFINED, false), (Value::integer(1), false), (Value::number(0.5), false)] {
+        let mut frame = ConcreteFrame { registers: vec![value.to_bits()], heap: None };
+        let step = step(&mut stage, &mut frame, Operation::RequireIteratorResult { register: 0 });
+        assert_eq!(matches!(step, Step::Value(_)), passes, "{value:?}");
+    }
+    for (value, copies) in [(string, true), (object, false), (Value::integer(7), false), (Value::UNDEFINED, false)] {
+        let mut frame = ConcreteFrame { registers: vec![value.to_bits(), Value::NULL.to_bits()], heap: None };
+        let step = step(&mut stage, &mut frame, Operation::PropertyKey { destination: 1, source: 0 });
+        assert_eq!(matches!(step, Step::Value(_)), copies, "{value:?}");
+        let expected = if copies { value } else { Value::NULL };
+        assert_eq!(Value::from_bits(frame.registers[1]), expected, "{value:?}");
+    }
 }

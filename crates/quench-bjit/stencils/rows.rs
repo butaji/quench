@@ -10,9 +10,19 @@
 //! its own slice of the generated instances (one row per kind, places and speculation); the
 //! target's fixed rows (`entry*.rs`) belong to the shard built with `--cfg fixed_rows`.
 #![no_std]
-#![feature(explicit_tail_calls, rust_preserve_none_cc)]
+#![feature(explicit_tail_calls, rust_preserve_none_cc, core_float_math)]
 #![allow(incomplete_features, non_upper_case_globals, dead_code, unused_imports)]
 extern crate core as std;
+
+/// The row's staged work's word, or the row leaves through exit 0 with nothing written.
+macro_rules! need {
+    ($s:expr, $e:expr) => {
+        match $e {
+            Some(v) => v,
+            None => return Out::Exit($s),
+        }
+    };
+}
 
 #[cfg(all(fixed_rows, target_arch = "x86_64"))]
 mod call_rows;
@@ -25,13 +35,18 @@ mod entry;
 mod facade;
 mod heap_rows;
 mod ic_rows;
+mod environment_rows;
+mod key_rows;
+mod name_rows;
+mod site_rows;
 mod layout;
 mod numeric;
+mod places;
 mod stage;
 mod staged;
 mod supernode_rows;
 mod words;
-pub(crate) use facade::{Value, heap, typed_ir, value, value_vec, vm};
+pub(crate) use facade::{Value, bytecode, heap, operations, typed_ir, units, value, value_vec, vm};
 
 use numeric::{Out, S};
 

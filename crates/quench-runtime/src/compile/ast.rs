@@ -643,9 +643,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             Expression::FunctionExpression(function) => function.id.is_none(),
             Expression::ArrowFunctionExpression(_) => true,
             Expression::ClassExpression(class) => class.id.is_none(),
-            Expression::ParenthesizedExpression(expression) => {
-                Self::anonymous_function_definition(&expression.expression)
-            }
+            Expression::ParenthesizedExpression(expression) => Self::anonymous_function_definition(&expression.expression),
             _ => false,
         }
     }
@@ -662,7 +660,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         {
             return;
         }
-        self.emit(Op::SetFunctionName, value, 0, 0, name);
+        let site = self.owner.cache_site();
+        self.emit(Op::SetFunctionName, value, 0, site, name);
     }
 
     /// A fresh local named `name`, or `name` with a `HIDDEN_LOCAL_SUFFIX` and a count when a
@@ -807,7 +806,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     /// Whether `atom` is a var of this function's frame. A script's root keeps none: its vars
     /// are the global object's, which a root whose names resolve statically reaches by name, as
-    /// its functions do (`lane_load_global_name`).
+    /// its functions do (`lane_load_name_bound`).
     pub(super) fn frame_var(&self, atom: Atom) -> bool {
         self.function_scope.contains(&atom)
             && (self.function_id != 0 || self.owner.module_goal || self.owner.eval_context.is_some() || self.owner.dynamic_binding_scopes != 0)

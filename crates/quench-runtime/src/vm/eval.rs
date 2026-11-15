@@ -1,8 +1,8 @@
-use crate::bytecode::private_identity_label;
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::*;
 
 pub(crate) mod eval_source;
+mod private_names;
 
 /// Whether source contains only ECMAScript whitespace and comments. This is a
 /// useful fast path for eval's common comment-only inputs: parsing an empty
@@ -257,10 +257,7 @@ impl<H: Host> Vm<H> {
         };
         let text = text.as_ref();
         let inherited_strict = self.direct_eval
-            && (self.in_class_initializer(p)
-                || self.frames.last()
-                    .and_then(|frame| p.function_get(frame.function as usize))
-                    .is_some_and(|function| function.strict));
+            && (self.in_class_initializer(p) || self.eval_caller_function(p).is_some_and(|function| function.strict));
         self.validate_eval_arguments_context(p, text)?;
         if only_trivia(text) {
             return Ok(Value::UNDEFINED);
@@ -404,7 +401,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let caller = match caller {
             Some(caller) => caller,
-            None => self.eval_caller(p)?,
+            None => self.eval_caller_identity(p)?,
         };
         self.programs.set_origin(program_id, super::program_store::CompilationOrigin::Eval { caller: Some(caller.origin) });
         // Eval code belongs to its caller's Script or Module (PerformEval).
@@ -786,10 +783,18 @@ impl<H: Host> Vm<H> {
     /// realm's global bindings: a Script, an indirect eval or host script, or a
     /// sloppy direct eval called from such code. The root of a direct eval
     /// running in a function's or module's scope is not.
+    /// Whether a call of `callee` flagged as a direct eval is one: the running realm's `eval`.
+    pub(super) fn calls_direct_eval(&self, callee: Value) -> bool {
+        matches!(
+            self.heap.function(callee),
+            Some(FunctionRecord { kind: FunctionKind::Native(Native::Eval), realm, .. }) if *realm == self.realm.globals
+        )
+    }
+
     fn running_global_code(&self) -> bool {
-        self.frames.last().is_some_and(|frame| {
-            frame.function == super::ROOT_FUNCTION_ID
-                && self.programs.declares_global_variables(frame.program)
+        self.eval_caller().is_some_and(|caller| {
+            caller.function() == super::ROOT_FUNCTION_ID
+                && self.programs.declares_global_variables(caller.program())
         })
     }
 
@@ -856,9 +861,7 @@ impl<H: Host> Vm<H> {
                     if caller_scope
                         && self.parameter_eval
                         && self
-                            .frames
-                            .last()
-                            .and_then(|frame| p.function_get(frame.function as usize))
+                            .eval_caller_function(p)
                             .is_some_and(|function| function.parameter_atoms.contains(&atom))
                     {
                         return self.syntax_error_result(
@@ -927,10 +930,9 @@ impl<H: Host> Vm<H> {
                 self.prepare_direct_eval_var_bindings(root_function.global_var_atoms());
             }
             let parent = if direct_eval {
-                if let Some(frame) = self.frames.len().checked_sub(1) {
-                    self.capture_binding_environment(frame)?
-                } else {
-                    Value::NULL
+                match self.eval_owner() {
+                    Some(owner) => self.capture_binding_environment(owner)?,
+                    None => Value::NULL,
                 }
             } else {
                 Value::NULL
@@ -941,9 +943,7 @@ impl<H: Host> Vm<H> {
                         (self.runtime_atoms.new_target, Value::UNDEFINED),
                         (
                             self.runtime_atoms.lexical_this,
-                            self.frames
-                                .last()
-                                .map_or(self.realm.globals, |frame| frame.this),
+                            self.eval_caller().map_or(self.realm.globals, |caller| caller.this()),
                         ),
                     ]
                 } else {
@@ -965,9 +965,7 @@ impl<H: Host> Vm<H> {
                 parent
             };
             let this = if direct_eval {
-                self.frames
-                    .last()
-                    .map_or(self.realm.globals, |frame| frame.this)
+                self.eval_caller().map_or(self.realm.globals, |caller| caller.this())
             } else {
                 self.realm.globals
             };
@@ -980,27 +978,48 @@ impl<H: Host> Vm<H> {
         result
     }
 
-    pub(super) fn capture_binding_environment(&mut self, frame: usize) -> Result<Value, JsError> {
-        let binding_site_pc = self.frames[frame].binding_site_pc.filter(|pc| {
-            self.programs
-                .get(self.frames[frame].program)
-                .is_some_and(|program| {
-                    program
-                        .function_get(self.frames[frame].function as usize)
-                        .and_then(|function| {
-                            function
-                                .binding_sites
-                                .binary_search_by_key(pc, |site| site.resume_pc)
-                                .ok()
-                                .map(|index| &function.binding_sites[index])
-                        })
-                        .is_some_and(|site| !site.bindings.is_empty())
+    pub(super) fn capture_binding_environment(&mut self, owner: VarOwner) -> Result<Value, JsError> {
+        let caller = self.owner_view(owner);
+        let site = caller
+            .binding_site()
+            .filter(|pc| self.site_has_bindings(caller.program(), caller.function(), *pc));
+        let environment = self.promote_owner_environment(owner);
+        self.site_environment(environment, site)
+    }
+
+    /// Whether the binding site resuming at `pc` of `function` of `program` records bindings,
+    /// which a closure made there captures with its environment.
+    pub(super) fn site_has_bindings(&self, program: ProgramId, function: u32, pc: u32) -> bool {
+        self.programs.get(program).is_some_and(|program| {
+            program
+                .function_get(function as usize)
+                .and_then(|function| {
+                    function
+                        .binding_sites
+                        .binary_search_by_key(&pc, |site| site.resume_pc)
+                        .ok()
+                        .map(|index| &function.binding_sites[index])
                 })
-        });
-        let environment = self.promote_frame_environment(frame);
-        let Some(binding_site_pc) = binding_site_pc else {
+                .is_some_and(|site| !site.bindings.is_empty())
+        })
+    }
+
+    /// `environment`, the captured environment of an activation making a closure at the binding
+    /// site resuming at `site`: a copy that names the site, sharing the activation's dynamic
+    /// bindings and slots, so the closure's by-name lookups find what the site scopes. The
+    /// environment itself where there is no such site. A frame's closure
+    /// (`capture_binding_environment`) and a window activation's (`lane_make_scoped_closure`)
+    /// make it the same way.
+    pub(super) fn site_environment(&mut self, environment: Value, site: Option<u32>) -> Result<Value, JsError> {
+        let Some(binding_site_pc) = site else {
             return Ok(environment);
         };
+        let scope = self.binding_site_environment_cell(environment, binding_site_pc)?;
+        Ok(self.heap.alloc(scope))
+    }
+
+    /// The environment cell `site_environment` allocates for a site at `binding_site_pc`.
+    fn binding_site_environment_cell(&mut self, environment: Value, binding_site_pc: u32) -> Result<Cell, JsError> {
         let slots = self
             .heap
             .clone_environment_slots(environment, &[], crate::bytecode::Resets::listed(&[]))
@@ -1030,7 +1049,7 @@ impl<H: Host> Vm<H> {
                 with_objects: scope.with_objects().into(),
             }),
         };
-        Ok(self.heap.alloc(scope))
+        Ok(scope)
     }
 
     fn validate_eval_arguments_context(
@@ -1052,14 +1071,11 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn in_class_initializer(&mut self, p: &ResidualProgram) -> bool {
-        self.frames
-            .last()
-            .and_then(|frame| p.function_get(frame.function as usize))
-            .is_some_and(|function| function.class_initializer)
+    fn in_class_initializer(&self, p: &ResidualProgram) -> bool {
+        self.eval_caller_function(p).is_some_and(|function| function.class_initializer)
     }
 
-    fn direct_eval_function_context(&mut self, p: &ResidualProgram) -> bool {
+    fn direct_eval_function_context(&self, p: &ResidualProgram) -> bool {
         if !self.direct_eval {
             return false;
         }
@@ -1067,10 +1083,7 @@ impl<H: Host> Vm<H> {
             return true;
         }
         let new_target = self.runtime_atoms.new_target;
-        self.frames
-            .len()
-            .checked_sub(1)
-            .is_some_and(|frame| self.dynamic_binding(frame, new_target).is_some())
+        self.eval_caller().is_some_and(|caller| self.dynamic_binding(caller, new_target).is_some())
     }
 
     fn check_global_eval_declaration(
@@ -1132,62 +1145,18 @@ impl<H: Host> Vm<H> {
         self.intern_atom(&format!("\0quench:private-home:{private}"))
     }
 
-    fn direct_eval_private_names(&mut self, p: &ResidualProgram) -> Option<(Value, Vec<(String, String)>)> {
-        let frame = self.frames.len().checked_sub(1)?;
-        let mut atoms = Vec::new();
-        let metadata = p.function_get(self.frames[frame].function as usize)?;
-        if let Some(pc) = self.frames[frame].binding_site_pc
-            && let Ok(index) = metadata.binding_sites.binary_search_by_key(&pc, |site| site.resume_pc)
-        {
-            atoms.extend(metadata.binding_sites[index].bindings.iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));
-        }
-        atoms.extend(metadata.name_bindings.resolved().into_iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));
-        let mut environment = self.captured_parent_environment(frame);
-        while let Some(Cell::Environment { parent, function, scope, .. }) = self.heap.get(environment) {
-            if let Some(owner) = scope.program().and_then(|program| self.programs.get(ProgramId::from_raw(program)))
-                && let Some(metadata) = owner.function_get(*function as usize)
-            {
-                atoms.extend(metadata.name_bindings.resolved().into_iter().filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).map(|binding| binding.atom));
-            }
-            environment = *parent;
-        }
-        atoms.sort_unstable();atoms.dedup();
-        let mut bindings = atoms.into_iter().filter_map(|atom| self.name_binding(frame, atom)).filter(|binding| binding.kind == crate::bytecode::LexicalBindingKind::PrivateName).collect::<Vec<_>>();
-        bindings.sort_by_key(|binding| match binding.location { crate::bytecode::EvalBindingLocation::Local(_) => 0, crate::bytecode::EvalBindingLocation::Capture { depth, .. } => u32::from(depth)+1 });
-        let mut names = Vec::new();
-        let mut first_home = None;
-        for binding in bindings {
-            let identity = self.atom_name(binding.atom).to_owned();
-            let Some(label) = private_identity_label(&identity).map(str::to_owned) else { continue; };
-            if names.iter().any(|(name, _)| name == &label) { continue; }
-            if let Ok(home) = self.load_name_binding(p, frame, binding) {
-                first_home.get_or_insert(home);
-                names.push((label, identity));
-            }
-        }
-        if !names.is_empty() { return Some((first_home?, names)); }
-        let home = self.eval_home_binding(p)?;
-        let names = self.private_names(home).into_iter().filter_map(|brand| {
-            let identity = self.atom_name(brand.name).to_owned();
-            private_identity_label(&identity).map(str::to_owned).map(|label| (label, identity))
-        }).fold(Vec::new(), |mut names, binding| { if !names.iter().any(|(label, _)| label == &binding.0) { names.push(binding); } names });
-        (!names.is_empty()).then_some((home, names))
-    }
-
     fn direct_eval_context(&mut self, p: &ResidualProgram) -> Option<crate::compile::EvalContext> {
         if !self.direct_eval {
             return None;
         }
-        let frame = self.frames.len().checked_sub(1)?;
-        let home_atom = p
-            .function_get(self.frames[frame].function as usize)?
-            .super_home_atom;
+        let caller = self.eval_caller()?;
+        let home_atom = p.function_get(caller.function() as usize)?.super_home_atom;
         let class_initializer = self.in_class_initializer(p);
         let atom = self.runtime_atoms.lexical_this;
         let super_calls = home_atom.is_some()
             && !class_initializer
             && self
-                .lexical_this_owner(frame, atom)
+                .lexical_this_owner(caller, atom)
                 .and_then(|(program, function, _)| {
                     self.programs.get(program).and_then(|program| {
                         program
@@ -1205,34 +1174,30 @@ impl<H: Host> Vm<H> {
     }
 
     fn eval_home_binding(&mut self, p: &ResidualProgram) -> Option<Value> {
-        let function = self.frames.last()?.function;
+        let function = self.eval_caller()?.function();
         let home_atom = p.function_get(function as usize)?.super_home_atom?;
         // Use the same binding operation as compiled super access. Its retained
         // metadata resolves captures across both scope views and eval programs.
-        self.load_name(p, home_atom, None).ok()
+        let owner = self.running_owner(); self.load_name(p, owner, home_atom, None).ok()
     }
 
     fn direct_eval_binding(&self, atom: Atom) -> Option<crate::bytecode::EvalBinding> {
-        self.name_binding(self.frames.len().checked_sub(1)?, atom)
+        self.name_binding(self.eval_caller()?, atom)
     }
 
     fn prepare_direct_eval_var_bindings(&mut self, atoms: &[Atom]) {
-        let Some(frame_index) = self
-            .frames
-            .len()
-            .checked_sub(1)
-            .map(|frame| self.variable_environment_frame(frame))
-        else {
+        let Some(owner) = self.eval_owner().map(|activation| self.variable_environment_owner(activation)) else {
             return;
         };
-        let Some(bindings) = self.own_dynamic_bindings(frame_index) else {
+        let caller = self.owner_view(owner);
+        let Some(bindings) = self.own_dynamic_bindings(caller) else {
             return;
         };
         let mut additions = atoms
             .iter()
             .copied()
             .filter(|atom| {
-                (self.parameter_eval || self.activation_binding_slot(frame_index, *atom).is_none())
+                (self.parameter_eval || self.activation_binding_slot(caller, *atom).is_none())
                     && !bindings.iter().any(|(candidate, _)| candidate == atom)
             })
             .map(|atom| (atom, Value::UNDEFINED))
@@ -1240,7 +1205,7 @@ impl<H: Host> Vm<H> {
         for &(atom, _) in &additions {
             self.note_dynamic_scope_name(atom);
         }
-        if let Some(bindings) = self.own_dynamic_bindings_mut(frame_index) {
+        if let Some(bindings) = self.owner_bindings_mut(owner) {
             bindings.append(&mut additions);
         }
     }

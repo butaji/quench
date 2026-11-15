@@ -1,40 +1,15 @@
 use super::activation::{Completion, Continuation};
 use super::promise::{PromiseReaction, PromiseState};
 use super::*;
-use crate::heap::{AwaitKind, AwaitRole, AwaitState, ResumedAwait};
-
-/// The job activation a lane run runs in frame slot `frame`, which an await or a return there
-/// may swap for the queue's next job (`Vm::chain_lane_await`, `Vm::chain_lane_complete`): the
-/// three call roots from `roots` hold what its job held.
-#[derive(Clone, Copy, Debug)]
-pub(super) struct AwaitChain {
-    pub(super) frame: usize,
-    task: ChainTask,
-    roots: usize,
-}
-
-/// What a chained job activation completes: an async function's resumption, or a promise
-/// reaction's handler call, whose completion settles `next` (`Vm::settle_reaction`).
-#[derive(Clone, Copy, Debug)]
-enum ChainTask {
-    Await(AwaitResume),
-    Reaction { next: Value },
-    /// A slot whose job failed to start (`Vm::end_chain_in_slot`).
-    Done { settled: bool },
-}
-
-/// The queue's front job taken for a chained run (`Vm::take_chained_job`).
-enum ChainedJob {
-    Await { resume: AwaitResume, continuation: Continuation, value: Value },
-    Reaction { handler: Value, id: u32, env: Value, value: Value, next: Value },
-}
+use crate::heap::{AwaitKind, AwaitRole, AwaitState};
 
 /// What an await reaction resumes with, read from its `AwaitState`.
 #[derive(Clone, Copy, Debug)]
 struct AwaitResume {
     /// The spent state itself, whose reaction is running: the activation's next await
-    /// suspends into it again (`Vm::await_again`).
-    state: Value,
+    /// suspends into it again (`Vm::await_again`). `None` for the run of an async generator's
+    /// request, which awaits in a state of its own.
+    state: Option<Value>,
     promise: Value,
     role: AwaitRole,
     rejected: bool,
@@ -42,9 +17,8 @@ struct AwaitResume {
 
 impl<H: Host> Vm<H> {
     /// `Continuation::suspend` of `frame` at an await or yield, with the registers liveness
-    /// finds dead there (the ones a collection of it on the frame stack skips: its root mask
-    /// at `frame.pc`) cleared first (`release_dead_registers`): its continuation then keeps
-    /// alive only what the resumed code can read.
+    /// finds dead there cleared first (`release_dead_registers`): a suspended activation is
+    /// traced whole, so a dead temporary otherwise stayed reachable until it resumed.
     pub(super) fn suspend_activation(
         &self,
         mut frame: Box<super::Frame>,
@@ -52,39 +26,43 @@ impl<H: Host> Vm<H> {
         resume_register: Option<u16>,
         promise: Value,
     ) -> Continuation {
-        let live_registers = self.live_registers_at_suspension(&mut frame);
+        let live_registers = self.release_dead_registers(frame.program, frame.function, frame.pc, &mut frame.registers);
         let mut continuation = Continuation::suspend(frame, completion, resume_register, promise);
-        continuation.live_registers = live_registers;
-        continuation.clean_epoch = self.heap.collection_epoch();
+        continuation.frame.live_registers = live_registers;
         continuation
     }
 
-    /// The registers live at `frame`'s suspension when they are the first `u64::BITS` and
-    /// liveness covers its function; the dead ones stay as they are until a collection makes
-    /// them stale (`Continuation::release_dead_registers`). Where the live ones reach further,
-    /// every dead register is cleared now and `None` returned.
-    fn live_registers_at_suspension(&self, frame: &mut super::Frame) -> Option<u64> {
-        type RegisterSet = crate::compile::liveness::RegisterSet;
-        let masks = self.programs.residual(frame.program).and_then(|program| program.register_root_masks(frame.function))?;
-        if masks.is_windowed() {
-            return None;
-        }
-        let mask = masks.get(frame.pc)?;
-        if let Ok(live) = u64::try_from(mask) {
-            return Some(live);
-        }
+    /// Clears the `registers` of a frame of `function` of `program` suspending to resume at `pc`
+    /// that are dead there, the ones a collection of it on the frame stack skips (its root
+    /// mask at `pc`), and returns the live ones, when liveness covers the function: its
+    /// continuation then keeps alive only what the resumed code can read.
+    pub(in crate::vm) fn release_dead_registers(
+        &self,
+        program: super::ProgramId,
+        function: u32,
+        pc: usize,
+        registers: &mut [Value],
+    ) -> Option<crate::compile::liveness::RegisterSet> {
+        let masks = self.programs.residual(program).and_then(|program| program.register_root_masks(function))?;
+        if masks.is_windowed() { return None; } let mask = masks.get(pc)?;
         // The mask covers the first `RegisterSet::BITS` registers; every later one is dead.
-        let covered = frame.registers.len().min(RegisterSet::BITS as usize);
-        let (low, high) = frame.registers.split_at_mut(covered);
+        type RegisterSet = crate::compile::liveness::RegisterSet;
+        let covered = registers.len().min(RegisterSet::BITS as usize);
+        let (low, high) = registers.split_at_mut(covered);
         high.fill(Value::UNDEFINED);
+        // Dead registers come in runs (a statement's temporaries), each cleared as one span,
+        // found a machine word of the mask at a time.
         for (word, registers) in low.chunks_mut(u64::BITS as usize).enumerate() {
-            let mut dead = !mask.word(word) & u64::MAX >> (u64::BITS as usize - registers.len());
+            let live = mask.word(word);
+            let mut dead = !live & u64::MAX >> (u64::BITS as usize - registers.len());
             while dead != 0 {
-                registers[dead.trailing_zeros() as usize] = Value::UNDEFINED;
-                dead &= dead - 1;
+                let start = dead.trailing_zeros();
+                let end = start + (dead >> start).trailing_ones();
+                registers[start as usize..end as usize].fill(Value::UNDEFINED);
+                dead &= u64::MAX.checked_shl(end).unwrap_or(0);
             }
         }
-        None
+        Some(mask)
     }
 
     pub(super) fn call_user_maybe_async(
@@ -109,6 +87,10 @@ impl<H: Host> Vm<H> {
             |vm| vm.promise_object(),
         )?;
         self.with_call_roots([promise], |vm| {
+            if id == super::ROOT_FUNCTION_ID {
+                vm.start_root_job(p, promise, env, this, context)?;
+                return Ok(promise);
+            }
             let outcome = match vm.call_user_frame(p, id, env, this, args, context) {
                 Ok(outcome) => outcome,
                 Err(error) => {
@@ -116,38 +98,69 @@ impl<H: Host> Vm<H> {
                     return Ok(promise);
                 }
             };
-            match outcome {
-                super::FrameOutcome::Complete(value)
-                | super::FrameOutcome::ConstructComplete { value, .. } => {
-                    vm.promise_resolve_value(p, promise, value)?
-                }
-                super::FrameOutcome::Await {
-                    value,
-                    destination,
-                    frame: Some(frame),
-                } => {
-                    let continuation = vm.suspend_activation(
-                        frame,
-                        Completion::Await(value),
-                        Some(destination),
-                        promise,
-                    );
-                    vm.enqueue_async_resume(p, AwaitKind::function(continuation), promise, value)?;
-                }
-                super::FrameOutcome::Await { frame: None, .. } => {
-                    return Err(JsError("async frame lost at suspension".into()));
-                }
-                super::FrameOutcome::Yield { .. } => {
-                    return Err(JsError("yield is not valid in an async function".into()));
-                }
-                super::FrameOutcome::ParameterInitializationComplete => {
-                    return Err(JsError(
-                        "unexpected generator parameter initialization boundary".into(),
-                    ));
-                }
-            }
+            vm.settle_async_call(p, promise, outcome)?;
             Ok(promise)
         })
+    }
+
+    /// Settles `promise`, the result of an async call, by the outcome of its first run: a return
+    /// resolves it, an await suspends the frame into a continuation resumed when the awaited value
+    /// settles.
+    fn settle_async_call(&mut self, p: &ResidualProgram, promise: Value, outcome: super::FrameOutcome) -> Result<(), JsError> {
+        match outcome {
+            super::FrameOutcome::Complete(value)
+            | super::FrameOutcome::ConstructComplete { value, .. } => {
+                self.promise_resolve_value(p, promise, value)?
+            }
+            super::FrameOutcome::Await {
+                value,
+                destination,
+                frame: Some(frame),
+            } => {
+                let continuation = self.suspend_activation(
+                    frame,
+                    Completion::Await(value),
+                    Some(destination),
+                    promise,
+                );
+                self.enqueue_async_resume(p, AwaitKind::function(continuation), promise, value)?;
+            }
+            super::FrameOutcome::Await { frame: None, .. } => {
+                return Err(JsError("async frame lost at suspension".into()));
+            }
+            super::FrameOutcome::Yield { .. } => {
+                return Err(JsError("yield is not valid in an async function".into()));
+            }
+            super::FrameOutcome::ParameterInitializationComplete => {
+                return Err(JsError(
+                    "unexpected generator parameter initialization boundary".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Starts the body of an async root, a module with a top-level `await`, as a job over its
+    /// evaluation record: its frame, bound at its first instruction, is the continuation an
+    /// await state keeps, which `resume_await` runs as an await's reaction does. The lane runs
+    /// it from its first instruction, so its first `await` suspends a window and no frame
+    /// (`Vm::run_job`); the body's end settles `promise`.
+    fn start_root_job(
+        &mut self,
+        p: &ResidualProgram,
+        promise: Value,
+        env: Value,
+        this: Value,
+        context: CallContext,
+    ) -> Result<(), JsError> {
+        let frame = match self.unstarted_frame(p, super::ROOT_FUNCTION_ID, env, this, context) {
+            Ok(frame) => frame,
+            Err(error) => return self.reject_settled_call(p, promise, error),
+        };
+        let continuation = Continuation::suspend(frame, Completion::Await(Value::UNDEFINED), None, promise);
+        let kind = AwaitKind::function(continuation);
+        let state = self.heap.alloc_await_state(AwaitState::arm(kind, self.realm.globals, promise));
+        self.with_call_roots([state], |vm| vm.resume_await(p, state, false, Value::UNDEFINED)).map(drop)
     }
 
     /// Rejects an async call's `promise` with the error its body completed with.
@@ -230,8 +243,8 @@ impl<H: Host> Vm<H> {
 
     /// Suspends the activation `kind` holds on `source`: one `AwaitState` cell holds it and
     /// is both handlers of the await's reaction, so it lives exactly as long as that
-    /// reaction. An async generator's `yield` holds no frame, whose continuation stays in
-    /// its generator's record (`async_generator_yield`).
+    /// reaction. An async generator's await holds no frame, whose continuation stays in its
+    /// generator's record (`async_generator_await`, `async_generator_yield`).
     pub(super) fn enqueue_async_resume(
         &mut self,
         p: &ResidualProgram,
@@ -241,7 +254,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let generator = match &kind {
             AwaitKind::AsyncFunction(_) => None,
-            AwaitKind::AsyncGeneratorAwait { generator, .. }
+            AwaitKind::AsyncGeneratorAwait { generator }
             | AwaitKind::AsyncGeneratorYield { generator } => Some(*generator),
         };
         let state = self.heap.alloc_await_state(AwaitState::arm(kind, self.realm.globals, promise));
@@ -251,31 +264,29 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    /// `enqueue_async_resume` of an async function's activation that awaits again from the
-    /// reaction of its last await, `resume`: its spent state takes the continuation, as a
-    /// fresh one would. That reaction was the state's only one and is running, so nothing
-    /// else names the state, and an activation keeps one state for all its awaits.
+    /// `enqueue_async_resume` of an activation that awaits again from the reaction of its last
+    /// await, `resume`: its spent state takes `kind`, as a fresh one would. That reaction was
+    /// the state's only one and is running, so nothing else names the state, and an activation
+    /// keeps one state for all its awaits. A request's run has no state to re-arm.
     #[inline(always)]
     fn await_again(
         &mut self,
         p: &ResidualProgram,
         resume: AwaitResume,
-        continuation: Continuation,
+        kind: AwaitKind,
         source: Value,
     ) -> Result<(), JsError> {
-        let realm = self.realm.globals;
-        let state = self.heap.await_state_mut(resume.state).expect("a running await reaction keeps its state");
-        debug_assert!(matches!(state, AwaitState::Spent), "an await state re-arms only once spent");
-        let generator = resume.role.generator();
-        let kind = match generator {
-            None => AwaitKind::function(continuation),
-            Some(generator) => AwaitKind::generator_await(generator, continuation),
+        let Some(spent) = resume.state else {
+            return self.enqueue_async_resume(p, kind, resume.promise, source);
         };
+        let realm = self.realm.globals;
+        let state = self.heap.await_state_mut(spent).expect("a running await reaction keeps its state");
+        debug_assert!(matches!(state, AwaitState::Spent), "an await state re-arms only once spent");
         *state = AwaitState::arm(kind, realm, resume.promise);
         let roots = self.active_call_roots.len();
-        self.active_call_roots.push(resume.state);
+        self.active_call_roots.push(spent);
         self.active_call_roots.push(source);
-        let attached = self.attach_await_reactions(p, resume.state, resume.promise, generator, source);
+        let attached = self.attach_await_reactions(p, spent, resume.promise, resume.role.generator(), source);
         self.active_call_roots.truncate(roots);
         attached
     }
@@ -339,907 +350,7 @@ impl<H: Host> Vm<H> {
         }
         Ok(())
     }
-
-    /// Runs an await's reaction: `state` is the `AwaitState` both its handlers name and `taken`
-    /// what its reaction took from it (`AwaitState::resume`). The first run takes the
-    /// continuation, which resumes in the realm that awaited.
-    pub(super) fn resume_await(
-        &mut self,
-        p: &ResidualProgram,
-        state: Value,
-        taken: Option<ResumedAwait>,
-        rejected: bool,
-        value: Value,
-    ) -> Result<Value, JsError> {
-        let Some(ResumedAwait { role, continuation, realm, promise }) = taken else {
-            return Err(JsError("stale async continuation".into()));
-        };
-        let generator = role.generator();
-        let resume = AwaitResume { state, promise, role, rejected };
-        let previous_global = self.switch_realm_global(realm);
-        let roots = [promise, generator.unwrap_or(Value::UNDEFINED), value];
-        let result = self.with_call_roots(roots, |vm| {
-            vm.resume_async_continuation(p, resume, continuation, value)?;
-            if let Some(generator) = generator {
-                vm.resume_async_generator_queue(p, generator)?;
-            }
-            Ok(Value::UNDEFINED)
-        });
-        self.switch_realm_global(previous_global);
-        result
-    }
-
-    fn resume_async_continuation(
-        &mut self,
-        p: &ResidualProgram,
-        resume: AwaitResume,
-        continuation: Option<Continuation>,
-        value: Value,
-    ) -> Result<(), JsError> {
-        // A yield's await leaves its continuation in the generator's record: a fulfilled
-        // value completes the request and the generator stays suspended there; a rejected
-        // one resumes it at the yield with the rejection.
-        let continuation = match (continuation, resume.role) {
-            (None, AwaitRole::AsyncGeneratorYield(generator)) => {
-                if !resume.rejected {
-                    if let Some(record) = self.generator_record_mut(generator) {
-                        record.stop();
-                    }
-                    let result = self.iterator_result(value, false)?;
-                    return self.promise_resolve_value(p, resume.promise, result);
-                }
-                self.generator_record_mut(generator).and_then(|record| record.resume())
-            }
-            (continuation, _) => continuation,
-        };
-        let Some(continuation) = continuation else {
-            if let Some(generator) = resume.role.generator() {
-                self.fail_async_generator(
-                    p,
-                    generator,
-                    resume.promise,
-                    JsError("stale async generator continuation".into()),
-                )?;
-                return Ok(());
-            }
-            return Err(JsError("stale async continuation".into()));
-        };
-        let Some(program) = self.programs.get(continuation.frame.program) else {
-            return Err(JsError("async continuation program is unavailable".into()));
-        };
-        let active_program = self.replace_active_program(continuation.frame.program);
-        let result =
-            self.resume_async_continuation_in_program(&program, resume, continuation, value);
-        self.restore_active_program(active_program);
-        result
-    }
-
-    /// Resumes `continuation`, then, while the queue's next job is another async function's
-    /// await resumption in this program and realm that the queue would run with nothing
-    /// observable between (`take_chained_await`), runs that one here too: the queue's order is
-    /// kept, and the job loop and reaction dispatch are skipped.
-    fn resume_async_continuation_in_program(
-        &mut self,
-        p: &ResidualProgram,
-        resume: AwaitResume,
-        continuation: Continuation,
-        value: Value,
-    ) -> Result<(), JsError> {
-        let program = continuation.frame.program;
-        let roots = self.active_call_roots.len();
-        let (mut resume, mut continuation, mut value) = (resume, continuation, value);
-        let result = loop {
-            if let Err(error) = self.resume_async_activation(p, resume, continuation, value) {
-                break Err(error);
-            }
-            let Some((next, taken, awaited)) = self.take_chained_await(program) else {
-                break Ok(());
-            };
-            // The queue releases what an unobserved job's stores left before the next job.
-            for root in self.host.end_unobserved_job() {
-                self.heap.release_root(root);
-            }
-            // As `resume_await` roots the job's promise and value, and the job its state.
-            self.active_call_roots.truncate(roots);
-            self.active_call_roots.push(next.state);
-            self.active_call_roots.push(next.promise);
-            self.active_call_roots.push(awaited);
-            (resume, continuation, value) = (next, taken, awaited);
-        };
-        self.active_call_roots.truncate(roots);
-        result
-    }
-
-    /// Takes the queue's front job when it is an async function's fulfilled await resumption
-    /// that `run_job_queue` would run next exactly as resuming it here does: a queue that runs
-    /// every job (`chain_await_jobs`), no collection due (the job boundary's safepoint), no
-    /// termination request, no module continuation waiting, no host observing Promise jobs,
-    /// and the job, the awaiting activation and the running one sharing realm and program.
-    fn take_chained_await(&mut self, program: ProgramId) -> Option<(AwaitResume, Continuation, Value)> {
-        let (state, value, next) = self.chain_gates()?;
-        if !next.is_undefined() {
-            return None;
-        }
-        let realm = self.realm.globals;
-        let awaiting = self.heap.await_state_mut(state)?;
-        if !matches!(awaiting, AwaitState::Pending { kind: AwaitKind::AsyncFunction(continuation), realm: resumes, .. }
-            if *resumes == realm && continuation.frame.program == program)
-        {
-            return None;
-        }
-        let ResumedAwait { continuation, promise, .. } = awaiting.resume()?;
-        self.realm.jobs.pop_front();
-        Some((AwaitResume { state, promise, role: AwaitRole::AsyncFunction, rejected: false }, continuation?, value))
-    }
-
-    /// The front job's handler and value when it is a fulfilled reaction of this realm with
-    /// no result promise or host context, in a queue `take_chained_await` may take it from.
-    #[inline(always)]
-    fn chain_gates(&self) -> Option<(Value, Value, Value)> {
-        let Some(PendingJob::Reaction(job)) = self.realm.jobs.front() else {
-            return None;
-        };
-        if job.rejected || job.execution_context.get().is_some() || job.realm != self.realm.globals {
-            return None;
-        }
-        if !self.chain_gates_open() {
-            return None;
-        }
-        Some((job.handler, job.value, job.next))
-    }
-
-    /// Whether the running queue may run its next job inside a chained activation's lane
-    /// run: it runs every job, its context for unobserved jobs is entered, no collection is
-    /// due (the job boundary's safepoint), no termination is requested, no module
-    /// continuation waits and no host observes Promise jobs.
-    #[inline(always)]
-    fn chain_gates_open(&self) -> bool {
-        self.chain_await_jobs
-            && self.unobserved_jobs_entered
-            && !self.heap.should_collect()
-            && !self.execution_interrupt.is_termination_requested()
-            && !self.static_module_jobs_pending()
-            && !self.host.observes_promise_lifecycle()
-    }
-
-    fn resume_async_activation(
-        &mut self,
-        p: &ResidualProgram,
-        resume: AwaitResume,
-        continuation: Continuation,
-        value: Value,
-    ) -> Result<(), JsError> {
-        let resume_register = continuation.resume_register;
-        let mut frame = continuation.resume(self.with_stack.len(), self.heap.collection_epoch());
-        if !resume.rejected
-            && let Some(register) = resume_register
-        {
-            if register as usize >= frame.registers.len() {
-                return Err(JsError("invalid async resume register".into()));
-            }
-            frame.registers[register as usize] = value;
-        }
-        self.activate_frame(&mut frame);
-        self.frames.push(frame);
-        let initial_error = resume
-            .rejected
-            .then(|| JsError::thrown(value, "await rejected".into()));
-        // A fulfilled async function resumption may chain the queue's next ones in the lane;
-        // the activation in the slot when the run ends is then the last of them.
-        let roots = self.active_call_roots.len();
-        let chained = initial_error.is_none() && !matches!(resume.role, AwaitRole::AsyncGeneratorYield(_));
-        let outer_chain = if chained {
-            self.active_call_roots.push(resume.state);
-            self.active_call_roots.push(resume.promise);
-            self.active_call_roots.push(Value::UNDEFINED);
-            self.await_chain.replace(AwaitChain { frame: self.frames.len() - 1, task: ChainTask::Await(resume), roots })
-        } else {
-            self.await_chain.take()
-        };
-        let result = match initial_error {
-            Some(error) => self.run_frame_general_with_error(p, self.frames.len() - 1, Some(error)),
-            None => self.run_resumed_frame(p, self.frames.len() - 1),
-        };
-        let task = match std::mem::replace(&mut self.await_chain, outer_chain) {
-            Some(chain) if chained => chain.task,
-            _ => ChainTask::Await(resume),
-        };
-        let mut frame = self.frames.pop().expect("resumed frame exists");
-        self.deactivate_frame(&mut frame, &result);
-        let finished = self.finish_chain_task(p, task, frame, result);
-        self.active_call_roots.truncate(roots);
-        finished
-    }
-
-    /// A promise reaction job's call of its handler, a plain script function the lane runs
-    /// from its entry, as a chained job activation (`AwaitChain`): the lane run continues into
-    /// the queue's next jobs where it can. `None` leaves the call to `call_value_from_frame`.
-    pub(super) fn run_chained_reaction(
-        &mut self,
-        handler: Value,
-        value: Value,
-        next: Value,
-    ) -> Option<Result<(), JsError>> {
-        if !self.chain_await_jobs || self.host.observes_promise_lifecycle() || self.lane_native.is_some() || self.lane_deferred.is_some() {
-            return None;
-        }
-        let (program_id, id, env) = self.plain_reaction_handler(handler)?;
-        let program = self.programs.get(program_id)?;
-        let active_program = self.replace_active_program(program_id);
-        let view = self.entered_lane_view(&program, id);
-        if !Self::lane_runs_call(view) {
-            self.restore_active_program(active_program);
-            return None;
-        }
-        let outcome = (|| {
-            let _call_guard = crate::stack::GuestCallGuard::enter()
-                .map_err(|crate::stack::StackExhausted| self.stack_exhaustion_error())?;
-            let roots = self.active_call_roots.len();
-            self.active_call_roots.push(handler);
-            self.active_call_roots.push(next);
-            self.active_call_roots.push(value);
-            let frame = match self.activate_user_frame(&program, id, env, Value::UNDEFINED, &[value], CallContext::user_function(id, handler)) {
-                Ok(frame) => frame,
-                Err(error) => {
-                    self.active_call_roots.truncate(roots);
-                    return self.settle_reaction_call(&program, next, Err(error));
-                }
-            };
-            let cursor = self.entry_cursor(&program, id, view);
-            let outer_chain = self.await_chain.replace(AwaitChain { frame, task: ChainTask::Reaction { next }, roots });
-            let result = self.run_frame_from_lane(&program, frame, &cursor, 0);
-            let task = std::mem::replace(&mut self.await_chain, outer_chain).map_or(ChainTask::Reaction { next }, |chain| chain.task);
-            let mut activation = self.frames.pop().expect("reaction frame exists");
-            self.deactivate_frame(&mut activation, &result);
-            let finished = self.finish_chain_task(&program, task, activation, result);
-            self.active_call_roots.truncate(roots);
-            finished
-        })();
-        self.restore_active_program(active_program);
-        Some(outcome)
-    }
-
-    /// `handler`'s program, function and environment when it is a plain script function of
-    /// this realm (not async, a generator or a class constructor), which a chained reaction
-    /// runs as `call_value_from_frame` would.
-    #[inline(always)]
-    fn plain_reaction_handler(&self, handler: Value) -> Option<(ProgramId, u32, Value)> {
-        let Some(FunctionRecord { kind: FunctionKind::User(program, id), env, realm, .. }) = self.heap.function(handler) else {
-            return None;
-        };
-        if *realm != self.realm.globals {
-            return None;
-        }
-        let body = self.programs.residual(*program)?.function_get(*id as usize)?;
-        (!body.is_async && !body.is_generator && !body.is_class_constructor).then_some((*program, *id, *env))
-    }
-
-    /// Finishes the job activation `task` ran, which left `frame` with `result`.
-    fn finish_chain_task(
-        &mut self,
-        p: &ResidualProgram,
-        task: ChainTask,
-        frame: Box<super::Frame>,
-        result: Result<FrameOutcome, JsError>,
-    ) -> Result<(), JsError> {
-        match task {
-            ChainTask::Await(resume) => {
-                self.finish_async_activation(p, resume, frame, result)?;
-                // As `resume_await` after the activation: its generator takes its next request.
-                match resume.role.generator() {
-                    Some(generator) => self.resume_async_generator_queue(p, generator),
-                    None => Ok(()),
-                }
-            }
-            ChainTask::Done { settled } => {
-                self.pool_frame(frame);
-                match result {
-                    Err(error) if !settled || error.is_execution_terminated() => Err(error),
-                    _ => Ok(()),
-                }
-            }
-            ChainTask::Reaction { next } => {
-                self.persist_global_lexical_bindings(p, &frame);
-                self.pool_frame(frame);
-                let called = match result {
-                    Ok(FrameOutcome::Complete(value)) => Ok(value),
-                    Ok(_) => Err(JsError("promise reaction handler did not complete".into())),
-                    Err(error) => Err(error),
-                };
-                self.settle_reaction_call(p, next, called)
-            }
-        }
-    }
-
-    /// Settles a reaction's `next` with its handler call's completion, as
-    /// `run_promise_reaction` does.
-    fn settle_reaction_call(&mut self, p: &ResidualProgram, next: Value, called: Result<Value, JsError>) -> Result<(), JsError> {
-        let (state, value) = match called {
-            Ok(value) => (PromiseState::Fulfilled, value),
-            Err(error) if error.is_execution_terminated() => return Err(error),
-            Err(error) => (PromiseState::Rejected, error.thrown_value().unwrap_or(Value::UNDEFINED)),
-        };
-        self.settle_reaction(p, next, state, value)
-    }
-
-    /// The return of chained job activation `frame` with `value` while the chain's gates hold:
-    /// finishes it as `finish_chain_task` would, with the slot empty and no chain named, so
-    /// guest code its settlement runs nests as it would after the job, then continues with the
-    /// queue (`continue_chain`). The next activation's cursor, function and PC come back,
-    /// `Some(None)` where the chain ended in the slot, or `None` where the run ends here.
-    #[inline(never)]
-    pub(super) fn chain_lane_complete(
-        &mut self,
-        p: &ResidualProgram,
-        program: ProgramId,
-        frame: usize,
-        current: &super::dispatch_frame::GeneralCodeCursor,
-        value: Value,
-    ) -> Option<Result<Option<(super::dispatch_frame::GeneralCodeCursor, u32, usize)>, JsError>> {
-        let chain = self.await_chain.filter(|chain| chain.frame == frame && frame + 1 == self.frames.len())?;
-        if !self.chain_gates_open() || matches!(chain.task, ChainTask::Done { .. }) {
-            return None;
-        }
-        self.active_call_roots[chain.roots + 2] = value;
-        let mut finished = self.frames.pop().expect("chained frame exists");
-        self.deactivate_frame(&mut finished, &Ok(FrameOutcome::Complete(value)));
-        self.await_chain = None;
-        if let Err(error) = self.finish_chain_task(p, chain.task, finished, Ok(FrameOutcome::Complete(value))) {
-            self.end_chain_in_slot(frame, chain.roots, false);
-            return Some(Err(error));
-        }
-        Some(self.continue_chain(p, program, frame, chain.roots, current))
-    }
-
-    /// `chain_lane_complete` made by the lane itself at the return of reaction handler
-    /// activation `frame`, the chain's slot, with nothing above it: the reaction settles and
-    /// the queue continues (`continue_chain`). `Some(Ok(true))` where the next job's activation
-    /// took the slot, for the lane to enter at its PC; `Some(Ok(false))` where the chain ended
-    /// in the slot. `None` changes nothing and leaves the return to the lane's exit.
-    pub(super) fn lane_chain_reaction_complete(
-        &mut self,
-        p: &ResidualProgram,
-        program: ProgramId,
-        frame: usize,
-        lane: *const super::dispatch_fast::LaneView,
-        value: Value,
-    ) -> Option<Result<bool, JsError>> {
-        let chain = self.await_chain.filter(|chain| chain.frame == frame && frame + 1 == self.frames.len())?;
-        if !matches!(chain.task, ChainTask::Reaction { .. }) || !self.chain_gates_open() {
-            return None;
-        }
-        // The returning activation's view, which a next reaction of the same handler shares.
-        let current = super::dispatch_frame::GeneralCodeCursor::of_lane(program, self.frames[frame].function, lane);
-        self.active_call_roots[chain.roots + 2] = value;
-        let mut finished = self.frames.pop().expect("chained frame exists");
-        self.deactivate_frame(&mut finished, &Ok(FrameOutcome::Complete(value)));
-        self.await_chain = None;
-        if let Err(error) = self.finish_chain_task(p, chain.task, finished, Ok(FrameOutcome::Complete(value))) {
-            self.end_chain_in_slot(frame, chain.roots, false);
-            return Some(Err(error));
-        }
-        Some(self.continue_chain(p, program, frame, chain.roots, &current).map(|next| next.is_some()))
-    }
-
-    /// The cursor, function and PC the queue's front job's activation starts at, when the lane
-    /// runs it there and `take_chained_job` may take it: an async function's await resumption
-    /// in this program, or a reaction whose handler is a plain script function of it.
-    #[inline(always)]
-    fn peek_chained_job(
-        &mut self,
-        p: &ResidualProgram,
-        program: ProgramId,
-        current: &super::dispatch_frame::GeneralCodeCursor,
-    ) -> Option<(super::dispatch_frame::GeneralCodeCursor, u32, usize)> {
-        let (handler, _, next) = self.chain_gates()?;
-        let realm = self.realm.globals;
-        // A function is never an await state: a reaction's handler is tested first.
-        let (function, pc) = if let Some(record) = self.heap.function(handler) {
-            (Self::plain_handler_function(p, record, program, realm)?, 0)
-        } else {
-            match self.heap.await_state_mut(handler) {
-                Some(AwaitState::Pending {
-                    kind: AwaitKind::AsyncFunction(continuation) | AwaitKind::AsyncGeneratorAwait { continuation, .. },
-                    realm: resumes,
-                    ..
-                }) if *resumes == realm && continuation.frame.program == program && next.is_undefined() => {
-                    (continuation.frame.function, continuation.frame.pc)
-                }
-                _ => return None,
-            }
-        };
-        // Consecutive activations of one function share its cursor.
-        let cursor = if current.function == function {
-            *current
-        } else if pc == 0 {
-            let view = self.entered_lane_view(p, function);
-            if !Self::lane_runs_call(view) {
-                return None;
-            }
-            self.entry_cursor(p, function, view)
-        } else {
-            self.general_cursor(program, p, function, true)
-        };
-        if pc != 0 && !Self::lane_runs(cursor.lane, pc) || pc == 0 && !Self::lane_runs_call(cursor.lane) {
-            return None;
-        }
-        Some((cursor, function, pc))
-    }
-
-    /// The function of reaction handler `handler`, a plain script function of `program`, whose
-    /// code `p` is, in realm `running_realm`.
-    #[inline(always)]
-    fn plain_handler_function(p: &ResidualProgram, handler: &FunctionRecord, program: ProgramId, running_realm: Value) -> Option<u32> {
-        // As `plain_reaction_handler`, with the body read from `p`, the running program's.
-        let FunctionRecord { kind: FunctionKind::User(handler_program, id), realm, .. } = handler else {
-            return None;
-        };
-        if *handler_program != program || *realm != running_realm {
-            return None;
-        }
-        let body = p.function_get(*id as usize)?;
-        (!body.is_async && !body.is_generator && !body.is_class_constructor).then_some(*id)
-    }
-
-    /// Takes the queue's front job, which `peek_chained_job` admitted.
-    #[inline(always)]
-    fn take_chained_job(&mut self) -> Option<ChainedJob> {
-        let Some(PendingJob::Reaction(job)) = self.realm.jobs.front() else {
-            return None;
-        };
-        let (handler, value, next) = (job.handler, job.value, job.next);
-        let job = match self.heap.await_state_mut(handler) {
-            Some(awaiting) => {
-                let ResumedAwait { continuation, promise, role, .. } = awaiting.resume()?;
-                let resume = AwaitResume { state: handler, promise, role, rejected: false };
-                ChainedJob::Await { resume, continuation: continuation?, value }
-            }
-            None => {
-                let (_, id, env) = self.plain_reaction_handler(handler)?;
-                ChainedJob::Reaction { handler, id, env, value, next }
-            }
-        };
-        self.realm.jobs.pop_front();
-        Some(job)
-    }
-
-    /// `take_chained_job` of the reaction `peek_chained_job` admitted with handler function
-    /// `id`: the handler is a plain script function of the running program, so neither its
-    /// await state nor its body is looked up again.
-    #[inline(always)]
-    fn take_chained_reaction(&mut self, id: u32) -> Option<ChainedJob> {
-        let Some(PendingJob::Reaction(job)) = self.realm.jobs.front() else {
-            return None;
-        };
-        let (handler, value, next) = (job.handler, job.value, job.next);
-        let env = self.heap.function(handler)?.env;
-        self.realm.jobs.pop_front();
-        Some(ChainedJob::Reaction { handler, id, env, value, next })
-    }
-
-    /// Starts taken job `job`'s activation in frame slot `frame`, the top of the frame stack,
-    /// as the chained activation `await_chain` names; its roots go in the chain's three.
-    #[inline(always)]
-    fn start_chained_job(&mut self, p: &ResidualProgram, frame: usize, roots: usize, job: ChainedJob) -> Result<(), JsError> {
-        match job {
-            ChainedJob::Await { resume, continuation, value } => {
-                self.active_call_roots[roots] = resume.state;
-                self.active_call_roots[roots + 1] = resume.promise;
-                self.active_call_roots[roots + 2] = value;
-                let resume_register = continuation.resume_register;
-                let mut resumed = continuation.resume(self.with_stack.len(), self.heap.collection_epoch());
-                if let Some(register) = resume_register {
-                    let Some(slot) = resumed.registers.get_mut(register as usize) else {
-                        self.end_chain_in_slot(frame, roots, false);
-                        return Err(JsError("invalid async resume register".into()));
-                    };
-                    *slot = value;
-                }
-                self.activate_frame(&mut resumed);
-                self.frames.push(resumed);
-                self.await_chain = Some(AwaitChain { frame, task: ChainTask::Await(resume), roots });
-            }
-            ChainedJob::Reaction { handler, id, env, value, next } => {
-                self.active_call_roots[roots] = handler;
-                self.active_call_roots[roots + 1] = next;
-                self.active_call_roots[roots + 2] = value;
-                if let Err(error) = self.activate_user_frame(p, id, env, Value::UNDEFINED, &[value], CallContext::user_function(id, handler)) {
-                    let settled = self.settle_reaction_call(p, next, Err(error));
-                    self.end_chain_in_slot(frame, roots, true);
-                    return settled.and(Err(JsError("promise reaction handler did not start".into())));
-                }
-                self.await_chain = Some(AwaitChain { frame, task: ChainTask::Reaction { next }, roots });
-            }
-        }
-        debug_assert_eq!(frame + 1, self.frames.len(), "a chained job activation takes the slot");
-        Ok(())
-    }
-
-    /// The await outcome of the lane run of async function activation `frame`, the slot of the
-    /// resumption `await_chain` names, when the queue's next job resumes another one in this
-    /// program that the lane runs at its resume PC: suspends this activation as
-    /// `finish_async_activation` does (`await_again`), takes that job as the job loop would
-    /// (`take_chained_await`) and puts its activation in the slot. The next job is taken before
-    /// this await attaches its reaction, which can only go behind it. The resumed activation's
-    /// cursor, function and PC come back, or `None` where the run ends here.
-    pub(super) fn chain_lane_await(
-        &mut self,
-        p: &ResidualProgram,
-        program: ProgramId,
-        frame: usize,
-        current: &super::dispatch_frame::GeneralCodeCursor,
-        value: Value,
-        destination: u16,
-    ) -> Option<Result<Option<(super::dispatch_frame::GeneralCodeCursor, u32, usize)>, JsError>> {
-        let chain = self.await_chain.filter(|chain| chain.frame == frame && frame + 1 == self.frames.len())?;
-        let ChainTask::Await(resume) = chain.task else {
-            return None;
-        };
-        if let Some((cursor, function, pc)) = self.peek_chained_job(p, program, current)
-            && pc != 0
-        {
-            // Another await resumption: its frame takes the slot in place.
-            return Some(self.chain_await_into_slot(p, frame, chain.roots, resume, value, destination).map(|()| Some((cursor, function, pc))));
-        }
-        if !self.chain_gates_open() || !self.front_job_may_chain() {
-            return None;
-        }
-        Some(self.suspend_and_continue_chain(p, program, frame, chain.roots, resume, current, value, destination))
-    }
-
-    /// `chain_lane_await` made by the lane itself at the `Await` record at `pc` of slot
-    /// `frame`'s activation, where the queue's next job resumes another activation of
-    /// `program`: the await suspends as `lane_stop_awaits` makes it and that activation takes
-    /// the slot (`chain_await_into_slot`), so the lane continues there with no exit. `None`
-    /// changes nothing and leaves the record to the lane's exit.
-    pub(super) fn lane_chain_await(
-        &mut self,
-        p: &ResidualProgram,
-        program: ProgramId,
-        frame: usize,
-        pc: usize,
-        awaited: u16,
-        destination: u16,
-    ) -> Option<Result<(), JsError>> {
-        let chain = self.await_chain.filter(|chain| chain.frame == frame && frame + 1 == self.frames.len())?;
-        let ChainTask::Await(resume) = chain.task else {
-            return None;
-        };
-        // The front job's await state first: an async generator's await (`AwaitKind`) ends the
-        // check before the gates.
-        let Some(PendingJob::Reaction(job)) = self.realm.jobs.front() else {
-            return None;
-        };
-        let realm = self.realm.globals;
-        // As `chain_gates`, read once.
-        if job.rejected || job.execution_context.get().is_some() || job.realm != realm || !job.next.is_undefined() {
-            return None;
-        }
-        let handler = job.handler;
-        match self.heap.await_state_mut(handler) {
-            Some(AwaitState::Pending {
-                kind: AwaitKind::AsyncFunction(continuation) | AwaitKind::AsyncGeneratorAwait { continuation, .. },
-                realm: resumes,
-                ..
-            }) if *resumes == realm && continuation.frame.program == program => {}
-            _ => return None,
-        }
-        if !self.chain_gates_open() {
-            return None;
-        }
-        let value = self.lane_await_value(p, frame, awaited, destination, pc)?;
-        Some(self.chain_await_into_slot(p, frame, chain.roots, resume, value, destination))
-    }
-
-    /// Whether the queue's front job is one `continue_chain` runs or starts: a thenable job, a
-    /// reaction without a handler, or one whose handler is a plain script function.
-    #[inline(never)]
-    fn front_job_may_chain(&mut self) -> bool {
-        match self.realm.jobs.front() {
-            Some(PendingJob::Thenable(_)) => true,
-            Some(PendingJob::Reaction(job)) => {
-                let handler = job.handler;
-                if let Some(state) = self.heap.await_state_mut(handler) {
-                    return !job.rejected && matches!(state, AwaitState::Pending { kind: AwaitKind::AsyncGeneratorYield { .. }, .. });
-                }
-                !self.is_function(handler) || self.plain_reaction_handler(handler).is_some()
-            }
-            _ => false,
-        }
-    }
-
-    /// `chain_lane_await` where the front job is not another await resumption: suspends the
-    /// slot's activation, then continues with the queue (`continue_chain`).
-    #[inline(never)]
-    #[allow(clippy::too_many_arguments)]
-    fn suspend_and_continue_chain(
-        &mut self,
-        p: &ResidualProgram,
-        program: ProgramId,
-        frame: usize,
-        roots: usize,
-        resume: AwaitResume,
-        current: &super::dispatch_frame::GeneralCodeCursor,
-        value: Value,
-        destination: u16,
-    ) -> Result<Option<(super::dispatch_frame::GeneralCodeCursor, u32, usize)>, JsError> {
-        let mut suspended = self.frames.pop().expect("chained frame exists");
-        self.deactivate_frame(&mut suspended, &Ok(FrameOutcome::Await { value, destination, frame: None }));
-        self.await_chain = None;
-        let continuation = self.suspend_activation(suspended, Completion::Await(value), Some(destination), resume.promise);
-        if let Err(error) = self.await_again(p, resume, continuation, value) {
-            self.end_chain_in_slot(frame, roots, false);
-            return Err(error);
-        }
-        self.continue_chain(p, program, frame, roots, current)
-    }
-
-    /// After the job activation in slot `frame` finished or suspended, runs the queue's next
-    /// jobs that call no handler (`run_handlerless_jobs`), then
-    /// starts the next job's activation in the slot where the lane can run it; otherwise the
-    /// chain ends there (`end_chain_in_slot`).
-    #[inline(never)]
-    fn continue_chain(
-        &mut self,
-        p: &ResidualProgram,
-        program: ProgramId,
-        frame: usize,
-        roots: usize,
-        current: &super::dispatch_frame::GeneralCodeCursor,
-    ) -> Result<Option<(super::dispatch_frame::GeneralCodeCursor, u32, usize)>, JsError> {
-        // The queue releases what an unobserved job's stores left before the next job.
-        for root in self.host.end_unobserved_job() {
-            self.heap.release_root(root);
-        }
-        if let Err(error) = self.run_handlerless_jobs(p) {
-            self.end_chain_in_slot(frame, roots, false);
-            return Err(error);
-        }
-        let Some(started) = self.peek_chained_job(p, program, current) else {
-            self.end_chain_in_slot(frame, roots, true);
-            return Ok(None);
-        };
-        // A started PC of 0 is a reaction's handler entry, which `peek_chained_job` admitted.
-        let next = if started.2 == 0 { self.take_chained_reaction(started.1) } else { self.take_chained_job() };
-        let Some(next) = next else {
-            self.end_chain_in_slot(frame, roots, true);
-            return Ok(None);
-        };
-        self.start_chained_job(p, frame, roots, next).map(|()| Some(started))
-    }
-
-    /// Runs the queue's front jobs, while the chain's gates hold, that call no handler, as
-    /// `run_promise_job` runs them: a thenable job of a promise with the intrinsic `then` and
-    /// species (`promise_then_resolving`), and a fulfilled reaction with no handler.
-    #[inline(never)]
-    fn run_handlerless_jobs(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
-        loop {
-            if !self.chain_gates_open() {
-                return Ok(());
-            }
-            let realm = self.realm.globals;
-            match self.realm.jobs.front() {
-                Some(PendingJob::Thenable(job)) if job.execution_context.get().is_none() && job.realm == realm => {
-                    let (then, thenable, promise) = (job.then, job.thenable, job.promise);
-                    let capabilities = &self.realm.promise.reaction_capabilities;
-                    if !self.is_intrinsic_promise_then(then)
-                        || !self.is_promise(thenable)
-                        || (!capabilities.is_empty() && capabilities.contains_key(&promise))
-                        || !self.promise_species_intrinsic(thenable)
-                    {
-                        return Ok(());
-                    }
-                    self.realm.jobs.pop_front();
-                    self.promise_then_resolving(p, thenable, promise)?;
-                }
-                Some(PendingJob::Reaction(job))
-                    if !job.rejected && job.execution_context.get().is_none() && job.realm == realm =>
-                {
-                    let (handler, value, next) = (job.handler, job.value, job.next);
-                    if self.is_function(handler) {
-                        return Ok(());
-                    }
-                    match self.heap.await_state_mut(handler) {
-                        None => {
-                            self.realm.jobs.pop_front();
-                            self.settle_reaction(p, next, PromiseState::Fulfilled, value)?;
-                        }
-                        // A fulfilled `yield`'s await runs no frame: it completes the request and
-                        // resumes the generator's queue (`resume_await`), as its job would.
-                        Some(state @ AwaitState::Pending { kind: AwaitKind::AsyncGeneratorYield { .. }, .. }) => {
-                            let taken = state.resume();
-                            self.realm.jobs.pop_front();
-                            let roots = self.active_call_roots.len();
-                            self.active_call_roots.extend([handler, value]);
-                            let resumed = self.resume_await(p, handler, taken, false, value);
-                            self.active_call_roots.truncate(roots);
-                            // As the reaction job: an await settles no capability, so only a
-                            // termination leaves it.
-                            match resumed {
-                                Err(error) if error.is_execution_terminated() => return Err(error),
-                                _ => {}
-                            }
-                        }
-                        Some(_) => return Ok(()),
-                    }
-                }
-                _ => return Ok(()),
-            }
-            for root in self.host.end_unobserved_job() {
-                self.heap.release_root(root);
-            }
-        }
-    }
-
-    /// `chain_lane_await` where the front job, which `peek_chained_job` admitted, resumes
-    /// another async function: its frame replaces the suspending one in slot `frame`.
-    #[inline(always)]
-    fn chain_await_into_slot(
-        &mut self,
-        p: &ResidualProgram,
-        frame: usize,
-        roots: usize,
-        resume: AwaitResume,
-        value: Value,
-        destination: u16,
-    ) -> Result<(), JsError> {
-        let Some(PendingJob::Reaction(job)) = self.realm.jobs.front() else {
-            unreachable!("a chained await resumption was admitted");
-        };
-        let (state, awaited) = (job.handler, job.value);
-        let Some(ResumedAwait { continuation: Some(continuation), promise, role, .. }) =
-            self.heap.await_state_mut(state).and_then(AwaitState::resume)
-        else {
-            unreachable!("an admitted await resumption holds its activation");
-        };
-        self.realm.jobs.pop_front();
-        let next = AwaitResume { state, promise, role, rejected: false };
-        self.active_call_roots[roots] = state;
-        self.active_call_roots[roots + 1] = promise;
-        let resume_register = continuation.resume_register;
-        let mut resumed = continuation.resume(self.with_stack.len(), self.heap.collection_epoch());
-        if let Some(register) = resume_register
-            && let Some(slot) = resumed.registers.get_mut(register as usize)
-        {
-            *slot = awaited;
-        }
-        let mut suspended = std::mem::replace(&mut self.frames[frame], resumed);
-        self.deactivate_frame(&mut suspended, &Ok(FrameOutcome::Await { value, destination, frame: None }));
-        let with_base = self.with_stack.len();
-        let running = &mut self.frames[frame];
-        running.with_base = with_base;
-        self.with_stack.append(&mut running.with_objects);
-        self.await_chain = Some(AwaitChain { frame, task: ChainTask::Await(next), roots });
-        let continuation = self.suspend_activation(suspended, Completion::Await(value), Some(destination), resume.promise);
-        self.await_again(p, resume, continuation, value)?;
-        // The queue releases what an unobserved job's stores left before the next job.
-        for root in self.host.end_unobserved_job() {
-            self.heap.release_root(root);
-        }
-        Ok(())
-    }
-
-    /// Ends a chained run whose slot `frame` lost its activation to a failure: an empty frame
-    /// takes the slot for the run's caller to retire, and its error is the run's, already
-    /// settled into the job's promise where `settled`.
-    #[inline(never)]
-    fn end_chain_in_slot(&mut self, frame: usize, roots: usize, settled: bool) {
-        if self.frames.len() == frame {
-            let mut empty = self.frame_pool.pop().unwrap_or_else(|| self.empty_frame());
-            empty.with_base = self.with_stack.len();
-            self.frames.push(empty);
-        }
-        self.await_chain = Some(AwaitChain { frame, task: ChainTask::Done { settled }, roots });
-    }
-
-    /// What follows the run of the activation `resume` resumed, which left `frame` with
-    /// `result`: its promise settles, or it suspends again.
-    fn finish_async_activation(
-        &mut self,
-        p: &ResidualProgram,
-        resume: AwaitResume,
-        frame: Box<super::Frame>,
-        result: Result<FrameOutcome, JsError>,
-    ) -> Result<(), JsError> {
-        let result = match result {
-            Ok(result) => result,
-            Err(error) => {
-                self.pool_frame(frame);
-                if let Some(generator) = resume.role.generator() {
-                    self.fail_async_generator(p, generator, resume.promise, error)?;
-                } else {
-                    let reason = error
-                        .thrown_value()
-                        .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-                    self.promise_settle(p, resume.promise, PromiseState::Rejected, reason)?;
-                }
-                return Ok(());
-            }
-        };
-        match result {
-            super::FrameOutcome::Complete(value)
-            | super::FrameOutcome::ConstructComplete { value, .. } => {
-                self.pool_frame(frame);
-                if let Some(generator) = resume.role.generator() {
-                    self.finish_async_generator(p, generator, resume.promise, value)?;
-                } else {
-                    self.promise_resolve_value(p, resume.promise, value)?;
-                }
-            }
-            super::FrameOutcome::Await {
-                value,
-                destination,
-                frame: None,
-            } => {
-                let continuation = self.suspend_activation(
-                    frame,
-                    Completion::Await(value),
-                    Some(destination),
-                    resume.promise,
-                );
-                // An async generator's body awaits from its last await's reaction too
-                // (`AwaitRole::AsyncGeneratorAwait`): its spent state takes the continuation.
-                debug_assert!(!matches!(resume.role, AwaitRole::AsyncGeneratorYield(_)), "a yield's await resumes no frame");
-                self.await_again(p, resume, continuation, value)?;
-            }
-            super::FrameOutcome::Await {
-                frame: Some(frame), ..
-            } => {
-                self.pool_frame(frame);
-                if let Some(generator) = resume.role.generator() {
-                    self.fail_async_generator(
-                        p,
-                        generator,
-                        resume.promise,
-                        JsError("resumed async generator frame retained unexpectedly".into()),
-                    )?;
-                } else {
-                    return Err(JsError("resumed async frame retained unexpectedly".into()));
-                }
-            }
-            super::FrameOutcome::Yield {
-                frame: Some(frame), ..
-            } => {
-                self.pool_frame(frame);
-                if let Some(generator) = resume.role.generator() {
-                    self.fail_async_generator(
-                        p,
-                        generator,
-                        resume.promise,
-                        JsError("resumed async generator frame retained unexpectedly".into()),
-                    )?;
-                } else {
-                    return Err(JsError("yield is not valid in an async function".into()));
-                }
-            }
-            super::FrameOutcome::ParameterInitializationComplete => {
-                self.pool_frame(frame);
-                return Err(JsError(
-                    "unexpected generator parameter initialization boundary".into(),
-                ));
-            }
-            super::FrameOutcome::Yield {
-                value,
-                destination,
-                delegated_result,
-                frame: None,
-            } => {
-                if let Some(generator) = resume.role.generator() {
-                    self.async_generator_yield(
-                        p,
-                        generator,
-                        resume.promise,
-                        frame,
-                        value,
-                        destination,
-                        delegated_result.is_some(),
-                    )?;
-                } else {
-                    self.pool_frame(frame);
-                    return Err(JsError("yield is not valid in an async function".into()));
-                }
-            }
-        }
-        Ok(())
-    }
 }
+
+mod job_resume;
+mod settle;

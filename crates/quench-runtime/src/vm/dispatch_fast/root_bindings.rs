@@ -28,7 +28,7 @@ pub(super) fn lane_root_environment<H: Host>(cx: *mut LaneContext<H>, depth: u16
     let mut env = unsafe { (*cx).registers }.env();
     if env.is_deleted() {
         // A frame's closure environment, past any `with` layers, as its capture walk finds it.
-        return vm.capture_env(unsafe { (*cx).frame }, depth);
+        return vm.owner_capture_env(VarOwner::Frame(unsafe { (*cx).frame() }), depth);
     }
     for _ in 0..depth {
         let Some(Cell::Environment { parent, .. }) = vm.heap.get(env) else { return None };
@@ -53,7 +53,7 @@ pub(super) fn lane_root_binding_slot<H: Host>(cx: *mut LaneContext<H>, depth: u1
     };
     let env = unsafe { (*cx).registers }.env();
     let walked = if env.is_deleted() {
-        let frame = &vm.frames[unsafe { (*cx).frame }];
+        let frame = &vm.frames[unsafe { (*cx).frame() }];
         vm.walked_capture_slots(frame.env, frame.captured, depth)
     } else {
         vm.walked_capture_slots(env, false, depth)

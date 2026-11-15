@@ -147,37 +147,7 @@ impl FunctionCompiler<'_, '_> {
             });
         let class_home_atom =
             self.hidden_local(&format!("{}class:{}", crate::bytecode::HOME_BINDING_PREFIX, class.span.start));
-        let mut private_bindings = FxHashMap::default();
-        for element in &class.body.body {
-            if let ClassElement::AccessorProperty(accessor) = element {
-                let atom = self.owner.private_name_atom(accessor.span);
-                let home = if accessor.r#static {
-                    class_home_atom
-                } else {
-                    constructor_home_atom
-                };
-                private_bindings.insert(atom, home);
-            }
-            let (key, is_static) = match element {
-                ClassElement::PropertyDefinition(field) => (&field.key, field.r#static),
-                ClassElement::MethodDefinition(method) => (&method.key, method.r#static),
-                ClassElement::AccessorProperty(accessor) => (&accessor.key, accessor.r#static),
-                _ => continue,
-            };
-            if let PropertyKey::PrivateIdentifier(identifier) = key {
-                let atom = self.owner.private_name_atom(identifier.span);
-                if !self.owner.private_name_is_overridden(atom) {
-                    private_bindings.insert(
-                        atom,
-                        if is_static {
-                            class_home_atom
-                        } else {
-                            constructor_home_atom
-                        },
-                    );
-                }
-            }
-        }
+        let private_bindings: FxHashMap<_, _> = self.class_private_bindings(class, (class_home_atom, constructor_home_atom)).into_iter().collect();
         let has_private_bindings = !private_bindings.is_empty();
         if has_private_bindings {
             self.push_private_bindings(private_bindings);

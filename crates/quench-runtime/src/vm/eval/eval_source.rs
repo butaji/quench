@@ -72,7 +72,7 @@ impl<H: Host> Vm<H> {
         } else {
             Vec::new()
         };
-        let caller_has_global_variables = self.frames.is_empty() || self.running_global_code();
+        let caller_has_global_variables = self.eval_caller().is_none() || self.running_global_code();
         // Annex B only concerns function declarations, which the text then names.
         let annex_b_forbidden_names = if source.contains("function") {
             self.annex_b_forbidden_names(caller_has_global_variables)
@@ -86,7 +86,7 @@ impl<H: Host> Vm<H> {
                 context,
                 private_names: private_names.clone(),
                 annex_b_forbidden_names: annex_b_forbidden_names.clone(),
-                caller: self.eval_caller(p)?,
+                caller: self.eval_caller_identity(p)?,
             }),
             None => None,
         };
@@ -103,7 +103,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The caller identity the eval's program is installed with.
-    pub(super) fn eval_caller(&mut self, p: &ResidualProgram) -> Result<EvalCaller, JsError> {
+    pub(super) fn eval_caller_identity(&mut self, p: &ResidualProgram) -> Result<EvalCaller, JsError> {
         Ok(EvalCaller { origin: self.capture_eval_origin(p)?, script_or_module: self.active_script_or_module(p) })
     }
 

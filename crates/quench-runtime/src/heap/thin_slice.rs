@@ -14,9 +14,7 @@ pub(crate) const MAX_PREFIX_WORDS: usize = 2;
 pub(crate) const MARK_BIT: usize = 1 << (usize::BITS - 1);
 /// The mark bit and where a word-sized element run starts, for code that reads a slice header
 /// natively (`heap::NATIVE_ENVIRONMENT_LAYOUT`); `lay_out_in_place` asserts the offset.
-#[allow(dead_code)] // consumer: thread 13's Emit lowering of LoadEnvLocal in environment windows
 pub(crate) const NATIVE_MARK_BIT: u64 = MARK_BIT as u64;
-#[allow(dead_code)] // consumer: thread 13's Emit lowering of LoadEnvLocal in environment windows
 pub(crate) const NATIVE_WORD_ELEMENTS_OFFSET: usize = size_of::<usize>();
 
 /// `P` words precede the header in a slice's allocation, zero when it is made, for its owner's

@@ -162,16 +162,16 @@ impl<H: Host> Vm<H> {
             return Some(false);
         }
         if value.is_null() {
-            output.extend_from_slice(b"null");
+            output.append_bytes(b"null");
         } else if let Some(value) = value.as_bool() {
-            output.extend_from_slice(if value { b"true" } else { b"false" });
+            output.append_bytes(if value { b"true" } else { b"false" });
         } else if let Some(integer) = value.as_int() {
             write_json_integer(integer, output);
         } else if let Some(number) = value.as_number() {
             if number.is_finite() {
                 crate::number_to_string::write(number, output);
             } else {
-                output.extend_from_slice(b"null");
+                output.append_bytes(b"null");
             }
         } else if let Some(text) = self.heap.string(value) {
             write_json_string(text, output);
@@ -202,7 +202,7 @@ impl<H: Host> Vm<H> {
             }
             match self.json_write_plain(*element, plain) {
                 Some(true) => {}
-                Some(false) => plain.output.extend_from_slice(b"null"),
+                Some(false) => plain.output.append_bytes(b"null"),
                 None => return false,
             }
         }
@@ -233,7 +233,7 @@ impl<H: Host> Vm<H> {
             let start = plain.output.len();
             let (key_start, key_end) = member.key;
             let key_start = key_start as usize + usize::from(!written);
-            plain.output.extend_from_slice(&plain.key_text[key_start..key_end as usize]);
+            plain.output.append_bytes(&plain.key_text[key_start..key_end as usize]);
             match self.json_write_plain(member_value, plain) {
                 Some(true) => written = true,
                 Some(false) => plain.output.truncate(start),

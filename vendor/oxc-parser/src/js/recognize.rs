@@ -1204,8 +1204,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.ctx = ctx;
         self.rc_eat(Kind::RParen)?;
         Ok(match first {
-            Shape::Ident if single => Shape::ParenIdent,
-            Shape::Member if single => Shape::ParenMember,
+            Shape::Ident | Shape::ParenIdent if single => Shape::ParenIdent,
+            Shape::Member | Shape::ParenMember if single => Shape::ParenMember,
             _ => Shape::Other,
         })
     }

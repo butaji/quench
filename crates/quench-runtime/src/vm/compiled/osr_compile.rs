@@ -6,7 +6,15 @@ use super::{
     publish_body, tier_policy, CompiledOsrRegion, FieldReceiver, LaneHelpers, LoopRegion,
     NativeCompileRejection, NativeFieldLoad, Observation, VmFacts,
 };
+use super::base_region::function::{build_region, Body, BodySpec};
+use super::lane_compile::LaneDependencies;
+use super::tier_policy::Tiers;
+use super::lane_region::StableFacts;
+use crate::code_dependencies::Invalidation;
+mod calls;
+pub(in crate::vm) use calls::{CallCode, RegionCalls};
 use crate::bytecode::{FieldLookup, Function, Op, ResidualProgram, WideInstruction};
+use crate::vm::global_facts::GlobalTable;
 use super::super::specializer::Specializer;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -23,6 +31,12 @@ pub(in crate::vm) struct OsrFacts {
     slot_dependencies: Vec<crate::code_dependencies::SlotDependency>,
     /// The heap identities the code names (a call's callee), which its publication keeps alive.
     pub(in crate::vm) roots: crate::folded_roots::FoldedRoots,
+    /// The Stable facts a BaseJIT region folded: atoms its stores run in place for, which no method
+    /// cache names (a cache naming one retires it, `MethodCacheAtoms::name`), and the global cells
+    /// that hold the callees it inlines.
+    stable: StableFacts,
+    /// What the callees its calls name depend on (`LaneDependencies::of`).
+    calls: LaneDependencies,
 }
 
 impl OsrFacts {
@@ -30,9 +44,11 @@ impl OsrFacts {
     /// Subscribes `code` to the facts; whether all hold. A receiver shape is guarded at each
     /// field use, so only a holder shape's departure discards it; a receiver shape ID still
     /// retires it at compaction (`shape_dependencies`).
-    pub(in crate::vm) fn subscribe(&self, code: &Rc<dyn crate::code_dependencies::DependentCode>, heap: &mut crate::heap::Heap) -> bool {
+    pub(in crate::vm) fn subscribe(&self, code: &Rc<dyn crate::code_dependencies::DependentCode>, heap: &mut crate::heap::Heap,
+        method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
         self.departure_shapes.iter().all(|shape| heap.subscribe_shape(*shape, code))
             && self.slot_dependencies.iter().all(|dependency| heap.subscribe_slot_observation(*dependency, code))
+            && self.calls.subscribe(&self.stable, code, heap, method_atoms)
     }
 }
 
@@ -50,8 +66,8 @@ pub(in crate::vm) struct PendingOsrRegion {
     crossing: super::Crossing,
     /// Where a run may re-enter the code mid-region.
     resumes: super::base_region::ResumeTable,
-    /// The inline-cache entries of BaseJIT code that a miss may re-patch in place.
-    sites: super::base_region::CacheSites,
+    /// What its code owns of its calls (`CallCode`).
+    calls: CallCode,
 }
 
 /// What a background loop-region compile came to.
@@ -229,22 +245,17 @@ fn loop_fields(region: &LoopRegion, observation: &Observation<'_>)
 impl OsrFacts {
     /// The facts the observation's field descriptors embed in code compiled from it.
     fn observed(observation: &Observation<'_>) -> Self {
-        Self::of_loads(observation.native_field_loads.iter().flatten())
-    }
-
-    /// The facts the descriptors `loads` embed in code that took them.
-    pub(super) fn of_loads<'a>(loads: impl IntoIterator<Item = &'a NativeFieldLoad>) -> Self {
-        let loads: Vec<&NativeFieldLoad> = loads.into_iter().collect();
-        let mut shape_dependencies: Vec<_> = loads.iter().flat_map(|field| std::iter::once(field.shape).chain(field.holder)).collect();
+        let loads = || observation.native_field_loads.iter().flatten();
+        let mut shape_dependencies: Vec<_> = loads().flat_map(|field| std::iter::once(field.shape).chain(field.holder)).collect();
         shape_dependencies.sort_unstable();
         shape_dependencies.dedup();
-        let mut departure_shapes: Vec<_> = loads.iter().filter_map(|field| field.holder).collect();
+        let mut departure_shapes: Vec<_> = loads().filter_map(|field| field.holder).collect();
         departure_shapes.sort_unstable();
         departure_shapes.dedup();
-        let mut slot_dependencies: Vec<_> = loads.iter().filter_map(|field| field.slot_dependency()).collect();
+        let mut slot_dependencies: Vec<_> = loads().filter_map(|field| field.slot_dependency()).collect();
         slot_dependencies.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
         slot_dependencies.dedup();
-        Self { shape_dependencies, departure_shapes, slot_dependencies, roots: Default::default() }
+        Self { shape_dependencies, departure_shapes, slot_dependencies, roots: Default::default(), stable: StableFacts::default(), calls: LaneDependencies::default() }
     }
 }
 
@@ -277,6 +288,7 @@ struct LoopPlanner<'a> {
     function_id: u32,
     helpers: LaneHelpers,
     views: super::ElementViews,
+    tiers: &'static Tiers,
 }
 
 impl LoopPlanner<'_> {
@@ -284,14 +296,14 @@ impl LoopPlanner<'_> {
     /// at the call's exact PC, with no callee inlined. The inlined unit is an optimization over
     /// that plan, used only where the general plan declines; an inlined callee the region
     /// cannot prove exactly then costs the region nothing but the inlining.
-    fn plan(&self, global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads,
+    fn plan(&self, global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> crate::vm::global_facts::GlobalReads,
         unit: &lane_unit::Unit, entry_fields: &super::lane_region::EntryWords, (header, backedge): (usize, usize),
         generic: &[usize]) -> Option<super::lane_region::LoweredRegion> {
         let number_reads = observed_reads(unit, self.observation.number_arrays, self.observation.abandoned, generic);
         super::lane_region::RegionSpecializer {
             number_reads: &number_reads, int_entries: self.observation.int_entries, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
             function_id: self.function_id, unit, helpers: self.helpers, fields: self.fields,
-            global_reads: &global_reads(unit), facts: VmFacts::STATIC, generic,
+            global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts { tiers: self.tiers, ..VmFacts::STATIC }, generic,
             direct: &BTreeMap::new(), frame_captures: &[], isa: self.isa,
             entry_fields,
             plan: super::lane_region::RegionPlan { entry_bounds: self.observation.entry_bounds,
@@ -309,23 +321,28 @@ impl LoopPlanner<'_> {
 const REGION_CODE_BUDGET: usize = 2 * osr_loop::MAX_CODE_BYTES;
 
 /// The BaseJIT tier's answer for `region`: `Some(code)` where it builds or (under `--b-jit`) declines the
-/// region, `None` where Cranelift compiles it. Number loops whose every instruction has a stencil row skip Cranelift.
-fn fast_pending(region: &LoopRegion, views: super::ElementViews, widened: &[usize], observation: &Observation<'_>)
-    -> Option<Option<PendingOsrRegion>> {
+/// region, `None` where Cranelift compiles it. A region BaseJIT builds skips Cranelift: every instruction has a lowering (`base_region::steps`).
+/// Its small monomorphic calls run as their callees' rows (`calls`, the function's and the realm's they were found in).
+fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::base_region::Known, widened: &[usize], observation: &Observation<'_>, helpers: LaneHelpers,
+    (function, calls, invalidation): (u32, RegionCalls, Invalidation)) -> Option<Option<PendingOsrRegion>> {
     let base_only = crate::jit_mode::base_only();
     if !crate::jit_mode::base_regions() || region.inlining.is_some() {
         return base_only.then_some(None);
     }
-    let built = super::base_region::build(region, views == super::ElementViews::Dense, widened,
-        [observation.int_registers, observation.double_registers], observation.operand_kinds, observation.native_field_loads);
-    let Ok(super::base_region::Built { code, bare, resumes, embedded, sites }) = built else { return base_only.then_some(None) };
+    let registers = known.program.function(function as usize).registers;
+    let spec = BodySpec { function, registers, known, realm: calls.realm, widened, seen: [observation.int_registers, observation.double_registers], kinds: observation.operand_kinds };
+    // SAFETY: `calls` was made of the call sites' records this compile (`Vm::region_calls`), whose entry cells are live.
+    let built = unsafe { build_region(region, &spec, views == super::ElementViews::Dense, &calls.callees, helpers) };
+    let Ok(Body { code, bare, frames, records, stable, atoms, holders, layouts, slot_types, resumes, .. }) = built else { return base_only.then_some(None) };
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, region.header, &code, None, "");
     }
+    let calls = CallCode::of((frames, calls.callees.owned, records), registers, invalidation);
+    let facts = OsrFacts { stable: StableFacts { globals: stable, holders, atoms, layouts, slots: slot_types, ..Default::default() },
+        calls: LaneDependencies::of(std::iter::empty(), &calls.direct), ..OsrFacts::observed(observation) };
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
     let code = super::super::jit_backend::run_in_background(move || Ok(code));
-    Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean }, resumes,
-        facts: OsrFacts::of_loads(&embedded), sites }))
+    Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean }, resumes, facts, calls }))
 }
 
 /// Lowers the loop: the inlined unit where the region has one, else (or where that plan
@@ -334,7 +351,7 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, widened: &[usiz
 /// stays in the interpreter, with no second lowering with its own facts, widenings and entry
 /// record.
 fn lower_loop(planner: &LoopPlanner<'_>, region: &LoopRegion,
-    global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads, widened: &[usize],
+    global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> crate::vm::global_facts::GlobalReads, widened: &[usize],
 ) -> Option<super::lane_region::LoweredRegion> {
     let program = planner.program;
     let mut plan = |unit: &lane_unit::Unit, entry_fields: &super::lane_region::EntryWords, header: usize, backedge: usize, generic: &[usize]|
@@ -355,18 +372,24 @@ fn lower_loop(planner: &LoopPlanner<'_>, region: &LoopRegion,
 pub(in crate::vm) fn start_osr_region(
     region: &LoopRegion, views: super::ElementViews,
     observation: &Observation<'_>,
-    policy: crate::MemoryPolicy,
+    (policy, tiers): (crate::MemoryPolicy, &'static Tiers),
     program: &ResidualProgram,
     function_id: u32,
     helpers: LaneHelpers,
-    global_reads: &mut dyn FnMut(&lane_unit::Unit) -> crate::vm::global_facts::GlobalReads,
-    widened: &[usize],
+    global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> crate::vm::global_facts::GlobalReads,
+    (widened, stores): (&[usize], Option<&crate::vm::method_cache::AtomBits>),
+    calls: RegionCalls,
 ) -> Option<PendingOsrRegion> {
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
-    if let Some(decided) = fast_pending(region, views, widened, observation) {
+    // The word the code reads where a call may have changed a Stable fact it folded (`Known::invalidation`).
+    let invalidation = Invalidation::default();
+    // The b-jit's rows hold global slots where the VM and the program run specialized (`stores` is that fact).
+    let globals = (crate::jit_mode::base_regions() && region.inlining.is_none() && stores.is_some()).then(|| global_reads(&loop_unit(program.function(function_id as usize)), GlobalTable::Base));
+    let known = super::base_region::Known { program, stores, reads: None, adds: None, names: None, invalidation: Some(invalidation.address()), constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: globals.as_ref(), stitch: &tiers.stitch };
+    if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation)) {
         return decided;
     }
-    let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views };
+    let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views, tiers };
     let lowered = lower_loop(&planner, region, global_reads, widened)?;
     let function = lowered.function;
     super::residuals::report_clif(region.header, &function);
@@ -376,16 +399,22 @@ pub(in crate::vm) fn start_osr_region(
         compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()))
     });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
-    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General, resumes: super::base_region::ResumeTable::empty(), sites: Default::default() })
+    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General, resumes: super::base_region::ResumeTable::empty(), calls: CallCode::default() })
 }
 
 impl PendingOsrRegion {
 
     /// Subscribes its watch to the facts its code names; whether they hold.
-    pub(in crate::vm) fn watch(&self, heap: &mut crate::heap::Heap) -> bool {
+    pub(in crate::vm) fn watch(&self, heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
         self.watch.hold_roots(self.facts.roots.clone(), heap);
         let watch: Rc<dyn crate::code_dependencies::DependentCode> = self.watch.clone();
-        self.facts.subscribe(&watch, heap)
+        self.facts.subscribe(&watch, heap, method_atoms)
+    }
+
+    /// The watch a collection that frees any of the callees its code names retires, and those callees
+    /// (`ProgramStore::note_pending_native_calls`).
+    pub(in crate::vm) fn native_calls(&self) -> (Rc<crate::code_dependencies::PublishedCode<()>>, Box<[crate::value::Value]>) {
+        (self.watch.clone(), self.calls.identities())
     }
 
     /// Makes it stale where its code names shape ids, which a compaction renumbers.
@@ -401,12 +430,13 @@ impl PendingOsrRegion {
             std::task::Poll::Ready(Some(Ok(code))) => code,
             std::task::Poll::Ready(_) => return Ok(OsrCompile::Failed),
         };
-        let Self { header, clif, facts, crossing, resumes, sites, .. } = *self;
+        let Self { header, clif, facts, crossing, resumes, calls, .. } = *self;
         let Some((memory, entry)) = publish_body(&code) else { return Ok(OsrCompile::Failed) };
+        super::entry_cell::reserve_lane_scratch(calls.window());
         if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
             dump_native_code(directory, header, &memory, &clif);
         }
-        Ok(OsrCompile::Done(CompiledOsrRegion { code: memory, entry, facts, crossing, resumes, sites: sites.into() }))
+        Ok(OsrCompile::Done(CompiledOsrRegion { code: memory, entry, facts, crossing, resumes, calls }))
     }
 }
 

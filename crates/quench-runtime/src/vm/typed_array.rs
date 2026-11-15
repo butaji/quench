@@ -2,7 +2,8 @@ use super::typed_array_install::{TYPED_ARRAY_BASE_METHODS, TYPED_ARRAY_CALLBACK_
 use super::typed_array_install::{UINT8_ARRAY_PROTOTYPE_METHODS, UINT8_ARRAY_STATIC_METHODS};
 use super::*;
 
-/// Direct-mapped entries of `TypedArrayGeometryProofs`, by name: the four geometry names
+/// Direct-mapped entries of `TypedArrayGeometryProofs`, by name and prototype (a DataView reads
+/// `byteLength` and `byteOffset` through its own): the four geometry names
 /// (`length`, `byteLength`, `byteOffset`, `buffer`) a typed array reads through its
 /// prototypes' accessors, each under the one prototype chain (a Buffer's or a plain view's)
 /// a program mostly reads it from.
@@ -23,6 +24,11 @@ struct TypedArrayGeometryProof {
     native: Native,
 }
 
+/// The proof slot of `atom` read through `prototype`: a lookup and the proof it finds share it.
+fn geometry_slot(atom: Atom, prototype: Value) -> usize {
+    (atom as usize).wrapping_add(prototype.to_bits() as usize) % TYPED_ARRAY_GEOMETRY_ENTRIES
+}
+
 #[derive(Default)]
 pub(super) struct TypedArrayGeometryProofs([std::cell::Cell<Option<TypedArrayGeometryProof>>; TYPED_ARRAY_GEOMETRY_ENTRIES]);
 
@@ -39,7 +45,7 @@ impl<H: Host> Vm<H> {
         }
         let (shape, prototype) = (data.shape(), data.proto());
         let epoch = crate::heap::prototype_layout_epoch();
-        let index = atom as usize % TYPED_ARRAY_GEOMETRY_ENTRIES;
+        let index = geometry_slot(atom, prototype);
         let native = match self.typed_array_geometry.0[index].get() {
             Some(proof) if proof.shape == shape && proof.prototype == prototype && proof.atom == atom && proof.epoch == epoch => {
                 proof.native
@@ -71,7 +77,7 @@ impl<H: Host> Vm<H> {
             link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
         }
         if crate::heap::prototype_layout_epoch() == epoch {
-            let index = atom as usize % TYPED_ARRAY_GEOMETRY_ENTRIES;
+            let index = geometry_slot(atom, prototype);
             self.typed_array_geometry.0[index].set(Some(TypedArrayGeometryProof { shape, prototype, atom, epoch, native }));
         }
         Some(native)
@@ -380,12 +386,7 @@ impl<H: Host> Vm<H> {
                         .min(current_length.saturating_sub(target))
                         .min(current_length.saturating_sub(start));
                     let (buffer, offset, width) = match self.heap.get(this) {
-                        Some(Cell::TypedArray {
-                            buffer,
-                            object,
-                            kind,
-                            ..
-                        }) => (*buffer, object.offset, kind.width()),
+                        Some(Cell::TypedArray { buffer, object, .. }) => (*buffer, object.offset, object.native.kind().width()),
                         _ => unreachable!("typed array receiver was validated"),
                     };
                     let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) else {
@@ -701,14 +702,13 @@ impl<H: Host> Vm<H> {
             buffer,
             object,
             length: view_length,
-            kind,
             ..
         }) = self.heap.get(this)
         else {
             return Err(self.type_error(p, "typed array receiver is invalid".into()));
         };
         let (buffer, offset, length_tracking, kind) =
-            (*buffer, object.offset, view_length.is_tracking(), *kind);
+            (*buffer, object.offset, view_length.is_tracking(), object.native.kind());
         let length = self.typed_array_length(this).unwrap_or_default();
         let begin = self.typed_array_relative_index(p, args.first(), length)?;
         let end_arg = args.get(1).filter(|value| !value.is_undefined());
@@ -814,10 +814,10 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some(Cell::TypedArray { buffer, kind, .. }) = self.heap.get(this) else {
+        let Some(Cell::TypedArray { buffer, object, .. }) = self.heap.get(this) else {
             return Err(self.type_error(p, "typed array receiver is invalid".into()));
         };
-        let (buffer, kind) = (*buffer, *kind);
+        let (buffer, kind) = (*buffer, object.native.kind());
         if self.typed_array_out_of_bounds(this) || self.array_buffer_detached(buffer) {
             return Err(self.type_error(p, "typed array receiver is invalid".into()));
         }
@@ -1066,13 +1066,12 @@ impl<H: Host> Vm<H> {
             buffer,
             object,
             length,
-            kind,
             ..
         }) = self.heap.get(this)
         else {
             return None;
         };
-        let (buffer, offset, length, kind) = (*buffer, object.offset, *length, *kind);
+        let (buffer, offset, length, kind) = (*buffer, object.offset, *length, object.native.kind());
         let view_length = match self.heap.get(buffer) {
             Some(Cell::ArrayBuffer { bytes, detached: false, .. }) => length.within(offset, kind.width(), bytes.len()),
             _ => None,

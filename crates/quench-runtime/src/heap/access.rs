@@ -7,7 +7,7 @@ use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
 use std::collections::HashSet;
 
-mod subscribe; mod function_shapes; mod slot_types;
+mod subscribe; mod function_shapes; mod slot_types; mod remembered;
 
 impl Heap {
     /// Return live JavaScript objects whose internal prototype chain contains `prototype`.
@@ -206,7 +206,7 @@ impl Heap {
         unsafe { self.slots.get_unchecked(index) }.cell.as_ref()
     }
 
-    pub fn get_mut(&mut self, value: Value) -> Option<&mut Cell> {
+    #[inline] pub fn get_mut(&mut self, value: Value) -> Option<&mut Cell> {
         let HeapReference::LegacySlot(index) = value.heap_reference()? else {
             return None;
         };
@@ -286,8 +286,7 @@ impl Heap {
     }
 
     /// `iterator`, mutably, past the write barrier.
-    #[inline]
-    pub(crate) fn iterator_mut(&mut self, value: Value) -> Option<&mut IteratorRecord> {
+    #[inline(always)] pub(crate) fn iterator_mut(&mut self, value: Value) -> Option<&mut IteratorRecord> {
         if let Some(record_id) = value.direct_iterator_index() {
             // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
             return Some(unsafe { self.iterator_records.get_live_mut(record_id, &self.properties) });
@@ -335,7 +334,7 @@ impl Heap {
     }
 
     /// `await_state`, mutably, past the write barrier.
-    pub(crate) fn await_state_mut(&mut self, value: Value) -> Option<&mut AwaitState> {
+    #[inline(always)] pub(crate) fn await_state_mut(&mut self, value: Value) -> Option<&mut AwaitState> {
         if let Some(record_id) = value.direct_await_index() {
             // SAFETY: direct-await Values name live records; `&mut self` is exclusive.
             return Some(unsafe { self.await_records.get_live_mut(record_id, &self.properties) });
@@ -347,7 +346,7 @@ impl Heap {
     }
 
     /// `promise`, mutably, past the write barrier.
-    pub(crate) fn promise_mut(&mut self, value: Value) -> Option<&mut PromiseCell> {
+    #[inline(always)] pub(crate) fn promise_mut(&mut self, value: Value) -> Option<&mut PromiseCell> {
         if let Some(record_id) = value.direct_promise_index() {
             // SAFETY: direct-promise Values name live records; `&mut self` is exclusive.
             return Some(unsafe { self.promise_records.get_live_mut(record_id, &self.properties) });
@@ -383,7 +382,7 @@ impl Heap {
         }
     }
 
-    pub(crate) fn is_function_value(&self, value: Value) -> bool {
+    #[inline(always)] pub(crate) fn is_function_value(&self, value: Value) -> bool {
         self.function(value).is_some()
     }
 
@@ -748,6 +747,11 @@ impl Heap {
         self.object_records.native_mark_blocks()
     }
 
+    /// Function mark blocks, which a native store into a function's own properties reads.
+    pub(crate) fn native_function_mark_blocks(&self) -> (*const u8, usize) {
+        self.function_records.native_mark_blocks()
+    }
+
     /// The current base and length of out-of-line ordinary-object property values.
     ///
     /// Native readers may use these only during synchronous no-safepoint execution and must
@@ -850,39 +854,6 @@ impl Heap {
                 visit(Value::heap(index as u32));
             }
         }
-    }
-
-    /// `remember` of `value`'s cell, for a write made through a pointer to its storage.
-    #[inline(always)]
-    pub(crate) fn remember_cell(&mut self, value: Value) {
-        if let Some(HeapReference::LegacySlot(index)) = value.heap_reference() {
-            self.remember(index as usize);
-        }
-    }
-
-    /// The write barrier: an old (marked) cell written to joins the remembered set once.
-    #[inline(always)]
-    pub(super) fn remember(&mut self, index: usize) {
-        if !self.tracks_young_cells()
-            || index >= self.slots.len()
-            || !Heap::marked(&self.marks, index)
-        {
-            return;
-        }
-        let (word, bit) = super::slot_bit(index);
-        // A cell already remembered needs nothing more: the common repeated write.
-        if self.remembered_marks.get(word).is_some_and(|marks| marks & bit != 0) {
-            return;
-        }
-        self.remember_first(word, bit, index);
-    }
-
-    /// `remember` of a cell not yet in the remembered set.
-    #[inline(never)]
-    fn remember_first(&mut self, word: usize, bit: u64, index: usize) {
-        self.remembered_marks.resize(self.marks.len(), 0);
-        self.remembered_marks[word] |= bit;
-        self.remembered.push(index as u32);
     }
 }
 

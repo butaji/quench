@@ -7,7 +7,7 @@
 
 use super::builtins::{UnitWidth, char_at_ascii, char_code_at};
 use super::region::Region;
-use super::{Stage, value::is_direct_string};
+use super::Stage;
 use crate::Value;
 use crate::vm::wtf16::native_string as form;
 
@@ -20,31 +20,13 @@ pub(crate) struct FlatString<W> {
     pub(crate) wide: W,
 }
 
-/// The flat string `value` names among the string records at `record_base`: `None` (leaving
-/// at `miss`) for any other value, before the first string record exists (`record_base`
-/// zero), or for a record in a form a row does not read. The record's address is its index,
-/// `value`'s low half, times the record size past `record_base`.
+/// The flat string `value` names among the string records at `record_base`: its units, length
+/// and width, read from its record (`string_length::flat_record`), or `None` (leaving at `miss`)
+/// where that leaves.
 #[inline(always)]
 pub(crate) fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
     -> Option<FlatString<S::Word>> {
-    let is_string = is_direct_string(stage, value);
-    stage.guard(is_string, miss)?;
-    let present = stage.ne_imm(record_base, 0u32);
-    stage.guard(present, miss)?;
-    let index = stage.and_imm(value, u64::from(u32::MAX));
-    // A small string has no string record (`Heap::small_string_text`).
-    let small_bits = stage.and_imm(index, u64::from(crate::heap::SMALL_STRING_ID_MASK));
-    let has_record = stage.ne_imm(small_bits, u64::from(crate::heap::SMALL_STRING_ID_BASE));
-    stage.guard(has_record, miss)?;
-    let offset = stage.mul_imm(index, form::RECORD_SIZE as u64);
-    let record = stage.add(record_base, offset);
-    let tag = stage.load_u8(Region::HeapMeta.mutable(), record, form::TAG_OFFSET);
-    let short = stage.eq_imm(tag, u64::from(form::TAG_SHORT));
-    let ascii = stage.eq_imm(tag, u64::from(form::TAG_ASCII));
-    let wide = stage.eq_imm(tag, u64::from(form::TAG_WIDE));
-    let shared = stage.any(ascii, wide);
-    let flat = stage.any(short, shared);
-    stage.guard(flat, miss)?;
+    let (record, short, wide) = super::string_length::flat_record(stage, record_base, value, miss)?;
     // Every form keeps the words of both layouts inside the record, so each is read and the
     // form selects.
     let pointer = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_POINTER_OFFSET);
@@ -116,7 +98,7 @@ mod tests {
     use super::*;
     use crate::heap::Heap;
     use crate::staged::Concrete;
-    use crate::staged::builtins::length_value;
+    use crate::staged::value::length_value;
     use crate::vm::wtf16::{JsString, SHORT_ASCII_CAPACITY};
 
     fn stage() -> Concrete { Concrete::new(std::ptr::null()) }

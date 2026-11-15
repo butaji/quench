@@ -171,12 +171,16 @@ impl<H: Host> Vm<H> {
             return (self.fuse_intact(IntactFuse::StringIterator) && self.fuse_intact(IntactFuse::StringIteratorNext))
                 .then_some(IterationSource::String);
         }
-        let (kind, iterator, next) = match self.heap.get(source)? {
-            Cell::Set { object, .. } if object.proto() == self.set_proto && !object.has_side_descriptors() => {
-                (IterationSource::Set, IntactFuse::SetIterator, IntactFuse::SetIteratorNext)
+        // The prototype holds `@@iterator`: the realm's own `Set.prototype` or `Map.prototype`,
+        // or another realm's (a script loaded as its own realm makes its collections there),
+        // whose intrinsic the fuse at that prototype proves. The iterators every realm makes
+        // share one prototype, the realm's `next` fuse.
+        let (kind, holder, iterator, next) = match self.heap.get(source)? {
+            Cell::Set { object, .. } if !object.has_side_descriptors() => {
+                (IterationSource::Set, object.proto(), IntactFuse::SetIterator, IntactFuse::SetIteratorNext)
             }
-            Cell::Map { object, .. } if object.proto() == self.map_proto && !object.has_side_descriptors() => {
-                (IterationSource::Map, IntactFuse::MapIterator, IntactFuse::MapIteratorNext)
+            Cell::Map { object, .. } if !object.has_side_descriptors() => {
+                (IterationSource::Map, object.proto(), IntactFuse::MapIterator, IntactFuse::MapIteratorNext)
             }
             _ => return None,
         };
@@ -190,7 +194,7 @@ impl<H: Host> Vm<H> {
                 self.collection_iteration_shape = Some(shape);
             }
         }
-        (self.fuse_intact(iterator) && self.fuse_intact(next)).then_some(kind)
+        (self.heap.object(holder).is_some() && self.fuse_intact_at(iterator, holder) && self.fuse_intact(next)).then_some(kind)
     }
 
     /// Whether neither `iterator` nor any prototype in its chain has `key`, which the shapes
@@ -3293,7 +3297,8 @@ impl<H: Host> Vm<H> {
     /// Whether `method` is this realm's %ArrayIteratorPrototype%.next and `iterator` one of
     /// its array iterators, so a step may run without the call and its result object.
     pub(super) fn steps_as_array_iterator(&self, iterator: Value, method: Value) -> bool {
-        self.iteration_step(iterator, method) == IterationStep::Array
+        self.heap.iterator(iterator).is_some_and(|record| record.kind.is_array_iterator())
+            && self.is_current_realm_native(method, Native::ArrayIteratorNext)
     }
 
     /// What a step calling `method` of `iterator` is, from one read of the iterator's record:
@@ -3306,7 +3311,9 @@ impl<H: Host> Vm<H> {
             Some(IteratorRecord { kind, .. })
                 if kind.is_array_iterator() && self.is_current_realm_native(method, Native::ArrayIteratorNext) =>
             {
-                IterationStep::Array
+                // A keys or entries step makes its value (`Vm::step_array_entry`), as a
+                // collection's step does.
+                if matches!(kind, IteratorKind::Array | IteratorKind::ArrayValues) { IterationStep::Array } else { IterationStep::Collection }
             }
             Some(IteratorRecord { kind: IteratorKind::Generator, ext, .. })
                 if ext.generator.as_ref().is_some_and(|record| !record.is_executing())

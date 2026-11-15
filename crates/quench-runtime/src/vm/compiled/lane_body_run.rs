@@ -2,6 +2,7 @@
 //! through the body's entry word.
 
 use super::*;
+use crate::vm::tier_events::Event;
 
 /// The activations a run's window has no pending push for: its caller pushed the body's own.
 pub(in crate::vm) const NO_PENDING_ACTIVATIONS: usize = 0;
@@ -30,29 +31,27 @@ impl<H: Host> Vm<H> {
     /// Runs `run`'s body; where it left, or that it returned.
     pub(in crate::vm) fn run_lane_body(&mut self, run: &BodyRun) -> LaneExit {
         let frame = lane_frame();
-        #[cfg(test)]
-        LANE_ENTRIES.with(|counts| counts.set((counts.get().0 + 1, counts.get().1)));
+        self.programs.tier_events().record(Event::Entered);
         // SAFETY: the activation's capture slots outlive its body's run, which collects nothing.
-        let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(run.captures) }
+        let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(super::super::dispatch_fast::capture_reads(run.captures)) }
             .unwrap_or((std::ptr::null(), 0));
         // SAFETY: the frame lives for the thread and is never moved once made; no reference
         // into it is held across the body's run, which may enter it again
         // (`run_nested_lane_method`).
-        #[cfg(test)]
-        let bound = unsafe { (*frame).run_words() };
-        let outer_locals = unsafe { (*frame).dispatch.native_locals };
+        let outer_locals = unsafe { let dispatch = &(*frame).dispatch; (dispatch.native_locals, dispatch.local_count, dispatch.environment_storage) };
         let context = unsafe { self.bind_body_entry(frame, run) };
-        #[cfg(test)]
-        LANE_RUN_REWRITES.with(|count| count.set(count.get() + usize::from(bound != unsafe { (*frame).run_words() })));
-        let captures = entry_cell::capture_word(capture_values, capture_len);
+        let captures = entry_cell::capture_word(capture_values, capture_len, super::super::dispatch_fast::capture_stores(run.captures).is_some());
         // SAFETY: the body was compiled for this function, never allocates or collects, and
         // reads only the registers, constants and heap bases bound above.
         let BodyReturn { status, value: word } = unsafe { self.call_body(run, context, captures) };
         // A body re-reads its locals' address after each call-out, and a run its call-outs make
         // binds its own: the run it returns into gets back the address it entered with.
-        unsafe { (*frame).dispatch.native_locals = outer_locals };
+        unsafe { let dispatch = &mut (*frame).dispatch; (dispatch.native_locals, dispatch.local_count, dispatch.environment_storage) = outer_locals };
         // SAFETY: as above; a completing body wrote the record before it returned.
-        LaneExit::read(status, word, || unsafe { (*frame).dispatch.returned_pc })
+        let exit = LaneExit::read(status, word, || unsafe { (*frame).dispatch.returned_pc });
+        self.programs.tier_events().record(Event::ended(exit));
+        if status == LANE_BODY_RETURNED { self.programs.tier_events().record(Event::Returned); }
+        exit
     }
 
     /// The words an entry of `run` binds in the thread's lane frame: those of its run
@@ -76,21 +75,25 @@ impl<H: Host> Vm<H> {
             // A run's field cache entries are rebound when the table moves
             // (`Vm::rebind_lane_field_entries`), not per entry: `bind_run` binds them once per
             // run, and the frame's word follows the table from then on.
-            (*frame).bind_run(bound, &self.execution_interrupt, || self.program_field_entries(run.program).unwrap_or(0));
+            if (*frame).bind_run(bound, &self.execution_interrupt, || self.program_field_entries(run.program).unwrap_or(0)) {
+                self.programs.tier_events().record(Event::RunBound);
+            }
+            debug_assert_eq!((*dispatch).field_entries, self.program_field_entries(run.program).unwrap_or(0), "the run's field cache entries stand");
             (*dispatch).native_registers = run.registers;
-            // The activation's locals, which a body's `LoadLocalPlain` and `StoreLocalPlain` address.
-            (*dispatch).native_locals = crate::vm::dispatch_fast::lane_body_locals::<H>(run.lane_context, run.registers, run.pending != NO_PENDING_ACTIVATIONS);
+            let locals = super::super::dispatch_fast::body_locals::<H>(run.lane_context);
+            ((*dispatch).native_locals, (*dispatch).local_count, (*dispatch).environment_storage) = (locals.locals, locals.count, locals.environment);
             (*dispatch).refresh_object_bases_at_entry(self);
             let vm = self as *mut Self;
             (*dispatch).bind_lane_storage(vm);
-            // A run starts with no native frames; its direct calls place their callees past
-            // the stack's values.
-            let (top, end, activations, shadow) = self.lane_stack_spare(run.pending);
-            ((*dispatch).native_top, (*dispatch).native_end) = (top.addr(), end.addr());
-            // A run whose lane may not make the frames' activations makes no direct call.
-            let frames = if run.direct_calls { SHADOW_FRAMES.min(activations) } else { 0 };
-            (*dispatch).shadow_base = shadow.addr();
-            ((*dispatch).shadow_top, (*dispatch).shadow_end) = (shadow.addr(), shadow.add(frames).addr());
+            // A run starts with no native frames; its direct calls push their callees' windows and
+            // frames onto the lane stack's own tops, which the dispatch points at. A body entered
+            // through its cell has an activation pending, which a leave pushes first: it makes no
+            // direct call, the frames of which would sit above that activation's room.
+            let words = self.lane_stack_words(if run.direct_calls && run.pending == NO_PENDING_ACTIVATIONS { SHADOW_FRAMES } else { 0 });
+            (*dispatch).lane_frames_end = words.frames_end;
+            (*dispatch).lane_values_top = words.values_top;
+            (*dispatch).lane_values_end = words.values_end;
+            (*dispatch).lane_activations_top = words.activations_top;
             &raw mut (*frame).context
         }
     }

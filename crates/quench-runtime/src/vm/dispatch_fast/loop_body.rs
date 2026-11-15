@@ -34,7 +34,7 @@ impl LoopBody {
     /// A new loop site's body: none is planned while loop bodies are off (`tier_policy::LOOP_BODIES`)
     /// outside `tier-stress`, which keeps compiling every eligible body,
     /// or where the process runs no Cranelift function tiers (`--b-jit`).
-    pub(super) fn initial() -> Self { if (super::super::compiled::tier_policy::LOOP_BODIES || super::super::compiled::tier_policy::admits_every_compile()) && crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) { Self::IDLE } else { Self::Declined } }
+    pub(super) fn initial(tiers: &Tiers) -> Self { if (super::super::compiled::tier_policy::LOOP_BODIES || tiers.admits_all) && crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) { Self::IDLE } else { Self::Declined } }
 
     /// Records that a run left at `exit`: taken often, where they are few, the leaves are the
     /// next body's feedback (a failed entry contract drops the contract), until the bodies
@@ -135,8 +135,8 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
     // A body its iterations have not paid for waits until they would at its planned size.
     if matches!(outcome, LaneBodyOutcome::Unpaid) {
         let ir = vm.programs.planned_lane_ir(&(vm.active_program.raw(), function, Some(site.header)))
-            .unwrap_or_else(|| usize::try_from(site.span().saturating_mul(super::super::compiled::tier_policy::TIERS.loops.ir_per_bytecode)).unwrap_or(usize::MAX));
-        site.body_due.set(super::super::compiled::loop_model::body_taken(site.span(), ir, true));
+            .unwrap_or_else(|| usize::try_from(site.span().saturating_mul(vm.programs.tiers().loops.ir_per_bytecode)).unwrap_or(usize::MAX));
+        site.body_due.set(super::super::compiled::loop_model::body_taken(vm.programs.tiers(), site.span(), ir, true));
     }
     *body = LoopBody::after(outcome, stuck, attempts);
     if matches!(*body, LoopBody::Ready { .. }) { raise_tier_up(vm, site); }
@@ -223,13 +223,21 @@ fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: 
     if resume.inside(site.header..=site.backedge) { site.body.borrow_mut().note_leave(exit); }
     drop(method);
     if site.diagnostics { site.body_runs.set(site.body_runs.get().saturating_add(1)); }
-    Some(match resumed {
+    Some(loop_attempt(cx, ip, resumed))
+}
+
+/// What a loop site's attempt leaves the lane to do after native code of its loop left, and the lane
+/// recovered `resumed` (`lane_body_left`, `lane_body_inlined_activation`): `ip` is the record the run
+/// was reached at.
+pub(super) fn loop_attempt<H: Host>(cx: *mut LaneContext<H>, ip: Ip, resumed: LaneBodyLeft) -> LoopAttempt {
+    match resumed {
         LaneBodyLeft::Terminated => LoopAttempt::Leave(super::exit(ip)),
         // A callee's run that left the lane for the general path leaves it at its record.
         LaneBodyLeft::Resume(_, next, _) if body_calls::left_lane(next) => LoopAttempt::Leave(next),
         LaneBodyLeft::Resume(registers, next, carried) => LoopAttempt::Carry(registers, next, carried),
+        LaneBodyLeft::Raised(record) => LoopAttempt::Leave(lane_raised_exit(cx, record)),
         LaneBodyLeft::Completed(record, value) => LoopAttempt::Resumed(lane_return_value_general::<H>(cx, record, value)),
-    })
+    }
 }
 
 #[cfg(test)]
