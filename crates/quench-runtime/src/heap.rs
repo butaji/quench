@@ -667,6 +667,11 @@ pub(crate) struct Heap {
     young_weak: Vec<u32>,
     free_by_slab: Vec<FreeSlotBitmap>,
     free_slabs: Vec<u32>,
+    /// The slots of one free-list word claimed whole (`refill_bump`), which allocations take
+    /// lowest first, and the first slot of that word: claimed slots are young already, so an
+    /// allocation is a bit scan. A collection hands back the unused ones first (`retire_bump`).
+    bump_bits: u64,
+    bump_base: usize,
     free_slots: usize,
     external_bytes: usize,
     /// The allocation weight charged since the heap was made or reset: one per cell or
@@ -1016,6 +1021,8 @@ impl Heap {
             young: YoungSlots::default(),
             free_by_slab: Vec::with_capacity(12),
             free_slabs: Vec::with_capacity(12),
+            bump_bits: 0,
+            bump_base: 0,
             free_slots: 0,
             layout_id: Self::next_layout_id(),
             collect_at: std::cell::Cell::new(MemoryPolicy::default().pacing().minimum_young),
@@ -1843,8 +1850,9 @@ impl Heap {
         };
         let index = slot as u32;
         self.slots.get_mut(slot).unwrap().cell = Some(cell());
-        if track_young {
-            self.young.insert(index as usize);
+        // A claimed slot is young already (`refill_bump`).
+        if !track_young {
+            self.young.remove_word(slot / u64::BITS as usize, 1 << (slot % u64::BITS as usize));
         }
         if weak {
             self.young_weak.push(index);
@@ -1857,22 +1865,56 @@ impl Heap {
         Value::heap(index)
     }
 
-    /// A free slot's index, the highest of the last slab with one, claimed.
+    /// A free slot's index, claimed and young: the lowest of the claimed word's
+    /// (`bump_bits`), else of a word newly claimed.
     #[inline(always)]
     fn take_free_slot(&mut self) -> Option<usize> {
+        let bits = self.bump_bits;
+        if bits != 0 {
+            self.bump_bits = bits & (bits - 1);
+            return Some(self.bump_base + bits.trailing_zeros() as usize);
+        }
+        self.refill_bump()
+    }
+
+    /// Claims the free slots of the highest word of the last slab with one, makes them young
+    /// in one word operation, and takes the lowest. Allocations then cost a bit scan, not a
+    /// free-list pop and a young insert each (BigInt sums, closures, environments).
+    #[inline(never)]
+    fn refill_bump(&mut self) -> Option<usize> {
         while let Some(slab) = self.free_slabs.last().copied() {
             let slab_index = slab as usize;
-            let Some(offset) = self.free_by_slab[slab_index].pop() else {
+            let Some((word, bits)) = self.free_by_slab[slab_index].pop_word() else {
                 self.free_slabs.pop();
                 continue;
             };
-            self.free_slots -= 1;
+            self.free_slots -= bits.count_ones() as usize;
             if self.free_by_slab[slab_index].is_empty() {
                 self.free_slabs.pop();
             }
-            return Some(slab_index * SLOTS_PER_SLAB + offset as usize);
+            let base = slab_index * SLOTS_PER_SLAB + word * u64::BITS as usize;
+            self.young.insert_word(base / u64::BITS as usize, bits);
+            self.bump_bits = bits & (bits - 1);
+            self.bump_base = base;
+            return Some(base + bits.trailing_zeros() as usize);
         }
         None
+    }
+
+    /// Hands the claimed slots no allocation took back to the free list, not young, before a
+    /// collection marks or sweeps: a sweep must not count free slots as young deaths.
+    pub(super) fn retire_bump(&mut self) {
+        let bits = std::mem::take(&mut self.bump_bits);
+        if bits == 0 {
+            return;
+        }
+        self.young.remove_word(self.bump_base / u64::BITS as usize, bits);
+        let slab = self.bump_base / SLOTS_PER_SLAB;
+        if self.free_by_slab[slab].is_empty() {
+            self.free_slabs.push(slab as u32);
+        }
+        self.free_by_slab[slab].insert_word((self.bump_base % SLOTS_PER_SLAB) / u64::BITS as usize, bits);
+        self.free_slots += bits.count_ones() as usize;
     }
 
     /// `alloc_in_slot` when no slot is free: a new one past the last.
@@ -2214,6 +2256,7 @@ impl Heap {
         self.aged.clear();
         self.free_by_slab.clear();
         self.free_slabs.clear();
+        self.bump_bits = 0;
         self.free_slots = 0;
         buffer_bytes::bump_view_epoch();
         self.external_bytes = 0;
@@ -2470,6 +2513,7 @@ impl Heap {
     /// `collection_is_full`, noting a full collection's start for the old-generation sizing
     /// (`GenerationalPacing::old_sizing`).
     fn start_collection(&mut self, full: bool) -> bool {
+        self.retire_bump();
         let full = self.collection_is_full(full);
         if full {
             self.pacing_state.old_generation.start_full();

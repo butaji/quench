@@ -64,6 +64,23 @@ impl YoungSlots {
         self.words[word] |= 1_u64 << (index % WORD_BITS);
     }
 
+    /// Makes the slots `mask` names in word `word` young at once (`Heap::refill_bump`).
+    #[inline]
+    pub(super) fn insert_word(&mut self, word: usize, mask: u64) {
+        if word >= self.words.len() {
+            self.words.resize(word + 1, 0);
+        }
+        self.words[word] |= mask;
+    }
+
+    /// Makes the slots `mask` names in word `word` not young.
+    #[inline]
+    pub(super) fn remove_word(&mut self, word: usize, mask: u64) {
+        if let Some(bits) = self.words.get_mut(word) {
+            *bits &= !mask;
+        }
+    }
+
     pub(super) fn clear(&mut self) {
         self.words.fill(0);
     }
