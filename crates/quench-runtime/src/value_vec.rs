@@ -1078,13 +1078,15 @@ impl ValueArena {
         self.values.len()
     }
 
-    /// Its length, capacity, released values and nursery range, for `QUENCH_TRACE=gc`.
+    /// Its length, capacity, released values, held values against the last full collection's
+    /// (`GenerationalPacing::arena_growth_reached`) and nursery range, for `QUENCH_TRACE=gc`.
     pub(crate) fn trace_summary(&self) -> String {
         let n = self.nursery;
         let free_classes = self.free.iter().enumerate().filter(|(_, list)| !list.is_empty())
             .map(|(class, list)| format!("{class}:{}", list.len())).collect::<Vec<_>>().join(",");
-        format!("arena_len={} arena_cap={} released={} nursery={}..{}..{} free=[{free_classes}]",
-            self.values.len(), self.values.capacity(), self.released_values, n.floor, n.top, n.end)
+        format!("arena_len={} arena_cap={} released={} arena_held={} arena_settled={} nursery={}..{}..{} free=[{free_classes}]",
+            self.values.len(), self.values.capacity(), self.released_values, self.occupied_values(), self.settled_values,
+            n.floor, n.top, n.end)
     }
 
     #[inline(always)] pub(crate) fn release(&mut self, vector: ValueVec) {
