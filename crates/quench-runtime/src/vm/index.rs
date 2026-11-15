@@ -267,7 +267,7 @@ impl<H: Host> Vm<H> {
                 || data.boxed_primitive().is_some()
                 || data.is_module_namespace()
                 || data.deferred_module().is_some()
-                || self.heap.sparse_length(current).is_some()
+                || self.heap.sparse_get(current, index).is_some_and(|value| !value.is_deleted())
                 || self.shape_names_index(data.shape(), index)
             {
                 return None;
