@@ -1615,6 +1615,46 @@ impl Heap {
         self.insert_admitted_object_record(object)
     }
 
+    /// `alloc_unfilled_object_under_flagged_prototype` of an object whose first slot holds
+    /// `first` from the start, admitted; `None` where the header cannot hold it inline.
+    #[inline(always)]
+    pub(crate) fn alloc_object_under_flagged_prototype_with_first(&mut self, header: InlineObjectHeader, first: Value) -> Option<Value> {
+        if cfg!(feature = "profile-aggregate") {
+            return None;
+        }
+        let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
+        inline[0] = first;
+        let object = Object::from_inline_header(header, inline)?;
+        debug_assert!(self.prototype_flagged(object.proto()));
+        Some(self.insert_object_record(object))
+    }
+
+    /// A function record claimed before its function exists, as the value that names it, for
+    /// a closure whose `.prototype` names the closure from its creation: written by
+    /// `fill_claimed_function_record` before any collection. `None` where the claim would
+    /// take the record space's slow path.
+    #[inline(always)]
+    pub(crate) fn claim_function_record(&mut self) -> Option<Value> {
+        if cfg!(feature = "profile-aggregate") {
+            return None;
+        }
+        self.function_records.claim_uninit_quick().map(Value::direct_function)
+    }
+
+    /// `alloc_function_under_flagged_prototype` of `function` into the record `claimed`
+    /// (`claim_function_record`) names.
+    #[inline(always)]
+    pub(crate) fn fill_claimed_function_record(&mut self, claimed: Value, function: FunctionRecord) {
+        debug_assert!(self.prototype_flagged(function.object.proto()));
+        let id = claimed.direct_function_index().expect("a claimed function record");
+        self.admit_object_contents(&function.object);
+        self.allocated += 1;
+        // SAFETY: the claim made the id occupied with its record uninitialized, written once here.
+        unsafe { self.function_records.record_ptr(id).write(function) };
+        #[cfg(feature = "profile-memory")]
+        self.profile_allocation(claimed);
+    }
+
     /// An object of the run header `header` (`InlineObjectHeader::of_run`) over a new young
     /// run of the first `len` of `values` (the rest `undefined`), for a function record
     /// (`YoungOwner::Function`), not yet allocated; `None` when the nursery has no run for it.

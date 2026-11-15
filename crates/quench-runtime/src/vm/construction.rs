@@ -369,7 +369,18 @@ impl<H: Host> Vm<H> {
     fn closure_of_template(&mut self, template: ClosureTemplate, env: Value) -> Value {
         // Both objects are allocated finished from headers derived once: the prototype under
         // the shape its `constructor` add would reach, its slot filled once the closure exists.
-        let prototype = template.prototype.map(|header| self.heap.alloc_unfilled_object_under_flagged_prototype(header));
+        // A closure whose record is claimed first is its prototype's `constructor` from the
+        // start; any other fills that slot once it exists.
+        let claimed = template.prototype.and_then(|_| self.heap.claim_function_record());
+        let mut unfilled = false;
+        let prototype = template.prototype.map(|header| {
+            claimed
+                .and_then(|function| self.heap.alloc_object_under_flagged_prototype_with_first(header, function))
+                .unwrap_or_else(|| {
+                    unfilled = true;
+                    self.heap.alloc_unfilled_object_under_flagged_prototype(header)
+                })
+        });
         let named = [template.length, template.name];
         let object = if finished_closure_fits(prototype) {
             crate::heap::Object::from_inline_header(template.header, finished_closure_slots(&named, prototype))
@@ -382,13 +393,15 @@ impl<H: Host> Vm<H> {
         let object = object.unwrap_or_else(|| {
             self.finished_closure_object(template.function_prototype, template.header.shape(), named, prototype)
         });
-        let function = self.heap.alloc_function_under_flagged_prototype(FunctionRecord {
-            object,
-            realm: template.realm,
-            kind: template.kind,
-            env,
-        });
-        if let Some(prototype) = prototype {
+        let record = FunctionRecord { object, realm: template.realm, kind: template.kind, env };
+        let function = match claimed {
+            Some(function) => {
+                self.heap.fill_claimed_function_record(function, record);
+                function
+            }
+            None => self.heap.alloc_function_under_flagged_prototype(record),
+        };
+        if unfilled && let Some(prototype) = prototype {
             self.heap.fill_new_object_slot(prototype, 0, function);
         }
         function
