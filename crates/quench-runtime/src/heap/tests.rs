@@ -739,7 +739,7 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
         let constructor = heap.alloc(Cell::Object(plain_object()));
         let weak_constructor = heap.weak_handle(constructor).unwrap();
         let regexp = heap.alloc(Cell::RegExp {
-            object: Box::new(plain_object()),
+            object: plain_object(),
             meta: Rc::new(crate::heap::RegExpMeta {
                 source: "a".into(),
                 flags: crate::vm::RegExpFlags::validated(""),

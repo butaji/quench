@@ -15,6 +15,7 @@ impl Cell {
             // cell stays small.
             Self::Object(object) => Some(object),
             Self::Array { object } => Some(object),
+            Self::RegExp { object, .. } => Some(object),
             Self::ArrayBuffer { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
@@ -24,7 +25,6 @@ impl Cell {
             | Self::WeakRef { object, .. }
             | Self::FinalizationRegistry { object, .. }
             | Self::Date { object, .. }
-            | Self::RegExp { object, .. }
             | Self::Proxy { object, .. }
             | Self::TemporalDuration { object, .. }
             | Self::TemporalPlainDate { object, .. }
@@ -53,6 +53,7 @@ impl Cell {
             // cell stays small.
             Self::Object(object) => Some(object),
             Self::Array { object } => Some(object),
+            Self::RegExp { object, .. } => Some(object),
             Self::ArrayBuffer { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
@@ -62,7 +63,6 @@ impl Cell {
             | Self::WeakRef { object, .. }
             | Self::FinalizationRegistry { object, .. }
             | Self::Date { object, .. }
-            | Self::RegExp { object, .. }
             | Self::Proxy { object, .. }
             | Self::TemporalDuration { object, .. }
             | Self::TemporalPlainDate { object, .. }

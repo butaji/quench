@@ -2429,7 +2429,7 @@ impl<H: Host> Vm<H> {
         meta: Rc<crate::heap::RegExpMeta>,
     ) -> Result<Value, JsError> {
         let object = self.heap.alloc(Cell::RegExp {
-            object: Box::new(Self::empty_object(prototype)),
+            object: Self::empty_object(prototype),
             meta,
         });
         // Every new RegExp object starts in the same shape, so the `lastIndex` definition the

@@ -4228,7 +4228,7 @@ pub(crate) enum Cell {
     /// `meta` is shared: every evaluation of one literal site takes the site's record
     /// (`ProgramStore::regexp_literal_meta`), and `compile` replaces the receiver's copy.
     RegExp {
-        object: Box<Object>,
+        object: Object,
         meta: Rc<RegExpMeta>,
     },
     Error(String),
