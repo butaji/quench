@@ -1029,7 +1029,8 @@ impl ValueArena {
     /// `vector`, an ordinary run of a plain object whose values all have a narrow form and
     /// fill a smaller class narrow, moved into a released range of the narrow class, its own
     /// range released in turn: what a full collection without compaction does for the runs
-    /// it keeps (`Heap::narrow_live_runs`). Only a released range takes it, so the arena never
+    /// it keeps (`Heap::narrow_live_runs`). Without such a range the run narrows in place and
+    /// its unused tail is released, where the tail is a class of its own. The arena never
     /// grows for it. `None` changes nothing.
     pub(crate) fn narrow_into_released(&mut self, vector: ValueVec) -> Option<ValueVec> {
         debug_assert!(!vector.is_narrow() && !vector.is_dictionary() && !vector.has_inline_property_storage());
@@ -1040,12 +1041,28 @@ impl ValueArena {
         let mut narrow = vector;
         narrow.auxiliary |= NARROW_FORM;
         let capacity = Self::ordered_capacity(narrow, length);
-        let target = self.pop_free(Self::bucket(capacity))? as usize;
-        self.released_values -= capacity;
+        let tail = Self::ordered_capacity(vector, length) - capacity;
+        if self.free[Self::bucket(capacity)].is_empty() && capacity_class(tail) != tail {
+            return None;
+        }
         let words = self.narrow_words_of(vector.start(), length);
+        let target = match self.pop_free(Self::bucket(capacity)) {
+            Some(target) => {
+                self.released_values -= capacity;
+                self.release_held(vector);
+                target as usize
+            }
+            None => {
+                // No released range of the narrow class: the run narrows where it is, and the
+                // words it no longer fills go free as a range of their own class.
+                let source = vector.start();
+                self.push_free(Self::bucket(tail), (source + capacity) as u32);
+                self.released_values += tail;
+                source
+            }
+        };
         self.values[target..target + words.len()].copy_from_slice(&words);
         self.values[target + words.len()..target + capacity].fill(Value::UNDEFINED);
-        self.release_held(vector);
         narrow.relocate(target);
         Some(narrow)
     }
