@@ -593,9 +593,7 @@ impl<H: Host> Vm<H> {
                 if radix == 10 || !number.is_finite() {
                     return Ok(self.heap.alloc_string(super::wtf16::JsString::from_number(number)));
                 }
-                Ok(self.heap.alloc_string(
-                    super::string_extra::number_to_radix(number, radix).into(),
-                ))
+                Ok(self.heap.alloc_string(super::string_extra::number_to_radix_string(number, radix)))
             }
             _ => unreachable!("non-primitive native routed to primitive library"),
         }
