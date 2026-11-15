@@ -8647,11 +8647,14 @@ script_handler! {
         let (left, right) = (r.get(i.b), r.get(i.c));
         // Equal words are strictly equal but for NaN, tested first: about half of a symbol-
         // comparing program's compares (V8-v7 Boyer) are of one value with itself.
-        let equal = if left == right { left.as_number().is_none_or(|number| !number.is_nan()) } else { match (left.as_number(), right.as_number()) {
-            (Some(left), Some(right)) => left == right,
+        // Two distinct heap words, the common unequal case of reference-comparing code, are
+        // decided by their families first, without decoding either word as a Number.
+        let equal = if left == right { left.as_number().is_none_or(|number| !number.is_nan()) } else if !(left.is_heap() && right.is_heap()) {
+            matches!((left.as_number(), right.as_number()), (Some(left), Some(right)) if left == right)
+        } else {
             // Two distinct heap values are equal only as strings or BigInts, which their
             // handles' families name; a slot cell that is no BigInt (a Symbol) is not.
-            _ if left.is_heap() && right.is_heap() => match left.distinct_heap_pair(right) {
+            match left.distinct_heap_pair(right) {
                 crate::value::DistinctHeapPair::Unequal => false,
                 crate::value::DistinctHeapPair::Strings => {
                     sibling!(lane_jump_strict_equal_cells::<H, BACKWARD, NEGATED>, r, ip, Carried::script_in(cx, view))
@@ -8662,9 +8665,8 @@ script_handler! {
                     }
                     false
                 }
-            },
-            _ => false,
-        } };
+            }
+        };
         if equal == NEGATED {
             resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None));
         }
