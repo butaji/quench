@@ -844,14 +844,14 @@ impl ValueArena {
 
     /// The heap references among a vector's values: the edges a collector traces. Numbers,
     /// other immediates and deleted slots are not references.
-    pub(crate) fn append_heap_references(&self, vector: ValueVec, output: &mut Vec<Value>, mut settled: impl FnMut(Value) -> bool) {
+    pub(crate) fn append_heap_references(&self, vector: ValueVec, output: &mut Vec<Value>) {
         let len = self.len(vector);
         if vector.is_dictionary() {
             let values = &self.dictionaries[&vector.dictionary_id()];
             output.extend(
                 (0..len)
                     .filter_map(|slot| values.get(&(slot as u32)).copied())
-                    .filter(|value| value.is_heap() && !settled(*value)),
+                    .filter(|value| value.is_heap()),
             );
             return;
         }
@@ -862,7 +862,7 @@ impl ValueArena {
             self.values[vector.start()..vector.start() + len]
                 .iter()
                 .copied()
-                .filter(|value| value.is_heap() && !settled(*value)),
+                .filter(|value| value.is_heap()),
         );
     }
 
@@ -1362,7 +1362,7 @@ mod tests {
         assert_eq!(arena.get(vector, 1).unwrap().as_number(), Some(33.0));
 
         let mut references = Vec::new();
-        arena.append_heap_references(vector, &mut references, |_| false);
+        arena.append_heap_references(vector, &mut references);
         assert!(references.is_empty(), "numbers are not heap references");
         assert_eq!(arena.values.len(), range_count);
         assert!(
@@ -1387,7 +1387,7 @@ mod tests {
         arena.migrate_to_dictionary_for_test(&mut vector);
 
         let mut roots = Vec::new();
-        arena.append_heap_references(vector, &mut roots, |_| false);
+        arena.append_heap_references(vector, &mut roots);
         assert_eq!(roots, [Value::heap(11)]);
     }
 

@@ -139,20 +139,12 @@ impl PromiseRecord {
         }
     }
 
-    /// The heap values the record keeps alive: a pending promise has no result, and most
-    /// reactions no rejection handler, so a mark that pushed each field popped a quarter of
-    /// its work to find no edge.
     pub(crate) fn append_roots(&self, roots: &mut Vec<Value>) {
-        let mut push = |value: Value| {
-            if value.is_heap() {
-                roots.push(value);
-            }
-        };
-        push(self.result);
+        roots.push(self.result);
         for reaction in &self.reactions {
-            push(reaction.on_fulfilled);
-            push(reaction.on_rejected);
-            push(reaction.next);
+            roots.push(reaction.on_fulfilled);
+            roots.push(reaction.on_rejected);
+            roots.push(reaction.next);
         }
     }
 }

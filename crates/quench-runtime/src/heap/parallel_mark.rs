@@ -24,7 +24,7 @@ use super::{
     ArrayObject, AwaitState, Cell, CellKind, EnvironmentTrace, FunctionRecord, GcTraceKind, Heap,
     IteratorRecord, MarkBits, Object, ParallelObjectRootTrace, PromiseCell, SlotArena, SparseElements,
     PARALLEL_MARK_MAX_THREADS, PARALLEL_MARK_SPLIT_THRESHOLD, PARALLEL_MARK_STACK_SIZE_BYTES, mark_bits,
-    mark_word_if_new, settled::{Settled, marked_prototype}, weak,
+    mark_word_if_new, weak,
 };
 use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
@@ -72,21 +72,6 @@ struct ParallelMarkView<'heap> {
     reads_closures: bool,
     /// `EnvironmentTrace::projection_function` for this collection.
     projection_function: Option<u32>,
-}
-
-/// What a worker's visits settle (`Settled`).
-struct ParallelSettled<'view, 'heap>(&'view ParallelMarkView<'heap>);
-
-impl Settled for ParallelSettled<'_, '_> {
-    #[inline(always)]
-    fn mark_flat_string(&mut self, record_id: RecordId) -> bool {
-        super::string_parts::mark_flat_if_new(&self.0.strings, record_id)
-    }
-
-    #[inline(always)]
-    fn is_marked_prototype(&self, value: Value) -> bool {
-        marked_prototype(value, &self.0.objects, &self.0.arrays, &self.0.functions)
-    }
 }
 
 // SAFETY: the view is built from the collector's exclusive borrow of the heap and lives only
@@ -254,7 +239,7 @@ impl<'heap> ParallelMarkView<'heap> {
                 }
                 // SAFETY: this view just marked the occupied record.
                 let object = unsafe { self.objects.get(id) };
-                Heap::object_children(value, object, properties, &mut ParallelSettled(self), work, &mut object_roots, trace_kind, last_proto);
+                Heap::object_children(value, object, properties, work, &mut object_roots, trace_kind, last_proto);
                 self.note_marked_key(value, batch);
                 CellKind::Object
             }
@@ -264,11 +249,12 @@ impl<'heap> ParallelMarkView<'heap> {
                 }
                 // SAFETY: this view just marked the occupied record.
                 let array = unsafe { self.arrays.get(id) };
+                let strings = self.strings;
                 Heap::array_children(
                     value,
                     array,
                     properties,
-                    &mut ParallelSettled(self),
+                    |string| super::string_parts::mark_flat_if_new(&strings, string),
                     work,
                     &mut object_roots,
                     trace_kind,
@@ -284,7 +270,7 @@ impl<'heap> ParallelMarkView<'heap> {
                 }
                 // SAFETY: this view just marked the occupied record.
                 let function = unsafe { self.functions.get(id) };
-                Heap::function_children(value, function, properties, &mut ParallelSettled(self), work, &mut object_roots, trace_kind, last_proto);
+                Heap::function_children(value, function, properties, work, &mut object_roots, trace_kind, last_proto);
                 if self.reads_closures {
                     batch.closures.push(id);
                 } else {
@@ -299,7 +285,7 @@ impl<'heap> ParallelMarkView<'heap> {
                 }
                 // SAFETY: this view just marked the occupied record.
                 let iterator = unsafe { self.iterators.get(id) };
-                Heap::object_children(value, &iterator.object, properties, &mut ParallelSettled(self), work, &mut object_roots, trace_kind, last_proto);
+                Heap::object_children(value, &iterator.object, properties, work, &mut object_roots, trace_kind, last_proto);
                 Heap::iterator_edges(iterator, work);
                 self.note_marked_key(value, batch);
                 CellKind::Iterator
@@ -310,7 +296,7 @@ impl<'heap> ParallelMarkView<'heap> {
                 }
                 // SAFETY: this view just marked the occupied record.
                 let promise = unsafe { self.promises.get(id) };
-                Heap::object_children(value, &promise.object, properties, &mut ParallelSettled(self), work, &mut object_roots, trace_kind, last_proto);
+                Heap::object_children(value, &promise.object, properties, work, &mut object_roots, trace_kind, last_proto);
                 promise.record.append_roots(work);
                 self.note_marked_key(value, batch);
                 CellKind::Object
