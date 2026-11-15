@@ -288,7 +288,8 @@ impl<H: Host> Vm<H> {
         generator: Option<Value>,
         source: Value,
     ) -> Result<(), JsError> {
-        let source = if self.host.observes_promise_lifecycle()
+        let observes = self.host.observes_promise_lifecycle();
+        let source = if observes
             && !self.is_promise(source)
             && !self.is_object_like(source)
         {
@@ -303,7 +304,8 @@ impl<H: Host> Vm<H> {
         };
         // Materialize the await reaction's Promise resource for host lifecycle
         // observation, even though the continuation consumes no result value.
-        let next = if self.host.observes_promise_lifecycle() {
+        // The observer read above stands: without one, nothing above ran guest code.
+        let next = if observes {
             self.with_call_roots([source], |vm| {
                 vm.promise_object_with_parent(
                     vm.promise_record(source).and_then(|record| record.host_context().get()),
@@ -840,6 +842,8 @@ impl<H: Host> Vm<H> {
         program: ProgramId,
         frame: usize,
         pc: usize,
+        awaited: u16,
+        destination: u16,
     ) -> Option<Result<(), JsError>> {
         let chain = self.await_chain.filter(|chain| chain.frame == frame && frame + 1 == self.frames.len())?;
         let ChainTask::Await(resume) = chain.task else {
@@ -850,7 +854,12 @@ impl<H: Host> Vm<H> {
         let Some(PendingJob::Reaction(job)) = self.realm.jobs.front() else {
             return None;
         };
-        let (realm, handler) = (self.realm.globals, job.handler);
+        let realm = self.realm.globals;
+        // As `chain_gates`, read once.
+        if job.rejected || job.execution_context.get().is_some() || job.realm != realm || !job.next.is_undefined() {
+            return None;
+        }
+        let handler = job.handler;
         match self.heap.await_state_mut(handler) {
             Some(AwaitState::Pending {
                 kind: AwaitKind::AsyncFunction(continuation) | AwaitKind::AsyncGeneratorAwait { continuation, .. },
@@ -859,17 +868,10 @@ impl<H: Host> Vm<H> {
             }) if *resumes == realm && continuation.frame.program == program => {}
             _ => return None,
         }
-        let (_, _, next) = self.chain_gates()?;
-        if !next.is_undefined() {
+        if !self.chain_gates_open() {
             return None;
         }
-        let body = p.function(self.frames[frame].function as usize);
-        let instruction = super::dispatch_fast::decoded_instruction(body, *body.code.get(pc)?);
-        let Some(FrameOutcome::Await { value, destination, frame: None }) =
-            self.lane_stop_awaits(p, frame, Some(instruction), pc)
-        else {
-            return None;
-        };
+        let value = self.lane_await_value(p, frame, awaited, destination, pc)?;
         Some(self.chain_await_into_slot(p, frame, chain.roots, resume, value, destination))
     }
 

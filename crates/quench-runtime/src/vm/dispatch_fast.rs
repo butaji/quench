@@ -3107,7 +3107,10 @@ fn lane_chained_await<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Resumed {
     }
     // SAFETY: the context's program outlives the run; `ip` is a record of the frame's view.
     let (code, program, pc) = unsafe { (&*(*cx).code, (*cx).program, ip.offset_from((*cx).base) as usize) };
-    match vm.lane_chain_await(code, program, frame, pc) {
+    // The record's fields are the `Await`'s: B the awaited register, A the result register.
+    // SAFETY: `ip` is a record of the running view.
+    let (awaited, destination) = unsafe { ((*ip).b, (*ip).a & crate::bytecode::REGISTER_MASK) };
+    match vm.lane_chain_await(code, program, frame, pc, awaited, destination) {
         None => Resumed::Exit(exit(ip)),
         Some(Ok(())) => lane_enter_script_frame(cx, frame),
         Some(Err(error)) => {
