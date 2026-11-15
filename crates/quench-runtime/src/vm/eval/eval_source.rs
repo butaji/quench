@@ -1,25 +1,34 @@
 //! What an eval's program is compiled with and keeps of its source.
 use super::*;
 
-/// The shared ASCII storage of `source`, the eval's string, when `text`, the text it compiles,
-/// is all of it.
-pub(super) fn shared_text(source: &JsString, text: &str) -> Option<std::rc::Rc<str>> {
+/// What an eval's program keeps of `source`, the eval's string, when `text`, the text it
+/// compiles, is all of it: the string's shared ASCII storage, or the rope itself when the
+/// string is an unflattened ASCII rope (`SourceText::Rope`), whose text the eval compiled
+/// from a copy it did not keep in the string.
+pub(super) fn shared_text(source: &JsString, text: &str) -> Option<crate::bytecode::SourceText> {
+    if let Some(rope) = crate::bytecode::RopeText::of(source) {
+        return (source.len() == text.len()).then_some(crate::bytecode::SourceText::Rope(rope));
+    }
     source
         .existing_flat()
         .and_then(crate::vm::wtf16::FlatUnits::shared_ascii)
         .filter(|(shared, range)| *range == (0..shared.len()) && shared.len() == text.len())
-        .map(|(shared, _)| shared.clone())
+        .map(|(shared, _)| crate::bytecode::SourceText::Local(shared.clone()))
 }
 
-/// Makes `residual` keep `shared`, its eval string's storage, in place of its copy of the
-/// same text, as V8's Script keeps its source string (inspector code-load: 2 MB per eval,
-/// each kept by the function it defines).
-pub(super) fn keep_shared_text(residual: &mut ResidualProgram, shared: Option<std::rc::Rc<str>>) {
+/// Makes `residual` keep `shared` (`shared_text`) in place of its copy of the same text, as
+/// V8's Script keeps its source string (inspector code-load: 2 MB per eval, each kept by the
+/// function it defines). A rope is compared by length: its text is the compiled text, and a
+/// compare would make it flat.
+pub(super) fn keep_shared_text(residual: &mut ResidualProgram, shared: Option<crate::bytecode::SourceText>) {
     if let (Some(shared), Some(source)) = (shared, residual.source.as_mut())
         && source.base == 0
-        && *source.text == *shared
+        && match &shared {
+            crate::bytecode::SourceText::Rope(_) => source.text.len() == shared.len(),
+            _ => *source.text == *shared,
+        }
     {
-        source.text = crate::bytecode::SourceText::Local(shared);
+        source.text = shared;
     }
 }
 

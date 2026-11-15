@@ -278,6 +278,18 @@ impl FlatUnits {
         }
     }
 
+    /// The text of ASCII units read in place; `None` for wide or unwritten text.
+    pub(crate) fn ascii_str(&self) -> Option<&str> {
+        Some(match self {
+            Self::Short(text) => text.as_str(),
+            Self::Ascii(text) => text,
+            Self::AsciiSlice(slice) => &slice.text[slice.range.clone()],
+            // SAFETY: an ASCII buffer holds only ASCII bytes, which are UTF-8.
+            Self::AsciiPrefix(buffer, length) => unsafe { std::str::from_utf8_unchecked(buffer.prefix(*length)) },
+            Self::Wide(_) | Self::WideSlice(_) | Self::WidePrefix(..) | Self::Parts(_) => return None,
+        })
+    }
+
     /// The shared ASCII storage these units view and the bytes they cover.
     pub(crate) fn shared_ascii(&self) -> Option<(&Rc<str>, Range<usize>)> {
         match self {
@@ -947,6 +959,11 @@ impl JsString {
                 node = right;
             }
         }
+    }
+
+    /// Whether this is a rope of ASCII units not made flat yet.
+    pub(crate) fn is_unflattened_ascii_rope(&self) -> bool {
+        matches!(&self.repr, Repr::Shared(inner) if inner.ascii && inner.flat.get().is_none() && inner.unflattened_host().is_none())
     }
 
     /// The flat units when the string already has them: never flattens a rope, so a
