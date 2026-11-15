@@ -1,6 +1,6 @@
 //! Call-site descriptions read from one function's text, for an error raised before its
 //! source's call sites are frozen.
-use super::{frozen_call_sites, parse_call_sites, CallFinder, CallSites};
+use super::{frozen_call_sites, CallFinder, CallSites};
 use oxc_ast_visit::Visit;
 use oxc_parser::{ParseOptions, Parser};
 use oxc_span::SourceType;
@@ -34,10 +34,20 @@ fn function_call_sites(source: &crate::bytecode::ProgramSource, span: crate::byt
     let blank = |part: &str| part.bytes().map(|byte| if byte == b'\n' { '\n' } else { ' ' }).collect::<String>();
     let padded = format!("{}({function})", blank(text.get(..start - 1)?));
     let goal = SourceType::script().with_typescript(source.typescript);
-    match parse_call_sites(&padded, goal, CallSites::new()) {
-        Ok((found, true)) => Some(found.into_values().collect()),
-        _ => None,
+    // Only the callee is read, never the expression text, so the parse takes no tokens, and
+    // the bodies of the functions inside it are released as they parse: the call is the
+    // function's own (an inner function's call raises in its own frame). jsdom-d3-startup
+    // threw and caught twice per iteration in a 2.4 MB module function, whose whole tree with
+    // tokens took 39 MB of the run's peak each time.
+    let allocator = crate::compile::lazy_bodies::sized_arena(&padded);
+    let options = ParseOptions { allow_return_outside_function: true, lazy_function_bodies: Some(start as u32 + 1), ..ParseOptions::default() };
+    let parsed = Parser::new(&allocator, &padded, goal).with_options(options).parse();
+    if crate::compile::stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
+        return None;
     }
+    let mut finder = CallFinder { source: &padded, comments: &parsed.program.comments, found: CallSites::new() };
+    finder.visit_program(&parsed.program);
+    Some(finder.found.into_values().collect())
 }
 
 /// The call sites of `source`'s top-level code: it parsed with every function body it can
