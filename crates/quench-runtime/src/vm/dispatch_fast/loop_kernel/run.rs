@@ -228,6 +228,14 @@ impl LoopKernel {
                     let (depth, slot) = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
                     super::super::lane_capture_value::<H>(cx, depth, slot)?.as_number()?
                 }
+                Scalar::Length { register, atom } => {
+                    // SAFETY: the running VM.
+                    let vm = unsafe { vm(cx) };
+                    if atom != vm.length_atom {
+                        return None;
+                    }
+                    super::super::own_length(vm, r.get(register))?.as_number()?
+                }
                 Scalar::Computed { op, a, b } => apply(op, state.scalars[usize::from(a)], state.scalars[usize::from(b)]),
             };
         }
