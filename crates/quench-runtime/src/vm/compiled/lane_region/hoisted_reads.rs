@@ -11,6 +11,12 @@ impl Lowering<'_, '_> {
             prove_receiver(state, instruction, receiver, header);
         }
         let raw = self.builder.use_var(variable);
+        if representation == Representation::Int64 {
+            // An integer operation's word, evaluated once for the loop (`hoist_pure`).
+            self.define(state, instruction.result_register(), raw, RegisterFact::definition(ty, Representation::Int64));
+            self.native += 1;
+            return;
+        }
         if representation == Representation::Int32 && instruction.op().is_load_capture() {
             // Captures have no tagged field-cache consumer. Preserve the
             // admitted view; recovery or a tagged use boxes it on demand.

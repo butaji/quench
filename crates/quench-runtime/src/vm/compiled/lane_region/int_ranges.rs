@@ -11,6 +11,7 @@
 
 use super::*;
 use super::super::facts::{self, Model, Observed, ObservedRead, Seeds, Text};
+use super::loop_versions::{Hoist, Nest};
 
 /// The facts one analysis proves, by unit PC.
 pub(super) struct IntRanges {
@@ -20,6 +21,8 @@ pub(super) struct IntRanges {
     /// length once (`Lowering::version_bounds`), by PC (ascending), with the bound's register and, for an
     /// index `base + iv` below `base + bound`, the base's.
     versioned: Vec<(usize, Register, Option<Register>)>,
+    /// The pure integer operations a loop's entry evaluates once (`Lowering::hoist_pure`), by PC (ascending).
+    hoisted: Vec<Hoist>,
     /// The arithmetic whose result leaves int32 within `IntRange::WORD`, by PC (ascending), with its range.
     index_ranges: Vec<(usize, IntRange)>,
     /// The products no consumer reads the sign of a zero of, by PC (ascending).
@@ -31,7 +34,7 @@ pub(super) struct IntRanges {
 impl IntRanges {
     pub(super) fn new(instructions: usize) -> Self {
         Self { overflow_free: CompoundBitSet::with_capacity(instructions), in_bounds: CompoundBitSet::with_capacity(instructions),
-            versioned: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions) }
+            versioned: Vec::new(), hoisted: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions) }
     }
 
     /// Whether the product at `pc` may keep the int32 zero for a negative one: no operands make a
@@ -59,6 +62,9 @@ impl IntRanges {
     /// The accesses whose bound their loop's entry compares with the array's length, by PC, with
     /// the bound's register.
     pub(super) fn versioned(&self) -> &[(usize, Register, Option<Register>)] { &self.versioned }
+
+    /// The pure integer operations hoisted to a loop's entry, by PC.
+    pub(super) fn hoisted(&self) -> &[Hoist] { &self.hoisted }
 }
 
 impl Lowering<'_, '_> {
@@ -89,9 +95,9 @@ impl Lowering<'_, '_> {
         reads
     }
 
-    /// The proofs of the unit entered at `entry` with the checked inputs `initial`.
+    /// The proofs of the unit entered at `entry` with the checked inputs `initial`, over `loops`, its local loops.
     pub(super) fn prove_ranges(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
-        leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) -> IntRanges {
+        leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, loops: &[(usize, usize)]) -> IntRanges {
         let dense = |pc: usize| self.hoisted_access(pc);
         let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
         let reads = self.element_reads(instructions);
@@ -102,6 +108,7 @@ impl Lowering<'_, '_> {
             native_calls: self.native_calls };
         let mut proved = IntRanges::new(instructions.len());
         let mut bounded: Vec<(usize, Register, (Register, Option<Register>))> = Vec::new();
+        let mut hoistable = Vec::new();
         facts::analyze_text(&text, initial, seeds).replay(&text, seeds, |pc, point| {
             if point.overflow_free(&self.program.constants, instructions[pc]) { proved.overflow_free.insert(pc); }
             match point.index_proof(&model, pc, instructions[pc]) {
@@ -110,10 +117,14 @@ impl Lowering<'_, '_> {
                 facts::IndexProof::Check => bounded.extend(self.affine_bound(instructions, pc, point)),
             }
             let signless = signless.binary_search(&pc).is_ok();
-            if let Some(range) = point.index_range(&self.program.constants, instructions[pc], signless) { proved.index_ranges.push((pc, range)); }
+            if let Some(range) = point.index_range(&self.program.constants, instructions[pc], signless) {
+                proved.index_ranges.push((pc, range));
+                if self.hoistable(pc, instructions[pc], point) { hoistable.push(pc); }
+            }
             if point.zero_free(&self.program.constants, instructions[pc]) { proved.zero_free.insert(pc); }
         });
         proved.versioned = self.versioned_bounds(&model, instructions, &bounded);
+        proved.hoisted = self.plan_hoists(Nest { instructions, loops: &self.lowered_loops(loops) }, &hoistable);
         proved.signless = signless;
         proved
     }

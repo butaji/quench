@@ -719,8 +719,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn define(&mut self, state: &mut State, register: Register, value: ir::Value, fact: RegisterFact) {
-        frame::register_define(&mut self.builder, &mut self.registers, &mut self.written, state,
-            register, value, fact);
+        frame::register_define(&mut self.builder, &mut self.registers, &mut self.written, state, register, value, fact);
     }
 
     fn set_tagged(&mut self, state: &mut State, register: Register, bits: ir::Value) {
@@ -828,7 +827,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             Some(block) => {
                 self.entered.insert(pc);
                 self.finishes |= pc <= self.at;
-                if self.at < pc { self.hoist_loop_entry(state, pc); }
+                if self.at < pc { self.hoist_entry(state, pc); }
                 self.conform(state, pc);
                 if self.at < pc { self.arrive(state, pc); }
                 self.goto(block, &[]);
@@ -1755,7 +1754,7 @@ pub(super) fn lower(
             read.pc == at && read.owner.is_none() && instructions[at].op().is_load_capture())),
         lowering.views, typed_captures, |pc| coverage.lowered(pc));
     lowering.entering = lowering.entering_ranges(entry_pc);
-    lowering.ranges = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape);
+    lowering.ranges = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);
     lowering.arrays_fixed = lowering.arrays_stay_put(&leaders, &writes);
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
@@ -1829,7 +1828,7 @@ pub(super) fn lower(
         // A bounded range reads its fields at their sites; hoisting them to a shared entry
         // guard would make every call leave at the entry.
         lowering.proving_entry = true;
-        lowering.hoist_loop_entry(&mut state, pc);
+        lowering.hoist_entry(&mut state, pc);
         lowering.proving_entry = false;
         lowering.goto(target, &[]);
     }
@@ -1839,7 +1838,7 @@ pub(super) fn lower(
         if !coverage.lowered(pc) { continue; }
         if let Some(block) = lowering.blocks[pc] {
             if reachable {
-                lowering.hoist_loop_entry(&mut state, pc);
+                lowering.hoist_entry(&mut state, pc);
                 lowering.conform(&mut state, pc);
                 lowering.arrive(&state, pc);
                 lowering.entered.insert(pc);

@@ -1,3 +1,6 @@
+//! What a loop's entering edge establishes once for its body over the facts rows: the pure integer
+//! operations its operands leave invariant (`hoists`), and the bounds of its accesses.
+//!
 //! Bounds by loop versioning: an element access in a counted loop whose index is below a bound
 //! the loop never writes (`i < n`) is within its array when the bound is, so the loop's entry
 //! compares the bound with the array's length once (`n <= length`) and the accesses of its body
@@ -13,7 +16,26 @@ use super::*;
 use super::super::facts::{Model, Point};
 use crate::staged::Stage;
 
+#[path = "loop_versions/plan.rs"] mod plan;
+#[path = "loop_versions/hoists.rs"] mod hoists;
+pub(super) use plan::Nest;
+
+/// The pure integer operation at `pc`, which the entry of the loop at `header` (the outermost one
+/// whose body writes none of its operands) evaluates once.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Hoist {
+    pub(super) pc: usize,
+    pub(super) header: usize,
+}
+
 impl Lowering<'_, '_> {
+    /// The reads `header`'s loop repeats unchanged, made on its entry edge from `state`: a guard that
+    /// fails there leaves at the header, before the loop runs. Its pure integer operations come first.
+    pub(super) fn hoist_entry(&mut self, state: &mut State, header: usize) {
+        self.hoist_pure(state, header);
+        self.hoist_loop_entry(state, header);
+    }
+
     /// The access at `pc` whose index is `base + iv` (an addition just before it, in its block)
     /// with `iv` below a bound (`i < n`) and both non-negative here: below `base + bound`, which
     /// the loop's entry may compare with the array's length once. Its array, bound and base.

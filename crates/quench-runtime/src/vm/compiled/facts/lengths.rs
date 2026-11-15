@@ -5,7 +5,7 @@
 
 use super::run::{Model, Point};
 use crate::bytecode::{Class, FieldLookup, Operand, Register, ResidualProgram, WideInstruction};
-use crate::typed_ir::Type;
+use crate::typed_ir::{IntRange, Type};
 use super::super::super::operations::NumberRelation;
 
 #[derive(Clone, Default)]
@@ -134,9 +134,14 @@ impl Point {
         self.relations.under.get(usize::from(register)).copied().flatten()
     }
 
+    /// The range of the integer `register` holds here, if it is one.
+    pub(in crate::vm::compiled) fn int_range(&self, register: Register) -> Option<IntRange> {
+        self.types.get(usize::from(register)).copied().and_then(Type::int_range)
+    }
+
     /// Whether `register` holds a non-negative integer here.
     pub(in crate::vm::compiled) fn non_negative(&self, register: Register) -> bool {
-        self.types.get(usize::from(register)).copied().and_then(Type::int_range).is_some_and(|range| range.min >= 0)
+        self.int_range(register).is_some_and(|range| range.min >= 0)
     }
 
     /// What proves the index of the element access at `pc` within `0..length` of its array: the
@@ -149,7 +154,7 @@ impl Point {
             _ => return IndexProof::Check,
         };
         let Some((array, index)) = array.zip(index) else { return IndexProof::Check };
-        let non_negative = self.types.get(usize::from(index)).copied().and_then(Type::int_range).is_some_and(|range| range.min >= 0);
+        let non_negative = self.int_range(index).is_some_and(|range| range.min >= 0);
         if !(model.dense)(pc) || !non_negative { return IndexProof::Check; }
         let related = |table: &[Option<Register>]| table.get(usize::from(index)).copied().flatten();
         match (related(&self.relations.below), related(&self.relations.under)) {

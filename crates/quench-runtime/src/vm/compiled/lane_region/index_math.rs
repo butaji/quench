@@ -15,6 +15,9 @@ use super::*;
 use super::super::operations::NumberArithmetic;
 use crate::staged::number_machine;
 
+/// The span of integers an index word holds of an arithmetic result of `range`: the Numbers it agrees with.
+pub(super) fn held(range: IntRange) -> IntRange { range.intersect(IntRange::EXACT).unwrap_or(IntRange::EXACT) }
+
 impl Lowering<'_, '_> {
     /// The range of the arithmetic `instruction` at `pc` where it runs in 64-bit words: its proved
     /// result leaves int32 within `IntRange::WORD`, its operands are int32 or already words, and
@@ -35,15 +38,22 @@ impl Lowering<'_, '_> {
     /// `operation` of the integer `operands` in 64-bit words, into the result register: where
     /// its `range` passes what a Number holds exactly, it leaves at `exit` before the register is
     /// defined.
-    pub(super) fn index_arithmetic(&mut self, state: &mut State, (destination, [left, right]): (Register, [Operand; 2]),
+    pub(super) fn index_arithmetic(&mut self, state: &mut State, (destination, operands): (Register, [Operand; 2]),
         (operation, range): (NumberArithmetic, IntRange), exit: ir::Block) -> Option<()> {
+        let result = self.index_word(state, operands, (operation, range), exit)?;
+        self.define(state, destination, result, RegisterFact::definition(Type::int(held(range)), Representation::Int64));
+        Some(())
+    }
+
+    /// The word `operation` of the integer `operands` computes: where its `range` passes what a
+    /// Number holds exactly, it leaves at `exit`.
+    pub(super) fn index_word(&mut self, state: &mut State, [left, right]: [Operand; 2],
+        (operation, range): (NumberArithmetic, IntRange), exit: ir::Block) -> Option<ir::Value> {
         let left = self.operand_long(state, left, exit)?;
         let right = self.operand_long(state, right, exit)?;
         let result = number_machine::wrapping_int32_arithmetic(&mut emit(&mut self.builder), operation, left, right);
         if !IntRange::EXACT.contains(range) { self.guard_exact(result, exit); }
-        let held = range.intersect(IntRange::EXACT).unwrap_or(IntRange::EXACT);
-        self.define(state, destination, result, RegisterFact::definition(Type::int(held), Representation::Int64));
-        Some(())
+        Some(result)
     }
 
     /// An element index's word: a register's held 64-bit word, else its int32 (`operand_int`),
@@ -59,11 +69,16 @@ impl Lowering<'_, '_> {
         frame::operand_long(&mut self.builder, &mut self.registers, state, &self.program.constants, operand, otherwise)
     }
 
-    /// Continues where the word `result` lies within `IntRange::EXACT`, else at `exit`: it is
-    /// biased by the span's minimum, which makes the span an unsigned prefix.
+    /// Continues where the word `result` lies within `IntRange::EXACT`, else at `exit`.
     fn guard_exact(&mut self, result: ir::Value, exit: ir::Block) {
-        let biased = self.raw_binary_imm(Binary::Add, result, -IntRange::EXACT.min);
-        let within = self.raw_compare_imm(Relation::UnsignedLessEqual, biased, IntRange::EXACT.max - IntRange::EXACT.min);
+        let within = self.within_exact(result);
         emit_js_guard(&mut self.builder, within, exit);
+    }
+
+    /// Whether the word lies within `IntRange::EXACT`: it is biased by the span's minimum, which makes
+    /// the span an unsigned prefix.
+    pub(super) fn within_exact(&mut self, word: ir::Value) -> ir::Value {
+        let biased = self.raw_binary_imm(Binary::Add, word, -IntRange::EXACT.min);
+        self.raw_compare_imm(Relation::UnsignedLessEqual, biased, IntRange::EXACT.max - IntRange::EXACT.min)
     }
 }
