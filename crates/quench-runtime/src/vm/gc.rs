@@ -784,16 +784,12 @@ impl<H: Host> Vm<H> {
         for frame in &self.frames {
             // A missing map means the function uses a register form the liveness pass cannot
             // represent; keep the safe conservative scan for that activation.
-            let register_masks = self
-                .programs
-                .residual(frame.program)
-                .and_then(|program| program.register_root_masks(frame.function));
             roots.extend([frame.env, frame.this]);
             roots.extend(frame.context.callee());
             roots.extend(frame.original_arguments.iter().copied());
             roots.extend(frame.locals.iter().copied());
             roots.extend(frame.dynamic_bindings.iter().map(|(_, value)| *value));
-            match register_masks {
+            match self.programs.residual(frame.program).and_then(|program| crate::compile::liveness::RegisterMasks::for_collection(program, frame.function)) {
                 Some(masks) => masks.extend_live(frame.pc as usize, &frame.registers, &mut roots),
                 None => roots.extend(frame.registers.iter().copied()),
             }
