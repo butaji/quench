@@ -246,7 +246,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn direct_dense_element(&self, base: Value, key: Value) -> Option<Value> {
         // One unsigned compare of the word past the int tag is the tag, sign and range test.
         let index = key.int_key_offset();
-        if index >= 1 << 31 {
+        if index > i32::MAX as usize {
             return None;
         }
         crate::staged::elements::concrete_record_element(self.heap.array_record_base()?, base, index)
@@ -355,7 +355,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn try_fill_record_hole(&mut self, object: Value, key: Value, value: Value) -> bool {
         let index = key.int_key_offset();
-        if index >= 1 << 31 {
+        if index > i32::MAX as usize {
             return false;
         }
         let Some(array) = self.heap.record_array(object) else {

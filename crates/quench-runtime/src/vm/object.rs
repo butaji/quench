@@ -724,20 +724,12 @@ impl<H: Host> Vm<H> {
         let mut subjects = Vec::new();
         let mut array_holder = false;
         let mut current = first;
-        let mut next = Value::NULL;
         while !current.is_null() {
             let Some(data) = self.object_data(current) else {
                 return false;
             };
             let is_array = self.heap.array(current).is_some();
-            if data.has_indexed_descriptors()
-                || data.is_arguments_object()
-                || data.boxed_primitive().is_some()
-                || data.is_module_namespace()
-                || data.deferred_module().is_some()
-                || self.shape_has_index_key(data.shape())
-                || (!is_array && self.heap.ordinary_object(current).is_none())
-            {
+            if self.may_hold_index(current, data, is_array) {
                 return false;
             }
             if is_array {
@@ -748,17 +740,27 @@ impl<H: Host> Vm<H> {
                 array_holder = true;
             }
             subjects.push(data.watched_subject());
-            if current == first {
-                next = data.proto();
-            }
             current = data.proto();
         }
         if let Some(subjects) = subjects.into_iter().collect::<Option<Vec<u32>>>() {
+            let next = self.object_data(first).map_or(Value::NULL, |data| data.proto());
             self.heap.dependencies().prove(crate::heap::ProofKind::IndexFreeChain, &subjects, |proofs| {
                 proofs.index_free_chain = Some(crate::heap::IndexFreeChainProof { first, next });
             });
         }
         true
+    }
+
+    /// Whether `object` (its `data`) may answer an index key itself: indexed descriptors, an
+    /// exotic or boxed-primitive object, an index key in its shape, or no ordinary object.
+    fn may_hold_index(&self, object: Value, data: &Object, is_array: bool) -> bool {
+        data.has_indexed_descriptors()
+            || data.is_arguments_object()
+            || data.boxed_primitive().is_some()
+            || data.is_module_namespace()
+            || data.deferred_module().is_some()
+            || self.shape_has_index_key(data.shape())
+            || (!is_array && self.heap.ordinary_object(object).is_none())
     }
 
     /// Whether OrdinarySet of array index `index` on `object`, which holds no own property

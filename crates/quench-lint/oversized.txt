@@ -852,7 +852,6 @@ complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::get_field_uncached 21
 complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::inherited_field 13
 complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::polymorphic_field_entries_hit 11
 complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::prototypes_hold_no_index 12
-complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::prove_index_free_chain 14
 complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::record_accessor_field_cache 14
 complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::set_field_uncached 55
 complexity crates/quench-runtime/src/vm/object.rs::Vm<H>::set_property_with_receiver 42
@@ -3186,7 +3185,6 @@ function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::inherited_field 61
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::invalidate_field_caches 50
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::literal_template 52
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::polymorphic_field_entries_hit 78
-function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::prove_index_free_chain 41
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::record_accessor_field_cache 87
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::set_field_uncached 183
 function-lines crates/quench-runtime/src/vm/object.rs::Vm<H>::set_property_with_program_mode 43
