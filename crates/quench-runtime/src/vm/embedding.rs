@@ -809,17 +809,8 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn detail_string(&self, value: Value) -> String {
-        if let Some(number) = value.as_number() {
-            return crate::number_to_string::format(number);
-        }
-        if let Some(boolean) = value.as_bool() {
-            return boolean.to_string();
-        }
-        if value.is_null() {
-            return "null".into();
-        }
-        if value.is_undefined() {
-            return "undefined".into();
+        if let Some(detail) = super::error::primitive_detail(value) {
+            return detail;
         }
 
         let mut value = value;
