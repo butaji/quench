@@ -275,7 +275,7 @@ fn quarantine_keeps_freed_backings_readable_until_it_ends() {
     for value in 32..200 {
         unique.push(Value::integer(value));
     }
-    assert_ne!(elements.header, old_header);
+    assert_ne!({ elements.header }, old_header);
     // SAFETY: the quarantine holds the old allocation.
     let old_len = unsafe { (*old_header.as_ptr()).len };
     assert_eq!(old_len, 32);

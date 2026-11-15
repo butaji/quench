@@ -4235,6 +4235,8 @@ struct JsStepDispatch {
     /// again after one (`refresh_object_bases`).
     string_record_base: usize,
     ascii_unit_strings: usize,
+    /// The object layout table's base (`heap::layouts::table_base`), for stencils.
+    layout_table: usize,
     outcome: Option<JsNativeStep>,
 }
 
@@ -4973,6 +4975,7 @@ impl LaneFrame {
                 array_record_base: 0,
                 string_record_base: 0,
                 ascii_unit_strings: 0,
+                layout_table: crate::heap::layouts::table_base() as usize,
                 object_record_base: 0,
                 function_record_base: 0,
                 object_mark_blocks: 0,
@@ -5105,7 +5108,7 @@ impl JsNativeActivation {
             local_count: activation.locals.len(),
             fixed_this_slot: std::ptr::null(),
             capture_values: std::ptr::null(), capture_len: 0,
-            array_record_base: 0, string_record_base: 0, ascii_unit_strings: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
+            array_record_base: 0, string_record_base: 0, ascii_unit_strings: 0, layout_table: crate::heap::layouts::table_base() as usize, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
             object_mark_block_count: 0, property_buffer: 0,
             field_entries: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
             stores_specialized: 0,
@@ -14446,3 +14449,4 @@ mod tests {
         }
     }
 }
+const _: () = assert!(std::mem::offset_of!(JsStepDispatch, layout_table) == 352, "stencils read it at `JS_STEP_LAYOUT_TABLE`");

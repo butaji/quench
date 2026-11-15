@@ -50,7 +50,9 @@ fn top_level_call_sites(source: &crate::bytecode::ProgramSource) -> Option<Vec<c
     if source.base != 0 {
         return None;
     }
-    let allocator = oxc_allocator::Allocator::default();
+    // The parse arena compiles share, whose pages go back when it is handed back: a fresh
+    // arena's chunks stayed in the malloc heap after it (mandreel: 23 MB to the end of the run).
+    let allocator = crate::compile::lazy_bodies::sized_arena(text);
     let options = ParseOptions { allow_return_outside_function: true, lazy_function_bodies: Some(0), ..ParseOptions::default() };
     let parsed = Parser::new(&allocator, text, SourceType::script().with_typescript(source.typescript)).with_options(options).parse();
     if crate::compile::stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {

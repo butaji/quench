@@ -9,6 +9,7 @@ pub(crate) struct NativeObjectLayout {
     pub(crate) record_capacity: usize,
     pub(crate) record_size: usize,
     pub(crate) record_align: usize,
+    pub(crate) layout_offset: usize,
     pub(crate) meta_offset: usize,
     pub(crate) auxiliary_offset: usize,
     pub(crate) payload_offset: usize,
@@ -36,10 +37,11 @@ pub(crate) struct NativeObjectLayout {
 
 pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     record_capacity: 16777216,
-    record_size: 16,
-    record_align: 8,
-    meta_offset: 8,
-    auxiliary_offset: 12,
+    record_size: 12,
+    record_align: 4,
+    layout_offset: 8,
+    meta_offset: 4,
+    auxiliary_offset: 0,
     payload_offset: 0,
     extras_arena_start_offset: 24,
     extras_inline_values_offset: 8,
@@ -81,10 +83,10 @@ pub(crate) struct NativeArrayLayout {
 
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     record_capacity: 16777216,
-    record_size: 16,
-    record_align: 8,
+    record_size: 12,
+    record_align: 4,
     elements_offset: 0,
-    extras_elements_offset: 32,
+    extras_elements_offset: 28,
     elements_header_offset: 0,
     header_length_offset: 4,
     header_values_offset: 16,
@@ -200,5 +202,7 @@ pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = 136;
 pub(crate) const JS_STEP_METHOD_CACHE_ATOMS: usize = 152;
 pub(crate) const JS_STEP_METHOD_CACHE_ATOM_WORDS: usize = 160;
 pub(crate) const JS_STEP_STORES_SPECIALIZED: usize = 168;
+/// The object layout table's base (`heap::layouts`).
+pub(crate) const JS_STEP_LAYOUT_TABLE: usize = 352;
 /// Where the property arena's header (`PropertyBuffer`) keeps the address of its first value.
 pub(crate) const PROPERTY_BUFFER_BASE: usize = 0;

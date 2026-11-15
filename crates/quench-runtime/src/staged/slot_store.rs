@@ -21,7 +21,7 @@ use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 /// without its form bits, and the extras bit is tested apart.
 pub(crate) fn admitted_payload<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, shape: u32, hinted: bool,
     value: S::Word, miss: S::Miss) -> Option<(S::Word, S::Cond)> {
-    let word = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
+    let word = super::object::header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
     if hinted {
         let shape = stage.site(u64::from(shape & !OBJECT.extras_form));
         let same = stage.eq_imm(word, shape);

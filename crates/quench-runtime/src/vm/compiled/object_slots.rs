@@ -155,7 +155,12 @@ pub(super) fn emit<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> Emit<'a, 'b>
 /// auxiliary word without the storage-form bits, which no recorded shape carries.
 pub(super) fn exact_shape(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, address: ir::Value) -> ir::Value {
     let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-    let word = builder.ins().load(types::I32, flags, address, layout.auxiliary_offset as i32);
+    let id = builder.ins().load(types::I32, flags, address, layout.layout_offset as i32);
+    let id = builder.ins().uextend(types::I64, id);
+    let offset = builder.ins().imul_imm_u(id, 8);
+    let base = builder.ins().iconst(types::I64, crate::heap::layouts::table_base() as i64);
+    let entry = builder.ins().iadd(base, offset);
+    let word = builder.ins().load(types::I32, flags, entry, layout.auxiliary_offset as i32);
     builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form)))
 }
 

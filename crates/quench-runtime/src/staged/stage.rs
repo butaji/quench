@@ -148,8 +148,8 @@ pub(crate) trait Stage {
 pub(crate) enum Table {
     /// The property arena's values, where a flat object's run starts at its position.
     PropertyValues,
+    /// The object layout table (`heap::layouts`): a record's header words at its layout id
+    /// times eight. Entries never change once written.
+    Layouts,
 }
 
-impl Table {
-    pub(crate) const COUNT: usize = 1;
-}

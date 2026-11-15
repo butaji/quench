@@ -57,7 +57,7 @@ mod capture_scope;
 mod class;
 mod early;
 mod frame_registers;
-mod lazy_bodies;
+pub(crate) mod lazy_bodies;
 mod eval_reach;
 mod literal_singletons;
 mod semantic_stats;

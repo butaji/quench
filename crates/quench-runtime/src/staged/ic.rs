@@ -136,7 +136,7 @@ pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, proper
     let mut stage = super::Concrete::new(property_values);
     let record = object as *const crate::heap::Object as u64;
     // The word proves the shape and, by its storage-form bits, where the values live.
-    let word = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
+    let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
     let at = Reached { record, shape: Some(recorded_shape(&mut stage, word)), inline: None };
     guard_shape(&mut stage, &at, shape, ())?;
     let layout = formed_own_layout(&mut stage, record, word, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, ())?;
@@ -157,7 +157,7 @@ pub(crate) unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &cra
     property_values: *const crate::Value, hint: u32, slot: u16) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
     let record = object as *const crate::heap::Object as u64;
-    let word = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32);
+    let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
     // A fixed form replaces the hint's form bits: equality then proves that form, so its
     // layout is read without testing the bits, whatever form the hint names.
     let forms = OBJECT.inline_form | OBJECT.extras_form;

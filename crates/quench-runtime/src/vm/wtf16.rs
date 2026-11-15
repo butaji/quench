@@ -566,6 +566,11 @@ struct JsStringInner {
     length: u32,
     /// Every unit is ASCII; known at construction, before a rope flattens.
     ascii: bool,
+    /// The low half of the units' text hash, made nonzero, once an equality compare
+    /// computed it; zero before. Two strings whose halves differ have different units, so
+    /// a compare of strings compared before decides inequality without reading units. In
+    /// the first word's padding beside `length` and `ascii`.
+    compare_hash: std::cell::Cell<u16>,
     flat: OnceCell<FlatUnits>,
     /// What the string holds beside its units, behind one word: see `Aside`. Mutated only
     /// through the methods below, which keep a `Host` in place once made.
@@ -592,6 +597,7 @@ impl JsStringInner {
         Self {
             length: stored_length(length),
             ascii,
+            compare_hash: std::cell::Cell::new(0),
             flat: OnceCell::from(units),
             aside: UnsafeCell::new(None),
         }
@@ -605,6 +611,7 @@ impl JsStringInner {
         Self {
             length: stored_length(length),
             ascii: false,
+            compare_hash: std::cell::Cell::new(0),
             flat: OnceCell::new(),
             aside: UnsafeCell::new(Some(Rc::new(Aside::Host(host)))),
         }
@@ -622,6 +629,7 @@ impl JsStringInner {
         Self {
             length: left.length.saturating_add(right.length),
             ascii: left.ascii && right.ascii,
+            compare_hash: std::cell::Cell::new(0),
             flat: OnceCell::new(),
             aside: UnsafeCell::new(Some(Rc::new(Aside::Rope(left, right)))),
         }
@@ -1311,7 +1319,31 @@ impl JsString {
     /// differ without flattening a rope or reading its units.
     #[inline(never)]
     fn equal_units(&self, other: &Self) -> bool {
-        self.len() == other.len() && self.units() == other.units()
+        if self.len() != other.len() {
+            return false;
+        }
+        // Shared text: one allocation is equal to itself, and strings whose compare hashes
+        // differ are unequal without reading their units again.
+        if let (Repr::Shared(left), Repr::Shared(right)) = (&self.repr, &other.repr) {
+            if Rc::ptr_eq(left, right) {
+                return true;
+            }
+            if self.compare_hash(left) != other.compare_hash(right) {
+                return false;
+            }
+        }
+        self.units() == other.units()
+    }
+
+    /// `JsStringInner::compare_hash` of this string's shared text `inner`, made on first use.
+    fn compare_hash(&self, inner: &JsStringInner) -> u16 {
+        let cached = inner.compare_hash.get();
+        if cached != 0 {
+            return cached;
+        }
+        let hash = (self.units().text_hash() as u16) | 1;
+        inner.compare_hash.set(hash);
+        hash
     }
 }
 

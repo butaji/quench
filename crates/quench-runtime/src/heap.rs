@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rc_drop::{StoppedCellDrop, cell_rc_drop_lock};
 mod access;
 mod array_elements;
+pub(crate) mod layouts;
 mod dense_growth;
 pub(crate) use dense_growth::dense_write_gap_limit;
 mod store_gate;
@@ -152,6 +153,9 @@ pub(crate) struct NativeObjectLayout {
     pub(crate) record_capacity: usize,
     pub(crate) record_size: usize,
     pub(crate) record_align: usize,
+    /// Where a record keeps its layout id (`heap::layouts`).
+    pub(crate) layout_offset: usize,
+    /// Where a layout's table entry keeps the `meta` and auxiliary words.
     pub(crate) meta_offset: usize,
     pub(crate) auxiliary_offset: usize,
     pub(crate) payload_offset: usize,
@@ -184,6 +188,7 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     record_capacity: RECORD_SPACE_CAPACITY,
     record_size: cell::NATIVE_OBJECT_RECORD_SIZE,
     record_align: cell::NATIVE_OBJECT_RECORD_ALIGN,
+    layout_offset: cell::NATIVE_OBJECT_LAYOUT_OFFSET,
     meta_offset: cell::NATIVE_OBJECT_META_OFFSET,
     auxiliary_offset: cell::NATIVE_OBJECT_AUXILIARY_OFFSET,
     payload_offset: cell::NATIVE_OBJECT_PAYLOAD_OFFSET,
@@ -2600,6 +2605,10 @@ impl Heap {
         } else {
             self.sweep_serial(full, compacts, age, &mut remembered_owners)
         };
+        if freed_cells > 0 {
+            // A freed slot may next hold another cell (`view_epoch`): one bump for the sweep.
+            buffer_bytes::bump_view_epoch();
+        }
         // The direct objects whose young runs survive, by start (`ValueArena::evacuate_young`),
         // where no compaction moves every run.
         let mut young_owners: Vec<(usize, RecordId)> = Vec::new();
@@ -3056,8 +3065,6 @@ impl Heap {
                     }
                     slab_free.merge(&free_slots);
                     self.free_slots += freed_cells;
-                    // A freed slot may next hold another cell (`view_epoch`).
-                    buffer_bytes::bump_view_epoch();
                     for properties in released_properties {
                         self.properties.release(properties);
                     }
@@ -3163,8 +3170,6 @@ impl Heap {
             };
             // Lists the slots `bits` names in the heap's word `word` of slots as free.
             let mut free_word = |word: usize, bits: u64| {
-                // A freed slot may next hold another cell (`view_epoch`).
-                buffer_bytes::bump_view_epoch();
                 let slab = word / FREE_SLOT_WORDS;
                 let slab_free = &mut free_by_slab[slab];
                 if slab_free.is_empty() {

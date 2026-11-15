@@ -136,8 +136,8 @@ impl JsString {
 }
 
 fn write_object(writer: &mut Writer, object: &Object) -> SnapshotResult<()> {
-    writer.u32(object.meta);
-    writer.u32(object.auxiliary);
+    writer.u32(object.meta());
+    writer.u32(object.aux());
     match object.extras() {
         // The payload word: narrow inline values or the storage position.
         None => {
@@ -162,7 +162,7 @@ fn read_object(reader: &mut Reader<'_>) -> SnapshotResult<Object> {
         1 => Object::tag_extras(Box::new(read_extras(reader)?)),
         _ => return Err(SnapshotError("invalid snapshot object".into())),
     };
-    Ok(Object { meta, auxiliary, payload })
+    Ok(Object::from_header(meta, auxiliary, payload))
 }
 
 fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()> {

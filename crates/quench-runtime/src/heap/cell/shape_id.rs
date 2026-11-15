@@ -7,8 +7,8 @@ impl super::Object {
     /// (`Heap::remap_live_object_shapes`), not one prototype at a time.
     #[inline(always)]
     pub(crate) fn renumber_shape(&mut self, shape: u32) {
-        let mut properties = ValueVec::from_parts(0, self.auxiliary);
+        let mut properties = ValueVec::from_parts(0, self.aux());
         properties.set_auxiliary(shape);
-        self.auxiliary = properties.into_parts().1;
+        self.set_aux(properties.into_parts().1);
     }
 }

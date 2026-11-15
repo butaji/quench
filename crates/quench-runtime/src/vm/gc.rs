@@ -402,6 +402,8 @@ impl<H: Host> Vm<H> {
         let full = self.heap.collection_is_full(full);
         if full && !begin_cycle {
             self.host.at_collection_boundary(self.memory_policy());
+        } else {
+            self.host.before_collection();
         }
         #[cfg(feature = "profile-memory")]
         if crate::trace::Channel::FunctionUse.on() {

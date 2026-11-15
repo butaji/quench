@@ -5185,7 +5185,10 @@ script_handler! {
     /// The intermediates are written as their records write them. Any other case (a non-int
     /// `x`, a sum past int32 unshifted, a view with no current entry) runs the addition's own
     /// record and the records after it.
-    fn lane_typed_address_get<SHIFT: bool>(cx, r, ip, i, view) {
+    fn lane_typed_address_get<SHIFT: bool, KIND: usize>(cx, r, ip, i, view) {
+        if KIND == UNSEEN_TYPED_KIND {
+            sibling!(lane_typed_address_miss::<H, SHIFT, KIND, true>, r, ip, Carried::script_in(cx, view))
+        }
         let Some(x) = r.int(i.b) else {
             sibling!(lane_operator_integer_constant::<H, { super::operations::ADDITION }>, r, ip, Carried::script_in(cx, view))
         };
@@ -5201,8 +5204,8 @@ script_handler! {
             }
             (sum, unsafe { &*following(ip) })
         };
-        let Some(value) = (unsafe { vm(cx) }).typed_cached_element::<{ super::typed_array_access::ANY_TYPED_KIND }>(r.get(read.b), Value::integer(key)) else {
-            sibling!(lane_typed_address_miss::<H, SHIFT>, r, ip, Carried::script_in(cx, view))
+        let Some(value) = (unsafe { vm(cx) }).typed_cached_element::<KIND>(r.get(read.b), Value::integer(key)) else {
+            sibling!(lane_typed_address_miss::<H, SHIFT, KIND, true>, r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, Value::integer(sum));
         if SHIFT {
@@ -5219,7 +5222,10 @@ script_handler! {
     /// `lane_typed_address_get` of a store: `base[(x + K) >> S] = v` (or `base[x + K] = v`)
     /// as one record (`specialize_typed_addresses`), through the view cache
     /// (`Vm::typed_cached_store`). Any other case runs the addition's own record.
-    fn lane_typed_address_set<SHIFT: bool>(cx, r, ip, i, view) {
+    fn lane_typed_address_set<SHIFT: bool, KIND: usize>(cx, r, ip, i, view) {
+        if KIND == UNSEEN_TYPED_KIND {
+            sibling!(lane_typed_address_miss::<H, SHIFT, KIND, false>, r, ip, Carried::script_in(cx, view))
+        }
         let Some(x) = r.int(i.b) else {
             sibling!(lane_operator_integer_constant::<H, { super::operations::ADDITION }>, r, ip, Carried::script_in(cx, view))
         };
@@ -5234,8 +5240,8 @@ script_handler! {
             }
             (sum, unsafe { &*following(ip) })
         };
-        if !(unsafe { vm(cx) }).typed_cached_store::<{ super::typed_array_access::ANY_TYPED_KIND }>(r.get(store.b), Value::integer(key), r.get(store.a)) {
-            sibling!(lane_typed_address_miss::<H, SHIFT>, r, ip, Carried::script_in(cx, view))
+        if !(unsafe { vm(cx) }).typed_cached_store::<KIND>(r.get(store.b), Value::integer(key), r.get(store.a)) {
+            sibling!(lane_typed_address_miss::<H, SHIFT, KIND, false>, r, ip, Carried::script_in(cx, view))
         }
         r.set(i.a, Value::integer(sum));
         if SHIFT {
@@ -5248,18 +5254,56 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_typed_address_get` whose read found no current view entry: a base that is no
-    /// typed array (a plain array read `a[i + 1]` has the same shape) makes the record its
-    /// addition again for good; either way the addition's own record runs.
+    /// `lane_typed_address_get` (or `_set`) whose access found no current view entry. A base
+    /// that is no typed array (a plain array read `a[i + 1]` has the same shape) makes the
+    /// record its addition again for good; a typed array base gets its entry made
+    /// (`Vm::fill_typed_view`) and makes the record the variant of its kind, or any-kind for
+    /// a second kind. Either way the addition's own record runs.
     #[inline(never)]
-    fn lane_typed_address_miss<SHIFT: bool>(cx, r, ip, i, view) {
+    fn lane_typed_address_miss<SHIFT: bool, KIND: usize, READ: bool>(cx, r, ip, i, view) {
         // SAFETY: the pass fused this record with the one or two after it in the view.
-        let read = unsafe { &*if SHIFT { following(following(ip)) } else { following(ip) } };
-        if (unsafe { vm(cx) }).typed_array_kind_of(r.get(read.b)).is_none() {
-            requicken::<H>(ip, lane_operator_integer_constant::<H, { super::operations::ADDITION }>);
+        let access = unsafe { &*if SHIFT { following(following(ip)) } else { following(ip) } };
+        let vm = unsafe { vm(cx) };
+        let base = r.get(access.b);
+        match vm.typed_array_kind_of(base) {
+            None => requicken::<H>(ip, lane_operator_integer_constant::<H, { super::operations::ADDITION }>),
+            Some(kind) => {
+                if KIND == UNSEEN_TYPED_KIND {
+                    requicken::<H>(ip, typed_address_handler::<H, SHIFT, READ>(Some(kind)));
+                } else if KIND != super::typed_array_access::ANY_TYPED_KIND && kind != crate::heap::TYPED_ARRAYS[KIND % TypedArrayKind::COUNT].kind {
+                    requicken::<H>(ip, typed_address_handler::<H, SHIFT, READ>(None));
+                }
+                vm.fill_typed_view(base);
+            }
         }
         sibling!(lane_operator_integer_constant::<H, { super::operations::ADDITION }>, r, ip, Carried::script_in(cx, view))
     }
+}
+
+/// The `KIND` of a fused address record that has run no access yet: its first access runs
+/// the miss (`lane_typed_address_miss`), which picks the variant of the kind it sees.
+const UNSEEN_TYPED_KIND: usize = usize::MAX - 1;
+
+/// The fused address record (`lane_typed_address_get`, `lane_typed_address_set`) for a site
+/// that has seen kind `kind`, or the any-kind record for no kind or one no variant serves.
+fn typed_address_handler<H: Host, const SHIFT: bool, const READ: bool>(kind: Option<TypedArrayKind>) -> Handler {
+    macro_rules! kinds {
+        ($($kind:ident),*) => {
+            match kind {
+                $(Some(TypedArrayKind::$kind) => if READ {
+                    lane_typed_address_get::<H, SHIFT, { TypedArrayKind::$kind as usize }> as Handler
+                } else {
+                    lane_typed_address_set::<H, SHIFT, { TypedArrayKind::$kind as usize }> as Handler
+                },)*
+                _ => if READ {
+                    lane_typed_address_get::<H, SHIFT, { super::typed_array_access::ANY_TYPED_KIND }> as Handler
+                } else {
+                    lane_typed_address_set::<H, SHIFT, { super::typed_array_access::ANY_TYPED_KIND }> as Handler
+                },
+            }
+        };
+    }
+    kinds!(Uint8, Uint8Clamped, Uint16, Uint32, Int8, Int16, Int32, Float32, Float64)
 }
 
 script_handler! {
@@ -17355,7 +17399,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         ActivationArguments::Kept(_, count) => count,
     };
     #[cfg(feature = "profile-lane-exits")]
-    if let Some(body) = vm.programs.residual(target.program).and_then(|code| {
+    if let Some(body) = vm.programs.residual(target.program()).and_then(|code| {
         let body = code.function_get(target.function as usize)?;
         let plan = body.call_plan(code);
         Some(format!(
@@ -21574,7 +21618,7 @@ fn specialize_typed_addresses<H: Host>(records: &mut [LaneInstruction]) {
             && third.b != t
             && third.b != second.a
         {
-            records[pc].handler = lane_typed_address_get::<H, true> as Handler as *const ();
+            records[pc].handler = lane_typed_address_get::<H, true, UNSEEN_TYPED_KIND> as Handler as *const ();
             continue;
         }
         if let (Some(second), Some(third)) = (records.get(pc + 1), records.get(pc + 2))
@@ -21585,7 +21629,7 @@ fn specialize_typed_addresses<H: Host>(records: &mut [LaneInstruction]) {
             && ![t, second.a].contains(&third.b)
             && ![t, second.a].contains(&third.a)
         {
-            records[pc].handler = lane_typed_address_set::<H, true> as Handler as *const ();
+            records[pc].handler = lane_typed_address_set::<H, true, UNSEEN_TYPED_KIND> as Handler as *const ();
             continue;
         }
         if let Some(second) = records.get(pc + 1)
@@ -21594,7 +21638,7 @@ fn specialize_typed_addresses<H: Host>(records: &mut [LaneInstruction]) {
             && second.b != t
             && second.a != t
         {
-            records[pc].handler = lane_typed_address_set::<H, false> as Handler as *const ();
+            records[pc].handler = lane_typed_address_set::<H, false, UNSEEN_TYPED_KIND> as Handler as *const ();
             continue;
         }
         if let Some(second) = records.get(pc + 1)
@@ -21602,7 +21646,7 @@ fn specialize_typed_addresses<H: Host>(records: &mut [LaneInstruction]) {
             && second.c == t
             && second.b != t
         {
-            records[pc].handler = lane_typed_address_get::<H, false> as Handler as *const ();
+            records[pc].handler = lane_typed_address_get::<H, false, UNSEEN_TYPED_KIND> as Handler as *const ();
         }
     }
 }

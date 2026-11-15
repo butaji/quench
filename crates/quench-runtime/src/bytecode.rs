@@ -1264,7 +1264,13 @@ pub(crate) struct DeclaredAtomSets {
     environment: rustc_hash::FxHashSet<Atom>,
     /// Per local slot: whether its name is a global var or global lexical declaration.
     slots: Box<[SlotDeclaration]>,
+    /// Each local name's first slot, for a function with more than `LOCAL_SLOT_SCAN` locals
+    /// (a script root declaring thousands of globals); a smaller one scans its names.
+    local_slots: Option<rustc_hash::FxHashMap<Atom, u32>>,
 }
+
+/// Locals a name's slot is found among by a scan (`Function::local_slot`).
+const LOCAL_SLOT_SCAN: usize = 32;
 
 /// Whether a local slot's name is among `global_var_atoms` and `global_lexical_atoms`.
 /// What a root environment slot holds for the reads through it.
@@ -1980,8 +1986,24 @@ impl Function {
                 global_immutable: self.global_immutable_atoms().iter().copied().collect(),
                 environment: self.environment_atoms.iter().copied().collect(),
                 slots,
+                local_slots: (self.local_atoms.len() > LOCAL_SLOT_SCAN).then(|| {
+                    let mut slots = rustc_hash::FxHashMap::default();
+                    for (slot, atom) in self.local_atoms.iter().enumerate().rev() {
+                        slots.insert(*atom, slot as u32);
+                    }
+                    slots
+                }),
             })
         })
+    }
+
+    /// The first local slot named `atom`: one probe in a function with many locals, where a
+    /// scan per global write made a script of N declarations cost N^2.
+    pub(crate) fn local_slot(&self, atom: Atom) -> Option<usize> {
+        if self.local_atoms.len() <= LOCAL_SLOT_SCAN {
+            return self.local_atoms.iter().position(|candidate| *candidate == atom);
+        }
+        self.declared_atoms().local_slots.as_ref()?.get(&atom).map(|slot| *slot as usize)
     }
 
     /// The declaration kinds of local `slot`'s name (none for a slot outside the function).
