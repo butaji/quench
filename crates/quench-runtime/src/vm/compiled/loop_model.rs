@@ -71,7 +71,7 @@ fn body_work(loops: &Loops, span: u64, ir: usize) -> u64 {
 /// `body_required_taken` at the costs this process has learned; under `tier-stress` none.
 pub(in crate::vm) fn body_taken(span: u64, ir: usize, unplanned: bool) -> u64 {
     if admits_every_compile() { return 0; }
-    let plan = if unplanned { super::tier_model::learned_plan_ns_per_ir() } else { 0 };
+    let plan = if unplanned { super::tier_model::plan_ns_per_ir() } else { 0 };
     let outlay = TIERS.priors.region_entry_ns + super::tier_model::outlay_ns(ir, plan, learned_ns_per_ir(), compile_wall_permille());
     body_required_taken(&TIERS.priors, body_work(&TIERS.loops, span, ir), outlay)
 }

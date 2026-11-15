@@ -56,8 +56,8 @@ pub(in crate::vm) struct Priors {
     pub(in crate::vm) compile_forgetting_permille: u64,
     pub(in crate::vm) compile_prior_ir: u64,
     /// Nanoseconds the plan of a lane body (inlining, proofs, lowering to IR) takes per IR
-    /// instruction on the program's own thread, until the process's own plans replace it: none
-    /// of it overlaps the program, as a compile on the code generator's thread does.
+    /// instruction on the program's own thread (measured 1.46 us on Box2D): a fixed price on its
+    /// work, none of which overlaps the program as a compile on the code generator's thread does.
     pub(in crate::vm) plan_ns_per_ir: u64,
 }
 

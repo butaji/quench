@@ -274,7 +274,6 @@ impl<H: Host> Vm<H> {
             .ok_or(Unstarted::Declined)?;
         let planned_ir = native.dfg.num_insts();
         self.programs.note_planned_lane_ir(site, planned_ir);
-        super::tier_model::note_plan(plan_started.elapsed(), planned_ir);
         let plan_us = u64::try_from(plan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         // A body that cannot amortize a lane entry would serve native callers only
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
