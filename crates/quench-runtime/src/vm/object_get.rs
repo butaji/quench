@@ -560,7 +560,7 @@ impl<H: Host> Vm<H> {
 
     /// The walk of `prove_symbol_load`, recording what it proves: the value, an absent key, a
     /// getter (which only the general path calls), or a chain no proof covers.
-    fn prove_load(&mut self, object: Value, key: PropertyKey, epoch: u64) -> ProvedLoad {
+    pub(in crate::vm) fn prove_load(&mut self, object: Value, key: PropertyKey, epoch: u64) -> ProvedLoad {
         self.prove_load_walk(object, key, epoch).unwrap_or(ProvedLoad::Unproved)
     }
 

@@ -443,6 +443,9 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let property = PropertyKey::string(atom);
+        if let Some(found) = self.proved_has(object, property) {
+            return Some(found);
+        }
         let mut current = object;
         loop {
             let data = self.heap.ordinary_object(current)?;
@@ -459,6 +462,28 @@ impl<H: Host> Vm<H> {
             if current.is_null() {
                 return Some(false);
             }
+        }
+    }
+
+    /// `HasProperty` of `key` on the ordinary `object` from the fact table (K-ENTRY): any
+    /// answer but an absent key is a present one, and a table miss proves the chain once
+    /// (`Vm::prove_load`). `None` where neither answers.
+    #[inline]
+    pub(super) fn proved_has(&mut self, object: Value, key: PropertyKey) -> Option<bool> {
+        use super::symbol_load_proof::SymbolLoadAnswer;
+        let data = self.heap.ordinary_object(object)?;
+        let (layout, side) = (data.layout_id(), data.has_side_descriptors());
+        let epoch = crate::heap::prototype_layout_epoch();
+        match self.symbol_load_proofs.answer(layout, key, epoch) {
+            Some(SymbolLoadAnswer::Own(_)) => Some(true),
+            Some(SymbolLoadAnswer::Absent) if !side => Some(false),
+            Some(SymbolLoadAnswer::Inherited { .. } | SymbolLoadAnswer::Getter { .. }) if !side => Some(true),
+            Some(_) => None,
+            None => match self.prove_load(object, key, epoch) {
+                super::object_get::ProvedLoad::Value(_) | super::object_get::ProvedLoad::Getter => Some(true),
+                super::object_get::ProvedLoad::Absent => Some(false),
+                super::object_get::ProvedLoad::Unproved => None,
+            },
         }
     }
 
