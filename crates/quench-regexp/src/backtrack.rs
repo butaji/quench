@@ -142,6 +142,9 @@ fn ascii_table(ascii: u128) -> AsciiTable {
 /// A set a program's instructions test units against: the set with its `AsciiTable`.
 struct MatchSet {
     table: AsciiTable,
+    /// A byte per unit of an ASCII subject, for the scan of a repeat (`run_end`): a load
+    /// and a compare a unit, where the bit table takes a shift, a load and a bit test.
+    bytes: [bool; 256],
     beyond: Beyond,
 }
 
@@ -149,6 +152,7 @@ impl From<UnitSet> for MatchSet {
     fn from(set: UnitSet) -> Self {
         Self {
             table: ascii_table(set.ascii),
+            bytes: std::array::from_fn(|unit| unit < ASCII_UNITS as usize && set.ascii >> unit & 1 != 0),
             beyond: set.beyond,
         }
     }
@@ -1605,10 +1609,10 @@ impl Program {
     fn run_end<T: Text + ?Sized>(&self, test: UnitTest, text: &T, from: usize, to: usize) -> usize {
         let taken = match (test, text.bytes()) {
             (UnitTest::Set(set), Some(bytes)) => {
-                let table = &self.sets[set as usize].table;
+                let table = &self.sets[set as usize].bytes;
                 bytes[from..to]
                     .iter()
-                    .position(|unit| !table.contains(*unit))
+                    .position(|unit| !table[usize::from(*unit)])
             }
             (UnitTest::Exact(expected), Some(bytes)) => {
                 bytes[from..to].iter().position(|unit| u32::from(*unit) != expected)
