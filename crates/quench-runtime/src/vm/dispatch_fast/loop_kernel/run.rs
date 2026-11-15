@@ -1,7 +1,7 @@
 //! Running a loop kernel: entry facts, the trip count, chunks of columns, the scalar pass
 //! over recurrences, the chunk's stores, and the registers written back.
 use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
-use super::shape::{Arg, NodeOp, Scalar};
+use super::shape::{Arg, NodeOp, Scalar, Stride};
 use super::typed;
 use crate::heap::TypedArrayKind;
 use super::*;
@@ -36,6 +36,8 @@ struct State {
     scalars: [f64; SLOTS],
     /// Each affine value's index at the run's first iteration.
     firsts: [i64; SLOTS],
+    /// Each affine value's step per iteration.
+    steps: [i64; SLOTS],
     spans: [Span; MAX_BASES],
     phis: [f64; SLOTS],
     /// The written registers' values at the last committed iteration: recurrences, then temps.
@@ -49,6 +51,7 @@ impl State {
     const EMPTY: Self = Self {
         scalars: [0.0; SLOTS],
         firsts: [0; SLOTS],
+        steps: [0; SLOTS],
         spans: [NO_SPAN; MAX_BASES],
         phis: [0.0; SLOTS],
         finals: [0.0; 2 * SLOTS],
@@ -168,7 +171,12 @@ const WORK_PER_ITERATION: u64 = 4;
 impl LoopKernel {
     /// Runs the loop from the registers' current state (module documentation).
     pub(super) unsafe fn run<H: Host>(&self, cx: *mut LaneContext<H>, r: Registers, ip: Ip) {
-        let Some(mut state) = self.enter(cx, r) else { return };
+        let Some(mut state) = self.enter(cx, r) else {
+            if crate::trace::Channel::LoopKernel.on() {
+                eprintln!("loop-kernel: entry declined ({} declines)", self.declines.get());
+            }
+            return;
+        };
         // SAFETY: the kernel's scratch, used by one run at a time.
         let scratch = unsafe { &mut *self.scratch.get() };
         let columns = self.recurrence.columns(&self.shape) * CHUNK;
@@ -181,6 +189,9 @@ impl LoopKernel {
             if !self.chunk::<H>(&mut state, scratch, done, len) {
                 // A chunk met a value the kernel does not compute: the loop's own records
                 // run from its first iteration, now and at every later entry.
+                if crate::trace::Channel::LoopKernel.on() {
+                    eprintln!("loop-kernel: a chunk met a value the kernel does not compute; standing down");
+                }
                 self.stand_down::<H>(ip);
                 break;
             }
@@ -203,11 +214,12 @@ impl LoopKernel {
         let mut state = State::EMPTY;
         for (slot, affine) in shape.affines.iter().enumerate() {
             state.firsts[slot] = i64::from(r.get(affine.register).as_int()?) + i64::from(affine.offset);
+            state.steps[slot] = stride(affine.step, r)?;
         }
-        let counter = shape.affines[usize::from(shape.counter)];
         let start = state.firsts[usize::from(shape.counter)];
         self.scalars(cx, &mut state, r)?;
-        state.trip = trip_count(start as f64, f64::from(counter.step), shape.relation, state.scalars[usize::from(shape.bound)]);
+        let step = state.steps[usize::from(shape.counter)];
+        state.trip = trip_count(start as f64, step as f64, shape.relation, state.scalars[usize::from(shape.bound)]);
         if state.trip < MIN_TRIP {
             self.declines.set(self.declines.get() + 1);
             return None;
@@ -260,12 +272,12 @@ impl LoopKernel {
         let mut limit = state.trip;
         for node in &shape.nodes {
             if let NodeOp::Load { base, index } = node.op {
-                let step = i64::from(shape.affines[usize::from(index)].step);
+                let step = state.steps[usize::from(index)];
                 limit = limit.min(fits(state.firsts[usize::from(index)], step, state.spans[usize::from(base)].readable));
             }
         }
         for store in &shape.stores {
-            let step = i64::from(shape.affines[usize::from(store.index)].step);
+            let step = state.steps[usize::from(store.index)];
             limit = limit.min(fits(state.firsts[usize::from(store.index)], step, state.spans[usize::from(store.base)].writable));
         }
         (limit >= MIN_TRIP).then_some(limit)
@@ -290,13 +302,13 @@ impl LoopKernel {
                     return None;
                 }
             }
-            let step = i64::from(shape.affines[usize::from(store.index)].step);
+            let step = state.steps[usize::from(store.index)];
             for &(node, order) in &shape.loads {
                 let NodeOp::Load { base, index } = shape.nodes[usize::from(node)].op else { continue };
                 if state.spans[usize::from(base)].base != stored {
                     continue;
                 }
-                if i64::from(shape.affines[usize::from(index)].step) != step {
+                if state.steps[usize::from(index)] != step {
                     return None;
                 }
                 let distance = state.firsts[usize::from(index)] - state.firsts[usize::from(store.index)];
@@ -338,7 +350,7 @@ impl LoopKernel {
 
     #[inline(always)]
     fn index(&self, state: &State, slot: u8, k: u64) -> i64 {
-        state.firsts[usize::from(slot)] + i64::from(self.shape.affines[usize::from(slot)].step) * k as i64
+        state.firsts[usize::from(slot)] + state.steps[usize::from(slot)] * k as i64
     }
 
     /// The column operations: the loads, then the operators in node order (operands precede
@@ -366,8 +378,8 @@ impl LoopKernel {
     }
 
     /// Node `id`'s operator over the columns and scalars it reads. A recurrence it reads is
-    /// the column of its value at an iteration's end, one iteration late (`sequential`): its
-    /// value at entry for the chunk's first iteration.
+    /// a column `depth` iterations late (`lagged`): before that, the values at entry of the
+    /// recurrences it was copied through.
     fn operator_column(&self, state: &State, scratch: &mut [f64], id: usize, len: usize) {
         let node = self.shape.nodes[id];
         let base = scratch.as_mut_ptr();
@@ -377,22 +389,42 @@ impl LoopKernel {
         let column = |arg: Arg, from: usize, to: usize| match arg {
             Arg::Col(n) => Column::Col(read(usize::from(n), from, to)),
             Arg::Scalar(slot) => Column::Scalar(state.scalars[usize::from(slot)]),
-            Arg::Phi(p) if from == 0 => Column::Scalar(state.phis[usize::from(p)]),
-            Arg::Phi(p) => match self.shape.phis[usize::from(p)].1 {
-                Arg::Col(n) => Column::Col(read(usize::from(n), from - 1, to - 1)),
-                _ => unreachable!("a lagged recurrence ends as a column"),
+            Arg::Phi(p) => match self.lagged(p) {
+                (_, depth) if from < depth => Column::Scalar(state.phis[self.lagged_entry(p, from)]),
+                (n, depth) => Column::Col(read(n, from - depth, to - depth)),
             },
             Arg::Affine(_) => unreachable!("a column operation reads no affine value"),
         };
+        let depth = |arg: Arg| if let Arg::Phi(p) = arg { self.lagged(p).1 } else { 0 };
+        let head = depth(node.a).max(depth(node.b)).min(len);
         // SAFETY: as above.
         let out = unsafe { std::slice::from_raw_parts_mut(base.add(id * CHUNK), len) };
-        if matches!(node.a, Arg::Phi(_)) || matches!(node.b, Arg::Phi(_)) {
-            let (first, rest) = out.split_at_mut(1);
-            operate(node.op, first, column(node.a, 0, 1), column(node.b, 0, 1));
-            operate(node.op, rest, column(node.a, 1, len), column(node.b, 1, len));
-        } else {
-            operate(node.op, out, column(node.a, 0, len), column(node.b, 0, len));
+        for k in 0..head {
+            operate(node.op, &mut out[k..k + 1], column(node.a, k, k + 1), column(node.b, k, k + 1));
         }
+        operate(node.op, &mut out[head..], column(node.a, head, len), column(node.b, head, len));
+    }
+
+    /// A lagged recurrence's column and how many iterations late it reads it.
+    fn lagged(&self, p: u8) -> (usize, usize) {
+        let (mut at, mut depth) = (p, 1);
+        loop {
+            match self.shape.phis[usize::from(at)].1 {
+                Arg::Col(n) => return (usize::from(n), depth),
+                Arg::Phi(q) => (at, depth) = (q, depth + 1),
+                _ => unreachable!("a lagged recurrence ends as a column"),
+            }
+        }
+    }
+
+    /// The recurrence whose value at entry a lagged recurrence `p` has at iteration `k`.
+    fn lagged_entry(&self, p: u8, k: usize) -> usize {
+        let mut at = p;
+        for _ in 0..k {
+            let Arg::Phi(q) = self.shape.phis[usize::from(at)].1 else { unreachable!("within the lag") };
+            at = q;
+        }
+        usize::from(at)
     }
 
     /// Decodes `bases[base][index + step * k]` into `out`; `false` where one is no Number.
@@ -400,7 +432,7 @@ impl LoopKernel {
         let span = state.spans[usize::from(base)];
         let values = span.values;
         let first = self.index(state, index, done);
-        let step = i64::from(self.shape.affines[usize::from(index)].step);
+        let step = state.steps[usize::from(index)];
         if let Some((kind, _)) = span.typed {
             // SAFETY: `limit` keeps every index of the run below the span's readable length.
             unsafe { typed::load(kind, values.cast(), first, step, out) };
@@ -431,7 +463,7 @@ impl LoopKernel {
             }
             let values = span.values;
             let first = self.index(state, store.index, done);
-            let step = i64::from(self.shape.affines[usize::from(store.index)].step);
+            let step = state.steps[usize::from(store.index)];
             let mut deleted = 0u64;
             for k in 0..len as i64 {
                 // SAFETY: `limit` keeps every index below the span's writable length.
@@ -447,7 +479,7 @@ impl LoopKernel {
             let span = state.spans[usize::from(store.base)];
             let values = span.values;
             let first = self.index(state, store.index, done) as isize;
-            let step = self.shape.affines[usize::from(store.index)].step as isize;
+            let step = state.steps[usize::from(store.index)] as isize;
             if let Some((kind, _)) = span.typed {
                 let numbers = (0..len).map(|k| self.value(state, scratch, store.value, k, done));
                 // SAFETY: `limit` keeps every index below the span's writable length.
@@ -494,10 +526,22 @@ impl LoopKernel {
         let shape = &self.shape;
         for &(register, step) in &shape.inductions {
             let entry = r.get(register).as_int().map_or(0, i64::from);
-            r.set(register, Value::number((entry + i64::from(step) * done as i64) as f64));
+            let step = stride(step, r).unwrap_or(0);
+            r.set(register, Value::number((entry + step * done as i64) as f64));
         }
         for (slot, &(register, _)) in shape.phis.iter().chain(&shape.temps).enumerate() {
             r.set(register, Value::number(state.finals[slot]));
+        }
+    }
+}
+
+/// An affine value's step at entry; `None` for a register step that is no nonzero int32.
+fn stride(step: Stride, r: Registers) -> Option<i64> {
+    match step {
+        Stride::Const(step) => Some(i64::from(step)),
+        Stride::Register(register, negative) => {
+            let value = i64::from(r.get(register).as_int().filter(|&value| value != 0)?);
+            Some(if negative { -value } else { value })
         }
     }
 }

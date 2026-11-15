@@ -69,7 +69,8 @@ pub(super) struct Machine {
 }
 
 impl Machine {
-    pub(super) fn of(shape: &Shape) -> Option<Self> {
+    /// The machine running the scalar pass's nodes but `side`'s.
+    pub(super) fn of(shape: &Shape, side: &[u16]) -> Option<Self> {
         let count = shape.phis.len();
         if count > MAX_RECURRENCES {
             return None;
@@ -103,12 +104,12 @@ impl Machine {
             })
         };
         let mut steps = Vec::with_capacity(shape.seq.len());
-        for &id in &shape.seq {
+        for &id in shape.seq.iter().filter(|id| !side.contains(id)) {
             let node = shape.nodes[usize::from(id)];
             let (a, b) = (operand(node.a, &mut next, &registers)?, operand(node.b, &mut next, &registers)?);
             let register = take(&mut next)?;
             *registers.get_mut(usize::from(id))? = register;
-            let out = if read_later(shape, &[], id) { u32::try_from(usize::from(id) * CHUNK).ok()? } else { dump };
+            let out = if read_later(shape, side, id) { u32::try_from(usize::from(id) * CHUNK).ok()? } else { dump };
             let code = Code::of(node.op, true);
             steps.push(Step { kind: kind(code, a, b), code, a: a & !REGISTER, b: b & !REGISTER, register, out });
         }

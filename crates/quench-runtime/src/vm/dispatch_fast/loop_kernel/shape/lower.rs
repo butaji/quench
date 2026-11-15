@@ -9,18 +9,16 @@ impl Lowering<'_> {
         }
         let mut nodes = Vec::with_capacity(graph.nodes.len());
         for &node in &graph.nodes {
-            nodes.push(self.node(node)?);
+            nodes.push(traced(self.node(node), "a node's operands")?);
         }
-        let stores = self.stores(&graph)?;
-        let (counter, relation, bound) = self.test(test)?;
-        let inductions = self.inductions(file)?;
-        let (phis, temps) = self.finals(file)?;
+        let stores = traced(self.stores(&graph), "a store")?;
+        let (counter, relation, bound) = traced(self.test(test), "the loop test")?;
+        let inductions = traced(self.inductions(file), "an induction")?;
+        let (phis, temps) = traced(self.finals(file), "a written register's final value")?;
         for affine in &mut self.affines {
-            affine.step = inductions.iter().find(|(register, _)| *register == affine.register).map_or(0, |&(_, step)| step);
+            affine.step = inductions.iter().find(|(register, _)| *register == affine.register).map_or(Stride::Const(0), |&(_, step)| step);
         }
-        if !disjoint_stores(&stores, &self.affines) {
-            return None;
-        }
+        traced(disjoint_stores(&stores, &self.affines).then_some(()), "stores into one array")?;
         let seq = sequential(&mut nodes, &phis);
         Some(Shape {
             counter,
@@ -50,11 +48,12 @@ impl Lowering<'_> {
             .collect()
     }
 
-    fn inductions(&self, file: &[Sym]) -> Option<Vec<(u16, i32)>> {
+    fn inductions(&self, file: &[Sym]) -> Option<Vec<(u16, Stride)>> {
         (0..file.len())
             .filter(|&register| self.induction[register])
             .map(|register| match file[register] {
-                Sym::Affine(r, step) if usize::from(r) == register => Some((r, step)),
+                Sym::Affine(r, step) if usize::from(r) == register => Some((r, Stride::Const(step))),
+                Sym::Strided(r, by, negative) if usize::from(r) == register => Some((r, Stride::Register(by, negative))),
                 _ => None,
             })
             .collect()
@@ -92,29 +91,38 @@ impl Lowering<'_> {
 fn disjoint_stores(stores: &[Store], affines: &[Affine]) -> bool {
     let apart = |a: &Store, b: &Store| {
         let (a, b) = (affines[usize::from(a.index)], affines[usize::from(b.index)]);
-        a.register == b.register && a.step == b.step && a.step != 0 && (a.offset - b.offset).rem_euclid(a.step) != 0
+        let step = a.step.constant().filter(|&step| step != 0);
+        a.register == b.register && a.step == b.step && step.is_some_and(|step| (a.offset - b.offset).rem_euclid(step) != 0)
     };
     stores.iter().enumerate().all(|(i, store)| stores[..i].iter().all(|other| other.base != store.base || apart(other, store)))
 }
 
 /// The nodes that read a recurrence, directly or through another node, in body order. A
 /// recurrence whose value at an iteration's end is a column no recurrence feeds (`p = c`)
-/// is that column one iteration late, so a node reading it is a column too (`lagged`),
-/// where the column is ready first: a load (loads run first), or a node before the reader.
+/// is that column one iteration late, and one that ends as such a recurrence's old value
+/// (`q = p; p = c`) is it two iterations late (`lagged`). A node reading one is a column
+/// too, where the column is ready first: a load (loads run first), or a node before it.
 fn sequential(nodes: &mut [Node], phis: &[(u16, Arg)]) -> Vec<u16> {
-    let mut lagged = vec![false; phis.len()];
+    let mut lagged: Vec<Option<(u16, u8)>> = vec![None; phis.len()];
     loop {
         for id in 0..nodes.len() {
             let node = nodes[id];
             let reads = |arg: Arg| match arg {
-                Arg::Phi(p) => !(lagged[usize::from(p)] && lag_ready(nodes, phis[usize::from(p)].1, id)),
+                Arg::Phi(p) => !lagged[usize::from(p)].is_some_and(|(n, _)| lag_ready(nodes, n, id)),
                 Arg::Col(n) => nodes[usize::from(n)].seq,
                 _ => false,
             };
             let seq = matches!(node.op, NodeOp::Arith(_) | NodeOp::Bits(_)) && (reads(node.a) || reads(node.b));
             nodes[id].seq = seq;
         }
-        let next: Vec<bool> = phis.iter().map(|&(_, last)| matches!(last, Arg::Col(n) if !nodes[usize::from(n)].seq)).collect();
+        let next: Vec<Option<(u16, u8)>> = phis
+            .iter()
+            .map(|&(_, last)| match last {
+                Arg::Col(n) if !nodes[usize::from(n)].seq => Some((n, 1)),
+                Arg::Phi(q) => lagged[usize::from(q)].filter(|&(_, depth)| depth < MAX_LAG).map(|(n, depth)| (n, depth + 1)),
+                _ => None,
+            })
+            .collect();
         if next == lagged {
             break;
         }
@@ -123,10 +131,18 @@ fn sequential(nodes: &mut [Node], phis: &[(u16, Arg)]) -> Vec<u16> {
     (0..nodes.len() as u16).filter(|&id| nodes[usize::from(id)].seq).collect()
 }
 
-/// Whether column `last` is computed before node `reader`'s column (`Runner::columns`).
-pub(super) fn lag_ready(nodes: &[Node], last: Arg, reader: usize) -> bool {
-    match last {
-        Arg::Col(n) => usize::from(n) < reader || matches!(nodes[usize::from(n)].op, NodeOp::Load { .. } | NodeOp::Iota { .. }),
-        _ => false,
+/// `value`, reporting what has no kernel model when it is `None` (`Channel::LoopKernel`).
+pub(super) fn traced<T>(value: Option<T>, what: &str) -> Option<T> {
+    if value.is_none() && crate::trace::Channel::LoopKernel.on() {
+        eprintln!("loop-kernel:   no model for {what}");
     }
+    value
+}
+
+/// The most iterations late a lagged recurrence reads its column.
+const MAX_LAG: u8 = 4;
+
+/// Whether column `n` is computed before node `reader`'s column (`Runner::columns`).
+fn lag_ready(nodes: &[Node], n: u16, reader: usize) -> bool {
+    usize::from(n) < reader || matches!(nodes[usize::from(n)].op, NodeOp::Load { .. } | NodeOp::Iota { .. })
 }

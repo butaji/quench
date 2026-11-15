@@ -114,6 +114,33 @@ pub(super) fn read_later(shape: &Shape, side: &[u16], id: u16) -> bool {
     read_as_column(shape, side, id) || shape.temps.iter().any(|&(_, arg)| arg == Arg::Col(id))
 }
 
+/// The nodes of the scalar pass that no recurrence's next value reads, directly or through
+/// other nodes, and that read no recurrence directly: they run as columns after the pass.
+fn feeds_none(shape: &Shape) -> Vec<u16> {
+    let mut needed = vec![false; shape.nodes.len()];
+    let mut work: Vec<u16> = shape.phis.iter().filter_map(|&(_, arg)| if let Arg::Col(n) = arg { Some(n) } else { None }).collect();
+    while let Some(n) = work.pop() {
+        let node = shape.nodes[usize::from(n)];
+        if !node.seq || std::mem::replace(&mut needed[usize::from(n)], true) {
+            continue;
+        }
+        work.extend([node.a, node.b].into_iter().filter_map(|arg| if let Arg::Col(m) = arg { Some(m) } else { None }));
+    }
+    let mut side: Vec<u16> = Vec::new();
+    for &id in &shape.seq {
+        let node = shape.nodes[usize::from(id)];
+        let column = |arg: Arg| match arg {
+            Arg::Phi(_) => false,
+            Arg::Col(m) => !shape.nodes[usize::from(m)].seq || needed[usize::from(m)] || side.contains(&m),
+            _ => true,
+        };
+        if !needed[usize::from(id)] && column(node.a) && column(node.b) {
+            side.push(id);
+        }
+    }
+    side
+}
+
 /// Whether `arg` is the recurrence or a value computed from it this iteration.
 fn recurrent(shape: &Shape, arg: Arg) -> bool {
     match arg {
@@ -128,7 +155,10 @@ impl Recurrence {
         if shape.phis.is_empty() {
             return Some(Self { pass: Pass::None, side: Vec::new() });
         }
-        Self::single(shape).or_else(|| Some(Self { pass: Pass::Machine(super::machine::Machine::of(shape)?), side: Vec::new() }))
+        Self::single(shape).or_else(|| {
+            let side = feeds_none(shape);
+            Some(Self { pass: Pass::Machine(super::machine::Machine::of(shape, &side)?), side })
+        })
     }
 
     /// The pass of a single recurrence whose cycle is a chain (`cycle`), whose other nodes

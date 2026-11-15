@@ -107,6 +107,8 @@ setting! {
         JitCoverage = "jit-coverage",
         /// Whether a startup snapshot was restored, and why not.
         StartupSnapshot = "startup-snapshot",
+        /// No-JIT loop kernels: each loop's kernel or the reason it has none.
+        LoopKernel = "loop-kernel",
     }
 }
 

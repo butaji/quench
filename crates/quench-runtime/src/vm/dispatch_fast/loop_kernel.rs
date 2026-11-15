@@ -73,8 +73,18 @@ impl LoopKernel {
         backedge: usize,
         original: *const (),
     ) -> Option<Box<Self>> {
-        let shape = Shape::of(decoded, constants, usize::from(function.registers), header, backedge)?;
-        let recurrence = recur::Recurrence::of(&shape)?;
+        let trace = crate::trace::Channel::LoopKernel.on();
+        let Some(shape) = Shape::of(decoded, constants, usize::from(function.registers), header, backedge) else {
+            if trace {
+                eprintln!("loop-kernel: loop {header}..{backedge}: no shape");
+            }
+            return None;
+        };
+        let recurrence = recur::Recurrence::of(&shape);
+        if trace {
+            eprintln!("loop-kernel: loop {header}..{backedge}: {}", if recurrence.is_some() { "kernel" } else { "no recurrence pass" });
+        }
+        let recurrence = recurrence?;
         let mut kernel = Box::new(LoopKernel {
             shape,
             recurrence,

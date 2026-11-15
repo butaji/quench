@@ -5,7 +5,7 @@ use super::super::*;
 use crate::bytecode::OperandKind;
 
 /// Most operations a kernel keeps (columns of scratch).
-const MAX_NODES: usize = 64;
+const MAX_NODES: usize = 96;
 /// Most recurrences, scalars and affine values a kernel keeps.
 const MAX_SLOTS: usize = 32;
 
@@ -28,7 +28,25 @@ pub(super) enum Arg {
 pub(super) struct Affine {
     pub(super) register: u16,
     pub(super) offset: i32,
-    pub(super) step: i32,
+    pub(super) step: Stride,
+}
+
+/// An induction's step: a constant, or an unwritten register's int32 value at entry, maybe
+/// negated (`i -= height`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Stride {
+    Const(i32),
+    Register(u16, bool),
+}
+
+impl Stride {
+    /// The constant step, if it is one.
+    pub(super) fn constant(self) -> Option<i32> {
+        match self {
+            Stride::Const(step) => Some(step),
+            Stride::Register(..) => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -93,7 +111,7 @@ pub(crate) struct Shape {
     /// Recurrence registers and their values at an iteration's end.
     pub(super) phis: Vec<(u16, Arg)>,
     /// Inductions and their steps.
-    pub(super) inductions: Vec<(u16, i32)>,
+    pub(super) inductions: Vec<(u16, Stride)>,
     /// The other registers the body writes, with their values at an iteration's end.
     pub(super) temps: Vec<(u16, Arg)>,
 }
@@ -126,6 +144,8 @@ enum Sym {
     Phi(u16),
     Const(f64),
     Affine(u16, i32),
+    /// An induction stepped by an unwritten register (`Stride::Register`).
+    Strided(u16, u16, bool),
     /// A captured binding's value (a `LoadCapture` immediate): the body runs no code that
     /// could assign it.
     Capture(u32),
@@ -161,7 +181,7 @@ impl<'a> Graph<'a> {
     }
 
     fn node(&mut self, op: SymOp, a: Sym, b: Sym) -> Option<Sym> {
-        (self.nodes.len() < MAX_NODES).then_some(())?;
+        lower::traced((self.nodes.len() < MAX_NODES).then_some(()), "more nodes")?;
         self.nodes.push((op, a, b));
         Some(Sym::Node((self.nodes.len() - 1) as u16))
     }
@@ -190,6 +210,22 @@ impl<'a> Graph<'a> {
             Sym::Affine(register, 0) if !self.written[usize::from(register)] => Some(register),
             _ => None,
         }
+    }
+
+    /// A written register plus or minus an unwritten one (`i -= height`), which only an
+    /// induction's step may be.
+    fn strided(&self, kind: SymOp, a: Sym, b: Sym) -> Option<Sym> {
+        let (written, other, negative) = match (kind, a, b) {
+            (SymOp::Arith(NumberArithmetic::Add), Sym::Affine(r, 0), Sym::Affine(h, 0))
+            | (SymOp::Arith(NumberArithmetic::Add), Sym::Affine(h, 0), Sym::Affine(r, 0))
+                if self.written[usize::from(r)] && !self.written[usize::from(h)] =>
+            {
+                (r, h, false)
+            }
+            (SymOp::Arith(NumberArithmetic::Subtract), Sym::Affine(r, 0), Sym::Affine(h, 0)) => (r, h, true),
+            _ => return None,
+        };
+        (self.written[usize::from(written)] && !self.written[usize::from(other)]).then_some(Sym::Strided(written, other, negative))
     }
 
     fn index(sym: Sym) -> Option<(u16, i32)> {
@@ -224,6 +260,9 @@ impl<'a> Graph<'a> {
         // An induction stepped by a constant (`i += 4`) stays affine, as `inc_dec` steps it.
         if let Some(affine) = shifted(kind, a, b).filter(|&sym| matches!(sym, Sym::Affine(r, _) if self.written[usize::from(r)])) {
             return Some(affine);
+        }
+        if let Some(strided) = self.strided(kind, a, b) {
+            return Some(strided);
         }
         let (a, b) = (self.arith_operand(a)?, self.arith_operand(b)?);
         self.node(kind, a, b)
@@ -287,7 +326,13 @@ impl<'a> Graph<'a> {
     /// One pass over `body` from the register file `file`.
     fn pass(&mut self, body: &[WideInstruction], file: &mut [Sym]) -> Option<()> {
         for &instruction in body {
-            if let Some(value) = self.step(instruction, file).ok()? {
+            let Ok(value) = self.step(instruction, file) else {
+                if crate::trace::Channel::LoopKernel.on() {
+                    eprintln!("loop-kernel:   no model for {:?} {:?}", instruction.op(), instruction.binary_operator());
+                }
+                return None;
+            };
+            if let Some(value) = value {
                 *file.get_mut(usize::from(instruction.result_register()))? = value;
             }
         }
@@ -360,7 +405,14 @@ impl Shape {
         first.pass(pre, &mut file)?;
         first.pass(body, &mut file)?;
         let induction: Vec<bool> = (0..registers)
-            .map(|register| written[register] && matches!(file[register], Sym::Affine(r, step) if usize::from(r) == register && step != 0))
+            .map(|register| {
+                written[register]
+                    && match file[register] {
+                        Sym::Affine(r, step) => usize::from(r) == register && step != 0,
+                        Sym::Strided(r, _, _) => usize::from(r) == register,
+                        _ => false,
+                    }
+            })
             .collect();
         // Pass 2: recurrences start as `Phi`.
         let mut file: Vec<Sym> = identity
@@ -404,11 +456,11 @@ impl<'a> Lowering<'a> {
 
     fn affine(&mut self, (register, offset): (u16, i32)) -> Option<u8> {
         let step = if self.induction[usize::from(register)] {
-            0 // filled from the inductions in `lower`
+            Stride::Const(0) // filled from the inductions in `lower`
         } else if self.written[usize::from(register)] {
             return None;
         } else {
-            0
+            Stride::Const(0)
         };
         Self::slot(&mut self.affines, Affine { register, offset, step })
     }
@@ -440,6 +492,7 @@ impl<'a> Lowering<'a> {
             Sym::Affine(register, offset) => Arg::Affine(self.affine((register, offset))?),
             Sym::Capture(imm) => self.scalar(Scalar::Capture(imm))?,
             Sym::Field(register, atom) => self.scalar(Scalar::Length { register, atom })?,
+            Sym::Strided(..) => return None,
         })
     }
 
