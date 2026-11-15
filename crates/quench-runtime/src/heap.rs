@@ -770,6 +770,13 @@ pub(crate) struct Heap {
     cycle_gate: concurrent_mark::CycleGate,
     /// Whether old records keep reference counts (`rc`, `QUENCH_DEV=rc-gc`).
     rc_active: bool,
+    /// Old records whose count is 0, to try freeing at the next minor collection, and the
+    /// ones this minor collection made candidates (`Heap::rc_pre_mark`).
+    rc_zero: Vec<Value>,
+    rc_candidates: Vec<Value>,
+    /// Under `QUENCH_DEV=rc-verify`, the candidates counts would have freed, kept instead
+    /// until a full collection's trace checks that none is reachable.
+    rc_suspects: Vec<Value>,
     /// Marks on the parallel pool whatever the heap's size (`Heap::parallel_mark`), so unit
     /// tests reach the parallel path with small heaps.
     #[cfg(test)]
@@ -2113,6 +2120,13 @@ impl Heap {
         self.resident_at_full_start = 0;
         self.resident_after_full = 0;
         self.cycle_gate = concurrent_mark::CycleGate::default();
+        self.rc_zero.clear();
+        self.rc_candidates.clear();
+        self.rc_suspects.clear();
+        // The fresh record spaces keep counts as the old ones did.
+        if self.rc_active {
+            self.set_rc(true);
+        }
         self.weight_between_fulls = 0;
         self.old_live = 0;
         self.collections = 0;
@@ -2486,6 +2500,9 @@ impl Heap {
                     remembered_owners.extend_from_slice(&work[first..first + written]);
                 }
             }
+            if self.rc_active {
+                self.rc_pre_mark(&mut work);
+            }
         }
         #[cfg(debug_assertions)]
         let verify_remembered_records: Vec<Value> = if full {
@@ -2563,6 +2580,19 @@ impl Heap {
                 let mut pinned = verify_old_records.unwrap_or_default();
                 pinned.extend(verify_remembered_records);
                 self.debug_verify_minor(&verify_roots, &pinned, &mut object_roots);
+            }
+        }
+        if self.rc_active && crate::trace::Dev::RcVerify.on() {
+            if full {
+                self.rc_check_suspects();
+            } else {
+                // The candidates the mark left are kept, and marked through, for the next
+                // full collection to judge.
+                let suspects = self.rc_unmarked_candidates();
+                work.extend(suspects.iter().copied());
+                self.rc_suspects.extend(suspects);
+                let mut ephemerons = weak::EphemeronWork::default();
+                self.mark_work(&mut work, &mut object_roots, None, &mut ephemerons, GcTraceKind::Collection, &mut environments);
             }
         }
         self.clear_unread_environment_slots(environments);
@@ -2942,7 +2972,7 @@ impl Heap {
         for (family, _) in self.record_families_mut() {
             aged.add(family.take_aged_fates());
         }
-        let next = self.pacing().plan(
+        let mut next = self.pacing().plan(
             &mut self.pacing_state,
             pacing::CollectionOutcome {
                 full,
@@ -2965,6 +2995,9 @@ impl Heap {
         if full {
             let pause_micros = full_started.map_or(0, |started| started.elapsed().as_micros() as u64);
             self.judge_cycles(premarked, full_mark_micros, pause_micros);
+        }
+        if self.rc_active {
+            next = self.rc_plan(live);
         }
         if crate::trace::Channel::Gc.on() {
             let (mark_us, sweep_us) = trace_times;

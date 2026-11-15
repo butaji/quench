@@ -1562,6 +1562,22 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         count == 1
     }
 
+    /// Makes old record `id` a candidate for freeing: its mark bit is cleared, so a minor
+    /// collection's mark re-marks it if anything it traces names it, and its word goes to the
+    /// minor sweep's list (`aged_words`), which frees it otherwise. `false` when it is not
+    /// marked: logged by the barrier this epoch, young, or a candidate already.
+    pub(super) fn rc_unmark(&mut self, id: RecordId) -> bool {
+        let (block_index, record_index) = Self::split_id(id);
+        let (word_index, mask) = (record_index / OCCUPANCY_WORD_BITS, 1_u64 << (record_index % OCCUPANCY_WORD_BITS));
+        let word = &mut self.blocks[block_index].marked[word_index];
+        if *word & mask == 0 {
+            return false;
+        }
+        *word &= !mask;
+        self.aged_words.push(id - (record_index % OCCUPANCY_WORD_BITS) as RecordId);
+        true
+    }
+
     /// Every count becomes 0, as a recount starts.
     pub(super) fn rc_clear(&mut self) {
         self.rc_ensure();

@@ -140,5 +140,8 @@ setting! {
         /// Old records keep reference counts, and minor collections free the records whose
         /// count drops to zero (`heap::rc`).
         RcGc = "rc-gc",
+        /// Under `rc-gc`, checks before each minor sweep that nothing live names a record it
+        /// frees, and reports what does (`Heap::rc_verify_frees`).
+        RcVerify = "rc-verify",
     }
 }

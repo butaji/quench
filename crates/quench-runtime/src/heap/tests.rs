@@ -2084,3 +2084,40 @@ fn reference_counts_match_the_heap_references_after_each_collection() {
         }
     }
 }
+
+#[test]
+fn a_dropped_acyclic_old_structure_is_freed_by_the_next_minor_collection_under_counts() {
+    let mut heap = Heap::new();
+    heap.register_property_shape(1, 2, None);
+    heap.set_rc(true);
+    let root = heap.alloc_object_pair(Value::NULL, 1, Value::NULL, Value::NULL);
+    let mut chain = Vec::new();
+    let mut owner = root;
+    for _ in 0..50 {
+        let node = heap.alloc_object_pair(Value::NULL, 1, Value::NULL, Value::NULL);
+        heap.property_set(owner, 0, node);
+        chain.push(node);
+        owner = node;
+    }
+    // A second edge into the chain's middle, from a node that stays.
+    let keeper = heap.alloc_object_pair(Value::NULL, 1, Value::NULL, Value::NULL);
+    heap.property_set(root, 1, keeper);
+    heap.property_set(keeper, 0, chain[40]);
+    heap.collect([root]);
+    assert!(heap.rc_mismatches().is_empty());
+    heap.property_set(root, 0, Value::NULL);
+    collect_minor(&mut heap, [root]);
+    assert!(heap.rc_mismatches().is_empty());
+    for (index, &node) in chain.iter().enumerate() {
+        assert_eq!(heap.is_live(node), index >= 40, "node {index}");
+    }
+    assert!(heap.is_live(root) && heap.is_live(keeper));
+    // A zero-count record a root names stays.
+    heap.property_set(keeper, 0, Value::NULL);
+    collect_minor(&mut heap, [root, chain[45]]);
+    assert!(heap.is_live(chain[45]) && heap.is_live(chain[49]) && !heap.is_live(chain[40]));
+    assert!(heap.rc_mismatches().is_empty());
+    collect_minor(&mut heap, [root]);
+    assert!(chain.iter().all(|&node| !heap.is_live(node)));
+    assert!(heap.rc_mismatches().is_empty());
+}

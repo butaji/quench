@@ -470,7 +470,11 @@ impl<H: Host> Vm<H> {
         // costs each root a step through every nesting level. They go into the previous
         // collection's mark stack, which holds as many already.
         let mut roots = self.heap.take_mark_stack();
-        self.programs.extend_roots(&mut roots, full, self.heap.promotion_age());
+        // Under counts, a minor collection may free any old record nothing counted names, so
+        // the roots a minor would take only where they may name young records (program
+        // constants, kept atom strings) are all taken.
+        let all_roots = full || self.heap.rc_active();
+        self.programs.extend_roots(&mut roots, all_roots, self.heap.promotion_age());
         self.heap.extend_folded_roots(&mut roots);
         roots.extend(self.wasm_js.roots());
         roots.extend([
@@ -708,7 +712,7 @@ impl<H: Host> Vm<H> {
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
         roots.extend(self.natives.roots());
-        roots.extend(self.heap.kept_atom_roots(full));
+        roots.extend(self.heap.kept_atom_roots(all_roots));
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {
                 [
@@ -826,7 +830,10 @@ impl<H: Host> Vm<H> {
             owned_root_filter: &owned_root_filter,
             _shape_borrow: std::marker::PhantomData,
         };
-        if begin_cycle {
+        // A cycle's snapshot, and a minor collection under counts (which re-marks the
+        // zero-count old records anything uncounted names, `Heap::rc_pre_mark`), take every
+        // edge the VM holds outside the heap as a root.
+        if begin_cycle || !full && self.heap.rc_active() {
             for shape in 0..shape_count as u32 {
                 shape_trace.append_shape_edges(GcTraceKind::Collection, shape, false, &mut roots);
             }
@@ -837,6 +844,8 @@ impl<H: Host> Vm<H> {
             roots.extend(self.holder_hints.iter().flat_map(|hint| [hint.holder, hint.value]));
             roots.extend(self.private_homes.iter().flat_map(|(key, home)| [key.environment, *home]));
             self.private_site_homes.for_each_value(|value| roots.push(value));
+        }
+        if begin_cycle {
             self.heap.begin_cycle(roots);
             return;
         }
@@ -878,7 +887,8 @@ impl<H: Host> Vm<H> {
         unsafe { self.programs.retire_dead_native_calls(|callee| heap.is_live(callee)); }
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
         self.programs.clear_wasm_reference_caches();
-        self.prune_function_values(full);
+        // Under reference counts a minor collection frees old closures too.
+        self.prune_function_values(full || self.heap.rc_active());
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go
         // before their slots can name new cells.
