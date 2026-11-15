@@ -813,7 +813,7 @@ pub(crate) struct Heap {
     /// The last minor collection's counting (`QUENCH_TRACE=gc`): the microseconds before
     /// and after its mark, its candidates, the zero-count records it carried, its young
     /// survivors, and the candidates it freed.
-    rc_trace: [u64; 6],
+    rc_trace: [u64; 9],
     /// Bumped when counts restart (`set_rc`), which drops every pin (`rc_pin`).
     rc_pin_epoch: u64,
     /// Marks on the parallel pool whatever the heap's size (`Heap::parallel_mark`), so unit
@@ -3945,6 +3945,13 @@ impl Heap {
             if let Some(local) = small_strings::small_string_local(record_id) {
                 if self.small_strings.mark(local) {
                     small_strings::trace_small(&self.small_strings, &mut self.string_records, local, work);
+                    if self.rc_marking && self.small_strings.is_aged(local) {
+                        // A survivor counts its parts as it marks them (`Heap::rc_epoch`).
+                        // SAFETY: just marked, so occupied.
+                        unsafe { self.small_strings.get_live(local) }
+                            .for_each_text(|part| self.rc_increment(Value::direct_string(part)));
+                        self.rc_counted += 1;
+                    }
                     #[cfg(feature = "profile-aggregate")]
                     {
                         self.gc_profile.marked += 1;
@@ -3956,6 +3963,15 @@ impl Heap {
             // A string holds no edges but its parts': marking it and tracing them is the visit.
             if self.string_records.mark(record_id) {
                 string_parts::trace_parts(&mut self.string_records, record_id, work);
+                if self.rc_marking && self.string_records.is_aged(record_id) {
+                    // As for a small string; a flat one, marked in place wherever its holder
+                    // is traced, has no parts to count.
+                    // SAFETY: just marked, so occupied.
+                    if let Some(parts) = unsafe { self.string_records.get_live(record_id) }.parts() {
+                        parts.for_each_text(|part| self.rc_increment(Value::direct_string(part)));
+                    }
+                    self.rc_counted += 1;
+                }
                 #[cfg(feature = "profile-aggregate")]
                 {
                     self.gc_profile.marked += 1;

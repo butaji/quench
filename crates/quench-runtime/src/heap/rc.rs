@@ -219,8 +219,10 @@ impl Heap {
             decrements.extend(copied);
             logged.extend(written.into_iter().map(handle));
         });
+        let started = std::time::Instant::now();
         let mut children = Vec::new();
         self.rc_increment_children(logged, &mut children);
+        self.rc_trace[6] = started.elapsed().as_micros() as u64;
         let mut zero = std::mem::take(&mut self.rc_zero);
         for value in decrements {
             if self.rc_decrement(value) {
@@ -258,10 +260,13 @@ impl Heap {
         }
         self.rc_trace[2] = candidates.len() as u64;
         self.rc_trace[3] = carried.len() as u64;
+        self.rc_trace[7] = started.elapsed().as_micros() as u64 - self.rc_trace[6];
         self.rc_zero = carried;
+        let started = std::time::Instant::now();
         if !candidates.is_empty() {
             self.rc_pin_cell_references(work);
         }
+        self.rc_trace[8] = started.elapsed().as_micros() as u64;
         self.rc_candidates = candidates;
     }
 
@@ -307,14 +312,15 @@ impl Heap {
     /// whose cascade decremented them. Survivors and re-marked candidates left at 0 are tried
     /// at the next minor collection.
     pub(super) fn rc_epoch(&mut self) {
-        // The object and array survivors counted their children in the mark (`rc_counted`);
-        // the other families' (with the candidates the mark re-marked, aged) count theirs here.
+        // The object, array and string survivors counted their children in the mark
+        // (`rc_counted`); functions, promises, awaits and iterators (with the candidates the
+        // mark re-marked, aged) count theirs here, and vectors hold none.
         let counted = std::mem::take(&mut self.rc_counted);
         let mut survivors = Vec::new();
         let mut family = 0..;
         for_each_space_mut!(self, |space, handle| {
             space.rc_ensure();
-            if family.next().is_some_and(|family| family >= 2) {
+            if family.next().is_some_and(|family| (2..6).contains(&family)) {
                 space.for_each_young_survivor(|id| survivors.push(handle(id)));
             }
         });
