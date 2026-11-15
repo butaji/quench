@@ -4430,9 +4430,29 @@ pub(crate) fn arrow_chain_reads_implicit_bindings(code: &ResidualProgram, id: u3
                     | Op::LoadNameCall | Op::LoadNameTypeof | Op::ResolveName | Op::LoadResolvedName | Op::DeleteName
                     | Op::StoreName | Op::StoreResolvedName | Op::StoreVarBinding => true,
                     Op::MakeClosure => reads(code, instruction.closure_function_index(), depth),
-                    _ => false,
+                    _ => reads_this_field(code, instruction),
                 }
         })
     }
     reads(code, id, 8)
+}
+
+/// Whether `instruction` reads `this` through a field base (`FieldBase::THIS`): its field
+/// lookup, or a field-site operand in one of its fields. An arrow's `this.x` compiles to a
+/// field read of base `this` with no `LoadThis`, and that `this` is its maker's. A field that
+/// is no operand but decodes as one only answers `true`, which keeps the closure on its
+/// maker's environment.
+fn reads_this_field(code: &ResidualProgram, instruction: WideInstruction) -> bool {
+    let site_base_is_this = |index: usize| code.field_sites.get(index).is_some_and(|site| site.base == FieldBase::THIS);
+    let lookup_reads_this = instruction.op().immediate_role() == ImmediateRole::FieldLookup
+        && match instruction.field_lookup() {
+            Some(FieldLookup::Atom { base, .. }) => base == FieldBase::THIS,
+            Some(FieldLookup::Site(index)) => site_base_is_this(index),
+            None => false,
+        };
+    lookup_reads_this
+        || [instruction.a(), instruction.b(), instruction.c()].into_iter().any(|value| {
+            let operand = Operand(value);
+            operand.kind() == Some(OperandKind::Field) && site_base_is_this(usize::from(operand.payload()))
+        })
 }

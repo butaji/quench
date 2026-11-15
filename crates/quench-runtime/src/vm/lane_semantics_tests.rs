@@ -90,3 +90,30 @@ print(JSON.stringify(out));
     vm.execute(&Engine::specialize(source, "symbol-accessor-shapes.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), [r#"[1,2,"get1","get2",1,"now-getter",2,"undefined",3]"#]);
 }
+
+#[test]
+fn arrows_read_their_makers_this_through_field_bases() {
+    // An arrow's `this.x` compiles to a field read of base `this` with no `LoadThis`; the arrow
+    // still reads its maker's `this`, so it keeps its maker's environment (WSL's
+    // `name => this._program.functions.get(name)` read undefined when it did not).
+    let source = r#"
+class Checker {
+  constructor() { this._program = { functions: new Map([["f", 1]]) }; this.n = 2; }
+  check(resolve) { return resolve("f"); }
+  visit() { return this.check(name => this._program.functions.get(name)); }
+  sum() { return [1, 2].map(x => x + this.n).join(); }
+  nested() { return (() => () => this.n * 10)()(); }
+}
+const c = new Checker();
+let out = '';
+for (let i = 0; i < 5000; i++) {
+  const row = [c.visit(), c.sum(), c.nested()].join();
+  if (i % 2500 === 0) out += row + ';';
+}
+print(out);
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "arrow-this-fields.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["1,3,4,20;1,3,4,20;"]);
+}
