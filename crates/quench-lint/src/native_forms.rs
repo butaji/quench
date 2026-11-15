@@ -207,10 +207,3 @@ fn path_names(syntax: &syn::File) -> Vec<(String, String)> {
     paths.visit_file(syntax);
     paths.0
 }
-
-/// Adds the native-form measures the baseline has never recorded to `baseline`.
-pub fn first_baseline(found: &Measures, recorded: &Measures, baseline: &mut Measures) {
-    found.iter()
-        .filter(|(subject, _)| subject.starts_with("native_") && !recorded.contains_key(*subject))
-        .for_each(|(subject, count)| { baseline.insert(subject.clone(), *count); });
-}

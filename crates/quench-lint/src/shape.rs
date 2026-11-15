@@ -3,7 +3,9 @@
 //!
 //! Code written before the laws is listed in `oversized.txt` with its measure. The list only
 //! shrinks: an unlisted offender, a listed one that grew, and an entry that no longer
-//! offends all fail; `--update` rewrites the list to the current, smaller measures.
+//! offends all fail; `--update` rewrites the list to the current, smaller measures, and
+//! `--lower` rewrites only the entries that shrank or no longer offend (never one that grew,
+//! never a new one).
 
 use std::{collections::BTreeMap, fmt::Write as _};
 
@@ -147,14 +149,52 @@ impl<'ast> Visit<'ast> for Decisions {
     fn visit_item(&mut self, _: &'ast syn::Item) {}
 }
 
+/// The recorded offender a line of `oversized.txt` spells: its subject and measure.
+fn entry(line: &str) -> Option<(&str, usize)> {
+    let (subject, measure) = line.rsplit_once(' ').filter(|_| !line.starts_with('#'))?;
+    Some((subject, measure.parse().ok()?))
+}
+
 /// The recorded offenders, as `oversized.txt` spells them.
 pub fn parse(listing: &str) -> Measures {
-    listing
-        .lines()
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .filter_map(|line| line.rsplit_once(' '))
-        .filter_map(|(subject, measure)| Some((subject.to_owned(), measure.parse().ok()?)))
-        .collect()
+    listing.lines().filter_map(entry).map(|(subject, measure)| (subject.to_owned(), measure)).collect()
+}
+
+/// `listing` with each entry that shrank rewritten to its current measure and each that no
+/// longer offends dropped, and one report line per change. An entry that grew, a comment and
+/// the order of the rest stay as they are.
+pub fn lower(listing: &str, current: &Measures) -> (String, Vec<String>) {
+    let mut lowered = String::new();
+    let mut changes = Vec::new();
+    for line in listing.lines() {
+        let kept = match entry(line).map(|(subject, recorded)| (subject, recorded, current.get(subject))) {
+            Some((subject, recorded, None)) => {
+                changes.push(format!("dropped {subject} (was {recorded})"));
+                continue;
+            }
+            Some((subject, recorded, Some(&now))) if now < recorded => {
+                changes.push(format!("lowered {subject} {recorded} -> {now}"));
+                format!("{subject} {now}")
+            }
+            _ => line.to_owned(),
+        };
+        let _ = writeln!(lowered, "{kept}");
+    }
+    (lowered, changes)
+}
+
+/// The rule a measure is born with: `--update` records the first baseline of such a measure that
+/// the list has never held, where any other new measure fails until it is fixed.
+const BORN_WITH_RULE: &str = "native_";
+
+/// Adds the measures of a newly born rule that the baseline has never recorded to `baseline`.
+pub fn first_baseline(found: &Measures, recorded: &Measures, baseline: &mut Measures) {
+    found
+        .iter()
+        .filter(|(subject, _)| subject.starts_with(BORN_WITH_RULE) && !recorded.contains_key(*subject))
+        .for_each(|(subject, count)| {
+            baseline.insert(subject.clone(), *count);
+        });
 }
 
 pub fn render(measures: &Measures) -> String {
@@ -198,4 +238,33 @@ pub fn compare(recorded: &Measures, current: &Measures) -> usize {
         departures += 1;
     }
     departures
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lowering_rewrites_only_shrunk_entries_and_drops_the_vanished() {
+        let listing = "# a header, may only shrink\ncomplexity a::f 12\ncomplexity a::g 11\ncomplexity a::h 10\nmagic a::f 3\n";
+        let current: Measures = [("complexity a::f", 11), ("complexity a::g", 11), ("magic a::f", 5), ("magic a::new", 1)]
+            .into_iter()
+            .map(|(subject, measure)| (subject.to_owned(), measure))
+            .collect();
+        let (lowered, changes) = lower(listing, &current);
+        assert_eq!(lowered, "# a header, may only shrink\ncomplexity a::f 11\ncomplexity a::g 11\nmagic a::f 3\n");
+        assert_eq!(changes, ["lowered complexity a::f 12 -> 11", "dropped complexity a::h (was 10)"]);
+    }
+
+    #[test]
+    fn a_born_rule_records_only_measures_the_list_never_held() {
+        let found: Measures = [("native_ir a.rs", 2), ("native_ir b.rs", 1), ("magic a::f", 1)]
+            .into_iter()
+            .map(|(subject, measure)| (subject.to_owned(), measure))
+            .collect();
+        let recorded: Measures = [("native_ir b.rs".to_owned(), 1)].into_iter().collect();
+        let mut baseline = Measures::new();
+        first_baseline(&found, &recorded, &mut baseline);
+        assert_eq!(baseline.keys().collect::<Vec<_>>(), ["native_ir a.rs"]);
+    }
 }
