@@ -4561,10 +4561,25 @@ fn lane_return_value_general<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Va
     if let Some(resumed) = lane_complete_cross_activation(cx, value) {
         return resumed;
     }
+    if let Some(resumed) = lane_complete_array_step(cx, value) {
+        return resumed;
+    }
     if let Some(resumed) = lane_complete_returning_chain(cx, value) {
         return resumed;
     }
     lane_return_value_other(cx, ip, value)
+}
+
+/// The return of an array callback's activation (`Completion::ArrayStep`), one per element:
+/// the step of its iteration, tested before the other completions `lane_complete_returning`
+/// tests it after. `None` for any other activation.
+#[inline(always)]
+fn lane_complete_array_step<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    match vm.lane_stack.activations.last().map(|activation| &activation.kind) {
+        Some(ActivationKind::Script(script)) if script.completion == Completion::ArrayStep => lane_step_array_iteration_in_place(cx, value),
+        _ => None,
+    }
 }
 
 /// `lane_return_value_general` of any other activation's completion, or the frame's return.
@@ -18453,6 +18468,9 @@ lane_handler! {
             resume!(cx, resumed)
         }
         if let Some(resumed) = lane_complete_cross_activation(cx, value) {
+            resume!(cx, resumed)
+        }
+        if let Some(resumed) = lane_complete_array_step(cx, value) {
             resume!(cx, resumed)
         }
         if let Some(resumed) = lane_complete_returning_chain(cx, value) {
