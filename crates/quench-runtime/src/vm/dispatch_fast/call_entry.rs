@@ -108,7 +108,7 @@ impl CallEntry {
     /// or keeping activation, which `lane_activate_keeping` enters across programs.
     #[inline(always)]
     pub(super) fn activates_across(self) -> bool {
-        matches!(self, Self::Activates | Self::Keeps | Self::Gathers)
+        matches!(self, Self::Activates | Self::Keeps | Self::Gathers | Self::Leaf | Self::CaptureLeaf | Self::ContextLeaf | Self::ThisLeaf)
     }
 
     /// A body a call answers by reading alone (`lane_call_leaf_read`).

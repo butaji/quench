@@ -1820,6 +1820,7 @@ type ScriptGeneration = u32;
 struct Admission(u64);
 
 impl Admission {
+    #[inline(always)]
     const fn new(generation: ScriptGeneration, program: ProgramId) -> Self {
         Self(generation as u64 | (program.raw() as u64) << 32)
     }
@@ -2513,6 +2514,9 @@ struct LeafCall {
     /// The target the call resolved, which stays in its cache while the leaf runs: nothing
     /// in a leaf resolves a target.
     target: *const ScriptCallTarget,
+    /// The caller's program, for a leaf of another program (`lane_cross_leaf_call`), which
+    /// its return enters again; `None` for one of the caller's own.
+    caller_program: Option<ProgramId>,
 }
 
 const NO_LEAF_CALL: LeafCall = LeafCall {
@@ -2522,6 +2526,7 @@ const NO_LEAF_CALL: LeafCall = LeafCall {
     caller_registers: Registers(std::ptr::null_mut()),
     caller_base: std::ptr::null(),
     target: std::ptr::null(),
+    caller_program: None,
 };
 
 /// The slot storage of environment `env`, which frame `frame` held when a lane local access
@@ -13402,7 +13407,9 @@ impl<H: Host> Vm<H> {
             } else if plan.keeps_arguments {
                 CallEntry::Keeps
             } else if cross {
-                CallEntry::Activates
+                // A leaf runs as one across programs too (`lane_cross_leaf_call`); no other
+                // body form's answer reads another program's caches.
+                shape.leaf.map_or(CallEntry::Activates, CallEntry::leaf)
             } else {
                 // Leaf-ness is the view's, fixed with its returns (`TargetBody::leaf`).
                 shape.leaf.map_or(shape.entry, CallEntry::leaf)
@@ -13649,11 +13656,11 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
         call: leaf.call,
         caller_base: leaf.caller_base,
         caller_registers: leaf.caller_registers,
-        caller_program: unsafe { (*cx).program },
+        caller_program: leaf.caller_program.unwrap_or(unsafe { (*cx).program }),
         kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
             argc: leaf.argc,
-            completion: Completion::Plain,
+            completion: if leaf.caller_program.is_some() { Completion::Cross } else { Completion::Plain },
             forwards: false,
             environment: false,
         }),
@@ -14097,6 +14104,10 @@ script_handler! {
         }
         #[cfg(feature = "profile-lane-exits")]
         profile_script_call_target(cx, ip, callee, target);
+        // A leaf runs on a window without an activation, as its own program's calls run it.
+        if let Some((registers, base)) = leaf_calls::lane_cross_leaf_call(cx, r, ip, i, target) {
+            next!(cx, registers, base, Carried::script(cx))
+        }
         let Some(this) = lane_call_this(vm, target, r.get(i.c)) else {
             return exit(ip);
         };
@@ -17757,7 +17768,7 @@ fn lane_begin_cell_leaf<H: Host>(cx: *mut LaneContext<H>, ip: Ip, r: Registers, 
     // SAFETY: the running lane's context, and the callee's view outlives its program.
     unsafe {
         (*cx).leaf = LeafCall {
-            call: ip, form: CONTEXT_LEAF, argc, caller_registers: r, caller_base: (*cx).base, target,
+            call: ip, form: CONTEXT_LEAF, argc, caller_registers: r, caller_base: (*cx).base, target, caller_program: None,
         };
         window.set_this(this);
         window.set_env(target.env);
