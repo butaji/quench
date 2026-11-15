@@ -1186,6 +1186,13 @@ fn requicken<H: Host>(ip: Ip, handler: Handler) {
     }
 }
 
+/// Whether the record at `ip` runs `handler` now.
+#[inline(always)]
+fn handler_is<H: Host>(ip: Ip, handler: Handler) -> bool {
+    // SAFETY: as `requicken`, reading only.
+    unsafe { (*ip).handler == handler as *const () }
+}
+
 /// The receiver's context word, counted down from register 0 (`register_file::FRAME_CONTEXT`).
 const CONTEXT_THIS: usize = 1;
 /// The environment's context word.
@@ -8872,12 +8879,37 @@ script_handler! {
             let stored = vm.primary_own_field_store_hit::<true>(code, object, i.imm(), r.get(i.a), i.c, crate::heap::PropertyStoreLayout::MayWiden);
             if stored {
                 // The store may move the values (`MayWiden`): the hint takes the form after it.
-                set_field_hint(ip, vm.form_hint(vm.field_cache_entry(i.c), object));
+                let hint = vm.form_hint(vm.field_cache_entry(i.c), object);
+                set_field_hint(ip, hint);
+                // A narrow run's site stores in place from now on (`lane_set_field_narrow`); a
+                // narrow site whose object is no longer narrow goes back to the own store.
+                let narrow = hint.receiver & crate::value_vec::STORAGE_FORM == crate::value_vec::NARROW_FORM;
+                if !vm.heap.tracks_slot_representations() {
+                    if narrow {
+                        requicken::<H>(ip, lane_set_field_narrow::<H, THIS>);
+                    } else if handler_is::<H>(ip, lane_set_field_narrow::<H, THIS>) {
+                        requicken::<H>(ip, if THIS { lane_set_this_field_own::<H, false> } else { lane_set_object_field_own::<H, false> });
+                    }
+                }
             }
             stored
         });
         if !stored {
             sibling!(lane_set_field_miss::<H, THIS>, r, ip, Carried::script_in(cx, view))
+        }
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// An own-field store at a site whose objects keep narrow runs (`value_vec::NARROW_FORM`),
+    /// which `lane_set_field_logged` installs: the value's narrow form in place
+    /// (`Vm::hinted_narrow_field_store_hit`). Any other store takes `lane_set_field_logged`.
+    #[inline(never)]
+    fn lane_set_field_narrow<THIS: bool>(cx, r, ip, i, view) {
+        let object = if THIS { unsafe { lane_held_this(cx, r) } } else { r.get(i.b) };
+        if !unsafe { vm(cx) }.hinted_narrow_field_store_hit(i.field_hint(), object, i.imm(), r.get(i.a)) {
+            sibling!(lane_set_field_logged::<H, THIS>, r, ip, Carried::script_in(cx, view))
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }

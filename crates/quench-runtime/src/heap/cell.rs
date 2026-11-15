@@ -2390,6 +2390,16 @@ impl Object {
         debug_assert!(!plain || self.extras_pointer().is_none());
         plain.then_some(self.payload as usize)
     }
+    /// `formed_plain_start` of a narrow run (`value_vec::NARROW_FORM`): the run's first word
+    /// where the whole auxiliary word equals `hint`, a narrow form without inline storage or
+    /// extras, so slot `i` is half `i` of the run counted in `u32`s from twice that word.
+    #[inline(always)]
+    pub(crate) fn formed_narrow_start(&self, hint: u32) -> Option<usize> {
+        use crate::value_vec::{NARROW_FORM, STORAGE_FORM};
+        let narrow = hint & STORAGE_FORM == NARROW_FORM && self.aux() == hint && self.payload >> u32::BITS == NARROW_RUN_TAG >> u32::BITS;
+        narrow.then_some(self.payload as u32 as usize)
+    }
+
 
     /// The arena storage start of an object whose auxiliary word is `hint` whole, a lane
     /// record's own-field hint (`hint_shape`) of the arena form; `None` for any other word or form.
