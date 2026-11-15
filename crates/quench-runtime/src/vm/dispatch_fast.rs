@@ -1182,6 +1182,9 @@ fn requicken<H: Host>(ip: Ip, handler: Handler) {
             (*site).header_handler.set(handler as *const ());
             return;
         }
+        if loop_kernel::requicken_kernel::<H>(ip, handler) {
+            return;
+        }
         (*ip.cast_mut()).handler = handler as *const ();
     }
 }

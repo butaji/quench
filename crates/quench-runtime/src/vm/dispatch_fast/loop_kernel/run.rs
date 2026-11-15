@@ -162,6 +162,9 @@ fn fits(first: i64, step: i64, length: usize) -> u64 {
     }
 }
 
+/// Work-clock units (typical-host nanoseconds) charged per kernel iteration.
+const WORK_PER_ITERATION: u64 = 4;
+
 impl LoopKernel {
     /// Runs the loop from the registers' current state (module documentation).
     pub(super) unsafe fn run<H: Host>(&self, cx: *mut LaneContext<H>, r: Registers, ip: Ip) {
@@ -178,7 +181,7 @@ impl LoopKernel {
             if !self.chunk::<H>(&mut state, scratch, done, len) {
                 // A chunk met a value the kernel does not compute: the loop's own records
                 // run from its first iteration, now and at every later entry.
-                requicken::<H>(ip, self.original::<H>());
+                self.stand_down::<H>(ip);
                 break;
             }
             done += len as u64;
@@ -189,6 +192,8 @@ impl LoopKernel {
         if done == 0 {
             return;
         }
+        // The work clock counts the iterations the kernel ran in place of the records.
+        crate::clock::charge_work(done * WORK_PER_ITERATION);
         self.write_back(&state, r, done);
     }
 
@@ -521,3 +526,4 @@ fn decode(out: &mut [f64], elements: &[Value]) -> bool {
     }
     others == 0
 }
+

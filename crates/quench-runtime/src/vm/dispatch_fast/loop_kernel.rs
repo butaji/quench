@@ -27,6 +27,7 @@
 //! distance. Chunks also end at the run's safepoint (`script_below_floor`).
 use super::*;
 
+mod machine;
 mod recur;
 mod run;
 mod typed;
@@ -49,7 +50,7 @@ pub(super) struct LoopKernel {
     slot: u16,
     /// The test record's handler before the kernel took it, which runs where the kernel runs
     /// nothing.
-    original: *const (),
+    original: std::cell::Cell<*const ()>,
     declines: std::cell::Cell<u32>,
     /// The run's columns (`run`), kept between runs.
     scratch: std::cell::UnsafeCell<Vec<f64>>,
@@ -78,7 +79,7 @@ impl LoopKernel {
             shape,
             recurrence,
             slot: NO_CALL_LINK,
-            original,
+            original: std::cell::Cell::new(original),
             declines: std::cell::Cell::new(0),
             scratch: std::cell::UnsafeCell::new(Vec::new()),
         });
@@ -88,7 +89,13 @@ impl LoopKernel {
 
     fn original<H: Host>(&self) -> Handler {
         // SAFETY: `original` is the record's handler for this VM type (`install_loop_kernels`).
-        unsafe { std::mem::transmute::<*const (), Handler>(self.original) }
+        unsafe { std::mem::transmute::<*const (), Handler>(self.original.get()) }
+    }
+
+    /// Gives the record at `ip` back its own handler for good.
+    fn stand_down<H: Host>(&self, ip: Ip) {
+        // SAFETY: as `requicken`; the record holds this kernel.
+        unsafe { (*ip.cast_mut()).handler = self.original.get() };
     }
 }
 
@@ -145,6 +152,25 @@ pub(super) fn install_loop_kernels<H: Host>(
     kernels.into_boxed_slice()
 }
 
+/// `requicken` of a record holding a kernel: the record's own handler (which the kernel runs
+/// after itself) becomes `handler`, and the record keeps the kernel. `false` for any other
+/// record.
+///
+/// # Safety
+/// `ip` is a live record of the running view.
+#[inline(always)]
+pub(super) unsafe fn requicken_kernel<H: Host>(ip: Ip, handler: Handler) -> bool {
+    // SAFETY: the caller's contract.
+    let record = unsafe { &*ip };
+    if record.handler != lane_loop_kernel::<H> as Handler as *const () {
+        return false;
+    }
+    // SAFETY: the record names a live kernel of its view (`install_loop_kernels`).
+    let kernel = unsafe { &*(&*KERNELS.get())[usize::from(record.call_link.get())] };
+    kernel.original.set(handler as *const ());
+    true
+}
+
 script_handler! {
     /// A loop's head record holding its kernel (`LoopKernel`): runs the loop as far as the
     /// kernel can, then the record's own handler.
@@ -155,7 +181,7 @@ script_handler! {
         // head runs, then its test, which fails where the kernel ran the whole loop.
         unsafe { kernel.run(cx, r, ip) };
         if kernel.declines.get() >= SHORT_DECLINES {
-            requicken::<H>(ip, kernel.original::<H>());
+            kernel.stand_down::<H>(ip);
         }
         sibling!(kernel.original::<H>(), r, ip, Carried::script_in(cx, view))
     }

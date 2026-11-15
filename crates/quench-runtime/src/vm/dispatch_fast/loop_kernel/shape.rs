@@ -235,6 +235,14 @@ impl<'a> Graph<'a> {
     fn get_index(&mut self, instruction: WideInstruction, file: &[Sym]) -> Option<Sym> {
         let base = self.base(self.operand(file, instruction.operand_b())?)?;
         let index = Self::index(self.operand(file, instruction.operand_c())?)?;
+        // A second read of an element no store came between reads the first's column.
+        let same = |&&(id, order): &&(u16, u16)| {
+            matches!(self.nodes[usize::from(id)].0, SymOp::Load { base: b, index: i } if b == base && i == index)
+                && self.stores.iter().all(|store| store.3 < order)
+        };
+        if let Some(&(id, _)) = self.loads.iter().find(same) {
+            return Some(Sym::Node(id));
+        }
         let order = self.access();
         let node = self.node(SymOp::Load { base, index }, Sym::Const(0.0), Sym::Const(0.0))?;
         let Sym::Node(id) = node else { return None };
