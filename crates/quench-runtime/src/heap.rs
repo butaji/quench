@@ -4083,6 +4083,35 @@ impl Heap {
         }
     }
 
+    /// `property_set` of a primitive `value` over a primitive in `slot` of a cell object
+    /// (`HeapReference::LegacySlot`, as a RegExp's `lastIndex`): with no reference stored or
+    /// overwritten no barrier applies, so the cell is found by one slot read rather than the
+    /// record kinds' tests, twice. The caller proves both values primitive.
+    pub(crate) fn primitive_cell_property_set(&mut self, object: Value, slot: usize, value: Value) {
+        debug_assert!(value.heap_index().is_none());
+        let Some(HeapReference::LegacySlot(index)) = object.heap_reference() else {
+            return self.property_set(object, slot, value);
+        };
+        let Self { slots, properties, .. } = self;
+        let Some(data) = slots.get_mut(index as usize).and_then(|entry| entry.cell.as_mut()).and_then(Cell::object_mut) else {
+            return self.property_set(object, slot, value);
+        };
+        debug_assert!(data.properties().has_inline_property_storage() || properties.get(data.properties(), slot).is_none_or(|old| old.heap_index().is_none()));
+        if properties.tracks() {
+            let shape = data.exact_shape();
+            if shape == data.shape() && slot < properties.shape_length(shape) {
+                properties.note_slot_value(shape, slot, value);
+            }
+        }
+        data.note_value_write(slot);
+        let vector = data.properties();
+        if !vector.has_inline_property_storage() {
+            properties.set(vector, slot, value);
+        } else if !data.store_inline_narrow(slot, value) {
+            self.property_set(object, slot, value);
+        }
+    }
+
     pub(crate) fn property_set(&mut self, object: Value, slot: usize, value: Value) {
         self.note_value_slot(object, slot, value);
         let vector = {
