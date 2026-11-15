@@ -1908,7 +1908,7 @@ impl<H: Host> Vm<H> {
             }
             Some(
                 crate::vm::property_key::PropertyKey::Symbol(_)
-                | crate::vm::property_key::PropertyKey::Private(_),
+                | crate::vm::property_key::PropertyKey::Private(..),
             ) => false,
         };
         if triggers_evaluation {

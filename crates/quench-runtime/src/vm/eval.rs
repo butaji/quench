@@ -1126,7 +1126,7 @@ impl<H: Host> Vm<H> {
         }
         if !names.is_empty() { return Some((first_home?, names)); }
         let home = self.eval_home_binding(p)?;
-        let names = self.object_data(home).into_iter().flat_map(|object| object.private_names()).filter_map(|brand| {
+        let names = self.private_names(home).into_iter().filter_map(|brand| {
             let identity = self.atom_name(brand.name).to_owned();
             private_identity_label(&identity).map(str::to_owned).map(|label| (label, identity))
         }).fold(Vec::new(), |mut names, binding| { if !names.iter().any(|(label, _)| label == &binding.0) { names.push(binding); } names });

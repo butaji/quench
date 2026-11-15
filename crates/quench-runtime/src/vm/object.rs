@@ -492,7 +492,7 @@ impl<H: Host> Vm<H> {
                 ShapeTransition::Add { key, .. } => match key {
                     property_key::PropertyKey::String(atom) => format!("Add:{}", self.atom_name(*atom)),
                     property_key::PropertyKey::Symbol(_) => "Add:<symbol>".to_owned(),
-                    property_key::PropertyKey::Private(_) => "Add:<private>".to_owned(),
+                    property_key::PropertyKey::Private(..) => "Add:<private>".to_owned(),
                 },
                 ShapeTransition::Delete { key, .. } => match key {
                     property_key::PropertyKey::String(atom) => format!("Delete:{}", self.atom_name(*atom)),
@@ -1076,7 +1076,7 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn invalidate_method_caches_for_key(&mut self, key: PropertyKey) {
         match key {
-            PropertyKey::String(atom) | PropertyKey::Private(atom) => {
+            PropertyKey::String(atom) | PropertyKey::Private(_, atom) => {
                 self.invalidate_method_caches_for_atom(atom);
             }
             PropertyKey::Symbol(_) => {}
@@ -3913,7 +3913,7 @@ impl<H: Host> Vm<H> {
         let key = match property {
             PropertyKey::String(atom) => self.heap.alloc_string(self.atom_value(atom)),
             PropertyKey::Symbol(key) => key,
-            PropertyKey::Private(_) => {
+            PropertyKey::Private(..) => {
                 unreachable!("private keys cannot reach Proxy DefineOwnProperty")
             }
         };

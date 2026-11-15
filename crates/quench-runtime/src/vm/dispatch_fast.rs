@@ -466,6 +466,7 @@ impl LaneView {
                     (lane_returning::<H, RETURNING_FIELD_HOLDER, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_HOLDER, { $leaf }>),
                     (lane_returning::<H, RETURNING_FIELD_INHERITED, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_INHERITED, { $leaf }>),
                     (lane_returning::<H, RETURNING_FIELD_NESTED, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_NESTED, { $leaf }>),
+                    (lane_returning::<H, RETURNING_FIELD_PRIVATE, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_PRIVATE, { $leaf }>),
                 ];
                 returns.into_iter().chain(arithmetic_operators!(all pick).into_iter().flatten()).collect::<Vec<(Handler, Handler)>>()
             }};
@@ -7633,17 +7634,19 @@ unsafe fn lane_field_value<H: Host>(
 ) -> Option<Value> {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
+    // The record's address names its private-name sites (`lane_private_field_slot_at`).
+    let record = std::ptr::from_ref(i).addr();
     if i.b == crate::bytecode::FieldBase::NESTED {
         let site = *code.field_sites.get(i.imm() as usize)?;
         let base = unsafe { lane_field_base(cx, r, site.base) }?;
-        let value = lane_cached_field(cx, code, base, site.first.0, site.first.1)?;
+        let value = lane_field_step(cx, record + 1, code, base, site.first.0, site.first.1)?;
         return match site.second {
-            Some((atom, cache)) => lane_cached_field(cx, code, value, atom, cache),
+            Some((atom, cache)) => lane_field_step(cx, record + 2, code, value, atom, cache),
             None => Some(value),
         };
     }
     let base = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }?;
-    lane_cached_field(cx, code, base, i.imm(), i.c)
+    lane_field_step(cx, record, code, base, i.imm(), i.c)
 }
 
 /// The object a field base names: a register, or `this` where the lane knows it.
@@ -7676,6 +7679,20 @@ fn lane_cached_field<H: Host>(
     atom: crate::bytecode::Atom,
     site: u16,
 ) -> Option<Value> {
+    lane_cached_field_at(cx, code, object, atom, site, 0)
+}
+
+/// `lane_cached_field` of a read whose private name, if any, has the private-name site
+/// `private_site` (`lane_private_field_slot_at`); `0` for none, which reads it uncached.
+#[inline(always)]
+fn lane_cached_field_at<H: Host>(
+    cx: *mut LaneContext<H>,
+    code: &ResidualProgram,
+    object: Value,
+    atom: crate::bytecode::Atom,
+    site: u16,
+    private_site: usize,
+) -> Option<Value> {
     let probe = {
         let vm = unsafe { vm(cx) };
         // A string's own `length`, which its chain never shadows, as a tokenizer's
@@ -7686,8 +7703,13 @@ fn lane_cached_field<H: Host>(
         {
             return Some(Value::length(text.len()));
         }
+        let class = vm.atom_class(atom);
+        // A private field, which no field cache records, at its site.
+        if private_site != 0 && class.contains(super::object::AtomClass::PRIVATE) {
+            return lane_private_field_value(cx, private_site, code, object, atom);
+        }
         // A typed array's geometry, which no field cache records (`AtomClass::VIRTUAL_FIELD`).
-        if vm.atom_class(atom).contains(super::object::AtomClass::VIRTUAL_FIELD)
+        if class.contains(super::object::AtomClass::VIRTUAL_FIELD)
             && let Some(value) = vm.typed_array_geometry_read(object, atom)
         {
             return Some(value);
@@ -7974,8 +7996,67 @@ fn lane_private_site<H: Host>(cx: *mut LaneContext<H>) -> Option<(Value, u32, bo
     })
 }
 
+/// The slot of private field `atom` of `object` at the record `ip`, under its brand there: a
+/// private field is a shape slot (`private_slots`), so the site's last shape and slot under
+/// the home its environment finds (`PrivateSiteHomes::field_slot`) answer inline. `None` for
+/// an object without the field, a private method's or accessor's brand included.
+#[inline(always)]
+fn lane_private_field_slot<H: Host>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    code: &ResidualProgram,
+    object: Value,
+    atom: crate::bytecode::Atom,
+) -> Option<usize> {
+    lane_private_field_slot_at(cx, ip.addr(), code, object, atom)
+}
+
+/// `lane_private_field_slot` at site `site`: a record's address, or an address inside it for
+/// a nested read's step (`lane_field_value`), which no other record's site can be.
+#[inline(always)]
+fn lane_private_field_slot_at<H: Host>(
+    cx: *mut LaneContext<H>,
+    site: usize,
+    code: &ResidualProgram,
+    object: Value,
+    atom: crate::bytecode::Atom,
+) -> Option<usize> {
+    let scope = lane_private_site(cx)?;
+    (unsafe { vm(cx) }).site_private_field_slot(code, site, scope, object, atom)
+}
+
+/// A `GetField` step's private field value at site `site` (`lane_private_field_slot_at`):
+/// `None` for an object without the field, which the general path throws for, or a private
+/// method's or accessor's name, which it reads.
+#[inline(always)]
+fn lane_private_field_value<H: Host>(
+    cx: *mut LaneContext<H>,
+    site: usize,
+    code: &ResidualProgram,
+    object: Value,
+    atom: crate::bytecode::Atom,
+) -> Option<Value> {
+    let slot = lane_private_field_slot_at(cx, site, code, object, atom)?;
+    let vm = unsafe { vm(cx) };
+    vm.heap.property_get(vm.object_data(object)?, slot)
+}
+
+/// One `GetField` step of `lane_field_value`: a private name's at its site, any other name's
+/// through the field caches (`lane_cached_field`).
+#[inline(always)]
+fn lane_field_step<H: Host>(
+    cx: *mut LaneContext<H>,
+    site: usize,
+    code: &ResidualProgram,
+    object: Value,
+    atom: crate::bytecode::Atom,
+    cache: u16,
+) -> Option<Value> {
+    lane_cached_field_at(cx, code, object, atom, cache, site)
+}
+
 /// The store of private field `atom` of `object` at the record `ip`, under its brand there
-/// (`lane_private_brand`). `false` leaves the store, a private accessor's or method's
+/// (`lane_private_field_slot`). `false` leaves the store, a private accessor's or method's
 /// included, to the general path.
 #[inline(never)]
 fn lane_private_field_store<H: Host>(
@@ -7986,10 +8067,11 @@ fn lane_private_field_store<H: Host>(
     atom: crate::bytecode::Atom,
     value: Value,
 ) -> bool {
-    let Some(brand) = lane_private_brand(cx, ip, code, atom) else {
+    let Some(slot) = lane_private_field_slot(cx, ip, code, object, atom) else {
         return false;
     };
-    (unsafe { vm(cx) }).object_data_mut(object).is_some_and(|data| data.set_private_field(brand, value))
+    (unsafe { vm(cx) }).heap.property_set(object, slot, value);
+    true
 }
 
 /// Leave the lane at `ip` after its instruction failed with `error` before any effect: a frame
@@ -8037,10 +8119,27 @@ script_handler! {
     #[inline(never)]
     fn lane_define_private_field<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
+        let (object, home) = (r.get(i.b), r.get(i.c));
+        // The site's last add from this shape under this home (`PrivateSiteHomes::define_shape`).
+        if let Some(data) = vm.object_data(object)
+            && let Some(next) = vm.private_site_homes.define_shape(ip.addr(), home, data.shape())
+            && vm.private_element_addable(data)
+        {
+            vm.heap.property_add(object, r.get(i.a), next);
+            note_allocation(vm);
+            next!(cx, r, following(ip), Carried::script_in(cx, view))
+        }
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        if let Err(error) = vm.initialize_private_field(code, r.get(i.b), r.get(i.c), i.imm(), r.get(i.a)) {
+        let before = vm.object_data(object).map(|data| data.shape());
+        if let Err(error) = vm.initialize_private_field(code, object, home, i.imm(), r.get(i.a)) {
             return lane_raise(cx, ip, error);
+        }
+        if let (Some(before), Some(after)) = (before, vm.object_data(object).map(|data| data.shape()))
+            && vm.private_shape_cacheable(before)
+            && vm.private_shape_cacheable(after)
+        {
+            vm.private_site_homes.record_define(ip.addr(), home, before, after);
         }
         // Adding a private element can allocate.
         note_allocation(vm);
@@ -8055,10 +8154,31 @@ script_handler! {
     #[inline(never)]
     fn lane_mark_private_name<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
+        let (object, home) = (r.get(i.b), r.get(i.c));
+        // The site's last brand from this shape under this home (`PrivateSiteHomes::define_shape`);
+        // the shape lacks the brand, so the object is not branded yet.
+        if object != home
+            && let Some(data) = vm.object_data(object)
+            && let Some(next) = vm.private_site_homes.define_shape(ip.addr(), home, data.shape())
+            && vm.private_element_addable(data)
+        {
+            vm.heap.property_add(object, Value::UNDEFINED, next);
+            note_allocation(vm);
+            next!(cx, r, following(ip), Carried::script_in(cx, view))
+        }
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        if let Err(error) = vm.mark_private_name(code, r.get(i.b), r.get(i.c), i.imm()) {
+        let before = vm.object_data(object).map(|data| data.shape());
+        if let Err(error) = vm.mark_private_name(code, object, home, i.imm()) {
             return lane_raise(cx, ip, error);
+        }
+        if object != home
+            && let (Some(before), Some(after)) = (before, vm.object_data(object).map(|data| data.shape()))
+            && before != after
+            && vm.private_shape_cacheable(before)
+            && vm.private_shape_cacheable(after)
+        {
+            vm.private_site_homes.record_define(ip.addr(), home, before, after);
         }
         // Adding a private element can allocate.
         note_allocation(vm);
@@ -8112,9 +8232,7 @@ script_handler! {
     fn lane_check_private<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let present = lane_private_brand(cx, ip, code, i.imm()).is_some_and(|brand| {
-            (unsafe { vm(cx) }).object_data(r.get(i.a)).is_some_and(|data| data.private_field(brand).is_some())
-        });
+        let present = lane_private_field_slot(cx, ip, code, r.get(i.a), i.imm()).is_some();
         if !present {
             sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
         }
@@ -8147,7 +8265,8 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let carries = lane_private_brand(cx, ip, code, i.imm()).and_then(|brand| {
-            (unsafe { vm(cx) }).object_data(r.get(i.b)).map(|data| data.has_private_name(brand))
+            let vm = unsafe { vm(cx) };
+            vm.object_data(r.get(i.b)).map(|_| vm.has_private_name(r.get(i.b), brand))
         });
         let Some(carries) = carries else {
             sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
@@ -8167,13 +8286,17 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let read = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }.and_then(|object| {
+            if let Some(slot) = lane_private_field_slot(cx, ip, code, object, i.imm()) {
+                let vm = unsafe { vm(cx) };
+                return vm.heap.property_get(vm.object_data(object)?, slot).map(PrivateRead::Value);
+            }
             let brand = lane_private_brand(cx, ip, code, i.imm())?;
-            let data = (unsafe { vm(cx) }).object_data(object)?;
-            match data.private_field(brand) {
+            let vm = unsafe { vm(cx) };
+            match vm.private_field(object, brand) {
                 Some(value) => Some(PrivateRead::Value(value)),
                 // A method or accessor of a brand the object carries (`Vm::site_private_element`).
-                None if data.has_private_name(brand) => {
-                    match (unsafe { vm(cx) }).site_private_element(ip.addr(), brand, object)? {
+                None if vm.has_private_name(object, brand) => {
+                    match vm.site_private_element(ip.addr(), brand, object)? {
                         super::private_site_home::PrivateElement::Method(value) => Some(PrivateRead::Value(value)),
                         super::private_site_home::PrivateElement::Getter(getter) => Some(PrivateRead::Getter(object, getter)),
                     }
@@ -17940,6 +18063,9 @@ const RETURNING_FIELD_NESTED: u8 = 9;
 /// A returning `MakeObjectLiteral` (`return { ... }`): the literal `lane_make_object_literal`
 /// makes, returned from the frame.
 const RETURNING_OBJECT_LITERAL: u8 = 10;
+/// `RETURNING_FIELD` of a private name of a register or `this`: the site's private field
+/// (`lane_private_field_value`); a method, accessor or missing field takes `RETURNING_FIELD`.
+const RETURNING_FIELD_PRIVATE: u8 = 11;
 
 /// The cached read of a single-base returning `GetField` of `KIND` (`RETURNING_FIELD_OWN`,
 /// `_POLYMORPHIC`, `_HOLDER`, `_INHERITED`) at `cache`: a hit, which runs no guest code.
@@ -18136,6 +18262,9 @@ enum LeafRead {
     Nested { site: u32 },
     /// Its field record's hit, then the dense element the parameter `index` names.
     Element { base: u16, field: FieldHit, index: u16 },
+    /// Its returning private field read (`RETURNING_FIELD_PRIVATE`) of `atom` at its record
+    /// `site`, under the home the callee's environment `environment` finds.
+    Private { base: u16, atom: crate::bytecode::Atom, site: usize, environment: Value, function: u32 },
 }
 
 impl LeafRead {
@@ -18156,6 +18285,15 @@ impl LeafRead {
         let handler = entry.handler;
         if handler == lane_returning::<H, RETURNING_FIELD_NESTED, NOT_LEAF> as *const () {
             return Some(Self::Nested { site: entry.imm() });
+        }
+        if handler == lane_returning::<H, RETURNING_FIELD_PRIVATE, NOT_LEAF> as *const () {
+            return Some(Self::Private {
+                base: entry.b,
+                atom: entry.imm(),
+                site: std::ptr::from_ref(entry).addr(),
+                environment: target.env,
+                function: target.function,
+            });
         }
         let kind = if handler == lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF> as *const () {
             RETURNING_FIELD_POLYMORPHIC
@@ -18190,6 +18328,10 @@ impl LeafRead {
                 // SAFETY: a nested record of the running program names its site.
                 let site = unsafe { code.field_sites.get_unchecked(site as usize) };
                 nested_own_field_hit(vm, code, site, lane_read_base(site.base, arguments, this)?)
+            }
+            // The callee runs frameless, capturing from its closure's environment.
+            Self::Private { base: field_base, atom, site, environment, function } => {
+                vm.site_private_field(code, site, (environment, function, false), base(field_base)?, atom)
             }
             Self::Field { base: field_base, kind, cache } => {
                 let object = base(field_base)?;
@@ -18294,6 +18436,11 @@ impl MemoLeaf {
                 Self::Field { base, field: vm.field_cache_entry(cache) }
             }
             LeafRead::Field { .. } => return None,
+            // The memo holds for its callee alone, whose environment fixes the home, so the
+            // site's shape and slot under it are a plain own field step.
+            LeafRead::Private { base, site, environment, .. } => {
+                Self::Field { base, field: vm.site_private_field_entry(site, environment)? }
+            }
             LeafRead::Element { base, field, index } => Self::Element { base, field: entry(field), index },
             LeafRead::Nested { site } => {
                 // SAFETY: a nested record of the running program names its site.
@@ -18707,6 +18854,15 @@ script_handler! {
                     };
                     Some(value)
                 }
+                RETURNING_FIELD_PRIVATE => {
+                    let code = &*(*cx).code;
+                    let value = lane_field_base(cx, r, crate::bytecode::FieldBase(i.b))
+                        .and_then(|object| lane_private_field_value(cx, ip.addr(), code, object, i.imm()));
+                    let Some(value) = value else {
+                        sibling!(lane_returning::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
+                    };
+                    Some(value)
+                }
                 RETURNING_FIELD_NESTED => {
                     let Some(value) = lane_nested_own_value(cx, r, i).or_else(|| lane_nested_polymorphic_value(cx, r, ip)) else {
                         sibling!(lane_returning::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
@@ -18808,6 +18964,9 @@ fn returning_field_first_kind<H: Host, const LEAF: u8>(
     code: &ResidualProgram,
     i: &LaneInstruction,
 ) -> Handler {
+    if i.b != crate::bytecode::FieldBase::NESTED && vm.is_private_name(i.imm()) {
+        return lane_returning::<H, RETURNING_FIELD_PRIVATE, LEAF>;
+    }
     if is_single_field_base(i.b) && !vm.reads_function_info(i.imm()) {
         lane_returning::<H, RETURNING_FIELD_OWN, LEAF>
     } else if lane_field_site_tier(vm, code, i) == FieldSiteTier::Nested {

@@ -3246,6 +3246,29 @@ fn private_names_resolve_per_class_across_collections() {
 }
 
 #[test]
+fn private_elements_live_in_shape_slots_hidden_from_every_key_walk() {
+    // Private fields and method brands are shape slots under private keys: no key list,
+    // copy or integrity level sees them; a frozen or non-extensible object keeps and gains
+    // them; foreign brands still throw; values survive collections.
+    let source = "class A { #x = 1; #y; #m() { return this.#x + 10; } get #g() { return this.#x * 2; } set #g(v) { this.#x = v; }\n\
+           constructor(v) { this.#y = v; this.pub = 3; } sum() { return this.#x + this.#y + this.#m() + this.#g; }\n\
+           bump() { this.#g = this.#x + 1; return this.#x; } static has(o) { return #x in o; } static hasm(o) { return #m in o; } }\n\
+         class Base { constructor(o) { return o; } } class Stamp extends Base { #t = 9; static t(o) { return o.#t; } }\n\
+         var a = new A(2), out = [a.sum(), a.bump(), A.has(a), A.has({}), A.hasm(a)];\n\
+         out.push(JSON.stringify(a), Object.keys(a).join(), Reflect.ownKeys(a).length, Object.getOwnPropertySymbols(a).length);\n\
+         Object.freeze(a); out.push(a.bump(), Object.isFrozen(a), A.has({ ...a }));\n\
+         var plain = { q: 1 }; new Stamp(plain);\n\
+         for (let i = 0; i < 50000; i++) ({ i });\n\
+         out.push(Stamp.t(plain), Object.keys(plain).join(), a.sum());\n\
+         try { new Stamp(plain); } catch (error) { out.push(error.constructor.name); }\n\
+         var result = out.join();";
+    assert_eq!(
+        global_text(source, "result"),
+        "16,2,true,false,true,{\"pub\":3},pub,1,0,3,true,false,9,q,24,TypeError"
+    );
+}
+
+#[test]
 fn json_and_object_keys_read_enumerable_keys_in_own_property_order() {
     // Shape-backed objects skip descriptor objects; order, enumerability, wrapper unboxing
     // and the keys handed to toJSON and replacers stay those of the generic path.
@@ -4700,7 +4723,7 @@ fn class_field_record_roots_release_after_each_completion() {
             let atom = vm.intern_atom("entry");
             let key = match phase {
                 "symbol" => PropertyKey::symbol(values[2]),
-                "private" => PropertyKey::private(atom),
+                "private" => PropertyKey::private(values[1], atom),
                 _ => PropertyKey::string(atom),
             };
             let value = vm

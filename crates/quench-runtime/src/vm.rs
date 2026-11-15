@@ -189,6 +189,7 @@ mod shape_memo;
 mod symbol_write_proof;
 mod symbol_load_proof;
 mod private_site_home;
+mod private_slots;
 mod enumerable_key_memo;
 mod name_atom_memo;
 mod object_assignment;
@@ -1400,7 +1401,7 @@ impl ShapeAttributes {
 impl ShapeTransition {
     fn introduces_gc_roots(self) -> bool {
         match self {
-            Self::Add { key, .. } => key.symbol_value().is_some(),
+            Self::Add { key, .. } => key.gc_value().is_some(),
             Self::Descriptor { attributes, .. } => attributes.table_accessors(),
             Self::Root | Self::FunctionName { .. } | Self::FunctionNameReconfigured | Self::FunctionLengthReconfigured | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
         }
@@ -1422,7 +1423,7 @@ impl ShapeTransition {
             Self::Descriptor { slot, attributes } if !attributes.table_accessors() => {
                 Some(ShapeTransitionKey::Descriptor { slot, attributes })
             }
-            Self::Delete { key, .. } if key.symbol_value().is_none() => {
+            Self::Delete { key, .. } if key.gc_value().is_none() => {
                 Some(ShapeTransitionKey::Delete(key))
             }
             Self::Root

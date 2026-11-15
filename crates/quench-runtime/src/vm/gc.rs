@@ -102,7 +102,7 @@ fn append_shape_roots(
             .flat_map(|(key, attributes)| {
                 // Slot-held accessors (a getter, a pair cell) are traced with their object's slots.
                 let (getter, setter) = attributes.functions(accessors, || (None, None));
-                key.symbol_value()
+                key.gc_value()
                     .into_iter()
                     .chain([getter, setter].into_iter().flatten())
             }),
@@ -1033,6 +1033,7 @@ impl<H: Host> Vm<H> {
         self.shape_constructors.clear();
         self.transitions = transitions;
         self.shape_slot_memo.clear();
+        self.private_site_homes.forget_shapes();
         self.shape_attribute_memo.clear();
         self.plain_copy_shapes.clear();
         self.plain_assign_shapes.clear();

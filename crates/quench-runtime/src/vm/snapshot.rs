@@ -89,8 +89,9 @@ impl Snap for property_key::PropertyKey {
                 writer.u8(property_key_tag::SYMBOL);
                 writer.value(symbol);
             }
-            Self::Private(atom) => {
+            Self::Private(home, atom) => {
                 writer.u8(property_key_tag::PRIVATE);
+                writer.value(home);
                 writer.u32(atom);
             }
         }
@@ -100,7 +101,7 @@ impl Snap for property_key::PropertyKey {
         Ok(match reader.u8()? {
             property_key_tag::STRING => Self::String(reader.u32()?),
             property_key_tag::SYMBOL => Self::Symbol(reader.value()?),
-            property_key_tag::PRIVATE => Self::Private(reader.u32()?),
+            property_key_tag::PRIVATE => Self::Private(reader.value()?, reader.u32()?),
             _ => return Err(SnapshotError("invalid snapshot property key".into())),
         })
     }

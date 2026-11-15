@@ -101,7 +101,7 @@ impl<H: Host> Vm<H> {
         let value = match key {
             PropertyKey::String(atom) => self.own_property(object, atom),
             PropertyKey::Symbol(symbol) => self.symbol_property(object, symbol),
-            PropertyKey::Private(_) => return DiagnosticProperty::Blocked,
+            PropertyKey::Private(..) => return DiagnosticProperty::Blocked,
         };
         value.map_or(DiagnosticProperty::Absent, DiagnosticProperty::Data)
     }
@@ -196,7 +196,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<bool, JsError> {
-        if self.handler_lacks_trap(handler, ProxyTrap::Set) && !matches!(property, PropertyKey::Private(_)) {
+        if self.handler_lacks_trap(handler, ProxyTrap::Set) && !matches!(property, PropertyKey::Private(..)) {
             return self.proxy_set_target(p, target, receiver, property, value, strict);
         }
         let key = self.proxy_key_value(p, property)?;
@@ -642,7 +642,7 @@ impl<H: Host> Vm<H> {
             PropertyKey::String(atom) => {
                 atom != self.length_atom && !self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
             }
-            PropertyKey::Private(_) => false,
+            PropertyKey::Private(..) => false,
         };
         let mut current = object;
         loop {
@@ -912,7 +912,7 @@ impl<H: Host> Vm<H> {
     /// `None`, leaving the access to the general path, which throws or calls it.
     pub(super) fn private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom) -> Option<Value> {
         let home = self.private_name_home(p, atom)?;
-        self.object_data(target)?.private_field(PrivateBrand { home, name: atom })
+        self.private_field(target, PrivateBrand { home, name: atom })
     }
 
     /// The private brand of `atom` that function `function` of the running program, whose
@@ -990,7 +990,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
     ) -> Option<Value> {
         let brand = self.memoized_private_brand(p, environment, function, atom)?;
-        self.object_data(target)?.private_field(brand)
+        self.private_field(target, brand)
     }
 
     /// The store of private field `atom` of `target` under the running frame's home for the
@@ -998,7 +998,7 @@ impl<H: Host> Vm<H> {
     /// accessor, which the general path throws for or calls.
     pub(super) fn set_private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom, value: Value) -> bool {
         let Some(home) = self.private_name_home(p, atom) else { return false; };
-        self.object_data_mut(target).is_some_and(|object| object.set_private_field(PrivateBrand { home, name: atom }, value))
+        self.set_private_field(target, PrivateBrand { home, name: atom }, value)
     }
 
     /// Whether `object` may gain a private element: always, unless the host applies
@@ -1014,9 +1014,7 @@ impl<H: Host> Vm<H> {
         if !addable {
             return Err(self.type_error(p, "Cannot add private field to a non-extensible object".into()));
         }
-        if let Some(object) = self.object_data_mut(target)
-            && object.initialize_private_field(PrivateBrand { home, name: atom }, value)
-        {
+        if self.add_private_field(target, PrivateBrand { home, name: atom }, value) {
             return Ok(());
         }
         let name = crate::bytecode::private_identity_label(self.atom_name(atom)).unwrap_or_else(|| self.atom_name(atom)).to_owned();
@@ -1029,7 +1027,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn mark_private_name(&mut self, p: &ResidualProgram, object: Value, home: Value, atom: Atom) -> Result<(), JsError> {
         let brand = PrivateBrand { home, name: atom };
         if object != home {
-            let Some((addable, branded)) = self.object_data(object).map(|data| (self.private_element_addable(data), data.has_private_name(brand))) else {
+            let Some((addable, branded)) = self.object_data(object).map(|data| (self.private_element_addable(data), self.has_private_name(object, brand))) else {
                 return Err(self.type_error(p, "Cannot add private method to a non-extensible object".into()));
             };
             if !addable {
@@ -1039,9 +1037,7 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, "Cannot add private method to an object that already has it".into()));
             }
         }
-        if let Some(object) = self.object_data_mut(object) {
-            object.add_private_name(brand);
-        }
+        self.add_private_name(object, brand);
         Ok(())
     }
 
@@ -1106,9 +1102,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
     ) -> Option<Value> {
         let home = self.private_name_home(p, atom)?;
-        self.object_data(target)
-            .is_some_and(|object| object.has_private_name(PrivateBrand { home, name: atom }))
-            .then_some(home)
+        self.has_private_name(target, PrivateBrand { home, name: atom }).then_some(home)
     }
 
     /// The home object that declares private name `atom` for the running frame: the nearest
@@ -1202,14 +1196,10 @@ impl<H: Host> Vm<H> {
             }
             environment = *parent;
         }
-        let home = homes.into_iter().map(|(_, home)| home).find(|home| {
-            self.object_data(*home).is_some_and(|object| {
-                object.has_private_name(PrivateBrand {
-                    home: *home,
-                    name: atom,
-                })
-            })
-        })?;
+        let home = homes
+            .into_iter()
+            .map(|(_, home)| home)
+            .find(|home| self.has_private_name(*home, PrivateBrand { home: *home, name: atom }))?;
         // Eval-introduced private bindings live only in environments made for that eval, so
         // a cached chain never gains a nearer one.
         self.private_homes.insert(key, home);

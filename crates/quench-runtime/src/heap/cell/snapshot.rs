@@ -187,7 +187,6 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         structured_transfer_forbidden,
         module_bindings,
         deferred_module,
-        private_elements,
         stack_data,
         // Its code holds no global value.
         global_values: _,
@@ -217,12 +216,6 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
     if let Some(module) = deferred_module {
         write_module_source(writer, module);
     }
-    writer.len(private_elements.len());
-    for element in private_elements {
-        writer.value(element.brand.home);
-        writer.u32(element.brand.name);
-        writer.option_value(element.data);
-    }
     writer.bool(stack_data.is_some());
     if let Some(stack) = stack_data {
         write_stack_data(writer, stack)?;
@@ -249,12 +242,6 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
     let structured_serialization = structured_serialization::read(reader)?;
     let module_bindings = read_list(reader, |reader| Ok((reader.u32()?, ProgramId::from_raw(reader.u32()?), reader.u16()?)))?;
     let deferred_module = if reader.bool()? { Some(read_module_source(reader)?) } else { None };
-    let private_elements = read_list(reader, |reader| {
-        Ok(PrivateElement {
-            brand: PrivateBrand { home: reader.value()?, name: reader.u32()? },
-            data: reader.option_value()?,
-        })
-    })?;
     let stack_data = if reader.bool()? { Some(read_stack_data(reader)?) } else { None };
     let rare = RareExtras {
         arguments_map,
@@ -265,7 +252,6 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
         structured_transfer_forbidden,
         module_bindings,
         deferred_module,
-        private_elements,
         stack_data,
         global_values: None,
     };

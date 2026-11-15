@@ -11,10 +11,10 @@ use crate::value::Value;
 pub(crate) enum PropertyKey {
     String(Atom),
     Symbol(Value),
-    // OXC private-name lowering is introduced with class-field semantics;
-    // retain the namespace now so it cannot alias string or symbol keys.
-    #[allow(dead_code)]
-    Private(Atom),
+    /// A private name: the class home whose evaluation declared it and its name, the
+    /// brand (`PrivateBrand`) an object's private element is stored under. The home is a
+    /// value a live shape keeps alive (`gc_value`).
+    Private(Value, Atom),
 }
 
 impl PropertyKey {
@@ -26,15 +26,23 @@ impl PropertyKey {
         Self::Symbol(value)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn private(atom: Atom) -> Self {
-        Self::Private(atom)
+    pub(crate) fn private(home: Value, atom: Atom) -> Self {
+        Self::Private(home, atom)
+    }
+
+    /// The value a shape naming this key keeps alive: a symbol key's symbol, a private
+    /// name's class home.
+    pub(crate) fn gc_value(self) -> Option<Value> {
+        match self {
+            Self::Symbol(value) | Self::Private(value, _) => Some(value),
+            Self::String(_) => None,
+        }
     }
 
     pub(crate) fn symbol_value(self) -> Option<Value> {
         match self {
             Self::Symbol(value) => Some(value),
-            Self::String(_) | Self::Private(_) => None,
+            Self::String(_) | Self::Private(..) => None,
         }
     }
 }
@@ -48,7 +56,7 @@ mod tests {
     #[test]
     fn namespaces_do_not_alias() {
         let atom = Atom::from(7_u8);
-        assert_ne!(PropertyKey::string(atom), PropertyKey::private(atom));
+        assert_ne!(PropertyKey::string(atom), PropertyKey::private(Value::NULL, atom));
         assert_ne!(
             PropertyKey::symbol(Value::number(7.0)),
             PropertyKey::string(atom)

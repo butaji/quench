@@ -1933,7 +1933,6 @@ struct RareExtras {
     structured_transfer_forbidden: bool,
     module_bindings: Vec<(Atom, ProgramId, u16)>,
     deferred_module: Option<crate::ModuleSource>,
-    private_elements: Vec<PrivateElement>,
     stack_data: Option<StackData>,
     /// A global object's table of the values code read from it by name (`global_values`).
     global_values: Option<Box<global_values::GlobalValues>>,
@@ -1984,7 +1983,6 @@ impl RareExtras {
                     + module.source.len()
                     + module.original_bytes.as_ref().map_or(0, |bytes| bytes.len())
             })
-            + self.private_elements.capacity() * std::mem::size_of::<PrivateElement>()
             + self
                 .stack_data
                 .as_ref()
@@ -2016,13 +2014,6 @@ impl StackData {
 pub(crate) struct PrivateBrand {
     pub home: Value,
     pub name: Atom,
-}
-/// A name's actual class home and its data share one lifetime-owned entry.
-#[derive(Clone, Copy, Debug)]
-struct PrivateElement {
-    brand: PrivateBrand,
-    // Brand-only entries name methods/accessors or reserve a class-home declaration.
-    data: Option<Value>,
 }
 
 #[derive(Clone, Debug)]
@@ -2880,12 +2871,6 @@ impl Object {
         if let Some(value) = extras.boxed_primitive {
             visit(value);
         }
-        for element in &extras.private_elements {
-            visit(element.brand.home);
-            if let Some(value) = element.data {
-                visit(value);
-            }
-        }
         match extras.stack_data.as_ref() {
             Some(StackData::Captured { records, .. }) => {
                 for record in records {
@@ -3102,48 +3087,6 @@ impl Object {
     }
     pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
         self.extras_mut().rare_mut().deferred_module = module;
-    }
-    pub(crate) fn private_names(&self) -> impl Iterator<Item = PrivateBrand> + '_ {
-        self.extras()
-            .into_iter()
-            .flat_map(|extras| extras.rare().into_iter().flat_map(|rare| rare.private_elements.iter()).map(|element| element.brand))
-    }
-    pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
-        self.private_names().any(|candidate| candidate == brand)
-    }
-    pub(crate) fn add_private_name(&mut self, brand: PrivateBrand) {
-        if !self.has_private_name(brand) {
-            self.extras_mut()
-                .rare_mut().private_elements
-                .push(PrivateElement { brand, data: None });
-        }
-    }
-    pub(crate) fn private_field(&self, brand: PrivateBrand) -> Option<Value> {
-        self.extras()?.rare()?
-            .private_elements
-            .iter()
-            .find(|element| element.brand == brand)?
-            .data
-    }
-    pub(crate) fn set_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
-        let Some(element) = self.extras_mut_existing().and_then(ObjectExtras::rare_mut_existing).and_then(|rare| rare.private_elements.iter_mut().find(|element| element.brand == brand && element.data.is_some())) else { return false; };
-        element.data = Some(value);
-        true
-    }
-    pub(crate) fn initialize_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
-        let elements = &mut self.extras_mut().rare_mut().private_elements;
-        if let Some(element) = elements.iter_mut().find(|element| element.brand == brand) {
-            if element.data.is_some() {
-                return false;
-            }
-            element.data = Some(value);
-        } else {
-            elements.push(PrivateElement {
-                brand,
-                data: Some(value),
-            });
-        }
-        true
     }
     pub(crate) fn allocated_extra_bytes(&self) -> usize {
         self.extras().map_or(0, ObjectExtras::allocated_bytes)

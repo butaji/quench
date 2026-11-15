@@ -29,7 +29,7 @@ impl<H: Host> Vm<H> {
                 Ok(self.atom_string(atom))
             }
             PropertyKey::Symbol(key) => Ok(key),
-            PropertyKey::String(_) | PropertyKey::Private(_) => {
+            PropertyKey::String(_) | PropertyKey::Private(..) => {
                 Err(self.type_error(p, "private member is not present on this object".into()))
             }
         }
@@ -43,7 +43,7 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         property: PropertyKey,
     ) -> Result<Value, JsError> {
-        if !matches!(property, PropertyKey::Private(_)) && self.handler_lacks_trap(handler, ProxyTrap::Get) {
+        if !matches!(property, PropertyKey::Private(..)) && self.handler_lacks_trap(handler, ProxyTrap::Get) {
             return self.proxy_get_target(p, target, receiver, Some(property), Value::UNDEFINED);
         }
         let key = self.proxy_key_value(p, property)?;
@@ -117,7 +117,7 @@ impl<H: Host> Vm<H> {
         match property {
             PropertyKey::String(atom) => self.get_property_with_receiver(p, target, atom, receiver),
             PropertyKey::Symbol(symbol) => self.get_symbol_property_with_receiver(p, target, symbol, receiver),
-            PropertyKey::Private(_) => unreachable!("private keys cannot reach Proxy Get"),
+            PropertyKey::Private(..) => unreachable!("private keys cannot reach Proxy Get"),
         }
     }
 
