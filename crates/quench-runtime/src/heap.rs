@@ -782,6 +782,10 @@ pub(crate) struct Heap {
     /// Under `QUENCH_DEV=rc-verify`, the candidates counts would have freed, kept instead
     /// until a full collection's trace checks that none is reachable.
     rc_suspects: Vec<Value>,
+    /// The last minor collection's counting (`QUENCH_TRACE=gc`): the microseconds before
+    /// and after its mark, its candidates, the zero-count records it carried, its young
+    /// survivors, and the candidates it freed.
+    rc_trace: [u64; 6],
     /// Marks on the parallel pool whatever the heap's size (`Heap::parallel_mark`), so unit
     /// tests reach the parallel path with small heaps.
     #[cfg(test)]
@@ -2234,8 +2238,10 @@ impl Heap {
         std::mem::take(&mut self.abandoned_contexts)
     }
     pub(crate) fn should_full_collect(&self) -> bool {
+        // Under counts, minor collections free old garbage: the backup trace runs when
+        // `Heap::rc_plan` finds the live records grown, not at an allocation cap.
         self.full_due
-            || self.pacing().allocation_cap_reached(
+            || !self.rc_active && self.pacing().allocation_cap_reached(
                 self.live_after_full,
                 self.allocated_since_full(),
                 self.pacing_state.cap_backoff,
@@ -2514,7 +2520,9 @@ impl Heap {
                 }
             }
             if self.rc_active {
+                let started = std::time::Instant::now();
                 self.rc_pre_mark(&mut work);
+                self.rc_trace[0] = started.elapsed().as_micros() as u64;
             }
         }
         #[cfg(debug_assertions)]
@@ -2612,7 +2620,9 @@ impl Heap {
         self.mark_stack = { work.clear(); work };
         let finalization_jobs = self.prune_weak_entries(full, age);
         if self.rc_active && !full {
+            let started = std::time::Instant::now();
             self.rc_epoch();
+            self.rc_trace[1] = started.elapsed().as_micros() as u64;
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
@@ -3030,7 +3040,7 @@ impl Heap {
                 .ok()
                 .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<usize>().ok())
                 .map_or(0, |pages| pages * 4);
-            eprintln!("gc rss_kb={rss_kb} live_weight={live_weight} full={full}{concurrent} mark_us={mark_us} sweep_us={sweep_us} records_us={trace_records_us} resident_start={} resident_kept={} weight_between_fulls={} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?} {}", self.resident_at_full_start, self.resident_after_full, self.weight_between_fulls, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state, self.properties.trace_summary());
+            eprintln!("gc rss_kb={rss_kb} live_weight={live_weight} full={full}{concurrent} mark_us={mark_us} rc={:?} sweep_us={sweep_us} records_us={trace_records_us} resident_start={} resident_kept={} weight_between_fulls={} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?} {}", self.rc_trace, self.resident_at_full_start, self.resident_after_full, self.weight_between_fulls, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state, self.properties.trace_summary());
         }
         if full && crate::trace::Channel::StorageCensus.on() {
             self.trace_storage_census();
