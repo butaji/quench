@@ -476,9 +476,22 @@ impl<H: Host> Vm<H> {
     /// typed array's, iterator's or collection's `@@iterator`). An array's reads walk unproved
     /// (`plain_keyed_get`).
     #[inline(always)]
-    fn proved_read_receiver(&self, object: Value, key: PropertyKey) -> Option<&Object> {
+    pub(in crate::vm) fn proved_read_receiver(&self, object: Value, key: PropertyKey) -> Option<&Object> {
         if let Some(data) = self.heap.ordinary_object(object) {
             return Some(data);
+        }
+        // A name no exotic object answers off its shape: a collection, date, regexp, promise or
+        // iterator holds every own name on its shape, and an array every one but its indices
+        // and `length`, which `plain_named_key` leaves out.
+        if let PropertyKey::String(atom) = key
+            && self.plain_named_key(atom)
+        {
+            if let Some(data) = self.heap.ordinary_builtin_object(object) {
+                return Some(data);
+            }
+            if self.heap.array(object).is_some() {
+                return self.heap.object(object);
+            }
         }
         if !matches!(key, PropertyKey::Symbol(_))
             || self.heap.array(object).is_some()
