@@ -332,11 +332,21 @@ pub(super) struct Bindings<'m> {
     pub(super) globals: usize,
 }
 
-/// One inlining round's leaves, by defined index.
+/// Whether a defined function is a leaf of a round, and whether that leaf calls.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LeafKind {
+    None,
+    CallFree,
+    Calls,
+}
+
+/// One inlining round's leaves, by defined index: which functions are leaves, decided for
+/// the whole module, and the forms built so far. A module that lowers its functions on
+/// their first calls keeps the kinds and builds the form of a leaf its lowering copies
+/// (`LeafPlan::built_leaf`), so its life holds a byte per function, not every leaf's form.
 struct Round {
-    /// Boxed: few functions are leaves, and a module that lowers on first calls keeps its
-    /// rounds for its life.
-    leaves: Vec<Option<Box<Leaf>>>,
+    kinds: Box<[LeafKind]>,
+    built: std::cell::RefCell<rustc_hash::FxHashMap<u32, std::rc::Rc<Leaf>>>,
 }
 
 /// A module's inlining: the leaves of each round. A body that is not a leaf
@@ -348,6 +358,7 @@ pub(super) struct LeafPlan<'m, 'a, I> {
     bindings: Bindings<'m>,
     signatures: std::rc::Rc<Callees>,
     rounds: std::rc::Rc<Vec<Round>>,
+    budget: usize,
     marker: std::marker::PhantomData<Operator<'a>>,
 }
 
@@ -357,6 +368,7 @@ pub(super) struct LeafPlan<'m, 'a, I> {
 pub(super) struct PlanFacts {
     signatures: std::rc::Rc<Callees>,
     rounds: std::rc::Rc<Vec<Round>>,
+    budget: usize,
 }
 
 impl<'m, 'a, I: Operators<'a>> LeafPlan<'m, 'a, I> {
@@ -373,28 +385,52 @@ impl<'m, 'a, I: Operators<'a>> LeafPlan<'m, 'a, I> {
             bindings,
             signatures: std::rc::Rc::new(Callees::new(signatures)),
             rounds: std::rc::Rc::default(),
+            budget,
             marker: std::marker::PhantomData,
         };
         for round in 0..INLINE_ROUNDS {
             let leaves = (0..sources.count())
                 .map(|index| match plan.rounds.last() {
-                    Some(previous) if previous.leaves[index].is_none() => Ok(None),
-                    _ => plan.leaf(round, index, budget).map(|leaf| leaf.map(Box::new)),
+                    Some(previous) if previous.kinds[index] == LeafKind::None => Ok(None),
+                    _ => plan.leaf(round, index, budget),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             if leaves.iter().all(Option::is_none) {
                 break;
             }
+            let kinds = leaves
+                .iter()
+                .map(|leaf| match leaf {
+                    None => LeafKind::None,
+                    Some(leaf) if leaf.form.calls => LeafKind::Calls,
+                    Some(_) => LeafKind::CallFree,
+                })
+                .collect();
+            let built = leaves
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, leaf)| Some((index as u32, std::rc::Rc::new(leaf?))))
+                .collect();
             std::rc::Rc::get_mut(&mut plan.rounds)
                 .expect("a plan being made shares no rounds")
-                .push(Round { leaves });
+                .push(Round { kinds, built: std::cell::RefCell::new(built) });
         }
         Ok(plan)
     }
 
-    /// The plan's decisions, for `resume`.
+    /// The plan's decisions, for `resume`: which functions are leaves of each round, without
+    /// the forms this plan built.
     pub(super) fn facts(&self) -> PlanFacts {
-        PlanFacts { signatures: self.signatures.clone(), rounds: self.rounds.clone() }
+        PlanFacts {
+            signatures: self.signatures.clone(),
+            rounds: std::rc::Rc::new(
+                self.rounds
+                    .iter()
+                    .map(|round| Round { kinds: round.kinds.clone(), built: Default::default() })
+                    .collect(),
+            ),
+            budget: self.budget,
+        }
     }
 
     /// The plan `facts` were taken from, reading the same bodies from `sources`.
@@ -410,6 +446,7 @@ impl<'m, 'a, I: Operators<'a>> LeafPlan<'m, 'a, I> {
             bindings,
             signatures: facts.signatures.clone(),
             rounds: facts.rounds.clone(),
+            budget: facts.budget,
             marker: std::marker::PhantomData,
         }
     }
@@ -454,15 +491,35 @@ impl<'m, 'a, I: Operators<'a>> LeafPlan<'m, 'a, I> {
         operator: &Operator<'_>,
         caller: usize,
         round: usize,
-    ) -> Option<(usize, &Leaf)> {
+    ) -> Option<(usize, std::rc::Rc<Leaf>)> {
         let Operator::Call { function_index } = operator else {
             return None;
         };
         let callee = self.signatures.defined_index(*function_index)?;
-        let leaf = self.rounds[round].leaves.get(callee)?.as_deref()?;
+        let calls = match *self.rounds[round].kinds.get(callee)? {
+            LeafKind::None => return None,
+            LeafKind::CallFree => false,
+            LeafKind::Calls => true,
+        };
         // A call-free body may enter any other function; a calling body only
         // its own call sites.
-        ((callee == caller) == leaf.form.calls).then_some((callee, leaf))
+        ((callee == caller) == calls).then(|| (callee, self.built_leaf(round, callee)))
+    }
+
+    /// The form of `callee`, a leaf of `round`, built again from its source when this plan
+    /// has not built it: the same form the module's plan decided it was a leaf by.
+    fn built_leaf(&self, round: usize, callee: usize) -> std::rc::Rc<Leaf> {
+        if let Some(leaf) = self.rounds[round].built.borrow().get(&(callee as u32)) {
+            return leaf.clone();
+        }
+        let leaf = self
+            .leaf(round, callee, self.budget)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| panic!("Wasm leaf {callee} of {} does not build again", self.name));
+        let leaf = std::rc::Rc::new(leaf);
+        self.rounds[round].built.borrow_mut().insert(callee as u32, leaf.clone());
+        leaf
     }
 
     /// The body at defined `index` after `rounds` rounds. A `budget` lets a body found
@@ -510,14 +567,14 @@ impl<'m, 'a, I: Operators<'a>> LeafPlan<'m, 'a, I> {
                 }
                 if applies {
                     match self.leaf_call(&operator, index, round) {
-                        Some((callee, leaf)) => copied.copy(callee == index, leaf, nesting == 0),
+                        Some((callee, leaf)) => copied.copy(callee == index, &leaf, nesting == 0),
                         None => {
                             copied.kept_calls |= calls(&operator);
                             // A kept call can be inlined by the next round only if it
                             // enters one of that round's leaves.
                             copied.later |= matches!(operator, Operator::Call { function_index }
                                 if next.is_some_and(|next| self.signatures.defined_index(function_index)
-                                    .is_some_and(|callee| next.leaves[callee].is_some())));
+                                    .is_some_and(|callee| next.kinds[callee] != LeafKind::None)));
                         }
                     }
                 }
