@@ -2483,6 +2483,9 @@ struct LaneContext<H: Host> {
     /// The storage of the environment a frame run's captured locals live in, once a local
     /// access found it (`lane_frame_storage`).
     frame_storage: FrameStorage,
+    /// The instance environment the run's Wasm bindings last read and its dense slot storage
+    /// (`lane_instance_binding`), found this run as `frame_storage` is.
+    instance_slots: (Value, *const usize),
     /// Backward jumps left before the running Wasm function is credited with an
     /// interpreter entry's worth of loop work (`TIERS.wasm.backedges_per_entry`), or `None`
     /// when this run's code earns none (`Vm::lane_credits_backedges`). A crediting run keeps
@@ -4002,6 +4005,7 @@ fn lane_after_nested_collection<H: Host>(cx: *mut LaneContext<H>) {
         (*cx).registers.set_capture(std::ptr::null());
         (*cx).outer = NO_OUTER_WALK;
         (*cx).frame_storage = NO_FRAME_STORAGE;
+        (*cx).instance_slots = (Value::DELETED, std::ptr::null());
     }
 }
 
@@ -24389,6 +24393,7 @@ impl<H: Host> Vm<H> {
             instance: Value::DELETED,
             outer: NO_OUTER_WALK,
             frame_storage: NO_FRAME_STORAGE,
+            instance_slots: (Value::DELETED, std::ptr::null()),
             proofs: crate::heap::ArrayStorageProofs::new(),
             floor: entered.cell,
             // SAFETY: the VM holds its interrupt state for the whole run.
