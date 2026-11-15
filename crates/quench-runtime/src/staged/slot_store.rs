@@ -97,7 +97,7 @@ pub(crate) fn store_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::W
         let address = stage.add(record, half);
         stage.store_u32(Region::Payload.mutable(), address, OBJECT.payload_offset as i32, narrow);
         stage.constant(0)
-    }, |stage| {
+    }, move |stage| {
         let run = arena_run(stage, payload);
         let offset = stage.mul_imm(slot, OBJECT.property_value_size as u64);
         let address = stage.add(run, offset);
