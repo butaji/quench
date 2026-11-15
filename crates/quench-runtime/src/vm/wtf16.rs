@@ -1020,7 +1020,10 @@ impl JsString {
     pub(crate) fn existing_units(&self) -> Option<Units<'_>> {
         match &self.repr {
             Repr::Flat(units) => Some(units.view()),
-            Repr::Shared(inner) => inner.flat.get().map(|units| units.view()),
+            Repr::Shared(inner) => match inner.flat.get() {
+                Some(units) => Some(units.view()),
+                None => None,
+            },
         }
     }
 
@@ -1284,6 +1287,17 @@ impl JsString {
             && let Some(length) = buffer.append(*length, bytes.iter().copied())
         {
             return Self { repr: Repr::Flat(FlatUnits::AsciiPrefix(buffer.clone(), length)) };
+        }
+        // Wide text built by appends (a decode that met a unit past ASCII) grows the same way.
+        if let Repr::Shared(inner) = &self.repr
+            && let Some(FlatUnits::WidePrefix(buffer, length)) = inner.flat.get()
+            && let Some(tail) = text.existing_units()
+            && let Some(length) = match tail {
+                Units::Ascii(bytes) => buffer.append(*length, bytes.iter().map(|byte| u16::from(*byte))),
+                Units::Wide(units) => buffer.append(*length, units.iter().copied()),
+            }
+        {
+            return Self::from_flat(FlatUnits::WidePrefix(buffer.clone(), length));
         }
         let mut joined = self.clone();
         joined.push_js_string(text);
