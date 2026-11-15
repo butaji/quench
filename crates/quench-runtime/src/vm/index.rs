@@ -50,7 +50,7 @@ impl<H: Host> Vm<H> {
     /// prototype.
     pub(super) fn string_index_value(&mut self, string: Value, index: usize) -> Option<Value> {
         let text = self.heap.string(string).or_else(|| self.heap.string(self.string_wrapper_primitive(string)?))?;
-        let unit = text.units().get(index)?;
+        let unit = text.unit_at(index)?;
         // An ASCII unit's string is shared (`ascii_unit_string`), as `charAt`'s is.
         Some(match self.ascii_unit_string(unit) {
             Some(shared) => shared,
