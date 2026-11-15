@@ -18237,7 +18237,9 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         caller_program: unsafe { (*cx).program },
         kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
-            argc: argc as u16,
+            // An activation keeping nothing passed its parameters alone, which its window holds
+            // (a rest body's rest array among them): its materialization reads them there.
+            argc: if keeps { argc } else { argc.min(usize::from(target.params)) } as u16,
             completion: if forwarder.is_some() {
                 Completion::Forwarder
             } else {
