@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 use super::*;
 mod atoms;
+mod table;
+pub(super) use table::MethodCacheTable;
 pub(super) use atoms::{AtomBits, MethodCacheAtoms};
 
 /// Entries of a call site's inline method cache, most recent first; a site that sees more
@@ -18,7 +20,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn clear_method_caches(&mut self, _reason: usize) {
         #[cfg(feature = "profile-aggregate")]
         self.snapshot_method_caches(_reason);
-        self.method_caches.fill([EMPTY_METHOD_CACHE; _]);
+        self.method_caches.clear_all();
         self.megamorphic_methods.clear();
         self.method_cache_atoms.clear();
         self.method_cache_sites.clear();
@@ -36,7 +38,7 @@ impl<H: Host> Vm<H> {
         // Only the sites that recorded the atom can hold it: no scan of every site.
         if let Some(sites) = self.method_cache_sites.remove(&atom) {
             for site in sites {
-                if let Some(entries) = self.method_caches.get_mut(site as usize) {
+                if let Some(entries) = self.method_caches.recorded_ways_mut(site as usize) {
                     let len = entries.len();
                     retain_other_atom(entries, len, atom);
                 }
@@ -52,7 +54,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         self.snapshot_shadowed_method_caches(object, atom);
         let heap = &self.heap;
-        for entries in &mut self.method_caches {
+        for entries in self.method_caches.recorded_mut() {
             let len = entries.len();
             retain_unshadowed_entries(heap, entries, len, object, atom);
         }
@@ -108,7 +110,7 @@ impl<H: Host> Vm<H> {
     #[cfg(feature = "profile-aggregate")]
     fn all_method_cache_entries(&self) -> Vec<(usize, MethodCache)> {
         let mut entries = Vec::new();
-        for (site, cache) in self.method_caches.iter().enumerate() {
+        for (site, cache) in self.method_caches.sites() {
             entries.extend(cache.iter().map(|entry| (site, *entry)));
         }
         entries.extend(self.megamorphic_methods.iter().flat_map(|set| {
@@ -160,14 +162,9 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         let before = self.method_cache_entry_count();
         let heap = &self.heap;
-        // Only sites that recorded an entry hold one (`method_cache_sites`), so a collection
-        // visits those, not every site; the map is rebuilt with the entries, so dropped
-        // entries leave no stale sites behind.
-        let mut sites: Vec<u32> = self.method_cache_sites.drain().flat_map(|(_, sites)| sites).collect();
-        sites.sort_unstable();
-        sites.dedup();
-        for site in sites {
-            let Some(entries) = self.method_caches.get_mut(site as usize) else { continue };
+        // Rebuilt with the entries, so dropped entries leave no stale sites behind.
+        self.method_cache_sites.clear();
+        for (site, entries) in self.method_caches.recorded_sites_mut() {
             let len = entries.len();
             retain_entries(heap, entries, len);
             for (index, entry) in entries.iter().enumerate() {
@@ -190,7 +187,7 @@ impl<H: Host> Vm<H> {
     #[cfg(feature = "profile-aggregate")]
     fn method_cache_entry_count(&self) -> usize {
         self.method_caches
-            .iter()
+            .recorded()
             .flat_map(|entries| entries.iter())
             .filter(|entry| entry.target.is_some())
             .count()
@@ -230,7 +227,7 @@ impl<H: Host> Vm<H> {
             }
             return;
         }
-        let entries = &mut self.method_caches[site];
+        let entries = self.method_caches.ways_mut(site);
         if !entries.iter().any(|entry| entry.atom == cache.atom) {
             self.method_cache_sites.entry(cache.atom).or_default().push(site as u32);
         }

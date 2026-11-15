@@ -184,7 +184,7 @@ impl<H: Host> Vm<H> {
             runtime_atoms: RuntimeAtoms::default(),
             constructed_shapes: [provenance::ConstructedShape::EMPTY; provenance::CONSTRUCTED_SHAPE_ENTRIES],
             object_templates: Vec::new(),
-            method_caches: vec![],
+            method_caches: Default::default(),
             megamorphic_methods: vec![],
             method_cache_atoms: Default::default(),
             method_cache_sites: Default::default(),
