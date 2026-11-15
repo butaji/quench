@@ -893,7 +893,8 @@ impl Engine {
         let elements: Rc<[WasmElement]> = elements.into();
         let tags: Rc<[WasmTag]> = tags.into();
         let (program_constants, kept_constants) = if lazy_lowering {
-            (constants.constants().to_vec(), Some(constants))
+            let (settled, pool) = constants.settle();
+            (settled, Some(pool))
         } else {
             (constants.into_constants(), None)
         };
