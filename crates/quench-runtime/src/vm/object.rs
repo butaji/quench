@@ -3212,15 +3212,18 @@ impl<H: Host> Vm<H> {
             }
         };
         let slot = word.slot();
+        // SAFETY: the fact names `slot` of the holder's shape: the layout fixes an own holder's,
+        // and the chain epoch an inherited one's.
+        let stored = || unsafe { self.heap.property_get_shaped(holder, slot) };
         Some(match kind {
             KIND_GETTER_SLOT => {
                 if setter {
                     None
                 } else {
-                    Some(self.heap.property_get(holder, slot)?)
+                    Some(stored()?)
                 }
             }
-            KIND_GETTER_PAIR => match self.heap.get(self.heap.property_get(holder, slot)?) {
+            KIND_GETTER_PAIR => match self.heap.get(stored()?) {
                 Some(Cell::AccessorPair { setter: found, .. }) if setter => Some(*found).filter(|found| !found.is_undefined()),
                 Some(Cell::AccessorPair { getter, .. }) => Some(*getter),
                 _ => return None,
