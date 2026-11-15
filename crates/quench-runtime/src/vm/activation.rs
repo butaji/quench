@@ -172,11 +172,15 @@ pub(crate) struct Continuation {
     pub completion: Completion,
     pub resume_register: Option<u16>,
     pub promise: Value,
-    /// The registers live at the suspension, when liveness covers the function, every other
-    /// register was cleared there (`Vm::suspend_activation`) and the live ones are the first
-    /// `u64::BITS`: only these can name a cell, so the GC traces them alone. `None` traces
-    /// every register.
+    /// The registers live at the suspension, when liveness covers the function and the live
+    /// ones are the first `u64::BITS`: only these are read again, so the GC traces them alone.
+    /// The others keep their stale values until a resume after a collection clears them
+    /// (`release_dead_registers`). `None` traces every register, and every dead one was
+    /// cleared at the suspension.
     pub(super) live_registers: Option<u64>,
+    /// The collection epoch at which no dead register can name a freed cell: the suspension's,
+    /// or the last clearing's.
+    pub(super) clean_epoch: u64,
 }
 
 impl std::fmt::Debug for Continuation {
@@ -215,13 +219,62 @@ impl Continuation {
         promise: Value,
     ) -> Self {
         frame.js_jit_interpreter_started = None;
-        Self { frame, completion, resume_register, promise, live_registers: None }
+        Self { frame, completion, resume_register, promise, live_registers: None, clean_epoch: 0 }
+    }
+
+    /// Whether register `index` was live at the suspension; every register is where the
+    /// suspension knows no liveness.
+    fn register_is_live(&self, index: usize) -> bool {
+        self.live_registers.is_none_or(|live| index < u64::BITS as usize && live >> index & 1 != 0)
+    }
+
+    /// Register `index` as the suspended code may read it: `undefined` where it was dead at
+    /// the suspension, as a cleared register reads.
+    pub(super) fn live_register(&self, index: usize) -> Option<Value> {
+        let value = *self.frame.registers.get(index)?;
+        Some(if self.register_is_live(index) { value } else { Value::UNDEFINED })
+    }
+
+    /// Clears the registers dead at the suspension where a collection ran since `clean_epoch`
+    /// (`epoch` is the current one): the GC traced only the live ones, so a dead one may name
+    /// a freed cell. Without a collection each still names the cell it did, and the clearing
+    /// is skipped: an await pays for its precise roots only when a collection happens.
+    pub(super) fn release_dead_registers(&mut self, epoch: u64) {
+        if self.live_registers.is_some() && epoch != self.clean_epoch {
+            self.clear_dead_registers();
+            self.clean_epoch = epoch;
+        }
+    }
+
+    fn clear_dead_registers(&mut self) {
+        for index in 0..self.frame.registers.len() {
+            if !self.register_is_live(index) {
+                self.frame.registers[index] = Value::UNDEFINED;
+            }
+        }
+    }
+
+    /// Writes `value` to register `index`, which stays live past the suspension the mask
+    /// describes; a register beyond the mask clears the dead ones and drops the mask.
+    pub(super) fn write_live_register(&mut self, index: usize, value: Value) {
+        match self.live_registers {
+            Some(live) if index < u64::BITS as usize => self.live_registers = Some(live | 1 << index),
+            Some(_) => {
+                self.clear_dead_registers();
+                self.live_registers = None;
+            }
+            None => {}
+        }
+        if let Some(register) = self.frame.registers.get_mut(index) {
+            *register = value;
+        }
     }
 
     /// The suspended frame, ready to push: it continues after its suspending instruction,
     /// every register holds a value, and the state a run derives for itself (the operation's
     /// field and binding site, the capture cache, a fixed `this`, the `with` base) starts anew.
-    pub(super) fn resume(self, with_base: usize) -> Box<super::Frame> {
+    pub(super) fn resume(mut self, with_base: usize, epoch: u64) -> Box<super::Frame> {
+        self.release_dead_registers(epoch);
         let mut frame = self.frame;
         frame.pc_is_resume = true;
         frame.source_field = None;
@@ -305,7 +358,9 @@ impl Snap for Continuation {
         this.snap(writer)?;
         locals.snap(writer)?;
         dynamic_bindings.snap(writer)?;
-        registers.snap(writer)?;
+        // Registers as the suspended code reads them: a dead one is `undefined`.
+        writer.len(registers.len());
+        (0..registers.len()).filter_map(|index| self.live_register(index)).try_for_each(|value| value.snap(writer))?;
         active_iterators.snap(writer)?;
         with_objects.snap(writer)?;
         self.completion.snap(writer)?;
@@ -340,6 +395,7 @@ impl Snap for Continuation {
             resume_register: Snap::unsnap(reader)?,
             promise: Snap::unsnap(reader)?,
             live_registers: None,
+            clean_epoch: 0,
         })
     }
 }
@@ -408,7 +464,7 @@ mod tests {
             ]
         );
         // The resumed frame keeps the suspended state and starts its own run anew.
-        let frame = continuation.resume(0);
+        let frame = continuation.resume(0, 0);
         assert_eq!(frame.original_arguments, [Value::heap(10)]);
         assert_eq!(frame.with_objects, [Value::heap(11)]);
         assert_eq!((frame.function, frame.pc, frame.with_base), (3, 7, 0));

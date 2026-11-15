@@ -66,7 +66,7 @@ impl<H: Host> Vm<H> {
         let record = self.generator_record_mut(generator)?;
         let continuation = record.resume()?;
         let resume_register = continuation.resume_register;
-        let mut frame = continuation.resume(self.with_stack.len());
+        let mut frame = continuation.resume(self.with_stack.len(), self.heap.collection_epoch());
         if let Some(register) = resume_register {
             *frame.registers.get_mut(usize::from(register))? = sent;
         }
@@ -851,7 +851,7 @@ impl<H: Host> Vm<H> {
         self.with_call_roots(continuation.roots(), |vm| {
             let mut first_error = None;
             for cleanup in continuation.frame.active_iterators.iter().rev() {
-                let Some(&done) = continuation.frame.registers.get(usize::from(cleanup.done)) else {
+                let Some(done) = continuation.live_register(usize::from(cleanup.done)) else {
                     first_error
                         .get_or_insert_with(|| JsError("invalid iterator cleanup state".into()));
                     continue;
@@ -859,7 +859,7 @@ impl<H: Host> Vm<H> {
                 if vm.truthy(done) {
                     continue;
                 }
-                let Some(&iterator) = continuation.frame.registers.get(usize::from(cleanup.iterator))
+                let Some(iterator) = continuation.live_register(usize::from(cleanup.iterator))
                 else {
                     first_error
                         .get_or_insert_with(|| JsError("invalid iterator cleanup target".into()));
@@ -1251,10 +1251,7 @@ impl<H: Host> Vm<H> {
             continuation.frame.pc += 1;
             continuation.resume_register = None;
             // The written register need not be live at the suspension the mask describes.
-            continuation.live_registers = None;
-            if let Some(register) = continuation.frame.registers.get_mut(usize::from(destination)) {
-                *register = value;
-            }
+            continuation.write_live_register(usize::from(destination), value);
         }
         self.resume_generator(p, generator, &[], None)
     }
@@ -1367,7 +1364,7 @@ impl<H: Host> Vm<H> {
         if matches!(continuation.completion, Completion::GeneratorStart)
             && let Some(error) = initial_error
         {
-            self.pool_frame(continuation.resume(self.with_stack.len()));
+            self.pool_frame(continuation.resume(self.with_stack.len(), self.heap.collection_epoch()));
             self.close_generator(generator)?;
             return Err(error);
         }
@@ -1378,7 +1375,7 @@ impl<H: Host> Vm<H> {
             return Err(JsError("generator continuation program is unavailable".into()));
         };
         let resume_register = continuation.resume_register;
-        let mut frame = continuation.resume(self.with_stack.len());
+        let mut frame = continuation.resume(self.with_stack.len(), self.heap.collection_epoch());
         if initial_error.is_none()
             && let Some(register) = resume_register
         {
@@ -1588,7 +1585,7 @@ impl<H: Host> Vm<H> {
             if matches!(continuation.completion, Completion::GeneratorStart)
                 && let Some(error) = initial_error
             {
-                vm.pool_frame(continuation.resume(vm.with_stack.len()));
+                vm.pool_frame(continuation.resume(vm.with_stack.len(), vm.heap.collection_epoch()));
                 vm.fail_async_generator(p, generator, promise, error)?;
                 return Ok(promise);
             }
@@ -1605,7 +1602,7 @@ impl<H: Host> Vm<H> {
                 }
             };
             let resume_register = continuation.resume_register;
-            let mut frame = continuation.resume(vm.with_stack.len());
+            let mut frame = continuation.resume(vm.with_stack.len(), vm.heap.collection_epoch());
             if initial_error.is_none()
                 && let Some(register) = resume_register
             {

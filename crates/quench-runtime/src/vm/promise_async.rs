@@ -26,21 +26,27 @@ impl<H: Host> Vm<H> {
         resume_register: Option<u16>,
         promise: Value,
     ) -> Continuation {
-        let live_registers = self.release_dead_registers(&mut frame);
+        let live_registers = self.live_registers_at_suspension(&mut frame);
         let mut continuation = Continuation::suspend(frame, completion, resume_register, promise);
         continuation.live_registers = live_registers;
+        continuation.clean_epoch = self.heap.collection_epoch();
         continuation
     }
 
-    /// Clears the registers dead at `frame`'s suspension and returns the live ones when they
-    /// are the first `u64::BITS` and liveness covers its function.
-    fn release_dead_registers(&self, frame: &mut super::Frame) -> Option<u64> {
+    /// The registers live at `frame`'s suspension when they are the first `u64::BITS` and
+    /// liveness covers its function; the dead ones stay as they are until a collection makes
+    /// them stale (`Continuation::release_dead_registers`). Where the live ones reach further,
+    /// every dead register is cleared now and `None` returned.
+    fn live_registers_at_suspension(&self, frame: &mut super::Frame) -> Option<u64> {
         type RegisterSet = crate::compile::liveness::RegisterSet;
         let masks = self.programs.residual(frame.program).and_then(|program| program.register_root_masks(frame.function))?;
         if masks.is_windowed() {
             return None;
         }
         let mask = masks.get(frame.pc)?;
+        if let Ok(live) = u64::try_from(mask) {
+            return Some(live);
+        }
         // The mask covers the first `RegisterSet::BITS` registers; every later one is dead.
         let covered = frame.registers.len().min(RegisterSet::BITS as usize);
         let (low, high) = frame.registers.split_at_mut(covered);
@@ -52,7 +58,7 @@ impl<H: Host> Vm<H> {
                 dead &= dead - 1;
             }
         }
-        u64::try_from(mask).ok()
+        None
     }
 
     pub(super) fn call_user_maybe_async(
@@ -380,7 +386,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         let resume_register = continuation.resume_register;
-        let mut frame = continuation.resume(self.with_stack.len());
+        let mut frame = continuation.resume(self.with_stack.len(), self.heap.collection_epoch());
         if !resume.rejected
             && let Some(register) = resume_register
         {
