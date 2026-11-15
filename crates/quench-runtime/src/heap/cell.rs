@@ -907,7 +907,7 @@ impl Native {
     /// frames (`Vm::call_wasm_exported_function`); its trap becomes an error object where the
     /// general path raises it (JetStream richards-wasm calls an export 2.1 million times an
     /// iteration from a frameless activation). A keyed collection's or array's iterator
-    /// creation, `%IteratorPrototype%[@@iterator]`, `concat` and `Object.isExtensible` belong
+    /// creation, `%IteratorPrototype%[@@iterator]`, `concat`, `Array.from` and `Object.isExtensible` belong
     /// too (MobX's observable set reads `values()` 4,087 times per three proxy-mobx iterations).
     pub(crate) fn runs_beside_activations(self) -> bool {
         self.is_reflect_operation() || matches!(
@@ -940,6 +940,7 @@ impl Native {
                 | Self::SetEntries
                 | Self::IteratorSelf
                 | Self::ArrayConcat
+                | Self::ArrayFrom
                 | Self::ObjectIsExtensible
                 | Self::ArrayReverse
                 | Self::MathRandom
