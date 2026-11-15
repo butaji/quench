@@ -12,7 +12,7 @@ impl<H: Host> Vm<H> {
     /// Whether the accessor the site's recorded entry answers for `object` lives on its
     /// immediate prototype, whose values a hint's watch covers (`hold_getter_hint`).
     pub(super) fn cached_accessor_on_prototype(&self, object: Value, atom: Atom, site: usize) -> bool {
-        self.shape_property_lookup(object, atom)
+        self.accessor_receiver(object, atom)
             .and_then(|receiver| Some((self.accessor_entry(receiver, site)?, receiver.proto())))
             .is_some_and(|(cache, prototype)| cache.holder != OWN_ACCESSOR && cache.holder == prototype)
     }
@@ -24,7 +24,7 @@ impl<H: Host> Vm<H> {
         if self.accessor_field_indices.get(site) == NO_ACCESSOR_FIELD {
             return None;
         }
-        let receiver = self.shape_property_lookup(object, atom)?;
+        let receiver = self.accessor_receiver(object, atom)?;
         let cache = self.accessor_entry(receiver, site)?;
         let holder = if cache.holder == OWN_ACCESSOR {
             (!receiver.has_side_descriptors()).then_some(receiver)?
@@ -44,8 +44,22 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The object whose shape an accessor entry may match. An ordinary object's is its own:
+    /// an entry is recorded only for a shape `shape_property_lookup` answers (never a private
+    /// name's, a dictionary's or a module namespace's, whose shape is its own), so a shape
+    /// that matches one has been proved, and the lookup's checks are not made again. Any other
+    /// receiver is checked as it was recorded.
+    #[inline(always)]
+    fn accessor_receiver(&self, object: Value, atom: Atom) -> Option<&Object> {
+        match self.heap.object_record(object) {
+            Some(record) => Some(record),
+            None => self.shape_property_lookup(object, atom),
+        }
+    }
+
     /// The site's entry for a receiver of `receiver`'s shape and prototype, while the
     /// prototype layout epoch it was proved under still holds.
+    #[inline(always)]
     fn accessor_entry(&self, receiver: &Object, site: usize) -> Option<&AccessorFieldCache> {
         let mut index = self.accessor_field_indices.get(site);
         let epoch = crate::heap::prototype_layout_epoch();
