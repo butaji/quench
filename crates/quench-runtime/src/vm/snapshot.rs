@@ -243,6 +243,8 @@ impl<H: Host> Vm<H> {
             typed_views: _,
             native_microtask_running,
             unobserved_jobs_entered: _,
+            chain_await_jobs: _,
+            await_chain: _,
             host,
             specialized,
             heap,

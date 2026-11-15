@@ -1821,6 +1821,14 @@ pub(crate) struct Vm<H> {
     /// Whether the innermost running job queue has entered the host's context for unobserved
     /// Promise jobs (`Host::enter_unobserved_job`): its consecutive jobs share that entry.
     unobserved_jobs_entered: bool,
+    /// Whether the innermost running job queue runs every job it holds in order, with no
+    /// predicate between jobs: a resumed async activation may then run the queue's next
+    /// await resumption itself (`Vm::take_chained_await`).
+    chain_await_jobs: bool,
+    /// The async function activation a job resumed and the lane runs at frame index
+    /// `AwaitChain::frame`, which an await may swap for the queue's next resumption
+    /// (`Vm::chain_lane_await`).
+    await_chain: Option<promise_async::AwaitChain>,
     pub(crate) host: H,
     specialized: bool,
     heap: Heap,
