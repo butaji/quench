@@ -34,7 +34,7 @@ const ENTRY_WORDS: usize = 4;
 /// What a scalar entry takes in registers after the context: the function's first `params`
 /// parameters, each a binary64 where its bit of `floats` is set and an int32 otherwise.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(in crate::vm::compiled) struct ScalarAbi {
+pub(in crate::vm) struct ScalarAbi {
     floats: u8,
     params: u8,
 }

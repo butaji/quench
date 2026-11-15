@@ -203,7 +203,7 @@ fn typed_view<const KIND: u8>(payload: usize, (at, first): (u8, u8)) -> Option<t
     let record = word_at(payload, JS_STEP_LOOP_ENTRY);
     let values = entry::entry_word(&mut stage, record, offset);
     let length = entry::entry_word(&mut stage, record, offset + LOOP_ENTRY_ARRAY_COUNT_AT);
-    Some(typed_elements::TypedView { values, length, kind: typed_elements::ViewKind::Static(native) })
+    Some(typed_elements::TypedView { values, length, kind: typed_elements::ViewKind::Static(native), within: false })
 }
 
 /// A typed element read: the entry words' offset is hole 1, the Number delivered as `Value::number` makes it.
