@@ -66,6 +66,8 @@ pub(super) struct Store {
 pub(super) enum Scalar {
     Const(f64),
     Register(u16),
+    /// A captured binding, read once at entry (`Sym::Capture`).
+    Capture(u32),
     /// Loop-invariant arithmetic over earlier scalars, computed once at entry.
     Computed { op: NodeOp, a: u8, b: u8 },
 }
@@ -98,7 +100,7 @@ impl Shape {
     pub(super) fn scalar_constant(&self, slot: u8) -> Option<f64> {
         match self.scalars[usize::from(slot)] {
             Scalar::Const(value) => Some(value),
-            Scalar::Register(_) | Scalar::Computed { .. } => None,
+            Scalar::Register(_) | Scalar::Capture(_) | Scalar::Computed { .. } => None,
         }
     }
 }
@@ -110,6 +112,9 @@ enum Sym {
     Phi(u16),
     Const(f64),
     Affine(u16, i32),
+    /// A captured binding's value (a `LoadCapture` immediate): the body runs no code that
+    /// could assign it.
+    Capture(u32),
 }
 
 /// A symbolic pass's operation, before lowering.
@@ -225,15 +230,13 @@ impl<'a> Graph<'a> {
     /// The value `instruction` writes to its result register, or `Ok(None)` for one that
     /// writes none; `Err` for an instruction a kernel does not run.
     fn step(&mut self, instruction: WideInstruction, file: &[Sym]) -> Result<Option<Sym>, ()> {
-        let writes_local = instruction.op().class() != Class::SetIndex
-            && instruction.op().class() != Class::Nop
-            && instruction.numeric_local_target().is_some();
-        if writes_local {
+        if writes_local(instruction) {
             return Err(());
         }
         let value = match instruction.op().class() {
             Class::LoadConst => self.constants.get(instruction.constant_index()).and_then(|v| v.as_number()).map(Sym::Const),
             Class::Move => file.get(usize::from(instruction.register_b())).copied(),
+            Class::LoadCapture => Some(Sym::Capture(instruction.imm())),
             Class::IncDec => self.inc_dec(instruction, file),
             Class::GetIndex => self.get_index(instruction, file),
             Class::Binary | Class::NumericAdd | Class::NumericMultiply => self.binary(instruction, file),
@@ -253,6 +256,11 @@ impl<'a> Graph<'a> {
         }
         Some(())
     }
+}
+
+/// Whether `instruction` writes a numeric local besides its result, which no kernel models.
+fn writes_local(instruction: WideInstruction) -> bool {
+    !matches!(instruction.op().class(), Class::SetIndex | Class::Nop) && instruction.numeric_local_target().is_some()
 }
 
 /// The registers `body` writes.
@@ -377,6 +385,14 @@ impl<'a> Lowering<'a> {
                 Arg::Scalar(u8::try_from(index).ok().filter(|&i| usize::from(i) < MAX_SLOTS)?)
             }
             Sym::Affine(register, offset) => Arg::Affine(self.affine((register, offset))?),
+            Sym::Capture(imm) => {
+                let index = self.scalars.iter().position(|s| matches!(s, Scalar::Capture(known) if *known == imm));
+                let index = index.unwrap_or_else(|| {
+                    self.scalars.push(Scalar::Capture(imm));
+                    self.scalars.len() - 1
+                });
+                Arg::Scalar(u8::try_from(index).ok().filter(|&i| usize::from(i) < MAX_SLOTS)?)
+            }
         })
     }
 
