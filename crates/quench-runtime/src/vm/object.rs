@@ -1851,6 +1851,18 @@ impl<H: Host> Vm<H> {
         &mut self, record_id: u32, cache: FieldCache, value: Value,
         layout: crate::heap::PropertyStoreLayout,
     ) -> bool {
+        if !LOGS && layout == crate::heap::PropertyStoreLayout::Preserve {
+            // The unlogged store `lane_set_this_field_own` makes through a hint: one compare
+            // proves the exact shape and the arena form (`Object::formed_plain_start`), then
+            // the store gate; any other form takes the staged store. A refusal changes nothing,
+            // so an observed arena's store goes on to the flat store below.
+            // SAFETY: a direct object's live record; the exact shape covers the slot.
+            if cache.holder == NO_FIELD_HOLDER
+                && unsafe { crate::staged::store::concrete_own_store(&mut self.heap, record_id, cache.receiver, false, cache.slot, value) }
+            {
+                return true;
+            }
+        }
         let receiver = self.heap.object_record_by_id(record_id);
         if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
             return false;
