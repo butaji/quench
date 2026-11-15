@@ -1763,6 +1763,10 @@ use call_body_forms::{body_entry, leaf_body};
 const TARGET_CONSTRUCTS: u8 = 1;
 /// `ScriptCallTarget::forms`: `new` may run its body as the stores alone.
 const TARGET_INITIALIZES: u8 = 2;
+/// `ScriptCallTarget::forms`: a rest body (`CallEntry::Gathers`) that keeps the values it was
+/// passed, for a kept `arguments` (`CallPlan::keeps_arguments`) or legacy reflection of a
+/// sloppy function's; any other's rest array holds every value past its parameters.
+const TARGET_GATHERS_KEEPING: u8 = 4;
 
 impl ScriptCallTarget {
     /// `new` may activate it too (`Vm::inline_constructible`).
@@ -13351,7 +13355,8 @@ impl<H: Host> Vm<H> {
             // forwarding one runs its program's keeping construction
             // (`lane_construct_keeping_activation`), which another program's caller does not.
             forms: u8::from(shape.constructs && !environment && !settles && !body.rest && !(cross && plan.keeps_arguments)) * TARGET_CONSTRUCTS
-                | u8::from(shape.initializes && !environment && !settles && !cross && !body.rest) * TARGET_INITIALIZES,
+                | u8::from(shape.initializes && !environment && !settles && !cross && !body.rest) * TARGET_INITIALIZES
+                | u8::from(body.rest && (plan.keeps_arguments || plan.legacy_reflection || (lexical_this.is_none() && !body.strict))) * TARGET_GATHERS_KEEPING,
             fill: u8::try_from(body.register_roots.entry_fill(body.registers)).unwrap_or(u8::MAX),
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
@@ -18132,17 +18137,27 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     // A forwarding activation keeps every value passed after its registers, as does one for
     // a skipped forwarding constructor, whose frame passed them on, and one passed more values
     // than it has parameters.
-    let keeps = target.forwards() || forwarder.is_some() || argc > usize::from(target.params);
+    // A rest body keeps nothing its rest array holds, unless a kept `arguments` or legacy
+    // reflection reads them (`TARGET_GATHERS_KEEPING`).
+    let gathers = target.entry == CallEntry::Gathers;
+    let keeps = forwarder.is_some()
+        || if gathers {
+            target.forms & TARGET_GATHERS_KEEPING != 0
+        } else {
+            target.forwards() || argc > usize::from(target.params)
+        };
     let window_size = if keeps { count + argc } else { count };
-    // The rest array, made before the window is: the values past the other parameters.
-    let rest = (target.entry == CallEntry::Gathers).then(|| {
+    // The rest array, made before the window is: the values past the other parameters, read
+    // in place from the caller's window or the kept values.
+    let rest = gathers.then(|| {
         let fixed = usize::from(target.params) - 1;
-        let passed = (fixed..argc).map(|index| match arguments {
-            ActivationArguments::Window(base) => r.get(base + index as u16),
+        let passed: &[Value] = match arguments {
+            // SAFETY: the window holds `argc` registers of the caller.
+            ActivationArguments::Window(base) => unsafe { std::slice::from_raw_parts(r.0.add(usize::from(base)), argc) },
             // SAFETY: kept values hold `argc` values.
-            ActivationArguments::Kept(values, _) => unsafe { *values.add(index) },
-        });
-        vm.rest_parameter_array(&passed.collect::<smallvec::SmallVec<[Value; GATHERED_INLINE_VALUES]>>())
+            ActivationArguments::Kept(values, _) => unsafe { std::slice::from_raw_parts(values, argc) },
+        };
+        vm.rest_parameter_array(passed.get(fixed..).unwrap_or_default())
     });
     // A call that returns its callee's completion completes its caller too, which only an
     // activation's return does in the lane. A host permitting proper tail calls
