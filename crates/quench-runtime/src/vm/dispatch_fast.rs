@@ -358,6 +358,8 @@ pub(super) struct LaneView {
     /// those records read them.
     #[cfg_attr(not(test), allow(dead_code))]
     vector_regions: Box<[vector_region::VectorRegion]>,
+    /// The loop kernels whose test records name them (`loop_kernel`).
+    _loop_kernels: Box<[Box<loop_kernel::LoopKernel>]>,
     /// The record an activation starts at (`LaneView::start`): its first, or `prologue`
     /// while the JavaScript tier may claim the function (`LaneView::claim_for_tier`).
     start: std::cell::Cell<Ip>,
@@ -21729,6 +21731,12 @@ fn derive_lane_view<'live, H: Host>(
         specialize_relation_jumps::<H>(&mut records);
         specialize_array_literals::<H>(&mut records);
     }
+    // Loop kernels take their test records last, keeping each record's final handler.
+    let loop_kernels = if !wasm && !loop_tier {
+        loop_kernel::install_loop_kernels::<H>(&decoded, constants, function, &exits, &mut records)
+    } else {
+        Box::default()
+    };
     let min_run = if closes_loop(&decoded, &exits) {
         LANE_ENTRY_MIN_RUN
     } else {
@@ -21780,6 +21788,7 @@ fn derive_lane_view<'live, H: Host>(
         loops,
         loop_at_backedge: loop_at_backedge.into_boxed_slice(),
         vector_regions,
+        _loop_kernels: loop_kernels,
         start: std::cell::Cell::new(first),
         prologue: std::cell::UnsafeCell::new(LaneInstruction {
             handler: std::ptr::null(),
@@ -22279,6 +22288,7 @@ macro_rules! fused_arithmetic {
     };
 }
 mod raw_results;
+mod loop_kernel;
 
 /// The operator of a record running an arithmetic operator on two registers (`lane_operator`
 /// or `lane_operator_numbers`) that the lane fuses (`fused_arithmetic`); `None` for any other

@@ -198,6 +198,54 @@ pub(crate) unsafe fn concrete_replace_element(values: *mut crate::Value, index: 
     replace_element(&mut stage, values as u64, address as u64, old.to_bits(), value.to_bits());
 }
 
+/// `concrete_replace_element` of the elements at `first + step * k` by `values`'s items, the
+/// backing's count of others recounted once for all of them.
+///
+/// # Safety
+/// As `concrete_replace_element`, for every index.
+#[inline(always)]
+pub(crate) unsafe fn concrete_replace_elements(backing: *mut crate::Value, first: isize, step: isize, values: impl Iterator<Item = crate::Value>) {
+    let mut stage = Concrete::new(std::ptr::null());
+    let others = stage.load_u32(Region::Elements.mutable(), backing as u64, crate::heap::OTHERS_FROM_VALUES);
+    let counted = others != u64::from(crate::heap::OTHERS_UNKNOWN);
+    let (mut added, mut removed) = (0u64, 0u64);
+    for (k, value) in values.enumerate() {
+        // SAFETY: the caller's contract.
+        let address = unsafe { backing.offset(first + step * k as isize) };
+        if counted {
+            added += other(&mut stage, value.to_bits());
+            removed += other(&mut stage, unsafe { address.read() }.to_bits());
+        }
+        replace_uncounted_element(&mut stage, address as u64, value.to_bits());
+    }
+    if added != removed {
+        let others = recount(&mut stage, others, added, removed);
+        stage.store_u32(Region::Elements.mutable(), backing as u64, crate::heap::OTHERS_FROM_VALUES, others);
+    }
+}
+
+/// `concrete_replace_elements` of the contiguous elements from `first` by `values`, in
+/// passes the compiler vectorizes: count the others leaving and arriving, then copy.
+///
+/// # Safety
+/// As `concrete_replace_element`, for every index.
+#[inline(always)]
+pub(crate) unsafe fn concrete_replace_run(backing: *mut crate::Value, first: usize, values: &[u64]) {
+    let mut stage = Concrete::new(std::ptr::null());
+    // SAFETY: the caller's contract.
+    let elements = unsafe { std::slice::from_raw_parts_mut(backing.add(first).cast::<u64>(), values.len()) };
+    let others = stage.load_u32(Region::Elements.mutable(), backing as u64, crate::heap::OTHERS_FROM_VALUES);
+    if others != u64::from(crate::heap::OTHERS_UNKNOWN) {
+        let count = |bits: &[u64]| bits.iter().map(|&bits| other(&mut Concrete::new(std::ptr::null()), bits)).sum::<u64>();
+        let (added, removed) = (count(values), count(elements));
+        if added != removed {
+            let others = recount(&mut stage, others, added, removed);
+            stage.store_u32(Region::Elements.mutable(), backing as u64, crate::heap::OTHERS_FROM_VALUES, others);
+        }
+    }
+    elements.copy_from_slice(values);
+}
+
 /// The interpreter's reading of `other`.
 #[inline(always)]
 pub(crate) fn concrete_other(value: crate::Value) -> u32 {

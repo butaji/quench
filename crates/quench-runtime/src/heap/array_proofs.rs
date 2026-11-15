@@ -174,6 +174,30 @@ impl Heap {
     }
 }
 
+impl Heap {
+    /// The dense storage of the record array `base` names, as `ArrayStorageProofs::prove`
+    /// would prove it: its first element, the elements a read may reach, and those a store
+    /// of a Number may replace in place (zero where none may). `None` for any other value,
+    /// or while a cycle marks. Valid until the next change that retires proofs
+    /// (`retire_array_storage_proofs`): a loop kernel holds it across no call or allocation.
+    pub(crate) fn array_storage_span(&mut self, base: Value) -> Option<(NonNull<Value>, usize, usize)> {
+        let record_id = base.direct_array_index()?;
+        if self.satb_active {
+            return None;
+        }
+        // SAFETY: as in `prove_array_storage`.
+        let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
+        let replaces = !array.has_indexed_descriptors() && !array.is_frozen() && array.arguments_map().is_none()
+            && !array.was_used_as_prototype();
+        let length = array.elements().len().min(i32::MAX as usize);
+        Some(match array.unique_values().filter(|_| replaces) {
+            Some(values) => (values, length, length),
+            // SAFETY: a slice's pointer is never null.
+            None => (unsafe { NonNull::new_unchecked(array.elements().as_slice().as_ptr().cast_mut()) }, length, 0),
+        })
+    }
+}
+
 /// The proofs that hold any proof on this thread (`ArrayStorageProofs::prove` arms
 /// them), null when none do: only a lane run's proofs prove, and only between its entry
 /// and exit, each of which retires (`LaneProofScope`). A `#[thread_local]` static rather
