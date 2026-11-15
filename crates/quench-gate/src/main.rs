@@ -2,9 +2,10 @@
 //! ratchets, the census, the oracle tests, the C-parity gate and the conformance smoke, in
 //! that order, prints a summary table and exits nonzero if any step failed.
 //!
-//! usage: quench-gate [--quick] [--jobs N] [--record]
+//! usage: quench-gate [--quick] [--jobs N] [--record] [--passed]
 //! `--quick` runs only the lint, census and C-parity steps; `--record` writes the C-parity
-//! ceilings that have no value yet.
+//! ceilings that have no value yet. A full run that passes on a clean tree records the tree
+//! (`passed.rs`); `--passed` only answers whether the checked-out tree has that record.
 
 mod build;
 mod census;
@@ -13,6 +14,7 @@ mod conformance;
 mod cparity;
 mod lint;
 mod oracle;
+mod passed;
 mod pool;
 mod process;
 mod runtime_tests;
@@ -58,7 +60,27 @@ fn main() -> ExitCode {
             return ExitCode::from(USAGE_ERROR);
         }
     };
+    if config.passed {
+        return report(passed::check(&config));
+    }
     let outcomes = run(&config);
     step::print(&outcomes);
-    if outcomes.iter().all(|outcome| outcome.passed) { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    let all_passed = outcomes.iter().all(|outcome| outcome.passed);
+    let recorded = passed::record(&config, &outcomes);
+    println!("\npass record: {}", recorded.as_ref().map_or_else(Clone::clone, |path| path.display().to_string()));
+    if all_passed { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+}
+
+/// Prints where the pass record is, or why there is none, and exits accordingly.
+fn report(record: Result<std::path::PathBuf, String>) -> ExitCode {
+    match record {
+        Ok(path) => {
+            println!("passed: {}", path.display());
+            ExitCode::SUCCESS
+        }
+        Err(reason) => {
+            eprintln!("quench-gate: {reason}");
+            ExitCode::FAILURE
+        }
+    }
 }

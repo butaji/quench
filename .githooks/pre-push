@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+# The gate decides what may be pushed (quench-gate is the only definition of green).
+# A push to the integration branch needs a full gate pass recorded for the exact tree
+# being pushed; any other push runs the quick gate (lint, census, C-parity).
+set -eu
+
+integration_ref="refs/heads/v2-jit"
+gate() { cargo run -q --profile experiment -p quench-gate -- "$@"; }
+
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  [ "$remote_ref" = "$integration_ref" ] || continue
+  if [ "$(git rev-parse HEAD)" != "$local_sha" ]; then
+    echo "pre-push: check out the commit pushed to v2-jit ($local_sha) so its gate record can be read" >&2
+    exit 1
+  fi
+  gate --passed
+  exit 0
+done
+gate --quick
