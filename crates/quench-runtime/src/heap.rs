@@ -2277,6 +2277,7 @@ impl Heap {
                 self.reclaimable_program_bytes_after_full,
                 self.reclaimable_program_bytes_since_full,
             )
+            || self.pacing().arena_growth_reached(self.properties.settled_values(), self.properties.occupied_values())
     }
     /// Charges a reclaimable program (dynamic code: `eval`, `new Function`, scripts) of
     /// `bytes` (`ProgramFootprint`) as old growth of the programs the last full collection
@@ -2973,6 +2974,9 @@ impl Heap {
             self.compact_property_arena(property_owners, direct_property_owners);
         } else {
             self.evacuate_young_runs(young_owners);
+        }
+        if full {
+            self.properties.settle_after_full();
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
