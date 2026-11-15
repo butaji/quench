@@ -812,6 +812,14 @@ impl Compiler {
                     }
                     return Ok(());
                 }
+                let rewritten;
+                let body = match (*greedy && max == UNBOUNDED && min <= 1).then(|| unit_runs(body, flags)).flatten() {
+                    Some(runs) => {
+                        rewritten = runs;
+                        &rewritten
+                    }
+                    None => &**body,
+                };
                 // A body that cannot match empty never ends an iteration where it began, so
                 // only a nullable one keeps each iteration's start for the empty check.
                 let counter = self.register();
@@ -1376,6 +1384,78 @@ fn lookahead_units(expr: &Expr, flags: Flags, units: &mut Vec<u128>) -> Option<K
 enum Known {
     Whole,
     Partly,
+}
+
+/// A greedy unbounded loop's alternation `body` with each single-unit alternative that no
+/// other alternative can start at made a greedy run of itself (`(?:[a-z]|\\u....)+` loops
+/// as `(?:[a-z]+|\\u....)+`): at a unit of such an alternative only it matches, so the run
+/// tries the same matches in the same order, giving units back one at a time as the loop
+/// would give back iterations, and a run of units costs one scan rather than a loop
+/// iteration each. Iteration counts change, so only a loop of at most one required
+/// iteration is rewritten; the captures each iteration resets are those of the other
+/// alternatives, which the merged iterations would have reset alike. `None` where no
+/// alternative qualifies.
+fn unit_runs(body: &Expr, flags: Flags) -> Option<Expr> {
+    let alternatives = match body {
+        Expr::Alternation(alternatives) => alternatives,
+        // A group's own flags (`(?i:...)`, and the mode a parse wraps a group in).
+        Expr::Mode { body, flags: local } => {
+            let runs = unit_runs(body, merge_flags(flags, *local))?;
+            return Some(Expr::Mode { body: Box::new(runs), flags: *local });
+        }
+        _ => return None,
+    };
+    if flags.ignore_case {
+        return None;
+    }
+    fn single(alternative: &Expr) -> bool {
+        match alternative {
+            Expr::Literal(_) | Expr::Dot => true,
+            Expr::Class(class) => class_is_single_unit(class),
+            Expr::Sequence(parts) => matches!(&parts[..], [part] if single(part)),
+            _ => false,
+        }
+    }
+    let firsts: Vec<Option<UnitSet>> = alternatives
+        .iter()
+        .map(|alternative| if nullable(alternative) { None } else { consuming_starts(alternative, flags).map(|starts| starts.units) })
+        .collect();
+    let disjoint = |left: &UnitSet, right: &UnitSet| {
+        left.ascii & right.ascii == 0 && (matches!(left.beyond, Beyond::Never) || matches!(right.beyond, Beyond::Never))
+    };
+    let runs: Vec<bool> = alternatives
+        .iter()
+        .enumerate()
+        .map(|(index, alternative)| {
+            single(alternative)
+                && firsts[index].as_ref().is_some_and(|own| {
+                    firsts.iter().enumerate().all(|(other, first)| {
+                        other == index || first.as_ref().is_some_and(|first| disjoint(own, first))
+                    })
+                })
+        })
+        .collect();
+    if !runs.contains(&true) {
+        return None;
+    }
+    Some(Expr::Alternation(
+        alternatives
+            .iter()
+            .zip(runs)
+            .map(|(alternative, run)| {
+                if run {
+                    // The unit itself, out of its one-part sequence, so the run is a scan.
+                    let mut unit = alternative;
+                    while let Expr::Sequence(parts) = unit {
+                        unit = &parts[0];
+                    }
+                    Expr::Repeat { body: Box::new(unit.clone()), min: 1, max: None, greedy: true, captures: Box::new([]) }
+                } else {
+                    alternative.clone()
+                }
+            })
+            .collect(),
+    ))
 }
 
 fn starts(expr: &Expr, flags: Flags) -> Option<Starts> {
