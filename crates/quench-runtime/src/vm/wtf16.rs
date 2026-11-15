@@ -976,6 +976,16 @@ impl JsString {
         }
     }
 
+    /// The units of `existing_flat` in place, read where the concatenation paths read them
+    /// (an `Option::map` of `FlatUnits::view` stayed a call per read).
+    #[inline(always)]
+    pub(crate) fn existing_units(&self) -> Option<Units<'_>> {
+        match &self.repr {
+            Repr::Flat(units) => Some(units.view()),
+            Repr::Shared(inner) => inner.flat.get().map(|units| units.view()),
+        }
+    }
+
     /// The flat units, flattening a rope on first use.
     #[inline]
     pub(crate) fn flat(&self) -> &FlatUnits {
@@ -1232,7 +1242,7 @@ impl JsString {
     #[inline(always)]
     pub(crate) fn concat(&self, text: &Self) -> Self {
         if let (Repr::Flat(FlatUnits::AsciiPrefix(buffer, length)), Some(Units::Ascii(bytes))) =
-            (&self.repr, text.existing_flat().map(FlatUnits::view))
+            (&self.repr, text.existing_units())
             && let Some(length) = buffer.append(*length, bytes.iter().copied())
         {
             return Self { repr: Repr::Flat(FlatUnits::AsciiPrefix(buffer.clone(), length)) };
@@ -1317,7 +1327,7 @@ impl JsString {
             return Self { repr: Repr::Flat(FlatUnits::Short(joined)) };
         }
         if let (Some(Units::Ascii(head)), Some(Units::Ascii(tail))) =
-            (left.existing_flat().map(FlatUnits::view), right.existing_flat().map(FlatUnits::view))
+            (left.existing_units(), right.existing_units())
         {
             let units = FlatUnits::ascii_with(head.len() + tail.len(), |bytes| {
                 let (start, end) = bytes.split_at_mut(head.len());
@@ -1336,7 +1346,7 @@ impl JsString {
     /// Appends flat `text` into this string's append buffer past its end, when this string
     /// ends where the buffer does and `text` fits: an ASCII prefix only grows its length.
     fn append_in_place(&mut self, text: &Self) -> bool {
-        let Some(tail) = text.existing_flat().map(FlatUnits::view) else {
+        let Some(tail) = text.existing_units() else {
             return false;
         };
         if let (Repr::Flat(FlatUnits::AsciiPrefix(buffer, length)), Units::Ascii(bytes)) = (&mut self.repr, tail) {

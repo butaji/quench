@@ -77,7 +77,7 @@ impl<H: Host> Vm<H> {
             return self.ordinary_chain_read(object, atom);
         }
         let key = PropertyKey::string(atom);
-        let Some(data) = self.heap.ordinary_object(object) else {
+        let Some(data) = self.proved_read_receiver(object, key) else {
             return self.ordinary_chain_read(object, atom);
         };
         if let Some(key32) = key.key32()

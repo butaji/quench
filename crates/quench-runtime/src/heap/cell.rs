@@ -886,7 +886,9 @@ impl Native {
     /// its own code natively, or pushes a frame for it only after making the activations
     /// frames (`Vm::call_wasm_exported_function`); its trap becomes an error object where the
     /// general path raises it (JetStream richards-wasm calls an export 2.1 million times an
-    /// iteration from a frameless activation).
+    /// iteration from a frameless activation). A keyed collection's or array's iterator
+    /// creation, `%IteratorPrototype%[@@iterator]`, `concat` and `Object.isExtensible` belong
+    /// too (MobX's observable set reads `values()` 4,087 times per three proxy-mobx iterations).
     pub(crate) fn runs_beside_activations(self) -> bool {
         self.is_reflect_operation() || matches!(
             self,
@@ -911,6 +913,14 @@ impl Native {
                 | Self::StringReplaceAll
                 | Self::NumberString
                 | Self::MapEntries
+                | Self::MapKeys
+                | Self::MapValues
+                | Self::SetValues
+                | Self::SetKeys
+                | Self::SetEntries
+                | Self::IteratorSelf
+                | Self::ArrayConcat
+                | Self::ObjectIsExtensible
                 | Self::ArraySlice
                 | Self::ArrayMap
                 | Self::ArrayForEach
@@ -2380,6 +2390,16 @@ impl Object {
         debug_assert!(!plain || self.extras_pointer().is_none());
         plain.then_some(self.payload as usize)
     }
+    /// `formed_plain_start` of a narrow run (`value_vec::NARROW_FORM`): the run's first word
+    /// where the whole auxiliary word equals `hint`, a narrow form without inline storage or
+    /// extras, so slot `i` is half `i` of the run counted in `u32`s from twice that word.
+    #[inline(always)]
+    pub(crate) fn formed_narrow_start(&self, hint: u32) -> Option<usize> {
+        use crate::value_vec::{NARROW_FORM, STORAGE_FORM};
+        let narrow = hint & STORAGE_FORM == NARROW_FORM && self.aux() == hint && self.payload >> u32::BITS == NARROW_RUN_TAG >> u32::BITS;
+        narrow.then_some(self.payload as u32 as usize)
+    }
+
 
     /// The arena storage start of an object whose auxiliary word is `hint` whole, a lane
     /// record's own-field hint (`hint_shape`) of the arena form; `None` for any other word or form.
@@ -3347,12 +3367,14 @@ impl EnvironmentScopeRef {
         Self(std::num::NonZeroUsize::new(pointer as usize).expect("a box is never null"))
     }
 
+    #[inline(always)]
     fn scope(&self) -> Option<&EnvironmentScope> {
         // SAFETY: an untagged word is the pointer `boxed` leaked, owned by `self` until `Drop`.
         (self.0.get() & INLINE_SCOPE_TAG == 0)
             .then(|| unsafe { &*(self.0.get() as *const EnvironmentScope) })
     }
 
+    #[inline(always)]
     pub(crate) fn program(&self) -> Option<u32> {
         match self.scope() {
             Some(scope) => scope.program,

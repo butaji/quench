@@ -125,6 +125,32 @@ pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id:
     own_store(&mut stage, record, u64::from(record_id), shape, hinted, slot, value.to_bits(), ()).is_some()
 }
 
+/// A hinted own-field store into a narrow run (`Object::formed_narrow_start`): `value`'s
+/// narrow form at `slot` of record `record_id` where its whole auxiliary word is `shape`, a
+/// narrow run, and the store gate admits the write; false changes nothing (a value without a
+/// narrow form leaves to the general store, which widens the run).
+///
+/// # Safety
+/// `record_id` names a live object record of `heap`, whose shape's slot the hint covers.
+#[inline(always)]
+pub(crate) unsafe fn concrete_narrow_store(heap: &mut crate::heap::Heap, record_id: u32, shape: u32, slot: u16, value: crate::Value) -> bool {
+    // SAFETY: the caller's contract; the gate reads the heap before any write.
+    let record = unsafe { heap.unlogged_object_record(record_id) };
+    // SAFETY: a live record, read before any write.
+    let Some(start) = (unsafe { (*record).formed_narrow_start(shape) }) else {
+        return false;
+    };
+    let Some(narrow) = value.to_narrow() else {
+        return false;
+    };
+    if !heap.store_unlogged(record_id, value) {
+        return false;
+    }
+    // SAFETY: the shape matched, so the run's halves hold `slot`; the gate admitted the write.
+    unsafe { heap.arena_values_base().cast::<u32>().cast_mut().add(2 * start + usize::from(slot)).write(narrow) };
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

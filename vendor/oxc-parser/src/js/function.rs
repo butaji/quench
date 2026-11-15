@@ -845,7 +845,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// Declares a function declaration's name where it lies (`early`): lexical in a block,
     /// where a plain function in sloppy code also binds in the function around it (Annex B),
     /// which the tracker does not model.
-    fn declare_function_name(&mut self, name: oxc_str::Ident<'a>, async_or_generator: bool) {
+    pub(super) fn declare_function_name(&mut self, name: oxc_str::Ident<'a>, async_or_generator: bool) {
         if !self.early.active() {
             return;
         }

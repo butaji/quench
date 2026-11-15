@@ -1908,6 +1908,20 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// `hinted_primary_field_store_hit` of a site whose objects keep narrow runs
+    /// (`lane_set_field_narrow`): the value's narrow form in place (`concrete_narrow_store`).
+    #[inline(always)]
+    pub(super) fn hinted_narrow_field_store_hit(&mut self, hint: FieldCache, object: Value, atom: Atom, value: Value) -> bool {
+        if self.method_caches_may_name(atom) || hint.holder != NO_FIELD_HOLDER {
+            return false;
+        }
+        let Some(record_id) = object.direct_object_index() else {
+            return false;
+        };
+        // SAFETY: a direct object Value names a live record; the hint's slot is one its shape covers.
+        unsafe { crate::staged::store::concrete_narrow_store(&mut self.heap, record_id, hint.receiver, hint.slot, value) }
+    }
+
     /// `primary_own_field_store_hit` of an object in a slot cell: its exact shape the site's
     /// own entry (`Heap::cell_property_set_exact`).
     #[inline(never)]

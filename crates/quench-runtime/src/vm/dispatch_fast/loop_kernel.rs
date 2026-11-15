@@ -29,6 +29,7 @@ use super::*;
 
 mod recur;
 mod run;
+mod typed;
 mod shape;
 
 pub(super) use shape::Shape;

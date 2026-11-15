@@ -2,6 +2,8 @@
 //! over recurrences, the chunk's stores, and the registers written back.
 use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 use super::shape::{Arg, NodeOp, Scalar};
+use super::typed;
+use crate::heap::TypedArrayKind;
 use super::*;
 
 /// Iterations per chunk: each column holds this many f64s.
@@ -19,12 +21,15 @@ const SLOTS: usize = 32;
 #[derive(Clone, Copy)]
 struct Span {
     base: Value,
+    /// The first element: a `Value` of a record array, or of a typed array's kind.
     values: *mut Value,
     readable: usize,
     writable: usize,
+    /// A typed array's element kind, and its buffer's bytes (which other views may share).
+    typed: Option<(TypedArrayKind, (usize, usize))>,
 }
 
-const NO_SPAN: Span = Span { base: Value::UNDEFINED, values: std::ptr::null_mut(), readable: 0, writable: 0 };
+const NO_SPAN: Span = Span { base: Value::UNDEFINED, values: std::ptr::null_mut(), readable: 0, writable: 0, typed: None };
 
 /// A run's state: the entry facts and the recurrences' current values.
 struct State {
@@ -170,7 +175,7 @@ impl LoopKernel {
         let mut done = 0u64;
         while done < state.limit {
             let len = (state.limit - done).min(state.chunk as u64) as usize;
-            if !self.chunk(&mut state, scratch, done, len) {
+            if !self.chunk::<H>(&mut state, scratch, done, len) {
                 // A chunk met a value the kernel does not compute: the loop's own records
                 // run from its first iteration, now and at every later entry.
                 requicken::<H>(ip, self.original::<H>());
@@ -206,11 +211,9 @@ impl LoopKernel {
             state.phis[slot] = r.get(register).as_number()?;
         }
         // SAFETY: the running VM; the spans stay valid while the run calls and allocates nothing.
-        let heap = unsafe { &mut vm(cx).heap };
+        let vm = unsafe { vm(cx) };
         for (slot, &register) in shape.bases.iter().enumerate() {
-            let base = r.get(register);
-            let (values, readable, writable) = heap.array_storage_span(base)?;
-            state.spans[slot] = Span { base, values: values.as_ptr(), readable, writable };
+            state.spans[slot] = span(vm, r.get(register))?;
         }
         state.limit = self.limit(&state)?;
         state.chunk = self.chunk_length(&state)?;
@@ -234,7 +237,11 @@ impl LoopKernel {
                     if atom != vm.length_atom {
                         return None;
                     }
-                    super::super::own_length(vm, r.get(register))?.as_number()?
+                    let base = r.get(register);
+                    match super::super::own_length(vm, base) {
+                        Some(length) => length.as_number()?,
+                        None => vm.typed_array_geometry_read(base, atom)?.as_number()?,
+                    }
                 }
                 Scalar::Computed { op, a, b } => apply(op, state.scalars[usize::from(a)], state.scalars[usize::from(b)]),
             };
@@ -270,6 +277,13 @@ impl LoopKernel {
             if shape.stores[..n].iter().any(|other| state.spans[usize::from(other.base)].base == stored) {
                 return None;
             }
+            // A typed array's buffer may be another view's: only its own view reads it.
+            if let Some((_, bytes)) = state.spans[usize::from(store.base)].typed {
+                let shared = |span: &Span| span.base != stored && span.typed.is_some_and(|(_, other)| overlaps(bytes, other));
+                if state.spans[..shape.bases.len()].iter().any(shared) {
+                    return None;
+                }
+            }
             let step = i64::from(shape.affines[usize::from(store.index)].step);
             for &(node, order) in &shape.loads {
                 let NodeOp::Load { base, index } = shape.nodes[usize::from(node)].op else { continue };
@@ -287,7 +301,7 @@ impl LoopKernel {
     }
 
     /// One chunk of `len` iterations from iteration `done`; `false` where it committed nothing.
-    fn chunk(&self, state: &mut State, scratch: &mut [f64], done: u64, len: usize) -> bool {
+    fn chunk<H: Host>(&self, state: &mut State, scratch: &mut [f64], done: u64, len: usize) -> bool {
         if !self.columns(state, scratch, done, len) {
             return false;
         }
@@ -299,7 +313,7 @@ impl LoopKernel {
         if !self.stores_present(state, done, len) {
             return false;
         }
-        self.commit(state, scratch, done, len);
+        self.commit::<H>(state, scratch, done, len);
         self.finals(state, scratch, done, len);
         true
     }
@@ -357,9 +371,15 @@ impl LoopKernel {
 
     /// Decodes `bases[base][index + step * k]` into `out`; `false` where one is no Number.
     fn load(&self, state: &State, out: &mut [f64], base: u8, index: u8, done: u64) -> bool {
-        let values = state.spans[usize::from(base)].values;
+        let span = state.spans[usize::from(base)];
+        let values = span.values;
         let first = self.index(state, index, done);
         let step = i64::from(self.shape.affines[usize::from(index)].step);
+        if let Some((kind, _)) = span.typed {
+            // SAFETY: `limit` keeps every index of the run below the span's readable length.
+            unsafe { typed::load(kind, values.cast(), first, step, out) };
+            return true;
+        }
         if step == 1 {
             // SAFETY: as below, for the chunk's contiguous run of elements.
             let elements = unsafe { std::slice::from_raw_parts(values.add(first as usize), out.len()) };
@@ -379,7 +399,11 @@ impl LoopKernel {
     /// Whether every element the chunk's stores replace is present.
     fn stores_present(&self, state: &State, done: u64, len: usize) -> bool {
         self.shape.stores.iter().all(|store| {
-            let values = state.spans[usize::from(store.base)].values;
+            let span = state.spans[usize::from(store.base)];
+            if span.typed.is_some() {
+                return true;
+            }
+            let values = span.values;
             let first = self.index(state, store.index, done);
             let step = i64::from(self.shape.affines[usize::from(store.index)].step);
             let mut deleted = 0u64;
@@ -392,11 +416,18 @@ impl LoopKernel {
     }
 
     /// The chunk's stores, as `ArrayStorageProofs::replace` makes them.
-    fn commit(&self, state: &State, scratch: &[f64], done: u64, len: usize) {
+    fn commit<H: Host>(&self, state: &State, scratch: &[f64], done: u64, len: usize) {
         for store in &self.shape.stores {
-            let values = state.spans[usize::from(store.base)].values;
+            let span = state.spans[usize::from(store.base)];
+            let values = span.values;
             let first = self.index(state, store.index, done) as isize;
             let step = self.shape.affines[usize::from(store.index)].step as isize;
+            if let Some((kind, _)) = span.typed {
+                let numbers = (0..len).map(|k| self.value(state, scratch, store.value, k, done));
+                // SAFETY: `limit` keeps every index below the span's writable length.
+                unsafe { typed::store::<H>(kind, values.cast(), first, step, numbers) };
+                continue;
+            }
             // SAFETY: as in `stores_present`; a Number needs no write barrier.
             unsafe {
                 match store.value {
@@ -443,6 +474,21 @@ impl LoopKernel {
             r.set(register, Value::number(state.finals[slot]));
         }
     }
+}
+
+/// Whether two byte ranges, (start, length), share a byte.
+fn overlaps((a, a_length): (usize, usize), (b, b_length): (usize, usize)) -> bool {
+    a < b + b_length && b < a + a_length
+}
+
+/// The span of an array kernel accesses: a record array's or a typed array's elements.
+fn span<H: Host>(vm: &mut Vm<H>, base: Value) -> Option<Span> {
+    if let Some((values, readable, writable)) = vm.heap.array_storage_span(base) {
+        return Some(Span { base, values: values.as_ptr(), readable, writable, typed: None });
+    }
+    let typed = vm.typed_array_span(base)?;
+    let writable = if typed.writable { typed.length } else { 0 };
+    Some(Span { base, values: typed.first.cast(), readable: typed.length, writable, typed: Some((typed.kind, typed.store)) })
 }
 
 /// The longest chunk for a load whose index is `distance` past a store's, both stepping by
