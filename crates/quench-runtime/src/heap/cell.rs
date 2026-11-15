@@ -1014,7 +1014,7 @@ impl Native {
 
     /// Natives a lane `new` constructs in place from the running frame
     /// (`lane_construct_native`): the keyed collections, `Date`, `Promise`, `Object`,
-    /// `RegExp`, the buffers, typed arrays and errors and the primitive wrappers, whose
+    /// `RegExp`, the buffers, typed arrays and errors and the primitive wrappers and `Proxy`, whose
     /// [[Construct]] reads no caller state beyond the frame's published PC and runs guest
     /// code only through ordinary nested calls.
     pub(crate) fn constructs_from_lane(self) -> bool {
@@ -1035,6 +1035,7 @@ impl Native {
                     | Self::Boolean
                     | Self::Number
                     | Self::String
+                    | Self::Proxy
             )
     }
 
