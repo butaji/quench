@@ -765,7 +765,7 @@ impl Value {
     }
 
     #[inline(always)]
-    fn is_tagged(self) -> bool {
+    pub(crate) fn is_tagged(self) -> bool {
         // The tag field, shifted down, compared as one small range.
         let field = (self.0 >> TAG_SHIFT) as u32;
         field.wrapping_sub((FIRST_TAG >> TAG_SHIFT) as u32)

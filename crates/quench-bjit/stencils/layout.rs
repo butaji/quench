@@ -140,6 +140,8 @@ pub(crate) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeField
 
 pub(crate) const OTHERS_UNKNOWN: u32 = 4294967295;
 pub(crate) const NARROW_LEN: u32 = 2147483648;
+pub(crate) const DOUBLE_LEN: u32 = 1073741824;
+pub(crate) const ENCODED_LEN: u32 = 3221225472;
 pub(crate) const LENGTH_FROM_VALUES: i32 = -12;
 pub(crate) const OTHERS_FROM_VALUES: i32 = -4;
 pub(crate) const INLINE_PROPERTIES: usize = 2;

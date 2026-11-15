@@ -292,3 +292,99 @@ fn quarantine_keeps_freed_backings_readable_until_it_ends() {
     end_quarantine();
     assert_eq!(quarantined_bytes(), 0);
 }
+
+fn with_doubles(test: impl FnOnce()) {
+    TEST_DOUBLES.set(true);
+    test();
+    TEST_DOUBLES.set(false);
+}
+
+#[test]
+fn a_number_pushed_to_an_empty_backing_makes_it_double() {
+    with_doubles(|| {
+        let mut elements = ArrayElements::new();
+        let mut grown = 0;
+        assert!(elements.push_double(Value::number(0.5), &mut grown));
+        assert!(elements.push_double(Value::integer(3), &mut grown));
+        for index in 0..10 {
+            assert!(elements.push_double(Value::number(f64::from(index) + 0.25), &mut grown));
+        }
+        assert!(elements.is_double() && !elements.holds_only_int32());
+        assert_eq!(elements.len(), 12);
+        assert_eq!(elements.get(1), Some(Value::integer(3)));
+        assert_eq!(elements.double_values().unwrap()[1], 3.0);
+        assert_eq!(elements.get(0), Some(Value::number(0.5)));
+        assert!(elements.wide_values().is_none());
+        assert!(grown >= 12 && elements.capacity() >= 12);
+        // A non-Number leaves it to the generic append, which makes it generic for good.
+        assert!(!elements.push_double(Value::UNDEFINED, &mut grown));
+        elements.make_mut().push(Value::UNDEFINED);
+        assert!(!elements.is_double() && elements.len() == 13);
+        assert_eq!(elements.get(1), Some(Value::integer(3)));
+        assert!(!elements.push_double(Value::number(1.5), &mut grown));
+    });
+}
+
+#[test]
+fn an_int32_backing_turns_double_on_its_first_other_number() {
+    with_doubles(|| {
+        let mut elements = ArrayElements::from_slice(&[Value::integer(1), Value::integer(-2), Value::integer(3)]);
+        assert!(elements.replace_in_place(1, Value::number(2.5)));
+        assert!(elements.is_double());
+        assert_eq!(elements.to_vec(), vec![Value::integer(1), Value::number(2.5), Value::integer(3)]);
+        // Numbers keep it double: NaN reads canonical, -0 keeps its sign.
+        assert!(elements.replace_in_place(0, Value::number(f64::NAN)));
+        assert!(elements.replace_in_place(2, Value::number(-0.0)));
+        assert!(elements.get(0).unwrap().as_number().unwrap().is_nan());
+        assert!(elements.get(2).unwrap().as_number().unwrap().is_sign_negative());
+        // Another value leaves the write to `make_mut`, which makes it generic.
+        assert!(!elements.replace_in_place(1, Value::NULL));
+        elements.make_mut().set(1, Value::NULL);
+        assert!(!elements.is_double());
+        assert_eq!(elements.get(1), Some(Value::NULL));
+    });
+}
+
+#[test]
+fn a_shared_double_backing_copies_generic_and_a_hole_reads_as_deleted() {
+    with_doubles(|| {
+        let mut elements = ArrayElements::from_slice(&[Value::integer(1), Value::integer(2)]);
+        assert!(elements.replace_in_place(0, Value::number(0.5)));
+        let mut copy = elements.clone();
+        assert!(!copy.replace_in_place(1, Value::number(4.5)), "a shared backing is written by a copy");
+        copy.make_mut().set(1, Value::number(4.5));
+        assert!(!copy.is_double() && elements.is_double());
+        assert_eq!(elements.get(1), Some(Value::integer(2)));
+        assert_eq!(copy.get(1), Some(Value::number(4.5)));
+        // SAFETY: a test writes a hole word into the double backing it owns alone.
+        unsafe {
+            elements.double_words().add(1).write(Value::DELETED.to_bits());
+            (*elements.header.as_ptr()).others = 1;
+        }
+        assert_eq!(elements.get(1), Some(Value::DELETED));
+        assert!(elements.replace_in_place(1, Value::integer(7)));
+        assert_eq!(elements.header().others, 0);
+        assert_eq!(elements.get(1), Some(Value::integer(7)));
+    });
+}
+
+#[test]
+fn double_kind_stays_off_without_its_switch() {
+    let mut elements = ArrayElements::from_slice(&[Value::integer(1)]);
+    assert!(elements.replace_in_place(0, Value::number(0.5)));
+    assert!(!elements.is_double());
+    assert!(!ArrayElements::new().push_double(Value::number(0.5), &mut 0));
+}
+
+#[test]
+fn double_room_keeps_the_kind_and_the_hole_count() {
+    with_doubles(|| {
+        let mut elements = ArrayElements::new();
+        assert!(elements.push_double(Value::number(0.5), &mut 0));
+        let capacity = elements.capacity();
+        elements.reserve_double(capacity);
+        assert!(elements.is_double() && elements.capacity() >= capacity + 1);
+        assert_eq!((elements.len(), elements.header().others), (1, 0));
+        assert_eq!(elements.get(0), Some(Value::number(0.5)));
+    });
+}

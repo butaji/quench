@@ -773,6 +773,9 @@ impl<H: Host> Vm<H> {
         {
             return false;
         }
+        if self.heap.push_double_element(this, value) {
+            return true;
+        }
         if self.heap.grow_array_elements(this, |elements| elements.push(value)).is_none() {
             unreachable!("matched an array above");
         }
@@ -798,7 +801,7 @@ impl<H: Host> Vm<H> {
             super::index::mutable_array_elements(object.elements_mut()).set(index, value);
             return true;
         }
-        self.heap.grow_array_elements(array, |elements| elements.push(value)).is_some()
+        self.heap.push_double_element(array, value) || self.heap.grow_array_elements(array, |elements| elements.push(value)).is_some()
     }
 
     /// ArrayAccumulation's CreateDataPropertyOrThrow of `values` at a dense literal's next

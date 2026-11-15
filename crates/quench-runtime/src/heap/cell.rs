@@ -1812,7 +1812,7 @@ impl ArrayObject {
     /// narrow backing proves no index (`ArrayStorageProofs::prove`), so none reads it.
     #[inline]
     pub(crate) fn widen_elements(&mut self) {
-        if self.elements().is_narrow() {
+        if self.elements().is_encoded() {
             self.elements_raw_mut().widen();
         }
     }

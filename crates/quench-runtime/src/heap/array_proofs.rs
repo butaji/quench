@@ -132,7 +132,7 @@ impl ArrayStorageProofs {
         // (`dispatch_fast::proof_int_index`): a negative key lands at or above 2^31, past
         // every bound, so the bounds test is also the sign test. No dense backing is that long.
         // A narrow backing proves no index (`ArrayElements::is_narrow`): reads take the long way.
-        let length = if array.elements().is_narrow() { 0 } else { array.elements().len().min(i32::MAX as usize) };
+        let length = if array.elements().is_encoded() { 0 } else { array.elements().len().min(i32::MAX as usize) };
         let (values, writable) = match array.unique_values().filter(|_| replaces) {
             Some(values) => (values, length),
             None => match array.elements().wide_values() {
@@ -166,7 +166,7 @@ impl Heap {
         // SAFETY: direct-array Values name live records; `&mut self` is exclusive; widening
         // writes no reference into the record, so no barrier applies.
         let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
-        if array.elements().is_narrow() {
+        if array.elements().is_encoded() {
             retire_array_storage_proofs();
             array.widen_elements();
         }
