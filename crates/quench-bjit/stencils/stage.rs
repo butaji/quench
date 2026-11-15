@@ -5,7 +5,7 @@
 //! `UNSUPPORTED_*` symbol, which `build.rs` rejects, so a row cannot silently use one.
 
 use crate::layout::words::{HEAP_TAG, TAG_MASK};
-use crate::layout::{JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE};
+use crate::layout::{JS_STEP_LAYOUT_TABLE, JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE};
 use crate::staged::{Stage, Table};
 use crate::words::{hole, HOLE_FOURTH, HOLE_THIRD, LAST_HOLE};
 use crate::typed_ir::Type;
@@ -200,6 +200,8 @@ impl Stage for StencilStage {
                 let header = self.load_u64(Region::Dispatch.mutable(), self.payload, JS_STEP_PROPERTY_BUFFER as i32);
                 self.load_u64(Region::HeapMeta.mutable(), header, PROPERTY_BUFFER_BASE as i32)
             }
+            // A static of the runtime, whose address the dispatch payload carries.
+            Table::Layouts => self.load_u64(Region::Dispatch.mutable(), self.payload, JS_STEP_LAYOUT_TABLE as i32),
         }
     }
 }

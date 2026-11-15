@@ -161,7 +161,11 @@ impl Stage for Emit<'_, '_> {
     }
     fn known(&self, _cond: ir::Value) -> Option<bool> { None }
     fn table(&mut self, table: Table) -> ir::Value {
-        match table { Table::PropertyValues => self.property_values.expect("an operation addressing the arena has its base") }
+        match table {
+            Table::PropertyValues => self.property_values.expect("an operation addressing the arena has its base"),
+            // The table is a static that never moves; in-process code embeds its address.
+            Table::Layouts => self.builder.ins().iconst(types::I64, crate::heap::layouts::table_base() as i64),
+        }
     }
 }
 

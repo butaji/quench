@@ -887,8 +887,8 @@ const EMPTY_CACHE: FieldCache = FieldCache {
 /// `prototype` is `holder` as an object's header links it, which an object receiver's test compares.
 #[derive(Clone)]
 struct HolderHint {
-    /// The receiver's header words (`Object::guard_word`): its shape and storage form with
-    /// its prototype link, `holder`'s.
+    /// The receiver's layout id (`Object::guard_word`): its shape and storage form with its
+    /// prototype link, `holder`'s.
     guard: u64,
     atom: Atom,
     holder: Value,

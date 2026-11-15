@@ -170,7 +170,8 @@ const MIN_GROWN_CAPACITY: usize = 4;
 /// throughput 8316 -> 7292 KiB, with Score within run noise across the suite.
 const GROWTH_SHIFT: u32 = 1;
 
-#[repr(transparent)]
+/// Packed to four bytes: an array record (`ArrayObject`) holds it in its 4-aligned payload word.
+#[repr(C, packed(4))]
 pub(crate) struct ArrayElements {
     header: NonNull<Header>,
 }
@@ -313,7 +314,7 @@ impl ArrayElements {
     #[inline(always)]
     fn header(&self) -> &Header {
         // SAFETY: the header is live while any owner holds the backing.
-        unsafe { self.header.as_ref() }
+        unsafe { &*{ self.header }.as_ptr() }
     }
 
     #[inline(always)]
@@ -469,9 +470,9 @@ impl ArrayElements {
     /// # Safety
     /// `raw` holds an `into_raw` word for the borrow's whole lifetime.
     #[inline(always)]
-    pub(super) unsafe fn from_raw_ref(raw: &u64) -> &Self {
-        // SAFETY: `ArrayElements` is a transparent pointer, the size and alignment of `u64`.
-        unsafe { &*(raw as *const u64).cast::<Self>() }
+    pub(super) unsafe fn from_raw_ref<'a>(raw: *const u64) -> &'a Self {
+        // SAFETY: `ArrayElements` is a pointer packed to the alignment of a record's payload word.
+        unsafe { &*raw.cast::<Self>() }
     }
 
     /// `from_raw_ref`, mutably: a replacement written through it is a raw word again.
@@ -479,9 +480,9 @@ impl ArrayElements {
     /// # Safety
     /// As `from_raw_ref`.
     #[inline(always)]
-    pub(super) unsafe fn from_raw_mut(raw: &mut u64) -> &mut Self {
-        // SAFETY: as in `from_raw_ref`; `&mut` makes the borrow unique.
-        unsafe { &mut *(raw as *mut u64).cast::<Self>() }
+    pub(super) unsafe fn from_raw_mut<'a>(raw: *mut u64) -> &'a mut Self {
+        // SAFETY: as in `from_raw_ref`; the caller holds the word uniquely.
+        unsafe { &mut *raw.cast::<Self>() }
     }
 }
 

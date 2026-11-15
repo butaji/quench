@@ -1,0 +1,152 @@
+//! Object layouts: every fact an object record shares with the other objects of its kind,
+//! interned once. An ordinary object's header used to be two words of its own, `meta`
+//! (prototype link and flags) and `auxiliary` (shape and storage form), eight bytes per object
+//! for facts that thousands of objects repeat. A record now holds one 32-bit layout id, and the
+//! pair lives once in this table: the header word `meta | auxiliary << 32` at the id's entry.
+//!
+//! The table is process-wide and append-only. An entry is written before its id is handed out
+//! and never changes after, so a reader on any thread (a marker, compiled code) reads it with a
+//! plain load that the compiler may merge and hoist like any read of immutable memory, and a
+//! specializer may treat it as read-only (`staged::Table::Layouts`).
+//! Ids name bit patterns, not heap objects: two heaps share an entry when their headers are
+//! equal, and an entry outlives the objects that used it. Entry 0 is the all-zero header.
+//!
+//! Interning goes through a global direct-mapped cache of ids before the global map: a cached
+//! id is checked against its own entry, so a racy or stale cache slot only misses, and a header
+//! write (a shape transition, a prototype change) costs a hash, two loads and a compare in the
+//! common case.
+
+use rustc_hash::FxHashMap;
+use std::sync::Mutex;
+#[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+use std::cell::UnsafeCell;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Distinct headers the table holds: 32 MiB of address space, resident only where written.
+pub(crate) const LAYOUT_CAPACITY: usize = 1 << 22;
+
+/// On x86-64 Linux the table sits at a fixed low address, mapped before `main`
+/// (`map_fixed_table`), so a read of an entry is one instruction with the address as its
+/// displacement: no base to load from the GOT, no register to hold it. The address sits above
+/// the range the kernel randomizes a non-PIE program's break into (up to 1 GiB past the image)
+/// and below 2 GiB, the reach of a sign-extended 32-bit displacement; a break that grows into
+/// it only sends `malloc` to `mmap`.
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+const FIXED_TABLE: usize = 0x7000_0000;
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+extern "C" fn map_fixed_table() {
+    const MAP_FIXED_NOREPLACE: libc::c_int = 0x100000;
+    // SAFETY: an anonymous private mapping at an address nothing else may hold (NOREPLACE).
+    let mapped = unsafe {
+        libc::mmap(
+            FIXED_TABLE as *mut libc::c_void,
+            LAYOUT_CAPACITY * size_of::<u64>(),
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE | MAP_FIXED_NOREPLACE,
+            -1,
+            0,
+        )
+    };
+    if mapped as usize != FIXED_TABLE {
+        eprintln!("quench: cannot map the object layout table at {FIXED_TABLE:#x}");
+        std::process::abort();
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+#[used]
+#[unsafe(link_section = ".init_array")]
+static MAP_FIXED_TABLE: extern "C" fn() = map_fixed_table;
+
+#[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+#[repr(C, align(4096))]
+struct Table(UnsafeCell<[u64; LAYOUT_CAPACITY]>);
+// SAFETY: an entry is written once, under `MAP`'s lock, before its id exists anywhere; every
+// read of it follows the id's publication, and no entry is written twice.
+#[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+unsafe impl Sync for Table {}
+
+// SAFETY: all-zero bits are a valid table; the zeroed static lands in .bss.
+#[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+static TABLE: Table = unsafe { std::mem::zeroed() };
+static NEXT: AtomicU32 = AtomicU32::new(1);
+static MAP: Mutex<Option<FxHashMap<u64, u32>>> = Mutex::new(None);
+
+const CACHE_BITS: u32 = 12;
+static CACHE: [AtomicU32; 1 << CACHE_BITS] = [const { AtomicU32::new(0) }; 1 << CACHE_BITS];
+
+/// The base address of the table, entry `id` at `id * 8` past it.
+#[inline(always)]
+pub(crate) fn table_base() -> *const u64 {
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    return FIXED_TABLE as *const u64;
+    #[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+    return TABLE.0.get().cast();
+}
+
+/// The header word of layout `id`.
+#[inline(always)]
+pub(crate) fn word(id: u32) -> u64 {
+    debug_assert!((id as usize) < LAYOUT_CAPACITY);
+    // SAFETY: every id came from `intern`, below the capacity, and its entry was written
+    // before the id was handed out and never changes (`Table`).
+    unsafe { *table_base().add(id as usize) }
+}
+
+/// The layout id of the header `word`.
+#[inline(always)]
+pub(crate) fn intern(word: u64) -> u32 {
+    if word == 0 {
+        return 0;
+    }
+    let slot = (word.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (u64::BITS - CACHE_BITS)) as usize;
+    // Every id the cache holds is a written entry, so its check reads a valid word.
+    let id = CACHE[slot].load(Ordering::Relaxed);
+    if self::word(id) == word {
+        return id;
+    }
+    intern_slow(word, slot)
+}
+
+#[cold]
+#[inline(never)]
+fn intern_slow(word: u64, slot: usize) -> u32 {
+    let mut map = MAP.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let map = map.get_or_insert_with(FxHashMap::default);
+    let id = *map.entry(word).or_insert_with(|| {
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        assert!((id as usize) < LAYOUT_CAPACITY, "object layout table full");
+        // SAFETY: a fresh id below the capacity: no reader can name it yet (`Table`).
+        unsafe { *table_base().cast_mut().add(id as usize) = word };
+        std::sync::atomic::fence(Ordering::Release);
+        id
+    });
+    CACHE[slot].store(id, Ordering::Relaxed);
+    id
+}
+
+/// Layouts interned so far (memory reports).
+#[allow(dead_code)]
+pub(crate) fn count() -> usize {
+    NEXT.load(Ordering::Relaxed) as usize
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interning_is_stable_and_reads_back() {
+        assert_eq!(intern(0), 0);
+        assert_eq!(word(0), 0);
+        let a = intern(0x1234_5678_9abc_def0);
+        let b = intern(0x0fed_cba9_8765_4321);
+        assert_ne!(a, b);
+        assert_eq!(intern(0x1234_5678_9abc_def0), a);
+        assert_eq!(word(a), 0x1234_5678_9abc_def0);
+        assert_eq!(word(b), 0x0fed_cba9_8765_4321);
+        let other = std::thread::spawn(|| intern(0x1234_5678_9abc_def0)).join().unwrap();
+        assert_eq!(other, a);
+    }
+}

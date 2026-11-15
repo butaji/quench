@@ -7,7 +7,7 @@ use super::region::Access;
 /// so a guard never fails and each `choose` runs one arm.
 #[derive(Clone, Copy)]
 pub(crate) struct Concrete {
-    tables: [u64; Table::COUNT],
+    tables: [u64; 1],
     /// The heap whose store barrier `store_gate` reads; null where no store runs.
     heap: *const crate::heap::Heap,
 }
@@ -150,5 +150,11 @@ impl Stage for Concrete {
         unsafe { (*(watch as *const crate::code_dependencies::PublishedCode<()>)).is_published() }
     }
     #[inline(always)]
-    fn table(&mut self, table: Table) -> u64 { self.tables[table as usize] }
+    fn table(&mut self, table: Table) -> u64 {
+        match table {
+            Table::PropertyValues => self.tables[0],
+            // A static's address: no field to load.
+            Table::Layouts => crate::heap::layouts::table_base() as u64,
+        }
+    }
 }

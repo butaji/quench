@@ -1,5 +1,4 @@
 use super::*;
-use crate::value_vec::ValueVec;
 use std::rc::Rc;
 
 mod parallel;
@@ -277,9 +276,9 @@ fn scope_slot_owners_survive_collection_and_release() {
 
 #[test]
 fn ordinary_object_payloads_live_in_compact_records() {
-    // The prototype reference packs beside the shape and integrity bits, so a record is a
-    // header the size of a property vector plus one payload word of narrow inline values.
-    assert_eq!(size_of::<Object>(), size_of::<ValueVec>() + size_of::<u64>());
+    // The header words live once per layout (`heap::layouts`), so a record is its layout id
+    // plus one payload word of narrow inline values.
+    assert_eq!(size_of::<Object>(), size_of::<u32>() + size_of::<u64>());
     assert_eq!(size_of::<Slot>(), size_of::<Option<Cell>>());
 }
 

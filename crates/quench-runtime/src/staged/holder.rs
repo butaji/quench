@@ -6,15 +6,15 @@
 use super::Stage;
 
 /// The value the hint `(guard, watch, value)` records for the object part at `record`: `None`
-/// (leaving at `miss`) where the record's header words (`Object::guard_word`: its whole
-/// auxiliary word, the exact shape with its storage form, over its prototype link and flags)
-/// differ, or the watch no longer holds. One compare of the adjacent words proves the shape
+/// (leaving at `miss`) where the record's layout (`Object::guard_word`: the interned pair of
+/// its whole auxiliary word, the exact shape with its storage form, and its prototype link and
+/// flags) differs, or the watch no longer holds. One compare of the layout id proves the shape
 /// and the prototype together.
 #[inline(always)]
 pub(crate) fn holder_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, watch: u64, value: u64,
     miss: S::Miss) -> Option<S::Word> {
-    let words = stage.load_u64(super::region::Region::ShapeWord.mutable(), record,
-        crate::heap::NATIVE_OBJECT_LAYOUT.meta_offset as i32);
+    let words = stage.load_u32(super::region::Region::ShapeWord.mutable(), record,
+        crate::heap::NATIVE_OBJECT_LAYOUT.layout_offset as i32);
     let guard = stage.site(guard);
     let same = stage.eq_imm(words, guard);
     stage.guard(same, miss)?;
@@ -74,8 +74,9 @@ mod tests {
         heap.property_add(object, Value::integer(1), 1);
         let record = heap.object(object).unwrap();
         let guard = record.guard_word();
-        assert_eq!(guard >> u32::BITS, u64::from(record.hint_shape()));
-        assert_eq!(guard as u32 & ProtoLink::of(prototype).bits(), ProtoLink::of(prototype).bits());
+        let header = crate::heap::layouts::word(guard as u32);
+        assert_eq!(header as u32, record.hint_shape());
+        assert_eq!((header >> u32::BITS) as u32 & ProtoLink::of(prototype).bits(), ProtoLink::of(prototype).bits());
         let watch = Rc::new(PublishedCode::new(()));
         let hint = Value::integer(42);
         let read = |guard, watch: &Rc<PublishedCode<()>>| unsafe { concrete_holder_read(record, guard, Rc::as_ptr(watch), hint) };
