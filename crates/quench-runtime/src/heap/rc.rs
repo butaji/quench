@@ -79,6 +79,9 @@ macro_rules! with_space_mut {
 /// carries to the next one.
 const RC_FREE_BUDGET: usize = 1 << 20;
 
+/// Records the cascade prefetches together (`Heap::rc_pre_mark`).
+const RC_CASCADE_BATCH: usize = 16;
+
 /// Live records past this multiple of the last full collection's survivors (at least
 /// `RC_FULL_FLOOR`) make the next collection the backup trace, for cycles and stuck counts.
 const RC_FULL_GROWTH: usize = 4;
@@ -231,28 +234,45 @@ impl Heap {
         }
         let mut carried = Vec::new();
         let mut candidates = Vec::new();
-        while let Some(value) = zero.pop() {
-            if candidates.len() >= RC_FREE_BUDGET {
-                carried.push(value);
-                carried.append(&mut zero);
+        // The cascade reads dead records, long out of cache: it takes them from the stack
+        // `RC_CASCADE_BATCH` at a time, all prefetched before the first is read.
+        let mut batch: Vec<Value> = Vec::with_capacity(RC_CASCADE_BATCH);
+        'cascade: loop {
+            let take = zero.len().saturating_sub(RC_CASCADE_BATCH);
+            batch.extend(zero.drain(take..).rev());
+            if batch.is_empty() {
                 break;
             }
-            let Some((family, id)) = locate(value) else { continue };
-            if !with_space!(self, family, |space| space.is_live(id) && space.rc_count(id) == 0) {
-                continue;
-            }
-            if !with_space_mut!(self, family, |space| space.rc_unmark(id)) {
-                // Logged this epoch, young, or a candidate already: tried again next epoch.
-                carried.push(value);
-                continue;
-            }
-            candidates.push(value);
-            self.rc_children(value, &mut children);
-            for child in children.drain(..) {
-                if self.rc_decrement(child) {
-                    zero.push(child);
+            for &value in &batch {
+                if let Some((family, id)) = locate(value) {
+                    with_space!(self, family, |space| space.prefetch(id));
                 }
             }
+            for index in 0..batch.len() {
+                let value = batch[index];
+                if candidates.len() >= RC_FREE_BUDGET {
+                    carried.extend_from_slice(&batch[index..]);
+                    carried.append(&mut zero);
+                    break 'cascade;
+                }
+                let Some((family, id)) = locate(value) else { continue };
+                if !with_space!(self, family, |space| space.is_live(id) && space.rc_count(id) == 0) {
+                    continue;
+                }
+                if !with_space_mut!(self, family, |space| space.rc_unmark(id)) {
+                    // Logged this epoch, young, or a candidate already: tried again next epoch.
+                    carried.push(value);
+                    continue;
+                }
+                candidates.push(value);
+                self.rc_children(value, &mut children);
+                for child in children.drain(..) {
+                    if self.rc_decrement(child) {
+                        zero.push(child);
+                    }
+                }
+            }
+            batch.clear();
         }
         if carried.len() > 1024 {
             carried.sort_unstable_by_key(|value| value.to_bits());

@@ -753,6 +753,19 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     }
 
 
+    /// Starts loading record `id`'s first cache line, for a read soon after.
+    #[inline(always)]
+    pub(super) fn prefetch(&self, id: RecordId) {
+        // SAFETY: a prefetch reads nothing; the address is within the space's reservation.
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
+            _mm_prefetch::<_MM_HINT_T0>(self.base.as_ptr().add(id as usize).cast::<i8>());
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = id;
+    }
+
     /// # Safety
     /// `id` must come from a live direct Value of this record family. Sweep removes the
     /// record only after all weak owners have been pruned.
