@@ -1,12 +1,11 @@
 //! The tier decision rule for a lane body's compile (`tier-decision-rule-v1`, sections 1, 3, 5):
 //! a compile is admitted where the model's net gain in nanoseconds is positive under the
 //! credible lower bound of the entries to come. The thresholds it replaced are gone; the
-//! numbers it reads are `TIERS.priors`, and the compile cost is learned from this process's
-//! own compiles.
+//! numbers it reads are `TIERS.priors`. The compile and the plan are priced by their work (IR
+//! instructions), not timed: what is compiled then repeats from run to run, under callgrind and
+//! the virtual clock alike (policies follow work, not wall time).
 
 use super::tier_policy::{Priors, PER_MILLE, TIERS};
-#[cfg(not(test))]
-use std::sync::Mutex;
 
 /// What the model knows of one function at a decision point.
 pub(super) struct Observed {
@@ -36,49 +35,8 @@ pub(super) fn compile_wall_permille() -> u64 {
     })
 }
 
-/// Compile cost per IR instruction as a forgetting running ratio of the compiles this process
-/// has made (equal to the least-squares slope through the origin, which the rule's RLS gives
-/// with the intercept prior at zero), with the prior as `compile_prior_ir` pseudo-instructions.
-pub(super) struct CompileCost { ns: f64, ir: f64 }
-
-#[cfg(not(test))]
-static COMPILES: Mutex<CompileCost> = Mutex::new(CompileCost { ns: 0.0, ir: 0.0 });
-
-#[cfg(not(test))]
-fn with_compiles<R>(use_cost: impl FnOnce(&mut CompileCost) -> R) -> R {
-    use_cost(&mut COMPILES.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
-}
-
-/// Tests decide from the prior alone: learning from wall time would make what a test compiles
-/// depend on the load of the machine running it.
-#[cfg(test)]
-fn with_compiles<R>(use_cost: impl FnOnce(&mut CompileCost) -> R) -> R {
-    use_cost(&mut CompileCost { ns: 0.0, ir: 0.0 })
-}
-
-impl CompileCost {
-    /// Folds one compile's census pair in, the older ones weighted down by the forgetting factor.
-    pub(super) fn record(&mut self, priors: &Priors, took_ns: u64, ir: usize) {
-        let forget = priors.compile_forgetting_permille as f64 / PER_MILLE as f64;
-        self.ns = self.ns * forget + took_ns as f64;
-        self.ir = self.ir * forget + ir as f64;
-    }
-
-    /// The estimated nanoseconds per IR instruction.
-    pub(super) fn ns_per_ir(&self, priors: &Priors) -> u64 {
-        let prior = priors.compile_prior_ir as f64;
-        ((self.ns + prior * priors.compile_ns_per_ir as f64) / (self.ir + prior)) as u64
-    }
-}
-
-/// Records a finished compile of `ir` instructions that took `took`.
-pub(super) fn note_compile(took: std::time::Duration, ir: usize) {
-    with_compiles(|cost| cost.record(&TIERS.priors, took.as_nanos() as u64, ir));
-}
-
-pub(super) fn learned_ns_per_ir() -> u64 {
-    with_compiles(|cost| cost.ns_per_ir(&TIERS.priors))
-}
+/// The compile nanoseconds per IR instruction: a price on the compile's work.
+pub(super) fn compile_ns_per_ir() -> u64 { TIERS.priors.compile_ns_per_ir }
 
 /// The plan nanoseconds per IR instruction: a price on the plan's work (the instructions it
 /// builds), not a reading of its wall time, so that what is planned and compiled is the same
@@ -114,7 +72,7 @@ pub(super) fn net_planned_ns(priors: &Priors, share: u64, (plan_ns_per_ir, compi
 /// admitted (`TIERS` floor row).
 pub(super) fn admits(observed: &Observed, unplanned: bool, diagnostics: bool) -> bool {
     let plan = if unplanned { plan_ns_per_ir() } else { 0 };
-    let net = net_planned_ns(&TIERS.priors, TIERS.priors.body_share, (plan, learned_ns_per_ir()), compile_wall_permille(), observed);
+    let net = net_planned_ns(&TIERS.priors, TIERS.priors.body_share, (plan, compile_ns_per_ir()), compile_wall_permille(), observed);
     if diagnostics { shadow_log(observed, net); }
     super::tier_policy::admits_every_compile() || net > 0
 }
@@ -122,7 +80,7 @@ pub(super) fn admits(observed: &Observed, unplanned: bool, diagnostics: bool) ->
 /// The decision under `QUENCH_TRACE=js-jit`.
 fn shadow_log(observed: &Observed, net: i64) {
     eprintln!("QUENCH_TIER_MODEL entries={} ir={} region={} compile_ns_per_ir={} net_ns={net} pick={}",
-        observed.entries, observed.ir, observed.region, learned_ns_per_ir(), if net > 0 { "u-jit" } else { "interp" });
+        observed.entries, observed.ir, observed.region, compile_ns_per_ir(), if net > 0 { "u-jit" } else { "interp" });
 }
 
 #[cfg(test)]
@@ -172,14 +130,5 @@ mod tests {
         let work = observed(400, 0, 6000, false, 1000);
         assert!(net_ns(&PRIORS, PRIORS.body_share, PRIORS.compile_ns_per_ir, PER_MILLE, &work) > 0);
         assert!(net_planned_ns(&PRIORS, PRIORS.body_share, (PRIORS.plan_ns_per_ir, PRIORS.compile_ns_per_ir), PER_MILLE, &work) < 0);
-    }
-
-    #[test]
-    fn the_compile_cost_moves_from_the_prior_to_the_measurements() {
-        let mut cost = CompileCost { ns: 0.0, ir: 0.0 };
-        assert_eq!(cost.ns_per_ir(&PRIORS), PRIORS.compile_ns_per_ir);
-        for _ in 0..1000 { cost.record(&PRIORS, 1_000_000, 1000); }
-        let learned = cost.ns_per_ir(&PRIORS);
-        assert!(learned < 1100 && learned > 1000, "{learned}");
     }
 }

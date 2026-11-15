@@ -8,7 +8,7 @@
 //! nanoseconds per IR instruction (`tier_model`) over the `ir_per_bytecode` of the span, at the
 //! wall share of its time. The iterations to come are `taken / remaining_divisor` (Lindy).
 
-use super::tier_model::{compile_wall_permille, learned_ns_per_ir};
+use super::tier_model::{compile_wall_permille, compile_ns_per_ir};
 use super::tier_policy::{admits_every_compile, Loops, Priors, PER_MILLE, TIERS};
 
 /// What one iteration of a loop `span` bytecodes long saves, in ns, over the interpreter.
@@ -42,7 +42,7 @@ fn required_taken(priors: &Priors, loops: &Loops, span: u64, compile_ns_per_ir: 
 /// pays, at the compile cost this process has learned; under `tier-stress` the warm-up alone.
 pub(in crate::vm) fn admission_taken(span: u64) -> u32 {
     if admits_every_compile() { return TIERS.loops.warmup_taken; }
-    required_taken(&TIERS.priors, &TIERS.loops, span, learned_ns_per_ir(), compile_wall_permille())
+    required_taken(&TIERS.priors, &TIERS.loops, span, compile_ns_per_ir(), compile_wall_permille())
 }
 
 /// Whether `iterations`, over `entries` of the loop's native code (runs and declined entries),
@@ -72,7 +72,7 @@ fn body_work(loops: &Loops, span: u64, ir: usize) -> u64 {
 pub(in crate::vm) fn body_taken(span: u64, ir: usize, unplanned: bool) -> u64 {
     if admits_every_compile() { return 0; }
     let plan = if unplanned { super::tier_model::plan_ns_per_ir() } else { 0 };
-    let outlay = TIERS.priors.region_entry_ns + super::tier_model::outlay_ns(ir, plan, learned_ns_per_ir(), compile_wall_permille());
+    let outlay = TIERS.priors.region_entry_ns + super::tier_model::outlay_ns(ir, plan, compile_ns_per_ir(), compile_wall_permille());
     body_required_taken(&TIERS.priors, body_work(&TIERS.loops, span, ir), outlay)
 }
 
