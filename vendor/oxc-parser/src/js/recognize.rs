@@ -976,7 +976,16 @@ impl<'a, C: Config> ParserImpl<'a, C> {
 
     /// A primary expression and its member, call and tagged template suffixes.
     fn rc_lhs(&mut self) -> Rc<Shape> {
-        let mut shape = self.rc_primary()?;
+        // A plain identifier, the most common operand, read here (`rc_identifier_reference`).
+        let mut shape = if self.at(Kind::Ident) {
+            let name = self.rc_name();
+            let name = self.ident(name);
+            self.early.reference_word(name, false);
+            self.rc_ident = name;
+            Shape::Ident
+        } else {
+            self.rc_primary()?
+        };
         let mut chain = false;
         loop {
             match self.cur_kind() {
