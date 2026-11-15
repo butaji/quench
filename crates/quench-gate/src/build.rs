@@ -1,9 +1,9 @@
 //! Step 1: the workspace binaries the later steps run, built in the experiment profile.
 
-use crate::{config::Config, process, step::Verdict};
+use crate::{config::Config, lint::LINT, process, step::Verdict};
 
 /// The binaries the gate runs: the linter, the JavaScript host, and the conformance runners.
-pub const BINARIES: [&str; 4] = ["quench-lint", "quench-node", "run-test", "run"];
+pub const BINARIES: [&str; 4] = [LINT, "quench-node", "run-test", "run"];
 
 pub fn run(config: &Config) -> Verdict {
     let mut command = config.cargo("build");

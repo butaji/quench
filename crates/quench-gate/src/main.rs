@@ -6,9 +6,11 @@
 //! `--quick` runs only the lint, census and C-parity steps.
 
 mod build;
+mod census;
 mod config;
 mod lint;
 mod process;
+mod runtime_tests;
 mod step;
 
 use std::process::ExitCode;
@@ -19,9 +21,10 @@ use step::{Outcome, Step};
 /// The exit status of a run that was asked for something it cannot do.
 const USAGE_ERROR: u8 = 2;
 
-const STEPS: [Step; 2] = [
+const STEPS: [Step; 3] = [
     Step { name: "build", quick: false, blocking: true, run: build::run },
     Step { name: "lint", quick: true, blocking: false, run: lint::run },
+    Step { name: "census", quick: true, blocking: false, run: census::run },
 ];
 
 /// Runs the selected steps in order, stopping after a blocking step fails.

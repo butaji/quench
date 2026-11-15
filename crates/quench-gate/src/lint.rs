@@ -5,7 +5,7 @@
 
 use crate::{config::Config, process, step::Verdict};
 
-const LINT: &str = "quench-lint";
+pub const LINT: &str = "quench-lint";
 const LOWER_FLAG: &str = "--lower";
 /// The prefixes `quench-lint --lower` reports each edit of the list under.
 const EDITS: [&str; 2] = ["lowered ", "dropped "];
