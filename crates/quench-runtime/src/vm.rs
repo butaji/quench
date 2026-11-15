@@ -827,6 +827,9 @@ enum SlotAccessor {
 #[derive(Clone, Copy)]
 struct AccessorFieldCache {
     receiver: u32,
+    /// The receiver's layout id (`Object::layout_id`): its shape and prototype in one word,
+    /// which an ordinary receiver's hit compares instead of each.
+    layout: u32,
     /// The receiver's prototype, where the chain to `holder` starts.
     prototype: Value,
     /// The prototype holding the accessor, or `OWN_ACCESSOR` for the receiver itself, whose

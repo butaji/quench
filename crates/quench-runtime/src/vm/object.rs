@@ -3024,7 +3024,7 @@ impl<H: Host> Vm<H> {
         let Some(receiver) = self.shape_property_lookup(object, atom) else {
             return;
         };
-        let (receiver_shape, prototype) = (receiver.shape(), receiver.proto());
+        let (receiver_shape, prototype, receiver_layout) = (receiver.shape(), receiver.proto(), receiver.layout_id());
         if let Some(slot) = self.shape_slot(receiver_shape, atom) {
             // An own accessor, as `debug`'s `enabled` on each logger function: every receiver
             // of the shape holds its own getter in the slot, read from it at each hit.
@@ -3036,6 +3036,7 @@ impl<H: Host> Vm<H> {
                     site,
                     AccessorFieldCache {
                         receiver: receiver_shape,
+                        layout: receiver_layout,
                         prototype,
                         holder: OWN_ACCESSOR,
                         slot: slot as u16,
@@ -3087,6 +3088,7 @@ impl<H: Host> Vm<H> {
             site,
             AccessorFieldCache {
                 receiver: receiver_shape,
+                layout: receiver_layout,
                 prototype,
                 holder,
                 slot: slot as u16,
@@ -3136,14 +3138,31 @@ impl<H: Host> Vm<H> {
         if index == NO_ACCESSOR_FIELD {
             return None;
         }
-        let receiver = self.shape_property_lookup(object, atom)?;
-        let (shape, proto, epoch) = (receiver.shape(), receiver.proto(), crate::heap::prototype_layout_epoch());
-        let cache = loop {
-            let cache = self.accessor_fields.get(index as usize)?;
-            if shape == cache.receiver && proto == cache.prototype && epoch == cache.epoch {
-                break cache;
-            }
-            index = cache.next;
+        let epoch = crate::heap::prototype_layout_epoch();
+        // An ordinary receiver matches its entry by layout, which holds its shape and
+        // prototype: a recorded layout is of a shaped receiver outside dictionary mode, so a
+        // match proves what `shape_property_lookup` would.
+        let (receiver, cache) = if let Some(receiver) = self.heap.object_record(object) {
+            let layout = receiver.layout_id();
+            let cache = loop {
+                let cache = self.accessor_fields.get(index as usize)?;
+                if layout == cache.layout && epoch == cache.epoch {
+                    break cache;
+                }
+                index = cache.next;
+            };
+            (receiver, cache)
+        } else {
+            let receiver = self.shape_property_lookup(object, atom)?;
+            let (shape, proto) = (receiver.shape(), receiver.proto());
+            let cache = loop {
+                let cache = self.accessor_fields.get(index as usize)?;
+                if shape == cache.receiver && proto == cache.prototype && epoch == cache.epoch {
+                    break cache;
+                }
+                index = cache.next;
+            };
+            (receiver, cache)
         };
         let holder = if cache.holder == OWN_ACCESSOR {
             if receiver.has_side_descriptors() {

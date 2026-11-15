@@ -2069,6 +2069,13 @@ impl Object {
         self.header() as u32
     }
 
+    /// The interned layout id (`heap::layouts`): equal ids mean equal prototype links, flags,
+    /// shapes and storage forms, so one compare proves what comparing each would.
+    #[inline(always)]
+    pub(crate) fn layout_id(&self) -> u32 {
+        self.layout
+    }
+
     /// Sets both header words: the layout of the pair.
     #[inline(always)]
     fn set_header(&mut self, meta: u32, auxiliary: u32) {
@@ -2948,7 +2955,8 @@ impl Object {
     pub(crate) fn has_exotic_access(&self) -> bool {
         self.aux() & crate::value_vec::EXOTIC_ACCESS != 0
     }
-    #[inline] fn brand(&self) -> ObjectBrand {
+    #[inline(always)]
+    fn brand(&self) -> ObjectBrand {
         self.extras().and_then(ObjectExtras::rare).map_or(ObjectBrand::Ordinary, |rare| rare.brand)
     }
     #[inline(always)]
@@ -3057,6 +3065,7 @@ impl Object {
         extras.structured_serialization = StructuredSerialization::Forbidden;
     }
 
+    #[inline(always)]
     pub(crate) fn is_module_namespace(&self) -> bool {
         self.brand() == ObjectBrand::ModuleNamespace
     }
