@@ -191,6 +191,9 @@ impl Value {
         if upper == TAG_INT {
             return Self::narrow_integer(lower as i32);
         }
+        if self.0 == TAG_NULL {
+            return Some(NULL_NARROW);
+        }
         // The code of the value's tag plus its family bits; only an upper word the code names
         // exactly is narrow, which also rejects numbers and family bits on a constant.
         let tag = (self.0 >> TAG_SHIFT).wrapping_sub(FIRST_TAG >> TAG_SHIFT) as usize;
@@ -213,10 +216,8 @@ impl Value {
     /// integer first, keep `to_narrow`.
     #[inline(always)] pub(crate) fn to_narrow_reference(self) -> Option<u32> {
         if self.0 & !LOWER_WORD != DIRECT_OBJECT_UPPER {
-            // `null`, a list's end, the other common value of a new object's field.
-            if self.0 == TAG_NULL {
-                return Some(NULL_NARROW);
-            }
+            // `null`, a list's end, the other common value of a new object's field, takes
+            // `to_narrow`'s first test past the integer's.
             return self.to_narrow();
         }
         let lower = self.0 as u32;
