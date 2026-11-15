@@ -82,6 +82,9 @@ macro_rules! enter_wasm_function {
                     offset += 1;
                 }
                 stack.values.set_len(window + count + lane_values::CONTEXT);
+                // A Wasm activation runs with its caller's receiver and environment (`ActivationState::of`).
+                Registers(registers).set_this(r.this());
+                Registers(registers).set_env(r.env());
                 Registers(registers)
             };
             // SAFETY: capacity holds the activation.

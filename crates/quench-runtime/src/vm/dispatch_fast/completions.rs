@@ -238,7 +238,6 @@ pub(super) fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: 
     }
     if let ActivationKind::Script(script) = &activation.kind {
         unsafe {
-            (*cx).env = script.caller_env;
             (*cx).capture = script.caller_capture;
         }
     }

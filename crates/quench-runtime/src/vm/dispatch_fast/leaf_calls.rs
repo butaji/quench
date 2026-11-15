@@ -79,9 +79,8 @@ script_handler! {
             leaf.caller_base = (*cx).base;
             leaf.target = target;
             if leaf_swaps_env(LEAF) {
-                leaf.caller_env = (*cx).env;
                 leaf.caller_capture = (*cx).capture;
-                (*cx).env = target.env;
+                registers.set_env(target.env);
                 (*cx).capture = target.capture;
             }
             (*cx).registers = registers;
@@ -162,7 +161,6 @@ pub(super) fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value,
     unsafe {
         debug_assert!(leaf.form == form);
         if leaf_swaps_env(form) {
-            (*cx).env = leaf.caller_env;
             (*cx).capture = leaf.caller_capture;
         }
         (*cx).registers = caller;
