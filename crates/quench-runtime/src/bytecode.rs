@@ -3956,7 +3956,7 @@ impl ResidualProgram {
             return function;
         }
         if let Some(lazy) = &self.wasm_lazy {
-            let function = lazy.lower(index, self.constants.len());
+            let function = lazy.lower(index, &self.constants);
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
         }
