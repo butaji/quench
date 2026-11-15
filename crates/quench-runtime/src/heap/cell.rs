@@ -749,7 +749,7 @@ impl Native {
     /// are not objects, run no guest code and have no effect beyond allocating their result.
     /// `split` looks `Symbol.split` up only on an object separator (ES2025), so it is among
     /// them; `match` and `search`, which make a RegExp of a string, are not.
-    pub(crate) fn is_pure_string_method(self) -> bool {
+    pub(crate) const fn is_pure_string_method(self) -> bool {
         matches!(
             self,
             Self::StringCharCodeAt
@@ -778,7 +778,7 @@ impl Native {
     }
 
     /// The functions of the `Math` object (`MATH_FUNCTIONS`, which its test keeps equal).
-    pub(crate) fn is_math_function(self) -> bool {
+    pub(crate) const fn is_math_function(self) -> bool {
         matches!(
             self,
             Self::MathAbs
