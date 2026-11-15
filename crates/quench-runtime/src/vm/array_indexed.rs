@@ -546,6 +546,14 @@ impl ArrayIteration {
 /// The values an `ArrayStepCall` roots: the receiver, callback, thisArg, result and element.
 const ARRAY_STEP_VALUES: usize = 5;
 
+impl ArrayIteration {
+    /// The values the iteration reads once the callback passed `element` returns, which only
+    /// it holds.
+    pub(super) fn values(&self, element: Value) -> [Value; ARRAY_STEP_VALUES] {
+        [self.receiver, self.callback, self.this_arg, self.result, element]
+    }
+}
+
 /// A lane's array iteration whose callback's activation became a frame
 /// (`CallCompletion::ArrayStep`): the loop's state, the element and index that callback was
 /// passed, and roots for the values the iteration reads once its frame returns, which only
@@ -561,8 +569,8 @@ impl<H: Host> Vm<H> {
     /// The `ArrayStepCall` of a lane's iteration whose callback, passed `element` at `index`,
     /// becomes a frame.
     pub(super) fn array_step_call(&mut self, iteration: ArrayIteration, element: Value, index: usize) -> ArrayStepCall {
-        let values = [iteration.receiver, iteration.callback, iteration.this_arg, iteration.result, element];
-        ArrayStepCall { iteration, element, index, roots: values.map(|value| self.heap.root(value)) }
+        let roots = iteration.values(element).map(|value| self.heap.root(value));
+        ArrayStepCall { iteration, element, index, roots }
     }
 
     /// The value of the array callback method whose callback's frame (`ArrayStepCall`)

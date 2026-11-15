@@ -94,21 +94,21 @@ pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, 
 /// the body reads as it reads a completed script call's, so the body stays native across
 /// `Math.imul`, a string method or a collection read. Any other native is called out
 /// (`lane_body_native_out`). A call that returns its result is a miss, which leaves the body at the call.
-pub(super) fn lane_body_native_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, callee: Value) -> u64 {
+pub(super) fn lane_body_native_call<H: Host>(cx: *mut LaneContext<H>, call: &super::body_forms::BodyCall, callee: Value, receiver: Value) -> u64 {
     use super::super::compiled::LANE_CALL_COMPLETED;
-    let (vm, i) = (unsafe { vm(cx) }, unsafe { &*ip });
+    let vm = unsafe { vm(cx) };
     // A returning call's completion is its activation's, which the lane makes.
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 { return super::lane_body_stats::miss(super::lane_body_stats::Miss::NativeReturning); }
-    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else { return super::lane_body_stats::miss(super::lane_body_stats::Miss::NativeNotNative) };
+    if call.site.returns { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::NativeReturning); }
+    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::NativeNotNative) };
     let native = *native;
-    // SAFETY: the context's program outlives the lane run; the window is registers of the
+    // SAFETY: the context's program outlives the lane run; the values are registers of the
     // running function, which the native reads before anything can move them.
-    let (code, args) = unsafe { (&*(*cx).code, lane_call_window(r, i)) };
-    let Some(value) = vm.in_place_native_value(code, native, callee, r.get(i.c), args) else {
-        return lane_body_native_out(cx, r, ip, native, callee, args);
+    let (code, args) = unsafe { (&*(*cx).code, call.values()) };
+    let Some(value) = vm.in_place_native_value(code, native, callee, receiver, &args) else {
+        return lane_body_native_out(cx, call, native, (callee, receiver), &args);
     };
     note_allocation(vm);
-    r.set(i.a, value);
+    call.registers.set(call.site.result, value);
     LANE_CALL_COMPLETED
 }
 
@@ -158,20 +158,21 @@ pub(super) fn reflect_get_call_handler<H: Host>() -> Handler {
 /// registers then hold it and which continue at the next record; `LANE_CALL_MISSED` where the
 /// native is not one the lane calls or raised (the error stashed in `Vm::lane_raised` for the
 /// general path, as `lane_body_value_step`'s).
-fn lane_body_native_out<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, native: Native, callee: Value, args: &[Value]) -> u64 {
+fn lane_body_native_out<H: Host>(cx: *mut LaneContext<H>, call: &super::body_forms::BodyCall, native: Native,
+    (callee, receiver): (Value, Value), args: &[Value]) -> u64 {
     use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_LEFT};
-    let i = unsafe { &*ip };
+    let ip = call.ip;
     // An array callback method's callbacks are activations of the lane (`lane_begin_array_iteration`).
-    if native.is_array_callback() && let Some(status) = lane_body_array_iteration(cx, ip, native, r.get(i.c), args) {
+    if native.is_array_callback() && let Some(status) = lane_body_array_iteration(cx, ip, native, receiver, args) {
         return status;
     }
-    let Some(value) = lane_call_native(cx, ip, native, callee, r.get(i.c), args) else {
-        return super::lane_body_stats::miss(super::lane_body_stats::Miss::NativeNotCompleted);
+    let Some(value) = lane_call_native(cx, ip, native, callee, receiver, args) else {
+        return super::lane_body_stats::miss(unsafe { vm(cx) }, super::lane_body_stats::Miss::NativeNotCompleted);
     };
     // Guest code the native ran may have made the activations frames, whose registers these are.
     let after = unsafe { (*cx).registers };
-    after.set(i.a, value);
-    if after.0 == r.0 { return LANE_CALL_COMPLETED; }
+    after.set(call.site.result, value);
+    if after.0 == call.registers.0 { return LANE_CALL_COMPLETED; }
     unsafe { (*cx).callee_resume = following(ip); (*cx).callee_acc = Value::UNDEFINED; }
     LANE_CALL_LEFT
 }

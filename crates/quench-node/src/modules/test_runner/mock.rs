@@ -4,6 +4,8 @@ use super::{accessor, function, get, put, with_state, Context, NodeId};
 use crate::modules::private_slots;
 use quench_runtime::{RootId, RootedError};
 
+/// `mock.method(object, name, implementation)`: the position of the implementation.
+const IMPLEMENTATION_ARGUMENT: usize = 2;
 const MOCKS: &str = "\0quench:test:mocks";
 const CALLS: &str = "\0quench:mock:calls";
 const IMPLEMENTATION: &str = "\0quench:mock:implementation";
@@ -156,7 +158,7 @@ pub(crate) fn method_mock(c: &mut Context<'_>, this: RootId, args: &[RootId]) ->
     if !c.is_callable_rooted(original)? {
         return Err(crate::modules::util_shared_vm::argument_value_error(c, key, "methodName", "must be a method")?);
     }
-    let implementation = callable_or(c, args.get(2).copied(), original)?;
+    let implementation = callable_or(c, args.get(IMPLEMENTATION_ARGUMENT).copied(), original)?;
     let mock = create(c, this, original, implementation)?;
     let replacement = c.object_rooted()?;
     put(c, replacement, "value", mock)?;

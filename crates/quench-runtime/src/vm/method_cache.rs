@@ -408,51 +408,10 @@ impl<H: Host> Vm<H> {
         );
         self.profile.method_args(registers.len());
 
-        let (shape, proto) = self
-            .object_data(this)
-            .map(|object| (object.shape(), object.proto()))
-            .unwrap_or((NON_OBJECT_RECEIVER_SHAPE, Value::UNDEFINED));
-
+        let key = self.method_receiver_key(this);
+        let (shape, proto) = key;
         let specialized = self.specialized && p.specialized;
-        let mut candidate = if specialized {
-            self.method_caches[cache_site]
-                .iter()
-                .enumerate()
-                .find(|(_, entry)| entry.serves(shape, metadata.atom, proto, this))
-                .map(|(tier, entry)| (*entry, tier))
-        } else {
-            None
-        };
-        if specialized && candidate.is_none() {
-            candidate = self
-                .megamorphic_methods
-                .iter()
-                .find(|set| set.site == cache_site)
-                .and_then(|set| {
-                    set.entries[..usize::from(set.len)]
-                        .iter()
-                        .find(|entry| entry.serves(shape, metadata.atom, proto, this))
-                        .copied()
-                })
-                // The megamorphic set is the tier after the inline ways.
-                .map(|entry| (entry, METHOD_CACHE_WAYS));
-        }
-
-        let cached_call = candidate.and_then(|(entry, tier)| {
-            let owner = self.method_cache_owner(this, metadata.atom, entry.guard)?;
-            let owner_data = self.object_data(owner)?;
-            if owner_data.shape() != entry.guard.owner_shape {
-                return None;
-            }
-            let callee = self
-                .heap
-                .property_get(owner_data, entry.guard.slot as usize)?;
-            if entry.callee != callee {
-                return None;
-            }
-            let target = entry.target?;
-            Some((callee, target, tier))
-        });
+        let cached_call = self.cached_method(cache_site, metadata.atom, key, this, specialized);
         self.profile.method_cache(cached_call.is_some());
         #[cfg(feature = "profile-aggregate")]
         self.profile
@@ -490,6 +449,49 @@ impl<H: Host> Vm<H> {
             );
         }
         self.call_value_with_target_from_frame(p, callee, this, arguments.as_slice(), None)
+    }
+}
+
+impl<H: Host> Vm<H> {
+    /// The shape and prototype method caches key a lookup on `this` by: an object's own, else
+    /// the key no entry serves (`NON_OBJECT_RECEIVER_SHAPE`).
+    fn method_receiver_key(&self, this: Value) -> (u32, Value) {
+        self.object_data(this)
+            .map(|object| (object.shape(), object.proto()))
+            .unwrap_or((NON_OBJECT_RECEIVER_SHAPE, Value::UNDEFINED))
+    }
+
+    /// The method of `this` the caches of `cache_site` serve for `atom` under `key` (its shape and
+    /// prototype), with its call target and the cache tier that served it (the inline ways, then
+    /// the megamorphic set): the entry whose owner still holds the same callee. `specialized` is
+    /// whether the program and the VM use the caches at all.
+    fn cached_method(&self, cache_site: usize, atom: Atom, (shape, proto): (u32, Value), this: Value, specialized: bool)
+        -> Option<(Value, CallTarget, usize)> {
+        specialized.then_some(())?;
+        let serves = |entry: &MethodCache| entry.serves(shape, atom, proto, this);
+        let inline = self.method_caches[cache_site].iter().enumerate()
+            .find(|(_, entry)| serves(entry)).map(|(tier, entry)| (*entry, tier));
+        // The megamorphic set is the tier after the inline ways.
+        let megamorphic = || self.megamorphic_methods.iter().find(|set| set.site == cache_site)
+            .and_then(|set| set.entries[..usize::from(set.len)].iter().find(|entry| serves(entry)).copied())
+            .map(|entry| (entry, METHOD_CACHE_WAYS));
+        let (entry, tier) = inline.or_else(megamorphic)?;
+        let owner = self.method_cache_owner(this, atom, entry.guard)?;
+        let owner_data = self.object_data(owner)?;
+        if owner_data.shape() != entry.guard.owner_shape {
+            return None;
+        }
+        let callee = self.heap.property_get(owner_data, entry.guard.slot as usize)?;
+        (entry.callee == callee).then_some(())?;
+        Some((callee, entry.target?, tier))
+    }
+
+    /// The method `atom` of `this` that method site `site` caches, loaded as `call_method_site_safe`
+    /// loads it on a hit and without running guest code: `None` where the caches do not serve it.
+    pub(super) fn method_cache_load(&self, p: &ResidualProgram, site: usize, atom: Atom, this: Value) -> Option<Value> {
+        let key = self.method_receiver_key(this);
+        self.cached_method(self.method_cache_index(site), atom, key, this, self.specialized && p.specialized)
+            .map(|(callee, _, _)| callee)
     }
 }
 

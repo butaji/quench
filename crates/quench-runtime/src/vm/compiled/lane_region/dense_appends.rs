@@ -23,20 +23,21 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(reserve);
         self.builder.seal_block(reserve);
         let (_, length) = self.hoisted_view(array);
-        let at_end = self.ins().icmp(IntCC::Equal, index, length);
+        let at_end = self.raw_compare(Relation::Equal, index, length);
         let aliased = self.aliased_view(array, pc as usize);
-        let reserves = self.ins().band_not(at_end, aliased);
-        self.ins().brif(reserves, super::super::forced_or(attempt, general), &[], general, &[]);
+        let unaliased = self.raw_compare_imm(Relation::Equal, aliased, 0);
+        let reserves = self.raw_binary(Binary::And, at_end, unaliased);
+        self.branch_if(reserves, (super::super::forced_or(attempt, general), &[]), (general, &[]));
         self.builder.switch_to_block(attempt);
         self.builder.seal_block(attempt);
         let room = self.helper_call(LaneHelper::AppendRoom, &[base]);
-        let granted = self.ins().icmp_imm_u(IntCC::NotEqual, room, 0);
+        let granted = self.raw_compare_imm(Relation::NotEqual, room, 0);
         let reserved = self.builder.create_block();
-        self.ins().brif(granted, super::super::forced_or(reserved, general), &[], general, &[]);
+        self.branch_if(granted, (super::super::forced_or(reserved, general), &[]), (general, &[]));
         self.builder.switch_to_block(reserved);
         self.builder.seal_block(reserved);
         self.reload_dense_arrays(pc as usize);
-        let room = self.ins().ireduce(types::I32, room);
+        let room = self.raw_unary(Unary::Narrow(Lane::I32), room);
         let variables = self.array_variables(array);
         self.builder.def_var(variables.room, room);
         self.append_within_room(array, index, value, general, done);
@@ -51,13 +52,13 @@ impl Lowering<'_, '_> {
         let variables = self.array_variables(array);
         let room = self.builder.use_var(variables.room);
         // The emit stage's words are 64-bit; the view's index, length and room are 32-bit.
-        let [index, length, room] = [index, length, room].map(|word| self.ins().uextend(types::I64, word));
-        let mut stage = Emit { builder: &mut self.builder, property_values: None };
+        let [index, length, room] = [index, length, room].map(|word| self.raw_unary(Unary::ZeroExtend(Lane::I64), word));
+        let mut stage = Emit { builder: &mut self.builder, property_values: None, gate: None };
         let grown = crate::staged::elements::append_element(&mut stage, values, length, room, index, value, miss)
             .expect("the emit stage continues past its guards");
-        let grown = self.ins().ireduce(types::I32, grown);
+        let grown = self.raw_unary(Unary::Narrow(Lane::I32), grown);
         self.builder.def_var(variables.length, grown);
-        self.ins().jump(done, &[]);
+        self.goto(done, &[]);
     }
 
     /// Whether another view hoisted around `pc` holds `array`'s array: an append through one
@@ -68,12 +69,12 @@ impl Lowering<'_, '_> {
             .copied().collect();
         let bits = self.array_variables(array).bits;
         let bits = self.builder.use_var(bits);
-        let mut aliased = self.int_const(types::I8, 0);
+        let mut aliased = self.raw_const(Lane::I8, 0);
         for other in others {
             let other = self.array_variables(other).bits;
             let other = self.builder.use_var(other);
-            let same = self.ins().icmp(IntCC::Equal, bits, other);
-            aliased = self.ins().bor(aliased, same);
+            let same = self.raw_compare(Relation::Equal, bits, other);
+            aliased = self.raw_binary(Binary::Or, aliased, same);
         }
         aliased
     }
@@ -85,7 +86,7 @@ impl Lowering<'_, '_> {
             .filter(|array| array.views == ElementViews::Dense && (array.header..=array.back).contains(&pc)).copied().collect();
         for array in arrays {
             let room = self.array_variables(array).room;
-            let unproved = self.int_const(types::I32, 0);
+            let unproved = self.raw_const(Lane::I32, 0);
             self.builder.def_var(room, unproved);
         }
     }

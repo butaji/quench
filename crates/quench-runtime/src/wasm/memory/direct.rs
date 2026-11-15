@@ -30,3 +30,18 @@ impl MemoryStorage {
         }
     }
 }
+
+impl LinearBytes {
+    /// Grows by `delta` pages of `page_size` bytes: the size in pages before, or `None` where
+    /// the new length passes `maximum` bytes or the host refuses the memory, and nothing
+    /// changes. The one place the rule of `memory.grow` is written.
+    pub(crate) fn grow_pages(&mut self, delta: u64, page_size: usize, maximum: usize) -> Option<u64> {
+        let length = usize::try_from(delta)
+            .ok()
+            .and_then(|delta| delta.checked_mul(page_size))
+            .and_then(|extra| self.len().checked_add(extra))
+            .filter(|length| *length <= maximum)?;
+        let pages = (self.len() / page_size) as u64;
+        self.grow_to(length).then_some(pages)
+    }
+}

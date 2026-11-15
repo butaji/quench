@@ -35,9 +35,9 @@ fn copied_from(instructions: &[WideInstruction], leader: impl Fn(usize) -> bool,
         at -= 1;
         let instruction = instructions[at];
         if instruction.written_registers().any(|written| written == register) {
-            return match instruction.op().class() {
-                Class::Move => ArraySource::Register(instruction.register_b()),
-                Class::LoadCapture if captured(at) => ArraySource::Capture(at),
+            return match instruction.op() {
+                opcode if opcode.is_move() => ArraySource::Register(instruction.register_b()),
+                opcode if opcode.is_load_capture() && captured(at) => ArraySource::Capture(at),
                 _ => ArraySource::Register(register),
             };
         }
@@ -68,9 +68,9 @@ pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
         let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
         let first = arrays.len();
         for (pc, instruction) in (header..).zip(body) {
-            let (base, stores) = match instruction.op().class() {
-                Class::GetIndex => (instruction.operand_b().register_index(), false),
-                Class::SetIndex => (Some(instruction.register_b()), true),
+            let (base, stores) = match instruction.op() {
+                opcode if opcode.is_get_index() => (instruction.operand_b().register_index(), false),
+                opcode if opcode.is_set_index() => (Some(instruction.register_b()), true),
                 _ => continue,
             };
             let Some(source) = base.and_then(|base| array_source(unit, leaders, &written, |at| captured(header, at),
@@ -78,7 +78,7 @@ pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
             match arrays[first..].iter_mut().find(|array: &&mut LoopArray| array.source == source) {
                 Some(array) => array.writable |= stores,
                 None => {
-                    let views = if matches!(source, ArraySource::Capture(_)) { ElementViews::Typed } else { views };
+                    let views = if matches!(source, ArraySource::Capture(_)) { ElementViews::Typed(None) } else { views };
                     arrays.push(LoopArray { header, back, source, views, writable: stores });
                 }
             }
@@ -92,7 +92,7 @@ impl Lowering<'_, '_> {
     /// innermost loop around `pc` that proved it, if any.
     pub(super) fn loop_array(&self, pc: usize, register: Option<Register>) -> Option<LoopArray> {
         let source = copied_from(&self.unit.instructions, |at| self.blocks[at].is_some(),
-            |at| self.hoisted.get(&at).is_some_and(|read| read.representation == Representation::Tagged) && self.unit.instructions[at].op().class().eq(Class::LoadCapture), pc, register?);
+            |at| self.hoisted.get(&at).is_some_and(|read| read.representation == Representation::Tagged) && self.unit.instructions[at].op().is_load_capture(), pc, register?);
         self.loop_arrays.iter().copied()
             .filter(|array| array.source == source && (array.header..=array.back).contains(&pc))
             .min_by_key(|array| array.back - array.header)

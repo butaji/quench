@@ -41,26 +41,29 @@ impl WellKnownSymbol {
         Self::Unscopables,
     ];
 
-    /// The property name on `Symbol`; the description is `Symbol.` and this name.
+    /// The property name on `Symbol`, indexed by discriminant (`ALL` order); the description is
+    /// `Symbol.` and this name.
+    const NAMES: [&'static str; Self::ALL.len()] = [
+        "asyncDispose",
+        "asyncIterator",
+        "dispose",
+        "hasInstance",
+        "isConcatSpreadable",
+        "iterator",
+        "match",
+        "matchAll",
+        "metadata",
+        "replace",
+        "search",
+        "species",
+        "split",
+        "toPrimitive",
+        "toStringTag",
+        "unscopables",
+    ];
+
     pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::AsyncDispose => "asyncDispose",
-            Self::AsyncIterator => "asyncIterator",
-            Self::Dispose => "dispose",
-            Self::HasInstance => "hasInstance",
-            Self::IsConcatSpreadable => "isConcatSpreadable",
-            Self::Iterator => "iterator",
-            Self::Match => "match",
-            Self::MatchAll => "matchAll",
-            Self::Metadata => "metadata",
-            Self::Replace => "replace",
-            Self::Search => "search",
-            Self::Species => "species",
-            Self::Split => "split",
-            Self::ToPrimitive => "toPrimitive",
-            Self::ToStringTag => "toStringTag",
-            Self::Unscopables => "unscopables",
-        }
+        Self::NAMES[self as usize]
     }
 }
 

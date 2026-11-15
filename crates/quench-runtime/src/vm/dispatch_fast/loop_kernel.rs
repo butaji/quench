@@ -145,8 +145,11 @@ pub(super) fn install_loop_kernels<H: Host>(
     let mut kernels = Vec::new();
     for backedge in 0..decoded.len() {
         let jump = decoded[backedge];
+        if jump.op().class() != Class::Jump {
+            continue;
+        }
         let header = jump.jump_target() as usize;
-        if jump.op().class() != Class::Jump || header >= backedge {
+        if header >= backedge {
             continue;
         }
         if exits[header] || records[header].call_link.get() != NO_CALL_LINK {

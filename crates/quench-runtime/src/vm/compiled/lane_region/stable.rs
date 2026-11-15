@@ -2,6 +2,9 @@
 //! invalidation points where it learns that one changed.
 
 use super::*;
+use super::super::object_slots::emit;
+use crate::staged::machine::{Lane, MachineScalar, Relation};
+use crate::staged::{Region, Stage};
 
 /// The Stable facts a region's code folded (`typed_ir::BindingTime::Stable`), each the subject
 /// of a code dependency its publication takes (`ProgramStore::publish_lane_method`).
@@ -20,13 +23,15 @@ pub(crate) struct StableFacts {
     /// Global slots it stores to, or reads the `typeof` of, by the slot's observed type
     /// (`Heap::subscribe_slot_observation`).
     pub(crate) slots: Box<[crate::code_dependencies::SlotDependency]>,
+    /// Constructors whose `prototype` it holds for an `instanceof` (`Vm::instanceof_fact`).
+    pub(crate) instanceofs: Box<[crate::code_dependencies::InstanceofFact]>,
 }
 
 /// The Stable facts a lowering folded so far.
 #[derive(Default)]
 pub(super) struct StableUses {
     /// Holder shapes whose prototypes' values the code took as constants.
-    holders: BTreeSet<u32>,
+    pub(super) holders: crate::bitset::BitSet,
     /// Atoms it stores directly because no method cache named them.
     atoms: BTreeSet<Atom>,
     /// Global cells whose values the code took as constants.
@@ -37,28 +42,78 @@ pub(super) struct StableUses {
     layouts: BTreeSet<crate::heap::GlobalLayoutFact>,
     /// Global slots whose observed type the code relied on, each once.
     slots: Vec<crate::code_dependencies::SlotDependency>,
+    /// Constructors whose `prototype` the code took as a constant for an `instanceof`.
+    instanceofs: BTreeSet<crate::code_dependencies::InstanceofFact>,
     /// Loops, by header and backedge, entered only through forward edges that proved the realm
     /// (`Lowering::hoist_stable`): their blocks hold the proof.
     realm_loops: Vec<(usize, usize)>,
     /// Loops, likewise, entered only through forward edges that read the invalidation word, whose
     /// bodies change no Stable fact's subject (`keeps_stable_facts`): their blocks hold every
     /// Stable fact, which a change made elsewhere retires before the loop is entered again.
-    stable_loops: Vec<(usize, usize)>,
+    pub(super) stable_loops: Vec<(usize, usize)>,
     /// The PC a run of the body starts at.
     pub(super) start: usize,
 }
 
 impl StableUses {
     pub(super) fn take(&mut self) -> StableFacts {
-        StableFacts { holders: std::mem::take(&mut self.holders).into_iter().collect(),
+        StableFacts { holders: std::mem::take(&mut self.holders).iter().map(|holder| holder as u32).collect(),
             atoms: std::mem::take(&mut self.atoms).into_iter().collect(),
             globals: std::mem::take(&mut self.globals).into_iter().collect(), roots: std::mem::take(&mut self.roots),
             layouts: std::mem::take(&mut self.layouts).into_iter().collect(),
-            slots: std::mem::take(&mut self.slots).into_iter().collect() }
+            slots: std::mem::take(&mut self.slots).into_iter().collect(),
+            instanceofs: std::mem::take(&mut self.instanceofs).into_iter().collect() }
     }
 }
 
+impl StableHold<'_> {
+    /// Holds the values of prototypes of exact shape `holder` from the instruction at `at`: an
+    /// invalidation point unless the block or loop holds every Stable fact already
+    /// (`Lowering::hold_stable`). Nothing where the code takes no dependencies on the VM.
+    pub(super) fn hold_holder(&mut self, (builder, helpers): (&mut FunctionBuilder<'_>, LaneHelpers),
+        state: &mut State, exit: ir::Block, holder: u32) -> Option<()> {
+        let online = self.online?;
+        let held = state.proofs.stable || self.loops.iter().any(|(header, end)| (*header..=*end).contains(&self.at));
+        if !held { read_invalidation_word(builder, helpers, online, state, exit); }
+        self.holders.insert_growing(holder as usize);
+        Some(())
+    }
+}
+
+/// The code's invalidation word, as it is now (`code_dependencies::Invalidation`): its address
+/// for a live lowering, a symbol the loader resolves for a linking one.
+fn invalidation_word(builder: &mut FunctionBuilder<'_>, helpers: LaneHelpers, online: OnlineFacts<'_>) -> ir::Value {
+    let address = if helpers.links() {
+        crate::vm::jit_backend::symbol_address(builder, RelocKind::Invalidation as u32, 0)
+    } else {
+        emit(builder).raw_const(Lane::I64, online.invalidation as i64)
+    };
+    emit(builder).load_u64(Region::Invalidation.mutable(), address, 0)
+}
+
+/// The invalidation point: the word read once, leaving through `exit` where a change retired
+/// the code; the block then holds every Stable fact until a helper that may change one.
+fn read_invalidation_word(builder: &mut FunctionBuilder<'_>, helpers: LaneHelpers, online: OnlineFacts<'_>,
+    state: &mut State, exit: ir::Block) {
+    let invalidated = invalidation_word(builder, helpers, online);
+    let held = emit(builder).raw_compare_imm(Relation::Equal, invalidated, 0);
+    emit_js_guard(builder, held, exit);
+    state.proofs.stable = true;
+}
+
 impl Lowering<'_, '_> {
+    /// The encoded `prototype` link of the constructor in `constructor`, where the facts type it a
+    /// known function and the VM proved its `instanceof` Stable: held from here to the block's next
+    /// helper that may change one (`hold_stable`), under a dependency on the constructor's
+    /// `prototype` slot, its shape and its `@@hasInstance` holder.
+    pub(super) fn hold_instanceof(&mut self, state: &mut State, exit: ir::Block, constructor: Operand) -> Option<u32> {
+        let identity = state.values[usize::from(constructor.register_index()?)].value.ty.function_identity()?;
+        let fact = (self.vm.online?.instanceofs)(identity)?;
+        self.hold_stable(state, exit);
+        self.stable.instanceofs.insert(fact);
+        Some(fact.link)
+    }
+
     /// The division this lowering specializes under: online where it may take code
     /// dependencies on the VM (`VmFacts::online`), offline for code shared across VMs.
     pub(super) fn division(&self) -> Division {
@@ -72,19 +127,13 @@ impl Lowering<'_, '_> {
     /// Whether `held` is `identity`, a heap value the code names: a callee, a native, a folded value.
     pub(super) fn is_identity(&mut self, held: ir::Value, identity: Value) -> ir::Value {
         let word = self.stable.roots.embed_heap_identity(identity);
-        self.word_cmp_imm(IntCC::Equal, held, word as i64)
+        self.raw_compare_imm(Relation::Equal, held, word as i64)
     }
 
     /// `value`, a heap value or an immediate, as a constant the code names.
     pub(super) fn identity_constant(&mut self, value: Value) -> ir::Value {
         let word = self.stable.roots.embed_heap_identity(value);
-        self.word_const(word as i64)
-    }
-
-    /// The code's invalidation word, as it is now (`code_dependencies::Invalidation`).
-    fn invalidation_word(&mut self, online: OnlineFacts<'_>) -> ir::Value {
-        let address = self.reloc(RelocKind::Invalidation, 0, online.invalidation as u64);
-        self.word_load(address, 0)
+        self.raw_const(Lane::I64, word as i64)
     }
 
     /// Holds every Stable fact the code folded from here to the block's next helper that may
@@ -101,17 +150,14 @@ impl Lowering<'_, '_> {
     /// The invalidation point of `hold_stable`, made here.
     pub(super) fn read_invalidation(&mut self, state: &mut State, exit: ir::Block) {
         let online = self.vm.online.expect("only a division with Stable facts reads the word");
-        let invalidated = self.invalidation_word(online);
-        let held = self.word_cmp_imm(IntCC::Equal, invalidated, 0);
-        emit_js_guard(&mut self.builder, held, exit);
-        state.proofs.stable = true;
+        read_invalidation_word(&mut self.builder, self.helpers, online, state, exit);
     }
-
 
     /// Holds the values of prototypes of exact shape `holder` (`hold_stable`).
     pub(super) fn hold_holder(&mut self, state: &mut State, exit: ir::Block, holder: u32) {
-        self.hold_stable(state, exit);
-        self.stable.holders.insert(holder);
+        let mut hold = StableHold { holders: &mut self.stable.holders, loops: &self.stable.stable_loops,
+            online: self.vm.online, at: self.at };
+        hold.hold_holder((&mut self.builder, self.helpers), state, exit, holder).expect("only a division with Stable facts holds a prototype");
     }
 
     /// Holds the value of global cell `fact` (`hold_stable`), read from the global object
@@ -136,6 +182,14 @@ impl Lowering<'_, '_> {
         self.prove_realm(state, exit, (slot.global, slot.realm_offset));
     }
 
+    /// Holds the layout of the global object `slot` names (`hold_stable`), under which a new declaration is the only change that moves the
+    /// declarative record's words, and the realm active that the record belongs to: a global lexical binding is read live, at its address.
+    pub(super) fn hold_lexical(&mut self, state: &mut State, exit: ir::Block, slot: crate::vm::global_facts::LexicalSlot) {
+        self.hold_stable(state, exit);
+        self.stable.layouts.insert(slot.layout);
+        self.prove_realm(state, exit, (slot.global, slot.realm_offset));
+    }
+
     /// Proves the realm of global object `global` active, from the VM's field at `realm_offset`.
     /// A call returns to its caller's realm, so the proof outlives every call.
     pub(super) fn prove_realm(&mut self, state: &mut State, exit: ir::Block, realm: (Value, i32)) {
@@ -148,8 +202,8 @@ impl Lowering<'_, '_> {
     /// The realm test of `prove_realm`, made here.
     pub(super) fn test_realm(&mut self, state: &mut State, exit: ir::Block, (global, realm_offset): (Value, i32)) {
         let vm = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, vm));
-        let active = self.word_load(vm, realm_offset);
-        let same = self.word_cmp_imm(IntCC::Equal, active, global.to_bits() as i64);
+        let active = emit(&mut self.builder).load_u64(Region::Dispatch.mutable(), vm, realm_offset);
+        let same = self.raw_compare_imm(Relation::Equal, active, global.to_bits() as i64);
         emit_js_guard(&mut self.builder, same, exit);
         state.proofs.realm = true;
     }
@@ -160,9 +214,9 @@ impl Lowering<'_, '_> {
     pub(super) fn store_held_unnamed(&mut self, atom: Atom, specialized: ir::Value) -> Option<ir::Value> {
         let online = self.vm.online.filter(|online| !online.names(atom))?;
         self.stable.atoms.insert(atom);
-        let invalidated = self.invalidation_word(online);
-        let held = self.word_cmp_imm(IntCC::Equal, invalidated, 0);
-        Some(self.builder.ins().band(specialized, held))
+        let invalidated = invalidation_word(&mut self.builder, self.helpers, online);
+        let held = self.raw_compare_imm(Relation::Equal, invalidated, 0);
+        Some(emit(&mut self.builder).all(specialized, held))
     }
 
     /// Whether a run enters loop `header..=end` only at its header, by edges that each make the

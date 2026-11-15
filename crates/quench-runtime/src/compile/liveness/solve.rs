@@ -5,7 +5,7 @@
 //! initializer, mandreel's `global_init`) is tens of megabytes at a load's peak.
 
 use super::{RegisterSet, register_bit};
-use crate::bytecode::{ControlFlowLayout, Function, Op};
+use crate::bytecode::{ControlEdge, ControlFlowLayout, Function, Op};
 use std::ops::{BitAnd, BitOr, BitOrAssign, Not};
 
 /// A set of registers, one bit each, at a width that holds every register of the function.
@@ -77,7 +77,7 @@ pub(crate) fn analyze_successors<M: LiveMask>(
         M::narrow(function.local_registers.iter().filter(|entry| entry.local < function.params)
             .fold(RegisterSet::default(), |mask, entry| mask | register_bit(entry.register)))
     };
-    let mut live = analyze_graph(transfers, successors.starts(), successors.targets(), |_| observable);
+    let mut live = analyze_graph(transfers, successors.starts(), successors.targets(), successors.edges(), |_| observable);
     add_suspended_exception_roots(function, &mut live);
     live
 }
@@ -85,8 +85,12 @@ pub(crate) fn analyze_successors<M: LiveMask>(
 /// Solve shared instruction transfers with per-PC recovery requirements.
 /// `starts` indexes a compact successor table; the final requirement describes
 /// falling off the graph. Rewritten native units add their recovery floors here.
+/// `kinds` gives how control reaches each successor (empty: every one in order). An
+/// instruction an abrupt completion may leave by a handler reaches the handler's live-in set
+/// whatever the instruction writes, since the write is not made on that edge: it is live
+/// before every instruction the handler covers.
 pub(crate) fn analyze_graph<M: LiveMask, P: Pc>(
-    transfers: &[(M, M)], starts: &[P], successors: &[P], required: impl Fn(usize) -> M,
+    transfers: &[(M, M)], starts: &[P], successors: &[P], kinds: &[ControlEdge], required: impl Fn(usize) -> M,
 ) -> Vec<M> {
     let length = transfers.len();
     assert_eq!(starts.len(), length + 1);
@@ -96,11 +100,14 @@ pub(crate) fn analyze_graph<M: LiveMask, P: Pc>(
     loop {
         let mut changed = false;
         for pc in (0..length).rev() {
-            let output = edges(pc).iter().fold(M::default(), |output, successor| {
-                output | live.get(successor.index()).copied().unwrap_or_default()
-            });
+            let (mut output, mut thrown) = (M::default(), M::default());
+            for edge in starts[pc].index()..starts[pc + 1].index() {
+                let reached = live.get(successors[edge].index()).copied().unwrap_or_default();
+                output |= reached;
+                if kinds.get(edge) == Some(&ControlEdge::Handler) { thrown |= reached; }
+            }
             let (read, written) = transfers[pc];
-            let next = required(pc) | read | (output & !written);
+            let next = required(pc) | read | thrown | (output & !written);
             if live[pc] != next {
                 live[pc] = next;
                 changed = true;

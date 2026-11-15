@@ -4,21 +4,19 @@
 //! one operand of the next and is dead afterwards) replaces them by one stencil; else the row
 //! stands alone.
 //!
-//! A tile is one `Planned` at its first row's index followed by `COVERED` rows (no code) for the
-//! rest, so row indices, branch targets and `link`'s tables keep one entry per instruction. No
-//! branch may enter a tile past its first row, and a tile's exit is its first row's PC: the
-//! stencil leaves with nothing written but the pinned register between its rows (dead there,
-//! and shared with no web live at that PC), so the interpreter runs the covered instructions
-//! from the first.
+//! A tile is one `Planned` at its first row's index followed by `skipped` rows (no code) for the
+//! rest, so row indices, branch targets and `link`'s tables keep one entry per row. No branch may
+//! enter a tile past its first row, its rows are consecutive instructions of the caller (a tile
+//! never spans an inlined callee's rows), and a tile's exit is its first row: the stencil leaves
+//! with nothing written but the pinned register between its rows (dead there, and shared with no
+//! web live at that PC), so the interpreter runs the covered instructions from the first.
 
+use super::function::skipped;
 use super::*;
 use quench_bjit::HOLES;
 use quench_bjit::numeric::supernodes::{self, Key, Node, Operand, Shape, Supernode};
 use crate::bitset::BitSet;
 use std::sync::OnceLock;
-
-/// The code of a row a tile covers: none.
-static COVERED: Stencil = Stencil { code: Vec::new(), relocs: Vec::new(), imm32: Vec::new(), next_jump: None, tail_len: 0, raw_len: 0 };
 
 /// Hole roles of the operands (`numeric.rs`: 0 destination, 1 and 2 operands).
 const FIRST_OPERAND_HOLE: usize = quench_bjit::numeric::FIRST as usize;
@@ -39,13 +37,14 @@ fn candidates() -> &'static [Candidate] {
     })
 }
 
-/// What a row is in the supernode vocabulary.
-fn key_of(row: &Decoded) -> Key {
-    row.heap.map_or(Key::Number(row.kind as u8), |heap| Key::Heap(heap.code()))
+/// What a row is in the supernode vocabulary: none for a row that is a step (a call, a helper, a
+/// leave), which no supernode names.
+fn key_of(row: &Decoded) -> Option<Key> {
+    row.step.is_none().then(|| row.heap.map_or(Key::Number(row.kind as u8), |heap| Key::Heap(heap.code())))
 }
 
 /// What the matcher asks of the block around a position.
-pub(super) struct Facts<'a> {
+pub(super) struct Block<'a> {
     /// Indices of the rows some branch targets.
     pub(super) targets: &'a BitSet,
     /// Whether the web a row `k` wrote is dead once row `k` has run, on every way out of it.
@@ -66,10 +65,10 @@ fn fed_operand(producer: &Decoded, consumer: &Decoded) -> Option<Operand> {
 /// The operand of the last row that reads the first row's value, when `shape` matches the rows
 /// from `at`: the kinds agree, no branch enters past the first row, the first row is no branch
 /// and its value is dead after the last.
-pub(super) fn match_at(shape: &Shape, rows: &[Decoded], at: usize, facts: &Facts) -> Option<Operand> {
+pub(super) fn match_at(shape: &Shape, rows: &[Decoded], at: usize, facts: &Block) -> Option<Operand> {
     let window = rows.get(at..at + shape.keys.len())?;
     let (producer, consumer) = (window.first()?, window.last()?);
-    let keyed = window.iter().zip(&shape.keys).all(|(row, key)| key_of(row) == *key);
+    let keyed = window.iter().zip(&shape.keys).all(|(row, key)| key_of(row) == Some(*key));
     let entered_inside = (at + 1..at + window.len()).any(|row| facts.targets.contains(row));
     let fed = fed_operand(producer, consumer)?;
     let dead = (facts.dead_after)(at + window.len() - 1, producer.dst?);
@@ -83,16 +82,16 @@ fn live_nowhere(web: Register, successors: impl IntoIterator<Item = u32>, live_a
 
 /// Whether the web row `k` wrote is dead after it: live at neither its fall-through nor its branch target.
 fn dead_after(layout: &Layout, decoded: &[Decoded], k: usize, web: Register) -> bool {
-    let next = layout.header + k as u32 + 1;
-    live_nowhere(web, std::iter::once(next).chain(decoded[k].target), |pc| layout.webs.live_at(layout.region, pc))
+    let next = layout.span.header + k as u32 + 1;
+    live_nowhere(web, std::iter::once(next).chain(decoded[k].target), |pc| layout.webs.live_at(&layout.span, pc))
 }
 
 /// The row indices a branch of the region targets.
 fn branch_targets(layout: &Layout, decoded: &[Decoded]) -> BitSet {
-    let inside = layout.header..=layout.backedge;
+    let inside = layout.span.header..=layout.span.backedge;
     let mut targets = BitSet::new(decoded.len());
     decoded.iter().filter_map(|row| row.target).filter(|pc| inside.contains(pc)).for_each(|pc| {
-        targets.insert_growing((pc - layout.header) as usize);
+        targets.insert_growing((pc - layout.span.header) as usize);
     });
     targets
 }
@@ -118,57 +117,56 @@ fn joined(first: &Planned, second: &Planned, exchanged: bool, first_roles: u8) -
     std::array::from_fn(|role| if first_roles >> role & 1 == 1 { first.holes[role] } else { later[role] })
 }
 
-/// The tile of the two planned rows at `pc`, or `None` where the library has no stencil for
-/// their places (a general row, an operand in a frame slot, a pin shared by the tile).
+/// The tile of the two planned rows at row `pc`, or `None` where the library has no stencil for
+/// their places (a general row, an operand in a frame slot, a pin shared by the tile) or either is
+/// more than a stencil (a chain, a leave, a row with rows before or after it).
 fn fuse(pc: u32, first: &Planned, second: &Planned, fed: Operand, supernode: &Supernode) -> Option<Planned> {
-    if [first, second].iter().any(|row| !row.pre.is_empty() || !row.post.is_empty()) {
+    if [first, second].iter().any(|row| !row.pre.is_empty() || !row.post.is_empty() || row.stop.is_some() || row.owned.is_some()) {
         return None;
     }
     let (head, tail) = (first.node?, second.node?);
     let (tail, exchanged) = oriented(tail, fed, supernode.feeds)?;
     let stencil = numeric::supernode_stencil([head, tail])?;
     let holes = joined(first, second, exchanged, supernodes::roles(&head));
-    let exit_pc = first.exit_pc.or(second.exit_pc).map(|_| pc);
-    Some(Planned { stencil, node: None, holes, target: second.target, exit_pc, pre: Vec::new(), post: Vec::new(), patch: None })
+    let leaves = !first.exits.is_empty() || !second.exits.is_empty();
+    Some(Planned { stencil, node: None, holes, branch: second.branch, exits: if leaves { vec![Exit::Spilling(pc)] } else { Vec::new() }, pre: Vec::new(), post: Vec::new(), stop: None, owned: None })
+}
+
+/// Whether the `len` rows from `at` are consecutive instructions of the caller: the interpreter
+/// resuming at the first runs the others.
+fn caller_run(layout: &Layout, at: usize, len: usize) -> bool {
+    let Some(Origin::Caller(first)) = layout.origins.get(at).copied() else { return false };
+    (0..len).all(|k| layout.origins.get(at + k) == Some(&Origin::Caller(first + k as u32)))
 }
 
 /// The tile starting at row `at` and the rows it covers.
-fn tile_at(layout: &Layout, decoded: &[Decoded], singles: &[Option<Planned>], facts: &Facts, at: usize) -> Option<(Planned, usize)> {
+fn tile_at(layout: &Layout, decoded: &[Decoded], singles: &[Planned], facts: &Block, at: usize) -> Option<(Planned, usize)> {
     candidates().iter().find_map(|candidate| {
-        let fed = match_at(&candidate.shape, decoded, at, facts)?;
-        let (first, second) = (singles[at].as_ref()?, singles[at + 1].as_ref()?);
-        let tile = fuse(layout.header + at as u32, first, second, fed, candidate.supernode)?;
-        Some((tile, candidate.shape.keys.len()))
+        let width = candidate.shape.keys.len();
+        let fed = match_at(&candidate.shape, decoded, at, facts).filter(|_| caller_run(layout, at, width))?;
+        let tile = fuse(at as u32, singles.get(at)?, singles.get(at + 1)?, fed, candidate.supernode)?;
+        Some((tile, width))
     })
 }
 
-fn covered() -> Planned {
-    Planned { stencil: &COVERED, node: None, holes: [0; HOLES], target: None, exit_pc: None, pre: Vec::new(), post: Vec::new(), patch: None }
-}
-
-/// The plan of every row of the region, one entry per row: a tile at its first row, `covered`
-/// rows after it, a single row's plan elsewhere. `general` says which rows take general semantics and `kinds` the operand kinds each row's site saw.
-pub(super) fn plan_all(layout: &Layout, decoded: &[Decoded], general: &BitSet, kinds: &[OperandKinds]) -> Result<Vec<Planned>, String> {
-    let mut singles = decoded
-        .iter()
-        .enumerate()
-        .map(|(k, row)| plan(row, &layout.homes, layout.header + k as u32, general.contains(k), variant_of(row.kind, kinds.get(k))).map(Some))
-        .collect::<Result<Vec<_>, _>>()?;
+/// The plan of every row of the program, one entry per row: a tile at its first row, `skipped` rows
+/// after it, a single row's plan elsewhere. `singles` are the rows' plans on their own.
+pub(super) fn tiled(layout: &Layout, decoded: &[Decoded], mut singles: Vec<Planned>) -> Vec<Planned> {
     let targets = branch_targets(layout, decoded);
     let dead = |k: usize, web: Register| dead_after(layout, decoded, k, web);
-    let facts = Facts { targets: &targets, dead_after: &dead };
+    let facts = Block { targets: &targets, dead_after: &dead };
     let mut body = Vec::with_capacity(decoded.len());
     let mut at = 0;
     while at < decoded.len() {
         let (planned, width) = match tile_at(layout, decoded, &singles, &facts, at) {
             Some(tile) => tile,
-            None => (singles[at].take().ok_or("a row planned twice")?, 1),
+            None => (std::mem::replace(&mut singles[at], skipped()), 1),
         };
         body.push(planned);
-        body.extend((1..width).map(|_| covered()));
+        body.extend((1..width).map(|_| skipped()));
         at += width;
     }
-    Ok(body)
+    body
 }
 
 #[cfg(test)]
@@ -200,7 +198,7 @@ mod tests {
         });
         let targets = set;
         let dead = |row: usize, web: Register| !live_after.contains(&(row, web));
-        match_at(&shape(pattern), rows, at, &Facts { targets: &targets, dead_after: &dead })
+        match_at(&shape(pattern), rows, at, &Block { targets: &targets, dead_after: &dead })
     }
 
     #[test]
@@ -284,8 +282,12 @@ mod tests {
         assert_eq!(oriented(sub, Operand::A, &[Operand::A, Operand::B]), Some((sub, false)));
     }
 
-    fn planned(node: Node, holes: [u64; HOLES], exit_pc: Option<u32>, target: Option<u32>) -> Planned {
-        Planned { stencil: &COVERED, node: Some(node), holes, target, exit_pc, pre: Vec::new(), post: Vec::new(), patch: None }
+    fn planned(node: Node, holes: [u64; HOLES], exit: Option<u32>, target: Option<u32>) -> Planned {
+        Planned { node: Some(node), ..Planned::single(skipped_stencil(), holes, target, exit) }
+    }
+
+    fn skipped_stencil() -> &'static Stencil {
+        skipped().stencil
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -296,7 +298,7 @@ mod tests {
         let second = planned(Node::Number((ADD, d, c, between, true)), padded_holes([20, 21, 22]), Some(41), None);
         let supernode = &supernodes::SUPERNODES[0];
         let tile = fuse(40, &first, &second, Operand::B, supernode).expect("a stencil for MUL then ADD over pins");
-        assert!(tile.node.is_none() && tile.exit_pc == Some(40) && tile.target.is_none());
+        assert!(tile.node.is_none() && tile.exits == [Exit::Spilling(40)] && tile.branch.is_none());
         assert_eq!(&tile.holes[..3], &[20, 21, 12], "role 2 is the first row's immediate; the others are the second row's");
     }
 

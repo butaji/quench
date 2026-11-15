@@ -4,6 +4,7 @@ pub(super) use super::shape_lookup::derive_shape_lookup_index;
 pub(super) use super::field_cache::FieldCacheProbe;
 use crate::value::HeapReference;
 mod mru_chain;
+mod shape_edits;
 pub(super) use mru_chain::MRU_CHAIN_END;
 use mru_chain::record_mru_entry;
 /// The slot word of a stored field entry: the slot in the low half, a store class in byte 2
@@ -981,6 +982,42 @@ impl<H: Host> Vm<H> {
         self.heap.property_set(object, slot, value);
     }
     pub(super) fn invalidate_field_caches(&mut self) {
+        self.reset_field_cache_tables();
+        self.symbol_write_proofs.clear();
+        self.symbol_load_proofs.clear();
+        self.array_iteration_shape = None;
+        self.collection_iteration_shape = None;
+        self.array_species_proof = None;
+        self.for_in.forget_snapshot();
+        self.species_slot_proof.set(None);
+        self.promise_species_proof.take();
+        self.promise_then_memo.take();
+        self.heap.dependencies_mut().retire_all();
+        self.enumerable_keys.clear();
+        self.field_add_sets.clear();
+        self.keyed_adds.fill(FieldAddCache::EMPTY);
+        self.megamorphic_fields.clear();
+        self.heap.dependencies_mut().clear_inherited();
+        self.accessor_fields.clear();
+        self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
+        self.in_presences = [None; super::in_presence::IN_PRESENCES];
+        self.closure_shapes = [None; _];
+        self.resolver_function_shape = None;
+        self.bound_function_shape = None;
+        self.function_name_shapes.clear();
+        self.closure_templates.fill(None);
+        self.iterator_result_header = None;
+        self.reused_iterator_result = Value::UNDEFINED;
+        self.descriptor_shapes = [None; _];
+        self.descriptor_layout = None;
+        self.regexp_object_shapes = None;
+        self.regexp_last_index_layouts.clear();
+        self.regexp_builtin_layouts.clear();
+        self.regexp_symbol_layouts.clear();
+    }
+    /// Empties the per-site cache tables: the sites written since the last reset where they were
+    /// tracked, else every site, which starts the tracking (`field_cache_writes`).
+    fn reset_field_cache_tables(&mut self) {
         match &mut self.field_cache_writes {
             Some(sites) => {
                 for &site in sites.iter() {
@@ -1002,36 +1039,6 @@ impl<H: Host> Vm<H> {
                 self.field_cache_writes = Some(Vec::new());
             }
         }
-        self.symbol_write_proofs.clear();
-        self.symbol_load_proofs.clear();
-        self.array_iteration_shape = None;
-        self.collection_iteration_shape = None;
-        self.array_species_proof = None;
-        self.for_in.forget_snapshot();
-        self.species_slot_proof.set(None);
-        self.promise_species_proof.take();
-        self.promise_then_memo.take();
-        self.heap.dependencies_mut().retire_all();
-        self.enumerable_keys.clear();
-        self.field_add_sets.clear();
-        self.keyed_adds.fill(FieldAddCache::EMPTY);
-        self.megamorphic_fields.clear();
-        self.heap.dependencies_mut().clear_inherited();
-        self.accessor_fields.clear();
-        self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
-        self.closure_shapes = [None; _];
-        self.resolver_function_shape = None;
-        self.bound_function_shape = None;
-        self.function_name_shapes.clear();
-        self.closure_templates.fill(None);
-        self.iterator_result_header = None;
-        self.reused_iterator_result = Value::UNDEFINED;
-        self.descriptor_shapes = [None; _];
-        self.descriptor_layout = None;
-        self.regexp_object_shapes = None;
-        self.regexp_last_index_layouts.clear();
-        self.regexp_builtin_layouts.clear();
-        self.regexp_symbol_layouts.clear();
     }
     /// Notes that `site`'s per-site cache entries change (`field_cache_writes`).
     pub(super) fn note_field_cache_write(&mut self, site: usize) {
@@ -1095,7 +1102,7 @@ impl<H: Host> Vm<H> {
     fn lexical_this(&mut self, frame: usize) -> Option<Value> {
         let atom = self.runtime_atoms.lexical_this;
         let value = self
-            .dynamic_binding(frame, atom)
+            .dynamic_binding(self.frame_caller(frame), atom)
             .unwrap_or(self.frames[frame].this);
         // An initialized `this` binding never changes (a second `super()` throws), so the
         // frame keeps it as its fixed receiver; only a derived constructor's binding before
@@ -1115,7 +1122,7 @@ impl<H: Host> Vm<H> {
         base: FieldBase,
     ) -> Result<Value, JsError> {
         if let Some(local) = base.local_index() {
-            return self.load_local_binding(p, frame, usize::from(local), None);
+            return self.load_local_binding(p, VarOwner::Frame(frame), usize::from(local), None);
         }
         match base.register_index() {
             Some(register) => Ok(self.read(frame, register)),
@@ -1411,7 +1418,30 @@ impl<H: Host> Vm<H> {
         if atom != self.length_atom {
             return None;
         }
-        self.own_array_length(object).map(Value::length)
+        // The staged row answers a direct array without extras; any other (an arguments object,
+        // sparse elements, a length past int32) is `own_array_length`'s.
+        self.heap
+            .array_record_base()
+            .and_then(|records| crate::staged::elements::concrete_array_length(records, object))
+            .or_else(|| self.own_array_length(object).map(Value::length))
+    }
+
+    /// The `length` of a direct string, from the staged row over its record (`staged::strings`);
+    /// the rows' other forms (a rope, a slice, a length past int32) are read through the string.
+    #[inline(always)]
+    pub(super) fn string_length_value(&self, object: Value) -> Option<Value> {
+        self.heap
+            .string_record_base()
+            .and_then(|records| crate::staged::string_length::concrete_string_length(records, object))
+            .or_else(|| self.heap.string(object).map(|text| Value::length(text.len())))
+    }
+
+    /// The `length` of a direct array or string, from the one staged row over both record
+    /// tables (`staged::string_length::length_of`); any other form is the general read's.
+    #[inline(always)]
+    pub(super) fn length_value(&self, object: Value) -> Option<Value> {
+        let (arrays, strings) = (self.heap.array_record_base()?, self.heap.string_record_base()?);
+        crate::staged::string_length::concrete_length_of(arrays, strings, object)
     }
 
     /// `cached_field_hit` for compiled code's probe (`compiled::lane_field_get`), which also
@@ -1498,16 +1528,42 @@ impl<H: Host> Vm<H> {
         site: u16,
     ) -> Option<Value> {
         debug_assert!(self.specialized_operations_enabled(p));
-        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
-        let cache = self.field_cache_entry(site);
-        if cache.holder != NO_FIELD_HOLDER {
-            return None;
-        }
-        let value = self.own_field_entry_hit(cache, receiver)?;
+        debug_assert!(self.field_cache_index(site) < self.field_caches.len());
+        let (entries, records) = (self.active_field_entries as u64, self.heap.object_record_base()? as u64);
+        let offset = usize::from(site) as u64 * super::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64;
+        // SAFETY: `active_field_entries` is the running program's table (`field_cache_entry`), the
+        // site one of its sites, and the record table and arena the heap's own; the read ends here.
+        let value = unsafe { crate::staged::concrete_site_own_read(self.heap.arena_values_base(), (entries, records), object, offset) }?;
         #[cfg(feature = "profile-field-primitives")]
         self.profile.field_primitives.hit(crate::profile::field_primitives::Path::PrimaryOwnRead);
         self.profile.field_cache_hit(0, 0);
         Some(value)
+    }
+
+    /// The two reads of a nested lookup, `base.first.second`, through the primary entries of both
+    /// sites: `primary_own_field_hit` of each, the tables proved once (`staged::entry::site_chain`).
+    #[inline(always)]
+    pub(super) fn primary_own_chain_hit(&mut self, p: &ResidualProgram, base: Value, (first, second): (u16, u16)) -> Option<Value> {
+        debug_assert!(self.specialized_operations_enabled(p));
+        let (entries, records) = (self.active_field_entries as u64, self.heap.object_record_base()? as u64);
+        let offset = |site: u16| u64::from(site) * super::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64;
+        // SAFETY: as `primary_own_field_hit`, for both sites.
+        let value = unsafe { crate::staged::concrete_site_own_chain(self.heap.arena_values_base(), (entries, records), base, (offset(first), offset(second))) }?;
+        // One hit for each of the two reads.
+        self.profile.field_cache_hit(0, 0);
+        self.profile.field_cache_hit(0, 0);
+        Some(value)
+    }
+
+    /// The store of `value` through the site's primary entry into the own data field of a direct
+    /// object, where the write barrier needs no log (`staged::entry::site_store`): the store
+    /// `primary_own_field_store_hit::<false>` makes first.
+    #[inline(always)]
+    fn primary_site_store(&mut self, object: Value, value: Value, site: u16) -> bool {
+        let Some(records) = self.heap.object_record_base() else { return false };
+        let offset = usize::from(site) as u64 * super::NATIVE_FIELD_CACHE_LAYOUT.entry_size as u64;
+        // SAFETY: as `primary_own_field_hit`, with the heap that owns the record table.
+        unsafe { crate::staged::concrete_site_store(&self.heap, (self.active_field_entries as u64, records as u64), object, offset, value) }
     }
 
     /// The own data field the holderless field cache entry `cache` proves for `receiver`;
@@ -1628,17 +1684,6 @@ impl<H: Host> Vm<H> {
             ty: self.heap.slot_type(cache.receiver, usize::from(cache.slot)),
             inherited: None, function_shape: false,
         })
-    }
-
-    /// The own-field load the site's caches hold for `receiver`'s shape, which a polymorphic
-    /// site keeps beside its first entry; the first entry's where `receiver` names no shape.
-    pub(super) fn native_field_load_of(&self, site: u16, receiver: Option<Value>) -> Option<super::compiled::NativeFieldLoad> {
-        let shape = receiver.and_then(|receiver| self.heap.object_record(receiver)).map(Object::exact_shape);
-        let held = shape.and_then(|shape| self.megamorphic_field_cache(usize::from(site), shape, NO_FIELD_HOLDER));
-        match held {
-            Some(entry) => self.native_field_entry(entry),
-            None => self.native_field_load_descriptor(site, receiver),
-        }
     }
 
     /// Every holderless exact shape and slot the site's caches prove, for generated code to
@@ -1802,7 +1847,8 @@ impl<H: Host> Vm<H> {
         };
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = self.field_cache_entry(site);
-        if !self.store_record_field_entry::<LOGS>(record_id, cache, value, layout) {
+        let stored = (!LOGS && self.primary_site_store(object, value, site)) || self.store_record_field_entry::<LOGS>(record_id, cache, value, layout);
+        if !stored {
             return false;
         }
         #[cfg(feature = "profile-field-primitives")]
@@ -2002,20 +2048,36 @@ impl<H: Host> Vm<H> {
         else {
             return false;
         };
-        let (target_shape, slot) = (cache.target_shape, usize::from(cache.slot));
+        let transition = cache.transition();
         if !cache.proof_holds(receiver.proto_link())
             || !receiver.admits_cached_add()
             || self.method_caches_may_name(atom)
         {
             return false;
         }
-        if !(receiver.admits_plain_append(slot, value)
-            && self.heap.record_property_append_plain(record_id, slot, value, target_shape))
-        {
-            self.heap.record_property_add_moving(object, slot, value, target_shape);
-        }
+        self.add_by_transition(object, record_id, transition, value);
         self.profile.field_cache_hit(0, 0);
         true
+    }
+
+    /// The add of `value` to `object`, the direct object record `record_id` the caller admitted
+    /// (`Object::admits_cached_add`), along the cached `transition`: the staged add row first
+    /// (`staged::add`, which proves the before-shape and plain storage and needs no call), then,
+    /// where the store gate is closed (slot representations are tracked, or the barrier would log
+    /// the value), the plain append that observes the write, else the add that moves storage or
+    /// allocates (`Heap::record_property_add_moving`).
+    #[inline(always)]
+    fn add_by_transition(&mut self, object: Value, record_id: u32, transition: Transition, value: Value) {
+        // SAFETY: `record_id` names the live record of `object`; the row proves the rest.
+        if unsafe { concrete_add_property(&mut self.heap, record_id, transition, value) } {
+            return;
+        }
+        let (slot, shape) = (usize::from(transition.slot), transition.after);
+        if !(self.heap.object_record_by_id(record_id).admits_plain_append(slot, value)
+            && self.heap.record_property_append_plain(record_id, slot, value, shape))
+        {
+            self.heap.record_property_add_moving(object, slot, value, shape);
+        }
     }
 
     /// `define_field_cached`'s hit inline, for an object record: the site's add entry for its
@@ -2040,17 +2102,28 @@ impl<H: Host> Vm<H> {
         let Some((_, cache)) = self.field_add_entry(self.field_cache_index(site), receiver.exact_shape(), atom) else {
             return false;
         };
-        let (target_shape, slot) = (cache.target_shape, usize::from(cache.slot));
+        let transition = cache.transition();
         if self.method_caches_may_name(atom) {
             return false;
         }
-        if !(receiver.admits_plain_append(slot, value)
-            && self.heap.record_property_append_plain(record_id, slot, value, target_shape))
-        {
-            self.heap.record_property_add_moving(object, slot, value, target_shape);
-        }
+        self.add_by_transition(object, record_id, transition, value);
         self.profile.field_cache_hit(0, 0);
         true
+    }
+
+    /// The add `atom`'s site recorded that compiled code may run (`staged::add::site_add`): a define's
+    /// (`chained` false) needs no chain proof, an adding store's needs the entry whose prototype chain
+    /// is proved now (`FieldAddCache::proof_holds`), whose link the code then tests per receiver and
+    /// whose proof it holds as a Stable fact. `None` where the site recorded none.
+    pub(super) fn native_field_add(&self, site: u16, atom: Atom, chained: bool) -> Option<AddSite> {
+        let set = self.field_add_indices.get(self.field_cache_index(site));
+        if set == NO_FIELD_ADD_SET {
+            return None;
+        }
+        self.field_add_sets[set as usize].entries().filter(|cache| cache.atom == atom).find_map(|cache| {
+            let link = chained.then_some(cache.proved_prototype);
+            link.is_none_or(|link| cache.proof_holds(link)).then_some(AddSite { transition: cache.transition(), link: link.map(ProtoLink::bits) })
+        })
     }
 
     /// Whether the site has recorded a cached property add (`try_cached_field_add`).
@@ -2233,17 +2306,21 @@ impl<H: Host> Vm<H> {
         let value = match cache.answer {
             InheritedFieldAnswer::Absent => Value::UNDEFINED,
             InheritedFieldAnswer::Slot(_) if cache.constant_watch.as_ref().is_some_and(|watch| watch.is_published()) => cache.constant,
-            InheritedFieldAnswer::Slot(slot) => {
-                let holder = self.heap.object_record(cache.proved_holder)?;
-                // SAFETY: the proof keeps the holder and its recorded shape.
-                let value = unsafe { self.heap.property_get_shaped(holder, usize::from(slot)) }?;
-                let watch = crate::heap::watch_prototype_values(holder.exact_shape());
-                let cache = self.heap.dependencies_mut().inherited_mut(index);
-                (cache.constant, cache.constant_watch) = (value, watch);
-                value
-            }
+            InheritedFieldAnswer::Slot(slot) => self.hold_inherited_constant(index, (cache.proved_holder, slot))?,
         };
         self.profile.field_cache_hit(0, depth);
+        Some(value)
+    }
+
+    /// The value the proved holder's `slot` holds, which becomes inherited entry `index`'s constant
+    /// under a watch on the holder's prototype values.
+    fn hold_inherited_constant(&mut self, index: u32, (proved_holder, slot): (Value, u16)) -> Option<Value> {
+        let holder = self.heap.object_record(proved_holder)?;
+        // SAFETY: the proof keeps the holder and its recorded shape.
+        let value = unsafe { self.heap.property_get_shaped(holder, usize::from(slot)) }?;
+        let watch = crate::heap::watch_prototype_values(holder.exact_shape());
+        let cache = self.heap.dependencies_mut().inherited_mut(index);
+        (cache.constant, cache.constant_watch) = (value, watch);
         Some(value)
     }
 
@@ -2730,10 +2807,10 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Option<Value> {
-        let text = self.heap.string(object)?;
         if atom == self.length_atom {
-            return Some(Value::length(text.len()));
+            return self.string_length_value(object);
         }
+        self.heap.string(object)?;
         if !self.string_field_site_cacheable(p, atom) {
             return None;
         }
@@ -4333,10 +4410,9 @@ impl<H: Host> Vm<H> {
             .object_data(object)
             .and_then(|data| self.shape_slot(data.shape(), atom));
         self.check_property_write(object, atom, existing.is_some())?;
-        let shape = self
+        let (shape, layout) = self
             .object_data(object)
-            .map(Object::shape)
-            .unwrap_or(u32::MAX);
+            .map_or((u32::MAX, 0), |data| (data.shape(), data.layout_id()));
         let add_prototype_guard =
             if existing.is_none() && shape != u32::MAX && self.field_add_atom_eligible(atom) {
                 self.add_prototype_guard(object, PropertyKey::string(atom))
@@ -4367,6 +4443,7 @@ impl<H: Host> Vm<H> {
                         source_shape: shape,
                         target_shape: data_shape,
                         slot: slot as u16,
+                        layouts: Object::add_layouts(layout, data_shape),
                         ..prototype_guard
                     },
                 );
@@ -4383,7 +4460,7 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn record_field_add_cache(&mut self, site: usize, cache: FieldAddCache) {
+    pub(super) fn record_field_add_cache(&mut self, site: usize, cache: FieldAddCache) {
         if !self.field_cache_records(site) {
             return;
         }
@@ -4423,7 +4500,7 @@ impl<H: Host> Vm<H> {
     /// The add entry of cache site index `site` for receivers of `shape` adding `atom`, with
     /// the index of the site's set.
     #[inline(always)]
-    fn field_add_entry(&self, site: usize, shape: u32, atom: Atom) -> Option<(usize, &FieldAddCache)> {
+    pub(super) fn field_add_entry(&self, site: usize, shape: u32, atom: Atom) -> Option<(usize, &FieldAddCache)> {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors; every non-sentinel
         // index was installed together with its set.
         let set = unsafe { self.field_add_indices.get_unchecked(site) };
@@ -4491,6 +4568,7 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         let plain = self.class_field_is_plain_add(object, key);
+        let layout = self.object_data(object).map_or(0, Object::layout_id);
         self.define_class_field(p, object, key, value)?;
         let target_shape = self.object_data(object).map_or(shape, Object::shape);
         if plain
@@ -4507,6 +4585,7 @@ impl<H: Host> Vm<H> {
                     source_shape: shape,
                     target_shape,
                     slot,
+                    layouts: Object::add_layouts(layout, target_shape),
                     ..FieldAddCache::EMPTY
                 },
             );
@@ -4921,128 +5000,6 @@ impl<H: Host> Vm<H> {
                 .get_unchecked(table_index as usize)
                 .get(receiver, holder)
         }
-    }
-    pub(super) fn transition_shape(&mut self, shape: u32, atom: Atom) -> u32 {
-        self.transition_property_shape(shape, PropertyKey::string(atom))
-    }
-    pub(super) fn transition_property_shape(&mut self, shape: u32, key: PropertyKey) -> u32 {
-        self.transition_data_property_shape(shape, key, DEFAULT_DATA_ATTRIBUTES)
-    }
-    /// Out of line and of plain values: a lane construct that inlined it would otherwise pass
-    /// the transition it builds by its stack address, a temporary the construct's common path
-    /// then does not hold.
-    #[inline(never)]
-    pub(super) fn transition_data_property_shape(
-        &mut self,
-        shape: u32,
-        key: PropertyKey,
-        attributes: DataAttributes,
-    ) -> u32 {
-        debug_assert!(
-            self.walked_property_shape_slot(shape, key).is_none(),
-            "a shape gains only keys it lacks"
-        );
-        let transition = ShapeTransition::Add {
-            key,
-            slot: u32::try_from(self.shapes[shape as usize].storage_len())
-                .expect("object property index exceeds u32"),
-            attributes,
-        };
-        self.append_cached_shape_transition(shape, transition)
-    }
-    pub(super) fn append_cached_shape_transition(
-        &mut self,
-        shape: u32,
-        transition: ShapeTransition,
-    ) -> u32 {
-        if let Some(next) = self.owned_dictionary_edit(shape, transition) {
-            return next;
-        }
-        let key = transition.cache_key();
-        if let Some(key) = key {
-            let last = self.shapes[shape as usize].last_child.get();
-            let next = if last != NO_LAST_CHILD
-                && super::shape_transitions::is_transition(&self.shapes, last, shape, key)
-            {
-                Some(last)
-            } else {
-                self.transitions.get(&self.shapes, shape, key)
-            };
-            if let Some(next) = next {
-                self.shapes[shape as usize].last_child.set(next);
-                self.profile.shape_transition(true);
-                self.carry_lookup_index(shape, next);
-                return next;
-            }
-        }
-        if key.is_some() || matches!(transition, ShapeTransition::Add { .. }) {
-            self.profile.shape_transition(false);
-        }
-        let storage_len = self.shapes[shape as usize].storage_len();
-        let next_storage_len = match transition {
-            ShapeTransition::Add { .. } => storage_len
-                .checked_add(1)
-                .filter(|length| u32::try_from(*length).is_ok())
-                .expect("object property storage exhausted"),
-            ShapeTransition::Descriptor { .. } | ShapeTransition::Delete { .. } | ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured | ShapeTransition::Constructed { .. } => storage_len,
-            ShapeTransition::Root
-            | ShapeTransition::Vacant
-            | ShapeTransition::Dictionary { .. } => {
-                unreachable!("cached shape transitions are adds, deletions, descriptors or metadata")
-            }
-        };
-        self.append_transition_shape(shape, key, transition, next_storage_len)
-    }
-    /// The shape an object of `shape` had before `shape` added `key` at `slot`, its last slot,
-    /// when deleting `key` can return the object to it: a plain add from an ordinary shape,
-    /// then only redefinitions of that slot (an accessor is added as data, then given its
-    /// descriptor).
-    fn shape_before_last_add(&self, shape: u32, key: PropertyKey, slot: usize) -> Option<u32> {
-        let mut added_shape = shape;
-        while let ShapeTransition::Descriptor { slot: redefined, .. } = self.shapes[added_shape as usize].transition {
-            let parent = self.shapes[added_shape as usize].parent;
-            if redefined as usize != slot || self.shapes[parent as usize].storage_len() != self.shapes[added_shape as usize].storage_len() {
-                return None;
-            }
-            added_shape = parent;
-        }
-        let ShapeTransition::Add { key: added, slot: added_slot, .. } = self.shapes[added_shape as usize].transition else {
-            return None;
-        };
-        let parent = self.shapes[added_shape as usize].parent;
-        (added == key && added_slot as usize == slot && self.shape_appends_one_slot(parent, added_shape))
-            .then_some(parent)
-    }
-
-    pub(super) fn delete_shape_property(&mut self, object: Value, key: PropertyKey) {
-        let Some(shape) = self.object_data(object).map(Object::shape) else { return };
-        let Some(slot) = self.property_shape_slot(shape, key) else {
-            return;
-        };
-        if let Some(parent) = self.shape_before_last_add(shape, key, slot) {
-            // The object returns to the shape it had before adding `key`: transient keys added
-            // and deleted in turn (an object used as a stack of entries) fork no shapes.
-            let data = self.object_data(object).expect("object survived property deletion");
-            let kept = self.shapes[parent as usize].storage_len();
-            if !crate::value_vec::ValueArena::drops_last_in_place(data.properties(), kept + 1) {
-                // The shorter length names a smaller arena range, so the values move to one;
-                // the object owns the same edges, which its write barrier already logged.
-                let values = (0..kept)
-                    .map(|index| self.heap.property_get(data, index).unwrap_or(Value::DELETED))
-                    .collect::<Vec<_>>();
-                self.heap.initialize_object_properties(object, parent, &values);
-            }
-            self.heap.set_object_shape(object, parent);
-            self.reconfigure_function_name(object, key);
-            self.invalidate_method_caches_for_key(key);
-            return;
-        }
-        let next_id =
-            self.append_cached_shape_transition(shape, ShapeTransition::Delete { key, slot: slot as u32 });
-        self.heap.set_object_shape(object, next_id);
-        self.pack_owned_dictionary(object, next_id);
-        self.reconfigure_function_name(object, key);
-        self.invalidate_method_caches_for_key(key);
     }
 }
 

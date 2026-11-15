@@ -154,20 +154,6 @@ pub(super) struct SavedProgram {
 pub(super) const WASM_ACTIVATION_LIMIT: usize = crate::stack::MAX_GUEST_CALL_DEPTH;
 
 impl GeneralCodeCursor {
-    /// A cursor that names only `function` of `program` and its lane view `lane`, for a
-    /// caller that compares activations with it (`Vm::peek_chained_job`) and runs none from it.
-    pub(super) fn of_lane(program: ProgramId, function: u32, lane: *const dispatch_fast::LaneView) -> Self {
-        Self {
-            program,
-            function,
-            code: std::ptr::null(),
-            wide: std::ptr::null(),
-            decoded: std::ptr::null(),
-            lane,
-            back_edges: None,
-        }
-    }
-
     #[inline(always)]
     fn instruction(self, pc: usize) -> WideInstruction {
         // SAFETY: residual validation establishes every reachable PC and wide
@@ -637,6 +623,23 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The frame of an activation of `id` bound and left unrun, off the frame stack, as a suspension
+    /// at its first instruction holds it: what an owner keeps to start in a lane run
+    /// (`Vm::start_root_job`).
+    pub(super) fn unstarted_frame(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        parent: Value,
+        this: Value,
+        context: CallContext,
+    ) -> Result<Box<Frame>, JsError> {
+        self.activate_user_frame(p, id, parent, this, &[], context)?;
+        let mut frame = self.frames.pop().expect("the activation pushed a frame");
+        frame.with_objects = self.with_stack.split_off(frame.with_base);
+        Ok(frame)
+    }
+
     /// `activate_user_frame` for a function whose static layout describes its whole
     /// activation (`Function::plain_activation`): every local starts undefined because every
     /// parameter lives in a register, `this` is the coerced receiver or an arrow's lexical
@@ -717,6 +720,8 @@ impl<H: Host> Vm<H> {
         passed: &[Value],
         registers: &[Value],
     ) {
+        #[cfg(test)]
+        super::activation::note_frame_made();
         // The receiver is already coerced and the body binds no `arguments` object, so
         // activation cannot fail; the registers below replace what it placed in them.
         self.activate_user_frame(p, id, env, this, passed, context)
@@ -742,11 +747,6 @@ impl<H: Host> Vm<H> {
     ) -> Result<usize, JsError> {
         self.profile
             .function(self.active_program.raw(), id as usize);
-        if p.function(id as usize).parameter_eval_arguments_error {
-            return Err(self
-                .syntax_error_result(p, "arguments binding is not allowed in function parameters")
-                .expect_err("syntax_error_result must throw"));
-        }
         let function = &p.function(id as usize);
         let mut frame = self.pooled_frame();
         self.bind_activation_arguments(p, &mut frame, function, context, args)?;
@@ -827,11 +827,6 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.profile
             .function(self.active_program.raw(), id as usize);
-        if p.function(id as usize).parameter_eval_arguments_error {
-            return Err(self
-                .syntax_error_result(p, "arguments binding is not allowed in function parameters")
-                .expect_err("syntax_error_result must throw"));
-        }
         let function = &p.function(id as usize);
         let placeholder = self.pooled_frame();
         let old = std::mem::replace(&mut self.frames[frame_index], placeholder);
@@ -1262,52 +1257,48 @@ impl<H: Host> Vm<H> {
         if self.frames[frame].captured {
             return self.frames[frame].env;
         }
-        let parent = self.frames[frame].env;
-        // The environment copies the slots it captures out of the frame's locals, whose
-        // buffer stays with the frame for its next activation; captured slots read as
-        // deleted in the frame from now on.
-        let program = self.programs.get(self.frames[frame].program);
         let state = &mut *self.frames[frame];
-        let selective = program
+        let (mut locals, bindings) = (std::mem::take(&mut state.locals), std::mem::take(&mut state.dynamic_bindings));
+        let (program, function, parent) = (state.program, state.function, state.env);
+        let (env, _) = self.promoted_environment(parent, program, function, &mut locals, bindings);
+        // The locals' buffer stays with the frame for its next activation.
+        let state = &mut *self.frames[frame];
+        state.locals = locals;
+        state.env = env;
+        state.captured = true;
+        env
+    }
+
+    /// The environment under `parent` an activation of `function` of `program` makes of its
+    /// `locals` when a closure first captures them, with its slot storage: it copies the slots it
+    /// captures out of the locals, which read as deleted from now on, and takes over the
+    /// activation's implicit `bindings`.
+    pub(super) fn promoted_environment(
+        &mut self,
+        parent: Value,
+        program: ProgramId,
+        function: u32,
+        locals: &mut Vec<Value>,
+        bindings: Vec<(Atom, Value)>,
+    ) -> (Value, *const crate::heap::EnvironmentSlots) {
+        let code = self.programs.get(program);
+        let selective = code
             .as_ref()
-            .and_then(|program| program.function_get(state.function as usize))
+            .and_then(|code| code.function_get(function as usize))
             .and_then(|function| function.selective_capture_slots.as_deref());
-        let slots = match selective {
-            // `captured` is sorted, so one merge pass over the locals finds its slots.
-            Some(captured) => {
-                let mut pending = captured.iter().copied().peekable();
-                crate::heap::EnvironmentSlots::from_values(state.locals.iter_mut().enumerate().map(
-                    |(slot, value)| {
-                        while pending.next_if(|captured| usize::from(*captured) < slot).is_some() {}
-                        if pending.next_if(|captured| usize::from(*captured) == slot).is_some() {
-                            std::mem::replace(value, Value::DELETED)
-                        } else {
-                            Value::DELETED
-                        }
-                    },
-                ))
-            }
-            None => {
-                let slots = crate::heap::EnvironmentSlots::from_values(state.locals.iter().copied());
-                state.locals.clear();
-                slots
-            }
-        };
-        let env = self.heap.alloc(Cell::Environment {
+        let slots = captured_slots(locals, selective);
+        self.heap.alloc_environment(
             parent,
-            function: self.frames[frame].function,
+            function,
             slots,
-            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
-                program: Some(self.frames[frame].program.raw()),
+            crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+                program: Some(program.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
-                dynamic_bindings: std::mem::take(&mut self.frames[frame].dynamic_bindings).into(),
+                dynamic_bindings: bindings.into(),
                 with_objects: Box::default(),
             }),
-        });
-        self.frames[frame].env = env;
-        self.frames[frame].captured = true;
-        env
+        )
     }
 
     pub(super) fn clone_frame_environment(
@@ -1482,16 +1473,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         frame: usize,
     ) -> Result<FrameOutcome, JsError> {
-        self.run_frame_general_with_error(p, frame, None)
-    }
-
-    pub(super) fn run_frame_general_with_error(
-        &mut self,
-        p: &ResidualProgram,
-        frame: usize,
-        initial_error: Option<JsError>,
-    ) -> Result<FrameOutcome, JsError> {
-        self.run_frame_general_until::<false>(p, frame, None, initial_error, None)
+        self.run_frame_general_until::<false>(p, frame, None, None, None)
     }
 
     /// Runs frame `frame` on from the transition its linked native body made at its entry.
@@ -1567,36 +1549,6 @@ impl<H: Host> Vm<H> {
     const FRAME_ENTRY_LANE_RUNS: bool = crate::DYNAMIC_EXECUTION_ENABLED
         && !cfg!(any(feature = "profile-aggregate", feature = "profile-memory"));
 
-    /// `run_frame_general_with_error` of a resumed generator's or async function's frame
-    /// `frame` with no error to raise. Without JS tiers the general loop would only enter the
-    /// lane at the frame's PC, so the lane runs from here (`run_frame_from_lane`).
-    /// `run_resumed_frame`, or the general loop raising `error` into the frame where a
-    /// resumption throws.
-    pub(super) fn run_resumed_frame_or_raise(
-        &mut self,
-        p: &ResidualProgram,
-        frame: usize,
-        error: Option<JsError>,
-    ) -> Result<FrameOutcome, JsError> {
-        match error {
-            None => self.run_resumed_frame(p, frame),
-            error => self.run_frame_general_with_error(p, frame, error),
-        }
-    }
-
-    pub(super) fn run_resumed_frame(&mut self, p: &ResidualProgram, frame: usize) -> Result<FrameOutcome, JsError> {
-        let (program, function, pc) = (self.frames[frame].program, self.frames[frame].function, self.frames[frame].pc);
-        // With JS tiers the loop may run the resumed frame in a tier instead of the lane,
-        // so only the tier-free loop's lane entry is mirrored here.
-        let lane_runs = Self::FRAME_ENTRY_LANE_RUNS
-            && !self.tier_may_run(crate::jit_mode::Tier::ANY);
-        let cursor = self.general_cursor(program, p, function, lane_runs);
-        if !Self::lane_runs(cursor.lane, pc) {
-            return self.run_frame_general_with_error(p, frame, None);
-        }
-        self.run_frame_from_lane(p, frame, &cursor, pc)
-    }
-
     /// Runs frame `frame` from `pc` in the lane of `cursor`'s view, which runs that
     /// instruction. The frame's own return, a generator's plain `yield` and an async
     /// function's observation-free `await` the lane stops at become the frame's outcome as
@@ -1619,60 +1571,24 @@ impl<H: Host> Vm<H> {
             let _stack = self.enter_stack()?;
             // As the loop checks before each step; a termination selects no guest handler.
             self.check_execution_interrupt()?;
-            let (mut cursor, mut function, mut pc) = (*cursor, function, pc);
-            loop {
-                self.active_registers = self.frames[frame].registers.as_mut_ptr();
-                let mut executing = ExecutingProgram { id: program, retained: None };
-                let mut running = frame;
-                let stop = self.run_fast_lane(p, program, cursor.lane, &mut running, pc, &mut pending_calls, &mut executing, true);
-                // An await the lane chained in place (`lane_await`) left another activation in
-                // the slot, or failed.
-                if let Some(error) = self.lane_chain_error.take() {
-                    return Err(error);
-                }
-                // A reaction the lane chained in place (`lane_chain_reaction_return`) ended the
-                // chain in the slot: its empty frame completes, as `chain_lane_complete`'s does.
-                if std::mem::take(&mut self.lane_chain_ended) {
-                    return Ok(FrameOutcome::Complete(Value::UNDEFINED));
-                }
-                if running == frame && self.frames[frame].function != function {
-                    function = self.frames[frame].function;
-                    cursor = self.general_cursor(program, p, function, true);
-                }
-                let body = p.function(function as usize);
-                let stops_here = running == frame
-                    && pending_calls.is_empty()
-                    && executing.id == program
-                    && self.lane_raised.is_none()
-                    && stop < body.code.len();
-                if stops_here
-                    && let Some(outcome) = self.lane_stop_outcome(p, frame, cursor.instruction(stop), stop, body.is_async)
-                {
-                    // An await the queue's next job follows resumes that job's activation here
-                    // (`Vm::chain_lane_await`), with no return to the job loop.
-                    let chained = match outcome {
-                        FrameOutcome::Await { value, destination, frame: None } => {
-                            self.chain_lane_await(p, program, frame, &cursor, value, destination)
-                        }
-                        FrameOutcome::Complete(value) => self.chain_lane_complete(p, program, frame, &cursor, value),
-                        _ => None,
-                    };
-                    match chained {
-                        Some(Ok(Some(next))) => {
-                            (cursor, function, pc) = next;
-                            continue;
-                        }
-                        // The chain finished the slot's last job; its empty frame completes.
-                        Some(Ok(None)) => return Ok(FrameOutcome::Complete(Value::UNDEFINED)),
-                        Some(Err(error)) => return Err(error),
-                        None => {}
-                    }
-                    return Ok(outcome);
-                }
-                self.frames[running].pc = stop;
-                let raised = self.lane_raised.take();
-                return self.run_frames_after_lane_exit(p, running, &mut pending_calls, LaneExit { executing, raised });
+            self.active_registers = self.frames[frame].registers.as_mut_ptr();
+            let mut executing = ExecutingProgram { id: program, retained: None };
+            let mut running = frame;
+            let pc = self.run_fast_lane(p, program, cursor.lane, &mut running, pc, &mut pending_calls, &mut executing, true);
+            let body = p.function(function as usize);
+            let stops_here = running == frame
+                && pending_calls.is_empty()
+                && executing.id == program
+                && self.lane_raised.is_none()
+                && pc < body.code.len();
+            if stops_here
+                && let Some(outcome) = self.lane_stop_outcome(p, frame, cursor.instruction(pc), pc, body.is_async)
+            {
+                return Ok(outcome);
             }
+            self.frames[running].pc = pc;
+            let raised = self.lane_raised.take();
+            self.run_frames_after_lane_exit(p, running, &mut pending_calls, LaneExit { executing, raised })
         })();
         pending_calls.clear();
         self.pending_call_stacks.push(pending_calls);
@@ -2458,8 +2374,8 @@ impl<H: Host> Vm<H> {
                 _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
             }
             };
-            // The frame of a generator its caller resumed in place yields to that caller, as
-            // its return completes the call (`finish_in_loop_generator_step`).
+            // The frame a generator's activation became yields to its caller, as its return
+            // completes the call (`finish_materialized_generator_step`).
             let mut yielded = None;
             let step = match step {
                 Ok(StepResult::Yield { value, destination, delegated_result })
@@ -2467,7 +2383,7 @@ impl<H: Host> Vm<H> {
                 {
                     self.frames[frame].pc = pc;
                     self.frames[frame].pc_is_resume = true;
-                    yielded = Some(super::generator::InLoopGeneratorStop::Yielded { destination, delegated_result });
+                    yielded = Some(super::generator::MaterializedStop::Yielded { destination, delegated_result });
                     Ok(StepResult::Return(value))
                 }
                 step => step,
@@ -2507,8 +2423,8 @@ impl<H: Host> Vm<H> {
                         );
                         match pending.completion.take_generator() {
                             Some(resume) => {
-                                let stop = yielded.take().unwrap_or(super::generator::InLoopGeneratorStop::Returned);
-                                value = self.finish_in_loop_generator_step(completed_frame, resume, value, stop);
+                                let stop = yielded.take().unwrap_or(super::generator::MaterializedStop::Returned);
+                                value = self.finish_materialized_generator_step(completed_frame, resume, value, stop);
                             }
                             None => {
                                 self.finish_frame_scopes(&completed_frame);
@@ -2798,9 +2714,9 @@ impl<H: Host> Vm<H> {
                         Err(error) => error,
                         Ok(_) => unreachable!(),
                     };
-                    // A generator resumed in place finishes with its frame's throw.
+                    // A generator whose activation became a frame finishes with its throw.
                     if let Some(resume) = pending.completion.take_generator() {
-                        self.abandon_in_loop_generator_step(resume);
+                        self.abandon_materialized_generator_step(resume);
                     }
                     if let Some(step) = pending.completion.take_array_step() {
                         self.abandon_array_step(*step);
@@ -2852,23 +2768,11 @@ impl<H: Host> Vm<H> {
             error.capture_source_location(program, function as u32, throwing_pc);
             return Err(error);
         };
-        let with_depth = self.frames[frame].with_base + usize::from(handler.with_depth);
-        self.with_stack.truncate(with_depth);
-        match handler.slot {
-            None => {}
-            Some(crate::bytecode::ThrownValueSlot::Local(slot)) => {
-                let value = self.thrown_value_for(program, error);
-                if wasm {
-                    self.frames[frame].locals[usize::from(slot)] = value;
-                } else {
-                    self.initialize_handler_binding(program, frame, slot, value)?;
-                }
-            }
-            // A promoted binding is a plain local, which no environment captures.
-            Some(crate::bytecode::ThrownValueSlot::Register(register)) => {
-                let value = self.thrown_value_for(program, error);
-                self.frames[frame].registers[usize::from(register)] = value;
-            }
+        let home = super::handler_entry::HandlerHome::Frame(frame);
+        self.unwind_handler_scopes(home, handler);
+        if let Some(slot) = handler.slot {
+            let value = self.thrown_value_for(program, error);
+            self.bind_thrown_value(program, home, slot, value)?;
         }
         Ok(handler.target as usize)
     }
@@ -3002,4 +2906,25 @@ impl<H: Host> Vm<H> {
                 .get_unchecked_mut(slot) = value;
         }
     }
+}
+
+/// The slots of the environment a promotion makes of `locals`: those the `selective` capture list
+/// names, moved out and left deleted behind, or, with no list, all of them, which leave the locals
+/// empty.
+fn captured_slots(locals: &mut Vec<Value>, selective: Option<&[u16]>) -> crate::heap::EnvironmentSlots {
+    let Some(captured) = selective else {
+        let slots = crate::heap::EnvironmentSlots::from_values(locals.iter().copied());
+        locals.clear();
+        return slots;
+    };
+    // `captured` is sorted, so one merge pass over the locals finds its slots.
+    let mut pending = captured.iter().copied().peekable();
+    crate::heap::EnvironmentSlots::from_values(locals.iter_mut().enumerate().map(|(slot, value)| {
+        while pending.next_if(|captured| usize::from(*captured) < slot).is_some() {}
+        if pending.next_if(|captured| usize::from(*captured) == slot).is_some() {
+            std::mem::replace(value, Value::DELETED)
+        } else {
+            Value::DELETED
+        }
+    }))
 }

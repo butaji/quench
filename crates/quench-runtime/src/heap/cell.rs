@@ -19,12 +19,14 @@ mod shape_id;
 mod snapshot;
 mod typed_array_kind;
 mod wasm_fields;
-pub(crate) use await_state::{AwaitKind, AwaitRole, AwaitState, ResumedAwait};
-pub(crate) use wasm_fields::{WasmGcFields, WasmTableElements};
+pub(crate) use await_state::{AwaitKind, AwaitRole, AwaitState};
+pub(crate) use wasm_fields::{TableTarget, TableWords, WasmGcFields, WasmTableElements};
 pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 pub(crate) use prototype_values::{PrototypeValueWatch, subscribe_prototype_values, watch_prototype_values};
 pub(crate) use global_values::{GlobalCell, GlobalFact, GlobalLayoutFact, global_layout_fact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_layout, subscribe_global_value};
+#[cfg(test)]
+pub(crate) use global_values::new_table;
 
 /// Changes whenever the layout an object used as a prototype offers its inheritors can have
 /// changed: its shape, prototype or integrity changes; a collection frees a prototype, whose
@@ -1990,6 +1992,10 @@ struct ObjectExtras {
 #[derive(Clone, Debug, Default)]
 struct RareExtras {
     arguments_map: Option<Vec<u16>>,
+    /// The depth of the lane activation whose window holds this arguments object, as its latest
+    /// push recorded it (`Vm::record_window_owner`); stale once that activation ends, which its
+    /// reader checks against the activation's own binding.
+    window_depth: Option<u32>,
     brand: ObjectBrand,
     external_address: Option<usize>,
     boxed_primitive: Option<Value>,
@@ -3079,6 +3085,14 @@ impl Object {
     pub(crate) fn arguments_map_mut(&mut self) -> Option<&mut Vec<u16>> {
         self.extras_mut_existing()?.rare_mut_existing()?.arguments_map.as_mut()
     }
+    pub(crate) fn window_depth(&self) -> Option<usize> {
+        self.extras()?.rare()?.window_depth.map(|depth| depth as usize)
+    }
+    pub(crate) fn set_window_depth(&mut self, depth: usize) {
+        if let Some(rare) = self.extras_mut_existing().and_then(ObjectExtras::rare_mut_existing) {
+            rare.window_depth = u32::try_from(depth).ok();
+        }
+    }
     pub(crate) fn mapped_argument_slot(&self, index: usize) -> Option<usize> {
         self.arguments_map()?
             .get(index)
@@ -3574,24 +3588,6 @@ impl EnvironmentSlots {
         }
     }
 
-    /// `read_storage` of a slot the storage's length is known to cover: a function's own
-    /// depth-0 capture, whose slot the compiler took from the locals of the frame that made
-    /// the environment, which a dense storage holds in full (`EnvironmentSlots::from_values`
-    /// of the frame's locals, `from_captured` of an activation window's). The bounds test is
-    /// the compiler's, not each read's; an internal marker still leaves for the long way.
-    /// # Safety
-    /// As `read_storage`, and `slot` below the storage's length.
-    #[inline(always)]
-    pub(crate) unsafe fn read_covered_storage(storage: *const usize, slot: u16) -> Option<Value> {
-        // SAFETY: as guaranteed by the caller.
-        unsafe {
-            let (values, len) = Self::borrow_storage(storage)?.0.run();
-            debug_assert!(usize::from(slot) < len, "a depth-0 capture slot past its storage");
-            let value = values.add(usize::from(slot)).cast::<Value>().read();
-            (!value.is_internal_marker()).then_some(value)
-        }
-    }
-
     /// # Safety
     /// `storage` is null or live as for `dense_storage`; no element is mutably borrowed.
     #[inline(always)]
@@ -3600,16 +3596,18 @@ impl EnvironmentSlots {
         unsafe { let (values, len) = Self::borrow_storage(storage)?.0.run(); crate::staged::environment::concrete_dense_capture(values.cast(), len, slot) }
     }
 
-    /// Write through a cache whose caller has already admitted the store and taken its barrier.
+    /// Write through a cache whose caller has already admitted the store and taken its barrier:
+    /// `staged::environment::dense_capture_store`, as the native tiers store a capture.
     /// # Safety
     /// As `read_storage`, with exclusive access to the element for this operation and the
     /// environment's write authorization/barrier satisfied. No reference escapes the write.
     #[inline(always)]
     pub(crate) unsafe fn write_storage(storage: *const usize, slot: usize, value: Value) -> Option<()> {
-        // SAFETY: as guaranteed by the caller, for this write only.
-        let mut slots = unsafe { Self::borrow_storage(storage) }?;
-        *slots.dense_plain_mut(slot)? = value;
-        Some(())
+        // SAFETY: as guaranteed by the caller; the view's values are live for this write only.
+        let (values, len) = unsafe { Self::native_storage_view(storage) }?;
+        // SAFETY: the caller's exclusive access and authorization, over the view's `len` values.
+        unsafe { crate::staged::environment::concrete_dense_capture_store(values.cast_mut(), len, u16::try_from(slot).ok()?, value) }
+            .then_some(())
     }
 
     /// `read_storage` and `write_storage` of one slot under one borrow and bounds test: `update`
@@ -4063,6 +4061,7 @@ impl IteratorRecord {
 /// costs its occupancy bit; a heap whose record range is unavailable boxes it in a
 /// `Cell::Function` slot.
 #[derive(Clone, Debug)]
+#[repr(C)]
 pub(crate) struct FunctionRecord {
     pub(crate) object: Object,
     pub(crate) realm: Value,
@@ -4081,12 +4080,18 @@ impl FunctionRecord {
 }
 
 /// A typed array's or DataView's ordinary object and byte offset into its buffer, boxed
-/// together so the view cell keeps four words.
+/// together so the view cell keeps four words. The native prefix comes first: a typed array's
+/// table entry (`TypedViewTable`) addresses it, and `NATIVE_TYPED_ARRAY_LAYOUT` names its fields.
 #[derive(Clone, Debug)]
+#[repr(C)]
 pub(crate) struct BufferViewObject {
+    pub(crate) native: super::typed_view::NativeView,
     pub(crate) object: Object,
     pub(crate) offset: usize,
 }
+
+/// Where the native prefix starts in a view record: the record's address itself.
+pub(super) const NATIVE_VIEW_OFFSET: usize = std::mem::offset_of!(BufferViewObject, native);
 
 impl std::ops::Deref for BufferViewObject {
     type Target = Object;
@@ -4218,7 +4223,6 @@ pub(crate) enum Cell {
         immutable: bool,
     },
     TypedArray {
-        kind: TypedArrayKind,
         object: Box<BufferViewObject>,
         buffer: Value,
         length: ViewLength,
@@ -4312,8 +4316,14 @@ pub(crate) enum Cell {
     /// A `WebAssembly.Module` or `WebAssembly.Instance`.
     WasmObject { object: Box<Object>, slot: WasmObjectSlot },
     /// A global, memory or table is also its `WebAssembly.Global`, `.Memory` or `.Table`
-    /// object, so every export of it is the same JavaScript object.
-    WasmGlobal { header: Box<WasmGlobalHeader>, value: Value, ty: crate::WasmType, mutable: bool },
+    /// object, so every export of it is the same JavaScript object. `bits` is its one native
+    /// slot, which compiled code reads and writes in place: the raw payload of an i32, i64, f32
+    /// or f64 (a 32-bit one zero-extended), else the bits of the reference or vector handle,
+    /// the only kind the collector follows (`Storage`).
+    WasmGlobal { header: Box<WasmGlobalHeader>, bits: u64, ty: crate::WasmType, mutable: bool },
+    /// The persistent context of a Wasm instance, which its environment holds in a slot of its
+    /// own: native code reads the instance's words in place and rows name the instance by it.
+    WasmInstance(crate::vm::InstanceRecord),
     /// One memory identity owns its bytes and original optional maximum. `buffer` is the
     /// ArrayBuffer currently viewing the bytes, or undefined until one is requested; growth
     /// detaches it.
@@ -4434,6 +4444,7 @@ impl Cell {
             Self::BindingReference { .. } => "binding_reference",
             Self::Environment { .. } => "environment",
             Self::WasmBits64(_) => "wasm_bits64",
+            Self::WasmInstance(_) => "wasm_instance",
             Self::WasmV128(_) => "wasm_v128",
             Self::WasmExtern(_) => "wasm_extern",
             Self::AccessorPair { .. } => "accessor_pair",
@@ -4452,13 +4463,22 @@ impl Cell {
             Self::Error(_) => "error",
             Self::PromiseResolvingState { .. } => "promise_resolving_state",
             Self::Promise(_) => "promise",
+            Self::TemporalDuration { .. } | Self::TemporalPlainDate { .. } | Self::TemporalPlainDateTime { .. }
+            | Self::TemporalPlainMonthDay { .. } | Self::TemporalPlainYearMonth { .. }
+            | Self::TemporalZonedDateTime { .. } | Self::TemporalInstant { .. } => self.temporal_variant_name(),
+        }
+    }
+
+    /// `profile_variant_name` of a Temporal cell.
+    fn temporal_variant_name(&self) -> &'static str {
+        match self {
             Self::TemporalDuration { .. } => "temporal_duration",
             Self::TemporalPlainDate { .. } => "temporal_plain_date",
             Self::TemporalPlainDateTime { .. } => "temporal_plain_date_time",
             Self::TemporalPlainMonthDay { .. } => "temporal_plain_month_day",
             Self::TemporalPlainYearMonth { .. } => "temporal_plain_year_month",
             Self::TemporalZonedDateTime { .. } => "temporal_zoned_date_time",
-            Self::TemporalInstant { .. } => "temporal_instant",
+            _ => "temporal_instant",
         }
     }
 }

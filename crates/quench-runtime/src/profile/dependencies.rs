@@ -1,6 +1,6 @@
 #![cfg(feature = "profile-aggregate")]
 
-use crate::bytecode::{Op, Operand};
+use crate::bytecode::Operand;
 
 pub(super) fn binary_pairs(
     sites: &rustc_hash::FxHashMap<(u32, u32, u32), u64>,
@@ -22,7 +22,7 @@ pub(super) fn binary_pairs(
         let Some([first, second]) = code.get(pc as usize..pc as usize + 2) else {
             continue;
         };
-        if first.op() != Op::Binary || second.op() != Op::Binary {
+        if !first.op().is_binary() || !second.op().is_binary() {
             continue;
         }
         let Some(output) = binary_output(*first) else {

@@ -1,5 +1,7 @@
 //! A lane view's lane-body counters, kept under `QUENCH_TRACE=js-jit`.
 
+use super::super::tier_events::Event;
+
 /// A view's lane-body counters, which only a diagnostics run keeps
 /// (`ProgramStore::js_jit_diagnostics_enabled`): its function, its compiles and the frames the
 /// last inlined, and its runs by how they ended (`LaneExit`), in that order.
@@ -14,7 +16,7 @@ pub(in crate::vm) struct LaneBodyStats {
     compiled_at: std::cell::RefCell<Vec<u64>>,
     /// Completed, left at a caller PC, inside an inlined callee, in a native call's callee,
     /// or irreversibly terminated.
-    ends: [std::cell::Cell<u32>; End::COUNT],
+    ends: [std::cell::Cell<u32>; Event::END_COUNT],
     /// The PCs it left at, and inside inlined frames as `frame:pc`, with their counts.
     leaves: std::cell::RefCell<Vec<(String, u32)>>,
     /// Entries of the specialized body that ran in the lane instead (`lane_body_admits`).
@@ -42,9 +44,17 @@ impl LaneBodyStats {
         self.ends.iter().map(|end| u64::from(end.get())).sum()
     }
 
+    /// The runs that ended the activation (a return or an exception) and the runs that left it
+    /// to the lane, which a test reads to see that no exception made a frame.
+    #[cfg(test)]
+    pub(in crate::vm) fn ended_runs(&self) -> (u32, u32) {
+        let left = [Event::LeftAt, Event::LeftInlined, Event::LeftInCallee].map(|end| self.ends[end.end_index()].get()).iter().sum();
+        (self.ends[Event::Completed.end_index()].get(), left)
+    }
+
     /// `frames`, the body's inlined calls, name the function a leave inside one was in.
     pub(in crate::vm) fn ended(&self, exit: super::super::compiled::LaneExit, exits: &super::super::compiled::ExitTable, frames: &[super::super::compiled::InlinedCall], line: u64) {
-        let index = End::of(exit) as usize;
+        let index = Event::ended(exit).end_index();
         self.ends[index].set(self.ends[index].get() + 1);
         // Prefixed by the compile that left there, the first being `c1`.
         let compile = self.compiles.get();
@@ -95,26 +105,6 @@ impl LaneBodyStats {
     }
 }
 
-/// How a lane body's run ended, each with its `LaneBodyStats::ends` counter: completed, left
-/// at its own PC (its entry included), inside an inlined call, into a callee, or terminated.
-#[derive(Clone, Copy)]
-enum End { Completed, LeftAt, LeftInlined, LeftInCallee, Terminated }
-
-impl End {
-    const COUNT: usize = Self::Terminated as usize + 1;
-
-    fn of(exit: super::super::compiled::LaneExit) -> Self {
-        use super::super::compiled::LaneExit;
-        match exit {
-            LaneExit::Returned { .. } => Self::Completed,
-            LaneExit::At(_) | LaneExit::Entry | LaneExit::Stub => Self::LeftAt,
-            LaneExit::Inlined { .. } => Self::LeftInlined,
-            LaneExit::Callee => Self::LeftInCallee,
-            LaneExit::Terminated => Self::Terminated,
-        }
-    }
-}
-
 /// Why a lane body's call or construction helper answered `LANE_CALL_MISSED`, which leaves the
 /// body at the call: one variant per refusal site in `lane_body_call`, `lane_body_construct` and
 /// `lane_body_native_call`, named `site:reason` in the diagnostics report (`miss_report`).
@@ -122,20 +112,21 @@ macro_rules! miss_reasons {
     ($($variant:ident => $name:literal),+ $(,)?) => {
         #[derive(Clone, Copy)]
         pub(in crate::vm) enum Miss { $($variant),+ }
-        const MISS_NAMES: [&str; [$($name),+].len()] = [$($name),+];
+        pub(in crate::vm) const MISS_NAMES: [&str; [$($name),+].len()] = [$($name),+];
     };
 }
 miss_reasons! {
-    CallShadowActive => "call:shadow-active",
     CallNoScriptCalls => "call:no-script-calls",
     CallConstructing => "call:constructing",
     CallWithScope => "call:with-scope",
     CallReturningNotAdmitted => "call:returning-not-admitted",
+    CallForm => "call:form",
     CallReceiver => "call:receiver",
+    CallCallee => "call:callee",
     CallEntryNotActivation => "call:entry-not-activation",
     CallNoActivationRoom => "call:no-activation-room",
     CallReadAnswer => "call:read-answer",
-    ConstructShadowActive => "construct:shadow-active",
+    ConstructForm => "construct:form",
     ConstructNoScriptConstructs => "construct:no-script-constructs",
     ConstructConstructTarget => "construct:construct-target",
     ConstructWithScope => "construct:with-scope",
@@ -163,20 +154,23 @@ miss_reasons! {
     NativeNotNative => "native:not-native",
     NativeNotCompleted => "native:not-completed",
 }
-static MISSES: [std::sync::atomic::AtomicU64; MISS_NAMES.len()] = [const { std::sync::atomic::AtomicU64::new(0) }; MISS_NAMES.len()];
 
-/// Counts a miss for `reason` and answers the helper's miss.
+impl Miss {
+    /// How many reasons there are.
+    pub(in crate::vm) const COUNT: usize = MISS_NAMES.len();
+}
+
+/// Counts a miss for `reason` in the VM's tier events and answers the helper's miss.
 #[cold]
-pub(in crate::vm) fn miss(reason: Miss) -> u64 {
-    MISSES[reason as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+pub(in crate::vm) fn miss<H: super::super::Host>(vm: &super::super::Vm<H>, reason: Miss) -> u64 {
+    vm.programs.tier_events().record_miss(reason);
     decline(MISS_NAMES[reason as usize]);
     super::super::compiled::LANE_CALL_MISSED
 }
 
 /// The report line of the misses, `QUENCH_LANE_MISSES {...}`, most frequent first.
-pub(in crate::vm) fn miss_report() -> String {
-    let mut counts: Vec<_> = MISS_NAMES.iter().zip(&MISSES)
-        .map(|(name, count)| (*name, count.load(std::sync::atomic::Ordering::Relaxed))).filter(|(_, count)| *count != 0).collect();
+pub(in crate::vm) fn miss_report(events: &super::super::tier_events::TierEvents) -> String {
+    let mut counts: Vec<_> = MISS_NAMES.iter().zip(events.miss_counts()).filter(|(_, count)| *count != 0).collect();
     counts.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
     let fields = counts.iter().map(|(name, count)| format!("\"{name}\":{count}")).collect::<Vec<_>>().join(",");
     format!("QUENCH_LANE_MISSES {{{fields}}}")

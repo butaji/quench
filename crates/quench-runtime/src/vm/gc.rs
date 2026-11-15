@@ -414,6 +414,13 @@ impl<H: Host> Vm<H> {
         *self.lowered_tier0.get_mut() = lowered;
     }
 
+    /// Recursion leaves one pooled frame per level it reached; a full collection keeps the few that
+    /// ordinary call depth reuses, and later deeper calls allocate their own.
+    fn trim_frame_pool(&mut self) {
+        self.frame_pool.truncate(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
+        self.frame_pool.shrink_to(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
+    }
+
     pub(super) fn collect_slow(&mut self, program: &ResidualProgram, full: bool) {
         self.collect_inner(program, full, false);
     }
@@ -425,12 +432,11 @@ impl<H: Host> Vm<H> {
     fn collect_inner(&mut self, _program: &ResidualProgram, full: bool, begin_cycle: bool) {
         // Frameless activations' registers are no roots; their frames are.
         self.materialize_deferred_lane();
-        // The active for-in's cursor lives outside the heap until written back.
-        self.for_in_flush_cursor();
+        // The active for-in names words a collection may move or free.
+        self.for_in_forget_active();
         self.clear_call_targets();
         self.forget_outer_environments();
         self.resolved_module_requests.clear();
-        self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
         if full && !begin_cycle {
             self.host.at_collection_boundary(self.memory_policy());
@@ -448,10 +454,7 @@ impl<H: Host> Vm<H> {
         // would keep a dropped subject's text alive however large, as no string holds them.
         self.regexp_subjects.clear();
         if full {
-            // Recursion leaves one pooled frame per level it reached; a full collection keeps the
-            // few that ordinary call depth reuses, and later deeper calls allocate their own.
-            self.frame_pool.truncate(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
-            self.frame_pool.shrink_to(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
+            self.trim_frame_pool();
         }
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
@@ -514,6 +517,7 @@ impl<H: Host> Vm<H> {
         self.programs.extend_roots(if rc { &mut pins } else { &mut roots }, all_roots, self.heap.promotion_age());
         self.heap.extend_folded_roots(&mut roots);
         roots.extend(self.wasm_js.roots());
+        roots.extend(self.native_roots.live().iter().copied());
         roots.extend([
             self.realm.globals,
             self.object_proto,
@@ -807,6 +811,8 @@ impl<H: Host> Vm<H> {
                 .flat_map(|((global, _), template)| [*global, template.anchor]),
         );
         roots.extend(self.with_stack.iter().copied());
+        self.lane_stack.extend_roots(&self.programs, &mut roots);
+        self.lane_roots.iter().for_each(|parked| parked.extend_roots(&self.programs, &mut roots));
         roots.extend(std::iter::once(self.instanceof_has_instance_holder));
         roots.extend(self.active_call_roots.iter().copied());
         roots.extend(self.symbol_registry.values().copied());
@@ -953,7 +959,6 @@ impl<H: Host> Vm<H> {
         // no cleanup allocation can yet reuse a dead function locator.
         unsafe { self.programs.retire_dead_native_calls(|callee| heap.is_live(callee)); }
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
-        self.programs.clear_wasm_reference_caches();
         // Under reference counts a minor collection frees old closures too.
         self.prune_function_values(full || self.heap.rc_active());
         self.prune_wasm_exported_functions();
@@ -990,6 +995,7 @@ impl<H: Host> Vm<H> {
         self.prune_first_chunks();
         let heap = &self.heap;
         self.lane_stack.forget_dead_callees(|value| heap.is_live(value));
+        self.lane_roots.iter_mut().for_each(|parked| parked.stack.forget_dead_callees(|value| heap.is_live(value)));
         self.holder_hints.retire_dead(|holder| heap.is_live(holder));
         self.realm.jobs.extend(
             finalization_jobs
@@ -1167,7 +1173,7 @@ impl<H: Host> Vm<H> {
         let previous = std::mem::replace(&mut self.native_microtask_running, true);
         let result = (|| {
             self.check_execution_interrupt()?;
-            self.run_job_queue(program, true, |_| true)?;
+            self.run_job_queue(program, |_| true)?;
             Ok(Value::UNDEFINED)
         })();
         self.native_microtask_running = previous;
@@ -1192,13 +1198,11 @@ impl<H: Host> Vm<H> {
     fn run_job_queue(
         &mut self,
         program: &ResidualProgram,
-        chain: bool,
         mut more: impl FnMut(&Self) -> bool,
     ) -> Result<(), JsError> {
         let home = self.realm.globals;
         // An enclosing queue's entry stays in place below this queue's own.
         let outer = std::mem::replace(&mut self.unobserved_jobs_entered, false);
-        let outer_chain = std::mem::replace(&mut self.chain_await_jobs, chain);
         let result = (|| {
             while more(self) && let Some(job) = self.realm.jobs.pop_front() {
                 self.check_execution_interrupt()?;
@@ -1218,7 +1222,6 @@ impl<H: Host> Vm<H> {
         })();
         self.leave_unobserved_jobs();
         self.unobserved_jobs_entered = outer;
-        self.chain_await_jobs = outer_chain;
         self.switch_realm_global(home);
         result
     }
@@ -1279,7 +1282,7 @@ impl<H: Host> Vm<H> {
         promise: Value,
     ) -> Result<(), JsError> {
         loop {
-            self.run_job_queue(program, false, |vm| vm.promise_record(promise)
+            self.run_job_queue(program, |vm| vm.promise_record(promise)
                 .is_some_and(|record| record.state() == PromiseState::Pending))?;
             if self.promise_record(promise).is_none_or(|record| record.state() != PromiseState::Pending)
                 || !self.realm.jobs.is_empty() { return Ok(()); }

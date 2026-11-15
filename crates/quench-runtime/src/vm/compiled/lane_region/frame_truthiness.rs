@@ -18,7 +18,7 @@ pub(super) fn register_truthiness(builder: &mut FunctionBuilder<'_>, registers: 
         }
         Representation::Float64 => {
             let number = { let variable = register_float(builder, registers, usize::from(register)); builder.use_var(variable) };
-            emit_number_truthiness(builder, number)
+            crate::staged::number_machine::number_truthy(&mut super::super::super::object_slots::emit(builder), number)
         }
         Representation::Tagged => {
             let bits = register_tagged(builder, registers, state, register);

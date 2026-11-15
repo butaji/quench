@@ -276,9 +276,10 @@ impl<H: Host> Vm<H> {
     /// Native operands already contain atom IDs. Only an identical prefix of
     /// the initialized VM namespace can be adopted without rewriting the code.
     pub(super) fn prepare_native_script(
-        &self, native: NativeJsProgram<H>,
+        &mut self, native: NativeJsProgram<H>,
     ) -> Result<crate::PreparedScript, JsError> {
         self.validate_native_namespace(&native)?;
+        self.materialize_frozen_constants(&native);
         let mut program = Rc::unwrap_or_clone(native.program);
         program.atoms = crate::bytecode::AtomTable::shared(
             self.atom_sequence.clone(), program.atoms.len(),

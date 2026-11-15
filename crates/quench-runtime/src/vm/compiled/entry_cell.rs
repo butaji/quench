@@ -11,25 +11,24 @@ pub(in crate::vm) const LANE_BODY_NOT_ENTERED: u32 = RETURN_STATUS_BASE - 2;
 /// body is published or it retired) and the body's own recovery space, which it is stored in
 /// once, per function, at a stable address (`LaneView::entry_cell`).
 ///
-/// One 64-byte line, whose offsets are the designed cell's (`staged::call::ENTRY_CELL`): `entry` 0,
-/// `validity` 24, `view` 32, `env` 40, `capture` 48, `counters` 56. `recovery` and `body` sit at 8
-/// and 16 until `recovery` is derived from `body`, when `body` moves to 8 and `facts` takes 16.
-/// Writers: `entry`, `recovery` and `body` by `publish`/`withdraw`; `counters` only on cold paths
-/// (completion evidence); nothing yet reads or writes the other words.
+/// One 64-byte line whose every offset is the designed cell's (`staged::call::ENTRY_CELL`, asserted
+/// below): `entry` 0, `body` 8, `facts` 16, `validity` 24, `recovery` 32, `counters` 40.
+/// Writers: `entry`, `recovery` and `body` by `publish`/`withdraw`; `facts` once per function
+/// (`set_facts`); `counters` only on cold paths (completion evidence).
 #[repr(C, align(64))]
 pub(in crate::vm) struct EntryCell {
     pub(in crate::vm) entry: std::cell::Cell<usize>,
-    /// The address of the published body's `LaneMethod::recovery_space` (`NO_RECOVERY` for the stub).
-    pub(in crate::vm) recovery: std::cell::Cell<usize>,
     /// The address of the published body (`LaneMethod`), which the view keeps until it drops
     /// (`LaneView::pinned`): a leave inside a call through the cell recovers through it.
     pub(in crate::vm) body: std::cell::Cell<usize>,
+    /// The function's registers, room, parameters and entry kind (`CellFacts`), which a native
+    /// call's admission reads.
+    pub(in crate::vm) facts: std::cell::Cell<u64>,
     /// What the body's native callers compare to admit a call (the layout epoch the body was
     /// published under).
     pub(in crate::vm) validity: std::cell::Cell<u64>,
-    pub(in crate::vm) view: std::cell::Cell<usize>,
-    pub(in crate::vm) env: std::cell::Cell<usize>,
-    pub(in crate::vm) capture: std::cell::Cell<usize>,
+    /// The address of the published body's `LaneMethod::recovery_space` (`NO_RECOVERY` for the stub).
+    pub(in crate::vm) recovery: std::cell::Cell<usize>,
     /// Leaves (low half) and completions (high half) of this function's body since it
     /// specialized (`EVIDENCE`): the one home of its run statistics, written only on paths that
     /// already do work (a handler's run end, a leave's materialization), never by a call or a return.
@@ -40,10 +39,10 @@ const _: () = {
     use crate::staged::call::ENTRY_CELL;
     assert!(std::mem::size_of::<EntryCell>() == 64);
     assert!(std::mem::offset_of!(EntryCell, entry) as i32 == ENTRY_CELL.entry_offset);
+    assert!(std::mem::offset_of!(EntryCell, body) as i32 == ENTRY_CELL.body_offset);
+    assert!(std::mem::offset_of!(EntryCell, facts) as i32 == ENTRY_CELL.facts_offset);
     assert!(std::mem::offset_of!(EntryCell, validity) as i32 == ENTRY_CELL.validity_offset);
-    assert!(std::mem::offset_of!(EntryCell, view) as i32 == ENTRY_CELL.view_offset);
-    assert!(std::mem::offset_of!(EntryCell, env) as i32 == ENTRY_CELL.env_offset);
-    assert!(std::mem::offset_of!(EntryCell, capture) as i32 == ENTRY_CELL.capture_offset);
+    assert!(std::mem::offset_of!(EntryCell, recovery) as i32 == ENTRY_CELL.recovery_offset);
     assert!(std::mem::offset_of!(EntryCell, counters) as i32 == ENTRY_CELL.counters_offset);
 };
 
@@ -67,11 +66,19 @@ unsafe extern "C" fn lane_entry_stub(_: *mut CallContext, _: u64, _: u64, _: *co
 /// The recovery space the stub's cell names: no body, nothing to recover.
 static NO_RECOVERY: LaneRecoverySpace = LaneRecoverySpace { values: 0, activations: 0 };
 
+/// One completion in `EntryCell::counters` (its high word): a run of the body that ended by
+/// an exception through a native caller (`Lowering::direct_finish`), which no Rust code sees.
+pub(in crate::vm) const RAISED_RUN: u64 = 1 << u32::BITS;
+
 impl EntryCell {
+    /// The runs of the body that ended by an exception through a native caller, for tests.
+    #[cfg(test)]
+    pub(in crate::vm) fn raised_runs(&self) -> u32 { (self.counters.get() >> u32::BITS) as u32 }
+
     #[inline(always)] pub(in crate::vm) fn stub() -> usize { lane_entry_stub as BodyEntry as usize }
 
     pub(in crate::vm) fn new() -> Self {
-        Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default(), validity: Default::default(), view: Default::default(), env: Default::default(), capture: Default::default(), counters: Default::default() }
+        Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default() }
     }
 
     /// Publishes `method`'s entry and recovery space; it takes the cell back when it retires.
@@ -82,6 +89,9 @@ impl EntryCell {
         self.entry.set(body.entry_address());
         method.on_retire(&self.entry, body.entry_address(), Self::stub());
     }
+
+    /// Records the function's facts, which its native callers admit a call by.
+    pub(in crate::vm) fn set_facts(&self, facts: crate::staged::call::CellFacts) { self.facts.set(facts.word()) }
 
     /// Starts the statistics of a newly specialized body.
     pub(in crate::vm) fn reset_evidence(&self) { self.counters.set(0) }
@@ -114,16 +124,17 @@ impl EntryCell {
     }
 }
 
-/// Bits of a capture word that hold the dense slots' address; the slot count sits above them
-/// (a user-space address fits 48 bits).
-pub(super) const CAPTURE_ADDRESS_BITS: u32 = 48;
-/// The mask of those bits.
-pub(super) const CAPTURE_ADDRESS_MASK: i64 = (1 << CAPTURE_ADDRESS_BITS) - 1;
+pub(super) use quench_bjit::shared_words::CAPTURE_ADDRESS_BITS;
+/// The bit of the address a store tag takes: slots are aligned past it (`CAPTURE_STORES`).
+const CAPTURE_STORES_BIT: u64 = super::super::dispatch_fast::CAPTURE_STORES as u64;
+/// The mask of the address bits.
+pub(super) const CAPTURE_ADDRESS_MASK: i64 = ((1 << CAPTURE_ADDRESS_BITS) - 1) & !(CAPTURE_STORES_BIT as i64);
 
-/// The one word a body's entry takes its captures in: the dense slots' address and count.
-pub(in crate::vm) fn capture_word(values: *const Value, len: usize) -> u64 {
+/// The one word a body's entry takes its captures in: the dense slots' address and count, and
+/// whether they admit every direct store (`dispatch_fast::capture_stores`).
+pub(in crate::vm) fn capture_word(values: *const Value, len: usize, stores: bool) -> u64 {
     debug_assert!(values.addr() >> CAPTURE_ADDRESS_BITS == 0 && len >> (u64::BITS - CAPTURE_ADDRESS_BITS) == 0);
-    values.addr() as u64 | (len as u64) << CAPTURE_ADDRESS_BITS
+    values.addr() as u64 | u64::from(stores) * CAPTURE_STORES_BIT | (len as u64) << CAPTURE_ADDRESS_BITS
 }
 
 /// Grows the scratch window to `width` registers for a body a run may enter: an inlined leave

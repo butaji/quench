@@ -1,5 +1,5 @@
 opcodes 268
-opcodes_with_staged_operation 11
+opcodes_with_staged_operation 46
 hand_semantics_lines 0
 tier_opcode_arms 162
 frame_structs 10

@@ -46,17 +46,12 @@ fn caller_runs_general<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCa
 /// the callee in the site's history (`LaneView::respecialize`).
 pub(super) fn lane_note_late_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, target: &ScriptCallTarget, argc: u16) {
     let vm = unsafe { vm(cx) };
-    let (caller, function) = match Vm::<H>::innermost_shadow_frame() {
-        Some(frame) => (unsafe { &*(*frame.callee()).target.view }, unsafe { (*frame.callee()).target.function }),
-        None => {
-            let function = match vm.lane_stack.activations.last() {
-                Some(activation) => activation.function,
-                None => { let Some(frame) = vm.frames.get(unsafe { (*cx).frame }) else { return }; frame.function }
-            };
-            let Some(view) = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view) else { return };
-            (view, function)
-        }
+    // The innermost frame's function: a native callee's frame is linked, so it is the activation's.
+    let function = match vm.lane_stack.activations.last() {
+        Some(activation) => activation.function,
+        None => { let Some(frame) = vm.frames.get(unsafe { (*cx).frame() }) else { return }; frame.function }
     };
+    let Some(caller) = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view) else { return };
     if caller.owns_record(ip) && caller.note_late_call()
         && lane_direct_callee(vm, caller, function, 0, argc, *target).is_some() { caller.respecialize(); }
 }

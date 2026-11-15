@@ -396,6 +396,47 @@ impl<H: Host> Vm<H> {
         JsError::thrown(object, text)
     }
 
+    /// `WebAssembly.Module.exports(module)`: a descriptor array of the module's exports.
+    fn wasm_module_export_descriptors(&mut self, p: &ResidualProgram, module: Value) -> Result<Value, JsError> {
+        let module = self.wasm_module_of(p, module)?;
+        let descriptors = module
+            .exports()
+            .iter()
+            .map(|export| (export.name.clone(), export.kind))
+            .collect::<Vec<_>>();
+        let mut values = Vec::with_capacity(descriptors.len());
+        for (name, kind) in descriptors {
+            values.push(
+                self.wasm_descriptor(p, &[("name", &name), ("kind", crate::WasmExternKind::from(kind).name())])?,
+            );
+        }
+        Ok(self.new_array(values))
+    }
+
+    /// `WebAssembly.Module.customSections(module, sectionName)`: a buffer per custom section of that name.
+    fn wasm_module_custom_sections(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
+        let arg = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);
+        let module = self.wasm_module_of(p, arg(0))?;
+        // `sectionName` is a required DOMString.
+        let Some(&name) = args.get(1) else {
+            return Err(self.type_error(
+                p,
+                "WebAssembly.Module.customSections(): Argument 1 must be a string".into(),
+            ));
+        };
+        let name = self.to_string(p, name)?;
+        let sections = module
+            .custom_sections_named(&name)
+            .map(<[u8]>::to_vec)
+            .collect::<Vec<_>>();
+        let mut values = Vec::with_capacity(sections.len());
+        for bytes in sections {
+            let length = bytes.len();
+            values.push(self.new_array_buffer_cell(bytes.into(), false, length, false, false));
+        }
+        Ok(self.new_array(values))
+    }
+
     pub(super) fn call_wasm_js_native(
         &mut self,
         p: &ResidualProgram,
@@ -420,42 +461,8 @@ impl<H: Host> Vm<H> {
                 let result = self.wasm_instantiate_source(p, arg(0), arg(1));
                 self.settled_promise(p, result)
             }
-            Native::WasmModuleExports => {
-                let module = self.wasm_module_of(p, arg(0))?;
-                let descriptors = module
-                    .exports()
-                    .iter()
-                    .map(|export| (export.name.clone(), export.kind))
-                    .collect::<Vec<_>>();
-                let mut values = Vec::with_capacity(descriptors.len());
-                for (name, kind) in descriptors {
-                    values.push(
-                        self.wasm_descriptor(p, &[("name", &name), ("kind", crate::WasmExternKind::from(kind).name())])?,
-                    );
-                }
-                Ok(self.new_array(values))
-            }
-            Native::WasmModuleCustomSections => {
-                let module = self.wasm_module_of(p, arg(0))?;
-                // `sectionName` is a required DOMString.
-                if args.len() < 2 {
-                    return Err(self.type_error(
-                        p,
-                        "WebAssembly.Module.customSections(): Argument 1 must be a string".into(),
-                    ));
-                }
-                let name = self.to_string(p, arg(1))?;
-                let sections = module
-                    .custom_sections_named(&name)
-                    .map(<[u8]>::to_vec)
-                    .collect::<Vec<_>>();
-                let mut values = Vec::with_capacity(sections.len());
-                for bytes in sections {
-                    let length = bytes.len();
-                    values.push(self.new_array_buffer_cell(bytes.into(), false, length, false, false));
-                }
-                Ok(self.new_array(values))
-            }
+            Native::WasmModuleExports => self.wasm_module_export_descriptors(p, arg(0)),
+            Native::WasmModuleCustomSections => self.wasm_module_custom_sections(p, args),
             Native::WasmModuleImports => {
                 let module = self.wasm_module_of(p, arg(0))?;
                 let descriptors = module
@@ -524,10 +531,10 @@ impl<H: Host> Vm<H> {
                     Some(value) => self.js_to_wasm(p, *value, ty, declarations.as_ref())?,
                     None => self.wasm_table_default(ty),
                 };
+                let target = self.wasm_element_target(value);
                 if let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(this) {
-                    elements[index] = value;
+                    elements.fill(index..index + 1, value, target);
                 }
-                self.invalidate_wasm_reference_caches();
                 Ok(Value::UNDEFINED)
             }
             Native::WasmTableGrow => {
@@ -539,6 +546,7 @@ impl<H: Host> Vm<H> {
                     Some(value) => self.js_to_wasm(p, *value, ty, declarations.as_ref())?,
                     None => self.wasm_table_default(ty),
                 };
+                let target = self.wasm_element_target(value);
                 let Some(Cell::WasmTable { elements, .. }) = self.heap.get_mut(this) else {
                     unreachable!("checked table receiver");
                 };
@@ -555,17 +563,17 @@ impl<H: Host> Vm<H> {
                     return Err(self
                         .range_error(p, "WebAssembly.Table.grow(): failed to grow table".into()));
                 };
-                elements.resize(grown, value);
-                self.invalidate_wasm_reference_caches();
+                elements.resize(grown, value, target);
                 Ok(Value::number(length as f64))
             }
             Native::WasmGlobalValueGetter | Native::WasmGlobalValueOf => {
-                let (value, ty, _) = self.wasm_global_receiver(p, this)?;
+                let (ty, _) = self.wasm_global_receiver(p, this)?;
+                let value = self.wasm_global_load(this)?;
                 let declarations = self.wasm_global_declarations(this);
                 self.wasm_to_js(p, value, ty, declarations.as_ref())
             }
             Native::WasmGlobalValueSetter => {
-                let (_, ty, mutable) = self.wasm_global_receiver(p, this)?;
+                let (ty, mutable) = self.wasm_global_receiver(p, this)?;
                 if !mutable {
                     return Err(self.type_error(
                         p,
@@ -574,8 +582,9 @@ impl<H: Host> Vm<H> {
                 }
                 let declarations = self.wasm_global_declarations(this);
                 let value = self.js_to_wasm(p, arg(0), ty, declarations.as_ref())?;
-                if let Some(Cell::WasmGlobal { value: slot, .. }) = self.heap.get_mut(this) {
-                    *slot = value;
+                let word = self.wasm_global_bits(ty, value);
+                if let Some(Cell::WasmGlobal { bits, .. }) = self.heap.get_mut(this) {
+                    *bits = word;
                 }
                 Ok(Value::UNDEFINED)
             }
@@ -1540,12 +1549,7 @@ impl<H: Host> Vm<H> {
         }
 
         let (view_buffer, view_offset) = match self.heap.get(view) {
-            Some(Cell::TypedArray {
-                buffer,
-                kind: crate::heap::TypedArrayKind::Uint8,
-                object,
-                ..
-            }) => (*buffer, object.offset),
+            Some(Cell::TypedArray { buffer, object, .. }) if object.native.kind() == crate::heap::TypedArrayKind::Uint8 => (*buffer, object.offset),
             _ => return false,
         };
         if view_offset != 0 {
@@ -1604,10 +1608,10 @@ impl<H: Host> Vm<H> {
         view: Value,
         copy_within_atom: crate::bytecode::Atom,
     ) -> bool {
-        let Some(Cell::TypedArray { buffer, kind, .. }) = self.heap.get(view) else {
+        let Some(Cell::TypedArray { buffer, object, .. }) = self.heap.get(view) else {
             return false;
         };
-        if *kind != crate::heap::TypedArrayKind::Uint8
+        if object.native.kind() != crate::heap::TypedArrayKind::Uint8
             || self.typed_array_out_of_bounds(view)
             || self.array_buffer_detached(*buffer)
             || matches!(
@@ -1977,11 +1981,9 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         this: Value,
-    ) -> Result<(Value, WasmType, bool), JsError> {
+    ) -> Result<(WasmType, bool), JsError> {
         match self.heap.get(this) {
-            Some(Cell::WasmGlobal {
-                value, ty, mutable, ..
-            }) => Ok((*value, *ty, *mutable)),
+            Some(Cell::WasmGlobal { ty, mutable, .. }) => Ok((*ty, *mutable)),
             _ => Err(self.type_error(p, "receiver is not a WebAssembly.Global".into())),
         }
     }

@@ -15,22 +15,22 @@ impl Lowering<'_, '_> {
     pub(super) fn absent_receiver(&mut self) -> LaneReceiver {
         let receiver = LaneReceiver { object: self.builder.declare_var(types::I64), shape: self.builder.declare_var(types::I32),
             inline: self.builder.declare_var(types::I8), properties: self.builder.declare_var(types::I64) };
-        let (zero, none, outside) = (self.word_const(0), self.int_const(types::I32, i64::from(super::super::NO_FIELD_RECEIVER)), self.int_const(types::I8, 0));
+        let (zero, none, outside) = (self.raw_const(Lane::I64, 0), self.raw_const(Lane::I32, i64::from(super::super::NO_FIELD_RECEIVER)), self.raw_const(Lane::I8, 0));
         for (variable, value) in [(receiver.object, zero), (receiver.properties, zero), (receiver.shape, none), (receiver.inline, outside)] {
             self.builder.def_var(variable, value);
         }
         receiver
     }
 
-    /// Folds the read of `first` through `base` (its register and whether it is a proved
-    /// receiver) into `destination` when the closed program gives the field one value: the
-    /// field is read once here as data and required to hold it, so a changed prototype
-    /// fails the guard and leaves to the shared body. False, emitting nothing, otherwise.
-    pub(super) fn fold_frozen_field(&mut self, state: &mut State, (register, receiver): (Option<Register>, bool),
+    /// Folds the read of `first` through `read` (its base and lookup) into `destination` when
+    /// the closed program gives the field one value: the field is read once here as data and
+    /// required to hold it, so a changed prototype fails the guard and leaves to the shared
+    /// body. False, emitting nothing, otherwise.
+    pub(super) fn fold_frozen_field(&mut self, state: &mut State, read: (crate::bytecode::FieldBase, FieldLookup),
         first: (Atom, u16), destination: Register, exit: ir::Block) -> bool {
         if !self.division().folds(crate::staged::division::FROZEN_FIELD) { return false; }
         let Some(expected) = self.vm.frozen_fields.and_then(|fields| fields.get(&first.0)).copied() else { return false };
-        let actual = self.base_field_read(state, register, receiver, first, exit);
+        let Some(actual) = self.field_value(state, read, &[first], HeldRead::default(), exit) else { return false };
         let same = self.is_identity(actual, expected);
         emit_js_guard(&mut self.builder, same, exit);
         let value = self.identity_constant(expected);
@@ -71,7 +71,7 @@ impl Lowering<'_, '_> {
             self.number(state, destination, exit);
         }
         if ty == Type::INT32 {
-            let int = self.ins().ireduce(types::I32, value);
+            let int = self.raw_unary(Unary::Narrow(Lane::I32), value);
             self.define_int_view(state, destination, value, int);
         }
     }

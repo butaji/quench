@@ -1,6 +1,8 @@
 use super::*;
 use crate::Engine;
 use crate::test_host::TestHost;
+use crate::vm::test_oracle::{assert_tier_agrees, Expect, Tier};
+use crate::vm::tier_events::Event;
 
 /// Cache sites of a program wide enough to outgrow the field cache table's first mapping.
 const WIDE_PROGRAM_SITES: usize = 20_000;
@@ -50,19 +52,8 @@ const HOT_CALLEE: &str = r#"(function () {
 /// the entries. What an entry writes itself is its window and the stacks' room.
 #[test]
 fn entries_of_one_lane_run_rewrite_no_word_of_the_run() {
-    crate::vm::compiled::tier_policy::force_admission();
-    let program = Engine::specialize(HOT_CALLEE, "hot-callee.js").unwrap();
-    super::compiled::LANE_ENTRIES.with(|counts| counts.set((0, 0)));
-    super::compiled::LANE_RUN_REWRITES.with(|count| count.set(0));
-    let mut vm = Vm::new(TestHost::default());
-    vm.programs.enable_js_lane_methods();
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.execute(&program).unwrap();
-    let (entries, binds) = super::compiled::LANE_ENTRIES.with(std::cell::Cell::get);
-    let rewrites = super::compiled::LANE_RUN_REWRITES.with(std::cell::Cell::get);
-    if super::compiled::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
-        assert!(entries > 1000, "the hot callee runs as a body, entered {entries} times");
-        assert!(rewrites <= binds, "{rewrites} entries rewrote words of their run, {binds} bound one");
-        assert!(binds * 200 < entries, "{binds} runs bound for {entries} entries");
-    }
+    let events = assert_tier_agrees(HOT_CALLEE, Tier::Full, Expect::ENGAGED).events;
+    let (entries, binds) = (events.count(Event::Entered), events.count(Event::RunBound));
+    assert!(entries > 1000, "the hot callee runs as a body, entered {entries} times");
+    assert!(binds * 200 < entries, "{binds} runs bound for {entries} entries");
 }

@@ -28,13 +28,14 @@ use super::compiled::{
     native_js_operation_signature, native_js_start_pc,
 };
 use super::jit_backend::relocatable_code::{apply_relocation, patchable, ARM64_BRANCH_IMMEDIATE_BITS, ARM64_INSTRUCTION_BYTES};
+use crate::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, MachineTail, Relation};
 use super::specialize::{CallThreaded, CallThreadedExtension, Continuation, InstructionSite, Specializer};
 use crate::Host;
 use crate::bytecode::ResidualProgram;
 use cranelift_codegen::{
     RelocTarget,
     binemit::Reloc,
-    ir::{self, InstBuilder, MemFlagsData, condcodes::IntCC, types},
+    ir::{self, MemFlagsData, types},
     isa::{CallConv, TargetIsa},
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -248,8 +249,8 @@ fn patch(code: &mut [u8], address: u64, patch: &Patch, value: u64) -> Result<(),
 
 // -- Stencil shapes ---------------------------------------------------------
 
-fn hole_value(builder: &mut FunctionBuilder<'_>, isa: &dyn TargetIsa, hole: Hole) -> ir::Value {
-    super::jit_backend::symbol_address(builder, isa.pointer_type(), HOLE_NAMESPACE, hole as u32)
+fn hole_value(builder: &mut FunctionBuilder<'_>, hole: Hole) -> ir::Value {
+    super::jit_backend::symbol_address(builder, HOLE_NAMESPACE, hole as u32)
 }
 
 fn continuation(builder: &mut FunctionBuilder<'_>, isa: &dyn TargetIsa, hole: Hole, with_pc: bool) -> ir::FuncRef {
@@ -305,86 +306,90 @@ fn entry_stencil(isa: &dyn TargetIsa) -> ir::Function {
         let (context, result) = (parameters[0], parameters[4]);
         let start = native_js_start_pc(builder, context);
         let dispatch = continuation(builder, isa, Hole::Dispatch, true);
-        let call = builder.ins().call(dispatch, &[context, result, start]);
-        let status = builder.inst_results(call)[0];
-        builder.ins().return_(&[status]);
+        let status = builder.call_function(dispatch, &[context, result, start])[0];
+        builder.leave(&[status]);
     })
 }
 
 fn dispatch_stencil(isa: &dyn TargetIsa) -> ir::Function {
     stencil_function(isa, continuation_signature(isa, true), |builder, parameters| {
         let [context, result, pc] = parameters else { unreachable!("dispatch signature") };
-        let count = hole_value(builder, isa, Hole::Count);
-        let selected = builder.create_block();
-        let invalid = builder.create_block();
+        let count = hole_value(builder, Hole::Count);
+        let selected = builder.new_block();
+        let invalid = builder.new_block();
         builder.set_cold_block(invalid);
         // Compare the full PC: a high word must not alias a valid instruction.
-        let in_range = builder.ins().icmp(IntCC::UnsignedLessThan, *pc, count);
-        builder.ins().brif(in_range, selected, &[], invalid, &[]);
+        let in_range = builder.raw_compare(Relation::UnsignedLess, *pc, count);
+        builder.branch_if(in_range, (selected, &[]), (invalid, &[]));
 
-        builder.switch_to_block(selected);
-        let offset = builder.ins().imul_imm_u(*pc, i64::from(isa.pointer_bytes()));
-        let table = hole_value(builder, isa, Hole::Table);
-        let slot = builder.ins().iadd(table, offset);
-        let target = builder.ins().load(isa.pointer_type(), MemFlagsData::trusted(), slot, 0);
+        builder.enter(selected);
+        let offset = builder.raw_binary_imm(Binary::Mul, *pc, i64::from(isa.pointer_bytes()));
+        let table = hole_value(builder, Hole::Table);
+        let slot = builder.raw_binary(Binary::Add, table, offset);
+        let target = builder.raw_load(Lane::I64, MemFlagsData::trusted(), slot, 0);
         let signature = builder.import_signature(continuation_signature(isa, false));
-        builder.ins().return_call_indirect(signature, target, &[*context, *result]);
+        builder.tail_call_indirect(signature, target, &[*context, *result]);
 
-        builder.switch_to_block(invalid);
-        builder.ins().store(MemFlagsData::trusted(), *pc, *result, 0);
-        let status = builder.ins().iconst(types::I32, i64::from(NATIVE_JS_INVALID_PC));
-        builder.ins().return_(&[status]);
+        builder.enter(invalid);
+        builder.raw_store(Lane::I64, MemFlagsData::trusted(), (*pc, false), *result, 0);
+        let status = builder.raw_const(Lane::I32, i64::from(NATIVE_JS_INVALID_PC));
+        builder.leave(&[status]);
     })
 }
 
 fn jump_stencil(isa: &dyn TargetIsa) -> ir::Function {
     stencil_function(isa, continuation_signature(isa, false), |builder, parameters| {
         let following = continuation(builder, isa, Hole::Next, false);
-        builder.ins().return_call(following, parameters);
+        builder.tail_call(following, parameters);
     })
+}
+
+/// Continues in dispatch at the PC the operation reported.
+fn dispatch_next(builder: &mut FunctionBuilder<'_>, isa: &dyn TargetIsa, (context, result): (ir::Value, ir::Value), next: ir::Value) {
+    let dispatch = continuation(builder, isa, Hole::Dispatch, true);
+    builder.tail_call(dispatch, &[context, result, next]);
+}
+
+/// Continues at the following stencil where the operation reported the fallthrough PC, else in dispatch.
+fn fall_through_or_dispatch(builder: &mut FunctionBuilder<'_>, isa: &dyn TargetIsa, state: (ir::Value, ir::Value), next: ir::Value) {
+    let dispatched = builder.new_block();
+    let fallthrough = builder.new_block();
+    let expected = hole_value(builder, Hole::NextPc);
+    let falls = builder.raw_compare(Relation::Equal, next, expected);
+    builder.branch_if(falls, (fallthrough, &[]), (dispatched, &[]));
+    builder.enter(dispatched);
+    dispatch_next(builder, isa, state, next);
+    builder.enter(fallthrough);
+    let following = continuation(builder, isa, Hole::Next, false);
+    builder.tail_call(following, &[state.0, state.1]);
 }
 
 fn step_stencil(isa: &dyn TargetIsa, shape: StepShape) -> ir::Function {
     stencil_function(isa, continuation_signature(isa, false), |builder, parameters| {
         let [context, result] = parameters else { unreachable!("step signature") };
-        let operation = hole_value(builder, isa, Hole::Operation);
-        let pc = hole_value(builder, isa, Hole::Pc);
-        let operands = hole_value(builder, isa, Hole::Operands);
+        let operation = hole_value(builder, Hole::Operation);
+        let pc = hole_value(builder, Hole::Pc);
+        let operands = hole_value(builder, Hole::Operands);
         let signature = builder.import_signature(native_js_operation_signature(isa));
-        let call = builder.ins().call_indirect(signature, operation, &[*context, pc, operands, *result]);
-        let status = builder.inst_results(call)[0];
+        let status = builder.call_signature(signature, operation, &[*context, pc, operands, *result])[0];
 
-        // Blocks enter the layout in the order they are first switched to.
+        // Blocks enter the layout in the order they are first entered.
         // The fallthrough continuation comes last, so its tail jump is the
         // stencil's final instruction and can be elided.
-        let stopped = builder.create_block();
-        let continued = builder.create_block();
-        let continued_test = builder.ins().icmp_imm_u(IntCC::Equal, status, 0);
-        builder.ins().brif(continued_test, continued, &[], stopped, &[]);
+        let stopped = builder.new_block();
+        let continued = builder.new_block();
+        let continued_test = builder.raw_compare_imm(Relation::Equal, status, 0);
+        builder.branch_if(continued_test, (continued, &[]), (stopped, &[]));
 
-        builder.switch_to_block(stopped);
-        let stop = builder.ins().iconst(types::I32, i64::from(NATIVE_JS_STOPPED));
-        builder.ins().return_(&[stop]);
+        builder.enter(stopped);
+        let stop = builder.raw_const(Lane::I32, i64::from(NATIVE_JS_STOPPED));
+        builder.leave(&[stop]);
 
-        builder.switch_to_block(continued);
-        let next = builder.ins().load(types::I64, MemFlagsData::trusted(), *result, 0);
-        let dispatch = continuation(builder, isa, Hole::Dispatch, true);
+        builder.enter(continued);
+        let next = builder.raw_load(Lane::I64, MemFlagsData::trusted(), *result, 0);
         match shape {
-            StepShape::Branch => {
-                builder.ins().return_call(dispatch, &[*context, *result, next]);
-            }
-            StepShape::Fallthrough => {
-                let dispatched = builder.create_block();
-                let fallthrough = builder.create_block();
-                let expected = hole_value(builder, isa, Hole::NextPc);
-                let falls = builder.ins().icmp(IntCC::Equal, next, expected);
-                builder.ins().brif(falls, fallthrough, &[], dispatched, &[]);
-                builder.switch_to_block(dispatched);
-                builder.ins().return_call(dispatch, &[*context, *result, next]);
-                builder.switch_to_block(fallthrough);
-                let following = continuation(builder, isa, Hole::Next, false);
-                builder.ins().return_call(following, &[*context, *result]);
-            }
+            StepShape::Branch => dispatch_next(builder, isa, (*context, *result), next),
+            StepShape::Fallthrough => fall_through_or_dispatch(builder, isa, (*context, *result), next),
         }
     })
 }

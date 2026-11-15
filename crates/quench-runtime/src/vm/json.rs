@@ -8,8 +8,10 @@ use std::io::Write as _;
 use std::ops::Range;
 
 mod heap_builder;
+mod error_message;
 mod plain_write;
 pub(crate) use plain_write::JsonPlainCache;
+use error_message::json_syntax_message;
 use heap_builder::{short_run_ends, JsonBuildError, JsonHeapBuilder};
 pub(super) use heap_builder::JsonParseCache;
 
@@ -403,74 +405,7 @@ impl JsonSyntax {
 /// (`MessageTemplate::kInvalidRawJsonValue`).
 const JSON_INVALID_RAW_TEXT: &str = "Invalid value for JSON.rawJSON";
 
-/// Units V8 quotes on each side of an unexpected token (`JsonParser::kMaxContextCharacters`).
-const JSON_ERROR_CONTEXT_UNITS: usize = 10;
-/// Sources shorter than this are quoted whole (`kMinOriginalSourceLengthForContext`).
-const JSON_ERROR_CONTEXT_MIN_SOURCE: usize = 2 * JSON_ERROR_CONTEXT_UNITS + 1;
-/// Sources V8 names whole instead of quoting a token of (`JsonParser::IsSpecialString`):
-/// what `undefined`, `NaN`, `Infinity` and a plain object convert to.
-const JSON_ERROR_SPECIAL_SOURCES: [&str; 4] = ["[object Object]", "undefined", "Infinity", "NaN"];
-/// The last unit an escape may name and be a bad escape rather than an unexpected token
-/// (`unibrow::Latin1::kMaxChar`).
-const LATIN1_MAX: u16 = 0xFF;
 use crate::units::{CARRIAGE_RETURN, LINE_FEED};
-
-/// The message V8 gives `syntax` at `position` of `source`, its UTF-16 units.
-fn json_syntax_message(source: &[u16], syntax: JsonSyntax, position: usize) -> String {
-    let unexpected = syntax == JsonSyntax::Unexpected
-        || syntax == JsonSyntax::BadEscape && source.get(position).is_some_and(|&unit| unit > LATIN1_MAX);
-    let message = if unexpected {
-        match source.get(position) {
-            None => return "Unexpected end of JSON input".into(),
-            Some(&JSON_QUOTE) => "Unexpected string in JSON",
-            Some(&(JSON_MINUS | JSON_DIGIT_START..=JSON_DIGIT_END)) => "Unexpected number in JSON",
-            Some(&unit) => return json_unexpected_token_message(source, unit, position),
-        }
-    } else {
-        syntax.positioned_message()
-    };
-    let (line, column) = json_line_column(&source[..position]);
-    format!("{message} at position {position} (line {line} column {column})")
-}
-
-/// `Unexpected token` of `unit` at `position`, quoting the source around it
-/// (`JsonParser::GetErrorMessageWithEllipses`).
-fn json_unexpected_token_message(source: &[u16], unit: u16, position: usize) -> String {
-    let whole = String::from_utf16_lossy(source);
-    if JSON_ERROR_SPECIAL_SOURCES.contains(&whole.as_str()) {
-        return format!("\"{whole}\" is not valid JSON");
-    }
-    let token = String::from_utf16_lossy(&[unit]);
-    if source.len() < JSON_ERROR_CONTEXT_MIN_SOURCE {
-        return format!("Unexpected token '{token}', \"{whole}\" is not valid JSON");
-    }
-    let before = position >= JSON_ERROR_CONTEXT_UNITS;
-    let after = !before || position + JSON_ERROR_CONTEXT_UNITS < source.len();
-    let start = if before { position - JSON_ERROR_CONTEXT_UNITS } else { 0 };
-    let end = if after { position + JSON_ERROR_CONTEXT_UNITS } else { source.len() };
-    let context = String::from_utf16_lossy(&source[start..end]);
-    let (open, close) = (if before { "..." } else { "" }, if after { "..." } else { "" });
-    format!("Unexpected token '{token}', {open}\"{context}\"{close} is not valid JSON")
-}
-
-/// The one-based line and column after `prefix`: JSON's line terminators are CR and LF, and
-/// CR LF is one (`JsonParser::CalculateFileLocation`).
-fn json_line_column(prefix: &[u16]) -> (usize, usize) {
-    let mut line = 1;
-    let mut line_start = 0;
-    let mut index = 0;
-    while index < prefix.len() {
-        if prefix[index] == CARRIAGE_RETURN && index + 1 < prefix.len() && prefix[index + 1] == LINE_FEED {
-            index += 1;
-        }
-        if prefix[index] == CARRIAGE_RETURN || prefix[index] == LINE_FEED {
-            line += 1;
-            line_start = index + 1;
-        }
-        index += 1;
-    }
-    (line, 1 + prefix.len() - line_start)
-}
 
 /// Number literals at most this long parse from a stack buffer.
 const JSON_INLINE_NUMBER_LENGTH: usize = 64;
@@ -1829,24 +1764,8 @@ impl<H: Host> Vm<H> {
         value: Value,
         state: &mut JsonSerialization,
     ) -> Result<bool, JsError> {
-        if value.is_undefined() || value.is_deleted() || self.is_function(value) {
-            return Ok(false);
-        }
-        if value.is_null() {
-            state.output.append_bytes(b"null");
-            return Ok(true);
-        }
-        if let Some(value) = value.as_bool() {
-            state.output.append_bytes(if value { b"true" } else { b"false" });
-            return Ok(true);
-        }
-        if let Some(value) = value.as_number() {
-            if value.is_finite() {
-                crate::number_to_string::write(value, &mut state.output);
-            } else {
-                state.output.append_bytes(b"null");
-            }
-            return Ok(true);
+        if let Some(serialized) = self.json_serialize_primitive(value, &mut state.output) {
+            return Ok(serialized);
         }
         let unboxed = self.json_unbox(p, value)?;
         if unboxed != value {
@@ -1922,6 +1841,7 @@ impl<H: Host> Vm<H> {
             | Some(Cell::PromiseResolvingState { .. })
             | Some(Cell::WasmElements(_))
             | Some(Cell::WasmBits64(_))
+            | Some(Cell::WasmInstance(_))
             | Some(Cell::WasmGc { .. })
             | Some(Cell::WasmExtern(_))
             | Some(Cell::AccessorPair { .. })
@@ -1931,6 +1851,31 @@ impl<H: Host> Vm<H> {
             | Some(Cell::BindingReference { .. })
             | Some(Cell::WasmHostFunction { .. }) => Ok(false),
         }
+    }
+
+    /// Whether `value` serializes, where it is undefined, a function, null, a boolean or a number,
+    /// whose text is appended to `output`; `None` for any other value.
+    fn json_serialize_primitive(&self, value: Value, output: &mut JsonText) -> Option<bool> {
+        if value.is_undefined() || value.is_deleted() || self.is_function(value) {
+            return Some(false);
+        }
+        if value.is_null() {
+            output.extend_from_slice(b"null");
+            return Some(true);
+        }
+        if let Some(value) = value.as_bool() {
+            output.extend_from_slice(if value { b"true" } else { b"false" });
+            return Some(true);
+        }
+        if let Some(value) = value.as_number() {
+            if value.is_finite() {
+                crate::number_to_string::write(value, output);
+            } else {
+                output.extend_from_slice(b"null");
+            }
+            return Some(true);
+        }
+        None
     }
 
     fn json_unbox(&mut self, p: &ResidualProgram, value: Value) -> Result<Value, JsError> {

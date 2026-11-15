@@ -3,7 +3,9 @@
 use super::{V128_BYTES, WasmType, WasmValue};
 use crate::bytecode::{Op, Register};
 
+mod bits;
 mod integer;
+pub(crate) use bits::{bits_of, value_of};
 
 const SELECTOR_LANE_BITS: u32 = u8::BITS;
 const SELECTOR_LANE_MASK: u32 = u8::MAX as u32;
@@ -27,13 +29,13 @@ fn scalar(value: WasmValue) -> u64 {
     }
 }
 
-#[inline(always)] fn lane_mask(width: u32) -> u128 {
+#[inline(always)] pub(crate) fn lane_mask(width: u32) -> u128 {
     u128::MAX >> (u128::BITS - width)
 }
-#[inline(always)] fn lane(bits: u128, width: u32, index: u8) -> u64 {
+#[inline(always)] pub(crate) fn lane(bits: u128, width: u32, index: u8) -> u64 {
     ((bits >> (width * u32::from(index))) & lane_mask(width)) as u64
 }
-#[inline(always)] fn replace(bits: u128, width: u32, index: u8, value: u64) -> u128 {
+#[inline(always)] pub(crate) fn replace(bits: u128, width: u32, index: u8, value: u64) -> u128 {
     let shift = width * u32::from(index);
     let mask = lane_mask(width);
     (bits & !(mask << shift)) | ((u128::from(value) & mask) << shift)
@@ -178,21 +180,6 @@ impl SimdKernel {
     pub(crate) fn result_type(&self, lane: u8) -> WasmType {
         self.apply_bits_typed(0, 0, lane).ty()
     }
-
-    /// The operator applied to operands given as bits, its result as bits: a vector whole,
-    /// a scalar in the low bits (`ScalarBits`), as compiled code holds them.
-    #[inline(always)]
-    pub(crate) fn apply_bits(&self, left: u128, right: u128, lane: u8) -> u128 {
-        (self.bits)(left, right, lane)
-    }
-
-    fn apply_bits_typed(&self, left: u128, right: u128, lane: u8) -> WasmValue {
-        let value = |ty, bits: u128| match ty {
-            WasmType::V128 => WasmValue::V128(bits),
-            ty => WasmValue::from_bits(ty, bits as u64),
-        };
-        (self.apply)(value(self.left, left), self.right.map(|ty| value(ty, right)), lane)
-    }
 }
 
 /// An operand of `ty` given as bits, as `SimdKernel::bits` reads it.
@@ -223,7 +210,7 @@ const fn lane_count(widths: &[u32]) -> u32 {
 
 macro_rules! simd_operators {
     ($($name:ident [$($lane:ident: $width:expr)?]: $left:ident, $right:expr => |$a:ident, $b:ident, $l:ident| $body:expr;)* ) => {
-        #[derive(Clone, Copy, Debug)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u32)]
         pub(crate) enum SimdOperator { $($name,)* }
         impl SimdOperator {
@@ -246,7 +233,7 @@ macro_rules! simd_operators {
                 let (_, lane) = SimdKernel::of(selector)?;
                 Some((Self::ALL[(selector >> SELECTOR_LANE_BITS) as usize], lane))
             }
-            pub(super) fn selector(self, lane: u8) -> u32 { ((self as u32) << SELECTOR_LANE_BITS) | u32::from(lane) }
+            pub(crate) fn selector(self, lane: u8) -> u32 { ((self as u32) << SELECTOR_LANE_BITS) | u32::from(lane) }
             pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, u8)> {
                 match op {
                     $(wasmparser::Operator::$name $({$lane})? => Some((Self::$name, [$(*$lane)?].first().copied().unwrap_or(0))),)*

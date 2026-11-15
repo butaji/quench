@@ -7,7 +7,7 @@ use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
 use std::collections::HashSet;
 
-mod subscribe; mod function_shapes; mod slot_types;
+mod subscribe; mod function_shapes; mod slot_types; mod remembered;
 
 impl Heap {
     /// Return live JavaScript objects whose internal prototype chain contains `prototype`.
@@ -747,6 +747,11 @@ impl Heap {
         self.object_records.native_mark_blocks()
     }
 
+    /// Function mark blocks, which a native store into a function's own properties reads.
+    pub(crate) fn native_function_mark_blocks(&self) -> (*const u8, usize) {
+        self.function_records.native_mark_blocks()
+    }
+
     /// The current base and length of out-of-line ordinary-object property values.
     ///
     /// Native readers may use these only during synchronous no-safepoint execution and must
@@ -849,39 +854,6 @@ impl Heap {
                 visit(Value::heap(index as u32));
             }
         }
-    }
-
-    /// `remember` of `value`'s cell, for a write made through a pointer to its storage.
-    #[inline(always)]
-    pub(crate) fn remember_cell(&mut self, value: Value) {
-        if let Some(HeapReference::LegacySlot(index)) = value.heap_reference() {
-            self.remember(index as usize);
-        }
-    }
-
-    /// The write barrier: an old (marked) cell written to joins the remembered set once.
-    #[inline(always)]
-    pub(super) fn remember(&mut self, index: usize) {
-        if !self.tracks_young_cells()
-            || index >= self.slots.len()
-            || !Heap::marked(&self.marks, index)
-        {
-            return;
-        }
-        let (word, bit) = super::slot_bit(index);
-        // A cell already remembered needs nothing more: the common repeated write.
-        if self.remembered_marks.get(word).is_some_and(|marks| marks & bit != 0) {
-            return;
-        }
-        self.remember_first(word, bit, index);
-    }
-
-    /// `remember` of a cell not yet in the remembered set.
-    #[inline(never)]
-    fn remember_first(&mut self, word: usize, bit: u64, index: usize) {
-        self.remembered_marks.resize(self.marks.len(), 0);
-        self.remembered_marks[word] |= bit;
-        self.remembered.push(index as u32);
     }
 }
 

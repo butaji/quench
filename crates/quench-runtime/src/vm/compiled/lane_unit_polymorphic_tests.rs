@@ -61,6 +61,6 @@ fn a_budget_for_one_callee_inlines_the_heavier_call_site() {
     let planned = with_budget(&program, caller, program.function(caller as usize), 2 * budget, &targets, &body).unwrap();
     assert_eq!(planned.frames.len(), 2);
     // A measured loop that took one trip weighs no more than the site before it: the earlier site wins the tie.
-    let planned = with_trips(&program, caller, program.function(caller as usize), budget, &targets, &|_, _| Some(1), &body).unwrap();
+    let planned = with_trips(&program, caller, program.function(caller as usize), (budget, super::tier_policy::STATIC_ROWS.lane_body.max_inlined_instructions), &targets, &|_, _| Some(1), &body).unwrap();
     assert_eq!(planned.frames.iter().map(|frame| frame.target.function).collect::<Vec<_>>(), [cold]);
 }

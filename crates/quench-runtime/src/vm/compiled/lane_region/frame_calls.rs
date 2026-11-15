@@ -4,22 +4,19 @@
 use super::EmitFrame;
 use super::super::{emit_js_guard, emit_lane_helper_call, Emit, EmitProof, LaneHelper};
 use super::{BindingTime, Fact, Proof, Projection, RegisterFact, Representation, Type};
-use crate::bytecode::Register;
+use crate::bytecode::{Register, RegisterWindow};
+use crate::staged::Allocation;
 use cranelift_codegen::ir;
 use crate::Value;
-use cranelift_codegen::ir::{types, InstBuilder, MemFlagsData, condcodes::IntCC};
+use cranelift_codegen::ir::types;
+use crate::staged::machine::{Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
+use super::super::object_slots::emit;
+use crate::vm::compiled::regions;
 
 /// A fault-polling body records its poll instruction; any other leaves at the miss edge when
 /// the flag is set.
 pub(super) fn safepoint(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, proof: EmitProof) -> Option<()> {
     safepoint_parts(stage.builder, frame.polls, proof)
-}
-
-/// A depth-zero capture of the resolved run: the staged dense read, whose marker or bounds
-/// miss leaves at `miss`.
-pub(super) fn capture(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, depth: u16, slot: u16, miss: ir::Block) -> Option<ir::Value> {
-    let (values, len) = frame.captures.filter(|_| depth == 0)?;
-    crate::staged::environment::dense_capture(stage, values, len, slot, miss)
 }
 
 /// A Number return: the register in the int32 or binary64 view its facts favor, jumped to a
@@ -40,7 +37,7 @@ pub(super) fn number_return(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>,
     };
     let block = stage.builder.create_block();
     stage.builder.append_block_param(block, machine);
-    stage.builder.ins().jump(block, &[value.into()]);
+    stage.goto(block, &[value]);
     frame.number_returns.push(super::super::NumberReturn { block, fact });
     Some(())
 }
@@ -50,14 +47,14 @@ pub(in super::super) fn safepoint_parts(builder: &mut cranelift_frontend::Functi
     polls: &mut smallvec::SmallVec<[cranelift_codegen::ir::Inst; super::super::INLINE_EFFECT_EDGES]>,
     proof: EmitProof) -> Option<()> {
     let EmitProof::Safepoint { interrupt, miss, fault_poll } = proof else { return None };
-    let requested = builder.ins().atomic_load(types::I8, MemFlagsData::trusted(), interrupt);
+    let requested = emit(builder).raw_atomic_load(Lane::I8, regions::dispatch(), interrupt);
     if fault_poll {
         let cranelift_codegen::ir::ValueDef::Result(inst, _) = builder.func.dfg.value_def(requested) else { return None };
         polls.push(inst);
     } else {
         let miss = miss?;
-        let requested = builder.ins().uextend(types::I32, requested);
-        let clear = builder.ins().icmp_imm_u(IntCC::Equal, requested, 0);
+        let requested = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I32), requested);
+        let clear = emit(builder).raw_compare_imm(Relation::Equal, requested, 0);
         emit_js_guard(builder, clear, miss);
     }
     Some(())
@@ -68,12 +65,19 @@ pub(super) fn index_set_helper(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '
     base: cranelift_codegen::ir::Value, key: cranelift_codegen::ir::Value,
     value: cranelift_codegen::ir::Value, proof: EmitProof) -> Option<()> {
     let EmitProof::IndexSetHelper { miss } = proof else { return None };
+    index_set(frame, stage, (base, key, value), miss);
+    Some(())
+}
+
+/// The element store's host helper over the tagged `base`, `key` and `value`: its nonzero answer
+/// means the store landed, else the body leaves at `miss`.
+pub(in super::super) fn index_set(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>,
+    (base, key, value): (ir::Value, ir::Value, ir::Value), miss: ir::Block) {
     let payload = frame.payload;
     let address = frame.helpers.address(&mut stage.builder, LaneHelper::IndexSet);
     let stored = emit_lane_helper_call(stage.builder, payload, address, &[base, key, value]);
-    let hit = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
+    let hit = stage.raw_compare_imm(Relation::NotEqual, stored, 0);
     emit_js_guard(stage.builder, hit, miss);
-    Some(())
 }
 
 /// A literal allocation's DELETED answer (a due collection) leaves at `miss`; otherwise the
@@ -81,36 +85,118 @@ pub(super) fn index_set_helper(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '
 #[inline(always)]
 pub(super) fn finish_allocation(stage: &mut Emit<'_, '_>, frame: &mut EmitFrame<'_>, destination: Register,
     value: ir::Value, miss: ir::Block) {
-    let made = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+    let made = stage.raw_compare_imm(Relation::NotEqual, value, Value::DELETED.to_bits() as i64);
     super::super::emit_js_guard(stage.builder, made, miss);
     <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value,
         RegisterFact::definition(Type::ANY, Representation::Tagged));
 }
 
+/// The address of a stack run holding the tagged words of `registers`, which an allocator
+/// reads as the parts of a literal or a concatenation.
+fn register_words(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, registers: impl ExactSizeIterator<Item = Register>) -> ir::Value {
+    let word = types::I64.bytes();
+    let slot = stage.builder.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,
+        word * (registers.len() as u32).max(1), word.trailing_zeros() as u8));
+    for (index, register) in registers.enumerate() {
+        let value = <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::tagged(frame, stage, register);
+        stage.slot_store(slot, Lane::I64, value, (word as usize * index) as i32);
+    }
+    stage.slot_address(slot, 0)
+}
+
+/// The parts address and count an allocator takes for `window` (`register_words`).
+fn window_arguments(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, window: RegisterWindow) -> [ir::Value; 2] {
+    [register_words(frame, stage, window.base..window.base + window.count), stage.raw_const(Lane::I64, i64::from(window.count))]
+}
+
+/// An allocation row by the lane's own allocator of it (`LaneHelper::NewObject`, `NewArray`, `NewRegExp`, `NewConstArray`,
+/// `NewObjectPair`, `NewObjectLiteral`, `NewClosure`, `NewTemplate`, `NewConcat`): each leaves for a due collection first, and a
+/// DELETED answer leaves at the proof's miss edge.
+pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
+    allocation: Allocation, proof: EmitProof) -> Option<ir::Value> {
+    let (helper, arguments) = match allocation {
+        Allocation::Empty => (LaneHelper::NewObject, vec![]),
+        Allocation::Array { length } =>
+            (LaneHelper::NewArray, vec![stage.raw_const(Lane::I64, i64::from(length)), stage.raw_const(Lane::I64, 0)]),
+        Allocation::ArrayOf { elements } => {
+            let registers = elements.registers();
+            let words = register_words(frame, stage, registers.iter().copied());
+            (LaneHelper::NewArray, vec![stage.raw_const(Lane::I64, registers.len() as i64), words])
+        }
+        Allocation::RegExp { site } => (LaneHelper::NewRegExp, vec![stage.raw_const(Lane::I64, i64::from(site))]),
+        Allocation::ConstArray { constant, count } =>
+            (LaneHelper::NewConstArray, vec![stage.raw_const(Lane::I64, i64::from(constant)), stage.raw_const(Lane::I64, i64::from(count))]),
+        Allocation::ObjectPair { site, first, second } => {
+            let first = <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::tagged(frame, stage, first);
+            let second = <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::tagged(frame, stage, second);
+            (LaneHelper::NewObjectPair, vec![stage.raw_const(Lane::I64, i64::from(site)), first, second])
+        }
+        Allocation::ObjectLiteral { site, window } => {
+            let [parts, count] = window_arguments(frame, stage, window);
+            (LaneHelper::NewObjectLiteral, vec![stage.raw_const(Lane::I64, i64::from(site)), parts, count])
+        }
+        Allocation::Closure { function } => (LaneHelper::NewClosure, vec![stage.raw_const(Lane::I64, i64::from(function))]),
+        Allocation::Template { template } => (LaneHelper::NewTemplate, vec![stage.raw_const(Lane::I64, i64::from(template))]),
+        Allocation::Concat { window } => {
+            (LaneHelper::NewConcat, window_arguments(frame, stage, window).to_vec())
+        }
+    };
+    frame.allocate(stage, helper, destination, &arguments, proof)
+}
+
 /// The VM's field-store hit (`LaneHelper::FieldSet`): its false answer leaves at the miss edge.
-pub(super) fn field_store_miss(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value,
+pub(in super::super) fn field_store_miss(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value,
     atom: u32, site: u16, value: ir::Value, proof: EmitProof) -> Option<()> {
     let EmitProof::FieldStoreMiss { miss } = proof else { return None };
     let payload = frame.payload;
     let atom = atom_word(frame, stage, atom);
-    let site = stage.builder.ins().iconst(types::I64, i64::from(site));
+    let site = stage.raw_const(Lane::I64, i64::from(site));
     let set = frame.helpers.address(&mut stage.builder, LaneHelper::FieldSet);
     let stored = emit_lane_helper_call(stage.builder, payload, set, &[object, atom, site, value]);
-    let ok = stage.builder.ins().icmp_imm_u(IntCC::NotEqual, stored, 0);
+    let ok = stage.raw_compare_imm(Relation::NotEqual, stored, 0);
     emit_js_guard(stage.builder, ok, miss);
     Some(())
 }
 
+/// The word `(atom << 16) | site` the field helpers take.
+fn atom_site_word(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, atom: u32, site: u16) -> ir::Value {
+    if !frame.helpers.links() { return stage.raw_const(Lane::I64, (u64::from(atom) << u16::BITS | u64::from(site)) as i64); }
+    let atom = atom_word(frame, stage, atom);
+    crate::vm::jit_backend::symbol_words::atom_site_word(stage.builder, atom, site)
+}
+
+/// The VM's cached read of `atom` of `object` through `site` (`LaneHelper::FieldGet`): a
+/// DELETED answer leaves at `miss`.
+pub(in super::super) fn field_get_host(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32,
+    site: u16, miss: ir::Block) -> ir::Value {
+    let packed = atom_site_word(frame, stage, atom, site);
+    let get = frame.helpers.address(&mut stage.builder, LaneHelper::FieldGet);
+    let value = emit_lane_helper_call(stage.builder, frame.payload, get, &[object, packed]);
+    guard_word(frame, stage, value, Relation::NotEqual, Value::DELETED, miss);
+    value
+}
+
+/// The VM's own, polymorphic and adding store entries (`LaneHelper::FieldAdd`): a false
+/// answer leaves at `miss`.
+pub(in super::super) fn field_add(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, object: ir::Value, atom: u32,
+    site: u16, value: ir::Value, miss: ir::Block) {
+    let write = atom_site_word(frame, stage, atom, site);
+    let add = frame.helpers.address(&mut stage.builder, LaneHelper::FieldAdd);
+    let stored = emit_lane_helper_call(stage.builder, frame.payload, add, &[frame.payload, object, write, value]);
+    let hit = stage.raw_compare_imm(Relation::NotEqual, stored, 0);
+    emit_js_guard(stage.builder, hit, miss);
+}
+
 /// The lane's own global-name read word (`LaneHelper::GlobalGet`): `Value::DELETED` where it misses.
 fn global_word(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, atom: u32, site: u16) -> ir::Value {
-    let (atom, site) = (atom_word(frame, stage, atom), immediate(stage, i64::from(site)));
+    let (atom, site) = (atom_word(frame, stage, atom), stage.raw_const(Lane::I64, i64::from(site)));
     let get = frame.helpers.address(&mut stage.builder, LaneHelper::GlobalGet);
     emit_lane_helper_call(stage.builder, frame.payload, get, &[atom, site])
 }
 
-/// Leaves at `miss` unless `word` compares `cc` to `value`.
-fn guard_word(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, word: ir::Value, cc: IntCC, value: Value, miss: ir::Block) {
-    let held = stage.builder.ins().icmp_imm_u(cc, word, frame.roots.embed_heap_identity(value) as i64);
+/// Leaves at `miss` unless `word` compares `relation` to `value`.
+fn guard_word(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, word: ir::Value, relation: Relation, value: Value, miss: ir::Block) {
+    let held = stage.raw_compare_imm(relation, word, frame.roots.embed_heap_identity(value) as i64);
     emit_js_guard(stage.builder, held, miss);
 }
 
@@ -118,9 +204,9 @@ fn guard_word(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, word: ir::Val
 /// value is the destination's tagged word.
 fn global_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
     atom: u32, site: u16, ty: Type, proof: EmitProof) -> Option<()> {
-    let EmitProof::GlobalRead { miss: Some(miss) } = proof else { return None };
+    let EmitProof::GlobalRead { miss: Some(miss), .. } = proof else { return None };
     let value = global_word(frame, stage, atom, site);
-    guard_word(frame, stage, value, IntCC::NotEqual, Value::DELETED, miss);
+    guard_word(frame, stage, value, Relation::NotEqual, Value::DELETED, miss);
     let fact = if ty == Type::ANY { RegisterFact::definition(ty, Representation::Tagged) } else {
         RegisterFact::admit(Fact { ty, representation: Representation::Tagged, binding: BindingTime::Stable,
             proof: Proof::Dependency, projection: Projection::Exact }).expect("a Stable fact's dependency proves any type")
@@ -129,19 +215,15 @@ fn global_read(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination:
     Some(())
 }
 
-/// The 64-bit immediate `bits`.
-fn immediate(stage: &mut Emit<'_, '_>, bits: i64) -> ir::Value { stage.builder.ins().iconst(types::I64, bits) }
-
-/// The word of `atom`: its id now for a live lowering, its symbol for a linking one (`RelocKind::Atom`).
+/// The word of `atom` under the frame's helper binding.
 fn atom_word(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, atom: u32) -> ir::Value {
-    if !frame.helpers.links() { return immediate(stage, i64::from(atom)); }
-    crate::vm::jit_backend::symbol_address(&mut stage.builder, types::I64, super::relocs::RelocKind::Atom as u32, atom)
+    frame.helpers.atom_word(stage.builder, atom)
 }
 
 /// `value` as the tagged immediate `destination` holds under `fact`.
 fn define_immediate(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, value: Value,
     fact: RegisterFact) -> Option<()> {
-    let bits = immediate(stage, frame.roots.embed_heap_identity(value) as i64);
+    let bits = stage.raw_const(Lane::I64, frame.roots.embed_heap_identity(value) as i64);
     <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, bits, fact);
     Some(())
 }
@@ -159,21 +241,38 @@ fn global_held(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination:
     define_immediate(frame, stage, destination, value, held)
 }
 
+/// A global lexical binding's word, read live from its address (`staged::lexical_read`): a binding in its temporal dead zone leaves at the
+/// miss edge, any other word is the destination's tagged value.
+fn global_lexical(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, address: u64, proof: EmitProof) -> Option<()> {
+    let EmitProof::GlobalRead { miss: Some(miss), .. } = proof else { return None };
+    let at = stage.raw_const(Lane::I64, address as i64);
+    let value = crate::staged::lexical_read(stage, at, miss)?;
+    <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value, RegisterFact::definition(Type::ANY, Representation::Tagged));
+    Some(())
+}
+
 /// A whole-program value the read checks: a changed binding leaves, then the checked constant is held.
 fn global_frozen(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
     (atom, site): (u32, u16), (value, ty): (Value, Type), proof: EmitProof) -> Option<()> {
-    let EmitProof::GlobalRead { miss: Some(miss) } = proof else { return None };
+    let EmitProof::GlobalRead { miss: Some(miss), .. } = proof else { return None };
     let actual = global_word(frame, stage, atom, site);
-    guard_word(frame, stage, actual, IntCC::Equal, value, miss);
+    guard_word(frame, stage, actual, Relation::Equal, value, miss);
     global_held(frame, stage, destination, value, ty)
 }
 
 impl crate::staged::GlobalFrame<Emit<'_, '_>> for EmitFrame<'_> {
+    fn global_binding(&mut self, proof: EmitProof) -> crate::staged::GlobalBinding {
+        match proof {
+            EmitProof::GlobalRead { binding, .. } => binding,
+            _ => crate::staged::GlobalBinding::Dynamic,
+        }
+    }
     fn global_constant(&mut self, stage: &mut Emit<'_, '_>, destination: Register, value: Value) -> Option<()> { global_constant(self, stage, destination, value) }
     fn global_held(&mut self, stage: &mut Emit<'_, '_>, destination: Register, value: Value, ty: Type) -> Option<()> { global_held(self, stage, destination, value, ty) }
     fn global_frozen(&mut self, stage: &mut Emit<'_, '_>, destination: Register, atom: u32, site: u16, value: Value, ty: Type, proof: EmitProof) -> Option<()> {
         global_frozen(self, stage, destination, (atom, site), (value, ty), proof)
     }
+    fn global_lexical(&mut self, stage: &mut Emit<'_, '_>, destination: Register, address: u64, proof: EmitProof) -> Option<()> { global_lexical(self, stage, destination, address, proof) }
     fn global_read(&mut self, stage: &mut Emit<'_, '_>, destination: Register, atom: u32, site: u16, ty: Type, proof: EmitProof) -> Option<()> { global_read(self, stage, destination, atom, site, ty, proof) }
     fn global_write(&mut self, stage: &mut Emit<'_, '_>, source: Register, _atom: u32, _site: u16, value: ir::Value, _initialize: bool) -> Option<()> {
         super::call_out::global_write(self, stage, source, value)

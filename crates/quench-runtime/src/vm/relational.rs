@@ -245,7 +245,7 @@ impl<H: Host> Vm<H> {
             return Some(false);
         }
         let target = self.steady_instanceof_target(constructor)?;
-        self.instanceof_from_link(value, target)
+        self.instanceof_chain(value, target)
     }
 
     /// Whether `value` is a primitive for `instanceof`: outside the heap, or a string.
@@ -276,32 +276,6 @@ impl<H: Host> Vm<H> {
             return None;
         }
         Some(ProtoLink::object_record(prototype.direct_object_index()?))
-    }
-
-    /// Whether the chain of `value`, an object, reaches the prototype whose link is `target`;
-    /// `None` where a link outside the ordinary objects (a proxy) leaves it to the walk.
-    #[inline(always)]
-    fn instanceof_from_link(&self, value: Value, target: ProtoLink) -> Option<bool> {
-        let mut object = match value.direct_object_index() {
-            Some(record) => self.heap.object_record_by_id(record),
-            // Another object kind (an array, a function, a typed array, a Buffer) starts from
-            // its own link; a proxy's [[GetPrototypeOf]] may run its trap, which the walk makes.
-            None => self.ordinary_link_holder(value)?,
-        };
-        // The walk compares encoded links; only a link outside the object records decodes.
-        loop {
-            let link = object.proto_link();
-            if link == target {
-                return Some(true);
-            }
-            if link == ProtoLink::NULL {
-                return Some(false);
-            }
-            object = match link.object_record_id() {
-                Some(id) => self.heap.object_record_by_id(id),
-                None => self.ordinary_link_holder(object.proto())?,
-            };
-        }
     }
 
     /// `proved_instanceof` under a current proof of a primitive (`false`, as there) or a direct
@@ -344,7 +318,7 @@ impl<H: Host> Vm<H> {
         if Self::primitive_instance(value, &self.heap) {
             return Some(false);
         }
-        self.instanceof_from_link(value, target)
+        self.instanceof_chain(value, target)
     }
 
     /// `proved_instanceof` without a current proof: the steady case, which then records one.
@@ -369,7 +343,7 @@ impl<H: Host> Vm<H> {
     /// The object of `value`, a heap object other than a proxy, whose prototype link
     /// `[[GetPrototypeOf]]` reads without running guest code.
     #[inline(always)]
-    fn ordinary_link_holder(&self, value: Value) -> Option<&crate::heap::Object> {
+    pub(super) fn ordinary_link_holder(&self, value: Value) -> Option<&crate::heap::Object> {
         if matches!(self.heap.get(value), Some(Cell::Proxy { .. })) {
             return None;
         }
@@ -443,9 +417,19 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let property = PropertyKey::string(atom);
-        if let Some(found) = self.proved_has(object, property) {
-            return Some(found);
-        }
+        let found = match self.proved_has(object, property) {
+            Some(found) => found,
+            None => self.plain_in_chain(object, property)?,
+        };
+        // The answer is a fact the native tiers take of the site (`in_presence`).
+        self.remember_presence(object, atom, found);
+        Some(found)
+    }
+
+    /// Whether a shape along the chain of `object`, ordinary objects up to `null`, names `property`
+    /// (`plain_in`'s walk): `None` where an object on it is not ordinary or holds the key in a
+    /// side table.
+    fn plain_in_chain(&self, object: Value, property: PropertyKey) -> Option<bool> {
         let mut current = object;
         loop {
             let data = self.heap.ordinary_object(current)?;
@@ -551,7 +535,7 @@ impl<H: Host> Vm<H> {
     /// Whether `holder` holds a current proof that it inherits the native `@@hasInstance`
     /// (`Vm::instanceof_inheriting_holders`).
     #[inline(always)]
-    fn remembers_inheriting_holder(&self, holder: Value) -> bool {
+    pub(super) fn remembers_inheriting_holder(&self, holder: Value) -> bool {
         self.instanceof_inheriting_holders[instanceof_holder_index(holder)]
             == Some((holder, crate::heap::prototype_layout_epoch()))
     }
@@ -736,7 +720,7 @@ fn compare_positive_bigint_number(integer: BigInt, number: f64) -> Ordering {
 
 /// The `Vm::instanceof_constructor_layouts` entry a constructor of `shape` takes.
 #[inline(always)]
-fn instanceof_layout_index(shape: u32) -> usize {
+pub(super) fn instanceof_layout_index(shape: u32) -> usize {
     shape as usize % INSTANCEOF_CONSTRUCTOR_LAYOUTS
 }
 

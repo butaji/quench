@@ -40,7 +40,7 @@ mod atoms;
 #[cfg(feature = "aot")]
 mod native_sources;
 #[cfg(feature = "aot")]
-pub use native_sources::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation};
+pub use native_sources::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, SourceDemands};
 /// The parse goal shared by module compile-cache and linked native source keys.
 pub const STATIC_MODULE_GOAL: &str = "static-module";
 pub const STATIC_TYPESCRIPT_MODULE_GOAL: &str = "static-module:typescript";
@@ -54,7 +54,7 @@ mod capture_layout;
 mod capture_profile;
 mod call_only;
 mod capture_scope;
-mod class;
+mod class; mod class_private;
 mod early;
 mod frame_registers;
 pub(crate) mod lazy_bodies;

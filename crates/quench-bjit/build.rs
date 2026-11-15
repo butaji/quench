@@ -7,20 +7,26 @@
 //! sorted static table (`OUT_DIR/rustc_stencils.rs`).
 //!
 //! Extension point: a new row family adds its `*_row!` macro to `rows.rs` and a generator line
-//! to `instances`; a new source file adds an entry to `SOURCES`. Sharding, per-shard checks and
+//! to `instances`; a new source file is found by its `#[path]` (`sources::watched`). Sharding, per-shard checks and
 //! the merge apply to both without further edits. A row that contains a `call` or a `ret` is a
 //! build error: rows chain by `become` only, and only the `leave_*` rows return. Other targets
 //! get an empty table.
 #[path = "build/bytes.rs"]
 mod bytes;
+#[path = "build/checks.rs"]
+mod checks;
 #[path = "src/class.rs"]
 mod class;
 #[path = "build/elf.rs"]
 mod elf;
+#[path = "build/layout.rs"]
+mod layout;
 #[path = "stencils/library.rs"]
 mod library;
 #[path = "build/macho.rs"]
 mod macho;
+#[path = "build/sources.rs"]
+mod sources;
 #[path = "stencils/shards.rs"]
 mod shards;
 #[path = "stencils/supernodes.rs"]
@@ -48,13 +54,19 @@ const INSTANCES_VAR: &str = "QUENCH_STENCIL_INSTANCES";
 /// `fixed_rows`), so no name is defined twice.
 const FIXED_ROWS_SHARD: usize = 0;
 const EXIT_PREFIX: usize = 4;
-
-/// Every file whose change must recompile the stencils: the stencil sources and the runtime's
-/// staged rows they include, and nothing else.
-const SOURCES: [&str; 16] = [
-    "stencils", "../quench-runtime/src/staged/stage.rs", "../quench-runtime/src/staged/value.rs",
-    "../quench-runtime/src/staged/object.rs", "../quench-runtime/src/staged/elements.rs",
-    "../quench-runtime/src/staged/environment.rs", "../quench-runtime/src/staged/entry.rs", "../quench-runtime/src/staged/frame.rs", "../quench-runtime/src/staged/call.rs", "../quench-runtime/src/staged/ic.rs", "../quench-runtime/src/staged/slot_store.rs", "build.rs", "build", "src/class.rs", "src/numeric.rs", "src/call_record.rs",
+/// The stencil libraries of an x86-64 build: the table's name and the `-C target-cpu` it is built for. Another
+/// target has the baseline table alone, which also names the second.
+const VARIANTS: [(&str, Option<&str>); 2] = [("BASELINE", Some("x86-64-v2")), ("V3", Some("x86-64-v3"))];
+/// The flags every stencil object is built with beyond the target: optimized, no panic or overflow machinery, no
+/// frame pointer or unwind tables (a row has no frame), one codegen unit per shard so LLVM sees every row of it
+/// at once, and absolute relocations for the holes.
+const RUSTC_FLAGS: &[&str] = &[
+    "--edition", "2024", "--crate-type=lib", "--crate-name=quench_stencil_rows", "--emit=obj", "-C", "opt-level=3", "-C", "panic=abort", "-C", "relocation-model=static",
+    "-C", "codegen-units=1", "-C", "debuginfo=0", "-C", "debug-assertions=off", "-C", "overflow-checks=off", "-C", "force-frame-pointers=no", "-C", "force-unwind-tables=no",
+    // A jump table is a relocation against read-only data, which no hole names: a row's dispatch stays compares.
+    "-C", "llvm-args=--min-jump-table-entries=65536",
+    // A vectorized comparison loads its constants from a pool, which a row has none of (a hole is the only relocation).
+    "-C", "no-vectorize-slp", "-C", "no-vectorize-loops",
 ];
 
 /// The architecture and object reader of a build target, if its stencils are supported.
@@ -73,13 +85,13 @@ fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
 }
 
 fn main() {
-    for source in SOURCES {
-        println!("cargo::rerun-if-changed={source}");
+    for source in sources::watched(Path::new(env!("CARGO_MANIFEST_DIR"))) {
+        println!("cargo::rerun-if-changed={}", source.display());
     }
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let table = out.join("rustc_stencils.rs");
     let Some((arch, read)) = target() else {
-        fs::write(&table, "pub(crate) static RAW: &[RawStencil] = &[];\n").unwrap();
+        fs::write(&table, VARIANTS.map(|(name, _)| library_source(name, Counts::default(), &[])).concat()).unwrap();
         return;
     };
     let instances = instances();
@@ -87,7 +99,14 @@ fn main() {
     for (shard, part) in parts.iter().enumerate() {
         fs::write(instance_file(&out, shard), part.concat()).unwrap();
     }
-    fs::write(&table, table_source(&shards::merge(compile_shards(&out, parts.len(), arch, read)))).unwrap();
+    let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 { &VARIANTS } else { &VARIANTS[..1] };
+    let built: Vec<_> = variants.iter().map(|(name, cpu)| (*name, compile_shards(&out, parts.len(), (arch, read), *cpu))).collect();
+    let mut tables = String::new();
+    for (name, _) in VARIANTS {
+        let (_, (rows, counts)) = built.iter().find(|(built_name, _)| *built_name == name).unwrap_or(&built[0]);
+        tables += &library_source(name, *counts, rows);
+    }
+    fs::write(&table, tables).unwrap();
 }
 
 /// One macro invocation per generated row, the unit `shards::split` distributes.
@@ -102,12 +121,22 @@ fn instance_file(out: &Path, shard: usize) -> PathBuf {
     out.join(format!("instances_{shard}.rs"))
 }
 
-/// Compiles every shard (at most `shards::workers` rustc processes at once) and reads each
-/// object's rows.
-fn compile_shards(out: &Path, count: usize, arch: Arch, read: fn(&[u8]) -> Vec<ObjectRow>) -> Vec<Vec<(String, String)>> {
+/// What `checks` counted over a library's rows: the rows that keep a stack frame, and those whose hot path
+/// does not end in the continuation jump.
+#[derive(Clone, Copy, Default)]
+struct Counts {
+    framed: usize,
+    unchained: usize,
+}
+
+type Rows = Vec<(String, String)>;
+
+/// Compiles every shard for `cpu` (at most `shards::workers` rustc processes at once), reads each
+/// object's rows, and merges them into the sorted library with its counts.
+fn compile_shards(out: &Path, count: usize, (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRow>), cpu: Option<&str>) -> (Rows, Counts) {
     let parallelism = thread::available_parallelism().map_or(1, std::num::NonZero::get);
     let next = AtomicUsize::new(0);
-    thread::scope(|scope| {
+    let built: Vec<(Rows, Counts)> = thread::scope(|scope| {
         let workers: Vec<_> = (0..shards::workers(count, parallelism))
             .map(|_| {
                 scope.spawn(|| {
@@ -117,20 +146,25 @@ fn compile_shards(out: &Path, count: usize, arch: Arch, read: fn(&[u8]) -> Vec<O
                         if shard >= count {
                             return done;
                         }
-                        done.push(stencil_rows(arch, read(&fs::read(compile(out, shard)).unwrap())));
+                        done.push(stencil_rows(arch, read(&fs::read(compile(out, shard, cpu)).unwrap())));
                     }
                 })
             })
             .collect();
         workers.into_iter().flat_map(|worker| worker.join().expect("a shard worker")).collect()
-    })
+    });
+    let counts = built.iter().fold(Counts::default(), |sum, (_, c)| Counts { framed: sum.framed + c.framed, unchained: sum.unchained + c.unchained });
+    (shards::merge(built.into_iter().map(|(rows, _)| rows)), counts)
 }
 
-fn compile(out: &Path, shard: usize) -> PathBuf {
-    let object = out.join(format!("rows_{shard}.o"));
+fn compile(out: &Path, shard: usize, cpu: Option<&str>) -> PathBuf {
+    let object = out.join(format!("rows_{}_{shard}.o", cpu.unwrap_or("native")));
     let mut command = Command::new(env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()));
-    command.args(["--target", &env::var("TARGET").expect("cargo sets TARGET"), "--edition", "2024", "--crate-type=lib", "--crate-name=quench_stencil_rows", "--emit=obj", "-C", "opt-level=3", "-C", "panic=abort", "-C", "relocation-model=static", "-C", "codegen-units=8", "-C", "debuginfo=0"]);
-    command.args(["--check-cfg", "cfg(fixed_rows)"]);
+    command.args(["--target", &env::var("TARGET").expect("cargo sets TARGET")]).args(RUSTC_FLAGS);
+    if let Some(cpu) = cpu {
+        command.arg("-C").arg(format!("target-cpu={cpu}"));
+    }
+    command.args(["--check-cfg", "cfg(fixed_rows)", "--check-cfg", "cfg(stencil_build)", "--cfg", "stencil_build"]);
     if shard == FIXED_ROWS_SHARD {
         command.args(["--cfg", "fixed_rows"]);
     }
@@ -139,22 +173,32 @@ fn compile(out: &Path, shard: usize) -> PathBuf {
     object
 }
 
-/// The rows of one shard's object as (name, table entry), each checked.
-fn stencil_rows(arch: Arch, rows: Vec<ObjectRow>) -> Vec<(String, String)> {
-    rows.iter()
+/// The rows of one shard's object as (name, table entry), each checked, laid out hot part first where the
+/// target's layout pass handles the row (`layout`), with what `checks` counted.
+fn stencil_rows(arch: Arch, rows: Vec<ObjectRow>) -> (Rows, Counts) {
+    let mut counts = Counts::default();
+    let rows = rows
+        .iter()
         .map(|row| {
             check_no_return(arch, &row.name, &row.code);
             check_call(arch, &row.name, &row.code);
             let relocs = relocations(arch, row);
-            (row.name.clone(), format!("    RawStencil {{ name: {:?}, code: &{:?}, relocs: &{relocs:?} }},\n", row.name, row.code))
+            let is_row = arch == Arch::X86_64 && checks::is_row(&row.name);
+            let laid = if is_row { layout::reorder(&row.code, &relocs) } else { None };
+            let (code, relocs, hot_len) = laid.map_or((row.code.clone(), relocs, row.code.len()), |l| (l.code, l.relocs, l.hot_len));
+            counts.framed += usize::from(is_row && checks::has_stack_frame(&code));
+            counts.unchained += usize::from(is_row && !checks::ends_in_continuation(&code[..hot_len], &relocs));
+            (row.name.clone(), format!("    RawStencil {{ name: {:?}, code: &{code:?}, hot_len: {hot_len}, relocs: &{relocs:?} }},\n", row.name))
         })
-        .collect()
+        .collect();
+    (rows, counts)
 }
 
-/// The merged rows as the static table `RAW`.
-fn table_source(rows: &[(String, String)]) -> String {
+/// The static `RawLibrary` named `table`: its rows and what `checks` counted over them.
+fn library_source(table: &str, counts: Counts, rows: &[(String, String)]) -> String {
     let body: String = rows.iter().map(|(_, row)| row.as_str()).collect();
-    format!("pub(crate) static RAW: &[RawStencil] = &[\n{body}];\n")
+    let Counts { framed, unchained } = counts;
+    format!("pub(crate) static {table}: RawLibrary = RawLibrary {{ stencils_with_stack_frame: {framed}, stencils_not_ending_in_continuation: {unchained}, rows: &[\n{body}] }};\n")
 }
 
 /// The relocations of one row as (offset, class, index, addend).
@@ -163,11 +207,11 @@ fn relocations(arch: Arch, row: &ObjectRow) -> Vec<(u16, u8, u8, i32)> {
     row.relocs
         .iter()
         .map(|reloc| {
+            let index = hole_index(&row.name, &reloc.symbol, reloc.class);
             if is_successor(reloc.class) {
                 check_transfer(arch, &row.name, &row.code, reloc.offset, reloc.class);
             }
             check_value_field(arch, &row.name, &row.code, reloc.offset, reloc.class);
-            let index = hole_index(&row.name, &reloc.symbol, reloc.class);
             (u16::try_from(reloc.offset).expect("a stencil under 64 KiB"), reloc.class, u8::try_from(index).expect("a small hole index"), i32::try_from(reloc.addend).expect("a small addend"))
         })
         .collect()

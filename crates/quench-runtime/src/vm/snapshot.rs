@@ -11,6 +11,8 @@
 use super::*;
 use crate::snapshot::{read_list, Reader, Snap, SnapshotError, SnapshotResult, Writer};
 
+mod snap_impls;
+
 /// Every VM field that holds the active realm's or the VM's prototype of a builtin family.
 /// One list, so writing and reading cannot disagree about which fields or their order.
 macro_rules! builtin_prototypes {
@@ -32,202 +34,6 @@ macro_rules! builtin_prototypes {
     };
 }
 
-impl Snap for Native {
-    fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        self.write_snapshot(writer);
-        Ok(())
-    }
-    fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
-        Self::read_snapshot(reader)
-    }
-}
-
-impl Snap for WellKnownSymbols {
-    fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        self.0.snap(writer)
-    }
-    fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
-        Ok(Self(Snap::unsnap(reader)?))
-    }
-}
-
-impl Snap for ProgramId {
-    fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        writer.u32(self.raw());
-        Ok(())
-    }
-    fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
-        Ok(Self::from_raw(reader.u32()?))
-    }
-}
-
-impl Snap for JsString {
-    fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        self.write_snapshot(writer);
-        Ok(())
-    }
-    fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
-        Self::read_snapshot(reader)
-    }
-}
-
-/// `PropertyKey` tags, in declaration order.
-mod property_key_tag {
-    pub(super) const STRING: u8 = 0;
-    pub(super) const SYMBOL: u8 = 1;
-    pub(super) const PRIVATE: u8 = 2;
-}
-
-impl Snap for property_key::PropertyKey {
-    fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        match *self {
-            Self::String(atom) => {
-                writer.u8(property_key_tag::STRING);
-                writer.u32(atom);
-            }
-            Self::Symbol(symbol) => {
-                writer.u8(property_key_tag::SYMBOL);
-                writer.value(symbol);
-            }
-            Self::Private(home, atom) => {
-                writer.u8(property_key_tag::PRIVATE);
-                writer.value(home);
-                writer.u32(atom);
-            }
-        }
-        Ok(())
-    }
-    fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
-        Ok(match reader.u8()? {
-            property_key_tag::STRING => Self::String(reader.u32()?),
-            property_key_tag::SYMBOL => Self::Symbol(reader.value()?),
-            property_key_tag::PRIVATE => Self::Private(reader.value()?, reader.u32()?),
-            _ => return Err(SnapshotError("invalid snapshot property key".into())),
-        })
-    }
-}
-
-crate::snapshot::snap_struct!(PropertyAttributes { [writable, enumerable, configurable, accessor]; getter, setter });
-crate::snapshot::snap_struct!(ShapeAttributes { [writable, enumerable, configurable, accessor]; accessors });
-crate::snapshot::snap_struct!(DataAttributes { [writable, enumerable, configurable]; });
-crate::snapshot::snap_struct!(GlobalLexicalState { declarations, bindings, immutable_bindings });
-crate::snapshot::snap_struct!(ParkedRealm { global, state, prototypes });
-crate::snapshot::snap_struct!(ArgumentsObjectTemplate { anchor, length_slot, callee_slot, iterator_slot });
-crate::snapshot::snap_struct!(IteratorRealmPrototypes { helper, wrapper, generator, async_generator });
-crate::snapshot::snap_struct!(ErrorRealmIntrinsics {
-    host_formatter, constructor, stack_getter, stack_setter, call_site_constructor, call_site_prototype,
-});
-crate::snapshot::snap_struct!(PrivateHomeKey { environment, program, function, name });
-crate::snapshot::snap_struct!(RuntimeAtoms {
-    lexical_this, new_target, regexp_exec, regexp_flags, last_index, regexp_flag_accessors, then,
-    constructor, next, name, empty, value, done, iterator_return, writable, enumerable, configurable,
-    get, set,
-    bound_target, bound_this, bound_args, proxy_traps,
-});
-crate::snapshot::snap_struct!(RealmIntrinsics {
-    arguments_objects, iterator_prototypes, builtin_prototypes, function_constructors,
-    promise_constructors, error_intrinsics, regexp_intrinsics, intl_number_format_constructors,
-    intl_number_format_prototypes, intl_number_format_fallback_symbols, intl_collator_constructors,
-    intl_collator_prototypes, intl_plural_rules_prototypes, intl_datetime_format_constructors,
-    intl_datetime_format_prototypes, intl_datetime_format_fallback_symbols,
-    intl_display_names_constructors, intl_display_names_prototypes,
-    intl_duration_format_constructors, intl_duration_format_prototypes,
-    intl_list_format_constructors, intl_list_format_prototypes,
-    intl_relative_time_format_prototypes, intl_segmenter_prototypes,
-    intl_segment_iterator_prototypes, intl_segments_prototypes, intl_locale_prototypes,
-});
-
-crate::snapshot::snapshot_enum!(dictionary_trigger: DictionaryTrigger {
-    PropertyCount, DeletionPattern, PrototypeUse, ModuleNamespace,
-});
-
-impl Snap for DictionaryTrigger {
-    fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        dictionary_trigger::write(writer, *self);
-        Ok(())
-    }
-    fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
-        dictionary_trigger::read(reader)
-    }
-}
-
-/// `ShapeTransition` tags, in declaration order.
-mod transition_tag {
-    pub(super) const ROOT: u8 = 0;
-    pub(super) const FUNCTION_NAME: u8 = 1;
-    pub(super) const FUNCTION_NAME_RECONFIGURED: u8 = 2;
-    pub(super) const FUNCTION_LENGTH_RECONFIGURED: u8 = 3;
-    pub(super) const CONSTRUCTED: u8 = 4;
-    pub(super) const ADD: u8 = 5;
-    pub(super) const DELETE: u8 = 6;
-    pub(super) const VACANT: u8 = 7;
-    pub(super) const DESCRIPTOR: u8 = 8;
-    pub(super) const DICTIONARY: u8 = 9;
-}
-
-impl Snap for ShapeTransition {
-    fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        match *self {
-            Self::Root => writer.u8(transition_tag::ROOT),
-            Self::FunctionName { name } => {
-                writer.u8(transition_tag::FUNCTION_NAME);
-                writer.u32(name);
-            }
-            Self::FunctionNameReconfigured => writer.u8(transition_tag::FUNCTION_NAME_RECONFIGURED),
-            Self::FunctionLengthReconfigured => writer.u8(transition_tag::FUNCTION_LENGTH_RECONFIGURED),
-            Self::Constructed { constructor, new_target_is_base } => {
-                writer.u8(transition_tag::CONSTRUCTED);
-                writer.value(constructor);
-                writer.bool(new_target_is_base);
-            }
-            Self::Add { key, slot, attributes } => {
-                writer.u8(transition_tag::ADD);
-                key.snap(writer)?;
-                writer.u32(slot);
-                attributes.snap(writer)?;
-            }
-            Self::Delete { key, slot } => {
-                writer.u8(transition_tag::DELETE);
-                key.snap(writer)?;
-                writer.u32(slot);
-            }
-            Self::Vacant => writer.u8(transition_tag::VACANT),
-            Self::Descriptor { slot, attributes } => {
-                writer.u8(transition_tag::DESCRIPTOR);
-                writer.u32(slot);
-                attributes.snap(writer)?;
-            }
-            Self::Dictionary { trigger } => {
-                writer.u8(transition_tag::DICTIONARY);
-                trigger.snap(writer)?;
-            }
-        }
-        Ok(())
-    }
-    fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
-        Ok(match reader.u8()? {
-            transition_tag::ROOT => Self::Root,
-            transition_tag::FUNCTION_NAME => Self::FunctionName { name: reader.u32()? },
-            transition_tag::FUNCTION_NAME_RECONFIGURED => Self::FunctionNameReconfigured,
-            transition_tag::FUNCTION_LENGTH_RECONFIGURED => Self::FunctionLengthReconfigured,
-            transition_tag::CONSTRUCTED => Self::Constructed {
-                constructor: reader.value()?,
-                new_target_is_base: reader.bool()?,
-            },
-            transition_tag::ADD => Self::Add {
-                key: Snap::unsnap(reader)?,
-                slot: reader.u32()?,
-                attributes: Snap::unsnap(reader)?,
-            },
-            transition_tag::DELETE => Self::Delete { key: Snap::unsnap(reader)?, slot: reader.u32()? },
-            transition_tag::VACANT => Self::Vacant,
-            transition_tag::DESCRIPTOR => Self::Descriptor { slot: reader.u32()?, attributes: Snap::unsnap(reader)? },
-            transition_tag::DICTIONARY => Self::Dictionary { trigger: Snap::unsnap(reader)? },
-            _ => return Err(SnapshotError("invalid snapshot shape transition".into())),
-        })
-    }
-}
-
 impl<H: Host> Vm<H> {
     /// The VM as a snapshot, which `restore_snapshot` makes again in a new VM. Refused while
     /// anything runs or waits: a frame, a job, a module load or an embedder's script.
@@ -241,93 +47,61 @@ impl<H: Host> Vm<H> {
         }
         let Self {
             typed_views: _,
-            native_microtask_running,
+            native_microtask_running: _,
             unobserved_jobs_entered: _,
-            chain_await_jobs: _,
-            await_chain: _,
-            lane_chain_error: _,
-            lane_chain_ended: _,
             host,
             specialized,
             heap,
             realm,
-            object_proto: _,
-            function_proto: _,
-            array_proto: _,
-            string_proto: _,
-            number_proto: _,
-            array_buffer_proto: _,
-            shared_array_buffer_proto: _,
-            array_iterator_proto: _,
-            typed_array_proto: _,
-            uint8_array_proto: _,
-            uint8_clamped_array_proto: _,
-            uint16_array_proto: _,
-            uint32_array_proto: _,
-            int8_array_proto: _,
-            int16_array_proto: _,
-            int32_array_proto: _,
-            bigint64_array_proto: _,
-            biguint64_array_proto: _,
-            float16_array_proto: _,
-            float32_array_proto: _,
-            float64_array_proto: _,
-            data_view_proto: _,
-            map_proto: _,
-            set_proto: _,
-            shadow_realm_proto: _,
-            map_iterator_proto: _,
-            set_iterator_proto: _,
-            weak_map_proto: _,
-            weak_set_proto: _,
-            weak_ref_proto: _,
-            kept_alive,
-            finalization_registry_proto: _,
-            iterator_proto: _,
-            string_iterator_proto: _,
-            regexp_string_iterator_proto: _,
-            generator_proto: _,
-            iterator_helper_proto: _,
-            wrap_for_valid_iterator_proto: _,
-            async_iterator_proto: _,
-            async_generator_proto: _,
-            async_from_sync_iterator_proto: _,
-            regexp_proto: _,
-            temporal_plain_date_proto: _,
-            temporal_plain_time_proto: _,
-            temporal_plain_month_day_proto: _,
+            object_proto: _, function_proto: _, array_proto: _, string_proto: _, number_proto: _,
+            array_buffer_proto: _, shared_array_buffer_proto: _, array_iterator_proto: _,
+            typed_array_proto: _, uint8_array_proto: _, uint8_clamped_array_proto: _,
+            uint16_array_proto: _, uint32_array_proto: _, int8_array_proto: _,
+            int16_array_proto: _, int32_array_proto: _, bigint64_array_proto: _,
+            biguint64_array_proto: _, float16_array_proto: _, float32_array_proto: _,
+            float64_array_proto: _, data_view_proto: _, map_proto: _, set_proto: _,
+            shadow_realm_proto: _, map_iterator_proto: _, set_iterator_proto: _,
+            weak_map_proto: _, weak_set_proto: _, weak_ref_proto: _, kept_alive: _,
+            finalization_registry_proto: _, iterator_proto: _, string_iterator_proto: _,
+            regexp_string_iterator_proto: _, generator_proto: _, iterator_helper_proto: _,
+            wrap_for_valid_iterator_proto: _, async_iterator_proto: _, async_generator_proto: _,
+            async_from_sync_iterator_proto: _, regexp_proto: _, temporal_plain_date_proto: _,
+            temporal_plain_time_proto: _, temporal_plain_month_day_proto: _,
             temporal_plain_year_month_proto: _,
             natives,
-            frames,
-            native_stack_frames,
+            frames: _,
+            native_stack_frames: _,
             native_root_lists: _,
             gc_owned_root_count: _,
             frame_pool: _,
             lowered_tier0: _,
             pending_call_stacks: _,
             js_native_contexts: _,
+            native_roots: _,
             lane_stack: _,
+            lane_roots: _,
             execution_mode: _,
             native_execution_rejections: _,
             js_tier_pending: _,
             #[cfg(feature = "native-execution")]
             native_program_resolver: _,
             execution_interrupt: _,
-            wasm_reference_epoch: _,
-            active_call_roots,
-            with_stack,
+            active_call_roots: _,
+            with_stack: _,
             startup_intrinsics,
             with_scope_entered, scope_names: _,
-            test262_agent,
-            shared_async_waiters,
+            test262_agent: _,
+            shared_async_waiters: _,
             programs,
             program_cache_layouts: _,
             free_cache_layouts: _,
             active_registers: _,
-            lane_raised,
-            lane_returned,
-            lane_native,
-            lane_native_returned,
+            lane_raised: _,
+            lane_raise_site: _,
+            lane_returned: _,
+            lane_native: _,
+            lane_native_returned: _,
+            lane_suspended: _,
             active_context: _, program_contexts: _, idle_context: _, active_field_entries: _, field_entries_epoch: _,
             active_program: _,
             profile: _,
@@ -390,6 +164,7 @@ impl<H: Host> Vm<H> {
             length_atom,
             prototype_atom,
             instanceof_constructor_layouts: _,
+            in_presences: _,
             instanceof_inheriting_holders: _,
             instanceof_proofs: _,
             closure_shapes: _,
@@ -423,21 +198,23 @@ impl<H: Host> Vm<H> {
             object_shapes: _,
             descriptors,
             function_values,
-            wasm_exported_functions,
+            wasm_exported_functions: _,
             private_homes,
             default_collation: _,
             wasm_js,
-            direct_eval,
-            direct_eval_var_program,
-            parameter_eval,
-            eval_script_context,
-            deferred_dependency_batch,
-            construct_target,
+            direct_eval: _,
+            direct_eval_var_program: _,
+            parameter_eval: _,
+            eval_script_context: _,
+            deferred_dependency_batch: _,
+            construct_target: _,
             // Each process draws its own sequence (`fresh_random_seed`).
             random_state: _,
             // Each process keeps its own budget.
             dynamic_functions_to_keep: _,
-            lane_deferred: _,
+            lane_deferred: _, running_window: _,
+            // A snapshot is taken between runs, with no lane activation's eval running.
+            eval_callers: _,
             // Resolutions are the process's (its files), not the snapshot's.
             resolved_module_requests: _,
             resolved_module_names: _,
@@ -450,29 +227,11 @@ impl<H: Host> Vm<H> {
             global_lexical_states,
             parked,
             intrinsics,
-            jobs,
+            jobs: _,
             template_objects,
             promise,
         } = realm;
-        let running = [
-            ("a running frame", frames.is_empty() && native_stack_frames.is_empty() && active_call_roots.is_empty()),
-            ("a with statement", with_stack.is_empty()),
-            ("a pending job", jobs.is_empty() && kept_alive.is_empty() && !native_microtask_running),
-            ("an Atomics waiter", shared_async_waiters.is_empty() && !test262_agent.installed),
-            ("a lane completion", lane_raised.is_none() && lane_returned.is_none() && lane_native_returned.is_none()),
-            ("a lane native call", lane_native.is_none()),
-            (
-                "an eval or construction",
-                !direct_eval
-                    && direct_eval_var_program.is_none()
-                    && !parameter_eval
-                    && !eval_script_context
-                    && !deferred_dependency_batch
-                    && construct_target.is_none(),
-            ),
-            ("WebAssembly", wasm_exported_functions.is_empty()),
-        ];
-        if let Some((what, _)) = running.iter().find(|(_, quiescent)| !quiescent) {
+        if let Some(what) = self.running_work() {
             return Err(SnapshotError::unsupported(what));
         }
         let mut writer = Writer::new();
@@ -536,6 +295,41 @@ impl<H: Host> Vm<H> {
         Ok(writer.finish())
     }
 
+    /// What a snapshot cannot be taken across that is running or waiting now, if anything.
+    fn running_work(&self) -> Option<&'static str> {
+        self.running_execution().or_else(|| self.running_embedding())
+    }
+
+    /// The running frames, jobs and lane completions a snapshot cannot be taken across.
+    fn running_execution(&self) -> Option<&'static str> {
+        let running = [
+            ("a running frame", self.frames.is_empty() && self.native_stack_frames.is_empty() && self.active_call_roots.is_empty()),
+            ("a with statement", self.with_stack.is_empty()),
+            ("a pending job", self.realm.jobs.is_empty() && self.kept_alive.is_empty() && !self.native_microtask_running),
+            ("a lane completion", self.lane_raised.is_none() && self.lane_returned.is_none() && self.lane_native_returned.is_none() && self.lane_suspended.is_none()),
+            ("a lane native call", self.lane_native.is_none()),
+        ];
+        running.into_iter().find(|(_, quiescent)| !quiescent).map(|(what, _)| what)
+    }
+
+    /// The waiters, evals and WebAssembly exports a snapshot cannot be taken across.
+    fn running_embedding(&self) -> Option<&'static str> {
+        let running = [
+            ("an Atomics waiter", self.shared_async_waiters.is_empty() && !self.test262_agent.installed),
+            (
+                "an eval or construction",
+                !self.direct_eval
+                    && self.direct_eval_var_program.is_none()
+                    && !self.parameter_eval
+                    && !self.eval_script_context
+                    && !self.deferred_dependency_batch
+                    && self.construct_target.is_none(),
+            ),
+            ("WebAssembly", self.wasm_exported_functions.is_empty()),
+        ];
+        running.into_iter().find(|(_, quiescent)| !quiescent).map(|(what, _)| what)
+    }
+
     /// Makes this VM, newly made, the one `write_snapshot` wrote into `bytes`, with `entry` as
     /// its main program; returns `entry` with its atoms numbered as the restored VM's, which
     /// is the program the restored VM runs. The host's own state is restored apart.
@@ -572,6 +366,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_atoms");
         self.heap = Heap::read_snapshot(&mut reader, self.heap.memory_policy())?;
+        self.intern_typeof_names();
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_heap");
         self.realm.globals = reader.value()?;
@@ -610,8 +405,24 @@ impl<H: Host> Vm<H> {
         self.to_precision_atom = reader.u32()?;
         self.runtime_atoms = Snap::unsnap(&mut reader)?;
         self.descriptors = Snap::unsnap(&mut reader)?;
+        self.read_function_values(&mut reader)?;
+        self.private_homes = Snap::unsnap(&mut reader)?;
+        let [module, instance, memory, table, global, tag, js_tag] = <[Value; 7]>::unsnap(&mut reader)?;
+        self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag };
+        let holder = reader.value()?;
+        self.set_instanceof_has_instance_holder(holder);
+        read_host(&mut self.host, &mut crate::SnapshotReader { reader: &mut reader, heap: &self.heap })
+            .map_err(SnapshotError)?;
+        reader.finish()?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("snapshot_host");
+        Ok(())
+    }
+
+    /// Reads the function cache: each key's functions, held weakly as the running VM holds them.
+    fn read_function_values(&mut self, reader: &mut Reader<'_>) -> SnapshotResult<()> {
         let function_values =
-            read_list(&mut reader, |reader| Ok((<(ProgramId, u32)>::unsnap(reader)?, reader.values()?)))?;
+            read_list(reader, |reader| Ok((<(ProgramId, u32)>::unsnap(reader)?, reader.values()?)))?;
         for (key, functions) in function_values {
             let handles = functions
                 .into_iter()
@@ -623,16 +434,6 @@ impl<H: Host> Vm<H> {
                 .collect::<SnapshotResult<Vec<_>>>()?;
             self.function_values.record(key, handles);
         }
-        self.private_homes = Snap::unsnap(&mut reader)?;
-        let [module, instance, memory, table, global, tag, js_tag] = <[Value; 7]>::unsnap(&mut reader)?;
-        self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag };
-        let holder = reader.value()?;
-        self.set_instanceof_has_instance_holder(holder);
-        read_host(&mut self.host, &mut crate::SnapshotReader { reader: &mut reader, heap: &self.heap })
-            .map_err(SnapshotError)?;
-        reader.finish()?;
-        #[cfg(feature = "profile-memory")]
-        self.report_memory_if_enabled("snapshot_host");
         Ok(())
     }
 
@@ -890,8 +691,14 @@ mod tests {
             #x;
             constructor(x) { this.#x = x; }
             get x() { return this.#x; }
-            static make(x) { return new Point(x); }
+            #twice() { return this.#x * 2; }
+            twice() { return this.#twice(); }
+            static #made = 0;
+            static make(x) { Point.#made++; return new Point(x); }
+            static has(object) { return #x in object; }
+            static get count() { return Point.#made; }
         };
+        var kept = new Point(9);
         let lexical = 'lexical';
         function readLexical() { return lexical; }
         var map = new Map([[1, 'one'], [2, 'two']]);
@@ -912,7 +719,7 @@ mod tests {
     /// The entry a restored runtime runs against the setup's realm.
     const ENTRY: &str = r#"
         print(bump(), bump(), bound(), resumed);
-        print(readLexical(), pattern.exec('xabbc')[1], Point.make(4).x, typeof Point);
+        print(readLexical(), pattern.exec('xabbc')[1], Point.make(4).x, typeof Point, Point.has(kept), Point.has({}), kept.x, kept.twice(), Point.count);
         print(map.get(2), set.has('member'), Symbol.for('registered') === registered);
         print(record[local], JSON.stringify(record), Object.getOwnPropertyNames(record).join());
         print(bytes.join(), epoch.toISOString(), weak.get(record), template.raw.join('|'));

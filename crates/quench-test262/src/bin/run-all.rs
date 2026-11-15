@@ -26,8 +26,6 @@ use quench_test262::{
 use wait_timeout::ChildExt;
 
 const DEFAULT_REPORT: &str = "target/test262-report.json";
-/// A compiled run's report, kept beside the interpreter's so neither overwrites the other.
-const DEFAULT_JIT_REPORT: &str = "target/test262-report-jit.json";
 const DEFAULT_AOT_REPORT: &str = "target/test262-report-aot.json";
 const DEFAULT_AOT_DYNAMIC_REPORT: &str = "target/test262-report-aot-dynamic.json";
 const AOT_SERIAL_SOURCE_BYTES_ENV: &str = "TEST262_AOT_SERIAL_SOURCE_BYTES";
@@ -281,7 +279,7 @@ fn run_case_entry() -> ExitCode {
     let root = env::var_os("TEST262_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("tests/test262"));
-    let host = match Test262RuntimeHost::new(mode).with_native_dynamic_source(dynamic_source) {
+    let host = match Test262RuntimeHost::new(mode).with_native_support(dynamic_source.then_some(quench_runtime::NativeImageSupport::DynamicSource)) {
         Ok(host) => host,
         Err(error) => return fail(error),
     };
@@ -407,10 +405,10 @@ fn write_report(
     dynamic_source: bool,
 ) -> Result<(), String> {
     let default_report = match mode {
-        ExecutionMode::Interpreted => DEFAULT_REPORT,
-        ExecutionMode::Compiled => DEFAULT_JIT_REPORT,
-        ExecutionMode::NativeOnly if dynamic_source => DEFAULT_AOT_DYNAMIC_REPORT,
-        ExecutionMode::NativeOnly => DEFAULT_AOT_REPORT,
+        ExecutionMode::Interpreted => DEFAULT_REPORT.to_string(),
+        ExecutionMode::Compiled => format!("target/test262-report-{}.json", execution_mode_name(mode)),
+        ExecutionMode::NativeOnly if dynamic_source => DEFAULT_AOT_DYNAMIC_REPORT.to_string(),
+        ExecutionMode::NativeOnly => DEFAULT_AOT_REPORT.to_string(),
     };
     let path = env::var_os("TEST262_REPORT")
         .map(PathBuf::from)

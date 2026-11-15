@@ -2,6 +2,8 @@ use super::object_descriptors::PropertyDescriptorRecord;
 use super::property_key::PropertyKey;
 use super::*;
 
+mod arguments;
+
 /// Cost of probing one array index (format, atom lookup, descriptor lookup) relative to examining
 /// one descriptor-table entry.
 const INDEX_PROBE_COST_RATIO: usize = 8;
@@ -95,40 +97,6 @@ impl<H: Host> Vm<H> {
     /// prototype can shadow.
     pub(super) fn string_length(&self, value: Value) -> Option<usize> {
         self.heap.string(value).map(|string| string.len())
-    }
-
-    /// The own data `length` of an arguments object that keeps the layout it was made with
-    /// (a realm's `ArgumentsObjectTemplate` shape, which fixes the property, its attributes
-    /// and its slot); `None` for any other value or layout.
-    pub(super) fn arguments_object_length(&self, target: Value) -> Option<Value> {
-        let object = self.heap.object(target)?;
-        if !self.heap.array(target)?.is_arguments_object() {
-            return None;
-        }
-        let shape = object.shape();
-        [true, false].into_iter().find_map(|expose_callee| {
-            let template =
-                self.realm.intrinsics.arguments_objects.get(&(self.realm.globals, expose_callee))?;
-            (self.heap.object(template.anchor)?.shape() == shape)
-                .then(|| self.heap.property_get(object, template.length_slot))
-                .flatten()
-        })
-    }
-
-    /// Own data element `index` of an arguments object, where no parameter mapping reaches
-    /// it and no descriptor stands for it: its stored element, as `[[Get]]` finds it before
-    /// any prototype. `None` for a mapped, absent, accessor or redefined element, or any other
-    /// value.
-    pub(super) fn plain_arguments_element(&self, target: Value, index: usize) -> Option<Value> {
-        let object = self.heap.object(target)?;
-        if !object.is_arguments_object()
-            || object.has_indexed_descriptors()
-            || object.mapped_argument_slot(index).is_some()
-        {
-            return None;
-        }
-        let value = self.heap.array_elements(target)?.get(index)?;
-        (!value.is_deleted()).then_some(value)
     }
 
     pub(super) fn has_own_array_index(&self, target: Value, index: usize) -> bool {

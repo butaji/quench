@@ -19,15 +19,29 @@ pub enum JitMode {
 }
 
 impl JitMode {
+    /// Every mode a flag selects, with its flag: the one table `from_flag`, `flag` and `name` read.
+    pub const FLAGGED: [(Self, &'static str); 4] = [
+        (Self::Interp, "--no-jit"), (Self::BaseOnly, "--b-jit"), (Self::UltraOnly, "--u-jit"), (Self::QuickOnly, "--q-jit"),
+    ];
+
     /// The mode a command line flag selects, or `None` if the flag is not a JIT mode.
     pub fn from_flag(flag: &str) -> Option<Self> {
-        match flag {
-            "--no-jit" => Some(Self::Interp),
-            "--b-jit" => Some(Self::BaseOnly),
-            "--u-jit" => Some(Self::UltraOnly),
-            "--q-jit" => Some(Self::QuickOnly),
-            _ => None,
-        }
+        Self::FLAGGED.iter().find(|(_, own)| *own == flag).map(|(mode, _)| *mode)
+    }
+
+    /// The flag that selects this mode; none for the default.
+    pub fn flag(self) -> Option<&'static str> {
+        Self::FLAGGED.iter().find(|(mode, _)| *mode == self).map(|(_, flag)| *flag)
+    }
+
+    /// The name reports give this mode: its flag without the dashes, `jit` for the default.
+    pub fn name(self) -> &'static str {
+        self.flag().map_or("jit", |flag| flag.trim_start_matches("--"))
+    }
+
+    /// The mode the process runs in (`set_process_mode`).
+    pub fn process() -> Self {
+        process_mode()
     }
 
     /// Whether `arg` has the shape of a JIT mode flag (`--no-jit`, `--b-jit`, the removed `--jit`, or an unknown `--x-jit`).
@@ -107,9 +121,29 @@ impl Tier {
 
 static PROCESS_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(JitMode::Full as u8);
 
+// The mode a test thread runs in, over the process's: tests share one process, so a test that
+// needs `--b-jit` selects it for its own thread only (`with_mode`).
+#[cfg(test)]
+thread_local! {
+    static TEST_MODE: std::cell::Cell<Option<JitMode>> = const { std::cell::Cell::new(None) };
+}
+
+/// Runs `body` on this thread in `mode`.
+#[cfg(test)]
+pub(crate) fn with_mode<R>(mode: JitMode, body: impl FnOnce() -> R) -> R {
+    let before = TEST_MODE.with(|chosen| chosen.replace(Some(mode)));
+    let result = body();
+    TEST_MODE.with(|chosen| chosen.set(before));
+    result
+}
+
 fn process_mode() -> JitMode {
     #[cfg(test)]
     if let Some(mode) = THREAD_MODE.with(std::cell::Cell::get) {
+        return mode;
+    }
+    #[cfg(test)]
+    if let Some(mode) = TEST_MODE.with(std::cell::Cell::get) {
         return mode;
     }
     [JitMode::Interp, JitMode::BaseOnly, JitMode::UltraOnly, JitMode::QuickOnly, JitMode::Full]

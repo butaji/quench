@@ -305,7 +305,7 @@ pub(super) fn lane_planned_inline_quick<H: Host>(vm: &mut Vm<H>, callee: Value, 
 
 /// `lane_planned_construction` from the parameters' values `argument` gives.
 #[inline(always)]
-fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
+pub(super) fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
     // The plan in place: the allocation borrows the heap beside it, not a copy.
     let plan = &vm.lane_stack.construct_plans[index];

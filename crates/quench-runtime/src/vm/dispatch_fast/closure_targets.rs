@@ -127,3 +127,27 @@ impl<H: Host> Vm<H> {
         Some(ScriptCallTarget { callee, env, capture: storage.map_addr(|address| address | stores), ..*entry })
     }
 }
+
+/// The entry a call of `body` takes, whose resolution `shape` records: settling, an environment
+/// activation, a gather of rest parameters or a keeping of the arguments take their own, a class
+/// constructor its first resolution's, and any other the activation or leaf its shape allows.
+pub(super) fn target_entry(body: &crate::bytecode::Function, plan: &crate::bytecode::CallPlan, shape: &TargetBody, (settles, environment, cross): (bool, bool, bool)) -> CallEntry {
+    if settles {
+        CallEntry::Settles
+    } else if body.is_class_constructor {
+        shape.entry
+    } else if environment {
+        CallEntry::Environment
+    } else if body.rest {
+        CallEntry::Gathers
+    } else if plan.keeps_arguments {
+        CallEntry::Keeps
+    } else if cross {
+        // A leaf runs as one across programs too (`lane_cross_leaf_call`); no other
+        // body form's answer reads another program's caches.
+        shape.leaf.map_or(CallEntry::Activates, CallEntry::leaf)
+    } else {
+        // Leaf-ness is the view's, fixed with its returns (`TargetBody::leaf`).
+        shape.leaf.map_or(shape.entry, CallEntry::leaf)
+    }
+}

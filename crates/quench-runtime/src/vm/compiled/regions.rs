@@ -43,20 +43,50 @@ macro_rules! region_flags {
 region_flags! {
     /// An activation's register or local slot, or a call record.
     frame => Frame.mutable,
-    /// A property value of an object.
-    object_slots => ObjectSlots.mutable,
     /// An object record's exact shape word.
     shape_word => ShapeWord.mutable,
-    /// A dense array element.
-    elements => Elements.mutable,
-    /// A record's payload word, or a narrow value packed in it.
-    payload => Payload.mutable,
     /// A word of the step dispatch, call context or result.
     dispatch => Dispatch.mutable,
+    /// Heap bookkeeping (`Region::HeapMeta`): a cache entry, the property arena's header.
+    heap_meta => HeapMeta.mutable,
     /// A per-site feedback counter.
     miss_counter => MissCounters.mutable,
-    /// A word of the loop entry record: written before the run, never during it.
-    loop_entry => LoopEntry.readonly,
     /// A word of the frozen constant pool.
     constant => Constants.readonly,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_access_is_trusted_and_tagged_with_its_region_number() {
+        for region in Region::ALL {
+            for access in [region.mutable(), region.readonly()] {
+                let data = flags(access);
+                assert!(data.notrap() && data.aligned());
+                assert_eq!(data.alias_region(), Some(AliasRegion::from_u32(*region as u32)));
+            }
+        }
+    }
+
+    #[test]
+    fn only_a_readonly_access_may_move() {
+        for region in Region::ALL {
+            let (mutable, readonly) = (flags(region.mutable()), flags(region.readonly()));
+            assert!(!mutable.readonly() && !mutable.can_move());
+            assert!(readonly.readonly() && readonly.can_move());
+        }
+    }
+
+    #[test]
+    fn a_function_declares_each_region_at_its_number() {
+        let mut function = ir::Function::new();
+        declare_regions(&mut function);
+        assert_eq!(function.dfg.alias_regions.len(), Region::ALL.len());
+        for region in Region::ALL {
+            let handle = AliasRegion::from_u32(*region as u32);
+            assert_eq!(function.dfg.alias_regions[handle].user_id, *region as u32);
+        }
+    }
 }

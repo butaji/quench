@@ -30,9 +30,9 @@ fn frame_traffic(layout: &Layout, row: &Decoded) -> (u32, u32) {
 /// Whether `row` can leave the loop through a check: a row that proves something, or a branch
 /// out of the region. The back edge and the branches inside are no checks.
 fn is_check(layout: &Layout, row: &Decoded, planned: &Planned) -> bool {
-    planned.exit_pc.is_some()
+    !planned.exits.is_empty()
         && row.target.is_none_or(|target| {
-            row.kind != Kind::Jump && !(layout.header..=layout.backedge).contains(&target)
+            row.kind != Kind::Jump && !(layout.span.header..=layout.span.backedge).contains(&target)
         })
 }
 
@@ -59,11 +59,11 @@ fn of_rows(layout: &Layout, decoded: &[Decoded], body: &[Planned]) -> Residual {
 }
 
 /// Reports the region's counts and its code `bytes` when the channel is on.
-pub(super) fn report_rows(layout: &Layout, decoded: &[Decoded], body: &[Planned], bytes: usize) {
+pub(super) fn report_rows(layout: &Layout, header: u32, decoded: &[Decoded], body: &[Planned], bytes: usize) {
     if crate::trace::Channel::Residuals.on() {
         report(
             "b-jit",
-            layout.header,
+            header,
             of_rows(layout, decoded, body),
             Some(bytes),
         );

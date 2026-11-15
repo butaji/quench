@@ -675,6 +675,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             | Cell::ArrayFromAsyncState(_)
             | Cell::AwaitState(_)
             | Cell::WasmBits64(_)
+            | Cell::WasmInstance(_)
             | Cell::WasmV128(_)
             | Cell::WasmExtern(_)
             | Cell::AccessorPair { .. }
@@ -692,7 +693,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::TemporalPlainMonthDay { calendar, .. }
             | Cell::TemporalPlainYearMonth { calendar, .. } => calendar.capacity(),
             Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
-            Cell::WasmTable { elements, .. } => elements.capacity() * size_of::<Value>(),
+            Cell::WasmTable { elements, .. } => elements.external_bytes(),
             Cell::WasmGc { fields, .. } => fields.allocated_bytes(),
             Cell::Array { object } => object.elements().capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
@@ -708,10 +709,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             }
             Cell::BigInt(value) => value.spilled_bytes(),
             Cell::Error(value) => value.capacity(),
-            Cell::Promise(promise) => {
-                size_of::<super::PromiseCell>()
-                    + promise.record.reaction_heap_bytes()
-            }
+            Cell::Promise(promise) => size_of::<super::PromiseCell>() + promise.record.reaction_heap_bytes(),
             Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             Cell::Date { .. } => 0,
             Cell::RegExp { meta, .. } => meta.source.capacity(),

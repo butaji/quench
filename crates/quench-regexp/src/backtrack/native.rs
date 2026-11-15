@@ -3,7 +3,8 @@
 //! runs the same steps as `Program::run` (so the interpreter stays the one source of meaning)
 //! on a stack of its own. A search the native code cannot finish (its stack is full) is run
 //! again by the interpreter from the same start.
-use super::{Assertion, AssertionTest, Inst, MatchSet, Program, Search, Text, UnitTest, ASCII_UNITS};
+use super::matcher::{Admission, AssertionTest};
+use super::{Inst, MatchSet, Program, Search, Text, UnitTest, ASCII_UNITS};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::task::Poll;
 use std::sync::OnceLock;
@@ -17,34 +18,15 @@ pub enum NativeTest {
     Mask([u64; 2]),
 }
 
-#[derive(Clone, Copy)]
-pub enum NativeAssertion {
-    Start { multiline: bool },
-    End { multiline: bool },
-    StartBuffer,
-    EndBuffer,
-    EndBufferOptionalNewline,
-    Boundary,
-    NonBoundary,
-}
-
-/// The positions a guarded body can start at.
-#[derive(Clone, Copy)]
-pub struct NativeGuard {
-    pub at_start: bool,
-    pub at_end: bool,
-    pub mask: [u64; 2],
-}
-
 /// `Inst`, for the instructions a native search runs; `Dispatch`, `Backreference` and
 /// lookarounds keep a program interpreted.
 #[derive(Clone)]
 pub enum NativeInst {
     Unit(NativeTest),
     UnitRepeat { test: NativeTest, min: u32, max: u32, greedy: bool },
-    Assert(NativeAssertion),
+    Assert(AssertionTest),
     Split { alternative: u32 },
-    GuardedSplit { alternative: u32, guard: NativeGuard },
+    GuardedSplit { alternative: u32, guard: Admission<NativeTest> },
     Jump(u32),
     /// `count` consecutive temporaries from `temporary`.
     CaptureOpen { temporary: u32, count: u32, restores: bool },
@@ -75,6 +57,8 @@ pub struct NativePlan {
 pub type NativeFn = unsafe extern "C" fn(*const u8, usize, usize, *mut usize, *mut usize, *mut usize) -> usize;
 pub const NATIVE_FAIL: usize = usize::MAX;
 pub const NATIVE_OVERFLOW: usize = usize::MAX - 1;
+/// The units of an ASCII subject: a byte below this.
+pub const NATIVE_ASCII_UNITS: u32 = ASCII_UNITS;
 /// A quantifier bound without a maximum.
 pub const NATIVE_UNBOUNDED: u32 = super::UNBOUNDED;
 /// `LoopTail::start` of a loop whose body cannot match empty: no empty check.
@@ -144,18 +128,6 @@ fn native_test(test: UnitTest, sets: &[MatchSet]) -> NativeTest {
     }
 }
 
-fn native_assertion(test: AssertionTest) -> NativeAssertion {
-    match test.assertion {
-        Assertion::Start => NativeAssertion::Start { multiline: test.multiline },
-        Assertion::End => NativeAssertion::End { multiline: test.multiline },
-        Assertion::StartBuffer => NativeAssertion::StartBuffer,
-        Assertion::EndBuffer => NativeAssertion::EndBuffer,
-        Assertion::EndBufferOptionalNewline => NativeAssertion::EndBufferOptionalNewline,
-        Assertion::Boundary => NativeAssertion::Boundary,
-        Assertion::NonBoundary => NativeAssertion::NonBoundary,
-    }
-}
-
 impl Program {
     /// The program as a native plan, or `None` where an instruction is not one native code runs.
     fn native_plan(&self) -> Option<NativePlan> {
@@ -168,11 +140,11 @@ impl Program {
         Some(match inst {
             Inst::Unit(test) => NativeInst::Unit(native_test(test, sets)),
             Inst::UnitRepeat { test, min, max, greedy } => NativeInst::UnitRepeat { test: native_test(test, sets), min, max, greedy },
-            Inst::Assert(test) => NativeInst::Assert(native_assertion(test)),
+            Inst::Assert(test) => NativeInst::Assert(test),
             Inst::Split { alternative } => NativeInst::Split { alternative },
             Inst::GuardedSplit { alternative, guard } => {
-                let guard = &self.guards[guard as usize];
-                NativeInst::GuardedSplit { alternative, guard: NativeGuard { at_start: guard.at_start, at_end: guard.at_end, mask: guard.units.table.0 } }
+                let Admission { at_start, at_end, units } = self.guards[guard as usize];
+                NativeInst::GuardedSplit { alternative, guard: Admission { at_start, at_end, units: native_test(units, sets) } }
             }
             Inst::Jump(target) => NativeInst::Jump(target),
             Inst::Match => NativeInst::Match,

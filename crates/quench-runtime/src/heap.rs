@@ -1,6 +1,7 @@
 use crate::value::{HeapReference, Value};
 use crate::vm::wtf16::JsString;
 use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueArena, ValueVec};
+use crate::staged::wasm_instance::Storage as WasmStorage;
 use rayon::prelude::*;
 use rayon::ThreadPool;
 use rustc_hash::FxHashMap;
@@ -12,6 +13,9 @@ pub(crate) mod layouts;
 mod dense_growth;
 pub(crate) use dense_growth::dense_write_gap_limit;
 mod store_gate;
+mod typed_view;
+pub(crate) use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NativeView};
+use typed_view::TypedViewTable;
 pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, NARROW_LEN, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod array_proofs;
 pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope, retire_array_storage_proofs};
@@ -48,6 +52,11 @@ mod snapshot;
 mod string_alloc;
 mod string_atoms;
 mod native_layout;
+mod record_layouts;
+pub(crate) use record_layouts::{
+    NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, PropertyStoreLayout,
+    absent_environment_storage,
+};
 mod string_parts;
 mod small_strings;
 pub(crate) use small_strings::{FlatText, SMALL_STRING_ID_BASE, SMALL_STRING_ID_MASK, SmallParts, is_small_string};
@@ -55,7 +64,7 @@ mod thin_slice;
 pub(crate) use thin_slice::ThinBoxSlice;
 mod weak;
 pub(crate) use cell::*;
-pub(crate) use buffer_bytes::{BufferBytes,BufferRead,view_epoch};
+pub(crate) use buffer_bytes::{BufferBytes, BufferRead, buffer_relocations_address, view_epoch};
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
 use records::{
@@ -68,195 +77,6 @@ pub(crate) use root::{RootTable, WeakHandle};
 use slots::{FREE_SLOT_WORDS, FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
 mod young;
 use young::YoungSlots;
-
-/// The native reader's view of an ordinary array's fixed record and dense backing.
-///
-/// Every field is derived from the storage types below; this is a projection of the heap's
-/// representation, not a second copy of its length or element state. A consumer resolves the
-/// current live array record from the current rooted `Value`, then loads its current
-/// `ArrayElements` header and backing on every access. It must not retain a record or backing
-/// pointer across a VM safepoint: record addresses are stable for the heap lifetime, but a
-/// copy-on-write array mutation can replace and free its backing. The read itself must not
-/// call into the VM or permit collection while the borrowed raw pointers are in use.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeArrayLayout {
-    pub(crate) record_capacity: usize,
-    pub(crate) record_size: usize,
-    pub(crate) record_align: usize,
-    /// Where an array record keeps its backing's header pointer without extras: its
-    /// object's payload word. With extras, that word points at them (`NATIVE_OBJECT_LAYOUT`'s
-    /// extras tag), and they keep the pointer at `extras_elements_offset`.
-    pub(crate) elements_offset: usize,
-    pub(crate) extras_elements_offset: usize,
-    pub(crate) elements_header_offset: usize,
-    pub(crate) header_length_offset: usize,
-    pub(crate) header_values_offset: usize,
-    /// The backing's owner count, one where no other array shares it.
-    pub(crate) header_owners_offset: usize,
-    /// The record's object part, whose meta and payload words `NATIVE_OBJECT_LAYOUT` names.
-    pub(crate) object_offset: usize,
-    /// The meta bit of a frozen array.
-    pub(crate) frozen_mask: u32,
-    /// The meta bits of an array whose elements may not all be added or removed: frozen, or
-    /// not extensible.
-    pub(crate) integrity_mask: u32,
-}
-
-/// The native reader's view of a function record: its own properties are the `Object` at
-/// `object_offset`, whose words `NATIVE_OBJECT_LAYOUT` names. Generated code reads them only;
-/// a store's barrier tests object record marks (`emit_unlogged_property_store_guard`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeFunctionLayout {
-    pub(crate) record_size: usize,
-    pub(crate) object_offset: usize,
-}
-
-pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLayout {
-    record_size: cell::NATIVE_FUNCTION_RECORD_SIZE,
-    object_offset: cell::NATIVE_FUNCTION_OBJECT_OFFSET,
-};
-
-/// Layout facts for code generators which emit read-only ordinary-array accesses.
-pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
-    record_capacity: RECORD_SPACE_CAPACITY,
-    record_size: cell::NATIVE_ARRAY_RECORD_SIZE,
-    record_align: cell::NATIVE_ARRAY_RECORD_ALIGN,
-    elements_offset: cell::NATIVE_ARRAY_ELEMENTS_OFFSET,
-    extras_elements_offset: cell::NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET,
-    elements_header_offset: array_elements::NATIVE_HEADER_POINTER_OFFSET,
-    header_length_offset: array_elements::NATIVE_HEADER_LENGTH_OFFSET,
-    header_values_offset: array_elements::NATIVE_HEADER_VALUES_OFFSET,
-    header_owners_offset: array_elements::NATIVE_HEADER_OWNERS_OFFSET,
-    object_offset: cell::NATIVE_ARRAY_OBJECT_OFFSET,
-    frozen_mask: crate::value_vec::VALUE_VEC_FROZEN,
-    integrity_mask: crate::value_vec::VALUE_VEC_INTEGRITY_BITS,
-};
-
-/// Which invariants an existing-slot store must preserve. Native views cannot
-/// replace property storage; typed native regions also leave on content widening.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PropertyStoreLayout {
-    Preserve,
-    /// Native code leaves before a store that retires its content observations.
-    PreserveNative,
-    MayWiden,
-}
-
-/// The native reader's view of an ordinary object record and its out-of-line property words.
-///
-/// Generated code may resolve only a current direct-object Value to a live record, must
-/// compare its exact auxiliary shape (which also excludes dictionary storage), and must
-/// finish before any safepoint or property-arena mutation. `properties` pointers are scoped
-/// to one synchronous no-safepoint execution because growth and compaction can move the arena.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeObjectLayout {
-    pub(crate) record_capacity: usize,
-    pub(crate) record_size: usize,
-    pub(crate) record_align: usize,
-    /// Where a record keeps its layout id (`heap::layouts`).
-    pub(crate) layout_offset: usize,
-    /// Where a layout's table entry keeps the `meta` and auxiliary words.
-    pub(crate) meta_offset: usize,
-    pub(crate) auxiliary_offset: usize,
-    pub(crate) payload_offset: usize,
-    pub(crate) extras_arena_start_offset: usize,
-    pub(crate) extras_inline_values_offset: usize,
-    pub(crate) inline_storage_mask: u32,
-    pub(crate) array_mask: u32,
-    pub(crate) storage_start_mask: u32,
-    pub(crate) dictionary_mask: u32,
-    /// The auxiliary word's storage-form bits (`value_vec::INLINE_FORM`, `EXTRAS_FORM`), which
-    /// a recorded shape leaves out: a guard of a recorded shape masks them off the word.
-    pub(crate) inline_form: u32,
-    pub(crate) extras_form: u32,
-    pub(crate) narrow_form: u32,
-    pub(crate) narrow_run_tag: u64,
-    pub(crate) inline_property_count: usize,
-    pub(crate) extras_tag: u64,
-    pub(crate) extras_tag_mask: u64,
-    pub(crate) proto_mask: u32,
-    pub(crate) proto_record_base: u32,
-    pub(crate) proto_record_end: u32,
-    pub(crate) mark_records_per_block: usize,
-    pub(crate) mark_word_bits: usize,
-    pub(crate) mark_block_size: usize,
-    pub(crate) mark_offset: usize,
-    pub(crate) property_value_size: usize,
-    pub(crate) property_value_align: usize,
-}
-
-/// Layout facts for code generators which emit read-only ordinary-object field accesses.
-pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
-    record_capacity: RECORD_SPACE_CAPACITY,
-    record_size: cell::NATIVE_OBJECT_RECORD_SIZE,
-    record_align: cell::NATIVE_OBJECT_RECORD_ALIGN,
-    layout_offset: cell::NATIVE_OBJECT_LAYOUT_OFFSET,
-    meta_offset: cell::NATIVE_OBJECT_META_OFFSET,
-    auxiliary_offset: cell::NATIVE_OBJECT_AUXILIARY_OFFSET,
-    payload_offset: cell::NATIVE_OBJECT_PAYLOAD_OFFSET,
-    extras_arena_start_offset: cell::NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET,
-    extras_inline_values_offset: cell::NATIVE_OBJECT_EXTRAS_INLINE_VALUES_OFFSET,
-    inline_storage_mask: cell::NATIVE_OBJECT_INLINE_STORAGE_MASK,
-    array_mask: cell::NATIVE_OBJECT_ARRAY_MASK,
-    storage_start_mask: crate::value_vec::START_MASK,
-    dictionary_mask: crate::value_vec::DICTIONARY_STORAGE,
-    inline_form: cell::NATIVE_OBJECT_INLINE_FORM,
-    extras_form: cell::NATIVE_OBJECT_EXTRAS_FORM,
-    narrow_form: crate::value_vec::NARROW_FORM,
-    narrow_run_tag: cell::NATIVE_OBJECT_NARROW_RUN_TAG,
-    inline_property_count: INLINE_PROPERTY_COUNT,
-    extras_tag: cell::NATIVE_OBJECT_EXTRAS_TAG,
-    extras_tag_mask: cell::NATIVE_OBJECT_EXTRAS_TAG_MASK,
-    proto_mask: cell::NATIVE_OBJECT_PROTO_MASK,
-    proto_record_base: cell::NATIVE_OBJECT_PROTO_RECORD_BASE,
-    proto_record_end: cell::NATIVE_OBJECT_PROTO_RECORD_END,
-    mark_records_per_block: records::NATIVE_RECORDS_PER_BLOCK,
-    mark_word_bits: records::NATIVE_RECORD_MARK_WORD_BITS,
-    mark_block_size: records::NATIVE_RECORD_BLOCK_SIZE,
-    mark_offset: records::NATIVE_RECORD_MARK_OFFSET,
-    property_value_size: std::mem::size_of::<Value>(),
-    property_value_align: std::mem::align_of::<Value>(),
-};
-
-/// Layout facts for code generators reading a dense environment-slot storage
-/// (`EnvironmentSlots::dense`, `dense_plain`): the storage word holds a pointer to the slice
-/// header; the header's top bit marks a sparse storage and the rest is the length; the
-/// slots follow the header, one `Value` word each.
-#[allow(dead_code)] // consumer: thread 13's Emit lowering of LoadEnvLocal in environment windows
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeEnvironmentLayout {
-    /// Offset in the storage word of the header pointer.
-    pub(crate) header_pointer_offset: i32,
-    /// Header bit set on a sparse storage; the length is the other bits.
-    pub(crate) sparse_mark: u64,
-    /// Offset from the header to the first slot.
-    pub(crate) slots_offset: u64,
-    pub(crate) slot_size: u64,
-}
-
-#[allow(dead_code)] // consumer: thread 13's Emit lowering of LoadEnvLocal in environment windows
-pub(crate) const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvironmentLayout {
-    header_pointer_offset: 0,
-    sparse_mark: thin_slice::NATIVE_MARK_BIT,
-    slots_offset: thin_slice::NATIVE_WORD_ELEMENTS_OFFSET as u64,
-    slot_size: std::mem::size_of::<Value>() as u64,
-};
-
-const _: () =
-    assert!(NATIVE_OBJECT_LAYOUT.record_size.is_multiple_of(NATIVE_OBJECT_LAYOUT.record_align));
-const _: () =
-    assert!(NATIVE_OBJECT_LAYOUT.property_value_size == std::mem::size_of::<Value>());
-const _: () =
-    assert!(NATIVE_OBJECT_LAYOUT.property_value_align == std::mem::align_of::<Value>());
-const _: () = assert!(NATIVE_OBJECT_LAYOUT.inline_property_count > 0);
-const _: () =
-    assert!(NATIVE_OBJECT_LAYOUT.storage_start_mask & NATIVE_OBJECT_LAYOUT.dictionary_mask == 0);
-
-const _: () = assert!(
-    NATIVE_ARRAY_LAYOUT
-        .record_size
-        .is_multiple_of(NATIVE_ARRAY_LAYOUT.record_align)
-);
 
 // Keep implicit holes in dense storage when their one-time allocation is
 // bounded. 1 MiB covers the measured 16,900-slot NavierStokes grids and the
@@ -758,6 +578,8 @@ pub(crate) struct Heap {
     properties: ValueArena,
     roots: RootTable,
     sparse_arrays: Option<Box<FxHashMap<Value, SparseElements>>>,
+    /// The typed arrays' view records by slot (`Heap::typed_view_directory`); declared after `slots`, whose cells' records drop first.
+    typed_views: TypedViewTable,
     #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     gc_profile: GcProfile,
     #[cfg(feature = "profile-memory")]
@@ -1512,7 +1334,32 @@ impl Heap {
             },
             cell => cell,
         };
-        self.alloc_in_slot(cell, track_young)
+        self.alloc_slotted(cell, track_young)
+    }
+
+    /// `cell` in a legacy slot; a typed array also joins the table native code reads its views from.
+    fn alloc_slotted(&mut self, cell: Cell, track_young: bool) -> Value {
+        let typed = matches!(cell, Cell::TypedArray { .. });
+        let value = self.alloc_in_slot(cell, track_young);
+        if typed {
+            self.register_typed_view(value);
+        }
+        value
+    }
+
+    /// Names the record of the typed array just allocated at `value` in the table native code reads.
+    fn register_typed_view(&mut self, value: Value) {
+        let Some(index) = value.legacy_heap_index() else { return };
+        if let Some(Cell::TypedArray { object, .. }) = self.slots.get_mut(index as usize).and_then(|slot| slot.cell.as_mut()) {
+            self.typed_views.register(index, &mut object.native);
+        }
+    }
+
+    /// The directory of the typed array view record pages by legacy slot and its page count
+    /// (`NATIVE_TYPED_ARRAY_LAYOUT`): read an entry from a current live typed array's slot
+    /// index, finish before any VM safepoint, which an allocation may move the directory at.
+    pub(crate) fn typed_view_directory(&self) -> (*const usize, usize) {
+        self.typed_views.directory()
     }
 
     /// `alloc(Cell::BigInt(value))` without the dispatch on the cell's kind: a BigInt has no
@@ -4698,7 +4545,7 @@ impl Heap {
     }
 
     #[cfg(feature = "profile-memory")]
-    fn note_object_slots(&mut self, object: Value, slots: usize) {
+    pub(crate) fn note_object_slots(&mut self, object: Value, slots: usize) {
         self.memory_profile.object_slots_changed(object, slots);
     }
     /// Push the values `object` keeps alive. Objects that share a prototype push it once:
@@ -4878,9 +4725,9 @@ impl Heap {
                 object(&function.object);
                 work.extend([function.env, function.realm]);
             }
-            Cell::WasmGlobal { header, value: global, .. } => {
+            Cell::WasmGlobal { header, bits, ty, .. } => {
                 object(&header.object);
-                work.push(*global);
+                work.extend((WasmStorage::of(*ty) == WasmStorage::Handle).then(|| Value::from_bits(*bits)));
             }
             Cell::BindingReference { environment, .. } => work.push(*environment),
             Cell::Environment {
@@ -4936,8 +4783,7 @@ impl Heap {
                 target: crate::heap::WasmHostTarget::Host(_),
                 ..
             }
-            | Cell::WasmBits64(_)
-            | Cell::WasmV128(_) => {}
+            | Cell::WasmBits64(_) | Cell::WasmInstance(_) | Cell::WasmV128(_) => {}
             Cell::WasmHostFunction {
                 target: crate::heap::WasmHostTarget::Js(target),
                 ..
@@ -5117,7 +4963,7 @@ impl Heap {
             Cell::Function(_) => CellKind::Function,
             Cell::Environment { .. } | Cell::BindingReference { .. } => CellKind::Environment,
             Cell::BigInt(_) => CellKind::BigInt,
-            Cell::WasmElements(_) => CellKind::WasmElements,
+            Cell::WasmElements(_) | Cell::WasmInstance(_) => CellKind::WasmElements,
             Cell::WasmGlobal { .. } => CellKind::WasmGlobal,
             Cell::WasmMemory { .. } => CellKind::WasmMemory,
             Cell::WasmTable { .. } => CellKind::WasmTable,
@@ -5167,15 +5013,13 @@ impl Heap {
                 | Cell::WeakRef { .. }
                 | Cell::FinalizationRegistry { .. }
                 | Cell::WasmGlobal { .. }
+                | Cell::WasmInstance(_)
                 | Cell::WasmBits64(_)
                 | Cell::WasmV128(_)
                 | Cell::WasmExtern(_)
                 | Cell::AccessorPair { .. }
                 | Cell::WasmTag { .. } => 0,
-                Cell::Promise(promise) => {
-                    size_of::<PromiseCell>()
-                        + promise.record.reaction_heap_bytes()
-                }
+                Cell::Promise(promise) => size_of::<PromiseCell>() + promise.record.reaction_heap_bytes(),
                 Cell::WasmException { payload, .. } => payload.capacity() * size_of::<Value>(),
                 Cell::WasmHostFunction { target, signature } => {
                     size_of::<crate::WasmSignature>()
@@ -5188,7 +5032,7 @@ impl Heap {
                         }
                 }
                 Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
-                Cell::WasmTable { elements, .. } => elements.capacity() * size_of::<Value>(),
+                Cell::WasmTable { elements, .. } => elements.external_bytes(),
                 Cell::WasmGc { fields, .. } => fields.allocated_bytes(),
                 Cell::TemporalPlainDate { calendar, .. }
                 | Cell::TemporalPlainDateTime { calendar, .. }

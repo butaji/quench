@@ -79,9 +79,9 @@ pub struct Runtime<H> {
 }
 
 impl<H: Host> Runtime<H> {
-    pub fn new(host: H) -> Self {
-        Self { vm: Vm::new(host) }
-    }
+    pub fn new(host: H) -> Self { Self { vm: Vm::new(host) } }
+    /// What this runtime's tiers did, counted whatever diagnostics are on.
+    pub fn tier_events(&self) -> &crate::TierEvents { self.vm.tier_events() }
 
     /// Takes `images` (compiled ahead from this runtime's program) as its functions' first bodies.
     pub fn load_ahead_images(&mut self, images: crate::AheadImages) { self.vm.load_ahead_images(images); }

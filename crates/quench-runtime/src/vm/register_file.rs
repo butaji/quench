@@ -4,6 +4,7 @@
 //! whichever kind of frame it runs on. Everything else sees the registers alone: it derefs to
 //! the slice past the context, and its length, capacity and pointers are the registers'.
 
+use crate::snapshot::{Reader, Snap, SnapshotResult, Writer};
 use crate::value::Value;
 
 /// The words in front of register 0: captures, environment, receiver (`r[-3]`, `r[-2]`, `r[-1]`).
@@ -73,6 +74,18 @@ impl std::ops::DerefMut for RegisterFile {
     fn deref_mut(&mut self) -> &mut [Value] {
         // SAFETY: as `deref`.
         unsafe { self.words.get_unchecked_mut(FRAME_CONTEXT..) }
+    }
+}
+
+/// The registers as a list, as `Vec<Value>` records them: the context words are a running
+/// window's, rewritten when one links the file.
+impl Snap for RegisterFile {
+    fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
+        writer.len(self.len());
+        self.iter().try_for_each(|value| value.snap(writer))
+    }
+    fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
+        Ok(Self::from_registers(&Vec::<Value>::unsnap(reader)?))
     }
 }
 

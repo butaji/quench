@@ -159,7 +159,7 @@ enum Expr {
 }
 
 #[derive(Clone, Copy)]
-enum Assertion {
+pub enum Assertion {
     Start,
     End,
     StartBuffer,
@@ -2793,15 +2793,22 @@ fn canonical_preimages_of(key: u32, unicode: bool) -> impl Iterator<Item = u32> 
         .map(|(_, member)| *member)
 }
 
+/// The units `\w` matches, as inclusive ranges.
+const WORD_UNITS: [(u32, u32); 4] = [(b'0' as u32, b'9' as u32), (b'A' as u32, b'Z' as u32), (b'_' as u32, b'_' as u32), (b'a' as u32, b'z' as u32)];
+/// The units `\w` also matches under unicode case folding: long s and the Kelvin sign.
+const FOLDED_WORD_UNITS: [(u32, u32); 2] = [(0x017F, 0x017F), (0x212A, 0x212A)];
+const LINE_TERMINATORS: [(u32, u32); 3] = [(0x000A, 0x000A), (0x000D, 0x000D), (0x2028, 0x2029)];
+fn in_units(value: u32, ranges: &[(u32, u32)]) -> bool {
+    ranges.iter().any(|&(first, last)| first <= value && value <= last)
+}
 fn is_word(value: u32) -> bool {
-    char::from_u32(value)
-        .is_some_and(|character| character.is_ascii_alphanumeric() || character == '_')
+    in_units(value, &WORD_UNITS)
 }
 fn is_word_mode(value: u32, ignore_case: bool) -> bool {
-    is_word(value) || (ignore_case && matches!(char::from_u32(value), Some('ſ' | 'K')))
+    is_word(value) || (ignore_case && in_units(value, &FOLDED_WORD_UNITS))
 }
 fn is_line_terminator(value: u32) -> bool {
-    matches!(value, 0x000A | 0x000D | 0x2028 | 0x2029)
+    in_units(value, &LINE_TERMINATORS)
 }
 
 #[cfg(test)]

@@ -2,11 +2,15 @@
 //! a value at a slot, whichever of the two plain storage forms it keeps its values in. The
 //! interpreter runs it on `Concrete`; a specializer emits it from the same rows.
 
-use super::slot_store::{admitted_payload, store_flat};
+use super::narrow::{NOT_NARROW, UPPER_WORD};
+use super::object::{inline_storage, HALF_BYTES};
+use super::slot_store::{admitted_payload, gate_open, gated_payload, store_flat};
 use super::Stage;
 use super::region::Region;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+use crate::typed_ir::Type;
 use crate::value::{NarrowLayout, ValueLayout, LOWER_WORD};
+use crate::{Value, ValueType};
 
 /// The payload bits that code a narrow reference's family, and where they sit.
 const FAMILY_BITS: u64 = crate::value::HEAP_FAMILY_BITS;
@@ -14,35 +18,46 @@ const FAMILY_SHIFT: u32 = crate::value::HEAP_FAMILY_SHIFT;
 /// The upper words of the narrow constants, their codes following the families' codes.
 const CONSTANT_UPPER_WORDS: [u64; 4] = [crate::value::TAG_UNDEFINED, crate::value::TAG_NULL, crate::value::TAG_BOOL, crate::value::TAG_DELETED];
 const FIRST_CONSTANT_CODE: u64 = crate::value::NARROW_HEAP_FAMILIES as u64;
-/// A bit mask's complement in the low word: the upper word of a value.
-const UPPER_WORD: u64 = !(u32::MAX as u64);
-/// Bytes in one half of a packed payload word.
-const HALF_BYTES: u64 = std::mem::size_of::<u32>() as u64;
-
-/// The word a value that has no narrow form (a Number, a wide reference) yields.
-const NOT_NARROW: u64 = u64::MAX;
 
 /// The narrow form of `value` (`Value::to_narrow`) where it has one: an integer in range, a
 /// reference whose index fits, or a constant; `NOT_NARROW` for any other value, which the
-/// store leaves to the general path. Each form computes only its own arm.
+/// store leaves to the general path. A `fact` that proves an int32 selects the integer arm
+/// alone: the tag test and the reference arm are not emitted. Each form computes only its own arm.
 #[inline(always)]
-fn narrow_form<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
+pub(crate) fn narrow_form<S: Stage>(stage: &mut S, value: S::Word, fact: Type) -> S::Word {
+    if fact.is_subtype(Type::INT32) { return integer_form(stage, value); }
     let upper = stage.and_imm(value, UPPER_WORD);
     let is_int = stage.eq_imm(upper, ValueLayout::INT_TAG);
-    stage.choose(is_int, |stage| {
-        // An integer fits where its biased low word is below the span.
-        let lower = stage.and_imm(value, LOWER_WORD);
-        let span = 1_u64 << NarrowLayout::INTEGER_BITS;
-        let biased = stage.add_imm(lower, span >> 1);
-        let biased = stage.and_imm(biased, LOWER_WORD);
-        let over = stage.ugt_imm(biased, span - 1);
-        let fits = stage.not(over);
-        let shifted = stage.mul_imm(lower, 1_u64 << NarrowLayout::CODE_SHIFT);
-        let shifted = stage.and_imm(shifted, LOWER_WORD);
-        let integer = stage.or_imm(shifted, u64::from(NarrowLayout::INTEGER_FLAG));
-        let refused = stage.constant(NOT_NARROW);
-        stage.select(fits, integer, refused)
-    }, |stage| reference_form(stage, value, upper))
+    stage.choose(is_int, |stage| integer_form(stage, value), |stage| reference_form(stage, value, upper))
+}
+
+/// Whether the int32 `value`'s biased low word is below the narrow integer span: it has a narrow form.
+#[inline(always)]
+pub(crate) fn integer_fits<S: Stage>(stage: &mut S, value: S::Word) -> S::Cond {
+    let lower = stage.and_imm(value, LOWER_WORD);
+    let span = 1_u64 << NarrowLayout::INTEGER_BITS;
+    let biased = stage.add_imm(lower, span >> 1);
+    let biased = stage.and_imm(biased, LOWER_WORD);
+    let over = stage.ugt_imm(biased, span - 1);
+    stage.not(over)
+}
+
+/// The narrow word of the int32 `value` that `integer_fits` holds for: its code under the integer flag.
+#[inline(always)]
+pub(crate) fn integer_code<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
+    let lower = stage.and_imm(value, LOWER_WORD);
+    let shifted = stage.mul_imm(lower, 1_u64 << NarrowLayout::CODE_SHIFT);
+    let shifted = stage.and_imm(shifted, LOWER_WORD);
+    stage.or_imm(shifted, u64::from(NarrowLayout::INTEGER_FLAG))
+}
+
+/// `narrow_form` of an integer: its code where `integer_fits`.
+#[inline(always)]
+fn integer_form<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
+    let fits = integer_fits(stage, value);
+    let integer = integer_code(stage, value);
+    let refused = stage.constant(NOT_NARROW);
+    stage.select(fits, integer, refused)
 }
 
 /// `narrow_form` of a value that is no integer: its code is its family bits, a constant's
@@ -77,9 +92,29 @@ fn reference_form<S: Stage>(stage: &mut S, value: S::Word, upper: S::Word) -> S:
 #[inline(always)]
 pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, shape: u32, hinted: bool, slot: u16,
     value: S::Word, miss: S::Miss) -> Option<()> {
-    let (payload, inline) = admitted_payload(stage, record, record_id, shape, hinted, value, miss)?;
+    let payload = admitted_payload(stage, record, record_id, shape, hinted, value, miss)?;
+    own_store_with(stage, (record, payload, slot), (value, Type::ANY), miss)
+}
+
+/// `own_store` for a record whose exact shape the caller proved: the same gate and storage
+/// decisions, leaving the shape test to whoever holds its proof (`property_write::in_place`).
+/// `fact` is what the frame proved of `value` (`PropertyFrame::value_fact`): it folds the gate
+/// and selects the narrow encoder.
+#[inline(always)]
+pub(crate) fn own_store_proved<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, slot: u16,
+    value: (S::Word, Type), miss: S::Miss) -> Option<()> {
+    let payload = gated_payload(stage, record, record_id, value, miss)?;
+    own_store_with(stage, (record, payload, slot), value, miss)
+}
+
+/// The storage arms of an own store whose guards have passed: a packed slot takes the narrow
+/// form of `value`, a flat one any value.
+#[inline(always)]
+fn own_store_with<S: Stage>(stage: &mut S, (record, payload, slot): (S::Word, S::Word, u16),
+    (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
+    let inline = inline_storage(stage, record);
     // A packed slot needs the value's narrow form; a flat one takes any value.
-    let narrow = stage.choose(inline, |stage| narrow_form(stage, value), |stage| stage.constant(0));
+    let narrow = stage.choose(inline, |stage| narrow_form(stage, value, fact), |stage| stage.constant(0));
     let storable = stage.ne_imm(narrow, NOT_NARROW);
     stage.guard(storable, miss)?;
     stage.choose(inline, |stage| {
@@ -92,6 +127,53 @@ pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::
         stage.constant(0)
     });
     Some(())
+}
+
+/// `value` into the full-word slot at `address` of record `record_id`, which a frame bound
+/// before the run (the site's cache slot): behind the barrier's gate, as the own store is.
+#[inline(always)]
+pub(crate) fn bound_full_store<S: Stage>(stage: &mut S, record_id: S::Word, address: S::Word,
+    (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
+    gate_open(stage, record_id, (value, fact), miss)?;
+    stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value);
+    Some(())
+}
+
+/// `value`'s narrow form into the packed slot at `address` of record `record_id`; a value with
+/// no narrow form leaves at `miss`.
+#[inline(always)]
+pub(crate) fn bound_packed_store<S: Stage>(stage: &mut S, record_id: S::Word, address: S::Word,
+    (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
+    let narrow = narrow_form(stage, value, fact);
+    let storable = stage.ne_imm(narrow, NOT_NARROW);
+    stage.guard(storable, miss)?;
+    gate_open(stage, record_id, (value, fact), miss)?;
+    stage.store_u32(Region::Payload.mutable(), address, 0, narrow);
+    Some(())
+}
+
+/// Whether `bits` is a value of the type `holds` names: an int32, a direct object, `null` or
+/// `undefined`, each where `holds` has it. A slot of that type then keeps its representation
+/// under the store (`StoreArm::of`): no value widens it.
+#[inline(always)]
+pub(crate) fn slot_holds<S: Stage>(stage: &mut S, bits: S::Word, holds: Type) -> S::Cond {
+    let mut held = stage.ult(bits, bits);
+    if Type::INT32.is_subtype(holds) {
+        let upper = stage.and_imm(bits, UPPER_WORD);
+        let integer = stage.eq_imm(upper, ValueLayout::INT_TAG);
+        held = stage.any(held, integer);
+    }
+    if Type::DIRECT_OBJECT_FAMILY.is_subtype(holds) {
+        let object = super::value::is_direct_object(stage, bits);
+        held = stage.any(held, object);
+    }
+    for (class, constant) in [(ValueType::Null, Value::NULL), (ValueType::Undefined, Value::UNDEFINED)] {
+        if Type::language(class).is_subtype(holds) {
+            let named = stage.eq_imm(bits, constant.to_bits());
+            held = stage.any(held, named);
+        }
+    }
+    held
 }
 
 /// The interpreter's reading of `own_store`: `value` stored at `slot` of object record
@@ -113,7 +195,7 @@ pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id:
     // store, which changes nothing on a miss.
     // SAFETY: a live record, read before any write.
     if let Some(start) = unsafe { (*record).formed_plain_start(shape) } {
-        if !heap.store_unlogged(record_id, value) {
+        if !heap.store_unlogged(super::RecordSpace::Object, record_id, value) {
             return false;
         }
         // SAFETY: the shape matched, so its run holds `slot`; the gate admitted the write.
@@ -143,7 +225,7 @@ pub(crate) unsafe fn concrete_narrow_store(heap: &mut crate::heap::Heap, record_
     let Some(narrow) = value.to_narrow() else {
         return false;
     };
-    if !heap.store_unlogged(record_id, value) {
+    if !heap.store_unlogged(super::RecordSpace::Object, record_id, value) {
         return false;
     }
     // SAFETY: the shape matched, so the run's halves hold `slot`; the gate admitted the write.
@@ -225,5 +307,45 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(holes, [3, 4, 8]);
         assert_eq!(other, [40, 8, 16]);
+    }
+
+    /// The operations of the shared own store of a value the frame proved of type `fact`.
+    fn trace_of(fact: Type) -> Vec<String> {
+        let mut stage = crate::staged::trace::Trace::default();
+        let (record, id, value) = (stage.constant(0), stage.constant(1), stage.constant(2));
+        own_store_proved(&mut stage, record, id, 1, (value, fact), ());
+        stage.ops
+    }
+
+    fn count(ops: &[String], operation: &str) -> usize { ops.iter().filter(|line| line.starts_with(operation)).count() }
+
+    /// The binding time of the value's type decides the store's shape: an immediate type
+    /// folds the barrier away, an int32 takes the integer narrow arm alone, and nothing known
+    /// keeps the gate and the generic encoder.
+    #[test]
+    fn a_static_fact_folds_the_barrier_and_selects_the_integer_narrow_arm() {
+        let (generic, int32) = (trace_of(Type::ANY), trace_of(Type::INT32));
+        assert_eq!(count(&generic, "store_gate"), 1, "an unknown value asks the gate");
+        for immediate in [Type::NUMBER, Type::INT32, Type::language(ValueType::Boolean), Type::NULLISH] {
+            assert_eq!(count(&trace_of(immediate), "store_gate"), 0, "{immediate:?} names no heap record");
+        }
+        assert_eq!(count(&trace_of(Type::language(ValueType::Object)), "store_gate"), 1, "an object needs the barrier");
+        assert_eq!(count(&generic, "choose"), count(&int32, "choose") + 1, "an int32 needs no tag test");
+        assert!(int32.len() < generic.len());
+    }
+
+    #[test]
+    fn a_slot_holds_test_names_the_classes_its_type_has() {
+        let ops = |holds: Type| {
+            let mut stage = crate::staged::trace::Trace::default();
+            let bits = stage.constant(0);
+            slot_holds(&mut stage, bits, holds);
+            stage.ops
+        };
+        let never = ops(Type::language(ValueType::String));
+        assert_eq!(count(&never, "any"), 0, "no class of the type is testable");
+        assert_eq!(count(&ops(Type::INT32), "any"), 1);
+        let nullable = Type::DIRECT_OBJECT_FAMILY.join(Type::NULLISH);
+        assert_eq!(count(&ops(nullable), "any"), 3, "an object, null and undefined");
     }
 }

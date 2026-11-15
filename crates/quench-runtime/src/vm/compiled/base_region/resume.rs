@@ -1,6 +1,7 @@
 //! Resume stubs: where a run that left the region's PC (a Cranelift body's guard, say) re-enters
 //! its stencil code. A stub is the entry rows for the webs live at its PC (each pinned register
-//! loaded and checked from its frame slot, as at the header) and a jump to the PC's first row;
+//! loaded and checked from its frame slot, as at the header) and a jump to the first row of the PC's
+//! instruction (of a stitched program, `Layout::origins`);
 //! the table names each stub's code offset, and the resume thunk (`entry_resume`) calls it
 //! through the shared entry ABI, so a register that holds no Number there leaves with
 //! `LaneExit::Entry` and the interpreter resumes at the PC.
@@ -73,14 +74,18 @@ pub(super) struct Jump {
     pub(super) target: usize,
 }
 
-/// A stub for each PC of the region, ascending; `first` is the index of the body's first row
-/// and `starts` the index of each PC's first row among the body's.
-pub(super) fn resume_stubs(layout: &Layout, first: usize, starts: &[usize]) -> Result<Vec<Stub>, String> {
-    let header = layout.header;
-    (header..=layout.backedge)
-        .map(|pc| {
-            let rows = entry_rows(layout, &layout.webs.live_at(layout.region, pc))?;
-            Ok(Stub { pc, rows, target: first + starts[(pc - header) as usize] })
+/// A stub for each caller PC of a loop region that has a row of its own, ascending: not one a tile
+/// covers (its first row's instruction is run with it, so the interpreter takes the PC), nor one
+/// control never reaches. `first` is the index of the body's first row and `starts` the index of
+/// each row's first part among the body's.
+pub(super) fn resume_stubs(layout: &Layout, planned: &[Planned], (first, starts): (usize, &[usize])) -> Result<Vec<Stub>, String> {
+    layout
+        .entries
+        .iter()
+        .filter(|&&(_, row)| !planned[row as usize].stencil.code.is_empty() || !planned[row as usize].pre.is_empty())
+        .map(|&(pc, row)| {
+            let rows = entry_rows(layout, &layout.webs.live_at(&layout.span, row))?;
+            Ok(Stub { pc, rows, target: first + starts[row as usize] })
         })
         .collect()
 }
@@ -118,7 +123,7 @@ mod tests {
     }
 
     #[cfg(all(test, target_arch = "x86_64"))]
-    fn loop_region(source: &str, name: &str) -> LoopRegion {
+    fn loop_region(source: &str, name: &str) -> (crate::bytecode::ResidualProgram, usize, LoopRegion) {
         let program = crate::Engine::specialize(source, "resume.js").unwrap();
         let id = program.functions.iter().position(|body| body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
         let function = program.function(id);
@@ -127,18 +132,24 @@ mod tests {
             (instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.jump_target() as usize) <= pc)
                 .then(|| (instruction.jump_target(), pc as u32))
         }).expect("the function has a loop");
-        super::super::super::osr_loop::region(function, &decoded, &[], &[], None, header, backedge, super::super::super::osr_loop::MethodCalls::Inliner).expect("the loop is admitted")
+        let region = super::super::super::osr_loop::region(function, &decoded, &[], &[], None, header, backedge, super::super::super::osr_loop::MethodCalls::Inliner).expect("the loop is admitted");
+        (program, id, region)
     }
 
-    /// A region's code has a stub at each of its PCs, in order, inside the code and behind its
-    /// rows, and its resume thunk is the `entry_resume` routine at the end of the code.
+    /// A region's code has a stub at each of its PCs a row of its own runs, in order, inside the code
+    /// and behind its rows, and its resume thunk is the `entry_resume` routine at the end of the code.
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn a_built_region_has_a_stub_at_each_pc() {
-        let region = loop_region("function f(n){let s=0;for(let i=0;i<n;i++){s=s+i;}return s;} f(4);", "f");
-        let built = build(&region, true, &[], [&[], &[]], &[], &[]).expect("the loop has a row for each instruction");
+        let (program, id, region) = loop_region("function f(n){let s=0;for(let i=0;i<n;i++){s=s+i;}return s;} f(4);", "f");
+        let known = Known { program: &program, stitch: &crate::vm::compiled::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None, invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: None };
+        let spec = function::BodySpec { function: id as u32, registers: program.function(id).registers, known, realm: RealmProof::default(), widened: &[], seen: [&[], &[]], kinds: &[] };
+        let helpers = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+        // SAFETY: the region has no callees, so no entry cell is read.
+        let built = unsafe { function::build_region(&region, &spec, true, &callees::Callees::default(), helpers) }.expect("the loop has a row for each instruction");
         let (code, table) = (&built.code, &built.resumes);
-        assert_eq!(table.pcs(), (region.header..=region.backedge).collect::<Vec<_>>());
+        assert!(table.pcs().first() == Some(&region.header) && table.pcs().windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(table.pcs().iter().all(|pc| (region.header..=region.backedge).contains(pc)));
         let offsets: Vec<usize> = table.pcs().iter().map(|pc| table.stub(*pc).unwrap()).collect();
         assert!(offsets.windows(2).all(|pair| pair[0] < pair[1]), "stubs are laid out in PC order");
         let thunk = routine("entry_resume").unwrap().code;
@@ -149,7 +160,7 @@ mod tests {
 
     #[cfg(all(test, target_arch = "x86_64"))]
     fn thunk_len() -> usize {
-        thunk(0).unwrap().len()
+        thunk(Ending::Region, 0).unwrap().len()
     }
 
     /// A loop whose operands change type mid-run leaves compiled code at a guard and resumes
