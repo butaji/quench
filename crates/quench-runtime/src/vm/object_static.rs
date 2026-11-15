@@ -231,12 +231,8 @@ impl<H: Host> Vm<H> {
                 .map(|symbol| self.get_index(p, value, symbol))
                 .transpose()?
         };
-        let brand = tag
-            .and_then(|tag| self.heap.string(tag).map(|text| text.to_string()))
-            .unwrap_or_else(|| brand.to_owned());
-        Ok(self
-            .heap
-            .alloc_string(format!("[object {brand}]").into()))
+        let tag = tag.and_then(|tag| self.heap.string(tag).map(|text| text.to_string()));
+        Ok(self.builtin_brand_string(tag.as_deref().unwrap_or(brand)))
     }
 
     pub(super) fn descriptor_field(
