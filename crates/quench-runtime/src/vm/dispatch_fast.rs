@@ -641,7 +641,7 @@ mod body_calls;
 mod lane_leaves;
 #[path = "operand_feedback.rs"]
 pub(super) mod operand_feedback;
-use operand_feedback::{has_operand_feedback, note_first_miss, note_number_kinds, note_operands, note_pair_result, Records};
+use operand_feedback::{has_operand_feedback, note_bigint_kinds, note_first_miss, note_number_kinds, note_operands, note_pair_result, Records};
 #[path = "lane_body_tier.rs"]
 mod lane_body_tier;
 #[path = "loop_tier.rs"]
@@ -4884,8 +4884,19 @@ script_handler! {
     /// BigInt arithmetic in place; anything else takes the general path.
     #[inline(never)]
     fn lane_operator_other<OP: u32>(cx, r, ip, i, view) {
+        let (left, right) = (r.get(i.b), r.get(i.c));
+        // Two heap operands neither a string: BigInt arithmetic first, which notes its kind
+        // without classifying the operands and skips the concatenation's tests.
+        if left.is_heap() && right.is_heap() && !(unsafe { vm(cx) }).heap.is_string(left) && !(unsafe { vm(cx) }).heap.is_string(right)
+            && let Some(value) = lane_bigint_value(cx, OP, left, right)
+        {
+            // SAFETY: the record is an arithmetic record of the running view.
+            unsafe { note_bigint_kinds(cx, ip) };
+            r.set(i.a, value);
+            next!(cx, r, following(ip), Carried::script_in(cx, view))
+        }
         // SAFETY: the record is an arithmetic record of the running view.
-        unsafe { note_operands(cx, ip, r.get(i.b), r.get(i.c)) };
+        unsafe { note_operands(cx, ip, left, right) };
         let Some(value) = lane_other_operator_value(cx, OP, r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
