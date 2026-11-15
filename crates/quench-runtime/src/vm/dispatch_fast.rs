@@ -5202,6 +5202,11 @@ script_handler! {
     #[inline(never)]
     fn lane_get_index_getter<>(cx, r, ip, i, view) {
         let (base, key) = (r.get(i.b), r.get(i.c));
+        match proxy_traps::lane_keyed_get_trap(cx, r, ip, base, key) {
+            Some(Ok((registers, base))) => next!(cx, registers, base, Carried::script_in(cx, view)),
+            Some(Err(next)) => return next,
+            None => {}
+        }
         let vm = unsafe { vm(cx) };
         if !vm.lane_stack.activations.is_empty() && vm.proved_symbol_getter(base, key).is_none() {
             resume!(cx, lane_get_index_beside_activations(cx, ip, i, base, key));

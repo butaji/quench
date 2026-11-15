@@ -124,6 +124,33 @@ fn lane_activate_trap<H: Host, const N: usize>(cx: *mut LaneContext<H>, r: Regis
     }
 }
 
+/// The atom of a computed key a proxy's trap receives as a string: a string's own, or the
+/// canonical decimal text of an array index. `None` for any other key (a symbol, a negative
+/// or fractional number, an object whose ToPropertyKey runs guest code).
+fn keyed_trap_atom<H: Host>(vm: &mut Vm<H>, key: Value) -> Option<crate::bytecode::Atom> {
+    if let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) {
+        return Some(vm.lookup_array_index_atom(index).unwrap_or_else(|| vm.intern_atom(&index.to_string())));
+    }
+    vm.string_key_atom(key)
+}
+
+/// A lane `GetIndex` of `base[key]` at the record `ip` where `base` is a proxy whose `get`
+/// trap a named read would activate (`lane_read_get_trap`): the same activation with the
+/// key's string. `None`, before any effect, for any other read, which goes on along its
+/// path; `Err` carries the record to continue at.
+pub(super) fn lane_keyed_get_trap<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, base: Value, key: Value) -> Option<Result<(Registers, Ip), Ip>> {
+    let vm = unsafe { vm(cx) };
+    vm.proxy_parts(base)?;
+    let atom = keyed_trap_atom(vm, key)?;
+    let (trap, handler, arguments) = get_trap_call(vm, base, atom)?;
+    lane_materialize_running_leaf(cx);
+    let target = lane_trap_target(cx, trap)?;
+    Some(lane_activate_trap(cx, r, ip, target, handler, &arguments).map(|activated| {
+        owe_invariants(vm, Completion::ReadsTrapped, TrapCheck { target: arguments[0], atom, access: TrapAccess::Read });
+        activated
+    }))
+}
+
 /// Records that the trap activation `lane_activate_keeping` just pushed completes as
 /// `completion` says and owes `check` its target's invariants.
 fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, check: TrapCheck) {
