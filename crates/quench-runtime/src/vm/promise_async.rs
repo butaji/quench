@@ -3,6 +3,15 @@ use super::promise::{PromiseReaction, PromiseState};
 use super::*;
 use crate::heap::{AwaitKind, AwaitRole, AwaitState, ResumedAwait};
 
+/// The async function activation a job resumed (`resume_async_activation`), which runs in
+/// frame slot `frame` and whose state and promise call roots `roots` and `roots + 1` hold.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct AwaitChain {
+    frame: usize,
+    resume: AwaitResume,
+    roots: usize,
+}
+
 /// What an await reaction resumes with, read from its `AwaitState`.
 #[derive(Clone, Copy, Debug)]
 struct AwaitResume {
@@ -377,7 +386,75 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    /// Resumes `continuation`, then, while the queue's next job is another async function's
+    /// await resumption in this program and realm that the queue would run with nothing
+    /// observable between (`take_chained_await`), runs that one here too: the queue's order is
+    /// kept, and the job loop and reaction dispatch are skipped.
     fn resume_async_continuation_in_program(
+        &mut self,
+        p: &ResidualProgram,
+        resume: AwaitResume,
+        continuation: Continuation,
+        value: Value,
+    ) -> Result<(), JsError> {
+        let program = continuation.frame.program;
+        let roots = self.active_call_roots.len();
+        let (mut resume, mut continuation, mut value) = (resume, continuation, value);
+        let result = loop {
+            if let Err(error) = self.resume_async_activation(p, resume, continuation, value) {
+                break Err(error);
+            }
+            let Some((next, taken, awaited)) = self.take_chained_await(program) else {
+                break Ok(());
+            };
+            // The queue releases what an unobserved job's stores left before the next job.
+            for root in self.host.end_unobserved_job() {
+                self.heap.release_root(root);
+            }
+            // As `resume_await` roots the job's promise and value, and the job its state.
+            self.active_call_roots.truncate(roots);
+            self.active_call_roots.extend([next.state, next.promise, awaited]);
+            (resume, continuation, value) = (next, taken, awaited);
+        };
+        self.active_call_roots.truncate(roots);
+        result
+    }
+
+    /// Takes the queue's front job when it is an async function's fulfilled await resumption
+    /// that `run_job_queue` would run next exactly as resuming it here does: a queue that runs
+    /// every job (`chain_await_jobs`), no collection due (the job boundary's safepoint), no
+    /// termination request, no module continuation waiting, no host observing Promise jobs,
+    /// and the job, the awaiting activation and the running one sharing realm and program.
+    fn take_chained_await(&mut self, program: ProgramId) -> Option<(AwaitResume, Continuation, Value)> {
+        if !self.chain_await_jobs
+            || !self.unobserved_jobs_entered
+            || self.heap.should_collect()
+            || self.execution_interrupt.is_termination_requested()
+            || self.static_module_jobs_pending()
+            || self.host.observes_promise_lifecycle()
+        {
+            return None;
+        }
+        let realm = self.realm.globals;
+        let Some(PendingJob::Reaction(job)) = self.realm.jobs.front() else {
+            return None;
+        };
+        if job.rejected || job.execution_context.is_some() || job.realm != realm || !job.next.is_undefined() {
+            return None;
+        }
+        let (state, value) = (job.handler, job.value);
+        let awaiting = self.heap.await_state_mut(state)?;
+        if !matches!(awaiting, AwaitState::Pending { kind: AwaitKind::AsyncFunction(continuation), realm: resumes, .. }
+            if *resumes == realm && continuation.frame.program == program)
+        {
+            return None;
+        }
+        let ResumedAwait { continuation, promise, .. } = awaiting.resume()?;
+        self.realm.jobs.pop_front();
+        Some((AwaitResume { state, promise, role: AwaitRole::AsyncFunction, rejected: false }, continuation?, value))
+    }
+
+    fn resume_async_activation(
         &mut self,
         p: &ResidualProgram,
         resume: AwaitResume,
@@ -399,12 +476,98 @@ impl<H: Host> Vm<H> {
         let initial_error = resume
             .rejected
             .then(|| JsError::thrown(value, "await rejected".into()));
+        // A fulfilled async function resumption may chain the queue's next ones in the lane;
+        // the activation in the slot when the run ends is then the last of them.
+        let roots = self.active_call_roots.len();
+        let chained = initial_error.is_none() && resume.role.generator().is_none();
+        let outer_chain = if chained {
+            self.active_call_roots.extend([resume.state, resume.promise]);
+            self.await_chain.replace(AwaitChain { frame: self.frames.len() - 1, resume, roots })
+        } else {
+            self.await_chain.take()
+        };
         let result = match initial_error {
             Some(error) => self.run_frame_general_with_error(p, self.frames.len() - 1, Some(error)),
             None => self.run_resumed_frame(p, self.frames.len() - 1),
         };
+        let resume = match std::mem::replace(&mut self.await_chain, outer_chain) {
+            Some(chain) if chained => chain.resume,
+            _ => resume,
+        };
         let mut frame = self.frames.pop().expect("resumed frame exists");
         self.deactivate_frame(&mut frame, &result);
+        let finished = self.finish_async_activation(p, resume, frame, result);
+        self.active_call_roots.truncate(roots);
+        finished
+    }
+
+    /// The await outcome of the lane run of async function activation `frame`, the slot of the
+    /// resumption `await_chain` names, when the queue's next job resumes another one in this
+    /// program that the lane runs at its resume PC: suspends this activation as
+    /// `finish_async_activation` does (`await_again`), takes that job as the job loop would
+    /// (`take_chained_await`) and puts its activation in the slot. The next job is taken before
+    /// this await attaches its reaction, which can only go behind it. The resumed activation's
+    /// cursor, function and PC come back, or `None` where the run ends here.
+    pub(super) fn chain_lane_await(
+        &mut self,
+        p: &ResidualProgram,
+        program: ProgramId,
+        frame: usize,
+        value: Value,
+        destination: u16,
+    ) -> Option<Result<(super::dispatch_frame::GeneralCodeCursor, u32, usize), JsError>> {
+        let chain = self.await_chain.filter(|chain| chain.frame == frame)?;
+        let Some(PendingJob::Reaction(job)) = self.realm.jobs.front() else {
+            return None;
+        };
+        let (function, pc) = match self.heap.await_state_mut(job.handler)? {
+            AwaitState::Pending { kind: AwaitKind::AsyncFunction(continuation), .. } => {
+                (continuation.frame.function, continuation.frame.pc)
+            }
+            _ => return None,
+        };
+        let cursor = self.general_cursor(program, p, function, true);
+        if !Self::lane_runs(cursor.lane, pc) {
+            return None;
+        }
+        let (next, continuation, awaited) = self.take_chained_await(program)?;
+        self.active_call_roots[chain.roots] = next.state;
+        self.active_call_roots[chain.roots + 1] = next.promise;
+        let resume_register = continuation.resume_register;
+        let mut resumed = continuation.resume(self.with_stack.len(), self.heap.collection_epoch());
+        if let Some(register) = resume_register {
+            let Some(slot) = resumed.registers.get_mut(register as usize) else {
+                return Some(Err(JsError("invalid async resume register".into())));
+            };
+            *slot = awaited;
+        }
+        let mut suspended = std::mem::replace(&mut self.frames[frame], resumed);
+        self.deactivate_frame(&mut suspended, &Ok(FrameOutcome::Await { value, destination, frame: None }));
+        let with_base = self.with_stack.len();
+        let running = &mut self.frames[frame];
+        running.with_base = with_base;
+        self.with_stack.append(&mut running.with_objects);
+        self.await_chain = Some(AwaitChain { frame, resume: next, roots: chain.roots });
+        let continuation = self.suspend_activation(suspended, Completion::Await(value), Some(destination), chain.resume.promise);
+        if let Err(error) = self.await_again(p, chain.resume, continuation, value) {
+            return Some(Err(error));
+        }
+        // The queue releases what an unobserved job's stores left before the next job.
+        for root in self.host.end_unobserved_job() {
+            self.heap.release_root(root);
+        }
+        Some(Ok((cursor, function, pc)))
+    }
+
+    /// What follows the run of the activation `resume` resumed, which left `frame` with
+    /// `result`: its promise settles, or it suspends again.
+    fn finish_async_activation(
+        &mut self,
+        p: &ResidualProgram,
+        resume: AwaitResume,
+        frame: Box<super::Frame>,
+        result: Result<FrameOutcome, JsError>,
+    ) -> Result<(), JsError> {
         let result = match result {
             Ok(result) => result,
             Err(error) => {

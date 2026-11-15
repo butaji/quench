@@ -1097,7 +1097,7 @@ impl<H: Host> Vm<H> {
         let previous = std::mem::replace(&mut self.native_microtask_running, true);
         let result = (|| {
             self.check_execution_interrupt()?;
-            self.run_job_queue(program, |_| true)?;
+            self.run_job_queue(program, true, |_| true)?;
             Ok(Value::UNDEFINED)
         })();
         self.native_microtask_running = previous;
@@ -1122,11 +1122,13 @@ impl<H: Host> Vm<H> {
     fn run_job_queue(
         &mut self,
         program: &ResidualProgram,
+        chain: bool,
         mut more: impl FnMut(&Self) -> bool,
     ) -> Result<(), JsError> {
         let home = self.realm.globals;
         // An enclosing queue's entry stays in place below this queue's own.
         let outer = std::mem::replace(&mut self.unobserved_jobs_entered, false);
+        let outer_chain = std::mem::replace(&mut self.chain_await_jobs, chain);
         let result = (|| {
             while more(self) && let Some(job) = self.realm.jobs.pop_front() {
                 self.check_execution_interrupt()?;
@@ -1146,6 +1148,7 @@ impl<H: Host> Vm<H> {
         })();
         self.leave_unobserved_jobs();
         self.unobserved_jobs_entered = outer;
+        self.chain_await_jobs = outer_chain;
         self.switch_realm_global(home);
         result
     }
@@ -1206,7 +1209,7 @@ impl<H: Host> Vm<H> {
         promise: Value,
     ) -> Result<(), JsError> {
         loop {
-            self.run_job_queue(program, |vm| vm.promise_record(promise)
+            self.run_job_queue(program, false, |vm| vm.promise_record(promise)
                 .is_some_and(|record| record.state() == PromiseState::Pending))?;
             if self.promise_record(promise).is_none_or(|record| record.state() != PromiseState::Pending)
                 || !self.realm.jobs.is_empty() { return Ok(()); }

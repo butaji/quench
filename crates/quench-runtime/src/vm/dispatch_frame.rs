@@ -46,7 +46,7 @@ pub(super) struct GeneralCodeCursor {
     /// Fixed-width expansion of `code`; null while the function is cold.
     decoded: *const WideInstruction,
     /// The function's lane view, or null where the lane does not run.
-    lane: *const dispatch_fast::LaneView,
+    pub(super) lane: *const dispatch_fast::LaneView,
     /// The loop work the activation did in the general path while it may still gain a view
     /// (`note_back_edge`); `None` once it cannot.
     back_edges: Option<HotLoop>,
@@ -1593,24 +1593,35 @@ impl<H: Host> Vm<H> {
             let _stack = self.enter_stack()?;
             // As the loop checks before each step; a termination selects no guest handler.
             self.check_execution_interrupt()?;
-            self.active_registers = self.frames[frame].registers.as_mut_ptr();
-            let mut executing = ExecutingProgram { id: program, retained: None };
-            let mut running = frame;
-            let pc = self.run_fast_lane(p, program, cursor.lane, &mut running, pc, &mut pending_calls, &mut executing, true);
-            let body = p.function(function as usize);
-            let stops_here = running == frame
-                && pending_calls.is_empty()
-                && executing.id == program
-                && self.lane_raised.is_none()
-                && pc < body.code.len();
-            if stops_here
-                && let Some(outcome) = self.lane_stop_outcome(p, frame, cursor.instruction(pc), pc, body.is_async)
-            {
-                return Ok(outcome);
+            let (mut cursor, mut function, mut pc) = (*cursor, function, pc);
+            loop {
+                self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                let mut executing = ExecutingProgram { id: program, retained: None };
+                let mut running = frame;
+                let stop = self.run_fast_lane(p, program, cursor.lane, &mut running, pc, &mut pending_calls, &mut executing, true);
+                let body = p.function(function as usize);
+                let stops_here = running == frame
+                    && pending_calls.is_empty()
+                    && executing.id == program
+                    && self.lane_raised.is_none()
+                    && stop < body.code.len();
+                if stops_here
+                    && let Some(outcome) = self.lane_stop_outcome(p, frame, cursor.instruction(stop), stop, body.is_async)
+                {
+                    // An await the queue's next job follows resumes that job's activation here
+                    // (`Vm::chain_lane_await`), with no return to the job loop.
+                    if let FrameOutcome::Await { value, destination, frame: None } = outcome
+                        && let Some(next) = self.chain_lane_await(p, program, frame, value, destination)
+                    {
+                        (cursor, function, pc) = next?;
+                        continue;
+                    }
+                    return Ok(outcome);
+                }
+                self.frames[running].pc = stop;
+                let raised = self.lane_raised.take();
+                return self.run_frames_after_lane_exit(p, running, &mut pending_calls, LaneExit { executing, raised });
             }
-            self.frames[running].pc = pc;
-            let raised = self.lane_raised.take();
-            self.run_frames_after_lane_exit(p, running, &mut pending_calls, LaneExit { executing, raised })
         })();
         pending_calls.clear();
         self.pending_call_stacks.push(pending_calls);
