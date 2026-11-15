@@ -645,7 +645,10 @@ struct ProgramEntry {
     native_js: Option<Rc<super::native_program::NativeJsCode>>,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
     constants: Vec<Value>,
-    const_arrays: Vec<Option<crate::heap::ArrayElements>>,
+    /// The elements of the constant array literals that ran, by their first constant: few
+    /// programs run any, so a table dense over every constant touched a page per 256 of them
+    /// for nothing (an indirect eval of a 2 MB bundle, every load).
+    const_arrays: FxHashMap<u32, crate::heap::ArrayElements>,
     function_sources: Vec<Option<Value>>,
     /// Each RegExp literal site's record, shared by every object it evaluates to.
     regexp_literals: Vec<Option<Rc<crate::heap::RegExpMeta>>>,
@@ -1257,7 +1260,7 @@ impl ProgramStore {
             native_js: None,
             wasm_signatures: None,
             constants: Vec::new(),
-            const_arrays: Vec::new(),
+            const_arrays: FxHashMap::default(),
             function_sources,
             regexp_literals,
             module_environment: None,
@@ -1566,7 +1569,7 @@ impl ProgramStore {
 
     pub(crate) fn set_constants(&mut self, id: ProgramId, constants: Vec<Value>) {
         if let Some(entry) = self.entry_mut(id) {
-            entry.const_arrays = vec![None; constants.capacity()];
+            entry.const_arrays.clear();
             entry.constants = constants;
             // Lane views carry constants, so they derive from the new set.
             entry.lane_views = LaneViews::default();
@@ -2565,11 +2568,13 @@ impl ProgramStore {
     ) -> Option<crate::heap::ArrayElements> {
         let entry = self.entry_mut(id)?;
         let end = start.checked_add(count)?;
-        let cached = entry.const_arrays.get_mut(start)?;
-        if cached.is_none() {
-            *cached = Some(crate::heap::ArrayElements::from_slice(entry.constants.get(start..end)?));
+        let key = u32::try_from(start).ok()?;
+        if let Some(cached) = entry.const_arrays.get(&key) {
+            return Some(cached.clone());
         }
-        cached.clone()
+        let elements = crate::heap::ArrayElements::from_slice(entry.constants.get(start..end)?);
+        entry.const_arrays.insert(key, elements.clone());
+        Some(elements)
     }
 
     pub(crate) fn function_source(&self, id: ProgramId, function: u32) -> Option<Value> {

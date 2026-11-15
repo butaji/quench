@@ -120,12 +120,12 @@ impl ProgramEntry {
         writer.len(sites.objects);
         writer.bytes(&residual.encode_snapshot());
         writer.values(constants);
-        writer.len(const_arrays.len());
-        for array in const_arrays {
-            writer.bool(array.is_some());
-            if let Some(array) = array {
-                writer.values(array);
-            }
+        let mut arrays: Vec<_> = const_arrays.iter().collect();
+        arrays.sort_unstable_by_key(|(start, _)| **start);
+        writer.len(arrays.len());
+        for (start, array) in arrays {
+            writer.len(*start as usize);
+            writer.values(array);
         }
         function_sources.snap(writer)?;
         module_environment.snap(writer)?;
@@ -189,7 +189,10 @@ impl ProgramEntry {
             .map_err(|error| SnapshotError(format!("snapshot program: {error}")))?;
         let residual = Residual::encoded(sites, EncodedResidual { bytes: Rc::new(window), text, atoms: atoms.clone() });
         let constants = reader.values()?;
-        let const_arrays = read_list(reader, |reader| Ok(if reader.bool()? { Some(crate::heap::ArrayElements::from(reader.values()?)) } else { None }))?;
+        let const_arrays = read_list(reader, |reader| {
+            let start = u32::try_from(reader.len()?).map_err(|_| SnapshotError("snapshot constant array start".into()))?;
+            Ok((start, crate::heap::ArrayElements::from(reader.values()?)))
+        })?.into_iter().collect();
         let function_sources = Snap::unsnap(reader)?;
         let module_environment = Snap::unsnap(reader)?;
         let import_meta = Snap::unsnap(reader)?;
