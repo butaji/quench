@@ -3259,6 +3259,39 @@ fn lane_plain_local_operand<H: Host>(cx: *mut LaneContext<H>, slot: u16) -> Opti
         .flatten()
 }
 
+/// The local slots a lane body run on `registers` reads and writes (`JsStepDispatch::native_locals`):
+/// those of the activation it runs for, where `lane_plain_local_operand` finds them. An
+/// environment activation keeps them in its window after its registers; a VM frame in its own
+/// storage, or in the window after its registers where that storage does not cover the function
+/// (as `osr_lane::bind_frame`); any other frameless activation has none (null), and a run whose
+/// activation is not pushed yet (`lane_enter_cell_body`) is a plain one's.
+pub(super) fn lane_body_locals<H: Host>(lane_context: *mut (), registers: *mut Value, pending: bool) -> *mut Value {
+    let cx = lane_context.cast::<LaneContext<H>>();
+    if cx.is_null() || pending {
+        return std::ptr::null_mut();
+    }
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let window = |function: u32| code.function_get(function as usize)
+        .filter(|body| body.locals != 0)
+        // SAFETY: the activation's window follows its register file.
+        .map_or(std::ptr::null_mut(), |body| unsafe { registers.add(usize::from(body.registers) + usize::from(WINDOW_LOCALS)) });
+    if let Some(activation) = vm.lane_stack.activations.last() {
+        return match activation.script() {
+            Some(script) if script.environment => window(activation.function),
+            _ => std::ptr::null_mut(),
+        };
+    }
+    // SAFETY: its frame is the running one.
+    let Some(frame) = vm.frames.get_mut(unsafe { (*cx).frame }) else { return std::ptr::null_mut() };
+    let function = frame.function;
+    match code.function_get(function as usize) {
+        Some(body) if frame.locals.len() >= usize::from(body.locals) => frame.locals.as_mut_ptr(),
+        _ => window(function),
+    }
+}
+
 script_handler! {
     /// `IteratorCleanupPush` in the running VM frame, as the general loop runs it: the frame's
     /// iterator to close if the loop exits abruptly. A frameless activation keeps it on the
@@ -6207,6 +6240,16 @@ pub(super) unsafe fn lane_context_captures<H: Host>(context: usize) -> Option<(*
         // SAFETY: the context's slots stay live while the lane runs, which collects nothing.
         crate::heap::EnvironmentSlots::native_storage_view(capture_reads((*cx).capture))
     }
+}
+
+/// The running lane activation's receiver (`lane_this`), which a loop region it runs reads as a
+/// lane body does: a frameless activation's own, not the VM frame's beneath it; `DELETED` where
+/// it has none.
+///
+/// # Safety
+/// `context` is the running lane's context.
+pub(super) unsafe fn lane_context_this<H: Host>(context: usize) -> Value {
+    unsafe { lane_this(context as *mut LaneContext<H>) }.unwrap_or(Value::DELETED)
 }
 
 /// The environment a running lane body's captures resolve in when it runs as a direct

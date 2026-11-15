@@ -7,14 +7,15 @@ use super::*;
 /// inlined callee writes the callee's live registers to.
 pub(super) fn bind_loop<H: Host>(
     native: &mut JsNativeActivation, vm: &mut Vm<H>, region: &LoopRegion, entry: &mut LoopEntry,
-    (frame, lane_context): (usize, usize),
+    (_frame, lane_context): (usize, usize),
 ) {
     native.dispatch.bind_native_storage(vm);
     native.dispatch.lane_context = lane_context;
-    // A region's `THIS`-based reads take the running activation's receiver, as a
-    // lane body's do; `with` leaves it `DELETED`. The lane context's `this` is the
-    // outer activation's, so read the loop's own frame.
-    native.dispatch.receiver = vm.current_this(frame).unwrap_or(Value::DELETED).to_bits();
+    // A region's `THIS`-based reads take the running activation's receiver, as a lane
+    // body's do (`lane_loop_body`); `with` leaves it `DELETED`. A frameless activation's
+    // receiver is the lane context's: `frame` is then the VM frame beneath it, its caller's.
+    // SAFETY: `lane_context` is the running lane's context for `H`.
+    native.dispatch.receiver = unsafe { super::dispatch_fast::lane_context_this::<H>(lane_context) }.to_bits();
     // The counter is the `words` field's first word, not the struct's offset 0:
     // `LoopEntry` is not `repr(C)`.
     native.dispatch.loop_entry = entry.words_mut() as usize;
