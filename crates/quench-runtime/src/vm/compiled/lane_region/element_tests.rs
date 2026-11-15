@@ -160,6 +160,12 @@ fn is_sign_extension(function: &ir::Function, value: ir::Value) -> bool {
     function.dfg.insts[def].opcode() == ir::Opcode::Sextend
 }
 
+/// Whether `value` is an integer constant (an element's byte scale is one, a program's product has none).
+fn is_any_constant(function: &ir::Function, value: ir::Value) -> bool {
+    let ir::ValueDef::Result(def, _) = function.dfg.value_def(function.dfg.resolve_aliases(value)) else { return false };
+    matches!(function.dfg.insts[def], ir::InstructionData::UnaryImm { .. })
+}
+
 /// The instructions of `body` of `opcode` with 64-bit operands of which `accepts` takes the operands' definitions.
 fn wide_operations(function: &ir::Function, body: &[ir::Inst], opcode: ir::Opcode,
     accepts: impl Fn(&ir::Function, [ir::Value; 2]) -> bool) -> usize {
@@ -273,11 +279,12 @@ fn matmul_k_loop_multiplies_nothing_and_compares_no_index_with_a_length() {
     use crate::heap::TypedArrayKind as Kind;
     let function = entered_region(MATMUL, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
     let body = loop_body(&function);
-    let products = wide_operations(&function, &body, ir::Opcode::Imul, |_, _| true);
+    let program_product = |function: &ir::Function, operands: [ir::Value; 2]| !operands.iter().any(|operand| is_any_constant(function, *operand));
+    let products = wide_operations(&function, &body, ir::Opcode::Imul, program_product);
     assert_eq!(products, 0, "`i * n` is evaluated on the entering edge and `k * n` advances by `n`: {function}");
     assert_eq!(bounds_compares(&function, &body), 0, "both accesses carry the entry's proof: {function}");
     let entry = before_loops(&function);
-    assert!(wide_operations(&function, &entry, ir::Opcode::Imul, |_, _| true) >= 2, "the entry holds `i * n` and the start of `k * n`: {function}");
+    assert!(wide_operations(&function, &entry, ir::Opcode::Imul, program_product) >= 2, "the entry holds `i * n` and the start of `k * n`: {function}");
     assert!(version_compares(&function, &entry) >= 2, "the entry compares the reach of each access with its length: {function}");
 }
 
@@ -286,6 +293,7 @@ fn a_loop_invariant_product_is_one_word_the_entry_evaluates_once() {
     use crate::heap::TypedArrayKind as Kind;
     let source = "function f(a, x, y, n) { var s = 0; for (var k = 0; k < n; k++) s += a[x * y + k]; return s; }";
     let function = entered_region(source, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
-    let products = wide_operations(&function, &loop_body(&function), ir::Opcode::Imul, |_, _| true);
+    let products = wide_operations(&function, &loop_body(&function), ir::Opcode::Imul, |function, operands|
+        !operands.iter().any(|operand| is_any_constant(function, *operand)));
     assert_eq!(products, 0, "`x * y` does not change with `k`: {function}");
 }
