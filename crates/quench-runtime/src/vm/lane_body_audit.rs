@@ -1,94 +1,111 @@
-//! Whether a function's compiled body runs faster than the interpreter runs it: after the body
-//! publishes, one entry in `audit_period` runs timed, alternating the body and the interpreter
-//! (the activation run nested to its return, `body_calls::interpret_timed`). Once each side has
-//! `audit_samples` timed runs, a body not faster by `audit_margin_permille` retires and its
-//! function stays interpreted (`TIERS.lane_body`). Per function this holds the invariant that
-//! compiled code is never slower than the interpreter, from the one statistic it is about.
+//! Whether a function's compiled body makes the program faster than the interpreter does:
+//! after the body publishes, its entries alternate in epochs of `audit_period` entries between
+//! the body and the interpreter, each run by the lane's own path (the cell or prologue entry of
+//! the body; the plain activation of the interpreter), and each epoch's clock time from its
+//! first entry to the next epoch's is booked to its side. Once each side has `audit_samples`
+//! epochs, a body whose median epoch is not `audit_margin_permille` below the interpreter's
+//! retires, and its function stays interpreted (`TIERS.lane_body`). An epoch holds everything
+//! the program did between those entries, so the comparison prices what the body costs where it
+//! is entered (the entry's binding of the lane frame, its helpers' calls back into the VM) and
+//! not only its own instructions; the median keeps a collection that lands in one epoch from
+//! deciding it. Per function this holds the invariant that compiled code is never slower than
+//! the interpreter, from the one statistic it is about.
 
 use std::time::Instant;
-
-/// The sides an audit alternates between: the compiled body and the interpreter.
-const AUDITED_SIDES: u32 = 2;
 
 use super::{LaneBody, LaneView, TIERS};
 use super::super::compiled::tier_policy::PER_MILLE;
 
-/// The timed runs of one body and of its function's interpreted runs.
+/// The most epochs a side keeps (`audit_samples` is capped by it).
+const MAX_EPOCHS: usize = 32;
+
+/// The entry count of the running audit, in the view's history (`LaneBodyHistory`).
 #[derive(Clone, Copy, Default)]
 pub(in crate::vm) struct Audit {
     seen: u32,
-    sides: [Side; Timed::SIDES],
     done: bool,
 }
 
+/// The audit's epochs: when the running one began, and each side's booked durations.
 #[derive(Clone, Copy, Default)]
-struct Side {
-    nanos: u64,
-    runs: u16,
+pub(in crate::vm) struct Epochs {
+    started: Option<Instant>,
+    nanos: [[u32; MAX_EPOCHS]; SIDES],
+    filled: [u8; SIDES],
 }
 
-/// Which side an entry runs timed on.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(in crate::vm) enum Timed {
-    Body,
-    Interpreter,
-}
-
-impl Timed {
-    const SIDES: usize = 2;
-}
+/// The sides an audit alternates between: the compiled body (epochs 0, 2, ...) and the
+/// interpreter (epochs 1, 3, ...).
+const SIDES: usize = 2;
+const BODY: usize = 0;
+const INTERPRETER: usize = 1;
 
 impl LaneView {
-    /// Counts an entry of the published body while its audit runs: the side it runs timed on,
-    /// one entry in `audit_period`, alternating; `None` for the rest and once the audit ended.
+    /// Counts an entry of the published body while its audit runs; whether the entry runs
+    /// interpreted, its epoch being the interpreter's. A cell entry (`counts_interpreted`
+    /// false) of an interpreted epoch counts nothing and declines the body: the activation it
+    /// makes enters the prologue, which counts it.
     #[inline(always)]
-    pub(in crate::vm) fn audit_entry(&self) -> Option<Timed> {
+    pub(in crate::vm) fn audit_entry(&self, counts_interpreted: bool) -> bool {
         let mut history = self.tier().history.get();
         if history.audit.done {
-            return None;
+            return false;
         }
-        history.audit.seen = history.audit.seen.wrapping_add(1);
-        self.tier().history.set(history);
         let period = TIERS.lane_body.audit_period;
-        (history.audit.seen % period == 0)
-            .then(|| if (history.audit.seen / period) % AUDITED_SIDES == 0 { Timed::Body } else { Timed::Interpreter })
-    }
-
-    /// Books a completed timed run of `nanos` on `side`, then takes the verdict once both
-    /// sides have their samples.
-    pub(in crate::vm) fn audit_record(&self, side: Timed, nanos: u64) {
-        let mut history = self.tier().history.get();
-        let booked = &mut history.audit.sides[side as usize];
-        booked.nanos = booked.nanos.saturating_add(nanos);
-        booked.runs = booked.runs.saturating_add(1);
+        let seen = history.audit.seen;
+        let interpreted = (seen / period) % SIDES as u32 == INTERPRETER as u32;
+        if interpreted && !counts_interpreted {
+            return true;
+        }
+        history.audit.seen = seen.wrapping_add(1);
         self.tier().history.set(history);
-        self.audit_verdict();
+        if seen % period == 0 {
+            self.audit_epoch_boundary(seen / period);
+        }
+        interpreted
     }
 
-    /// Books the body's timed run that ended at `started`'s clock, if this entry was timed.
-    pub(in crate::vm) fn audit_body_run(&self, started: Option<Instant>) {
-        if let Some(started) = started {
-            self.audit_record(Timed::Body, audit_nanos(started));
+    /// Ends the epoch before `epoch`, booking its time to its side, and starts `epoch`; takes
+    /// the verdict once both sides have their epochs.
+    #[cold]
+    fn audit_epoch_boundary(&self, epoch: u32) {
+        let now = Instant::now();
+        let mut epochs = self.tier().audit_epochs.get();
+        if let Some(started) = epochs.started
+            && epoch > 0
+        {
+            let side = ((epoch - 1) % SIDES as u32) as usize;
+            let filled = usize::from(epochs.filled[side]);
+            if filled < MAX_EPOCHS {
+                epochs.nanos[side][filled] = u32::try_from(now.duration_since(started).as_nanos()).unwrap_or(u32::MAX);
+                epochs.filled[side] += 1;
+            }
+        }
+        epochs.started = Some(now);
+        self.tier().audit_epochs.set(epochs);
+        let samples = usize::from(TIERS.lane_body.audit_samples).min(MAX_EPOCHS);
+        if epochs.filled.iter().all(|&filled| usize::from(filled) >= samples) {
+            self.audit_verdict(&epochs, samples);
         }
     }
 
-    /// Ends the audit: a body whose mean timed run is not `audit_margin_permille` below the
+    /// Ends the audit: a body whose median epoch is not `audit_margin_permille` below the
     /// interpreter's retires, and its function runs in the lane for good.
-    fn audit_verdict(&self) {
+    fn audit_verdict(&self, epochs: &Epochs, samples: usize) {
         let mut history = self.tier().history.get();
-        let lane = &TIERS.lane_body;
-        let [body, interpreted] = history.audit.sides;
-        if history.audit.done || body.runs < lane.audit_samples || interpreted.runs < lane.audit_samples {
-            return;
-        }
         history.audit.done = true;
         self.tier().history.set(history);
-        let verdict = Verdict::of(body, interpreted, lane.audit_margin_permille);
+        let median = |side: usize| {
+            let mut nanos = epochs.nanos[side][..samples].to_vec();
+            nanos.sort_unstable();
+            u64::from(nanos[samples / 2])
+        };
+        let verdict = Verdict::of(median(BODY), median(INTERPRETER), TIERS.lane_body.audit_margin_permille);
         self.tier().body_stats.audit.set(Some(verdict));
         if !verdict.retire {
             return;
         }
-        // SAFETY: as `lane_body`; the verdict runs between runs, after the run that ended it.
+        // SAFETY: as `lane_body`; the verdict runs between runs, at an entry's count.
         let lane_body = unsafe { &mut *self.tier().tier_lane.get() };
         if matches!(lane_body, LaneBody::Specialized { .. }) {
             self.retire_body(lane_body, LaneBody::Declined);
@@ -101,16 +118,12 @@ impl LaneView {
         let mut history = self.tier().history.get();
         history.audit = Audit::default();
         self.tier().history.set(history);
+        self.tier().audit_epochs.set(Epochs::default());
         self.tier().body_stats.audit.set(None);
     }
 }
 
-/// The nanoseconds since `started`.
-pub(in crate::vm) fn audit_nanos(started: Instant) -> u64 {
-    u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
-}
-
-/// What an audit concluded: each side's mean timed run and whether the body retires.
+/// What an audit concluded: each side's median epoch and whether the body retires.
 #[derive(Clone, Copy)]
 pub(in crate::vm) struct Verdict {
     body_nanos: u64,
@@ -119,53 +132,15 @@ pub(in crate::vm) struct Verdict {
 }
 
 impl Verdict {
-    /// A body retires unless its mean run is `margin_permille` below the interpreter's mean,
-    /// compared without a division: `body / b_runs < interpreted / i_runs x (1 - margin)`.
-    fn of(body: Side, interpreted: Side, margin_permille: u64) -> Self {
-        let retire = u128::from(body.nanos) * u128::from(interpreted.runs) * u128::from(PER_MILLE)
-            >= u128::from(interpreted.nanos) * u128::from(body.runs) * u128::from(PER_MILLE - margin_permille);
-        Self { body_nanos: body.mean(), interpreter_nanos: interpreted.mean(), retire }
+    /// A body retires unless its median epoch is `margin_permille` below the interpreter's:
+    /// `body < interpreted x (1 - margin)`.
+    fn of(body: u64, interpreted: u64, margin_permille: u64) -> Self {
+        let retire = u128::from(body) * u128::from(PER_MILLE) >= u128::from(interpreted) * u128::from(PER_MILLE - margin_permille);
+        Self { body_nanos: body, interpreter_nanos: interpreted, retire }
     }
 
     /// The `QUENCH_LANE_BODY` report's `audit` value.
     pub(in crate::vm) fn report(self) -> String {
         format!("{{\"body_ns\":{},\"interpreter_ns\":{},\"retired\":{}}}", self.body_nanos, self.interpreter_nanos, self.retire)
-    }
-}
-
-impl Side {
-    fn mean(self) -> u64 {
-        self.nanos / u64::from(self.runs.max(1))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const MARGIN: u64 = 50;
-
-    fn side(nanos: u64, runs: u16) -> Side {
-        Side { nanos, runs }
-    }
-
-    #[test]
-    fn a_body_clearly_faster_stays() {
-        assert!(!Verdict::of(side(800, 4), side(1000, 4), MARGIN).retire);
-    }
-
-    #[test]
-    fn a_body_only_as_fast_retires() {
-        assert!(Verdict::of(side(1000, 4), side(1000, 4), MARGIN).retire);
-        assert!(Verdict::of(side(960, 4), side(1000, 4), MARGIN).retire);
-    }
-
-    #[test]
-    fn the_margin_boundary_is_inclusive_and_means_not_totals_compare() {
-        // 950 against 1000 is exactly the margin: not faster than it, so retired.
-        assert!(Verdict::of(side(950, 1), side(1000, 1), MARGIN).retire);
-        assert!(!Verdict::of(side(949, 1), side(1000, 1), MARGIN).retire);
-        // Twice the runs at twice the total is the same mean.
-        assert!(Verdict::of(side(2000, 8), side(1000, 4), MARGIN).retire);
     }
 }

@@ -2060,6 +2060,29 @@ impl Heap {
         self.properties.finish_young_cycle();
     }
 
+    /// The property arena words from which a full collection that does not compact narrows
+    /// live runs (`narrow_live_runs`).
+    const NARROW_PASS_MIN_ARENA_WORDS: usize = 1 << 20;
+
+    /// Moves each live plain object's ordinary run whose values all have a narrow form into a
+    /// released range of the narrow class (`ValueArena::narrow_into_released`), at a full
+    /// collection that does not compact: objects that grew after promotion.
+    fn narrow_live_runs(&mut self) {
+        let Self { object_records, properties, .. } = self;
+        object_records.for_each_live_mut(|_, object| {
+            if object.has_extras() {
+                return;
+            }
+            let vector = object.properties();
+            if vector.is_narrow() || vector.is_dictionary() || vector.has_inline_property_storage() || properties.holds_young_run(vector) {
+                return;
+            }
+            if let Some(narrow) = properties.narrow_into_released(vector) {
+                object.set_properties(narrow, properties);
+            }
+        });
+    }
+
     /// Slide every live arena range down over released ones, in offset order.
     /// `objects` holds each live arena owner packed with its range offset.
     fn compact_property_arena(
@@ -2996,6 +3019,11 @@ impl Heap {
             self.compact_property_arena(property_owners, direct_property_owners);
         } else {
             self.evacuate_young_runs(young_owners);
+            // The pass visits every object record: it pays where property storage is large
+            // (8 MB and up), and is a cost of its own for a small arena of many objects.
+            if full && self.narrow_runs && self.properties.resident_words() >= Self::NARROW_PASS_MIN_ARENA_WORDS {
+                self.narrow_live_runs();
+            }
         }
         if full {
             self.properties.settle_after_full();
@@ -5274,6 +5302,32 @@ impl Heap {
             }
         }
         let _ = element_capacity;
+        // Strings: records and their unit storage (shared storage counted once).
+        let (mut strings, mut string_bytes) = (0usize, 0usize);
+        let mut seen = rustc_hash::FxHashSet::default();
+        self.string_records.for_each_live(|_, string| {
+            strings += 1;
+            let ((unit_address, unit_bytes), host) = string.memory_parts();
+            if unit_bytes > 0 && seen.insert(unit_address) { string_bytes += unit_bytes; }
+            if let Some((address, bytes)) = host { if seen.insert(address) { string_bytes += bytes; } }
+        });
+        // Cells by kind, with the payload each owns beyond its slot.
+        let mut kinds: std::collections::BTreeMap<&'static str, (usize, usize)> = Default::default();
+        for slot in self.slots.iter() {
+            let Some(cell) = slot.cell.as_ref() else { continue };
+            let kind = match cell {
+                Cell::Object(_) => "object", Cell::Array { .. } => "array", Cell::Function(_) => "function",
+                Cell::Environment { .. } => "env", Cell::Map { .. } => "map", Cell::Set { .. } => "set",
+                Cell::Iterator(_) => "iter", Cell::Proxy { .. } => "proxy", Cell::WeakMap { .. } => "weakmap",
+                Cell::AccessorPair { .. } => "accessor", Cell::BindingReference { .. } => "binding",
+                _ => "other",
+            };
+            let entry = kinds.entry(kind).or_default();
+            entry.0 += 1;
+            entry.1 += cell.payload_bytes();
+        }
+        let kinds = kinds.iter().map(|(kind, (count, bytes))| format!("{kind}:{count}/{}KB", bytes / 1024)).collect::<Vec<_>>().join(",");
+        eprintln!("storage census strings={strings} string_bytes={}KB slot_bytes={} cells[{kinds}]", string_bytes / 1024, std::mem::size_of::<Slot>());
         eprintln!("storage census reasons: wide={:?} eligible={:?} same_class={:?}", reasons[0], reasons[1], reasons[2]);
         let rss_kb = std::fs::read_to_string("/proc/self/statm")
             .ok()

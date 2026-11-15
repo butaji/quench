@@ -56,6 +56,9 @@ enum Step {
     Bits { kernel: BitKernel, a: u16, b: u16, c: u16 },
     Count { kernel: BitKernel, a: u16, b: u16, count: u32 },
     Lanes { kernel: &'static SimdKernel, lane: u8, a: Place, b: Place, c: Option<Place> },
+    /// A lane operator whose operands and result are all vectors the bank holds: its
+    /// kernel's bits form (`SimdKernel::bits`) on bank slots, `c` being `b` for a unary one.
+    Vector { bits: fn(u128, u128, u8) -> u128, lane: u8, a: u16, b: u16, c: u16 },
     Shuffle { form: ShuffleForm, a: u16, b: u16, c: u16 },
     /// Two one-operand u32 shuffles and the extending multiply of their results
     /// (`crate::wasm::simd::multiply_words`).
@@ -167,6 +170,7 @@ impl VectorRegion {
                         Place::I32(register) => r.set(register, integers.encode(bits as u32 as i32)),
                     }
                 }
+                Step::Vector { bits, lane, a, b, c } => put!(a, bits(get!(b), get!(c), lane)),
                 Step::Shuffle { form, a, b, c } => put!(a, form.apply(get!(b), get!(c))),
                 Step::MultiplyWords { a, b, c, left, right } => {
                     put!(a, crate::wasm::simd::multiply_words(get!(b), get!(c), left, right))
@@ -503,6 +507,13 @@ impl Builder<'_> {
                         Step::Count { kernel, a, b, count: count as u32 }
                     }
                     (Some(kernel), _) => Step::Bits { kernel, a, b, c },
+                    (None, _) if vector(result) && vector(kernel.left) && kernel.right.is_none_or(vector) => Step::Vector {
+                        bits: kernel.bits,
+                        lane,
+                        a,
+                        b,
+                        c: if kernel.right.is_some() { c } else { b },
+                    },
                     (None, _) => Step::Lanes {
                         kernel,
                         lane,

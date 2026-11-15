@@ -60,6 +60,27 @@ const MIN_CAPACITY: usize = (INLINE_PROPERTY_COUNT + 1).next_power_of_two();
 /// Range capacities are the size classes `capacity_class` derives: powers of two from
 /// `MIN_CAPACITY` and the three-quarter steps between them, one free list each.
 const BUCKETS: usize = 64;
+
+/// A size class's released runs, linked through each run's first value: a released run's
+/// values are dead, so its list costs no memory of its own. As a `Vec<u32>` per class, the
+/// lists held 2.2 MB at TypeScript's peak, the full collection that releases millions of runs.
+#[derive(Clone, Copy, Debug)]
+struct FreeRuns {
+    head: u32,
+    len: u32,
+}
+
+impl FreeRuns {
+    const EMPTY: Self = Self { head: u32::MAX, len: 0 };
+
+    fn is_empty(self) -> bool {
+        self.len == 0
+    }
+
+    fn len(self) -> usize {
+        self.len as usize
+    }
+}
 /// The capacity of a range holding `len` values: the smallest power of two from
 /// `MIN_CAPACITY`, or three-quarter step between two (6, 12, 24, ...), that holds them. The
 /// half steps leave a range at most a third unused where powers of two left it half unused
@@ -300,7 +321,7 @@ impl Default for ValueVec {
 
 pub(crate) struct ValueArena {
     values: PropertyBuffer,
-    free: [Vec<u32>; BUCKETS],
+    free: [FreeRuns; BUCKETS],
     /// Values held by the ranges on `free`.
     released_values: usize,
     /// The narrow-run words the current compaction wrote, for its `QUENCH_TRACE=gc` census.
@@ -337,7 +358,7 @@ impl Default for ValueArena {
     fn default() -> Self {
         Self {
             values: PropertyBuffer::default(),
-            free: [const { Vec::new() }; BUCKETS],
+            free: [FreeRuns::EMPTY; BUCKETS],
             released_values: 0,
             narrowed_words: 0,
             widened_shapes: rustc_hash::FxHashSet::default(),
@@ -386,9 +407,10 @@ impl ValueArena {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
         let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _, widened_shapes: _ } = self;
         writer.values(values);
-        for bucket in free {
-            writer.u32s(bucket);
+        for bucket in 0..BUCKETS {
+            writer.u32s(&self.free_starts(bucket));
         }
+        let _ = free;
         writer.len(*released_values);
         writer.u32s(shape_lengths);
         writer.len(dictionaries.len());
@@ -411,6 +433,18 @@ impl ValueArena {
             *bucket = reader.u32s()?;
         }
         let released_values = reader.len()?;
+        let mut values: PropertyBuffer = values.into();
+        let mut lists = [FreeRuns::EMPTY; BUCKETS];
+        for (list, starts) in lists.iter_mut().zip(&free) {
+            // Pushed last to first, so the list pops in the order it was written.
+            for &start in starts.iter().rev() {
+                if start as usize >= values.len() {
+                    return Err(crate::snapshot::SnapshotError("free run past the arena".into()));
+                }
+                values[start as usize] = Value::from_bits(u64::from(list.head));
+                *list = FreeRuns { head: start, len: list.len + 1 };
+            }
+        }
         let shape_lengths = reader.u32s()?;
         let dictionaries = crate::snapshot::read_list(reader, |reader| {
             let id = reader.u32()?;
@@ -420,8 +454,8 @@ impl ValueArena {
         .into_iter()
         .collect();
         Ok(Self {
-            values: values.into(),
-            free,
+            values,
+            free: lists,
             released_values,
             shape_lengths,
             dictionaries,
@@ -435,9 +469,7 @@ impl ValueArena {
         self.widened_shapes.clear();
         self.shape_readers.reset();
         self.values.clear();
-        for bucket in &mut self.free {
-            bucket.clear();
-        }
+        self.free = [FreeRuns::EMPTY; BUCKETS];
         self.released_values = 0;
         self.settled_values = 0;
         self.shape_lengths.truncate(1);
@@ -992,10 +1024,34 @@ impl ValueArena {
         vector.relocate(target);
     }
 
+    /// `vector`, an ordinary run of a plain object whose values all have a narrow form and
+    /// fill a smaller class narrow, moved into a released range of the narrow class, its own
+    /// range released in turn: what a full collection without compaction does for the runs
+    /// it keeps (`Heap::narrow_live_runs`). Only a released range takes it, so the arena never
+    /// grows for it. `None` changes nothing.
+    pub(crate) fn narrow_into_released(&mut self, vector: ValueVec) -> Option<ValueVec> {
+        debug_assert!(!vector.is_narrow() && !vector.is_dictionary() && !vector.has_inline_property_storage());
+        let length = self.len(vector);
+        if length == 0 || !self.narrows_to_fewer_words(vector, length) {
+            return None;
+        }
+        let mut narrow = vector;
+        narrow.auxiliary |= NARROW_FORM;
+        let capacity = Self::ordered_capacity(narrow, length);
+        let target = self.pop_free(Self::bucket(capacity))? as usize;
+        self.released_values -= capacity;
+        let words = self.narrow_words_of(vector.start(), length);
+        self.values[target..target + words.len()].copy_from_slice(&words);
+        self.values[target + words.len()..target + capacity].fill(Value::UNDEFINED);
+        self.release_held(vector);
+        narrow.relocate(target);
+        Some(narrow)
+    }
+
     /// Where a surviving young run of `capacity` words at `source` moves: a free range of its
     /// class, or the nursery floor, which never passes the source.
     fn young_target(&mut self, capacity: usize, source: usize) -> usize {
-        match self.free[Self::bucket(capacity)].pop() {
+        match self.pop_free(Self::bucket(capacity)) {
             Some(target) => {
                 self.released_values -= capacity;
                 target as usize
@@ -1148,6 +1204,37 @@ impl ValueArena {
         self.release_held(vector);
     }
 
+    /// Links the released run at `start` into `bucket`'s list (`FreeRuns`).
+    #[inline(always)]
+    fn push_free(&mut self, bucket: usize, start: u32) {
+        let list = &mut self.free[bucket];
+        self.values[start as usize] = Value::from_bits(u64::from(list.head));
+        *list = FreeRuns { head: start, len: list.len + 1 };
+    }
+
+    /// The last run released into `bucket`, unlinked.
+    #[inline(always)]
+    fn pop_free(&mut self, bucket: usize) -> Option<u32> {
+        let list = self.free[bucket];
+        if list.is_empty() {
+            return None;
+        }
+        let next = self.values[list.head as usize].to_bits() as u32;
+        self.free[bucket] = FreeRuns { head: next, len: list.len - 1 };
+        Some(list.head)
+    }
+
+    /// `bucket`'s released runs, last released first.
+    fn free_starts(&self, bucket: usize) -> Vec<u32> {
+        let mut starts = Vec::with_capacity(self.free[bucket].len());
+        let mut start = self.free[bucket].head;
+        for _ in 0..self.free[bucket].len {
+            starts.push(start);
+            start = self.values[start as usize].to_bits() as u32;
+        }
+        starts
+    }
+
     #[inline(never)]
     fn release_held(&mut self, vector: ValueVec) {
         if vector.is_dictionary() {
@@ -1158,7 +1245,7 @@ impl ValueArena {
         }
         let capacity = Self::ordered_capacity(vector, self.len(vector));
         if capacity != 0 {
-            self.free[Self::bucket(capacity)].push(vector.start & START_MASK);
+            self.push_free(Self::bucket(capacity), vector.start & START_MASK);
             self.released_values += capacity;
         }
     }
@@ -1259,9 +1346,7 @@ impl ValueArena {
         // A burst's growth stays resident past the compaction that frees it: keep the room
         // the next doubling would give the live values, and return the rest.
         self.values.shrink_to(length.saturating_mul(COMPACTED_CAPACITY_FACTOR));
-        for bucket in &mut self.free {
-            bucket.clear();
-        }
+        self.free = [FreeRuns::EMPTY; BUCKETS];
         self.released_values = 0;
         // Compaction moved every live run below `length`, young ones too.
         self.nursery = Nursery::default();
@@ -1269,11 +1354,6 @@ impl ValueArena {
 
     pub(crate) fn memory_bytes(&self) -> usize {
         self.values.capacity() * size_of::<Value>()
-            + self
-                .free
-                .iter()
-                .map(|bucket| bucket.capacity() * size_of::<u32>())
-                .sum::<usize>()
             + self.dictionaries.capacity() * size_of::<(u32, FxHashMap<u32, Value>)>()
             + self
                 .dictionaries
@@ -1294,7 +1374,7 @@ impl ValueArena {
         (
             self.values.len(),
             self.values.capacity(),
-            self.free.iter().map(Vec::len).sum(),
+            self.free.iter().map(|list| list.len()).sum(),
         )
     }
 
@@ -1416,7 +1496,7 @@ impl ValueArena {
     #[inline(always)]
     fn allocate(&mut self, capacity: usize, max_start: usize) -> Option<usize> {
         let bucket = Self::bucket(capacity);
-        if let Some(start) = self.free[bucket].pop() {
+        if let Some(start) = self.pop_free(bucket) {
             self.released_values -= capacity;
             return Some(start as usize);
         }
@@ -1658,10 +1738,7 @@ mod tests {
         assert!(references.is_empty(), "numbers are not heap references");
         assert_eq!(arena.values.len(), range_count);
         assert!(
-            arena
-                .free
-                .iter()
-                .any(|bucket| bucket.contains(&(start as u32)))
+            (0..BUCKETS).any(|bucket| arena.free_starts(bucket).contains(&(start as u32)))
         );
 
         arena.release(vector);

@@ -44,14 +44,37 @@ pub(in crate::vm) type DirectCandidates = smallvec::SmallVec<[DirectCallee; tier
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub(in crate::vm) struct ShadowFrame {
-    pub(in crate::vm) callee: *const DirectCallee,
-    pub(in crate::vm) this: u64, pub(in crate::vm) body: usize,
+    /// Its callee, receiver and body: a direct call's native code writes them; an activation
+    /// the lane made (`ShadowFrame::EMPTY`) leaves them unwritten, as nothing reads them there.
+    pub(in crate::vm) callee: std::mem::MaybeUninit<*const DirectCallee>,
+    pub(in crate::vm) this: std::mem::MaybeUninit<u64>, pub(in crate::vm) body: std::mem::MaybeUninit<usize>,
     /// The address of its window of registers.
     pub(in crate::vm) window: usize,
 }
 
 impl ShadowFrame {
-    pub(in crate::vm) const EMPTY: Self = Self { callee: std::ptr::null(), this: 0, body: 0, window: 0 };
+    /// The prefix of an activation the lane made: its window alone, written at its push.
+    pub(in crate::vm) const EMPTY: Self = Self {
+        callee: std::mem::MaybeUninit::uninit(), this: std::mem::MaybeUninit::uninit(),
+        body: std::mem::MaybeUninit::uninit(), window: 0,
+    };
+
+    /// A direct call's callee (`DirectCallee`).
+    ///
+    /// # Safety
+    /// The frame is a direct call's, whose native code wrote it.
+    #[inline(always)]
+    pub(in crate::vm) unsafe fn callee(&self) -> *const DirectCallee { unsafe { self.callee.assume_init() } }
+
+    /// # Safety
+    /// As for `callee`.
+    #[inline(always)]
+    pub(in crate::vm) unsafe fn this(&self) -> u64 { unsafe { self.this.assume_init() } }
+
+    /// # Safety
+    /// As for `callee`.
+    #[inline(always)]
+    pub(in crate::vm) unsafe fn body(&self) -> usize { unsafe { self.body.assume_init() } }
 }
 
 

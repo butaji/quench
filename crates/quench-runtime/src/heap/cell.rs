@@ -3070,6 +3070,11 @@ impl Object {
         super::array_proofs::retire_array_storage_proofs();
         self.mark_element_fact(ElementFacts::INDEXED_DESCRIPTORS);
     }
+    /// Whether the object ever held sparse elements (`mark_sparse_elements`).
+    #[inline(always)]
+    pub(crate) fn has_sparse_elements(&self) -> bool {
+        self.element_facts().has(ElementFacts::SPARSE_ELEMENTS)
+    }
     pub(crate) fn mark_sparse_elements(&mut self) {
         self.mark_element_fact(ElementFacts::SPARSE_ELEMENTS);
     }

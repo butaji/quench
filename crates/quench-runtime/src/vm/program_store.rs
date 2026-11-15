@@ -2505,7 +2505,7 @@ impl ProgramStore {
             return Some(view.as_ptr());
         }
         let code = entry.residual.function_get(function as usize)?;
-        if !deferred_run_completes(entry.lane_deferred.get(function as usize)?) && !may_loop(code) {
+        if !deferred_run_completes(entry.lane_deferred.get(function as usize)?) && !may_loop(code) || entry.residual.runs_tier0(function as usize) {
             return None;
         }
         Some(derive_lane_view(entry, function, code, view, derive))
@@ -2515,6 +2515,11 @@ impl ProgramStore {
     /// and lane calls completed its deferred runs (`LANE_VIEW_DEFERRED_RUNS`), as
     /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
     /// general path.
+    /// Whether `function` of program `id` has a derived lane view.
+    pub(super) fn lane_view_derived(&self, id: ProgramId, function: u32) -> bool {
+        self.lane_entry(id).is_some_and(|entry| entry.lane_views.derived(function).is_some())
+    }
+
     pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32) -> bool {
         let Some(entry) = self.lane_entry(id) else {
             return false;
@@ -2525,6 +2530,7 @@ impl ProgramStore {
                 .lane_deferred
                 .get(function as usize)
                 .is_some_and(deferred_run_completes)
+                && !entry.residual.runs_tier0(function as usize)
     }
 
     pub(super) fn lane_view<'s>(

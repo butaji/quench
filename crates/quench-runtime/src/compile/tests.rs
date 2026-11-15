@@ -358,7 +358,7 @@ fn records_lowered_on_first_read_match_records_lowered_at_load() {
             // The root lowers at load; every other record waits for its first read.
             assert_eq!(lazy.functions[index].record().is_some(), index == 0, "function {index} of {source}");
             assert_eq!(
-                format!("{:?}", lazy.function(index)),
+                format!("{:?}", lazy.lowered_function(index)),
                 format!("{:?}", eager.function(index)),
                 "function {index} of {source}"
             );

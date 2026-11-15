@@ -66,11 +66,7 @@ pub(in crate::compile) fn free_names(program: &Program<'_>, scoping: &oxc_semant
     }
     let (start, own) = match program.body.first()? {
         Statement::FunctionDeclaration(function) => (function.span.start, function.id.as_ref().map(|id| id.name.as_str())),
-        Statement::ExpressionStatement(statement) => match statement.expression.without_parentheses() {
-            Expression::FunctionExpression(function) => (function.span.start, None),
-            _ => return None,
-        },
-        _ => return None,
+        _ => (alone_start(program)?, None),
     };
     let mut names: Vec<Box<str>> = scoping
         .root_unresolved_references()
@@ -87,11 +83,19 @@ pub(in crate::compile) fn free_names(program: &Program<'_>, scoping: &oxc_semant
 }
 
 /// The start of the function `program` holds alone, as `free_names` reads it.
+/// A method checks alone as an object literal's one method (`ParseOptions::lazy_nested_bodies`).
 pub(in crate::compile) fn alone_start(program: &Program<'_>) -> Option<u32> {
     match program.body.first()? {
         Statement::FunctionDeclaration(function) => Some(function.span.start),
         Statement::ExpressionStatement(statement) => match statement.expression.without_parentheses() {
             Expression::FunctionExpression(function) => Some(function.span.start),
+            Expression::ObjectExpression(object) => match object.properties.as_slice() {
+                [oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property)] if property.method => match &property.value {
+                    Expression::FunctionExpression(function) => Some(function.span.start),
+                    _ => None,
+                },
+                _ => None,
+            },
             _ => None,
         },
         _ => None,

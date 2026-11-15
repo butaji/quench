@@ -50,7 +50,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.options.lazy_function_bodies.is_some_and(|from| start >= from)
             && !self.is_ts
             && (self.lazy_depth == 0 || self.options.lazy_nested_bodies && self.options.lazy_body_check.is_some())
-            && matches!(func_kind, FunctionKind::Declaration | FunctionKind::Expression)
+            && (matches!(func_kind, FunctionKind::Declaration | FunctionKind::Expression)
+                // A method's body only inside another lazily parsed body, which compiles from
+                // its text again; never a constructor, whose `super()` its class decides.
+                || self.lazy_depth > 0 && matches!(func_kind, FunctionKind::ClassMethod | FunctionKind::ObjectMethod))
             && !self.source_text[..start as usize].trim_end().ends_with('(')
     }
 
@@ -105,18 +108,25 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let inside = |start: &u32| (span.start..span.end).contains(start);
         self.lexer.escaped_strings.retain(|start, _| !inside(start));
         self.lexer.escaped_templates.retain(|start, _| !inside(start));
+        // Released in source order, the bodies inside this one end each list.
+        while self.lazy_methods.last().is_some_and(inside) {
+            self.lazy_methods.pop();
+        }
         // SAFETY: the arena has the same chunk as at `marker` (its capacity is unchanged), the
         // marker lies in it and the arena's alignment is one byte. Nothing allocated after the
         // marker is referenced any more: the body is dropped, the parser state that can hold
         // arena data is as it was at the checkpoint, and the escaped strings and templates
         // inside the body are removed.
         unsafe { allocator.set_cursor_ptr(marker) };
-        // The bodies released inside it leave the tree with it: they were released after its
-        // body began, so they end the list.
-        while self.lazy_function_bodies.last().is_some_and(|start| inside(start)) {
+        // The bodies released inside it leave the tree with it.
+        while self.lazy_function_bodies.last().is_some_and(inside) {
             self.lazy_function_bodies.pop();
         }
-        self.lazy_function_bodies.push(span.start);
+        if function.method {
+            self.lazy_methods.push(span.start);
+        } else {
+            self.lazy_function_bodies.push(span.start);
+        }
         let directives = ArenaVec::from_iter_in(directives, &self.ast);
         FunctionBody::boxed(span, directives, ArenaVec::new_in(self), self)
     }
@@ -140,9 +150,18 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let (id, params, body) = unsafe {
             (function.id.map(|id| std::ptr::read(id)), std::ptr::read(function.params), std::ptr::read(body))
         };
-        let r#type = if function.expression { FunctionType::FunctionExpression } else { FunctionType::FunctionDeclaration };
+        let r#type = if function.expression || function.method { FunctionType::FunctionExpression } else { FunctionType::FunctionDeclaration };
         let node = Function::boxed(span, r#type, id, function.generator, function.r#async, false, None, None, params, None, Some(body), self);
-        let statement = if function.expression {
+        let statement = if function.method {
+            // `({ m(...) { ... } })`: a method's syntax (`super.x`, unique parameters) without
+            // its class or object, whose own checks the program around it made.
+            let key = PropertyKey::StaticIdentifier(IdentifierName::boxed(Span::empty(function.start), "m", self));
+            let property = ObjectProperty::boxed(span, PropertyKind::Init, key, Expression::FunctionExpression(node), true, false, false, self);
+            let mut properties = ArenaVec::new_in(self);
+            properties.push(ObjectPropertyKind::ObjectProperty(property));
+            let object = ObjectExpression::boxed(span, properties, self);
+            Statement::ExpressionStatement(ExpressionStatement::boxed(span, Expression::ObjectExpression(object), self))
+        } else if function.expression {
             Statement::ExpressionStatement(ExpressionStatement::boxed(span, Expression::FunctionExpression(node), self))
         } else {
             Statement::FunctionDeclaration(node)
@@ -461,6 +480,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                     r#async,
                     generator: generator.is_some(),
                     expression: func_kind == FunctionKind::Expression,
+                    method: matches!(func_kind, FunctionKind::ClassMethod | FunctionKind::ObjectMethod),
                 })
             } else {
                 let body = self.parse_function_body();
@@ -781,6 +801,8 @@ struct LazyFunction<'f, 'a> {
     r#async: bool,
     generator: bool,
     expression: bool,
+    /// A class or object method's: it checks alone as an object literal's method.
+    method: bool,
 }
 
 /// The parser state a function body's parse can extend with data that outlives the body.
