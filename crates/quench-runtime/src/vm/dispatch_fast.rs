@@ -8008,10 +8008,16 @@ fn lane_cached_field_at<H: Host>(
         // A string's own `length`, which its chain never shadows, as a tokenizer's
         // `this.input.length` reads: no cache records a primitive's, and the probes below
         // all decline it (`Vm::cached_string_field_hit`).
-        if atom == vm.length_atom
-            && let Some(text) = vm.heap.string(object)
-        {
-            return Some(Value::length(text.len()));
+        if atom == vm.length_atom {
+            if let Some(text) = vm.heap.string(object) {
+                return Some(Value::length(text.len()));
+            }
+            // An array's own `length` (`Vm::own_array_length`), which no field cache records
+            // either, as `lane_get_length` reads it: a returning or local-based `GetField`
+            // (`return rest.length`) otherwise reaches it only past the getter and miss paths.
+            if let Some(length) = vm.own_array_length(object) {
+                return Some(Value::length(length));
+            }
         }
         let class = vm.atom_class(atom);
         // A private field, which no field cache records, at its site.

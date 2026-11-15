@@ -983,15 +983,11 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    /// The rest parameter's array of the arguments past the fixed parameters.
+    /// The rest parameter's array of the arguments past the fixed parameters: a fresh array
+    /// as an array literal of them makes (`literal_array`), in a young run where one is free.
     #[inline(never)]
     pub(super) fn rest_parameter_array(&mut self, rest: &[Value]) -> Value {
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
-                Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                crate::heap::ArrayElements::from_slice(rest),
-            ),
-        })
+        self.literal_array(rest.len(), |index| rest[index])
     }
 
     /// A new activation's `arguments` object, mapped onto the parameters when the function's
