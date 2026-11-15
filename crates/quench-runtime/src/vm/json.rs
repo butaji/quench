@@ -2104,7 +2104,7 @@ impl<H: Host> Vm<H> {
                 let key = self
                     .heap
                     .array_elements(keys)
-                    .map(|elements| elements[index])
+                    .map(|elements| elements.get(index).expect("rooted own-key projection"))
                     .expect("rooted own-key projection");
                 if !self.heap.is_string(key) {
                     continue;

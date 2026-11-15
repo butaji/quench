@@ -30,10 +30,10 @@ impl<H: Host> Vm<H> {
     /// The element vector of an array whose indices are all own data properties of it: no
     /// indexed descriptors, sparse storage or arguments mapping. A slot holding the hole
     /// marker is a hole. Reading through the view runs no guest code.
-    pub(super) fn array_read_view(&self, this: Value) -> Option<&[Value]> {
+    pub(super) fn array_read_view(&self, this: Value) -> Option<std::borrow::Cow<'_, [Value]>> {
         let object = self.heap.array(this)?;
         (!object.has_indexed_descriptors() && !object.is_arguments_object() && self.heap.sparse_length(this).is_none())
-            .then(|| &**object.elements())
+            .then(|| object.elements().values_cow())
     }
 
     /// Searches `range` of `array` for `search`, from its end when `reverse`. Nothing in the

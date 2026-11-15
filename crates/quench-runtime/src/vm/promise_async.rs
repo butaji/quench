@@ -267,7 +267,7 @@ impl<H: Host> Vm<H> {
             && !self.is_object_like(source)
         {
             self.with_call_roots([Some(source), Some(promise), generator].into_iter().flatten(), |vm| {
-                let parent = vm.promise_record(promise).and_then(|record| record.host_context.get());
+                let parent = vm.promise_record(promise).and_then(|record| record.host_context().get());
                 let awaited = vm.promise_object_with_parent(parent)?;
                 vm.with_call_roots([awaited], |vm| vm.promise_resolve_value(p, awaited, source))?;
                 Ok(awaited)
@@ -280,7 +280,7 @@ impl<H: Host> Vm<H> {
         let next = if self.host.observes_promise_lifecycle() {
             self.with_call_roots([source], |vm| {
                 vm.promise_object_with_parent(
-                    vm.promise_record(source).and_then(|record| record.host_context.get()),
+                    vm.promise_record(source).and_then(|record| record.host_context().get()),
                 )
             })?
         } else {
@@ -300,7 +300,7 @@ impl<H: Host> Vm<H> {
             on_fulfilled: state,
             on_rejected: state,
             next,
-            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context.get())).into(),
+            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context().get())).into(),
         };
         if source_state == PromiseState::Pending {
             self.promise_record_mut(source)

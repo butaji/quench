@@ -58,27 +58,21 @@ pub(super) unsafe fn bind_captures<H: Host>(
     captures
 }
 
-/// The lane activation's own registers, locals and body. A frame whose local storage does not
-/// cover the function keeps them in the activation window, after the register file; the VM
-/// frame may name the caller.
+/// The lane activation's own registers, locals and body. Its locals are where a lane body's
+/// are (`dispatch_fast::lane_body_locals`): the VM frame may name the caller.
 ///
 /// # Safety
-/// `registers` is the activation's live register file.
+/// `registers` is the activation's live register file; `lane_context` the running lane's
+/// context for `H`.
 pub(super) unsafe fn bind_frame<H: Host>(
-    native: &mut JsNativeActivation, vm: &mut Vm<H>, (program, function, frame): (ProgramId, u32, usize),
+    native: &mut JsNativeActivation, vm: &mut Vm<H>, (program, function, lane_context): (ProgramId, u32, usize),
     registers: *mut crate::value::Value,
 ) {
     if let Some(program) = vm.programs.get(program)
         && let Some(body) = program.function_get(function as usize) {
         native.dispatch.native_registers = registers;
         native.dispatch.register_count = usize::from(body.registers);
-        native.dispatch.native_locals = if vm.frames[frame].locals.len() < usize::from(body.locals) {
-            // SAFETY: the window follows the register file.
-            unsafe { registers.add(usize::from(body.registers)
-                + usize::from(super::dispatch_fast::WINDOW_LOCALS)) }
-        } else {
-            vm.frames[frame].locals.as_mut_ptr()
-        };
+        native.dispatch.native_locals = super::dispatch_fast::lane_body_locals::<H>(lane_context as *mut (), registers, false);
         native.dispatch.local_count = usize::from(body.locals);
         native.dispatch.body = body as *const _;
         native.dispatch.residual = Rc::as_ptr(&program) as usize;

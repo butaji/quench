@@ -608,7 +608,7 @@ impl<H: Host> Vm<H> {
                     // async_hooks exposes its init, job boundaries, and
                     // settlement even though the resolving callbacks return
                     // no value to JavaScript.
-                    let parent = self.promise_record(promise).and_then(|record| record.host_context.get());
+                    let parent = self.promise_record(promise).and_then(|record| record.host_context().get());
                     let next = self.with_call_roots([promise, target], |vm| {
                         vm.promise_object_with_parent(parent)
                     })?;

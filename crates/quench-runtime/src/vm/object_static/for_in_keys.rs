@@ -174,7 +174,7 @@ impl<H: Host> Vm<H> {
             if active.cursor >= active.len {
                 return None;
             }
-            let key = *self.heap.array(active.keys)?.elements().get(active.cursor)?;
+            let key = self.heap.array(active.keys)?.elements().get(active.cursor)?;
             return Some((active.object, active.keys, key, active.cursor));
         }
         self.for_in_activate(state)
@@ -188,10 +188,10 @@ impl<H: Host> Vm<H> {
         self.for_in_flush_cursor();
         let elements = self.heap.array(state)?.elements();
         let cursor = usize::try_from(elements.get(CURSOR)?.as_int()?).ok()?;
-        let (object, keys) = (elements[OBJECT], elements[KEYS]);
+        let (object, keys) = (elements.get(OBJECT)?, elements.get(KEYS)?);
         let listed = self.heap.array(keys)?.elements();
         let len = listed.len();
-        let key = *listed.get(cursor)?;
+        let key = listed.get(cursor)?;
         self.for_in.active = Some(ActiveForIn { state, object, keys, len, cursor });
         Some((object, keys, key, cursor))
     }

@@ -93,11 +93,14 @@ pub(in crate::vm) fn register_number_value(builder: &mut FunctionBuilder<'_>, re
         }
         Representation::Tagged => {
             let bits = register_tagged(builder, registers, state, register);
-            let number = if fact.ty.is_subtype(Type::NUMBER) {
+            let bits = builder.func.dfg.resolve_aliases(bits);
+            let known = state.proofs.numbers.iter().find(|(source, _)| *source == bits).map(|(_, number)| *number);
+            let number = if let Some(number) = known { number } else if fact.ty.is_subtype(Type::NUMBER) {
                 emit_known_number(builder, bits)
             } else {
                 emit_js_tagged_number(builder, bits, otherwise)
             };
+            if known.is_none() && state.proofs.numbers.len() < 4 * INLINE_NUMBER_PROJECTIONS { state.proofs.numbers.push((bits, number)); }
             let variable = register_float(builder, registers, index);
             builder.def_var(variable, number);
             state.values[index] = RegisterFact { tagged: state.values[index].tagged,

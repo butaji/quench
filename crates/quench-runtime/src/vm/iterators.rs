@@ -110,7 +110,7 @@ impl<H: Host> Vm<H> {
         match kind {
             IterationSource::Array => {
                 let length = self.heap.array(source)?.elements().len();
-                self.present_dense_elements(source, 0..length).map(<[Value]>::to_vec)
+                self.present_dense_elements(source, 0..length).map(|values| values.into_owned())
             }
             IterationSource::Set => match self.heap.get(source)? {
                 Cell::Set { entries, .. } => Some(entries.to_vec()),
@@ -2930,8 +2930,8 @@ impl<H: Host> Vm<H> {
                 .array_elements(env)
                 .map_or((false, Value::UNDEFINED), |elements| {
                     (
-                        elements.first().is_some_and(|done| self.truthy(*done)),
-                        elements.get(1).copied().unwrap_or(Value::UNDEFINED),
+                        elements.first().is_some_and(|done| self.truthy(done)),
+                        elements.get(1).unwrap_or(Value::UNDEFINED),
                     )
                 });
         if done
@@ -2953,8 +2953,8 @@ impl<H: Host> Vm<H> {
                 .array_elements(env)
                 .map_or((Value::UNDEFINED, false), |elements| {
                     (
-                        elements.get(1).copied().unwrap_or(Value::UNDEFINED),
-                        elements.get(2).is_some_and(|close| self.truthy(*close)),
+                        elements.get(1).unwrap_or(Value::UNDEFINED),
+                        elements.get(2).is_some_and(|close| self.truthy(close)),
                     )
                 });
         if close_on_rejection {
@@ -3209,11 +3209,11 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let rest = array.elements().get(position..)?;
-        if rest.iter().any(|value| value.is_deleted()) {
+        let elements = array.elements();
+        if position > elements.len() || elements.range(position..elements.len()).any(|value| value.is_deleted()) {
             return None;
         }
-        let rest = rest.to_vec();
+        let rest: Vec<Value> = elements.range(position..elements.len()).collect();
         if let Some(IteratorRecord { done, source, .. }) = self.heap.iterator_mut(iterator) {
             *done = true;
             *source = Value::UNDEFINED;
@@ -3249,7 +3249,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let Some(&element) = array.elements().get(position) else {
+        let Some(element) = array.elements().get(position) else {
             if let Some(IteratorRecord { done, source, .. }) = self.heap.iterator_mut(iterator) {
                 *done = true;
                 *source = Value::UNDEFINED;
@@ -3408,7 +3408,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let Some(value) = array.elements().get(position).copied() else {
+        let Some(value) = array.elements().get(position) else {
             if let Some(IteratorRecord { done, source, .. }) = self.heap.iterator_mut(iterator) {
                 *done = true;
                 *source = Value::UNDEFINED;

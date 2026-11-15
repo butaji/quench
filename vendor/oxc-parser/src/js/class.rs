@@ -100,11 +100,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         if let Some(id) = &id
             && r#type == ClassType::ClassDeclaration
         {
-            self.early.declare(id.name.as_str(), crate::early::DeclKind::Lexical);
+            self.early.declare(id.name, crate::early::DeclKind::Lexical);
         }
         self.early.enter(crate::early::ScopeKind::Block);
         if let Some(id) = &id {
-            self.early.declare(id.name.as_str(), crate::early::DeclKind::OwnName);
+            self.early.declare(id.name, crate::early::DeclKind::OwnName);
         }
         // A class name may not be a reserved type name, but only in TypeScript
         // (`class string {}` is valid JavaScript).

@@ -24,7 +24,7 @@ impl Cell {
 
 /// Element storage an array owns.
 #[inline] pub(super) fn array_payload_bytes(array: &super::ArrayObject) -> usize {
-    array.elements().capacity() * size_of::<super::Value>()
+    array.elements().value_bytes()
 }
 
 impl Heap {

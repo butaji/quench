@@ -308,7 +308,7 @@ impl<H: Host> Vm<H> {
         object
             .elements()
             .get(index)
-            .copied()
+            
             .filter(|value| !value.is_deleted())
     }
 

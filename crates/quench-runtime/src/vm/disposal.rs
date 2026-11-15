@@ -739,17 +739,17 @@ impl<H: Host> Vm<H> {
             return Err(JsError("DisposableStack entries are invalid".into()));
         };
         let values = std::mem::take(elements);
-        for entry in values.iter().rev().copied() {
+        for entry in values.iter().rev() {
             let Some(elements) = self.heap.array_elements(entry) else {
                 continue;
             };
             let callback = elements
                 .get(DISPOSAL_ENTRY_CALLBACK_SLOT)
-                .copied()
+                
                 .unwrap_or(Value::UNDEFINED);
             let value = elements
                 .get(DISPOSAL_ENTRY_RECEIVER_SLOT)
-                .copied()
+                
                 .unwrap_or(Value::UNDEFINED);
             let mode = elements
                 .get(DISPOSAL_ENTRY_MODE_SLOT)
@@ -848,7 +848,7 @@ impl<H: Host> Vm<H> {
     fn async_disposal_state_value(&self, state: Value, slot: usize) -> Value {
         self.heap
             .array_elements(state)
-            .and_then(|elements| elements.get(slot).copied())
+            .and_then(|elements| elements.get(slot))
             .unwrap_or(Value::UNDEFINED)
     }
 
@@ -914,17 +914,17 @@ impl<H: Host> Vm<H> {
                 let Some(resource_elements) = self.heap.array_elements(resources) else {
                     return Err(JsError("DisposableStack entries are invalid".into()));
                 };
-                let entry = resource_elements[cursor];
+                let entry = resource_elements.get(cursor).expect("resource entry");
                 let Some(elements) = self.heap.array_elements(entry) else {
                     continue;
                 };
                 let callback = elements
                     .get(DISPOSAL_ENTRY_CALLBACK_SLOT)
-                    .copied()
+                    
                     .unwrap_or(Value::UNDEFINED);
                 let value = elements
                     .get(DISPOSAL_ENTRY_RECEIVER_SLOT)
-                    .copied()
+                    
                     .unwrap_or(Value::UNDEFINED);
                 let mode = elements
                     .get(DISPOSAL_ENTRY_MODE_SLOT)
@@ -932,7 +932,7 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(DISPOSAL_INVALID_MODE);
                 let await_result = elements
                     .get(DISPOSAL_ENTRY_AWAIT_RESULT_SLOT)
-                    .is_some_and(|value| self.truthy(*value));
+                    .is_some_and(|value| self.truthy(value));
                 let result = match mode {
                     DISPOSAL_USE_MODE => self.call_value(p, callback, value, &[]),
                     DISPOSAL_ASYNC_FROM_SYNC_MODE => {

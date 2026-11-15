@@ -125,7 +125,7 @@ impl ProgramEntry {
         writer.len(arrays.len());
         for (start, array) in arrays {
             writer.len(*start as usize);
-            writer.values(array);
+            writer.values(&array.values_cow());
         }
         let mut sources: Vec<(u32, crate::value::Value)> = function_sources.iter().map(|(function, source)| (*function, *source)).collect();
         sources.sort_unstable_by_key(|(function, _)| *function);

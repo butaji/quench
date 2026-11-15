@@ -1488,7 +1488,7 @@ impl<H: Host> Vm<H> {
                 elements
                     .iter()
                     .zip(types)
-                    .map(|(value, ty)| self.decode_wasm_value_in(*value, *ty, declarations))
+                    .map(|(value, ty)| self.decode_wasm_value_in(value, *ty, declarations))
                     .collect()
             }
         }

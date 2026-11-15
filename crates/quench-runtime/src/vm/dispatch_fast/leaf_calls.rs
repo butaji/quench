@@ -79,9 +79,8 @@ script_handler! {
             leaf.caller_base = (*cx).base;
             leaf.target = target;
             if leaf_swaps_env(LEAF) {
-                leaf.caller_capture = (*cx).capture;
                 registers.set_env(target.env);
-                (*cx).capture = target.capture;
+                registers.set_capture(target.capture);
             }
             (*cx).registers = registers;
             (*cx).base = base;
@@ -160,9 +159,6 @@ pub(super) fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value,
     // SAFETY: the call record belongs to the caller's live view; the target stays cached.
     unsafe {
         debug_assert!(leaf.form == form);
-        if leaf_swaps_env(form) {
-            (*cx).capture = leaf.caller_capture;
-        }
         (*cx).registers = caller;
         (*cx).base = leaf.caller_base;
         caller.set((*call).a & crate::bytecode::REGISTER_MASK, value);

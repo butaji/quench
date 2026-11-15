@@ -10,6 +10,8 @@
 //! references do, as the check of the body around composes them. Its own state rewinds with the
 //! parser (`EarlyCheckpoint`), so a speculative parse leaves nothing behind.
 
+use oxc_str::Ident;
+
 /// What a declared name is, as far as redeclaration and hoisting need.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum DeclKind {
@@ -85,8 +87,8 @@ struct Body {
 #[derive(Default)]
 pub(crate) struct Early<'a> {
     scopes: Vec<Scope>,
-    decls: Vec<(&'a str, DeclKind)>,
-    refs: Vec<&'a str>,
+    decls: Vec<(Ident<'a>, DeclKind)>,
+    refs: Vec<Ident<'a>>,
     boundaries: Vec<Boundary>,
     bodies: Vec<Body>,
     /// Whether each class being parsed has a heritage, and whether a constructor was seen in
@@ -196,7 +198,7 @@ impl<'a> Early<'a> {
         self.pop_boundary();
         let refs_start = self.scopes.last().map_or(0, |scope| scope.refs_start as usize);
         self.resolve_innermost();
-        let mut free: Vec<&'a str> = self.refs[refs_start..].iter().copied().filter(|name| *name != "arguments").collect();
+        let mut free: Vec<&'a str> = self.refs[refs_start..].iter().map(|name| name.as_str()).filter(|name| *name != "arguments").collect();
         free.sort_unstable();
         free.dedup();
         self.close_innermost();
@@ -303,12 +305,16 @@ impl<'a> Early<'a> {
     fn resolve_innermost(&mut self) {
         let Some(scope) = self.scopes.last().copied() else { return };
         let decls = &self.decls[scope.decls_start as usize..];
+        // A scope that declares nothing resolves nothing (most blocks).
+        if decls.iter().all(|declared| declared.1 == DeclKind::VarThrough) {
+            return;
+        }
         if !self.unsure && conflicts(decls) {
             self.unsure = true;
         }
         let refs_start = scope.refs_start as usize;
         let mut kept = refs_start;
-        let bound = |declared: &(&str, DeclKind)| declared.1 != DeclKind::VarThrough;
+        let bound = |declared: &(Ident<'a>, DeclKind)| declared.1 != DeclKind::VarThrough;
         if decls.len() <= 16 {
             for index in refs_start..self.refs.len() {
                 let name = self.refs[index];
@@ -318,14 +324,28 @@ impl<'a> Early<'a> {
                 }
             }
         } else {
-            let names: rustc_hash::FxHashSet<&str> = decls.iter().filter(|declared| bound(declared)).map(|declared| declared.0).collect();
+            let names: rustc_hash::FxHashSet<Ident<'a>> = decls.iter().filter(|declared| bound(declared)).map(|declared| declared.0).collect();
             for index in refs_start..self.refs.len() {
                 let name = self.refs[index];
-                if !names.contains(name) {
+                if !names.contains(&name) {
                     self.refs[kept] = name;
                     kept += 1;
                 }
             }
+        }
+        // The scopes around read each name once: a long run of references keeps one of each.
+        if kept - refs_start > 32 {
+            let mut seen = rustc_hash::FxHashSet::default();
+            seen.reserve(kept - refs_start);
+            let mut unique = refs_start;
+            for index in refs_start..kept {
+                let name = self.refs[index];
+                if seen.insert(name) {
+                    self.refs[unique] = name;
+                    unique += 1;
+                }
+            }
+            kept = unique;
         }
         self.refs.truncate(kept);
     }
@@ -356,11 +376,11 @@ impl<'a> Early<'a> {
     }
 
     #[inline]
-    pub(crate) fn reference(&mut self, name: &'a str) {
+    pub(crate) fn reference(&mut self, name: Ident<'a>) {
         if self.active() {
-            if reserved(name) {
+            if reserved(name.as_str()) {
                 self.unsure = true;
-            } else if name == "arguments" && self.boundaries.last().is_some_and(|boundary| matches!(boundary.home, Home::Field | Home::StaticBlock)) {
+            } else if name.as_str() == "arguments" && self.boundaries.last().is_some_and(|boundary| matches!(boundary.home, Home::Field | Home::StaticBlock)) {
                 self.unsure = true;
             }
             if !self.lost {
@@ -373,7 +393,7 @@ impl<'a> Early<'a> {
     pub(crate) fn unreference(&mut self, name: &str) {
         if self.active() && !self.lost {
             match self.refs.last() {
-                Some(last) if *last == name => {
+                Some(last) if last.as_str() == name => {
                     self.refs.pop();
                 }
                 _ => self.lost = true,
@@ -390,11 +410,11 @@ impl<'a> Early<'a> {
 
     /// Declares `name` in the innermost scope, or for `var` in the innermost function scope,
     /// recorded on each block between.
-    pub(crate) fn declare(&mut self, name: &'a str, kind: DeclKind) {
+    pub(crate) fn declare(&mut self, name: Ident<'a>, kind: DeclKind) {
         if !self.active() {
             return;
         }
-        if reserved(name) || matches!(name, "eval" | "arguments") {
+        if reserved(name.as_str()) || matches!(name.as_str(), "eval" | "arguments") {
             self.unsure = true;
         }
         if self.lost {
@@ -533,7 +553,7 @@ impl<'a> Early<'a> {
 
 /// Whether a scope's declarations may conflict: a name declared twice where either declaration
 /// is lexical, two catch parameters, or two parameters.
-fn conflicts(decls: &[(&str, DeclKind)]) -> bool {
+fn conflicts(decls: &[(Ident<'_>, DeclKind)]) -> bool {
     let clash = |a: DeclKind, b: DeclKind| {
         if a == DeclKind::OwnName || b == DeclKind::OwnName {
             return false;
@@ -549,13 +569,13 @@ fn conflicts(decls: &[(&str, DeclKind)]) -> bool {
         });
     }
     // Per name, the kinds seen so far as bits: a later kind clashes with any of them.
-    let mut seen: rustc_hash::FxHashMap<&str, u8> = rustc_hash::FxHashMap::default();
+    let mut seen: rustc_hash::FxHashMap<Ident<'_>, u8> = rustc_hash::FxHashMap::default();
     seen.reserve(decls.len());
     let lexical = 1u8 << (DeclKind::Lexical as u8);
     let own = 1u8 << (DeclKind::OwnName as u8);
     for (name, kind) in decls {
         let bit = 1u8 << (*kind as u8);
-        let kinds = seen.entry(name).or_insert(0);
+        let kinds = seen.entry(*name).or_insert(0);
         let others = *kinds & !own;
         if *kind != DeclKind::OwnName
             && others != 0
@@ -579,7 +599,7 @@ pub(crate) fn simple_parameters(params: &oxc_ast::ast::FormalParameters<'_>) -> 
 impl<'a, C: crate::ParserConfig> crate::ParserImpl<'a, C> {
     /// Declares a binding identifier as the construct around it says (`binding_kind`).
     #[inline]
-    pub(crate) fn declare_binding(&mut self, name: &'a str) {
+    pub(crate) fn declare_binding(&mut self, name: Ident<'a>) {
         if let Some(kind) = self.binding_kind {
             self.early.declare(name, kind);
         }

@@ -60,19 +60,21 @@ pub(crate) struct PromiseReaction {
 pub(crate) type PromiseReactions = smallvec::SmallVec<[PromiseReaction; 1]>;
 
 /// A promise's [[PromiseState]], [[PromiseResult]], reactions, rejection tracking and host
-/// context, in 56 bytes. A pending promise has reactions and no result or rejection
+/// context, in 48 bytes. A pending promise has reactions and no result or rejection
 /// identifier; a settled one has a result, maybe an identifier, and no reactions: the two
 /// share `first`. With a field for each, the record took 80 bytes and a promise's cell 96
-/// (doxbee-promise held 19 MB of promise records at its peak).
+/// (doxbee-promise held 19 MB of promise records at its peak). A host context and the
+/// reactions after the first, which most promises lack, live in a box (`PromiseRare`): kept
+/// inline, the context's word took the cell from 64 to 72 bytes.
 #[derive(Clone, Debug)]
 pub(crate) struct PromiseRecord {
-    pub(crate) host_context: StoredHostContext,
     /// Pending: the first reaction, when `has_first`. Settled: `on_fulfilled` is the
     /// result, `on_rejected` and `next` are undefined, and `execution_context` holds the
     /// rejection's identifier (0 for none), not a host context.
     first: PromiseReaction,
-    /// Pending: the reactions after the first, in order.
-    more: Option<Box<Vec<PromiseReaction>>>,
+    /// The host context, and while pending the reactions after the first, when either is
+    /// present.
+    rare: Option<Box<PromiseRare>>,
     state: PromiseState,
     phase: PromiseRejectionPhase,
     has_first: bool,
@@ -81,7 +83,16 @@ pub(crate) struct PromiseRecord {
     pub(crate) module_evaluation: bool,
 }
 
-const _: () = assert!(size_of::<PromiseRecord>() == 56);
+const _: () = assert!(size_of::<PromiseRecord>() == 48);
+const _: () = assert!(size_of::<PromiseCell>() == 64);
+
+/// What few promises keep (`PromiseRecord::rare`).
+#[derive(Clone, Debug)]
+struct PromiseRare {
+    host_context: StoredHostContext,
+    /// Pending: the reactions after the first, in order.
+    more: Vec<PromiseReaction>,
+}
 
 const NO_REACTION: PromiseReaction = PromiseReaction {
     on_fulfilled: Value::UNDEFINED,
@@ -151,10 +162,10 @@ impl PromiseRejectionState {
 impl PromiseRecord {
     /// A pending promise with no reactions under `host_context`.
     pub(crate) fn pending(host_context: StoredHostContext) -> Self {
+        let rare = host_context.get().is_some().then(|| Box::new(PromiseRare { host_context, more: Vec::new() }));
         Self {
-            host_context,
             first: NO_REACTION,
-            more: None,
+            rare,
             state: PromiseState::Pending,
             phase: PromiseRejectionPhase::Unobserved,
             has_first: false,
@@ -187,6 +198,12 @@ impl PromiseRecord {
         }
         record.set_rejection(rejection);
         Some(record)
+    }
+
+    /// The host context the promise was created under.
+    #[inline(always)]
+    pub(crate) fn host_context(&self) -> StoredHostContext {
+        self.rare.as_ref().map_or(StoredHostContext(NO_HOST_CONTEXT), |rare| rare.host_context)
     }
 
     #[inline(always)]
@@ -225,7 +242,10 @@ impl PromiseRecord {
     pub(crate) fn push_reaction(&mut self, reaction: PromiseReaction) {
         debug_assert_eq!(self.state, PromiseState::Pending);
         if self.has_first {
-            self.more.get_or_insert_with(Default::default).push(reaction);
+            self.rare
+                .get_or_insert_with(|| Box::new(PromiseRare { host_context: StoredHostContext(NO_HOST_CONTEXT), more: Vec::new() }))
+                .more
+                .push(reaction);
         } else {
             self.first = reaction;
             self.has_first = true;
@@ -236,7 +256,10 @@ impl PromiseRecord {
     pub(crate) fn reactions(&self) -> impl Iterator<Item = &PromiseReaction> {
         let pending = self.state == PromiseState::Pending;
         let first = (pending && self.has_first).then_some(&self.first);
-        let more = if pending { self.more.as_deref().map_or(&[][..], Vec::as_slice) } else { &[] };
+        let more = match &self.rare {
+            Some(rare) if pending => rare.more.as_slice(),
+            _ => &[],
+        };
         first.into_iter().chain(more)
     }
 
@@ -248,8 +271,12 @@ impl PromiseRecord {
         if self.has_first {
             reactions.push(self.first);
         }
-        if let Some(more) = self.more.take() {
-            reactions.extend(*more);
+        if let Some(mut rare) = self.rare.take() {
+            reactions.extend(rare.more.drain(..));
+            if rare.host_context.get().is_some() {
+                rare.more = Vec::new();
+                self.rare = Some(rare);
+            }
         }
         self.has_first = false;
         self.state = state;
@@ -259,8 +286,8 @@ impl PromiseRecord {
 
     /// Bytes the reactions hold outside the record.
     pub(crate) fn reaction_heap_bytes(&self) -> usize {
-        self.more.as_deref().map_or(0, |more| {
-            size_of::<Vec<PromiseReaction>>() + more.capacity() * size_of::<PromiseReaction>()
+        self.rare.as_deref().map_or(0, |rare| {
+            size_of::<PromiseRare>() + rare.more.capacity() * size_of::<PromiseReaction>()
         })
     }
 
@@ -294,7 +321,7 @@ impl AbandonedHostContexts {
                 self.jobs.push(context);
             }
         }
-        if let Some(context) = record.host_context.get() {
+        if let Some(context) = record.host_context().get() {
             self.promises.push(context);
         }
     }

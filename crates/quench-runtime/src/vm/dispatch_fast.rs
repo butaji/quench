@@ -358,6 +358,8 @@ pub(super) struct LaneView {
     /// those records read them.
     #[cfg_attr(not(test), allow(dead_code))]
     vector_regions: Box<[vector_region::VectorRegion]>,
+    /// The loop kernels whose test records name them (`loop_kernel`).
+    _loop_kernels: Box<[Box<loop_kernel::LoopKernel>]>,
     /// The record an activation starts at (`LaneView::start`): its first, or `prologue`
     /// while the JavaScript tier may claim the function (`LaneView::claim_for_tier`).
     start: std::cell::Cell<Ip>,
@@ -1185,6 +1187,8 @@ fn requicken<H: Host>(ip: Ip, handler: Handler) {
 const CONTEXT_THIS: usize = 1;
 /// The environment's context word.
 const CONTEXT_ENV: usize = 2;
+/// The captures' context word.
+const CONTEXT_CAPTURE: usize = 3;
 
 /// The active frame's registers. Lane instructions never resize registers or
 /// change the frame stack, so the base stays valid for the whole lane run.
@@ -1219,6 +1223,20 @@ impl Registers {
     fn set_env(self, env: Value) {
         // SAFETY: as for `this`.
         unsafe { *self.0.sub(CONTEXT_ENV) = env }
+    }
+
+    /// The frame's captures (`ScriptCallTarget::capture`), the context word below its
+    /// environment: null where none are read yet (a VM frame's, until first found).
+    #[inline(always)]
+    fn capture(self) -> *const usize {
+        // SAFETY: as for `this`; the word holds a pointer's bits.
+        unsafe { *self.0.sub(CONTEXT_CAPTURE).cast::<*const usize>() }
+    }
+
+    #[inline(always)]
+    fn set_capture(self, capture: *const usize) {
+        // SAFETY: as for `capture`.
+        unsafe { *self.0.sub(CONTEXT_CAPTURE).cast::<*const usize>() = capture }
     }
 
     #[inline(always)]
@@ -1497,7 +1515,6 @@ struct ScriptActivation {
     callee: Value,
     /// Arguments passed, all in parameter registers.
     argc: u16,
-    caller_capture: *const usize,
     /// What its return yields to the call.
     completion: Completion,
     /// The `argc` values passed follow the registers in the window, for a forwarded
@@ -2374,11 +2391,6 @@ struct LaneContext<H: Host> {
     /// (`ActivationKind::WasmEntry`), or `DELETED` where the frame's environment is the
     /// instance's (`lane_instance_env`).
     instance: Value,
-    /// The innermost capture storage header of the running function, once a capture read found
-    /// it dense (`EnvironmentSlots::dense_storage`); null until then and for sparse storage, which
-    /// the walk reads. No collection runs in the lane, so they stay in place. Tagged with
-    /// `CAPTURE_STORES` where a store to any of them is the whole write (`capture_stores`).
-    capture: *const usize,
     /// The last outer capture walk an activation read through (`lane_load_outer_capture`).
     /// One walk measured better than one per depth parity on closure-heavy code.
     outer: OuterWalk,
@@ -2432,7 +2444,6 @@ struct LeafCall {
     /// The target the call resolved, which stays in its cache while the leaf runs: nothing
     /// in a leaf resolves a target.
     target: *const ScriptCallTarget,
-    caller_capture: *const usize,
 }
 
 const NO_LEAF_CALL: LeafCall = LeafCall {
@@ -2442,7 +2453,6 @@ const NO_LEAF_CALL: LeafCall = LeafCall {
     caller_registers: Registers(std::ptr::null_mut()),
     caller_base: std::ptr::null(),
     target: std::ptr::null(),
-    caller_capture: std::ptr::null(),
 };
 
 /// The slot storage of environment `env`, which frame `frame` held when a lane local access
@@ -3438,7 +3448,7 @@ script_handler! {
             }
             note_allocation(vm);
             unsafe {
-                (*cx).capture = std::ptr::null();
+                (*cx).registers.set_capture(std::ptr::null());
                 (*cx).outer = NO_OUTER_WALK;
                 (*cx).frame_storage = NO_FRAME_STORAGE;
             }
@@ -3727,7 +3737,7 @@ fn lane_after_nested_collection<H: Host>(cx: *mut LaneContext<H>) {
     let vm = unsafe { vm(cx) };
     vm.lane_stack.enter_generation((vm.heap.collection_epoch(), vm.realm.globals));
     unsafe {
-        (*cx).capture = std::ptr::null();
+        (*cx).registers.set_capture(std::ptr::null());
         (*cx).outer = NO_OUTER_WALK;
         (*cx).frame_storage = NO_FRAME_STORAGE;
     }
@@ -3869,7 +3879,7 @@ script_handler! {
         let branch_ip = following(load_ip);
         let branch = unsafe { &*branch_ip };
         let bound = if CAPTURE {
-            let slots = capture_reads(unsafe { (*cx).capture });
+            let slots = capture_reads(unsafe { (*cx).registers }.capture());
             // SAFETY: as `lane_load_capture`'s read.
             let bound = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, ImmediateLayout::capture_slot(load.imm())) };
             let Some(bound) = bound else {
@@ -5817,7 +5827,7 @@ script_handler! {
         let imm = i.imm();
         // Deeper reads take `lane_load_outer_capture` (`specialize_captures`).
         debug_assert_eq!(ImmediateLayout::capture_depth(imm), 0);
-        let slots = capture_reads(unsafe { (*cx).capture });
+        let slots = capture_reads(unsafe { (*cx).registers }.capture());
         // SAFETY: null or the running function's dense storage, found this run
         // (`LaneContext::capture`), which covers each of its depth-0 slots.
         let value = unsafe { crate::heap::EnvironmentSlots::read_covered_storage(slots, ImmediateLayout::capture_slot(imm)) };
@@ -5837,7 +5847,7 @@ fn linked_outer_capture<H: Host>(cx: *mut LaneContext<H>, imm: u32) -> Option<Va
     if unsafe { (*cx).registers }.env().is_deleted() {
         return None;
     }
-    let capture = capture_reads(unsafe { (*cx).capture });
+    let capture = capture_reads(unsafe { (*cx).registers }.capture());
     if capture.is_null() {
         return None;
     }
@@ -5885,7 +5895,7 @@ script_handler! {
         let depth = ImmediateLayout::capture_depth(imm);
         // The links from the closure environment's storage up its chain (`EnvironmentSlots::link`),
         // one load and compare per level.
-        let capture = capture_reads(unsafe { (*cx).capture });
+        let capture = capture_reads(unsafe { (*cx).registers }.capture());
         if !capture.is_null() {
             let epoch = unsafe { vm(cx) }.heap.collection_epoch();
             let mut storage = capture;
@@ -6044,7 +6054,7 @@ fn lane_read_capture_value<H: Host, const PLAIN: bool>(
             && let Some((slots, None)) = vm.current_capture_slots(frame)
             && let Some(slots) = unsafe { &*slots }.dense_storage()
         {
-            unsafe { (*cx).capture = slots };
+            unsafe { (*cx).registers.set_capture(slots) };
         }
         (value, source, false)
     } else {
@@ -6058,7 +6068,7 @@ fn lane_read_capture_value<H: Host, const PLAIN: bool>(
             && root.is_none()
             && let Some(dense) = slots.dense_storage()
         {
-            unsafe { (*cx).capture = dense };
+            unsafe { (*cx).registers.set_capture(dense) };
         }
         let (value, source) = if PLAIN { vm.plain_capture(slots, root, slot) } else { (vm.owned_capture(slots, root, slot), None) };
         (value, source, root.is_some())
@@ -6283,7 +6293,7 @@ script_handler! {
 /// binding: whether it wrote.
 #[inline(always)]
 fn lane_store_own_capture<H: Host>(cx: *mut LaneContext<H>, slot: u16, value: Value) -> bool {
-    capture_stores(unsafe { (*cx).capture })
+    capture_stores(unsafe { (*cx).registers }.capture())
         // SAFETY: the running function's dense capture slots, which admit this write
         // (`CAPTURE_STORES`); no collection runs in the lane.
         .and_then(|slots| unsafe { crate::heap::EnvironmentSlots::write_storage(slots, usize::from(slot), value) })
@@ -6380,7 +6390,7 @@ script_handler! {
     /// (`capture_int32_update`). Slots that do not admit the store directly, or a value other
     /// than an integer, run the read's own record, then the others.
     fn lane_update_capture_int32<OP: u32, FORM: u8>(cx, r, ip, i, view) {
-        let Some((old, value)) = capture_int32_update::<OP>(unsafe { (*cx).capture }, i) else {
+        let Some((old, value)) = capture_int32_update::<OP>(unsafe { (*cx).registers }.capture(), i) else {
             sibling!(lane_load_capture::<H>, r, ip, view)
         };
         // SAFETY: the run is the read, the operator, its truncation and the store, then the
@@ -6407,11 +6417,11 @@ script_handler! {
 pub(super) unsafe fn lane_context_captures<H: Host>(context: usize) -> Option<(*const Value, usize)> {
     let cx = context as *mut LaneContext<H>;
     unsafe {
-        if capture_reads((*cx).capture).is_null() && (*cx).registers.env().is_deleted() {
-            (*cx).capture = lane_frame_capture(cx)?;
+        if capture_reads((*cx).registers.capture()).is_null() && (*cx).registers.env().is_deleted() {
+            (*cx).registers.set_capture(lane_frame_capture(cx)?);
         }
         // SAFETY: the context's slots stay live while the lane runs, which collects nothing.
-        crate::heap::EnvironmentSlots::native_storage_view(capture_reads((*cx).capture))
+        crate::heap::EnvironmentSlots::native_storage_view(capture_reads((*cx).registers.capture()))
     }
 }
 
@@ -6481,7 +6491,7 @@ fn lane_closure_value_of<H: Host>(cx: *mut LaneContext<H>, id: u32) -> Option<Va
     let env = vm.promote_frame_environment(frame);
     // Promotion moves the frame's captured locals into the environment, so a capture
     // slot pointer found before it is not reused.
-    unsafe { (*cx).capture = std::ptr::null() };
+    unsafe { (*cx).registers.set_capture(std::ptr::null()) };
     let value = lane_closure(vm, code, id, env);
     note_allocation(vm);
     value
@@ -8993,7 +9003,7 @@ script_handler! {
         let branch_ip = unsafe { ip.add(1) };
         let branch = unsafe { &*branch_ip };
         let value = if CAPTURE {
-            let slots = capture_reads(unsafe { (*cx).capture });
+            let slots = capture_reads(unsafe { (*cx).registers }.capture());
             // SAFETY: as `lane_load_capture`'s read.
             let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, ImmediateLayout::capture_slot(i.imm())) };
             let Some(value) = value else {
@@ -10022,7 +10032,7 @@ fn lane_loop_entry<H: Host>(
     entry: &mut super::compiled::LoopEntry,
 ) -> Option<super::compiled::ElementViews> {
     if !region.captures.is_empty() {
-        let slots = capture_reads(unsafe { (*cx).capture });
+        let slots = capture_reads(unsafe { (*cx).registers }.capture());
         for slot in &region.captures {
             // The activation's `this`, for reads of `this` the region stores (`THIS_CAPTURE`).
             if *slot == super::compiled::THIS_CAPTURE {
@@ -12525,7 +12535,7 @@ fn lane_frame_state<H: Host>(
         (*cx).memory = view;
         r.set_this(vm.frame_lane_this(frame));
         r.set_env(Value::DELETED);
-        (*cx).capture = std::ptr::null();
+        (*cx).registers.set_capture(std::ptr::null());
         (*cx).outer = NO_OUTER_WALK;
     }
     let view = Carried {
@@ -12899,7 +12909,7 @@ impl<H: Host> Vm<H> {
             registers.set_this(self.frame_lane_this(caller));
             registers.set_env(Value::DELETED);
             (*cx).instance = Value::DELETED;
-            (*cx).capture = std::ptr::null();
+            (*cx).registers.set_capture(std::ptr::null());
             (*cx).outer = NO_OUTER_WALK;
         }
     }
@@ -13486,7 +13496,6 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
     // (`lane_script_call_leaf`).
     let window = unsafe { (*cx).registers.0 };
     unsafe { stack.values.set_top(window.add(usize::from(target.registers) + lane_values::CONTEXT)) };
-    let caller_capture = if !leaf_swaps_env(form) { unsafe { (*cx).capture } } else { leaf.caller_capture };
     let activation = Activation {
         native: crate::vm::compiled::ShadowFrame::EMPTY, function: target.function,
         call: leaf.call,
@@ -13496,7 +13505,6 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
         kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
             argc: leaf.argc,
-            caller_capture,
             completion: Completion::Plain,
             forwards: false,
             environment: false,
@@ -13513,7 +13521,7 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
     }
     if !leaf_swaps_env(form) {
         Registers(window).set_env(target.env);
-        unsafe { (*cx).capture = target.capture };
+        Registers(window).set_capture(target.capture);
     }
 }
 
@@ -14769,15 +14777,13 @@ script_handler! {
     #[inline(never)]
     fn lane_call_spread<>(cx, r, ip, i, view) {
         let list = r.get(ImmediateLayout::call_window_base(i.imm()));
-        let vm = unsafe { vm(cx) };
-        let length = vm.heap.array(list).map_or(0, |array| array.elements().len());
-        if !vm.array_iteration_intact(list) || vm.present_dense_elements(list, 0..length).is_none() {
+        let Some(length) = (unsafe { vm(cx) }).intact_spread_length(list) else {
             return exit(ip);
-        }
+        };
         if let Some(resumed) = lane_spread_native_call(cx, ip, i, r.get(i.b), r.get(i.c), list) {
             resume!(cx, resumed)
         }
-        match lane_list_activation(cx, r, ip, i, r.get(i.b), r.get(i.c), list, true) {
+        match lane_list_activation(cx, r, ip, i, r.get(i.b), r.get(i.c), list, Some(length)) {
             Some(Ok((registers, base))) => next!(cx, registers, base, Carried::script_in(cx, view)),
             Some(Err(next)) => next,
             None => exit(ip),
@@ -14792,7 +14798,10 @@ script_handler! {
     #[inline(never)]
     fn lane_call_array<>(cx, r, ip, i, view) {
         let list = r.get(ImmediateLayout::call_window_base(i.imm()));
-        match lane_list_activation(cx, r, ip, i, r.get(i.b), r.get(i.c), list, true) {
+        let Some(length) = (unsafe { vm(cx) }).dense_list_length(list) else {
+            return exit(ip);
+        };
+        match lane_list_activation(cx, r, ip, i, r.get(i.b), r.get(i.c), list, Some(length)) {
             Some(Ok((registers, base))) => next!(cx, registers, base, Carried::script_in(cx, view)),
             Some(Err(next)) => next,
             None => exit(ip),
@@ -16440,7 +16449,7 @@ script_handler! {
         }
         let receiver = lane_entry_receiver(cx, i.b != 0);
         // SAFETY: the activation just set the context to its own captures.
-        let captures = capture_reads(unsafe { (*cx).capture });
+        let captures = capture_reads(unsafe { (*cx).registers }.capture());
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         if let Err(next) = body_calls::audited(cx, own, function, base, timed) {
@@ -17321,7 +17330,7 @@ fn lane_body_activate<H: Host>(
     };
     let receiver = if target.this_binding == ThisBinding::Lexical || this.is_deleted() { Value::DELETED } else { this };
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
-    let captures = capture_reads(unsafe { (*cx).capture });
+    let captures = capture_reads(unsafe { (*cx).registers }.capture());
     let exit = vm.run_nested_lane_method(&method, program, code, registers.0, receiver, captures, cx.cast());
     let (resumed, feedback) = lane_body_left(cx, registers, own, &method, exit);
     drop(method);
@@ -17531,11 +17540,10 @@ fn lane_begin_cell_leaf<H: Host>(cx: *mut LaneContext<H>, ip: Ip, r: Registers, 
     unsafe {
         (*cx).leaf = LeafCall {
             call: ip, form: CONTEXT_LEAF, argc, caller_registers: r, caller_base: (*cx).base, target,
-            caller_capture: (*cx).capture,
         };
         window.set_this(this);
         window.set_env(target.env);
-        (*cx).capture = target.capture;
+        window.set_capture(target.capture);
         ((*cx).registers, (*cx).base) = (window, (*target.view).records());
     }
 }
@@ -17618,7 +17626,6 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
         kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
             argc,
-            caller_capture: unsafe { (*cx).capture },
             completion: if skipped.is_some() { Completion::Forwarder } else { Completion::of(constructs, cross, SETTLES) },
             forwards: false,
             environment: false,
@@ -17632,9 +17639,9 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     unsafe {
         (*cx).registers = callee_registers;
         (*cx).base = base;
-        (*cx).capture = target.capture;
     }
     callee_registers.set_env(target.env);
+    callee_registers.set_capture(target.capture);
     if cross {
         lane_enter_program(cx, target.program());
     }
@@ -17793,7 +17800,6 @@ fn lane_activate_environment<H: Host>(
         kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
             argc,
-            caller_capture: unsafe { (*cx).capture },
             completion: Completion::of(false, cross, false),
             forwards: false,
             environment: true,
@@ -17806,9 +17812,9 @@ fn lane_activate_environment<H: Host>(
     unsafe {
         (*cx).registers = callee_registers;
         (*cx).base = base;
-        (*cx).capture = target.capture;
     }
     callee_registers.set_env(target.env);
+    callee_registers.set_capture(target.capture);
     callee_registers.set_this(this);
     if cross {
         lane_enter_program(cx, target.program());
@@ -18061,7 +18067,6 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         kind: ActivationKind::Script(ScriptActivation {
             callee: target.callee,
             argc: argc as u16,
-            caller_capture: unsafe { (*cx).capture },
             completion: if forwarder.is_some() {
                 Completion::Forwarder
             } else {
@@ -18081,9 +18086,9 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     unsafe {
         (*cx).registers = callee_registers;
         (*cx).base = base;
-        (*cx).capture = target.capture;
     }
     callee_registers.set_env(target.env);
+    callee_registers.set_capture(target.capture);
     callee_registers.set_this(this);
     if cross {
         lane_enter_program(cx, target.program());
@@ -18253,7 +18258,7 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
     }
     let destination = destination & crate::bytecode::REGISTER_MASK;
     let (call, caller_registers, caller_base, window) = (top.call, top.caller_registers, top.caller_base, top.native.window as *mut Value);
-    let (capture, caller_program) = (script.caller_capture, top.caller_program);
+    let caller_program = top.caller_program;
     // SAFETY: a script activation holds no drop glue or Wasm storage; its window is in the values.
     unsafe {
         stack.activations.set_len(depth);
@@ -18266,8 +18271,7 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
         unsafe { (*cx).memory = MemoryView::script(cx) };
     }
     debug_assert!(unsafe { (*cx).memory.bytes } == cx.cast::<u8>(), "a JavaScript run carries its context");
-    unsafe { (*cx).registers = caller_registers; (*cx).base = caller_base;
-             (*cx).capture = capture; }
+    unsafe { (*cx).registers = caller_registers; (*cx).base = caller_base; }
     if SETTLES { value = lane_settle_promise(cx, value, then); }
     caller_registers.set(destination, value);
     Some((caller_registers, following(call)))
@@ -18285,7 +18289,7 @@ fn lane_return_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(
     let activations = stack.activations.as_slice();
     // The innermost returns its call's completion, which the caller of `lane_return_from` proved.
     let mut index = activations.len().checked_sub(1)?;
-    let (outer, script, destination) = loop {
+    let (outer, destination) = loop {
         index = index.checked_sub(1)?;
         let activation = &activations[index];
         let ActivationKind::Script(script) = &activation.kind else { return None };
@@ -18295,12 +18299,11 @@ fn lane_return_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(
         // SAFETY: the call record belongs to the caller's live view.
         let destination = unsafe { (*activation.call).a };
         if destination & crate::bytecode::RETURN_REGISTER == 0 {
-            break (activation, script, destination);
+            break (activation, destination);
         }
     };
     debug_assert!(matches!(&activations.last()?.kind, ActivationKind::Script(top) if top.completion == Completion::Plain));
     let (call, caller_registers, caller_base, window) = (outer.call, outer.caller_registers, outer.caller_base, outer.native.window as *mut Value);
-    let capture = script.caller_capture;
     stack.drop_iterators_from(index + 1);
     stack.drop_trap_checks_from(index + 1);
     // SAFETY: script activations hold no drop glue or Wasm storage; the window is in the values.
@@ -18308,7 +18311,6 @@ fn lane_return_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(
         stack.activations.set_len(index);
         stack.values.set_top(window);
         (*cx).registers = caller_registers; (*cx).base = caller_base;
-        (*cx).capture = capture;
     }
     caller_registers.set(destination & crate::bytecode::REGISTER_MASK, value);
     Some((caller_registers, following(call)))
@@ -19711,6 +19713,7 @@ fn lane_activate_wasm_export<H: Host>(
         // A Wasm activation runs with its caller's receiver and environment (`ActivationState::of`).
         Registers(registers).set_this(r.this());
         Registers(registers).set_env(r.env());
+        Registers(registers).set_capture(r.capture());
         Registers(registers)
     };
     let (caller_program, caller_base) = unsafe { ((*cx).program, (*cx).base) };
@@ -21728,6 +21731,12 @@ fn derive_lane_view<'live, H: Host>(
         specialize_relation_jumps::<H>(&mut records);
         specialize_array_literals::<H>(&mut records);
     }
+    // Loop kernels take their test records last, keeping each record's final handler.
+    let loop_kernels = if !wasm && !loop_tier {
+        loop_kernel::install_loop_kernels::<H>(&decoded, constants, function, &exits, &mut records)
+    } else {
+        Box::default()
+    };
     let min_run = if closes_loop(&decoded, &exits) {
         LANE_ENTRY_MIN_RUN
     } else {
@@ -21779,6 +21788,7 @@ fn derive_lane_view<'live, H: Host>(
         loops,
         loop_at_backedge: loop_at_backedge.into_boxed_slice(),
         vector_regions,
+        _loop_kernels: loop_kernels,
         start: std::cell::Cell::new(first),
         prologue: std::cell::UnsafeCell::new(LaneInstruction {
             handler: std::ptr::null(),
@@ -22278,6 +22288,7 @@ macro_rules! fused_arithmetic {
     };
 }
 mod raw_results;
+mod loop_kernel;
 
 /// The operator of a record running an arithmetic operator on two registers (`lane_operator`
 /// or `lane_operator_numbers`) that the lane fuses (`fused_arithmetic`); `None` for any other
@@ -23572,7 +23583,6 @@ impl<H: Host> Vm<H> {
                 .lane_credits_backedges(code, program)
                 .then_some(TIERS.wasm.backedges_per_entry),
             instance: Value::DELETED,
-            capture: std::ptr::null(),
             outer: NO_OUTER_WALK,
             frame_storage: NO_FRAME_STORAGE,
             proofs: crate::heap::ArrayStorageProofs::new(),
@@ -23581,6 +23591,7 @@ impl<H: Host> Vm<H> {
         // The frame's receiver is its context word (`Registers::this`).
         registers.set_this(self.frame_lane_this(*frame));
         registers.set_env(Value::DELETED);
+        registers.set_capture(std::ptr::null());
         let cx: *mut LaneContext<H> = &mut context;
         let outer = LANE_CONTEXT.with(|current| current.replace(cx.cast()));
         let _proofs = crate::heap::LaneProofScope::enter();
@@ -23876,7 +23887,7 @@ impl<H: Host> Vm<H> {
                     (*cx).registers = frame_registers;
                     frame_registers.set_this(self.frame_lane_this(caller));
                     frame_registers.set_env(Value::DELETED);
-                    (*cx).capture = std::ptr::null();
+                    (*cx).registers.set_capture(std::ptr::null());
                     (*cx).outer = NO_OUTER_WALK;
                     (*cx).memory = MemoryView::script(cx);
                 }
@@ -23986,7 +23997,6 @@ impl PreparedShape {
             kind: ActivationKind::Script(ScriptActivation {
                 callee: target.callee,
                 argc: if keeps { argc } else { argc.min(params) } as u16,
-                caller_capture: caller.capture,
                 completion: Completion::ReturnsToNative,
                 forwards: keeps,
                 environment: false,
@@ -24132,7 +24142,7 @@ unsafe fn lane_reenter_prepared_values<H: Host, const N: usize>(
                 && (*cx).base == (*entry.view).records()
                 && Registers(registers).this() == entry.this
                 && Registers(registers).env() == entry.env
-                && (*cx).capture == entry.capture
+                && Registers(registers).capture() == entry.capture
                 && vm(cx).lane_stack.values.len() == window + entry.size + lane_values::CONTEXT,
             "a returning activation's context is its own"
         );
@@ -24190,7 +24200,7 @@ unsafe fn lane_enter_filled<H: Host>(
         (*cx).base = (*entry.view).records();
         Registers(registers).set_this(entry.this);
         Registers(registers).set_env(entry.env);
-        (*cx).capture = entry.capture;
+        Registers(registers).set_capture(entry.capture);
     }
     vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
     // SAFETY: the program store keeps a derived view alive with its program.

@@ -81,7 +81,11 @@ impl<H: Host> Vm<H> {
         if left.as_int().is_none() == right.as_int().is_none() {
             return;
         }
-        if let (Some(l), Some(r), Some(atom)) = (self.concat_key(left), self.concat_key(right), self.heap.string_atom(result)) {
+        // Only an atom result is kept: a fresh text (`"id" + n` counting up) skips the keys.
+        let Some(atom) = self.heap.string_atom(result) else {
+            return;
+        };
+        if let (Some(l), Some(r)) = (self.concat_key(left), self.concat_key(right)) {
             self.concat_memo.0[ConcatMemo::index(l, r)] = (l, r, atom);
         }
     }
@@ -116,12 +120,16 @@ impl<H: Host> Vm<H> {
         let text = unsafe { std::str::from_utf8_unchecked(&bytes) };
         // Such a key usually spells an atom whose string lives: it is the result, made and
         // matched to its atom once rather than per concatenation and per keyed access.
-        let atom = self.find_atom(Self::atom_hash_str(text), |atom| self.atom_units_equal_str(atom, text));
+        // The inline string is made first: its hash reads its padded words, and neither it
+        // nor the hash scans the bytes for ASCII again.
+        let inline = JsString::from_ascii_bytes(&bytes);
+        let hash = inline.inline_text_hash().expect("short ASCII text is held inline");
+        let atom = self.find_atom(wtf16::table_hash(hash), |atom| self.atom_units_equal_str(atom, text));
         if let Some(string) = atom.and_then(|atom| self.heap.atom_string(atom, false)) {
             self.memoize_concat(left, right, string);
             return Some(string);
         }
-        let string = self.heap.alloc_string(JsString::from_str(text));
+        let string = self.heap.alloc_string(inline);
         atom.inspect(|atom| self.heap.record_string_atom(string, *atom));
         self.memoize_concat(left, right, string);
         Some(string)

@@ -4843,7 +4843,7 @@ impl<H: Host> Vm<H> {
         }
         let execution_context = self
             .host
-            .capture_job_context(self.promise_record(promise).and_then(|record| record.host_context.get()));
+            .capture_job_context(self.promise_record(promise).and_then(|record| record.host_context().get()));
         self.realm.jobs.push_back(super::PendingJob::Thenable(ThenableJob {
             realm: self.realm.globals,
             then,
@@ -5038,7 +5038,7 @@ impl<H: Host> Vm<H> {
             // A %Promise% capability has no guest executor (see `promise_resolve_for_constructor`):
             // its promise is settled directly when the reaction runs.
             let next = if constructor == vm.intrinsic_promise_constructor() {
-                vm.promise_object_with_parent(vm.promise_record(promise).expect("promise record").host_context.get())?
+                vm.promise_object_with_parent(vm.promise_record(promise).expect("promise record").host_context().get())?
             } else {
                 let (next, resolve, reject) = vm.new_promise_capability(p, constructor)?;
                 vm.realm
@@ -5063,7 +5063,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Promise.prototype method called on non-Promise".into()));
         }
         let next = self.with_call_roots([promise, on_fulfilled, on_rejected], |vm| {
-            vm.promise_object_with_parent(vm.promise_record(promise).expect("promise record").host_context.get())
+            vm.promise_object_with_parent(vm.promise_record(promise).expect("promise record").host_context().get())
         })?;
         let (resolve, reject) = self.promise_resolving_functions(next);
         self.realm
@@ -5095,7 +5095,7 @@ impl<H: Host> Vm<H> {
                 Value::UNDEFINED
             },
             next,
-            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context.get())).into(),
+            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context().get())).into(),
         };
         // Species selection and capability construction may settle the source.
         // Read its authoritative state only when installing this reaction.

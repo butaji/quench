@@ -177,7 +177,7 @@ impl<H: Host> Vm<H> {
             // observe the rejection first.
             let notify_unhandled =
                 state == PromiseState::Rejected && record.rejection() == PromiseRejectionState::Unobserved;
-            (record.settle(state, result), notify_unhandled, module_evaluation, record.host_context)
+            (record.settle(state, result), notify_unhandled, module_evaluation, record.host_context())
         };
         self.realm.promise.async_module_settled |= module_evaluation;
         if let Some(resource) = host_context.get() {

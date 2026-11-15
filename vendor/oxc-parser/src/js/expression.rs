@@ -140,7 +140,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         self.check_identifier(kind, self.ctx);
         let (span, name) = self.parse_identifier_kind(Kind::Ident);
-        self.early.reference(name.as_str());
+        self.early.reference(name);
         IdentifierReference::new(span, name, self)
     }
 
@@ -158,7 +158,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         self.check_identifier(cur, self.ctx);
         let (span, name) = self.parse_identifier_kind(Kind::Ident);
-        self.declare_binding(name.as_str());
+        self.declare_binding(name);
         BindingIdentifier::new(span, name, self)
     }
 
