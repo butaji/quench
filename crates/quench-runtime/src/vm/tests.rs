@@ -3926,7 +3926,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
     let original = vm
         .heap
         .alloc(crate::heap::Cell::Error("original argument".into()));
-    let mut registers = vec![Value::UNDEFINED; 65];
+    let mut registers = super::register_file::RegisterFile::from_registers(&[Value::UNDEFINED; 65]);
     registers[64] = live;
     vm.frames.push(Box::new(super::Frame {
         context: super::activation::CallContext::Internal,
@@ -7030,7 +7030,7 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
         locals: vec![],
         dynamic_bindings: vec![],
         captured: false,
-        registers: vec![Value::heap(11), Value::heap(12)],
+        registers: super::register_file::RegisterFile::from_registers(&[Value::heap(11), Value::heap(12)]),
         initialized_registers: 0,
         capture_cache: super::CaptureCache::default(),
         active_iterators: vec![],
@@ -9316,7 +9316,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 locals: vec![local],
                 dynamic_bindings: vec![(atom, binding)],
                 captured: true,
-                registers: vec![register, iterator, Value::FALSE],
+                registers: super::register_file::RegisterFile::from_registers(&[register, iterator, Value::FALSE]),
                 initialized_registers: 0,
                 capture_cache: super::CaptureCache::default(),
                 active_iterators: vec![super::ActiveIterator {

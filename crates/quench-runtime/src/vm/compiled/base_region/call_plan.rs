@@ -353,6 +353,7 @@ mod tests {
             [protocol::GENERAL_RETURN_STATUS_BASE, protocol::LANE_BODY_RETURNED, protocol::LANE_BODY_NOT_ENTERED, protocol::NATIVE_JS_STOPPED, protocol::TERMINATED_STATUS]
         );
         assert_eq!(protocol::REGISTER_BYTES, std::mem::size_of::<crate::value::Value>());
+        assert_eq!(mirror::FRAME_CONTEXT_WORDS, crate::vm::register_file::FRAME_CONTEXT);
         let dispatch = |offsets: [usize; 7]| offsets;
         assert_eq!(
             dispatch([

@@ -81,7 +81,7 @@ macro_rules! enter_wasm_function {
                         .write(r.get(arguments + offset));
                     offset += 1;
                 }
-                stack.values.set_len(window + count);
+                stack.values.set_len(window + count + lane_values::CONTEXT);
                 Registers(registers)
             };
             // SAFETY: capacity holds the activation.

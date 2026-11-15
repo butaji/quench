@@ -1,5 +1,6 @@
 #[cfg(feature = "native-execution")]
 mod native_operands;
+mod register_file;
 mod shape_lookup; mod string_wrapper;
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
@@ -323,7 +324,7 @@ pub(super) struct Frame {
     locals: Vec<Value>,
     dynamic_bindings: Vec<(Atom, Value)>,
     captured: bool,
-    registers: Vec<Value>,
+    registers: register_file::RegisterFile,
     capture_cache: CaptureCache,
     /// How many leading register slots hold values, whatever the current length: below it a
     /// root-mapped activation can take the file without rewriting it.
@@ -408,7 +409,7 @@ impl Frame {
             locals: vec![],
             dynamic_bindings: vec![],
             captured: false,
-            registers: vec![],
+            registers: register_file::RegisterFile::new(),
             initialized_registers: 0,
             capture_cache: CaptureCache::default(),
             active_iterators: vec![],

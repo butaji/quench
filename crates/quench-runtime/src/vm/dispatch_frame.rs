@@ -1441,11 +1441,13 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     fn shrink_frame_buffers(frame: &mut Frame) {
         frame.original_arguments.shrink_to(RETAINED_FRAME_VALUES);
-        for buffer in [&mut frame.locals, &mut frame.registers] {
-            if buffer.capacity() > RETAINED_FRAME_VALUES {
-                buffer.clear();
-                buffer.shrink_to(RETAINED_FRAME_VALUES);
-            }
+        if frame.locals.capacity() > RETAINED_FRAME_VALUES {
+            frame.locals.clear();
+            frame.locals.shrink_to(RETAINED_FRAME_VALUES);
+        }
+        if frame.registers.capacity() > RETAINED_FRAME_VALUES {
+            frame.registers.clear();
+            frame.registers.shrink_to(RETAINED_FRAME_VALUES);
         }
         frame.initialized_registers = frame.initialized_registers.min(frame.registers.len());
         frame.dynamic_bindings.shrink_to(RETAINED_FRAME_VALUES);

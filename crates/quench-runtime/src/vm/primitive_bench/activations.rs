@@ -28,7 +28,6 @@ fn activation(kinds: Kinds, index: usize) -> Activation {
             ActivationKind::Script(ScriptActivation {
                 callee: Value::UNDEFINED,
                 argc: 0,
-                caller_this: Value::NULL,
                 caller_env: Value::UNDEFINED,
                 caller_capture: std::ptr::null(),
                 completion: Completion::Plain,

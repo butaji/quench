@@ -33,7 +33,7 @@
 use crate::layout::call_record::{CallRecord, CALLEE_EXIT, LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, NATIVE_JS_STOPPED, REGISTER_BYTES, TERMINATED_STATUS};
 use crate::codes::{LAST_INT_PIN, PIN, PINF};
 use crate::heap_rows::{payload, word_at};
-use crate::layout::{CELL_BODY_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_CONTEXT, JS_STEP_NATIVE_END, JS_STEP_NATIVE_TOP, JS_STEP_RESIDUAL, JS_STEP_SHADOW_END, JS_STEP_SHADOW_TOP, JS_STEP_VM, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
+use crate::layout::{CELL_BODY_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_CONTEXT, JS_STEP_NATIVE_END, JS_STEP_NATIVE_TOP, JS_STEP_RESIDUAL, JS_STEP_SHADOW_END, JS_STEP_SHADOW_TOP, JS_STEP_VM, FRAME_CONTEXT_WORDS, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
 use crate::stage::StencilStage;
 use crate::staged::{call::admit_native, frame, value};
 use crate::words::{S, hole64, is_int, slot};
@@ -202,7 +202,7 @@ unsafe fn admit(record: usize, payload: usize) -> Option<Admitted> {
         let cell = word_at(record, offset_of!(CallRecord, cell)) as usize;
         let (top, end) = (word_at(payload, JS_STEP_NATIVE_TOP) as usize, word_at(payload, JS_STEP_NATIVE_END) as usize);
         let recovery = word_at(cell, CELL_RECOVERY_AT) as usize;
-        let free = (((end - top) >> WORD_SHIFT) as u64).saturating_sub(word_at(recovery, RECOVERY_VALUES_AT));
+        let free = (((end - top) >> WORD_SHIFT) as u64).saturating_sub(word_at(recovery, RECOVERY_VALUES_AT) + FRAME_CONTEXT_WORDS as u64);
         let room = admit_native(&mut StencilStage::from_hole(0), cell as u64, word_at(record, offset_of!(CallRecord, expected)), free, ())? as usize;
         let shadow = word_at(payload, JS_STEP_SHADOW_TOP) as usize;
         let frames = word_at(recovery, RECOVERY_ACTIVATIONS_AT) as usize + 1;
@@ -222,7 +222,7 @@ unsafe fn push<const ARGC: usize>(s: &S, record: usize, payload: usize, a: &Admi
         put(a.shadow, frame::BODY, word_at(a.cell, CELL_BODY_AT));
         put(a.shadow, frame::WINDOW, a.top as u64);
         put(payload, JS_STEP_SHADOW_TOP, (a.shadow + word_at(record, offset_of!(CallRecord, frame_bytes)) as usize) as u64);
-        put(payload, JS_STEP_NATIVE_TOP, (a.top + (a.room << WORD_SHIFT)) as u64);
+        put(payload, JS_STEP_NATIVE_TOP, (a.top + ((a.room + FRAME_CONTEXT_WORDS) << WORD_SHIFT)) as u64);
     }
 }
 

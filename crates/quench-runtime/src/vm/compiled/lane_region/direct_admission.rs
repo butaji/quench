@@ -24,7 +24,9 @@ impl Lowering<'_, '_> {
         let load = |this: &mut Self, base: ir::Value, field: usize| this.word_load(base, dispatch_offset(field));
         let top = load(self, payload, std::mem::offset_of!(JsStepDispatch, native_top));
         let end = load(self, payload, std::mem::offset_of!(JsStepDispatch, native_end));
-        let next = self.word_add_imm(top, i64::from(callee.registers) * word);
+        // The next window starts past this one's registers and its context words
+        // (`lane_values::CONTEXT`), as a lane push leaves them.
+        let next = self.word_add_imm(top, (i64::from(callee.registers) + super::super::super::register_file::FRAME_CONTEXT as i64) * word);
         let recovery = load(self, cell, std::mem::offset_of!(EntryCell, recovery));
         let values = load(self, recovery, std::mem::offset_of!(LaneRecoverySpace, values));
         let bytes = self.word_mul_imm(values, word);
