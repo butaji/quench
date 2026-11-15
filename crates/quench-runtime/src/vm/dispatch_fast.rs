@@ -7094,9 +7094,10 @@ script_handler! {
 /// reads untested.
 fn own_formed_handler<H: Host, const THIS: bool>(hint: u32) -> Handler {
     use crate::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
-    // A narrow run's hint takes the hinted form, which reads the run as the word says.
+    // A narrow run's hint names neither inline values nor extras: those tests fold away and
+    // the read takes the run's halves.
     if hint & NARROW_FORM != 0 {
-        return lane_get_field_own_bound::<H, THIS, HINTED_FORM>;
+        return lane_get_field_own_bound::<H, THIS, NARROW_FORM>;
     }
     match hint & (INLINE_FORM | EXTRAS_FORM) {
         0 => lane_get_field_own_bound::<H, THIS, 0>,
@@ -19124,14 +19125,14 @@ enum FieldHit {
 }
 
 /// Every bound own-field read (`own_formed_handler`), of `this` and of a register.
-fn own_bound_handlers<H: Host>() -> [*const (); 10] {
-    use crate::value_vec::{EXTRAS_FORM, INLINE_FORM};
+fn own_bound_handlers<H: Host>() -> [*const (); 12] {
+    use crate::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
     macro_rules! forms {
         ($($form:expr),*) => {
             [$(lane_get_field_own_bound::<H, true, { $form }> as *const (), lane_get_field_own_bound::<H, false, { $form }> as *const ()),*]
         };
     }
-    forms!(HINTED_FORM, 0, EXTRAS_FORM, INLINE_FORM, EXTRAS_FORM | INLINE_FORM)
+    forms!(HINTED_FORM, 0, EXTRAS_FORM, INLINE_FORM, EXTRAS_FORM | INLINE_FORM, NARROW_FORM)
 }
 
 impl FieldHit {
