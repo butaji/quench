@@ -17,11 +17,39 @@ pub(super) unsafe fn lane_getter_read<H: Host>(
     atom: crate::bytecode::Atom,
     site: u16,
 ) -> Option<Value> {
-    let getter = {
-        let vm = unsafe { vm(cx) };
-        vm.cached_field_getter(object, atom, vm.field_cache_index(site))?
+    let vm = unsafe { vm(cx) };
+    let index = vm.field_cache_index(site);
+    if let Some(value) = vm.memoized_getter_answer(object, index) {
+        return Some(value);
+    }
+    let getter = vm.cached_field_getter(object, atom, index)?;
+    let value = unsafe { lane_getter_answer(cx, getter, object) }?;
+    lane_memoize_getter(cx, getter, object, index);
+    Some(value)
+}
+
+/// Memoizes at the accessor entry of cache index `site` that `getter`, whose call on
+/// `object` a read just answered, returns its own field read of the receiver
+/// (`Vm::memoize_getter_answer`): a `Reads` target whose returning `GetField` of `this` hits
+/// an own or holder entry and binds the receiver as `this`.
+#[inline(never)]
+pub(super) fn lane_memoize_getter<H: Host>(cx: *mut LaneContext<H>, getter: Value, object: Value, site: usize) {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
+    let Some(target) = vm.script_call_entry(getter).map(|entry| unsafe { *entry }) else {
+        return;
     };
-    unsafe { lane_getter_answer(cx, getter, object) }
+    if target.entry != CallEntry::Reads || lane_direct_call_this(vm, &target, object) != Some(object) {
+        return;
+    }
+    // SAFETY: a `Reads` target of the running program holds its returning record first.
+    let Some(LeafRead::Field { base, kind: RETURNING_FIELD_OWN | RETURNING_FIELD_HOLDER, cache }) = (unsafe { LeafRead::of::<H>(&target) }) else {
+        return;
+    };
+    if base == crate::bytecode::FieldBase::THIS.0 {
+        let answer = vm.field_cache_entry(cache);
+        vm.memoize_getter_answer(object, site, getter, answer);
+    }
 }
 
 /// What `getter` returns for a read of `object` where its call runs no guest code: a pure
@@ -96,6 +124,10 @@ pub(super) fn lane_read_getter<H: Host>(
         && let Some(target) = &target
         && let Some(value) = unsafe { lane_script_getter_answer(cx, target, base) }
     {
+        if i.b != crate::bytecode::FieldBase::NESTED {
+            let site = unsafe { vm(cx) }.field_cache_index(i.c);
+            lane_memoize_getter(cx, getter, base, site);
+        }
         let r = unsafe { (*cx).registers };
         r.set(i.a, value);
         return Ok((r, following(ip)));

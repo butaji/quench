@@ -844,6 +844,11 @@ struct AccessorFieldCache {
     epoch: u64,
     /// The site's next older entry in `Vm::accessor_fields`, or `NO_ACCESSOR_FIELD`.
     next: u32,
+    /// The getter whose call a field read of the receiver answers (`answer`), or undefined:
+    /// `Vm::memoized_getter_answer` reads it in place of the call.
+    getter: Value,
+    /// That read's field entry, which proves the receiver's shape itself.
+    answer: FieldCache,
 }
 /// A cache site without an accessor entry (`Vm::accessor_field_indices`).
 const NO_ACCESSOR_FIELD: u32 = object::MRU_CHAIN_END;

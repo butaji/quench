@@ -3043,6 +3043,8 @@ impl<H: Host> Vm<H> {
                         slot_accessor: self.slot_accessor(receiver_shape, slot),
                         epoch,
                         next: NO_ACCESSOR_FIELD,
+                        getter: Value::UNDEFINED,
+                        answer: FieldCache::own(0, 0),
                     },
                 );
             }
@@ -3095,6 +3097,8 @@ impl<H: Host> Vm<H> {
                 slot_accessor,
                 epoch,
                 next: NO_ACCESSOR_FIELD,
+                getter: Value::UNDEFINED,
+                answer: FieldCache::own(0, 0),
             },
         );
     }
@@ -3164,6 +3168,13 @@ impl<H: Host> Vm<H> {
             };
             (receiver, cache)
         };
+        self.accessor_entry_part(cache, receiver, setter)
+    }
+
+    /// The getter (`setter` false) or setter of the accessor `cache` names, which proves
+    /// `receiver`'s shape and chain.
+    #[inline(always)]
+    fn accessor_entry_part(&self, cache: &AccessorFieldCache, receiver: &Object, setter: bool) -> Option<Value> {
         let holder = if cache.holder == OWN_ACCESSOR {
             if receiver.has_side_descriptors() {
                 return None;
@@ -3185,6 +3196,48 @@ impl<H: Host> Vm<H> {
                 let attributes = self.slot_attributes(holder, usize::from(cache.slot))?;
                 if setter { attributes.setter } else { attributes.getter }
             }
+        }
+    }
+
+    /// A getter read at cache index `site` that the site's newest accessor entry memoizes
+    /// (`memoize_getter_answer`): the getter's own field read of the receiver, made where the
+    /// entry still proves `object`'s shape, prototype and chain and its holder still holds
+    /// that getter. `None` leaves the read to `cached_field_getter`.
+    #[inline(always)]
+    pub(super) fn memoized_getter_answer(&self, object: Value, site: usize) -> Option<Value> {
+        let entry = self.accessor_fields.get(self.accessor_field_indices.get(site) as usize)?;
+        let (getter, answer) = (entry.getter, entry.answer);
+        if getter.is_undefined() {
+            return None;
+        }
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        if receiver.shape() != entry.receiver
+            || receiver.proto() != entry.prototype
+            || crate::heap::prototype_layout_epoch() != entry.epoch
+            || self.accessor_entry_part(entry, receiver, false)? != getter
+        {
+            return None;
+        }
+        self.record_field_entry_hit(answer, object)
+    }
+
+    /// Records at the site's newest accessor entry, where it proves `object`, that its
+    /// getter `getter` returns the field read `answer` of the receiver
+    /// (`memoized_getter_answer`).
+    pub(super) fn memoize_getter_answer(&mut self, object: Value, site: usize, getter: Value, answer: FieldCache) {
+        let Some(receiver) = object.direct_object_index().map(|id| self.heap.object_record_by_id(id)) else {
+            return;
+        };
+        let (shape, proto) = (receiver.shape(), receiver.proto());
+        if self.shape_is_dictionary(shape) {
+            return;
+        }
+        let index = self.accessor_field_indices.get(site);
+        if let Some(entry) = self.accessor_fields.get_mut(index as usize)
+            && entry.receiver == shape
+            && entry.prototype == proto
+        {
+            (entry.getter, entry.answer) = (getter, answer);
         }
     }
 
