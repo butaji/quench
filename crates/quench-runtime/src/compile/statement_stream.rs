@@ -33,9 +33,9 @@ pub(super) struct StreamedBody {
     pub(super) strict: bool,
 }
 
-/// The start of the function `program` holds alone (as `BodyFacts::check` sees it) when its
-/// body streams.
-pub(super) fn streamable_start(program: &Program<'_>) -> Option<u32> {
+/// The function `program` holds alone (as `BodyFacts::check` sees it) when its body may
+/// stream by its size and kind: plain, past the streaming size, without directives.
+pub(super) fn streaming_function<'p, 'a>(program: &'p Program<'a>) -> Option<&'p Function<'a>> {
     let function = match program.body.first()? {
         Statement::FunctionDeclaration(function) => function,
         Statement::ExpressionStatement(statement) => match statement.expression.without_parentheses() {
@@ -45,18 +45,41 @@ pub(super) fn streamable_start(program: &Program<'_>) -> Option<u32> {
         _ => return None,
     };
     let body = function.body.as_ref()?;
-    if body.span.size() < STREAM_MIN_BODY || !body.directives.is_empty() || function.generator || function.r#async {
-        return None;
-    }
+    (body.span.size() >= STREAM_MIN_BODY && body.directives.is_empty() && !function.generator && !function.r#async).then_some(function)
+}
+
+/// The start of the function `program` holds alone when its body streams.
+pub(super) fn streamable_start(program: &Program<'_>) -> Option<u32> {
+    let function = streaming_function(program)?;
+    let body = function.body.as_ref()?;
+    straight_line(&body.statements).then_some(function.span.start)
+}
+
+/// Whether `statements` leave every function-wide analysis of their body unchanged.
+fn straight_line(statements: &[Statement<'_>]) -> bool {
     let mut check = StraightLine { fine: true };
-    for statement in &body.statements {
-        let Statement::ExpressionStatement(statement) = statement else { return None };
+    statements.iter().all(|statement| {
+        let Statement::ExpressionStatement(statement) = statement else { return false };
         check.visit_expression(&statement.expression);
-        if !check.fine {
-            return None;
+        check.fine
+    })
+}
+
+/// Whether the body of the source range `body` streams, read from its text a run at a time.
+pub(super) fn body_streams(text: &str, source_type: oxc_span::SourceType, body: StreamedBody) -> bool {
+    let allocator = oxc_allocator::Allocator::with_capacity(STREAM_ARENA);
+    let options = oxc_parser::ParseOptions { inherited_strict: body.strict, allow_return_outside_function: true, ..Default::default() };
+    let mut stream = oxc_parser::Parser::new(&allocator, &text[body.start as usize..body.end as usize], source_type)
+        .with_options(options)
+        .statement_stream();
+    let mut fine = true;
+    loop {
+        match stream.next(RUN_STATEMENTS, RUN_BYTES, &mut |_| {}, &mut |statements| fine &= straight_line(statements)) {
+            oxc_parser::StreamStep::More if fine => {}
+            oxc_parser::StreamStep::Done => return fine,
+            _ => return false,
         }
     }
-    Some(function.span.start)
 }
 
 /// Whether expressions leave every function-wide analysis of their body unchanged.

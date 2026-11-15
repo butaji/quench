@@ -340,6 +340,10 @@ pub struct ParseOptions {
     ///
     /// Default: `false`
     pub lazy_recognize_verify: bool,
+    /// With `lazy_recognize`, a body is recognized only while no function, arrow or class lies
+    /// inside it: the first stops the recognition, and the body is parsed whole, where its
+    /// check needs the tree for any function inside (`LazyBody::functions_inside`).
+    pub lazy_recognize_flat: bool,
 }
 
 /// A borrowed check of each lazily parsed function (`ParseOptions::lazy_body_check`).
@@ -363,6 +367,8 @@ pub struct LazyBody<'p, 'a> {
     /// its directives only. The check returns false where it needs the tree; the body is then
     /// parsed whole and checked again.
     pub stub: bool,
+    /// Where `stub`, a function, arrow or class lies inside the body; true otherwise.
+    pub functions_inside: bool,
 }
 
 impl LazyBodyCheck {
@@ -403,6 +409,7 @@ impl Default for ParseOptions {
             inherited_strict: false,
             lazy_recognize: false,
             lazy_recognize_verify: false,
+            lazy_recognize_flat: false,
         }
     }
 }
@@ -856,6 +863,12 @@ struct ParserImpl<'a, C: ParserConfig> {
 
     /// The stack the outermost recognized body may still use (`js::recognize`).
     rc_budget: Option<quench_stack::StackBudget>,
+    /// The function bodies, expression-bodied arrows and classes recognized so far
+    /// (`LazyBody::functions_inside`).
+    rc_functions: u32,
+    /// `rc_functions` where the outermost body being recognized began, under
+    /// `ParseOptions::lazy_recognize_flat`.
+    rc_flat_from: Option<u32>,
 }
 
 impl<'a, C: ParserConfig> ParserImpl<'a, C> {
@@ -906,6 +919,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             recognized_verdicts: Vec::new(),
             rc_ident: oxc_str::Ident::new_unhashed(""),
             rc_budget: None,
+            rc_functions: 0,
+            rc_flat_from: None,
         }
     }
 

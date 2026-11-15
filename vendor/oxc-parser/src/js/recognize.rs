@@ -92,6 +92,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
 
     /// `parse_function_body` while recognizing: the body's directives, and no statements.
     pub(crate) fn recognize_function_body(&mut self) -> ArenaBox<'a, FunctionBody<'a>> {
+        self.rc_count_function();
         let start = self.cur_start();
         let opening_span = self.cur_token().span();
         self.expect(Kind::LCurly);
@@ -126,6 +127,16 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.strict = strict;
         self.expect_closing(Kind::RCurly, opening_span);
         FunctionBody::boxed(self.end_span(start), directives, ArenaVec::new_in(self), self)
+    }
+
+    /// Counts a function, arrow or class recognized (`rc_functions`); under
+    /// `ParseOptions::lazy_recognize_flat`, one inside the outermost body stops the parse,
+    /// whose recognition is then rewound and the body parsed whole.
+    fn rc_count_function(&mut self) {
+        self.rc_functions += 1;
+        if self.rc_flat_from.is_some_and(|from| self.rc_functions - from > 1) {
+            self.set_unexpected();
+        }
     }
 
     fn recognize_statement(&mut self, stmt_ctx: StatementContext) {
@@ -286,6 +297,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             | Kind::Async
             | Kind::With
             | Kind::Debugger => {
+                if self.at(Kind::Class) {
+                    self.rc_count_function();
+                }
                 self.parse_statement_list_item(stmt_ctx);
                 self.rc_live()
             }
@@ -608,6 +622,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// A class (`parse_class` in JavaScript), its plain methods recognized here
     /// (`rc_class_method`) and every other element read by the parser.
     fn rc_class(&mut self, expression: bool) -> Rc<()> {
+        self.rc_count_function();
         let strict = std::mem::replace(&mut self.strict, true);
         self.bump_any();
         let binding_kind = self.binding_kind.take();
@@ -872,6 +887,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             self.recognize_function_body();
             self.rc_live()?;
         } else {
+            self.rc_count_function();
             self.ctx = self.ctx.difference(Context::TopLevel);
             self.rc_assign()?;
         }

@@ -79,7 +79,7 @@ pub(in crate::compile) fn reparse<'a>(
         true
     };
     // SAFETY: `check` lives through the parse, which alone calls it.
-    let mut parsed = parse(allocator, text, source_type, lazy_from, lazy_from.map(|_| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) }), false, false, true);
+    let mut parsed = parse(allocator, text, source_type, lazy_from, lazy_from.map(|_| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) }), false, false, crate::compile::annex_b_targets::Recognize::All);
     if let Some(starts) = recorded {
         // The function's own body compiles from this parse.
         let own = Reparsed::function_of(&parsed.program).and_then(|function| function.body.as_ref()).map(|body| body.span.start);
