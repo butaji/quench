@@ -68,6 +68,9 @@ pub(super) enum Scalar {
     Register(u16),
     /// A captured binding, read once at entry (`Sym::Capture`).
     Capture(u32),
+    /// `register.length` when the atom is `length` and the register an array or a string,
+    /// whose length no kernel body changes; any other field declines the run.
+    Length { register: u16, atom: u32 },
     /// Loop-invariant arithmetic over earlier scalars, computed once at entry.
     Computed { op: NodeOp, a: u8, b: u8 },
 }
@@ -100,7 +103,18 @@ impl Shape {
     pub(super) fn scalar_constant(&self, slot: u8) -> Option<f64> {
         match self.scalars[usize::from(slot)] {
             Scalar::Const(value) => Some(value),
-            Scalar::Register(_) | Scalar::Capture(_) | Scalar::Computed { .. } => None,
+            _ => None,
+        }
+    }
+}
+
+impl Scalar {
+    /// Whether two entry reads read the same value.
+    fn same_read(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::Capture(a), Self::Capture(b)) => a == b,
+            (Self::Length { register: a, atom: x }, Self::Length { register: b, atom: y }) => a == b && x == y,
+            _ => false,
         }
     }
 }
@@ -115,6 +129,9 @@ enum Sym {
     /// A captured binding's value (a `LoadCapture` immediate): the body runs no code that
     /// could assign it.
     Capture(u32),
+    /// A field of an unwritten register, by atom: read once at entry, which holds only for an
+    /// array's or a string's `length` (`Scalar::Length`).
+    Field(u16, u32),
 }
 
 /// A symbolic pass's operation, before lowering.
@@ -208,6 +225,13 @@ impl<'a> Graph<'a> {
         self.node(kind, a, b)
     }
 
+    /// A named field of a register the loop does not write.
+    fn field(&self, instruction: WideInstruction) -> Option<Sym> {
+        let crate::bytecode::FieldLookup::Atom { atom, base, .. } = instruction.field_lookup()? else { return None };
+        let register = base.register_index()?;
+        (!*self.written.get(usize::from(register))?).then_some(Sym::Field(register, atom))
+    }
+
     fn get_index(&mut self, instruction: WideInstruction, file: &[Sym]) -> Option<Sym> {
         let base = self.base(self.operand(file, instruction.operand_b())?)?;
         let index = Self::index(self.operand(file, instruction.operand_c())?)?;
@@ -237,6 +261,7 @@ impl<'a> Graph<'a> {
             Class::LoadConst => self.constants.get(instruction.constant_index()).and_then(|v| v.as_number()).map(Sym::Const),
             Class::Move => file.get(usize::from(instruction.register_b())).copied(),
             Class::LoadCapture => Some(Sym::Capture(instruction.imm())),
+            Class::GetField => self.field(instruction),
             Class::IncDec => self.inc_dec(instruction, file),
             Class::GetIndex => self.get_index(instruction, file),
             Class::Binary | Class::NumericAdd | Class::NumericMultiply => self.binary(instruction, file),
@@ -385,15 +410,18 @@ impl<'a> Lowering<'a> {
                 Arg::Scalar(u8::try_from(index).ok().filter(|&i| usize::from(i) < MAX_SLOTS)?)
             }
             Sym::Affine(register, offset) => Arg::Affine(self.affine((register, offset))?),
-            Sym::Capture(imm) => {
-                let index = self.scalars.iter().position(|s| matches!(s, Scalar::Capture(known) if *known == imm));
-                let index = index.unwrap_or_else(|| {
-                    self.scalars.push(Scalar::Capture(imm));
-                    self.scalars.len() - 1
-                });
-                Arg::Scalar(u8::try_from(index).ok().filter(|&i| usize::from(i) < MAX_SLOTS)?)
-            }
+            Sym::Capture(imm) => self.scalar(Scalar::Capture(imm))?,
+            Sym::Field(register, atom) => self.scalar(Scalar::Length { register, atom })?,
         })
+    }
+
+    /// The slot of an entry-read scalar, shared by its reads.
+    fn scalar(&mut self, scalar: Scalar) -> Option<Arg> {
+        let index = self.scalars.iter().position(|known| known.same_read(scalar)).unwrap_or_else(|| {
+            self.scalars.push(scalar);
+            self.scalars.len() - 1
+        });
+        Some(Arg::Scalar(u8::try_from(index).ok().filter(|&i| usize::from(i) < MAX_SLOTS)?))
     }
 
     fn node(&mut self, (op, a, b): (SymOp, Sym, Sym)) -> Option<Node> {

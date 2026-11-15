@@ -1442,6 +1442,7 @@ impl ProgramStore {
             .defined_signature(index)
     }
 
+    #[inline]
     pub(crate) fn wasm_signatures(&self, id: ProgramId) -> Option<&crate::wasm::WasmSignatures> {
         self.entry(id)?.wasm_signatures.as_deref()
     }
@@ -2515,11 +2516,6 @@ impl ProgramStore {
     /// and lane calls completed its deferred runs (`LANE_VIEW_DEFERRED_RUNS`), as
     /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
     /// general path.
-    /// Whether `function` of program `id` has a derived lane view.
-    pub(super) fn lane_view_derived(&self, id: ProgramId, function: u32) -> bool {
-        self.lane_entry(id).is_some_and(|entry| entry.lane_views.derived(function).is_some())
-    }
-
     pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32) -> bool {
         let Some(entry) = self.lane_entry(id) else {
             return false;
@@ -2810,6 +2806,7 @@ fn derive_lane_view<'s>(
     view.get_or_init(|| {
         // Only a loop tier reads the masks; a collection derives them otherwise.
         let live = || entry.residual.shared_register_root_masks(function);
+        entry.residual.pin_tier0(function as usize);
         let view = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
         #[cfg(feature = "profile-lane-exits")]
         {

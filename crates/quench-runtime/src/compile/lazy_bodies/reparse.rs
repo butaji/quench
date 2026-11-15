@@ -56,9 +56,14 @@ pub(in crate::compile) fn reparse<'a>(
         Nesting::Recorded(starts) => (None, Some(starts)),
     };
     let lazy_from = names.is_some().then_some(offset + 1);
-    let mut check = |body: oxc_parser::LazyBody<'_, '_>| if let Some(names) = &mut names { names.check(body) };
+    let mut check = |body: oxc_parser::LazyBody<'_, '_>| {
+        if let Some(names) = &mut names {
+            names.check(body);
+        }
+        true
+    };
     // SAFETY: `check` lives through the parse, which alone calls it.
-    let mut parsed = parse(allocator, text, source_type, lazy_from, lazy_from.map(|_| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) }), false, false);
+    let mut parsed = parse(allocator, text, source_type, lazy_from, lazy_from.map(|_| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) }), false, false, true);
     if let Some(starts) = recorded {
         // The function's own body compiles from this parse.
         let own = Reparsed::function_of(&parsed.program).and_then(|function| function.body.as_ref()).map(|body| body.span.start);

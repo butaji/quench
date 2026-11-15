@@ -290,7 +290,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     ///     `RegularExpressionLiteral`
     ///     `TemplateLiteral`[?Yield, ?Await, ~Tagged]
     ///     `CoverParenthesizedExpressionAndArrowParameterList`[?Yield, ?Await]
-    fn parse_primary_expression(&mut self) -> Expression<'a> {
+    pub(super) fn parse_primary_expression(&mut self) -> Expression<'a> {
         // FunctionExpression, GeneratorExpression
         // AsyncFunctionExpression, AsyncGeneratorExpression
         if self.at_function_with_async() {
@@ -1812,7 +1812,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// - Next tokens form an `await using` declaration
     /// - Next token is `/` (division or regex literal)
     /// - Next token cannot start an expression (`)`, `}`, `;`, etc.)
-    fn is_unambiguous_await(&mut self) -> bool {
+    pub(super) fn is_unambiguous_await(&mut self) -> bool {
         let token = self.lexer.peek_token();
 
         // Line break after await makes it ambiguous (could be ASI)
@@ -1938,7 +1938,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
 
 /// Whether a string literal's raw text holds a legacy octal or non-octal decimal escape, an
 /// early error in strict code.
-fn legacy_escape(raw: &str) -> bool {
+pub(super) fn legacy_escape(raw: &str) -> bool {
     let bytes = raw.as_bytes();
     let mut index = 0;
     while index + 1 < bytes.len() {
@@ -1961,6 +1961,6 @@ fn legacy_escape(raw: &str) -> bool {
 }
 
 /// A label a strict mode rule reads (`early`): a reserved word.
-fn reserved_label(name: &str) -> bool {
+pub(super) fn reserved_label(name: &str) -> bool {
     matches!(name, "await" | "implements" | "interface" | "let" | "package" | "private" | "protected" | "public" | "static" | "yield")
 }

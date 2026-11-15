@@ -519,10 +519,23 @@ fn emit_js_tagged_number(
         &[ir::BlockArg::Value(number)],
     );
 
+    // An integer is the common NaN-space value (a double column holds its integral
+    // values tagged), so its tag is tested first: shift, compare, convert.
     builder.switch_to_block(nan);
     let field = builder
         .ins()
         .ushr_imm_u(bits, i64::from(crate::value::ValueLayout::TAG_SHIFT));
+    let int_field = (crate::value::ValueLayout::INT_TAG
+        >> crate::value::ValueLayout::TAG_SHIFT) as i64;
+    let is_integer_tag = builder
+        .ins()
+        .icmp_imm_u(IntCC::Equal, field, int_field);
+    builder
+        .ins()
+        .brif(is_integer_tag, integer_block, &[], tagged, &[]);
+
+    // Any other tag leaves; an untagged NaN is the double NaN.
+    builder.switch_to_block(tagged);
     let offset = builder.ins().iadd_imm_s(
         field,
         -(crate::value::ValueLayout::FIRST_TAG_FIELD as i64),
@@ -534,21 +547,11 @@ fn emit_js_tagged_number(
     );
     builder.ins().brif(
         is_tagged,
-        tagged,
+        fallback,
         &[],
         join,
         &[ir::BlockArg::Value(number)],
     );
-
-    builder.switch_to_block(tagged);
-    let int_field = (crate::value::ValueLayout::INT_TAG
-        >> crate::value::ValueLayout::TAG_SHIFT) as i64;
-    let is_integer_tag = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, field, int_field);
-    builder
-        .ins()
-        .brif(is_integer_tag, integer_block, &[], fallback, &[]);
 
     builder.switch_to_block(integer_block);
     let integer = builder.ins().ireduce(types::I32, bits);

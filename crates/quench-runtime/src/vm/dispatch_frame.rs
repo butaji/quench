@@ -614,7 +614,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<usize, JsError> {
-        self.promote_tier0_if_due(p, self.active_program, id);
+        self.promote_tier0_if_due(p, id);
         let function = &p.function(id as usize);
         if id != super::ROOT_FUNCTION_ID && function.plain_activation(p) {
             self.activate_plain_frame(p, id, function, parent, this, args, context)
@@ -1717,7 +1717,16 @@ impl<H: Host> Vm<H> {
         pc: usize,
     ) -> Option<FrameOutcome> {
         let instruction = instruction.filter(|instruction| instruction.op().is_await())?;
-        let awaited = self.read(frame, instruction.register_b());
+        self.lane_await_value(p, frame, instruction.register_b(), instruction.result_register(), pc)
+            .map(|value| FrameOutcome::Await { value, destination: instruction.result_register(), frame: None })
+    }
+
+    /// `lane_stop_awaits` of the `Await` at `pc` that reads register `awaited` and resumes into
+    /// `destination`: the value the suspension awaits, with the frame set to resume after it.
+    #[inline(always)]
+    pub(super) fn lane_await_value(&mut self, p: &ResidualProgram, frame: usize, awaited: u16, destination: u16, pc: usize) -> Option<Value> {
+        let _ = destination;
+        let awaited = self.read(frame, awaited);
         let value = if self.is_object_like(awaited) {
             self.lane_promise_resolve(p, self.intrinsic_promise_constructor(), awaited)?
         } else {
@@ -1725,7 +1734,7 @@ impl<H: Host> Vm<H> {
         };
         self.frames[frame].pc = pc + 1;
         self.frames[frame].pc_is_resume = true;
-        Some(FrameOutcome::Await { value, destination: instruction.result_register(), frame: None })
+        Some(value)
     }
 
     /// Share the ordinary loop across direct entry and lane exits. Parameter initialization

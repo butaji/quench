@@ -115,6 +115,49 @@ impl<H: Host> Vm<H> {
     }
 }
 
+impl<H: Host> Vm<H> {
+    /// `replace` or `replaceAll` of a flat ASCII receiver at a non-empty flat ASCII search
+    /// string, by a flat ASCII replacement with no `$` (so no substitution pattern): no
+    /// conversion runs guest code, so the result's bytes are written once, the unmatched runs
+    /// copied around each replacement; no match answers the receiver itself. `None` leaves
+    /// any other call to `call_primitive_native`.
+    pub(super) fn replace_in_place(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+        if !matches!(native, Native::StringReplace | Native::StringReplaceAll) {
+            return None;
+        }
+        let [search, replacement, ..] = args else {
+            return None;
+        };
+        let ascii = |value: Value| match self.heap.string(value)?.existing_flat()?.view() {
+            Units::Ascii(bytes) => Some(bytes),
+            Units::Wide(_) => None,
+        };
+        let (text, needle, with) = (ascii(receiver)?, ascii(*search)?, ascii(*replacement)?);
+        if needle.is_empty() || with.contains(&b'$') {
+            return None;
+        }
+        let mut found = memchr::memmem::find_iter(text, needle);
+        let Some(first) = found.next() else {
+            return Some(receiver);
+        };
+        let mut bytes = smallvec::SmallVec::<[u8; 64]>::new();
+        bytes.extend_from_slice(&text[..first]);
+        bytes.extend_from_slice(with);
+        let mut cursor = first + needle.len();
+        if native == Native::StringReplaceAll {
+            // Occurrences do not overlap: each search starts past the previous match.
+            while let Some(at) = memchr::memmem::find(&text[cursor..], needle) {
+                bytes.extend_from_slice(&text[cursor..cursor + at]);
+                bytes.extend_from_slice(with);
+                cursor += at + needle.len();
+            }
+        }
+        bytes.extend_from_slice(&text[cursor..]);
+        let result = crate::vm::wtf16::JsString::from_ascii_bytes(&bytes);
+        Some(self.heap.alloc_string(result))
+    }
+}
+
 /// The units range `slice` (negative bounds count from the end) or `substring` (bounds in
 /// either order) takes from a string of `length` units, given its integer bounds.
 pub(super) fn substring_range(native: Native, length: i64, start: i64, end: i64) -> std::ops::Range<usize> {

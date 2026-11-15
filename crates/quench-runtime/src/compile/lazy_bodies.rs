@@ -219,8 +219,9 @@ pub(super) fn parse<'a>(
     check: Option<oxc_parser::LazyBodyCheck>,
     inherited_strict: bool,
     nested: bool,
+    recognize: bool,
 ) -> oxc_parser::ParserReturn<'a> {
-    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check, inherited_strict, nested);
+    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check, inherited_strict, nested, recognize);
     if !parsed.lazy_function_bodies.is_empty() {
         let starts: FxHashSet<u32> = parsed.lazy_function_bodies.iter().copied().collect();
         stand_in(allocator, &mut parsed.program, &starts);
@@ -308,9 +309,13 @@ impl BodyFacts {
     /// bodies inside it whole, and adds its facts. The facts are gathered before code
     /// generation: an analysis per function between the records code generation keeps left
     /// the heap their holes (JetStream +2-3% max RSS).
-    pub(super) fn check(&mut self, oxc_parser::LazyBody { program, call_assignment_targets, in_function, early }: oxc_parser::LazyBody<'_, '_>, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) {
+    /// False where `stub` and the check needs the body's tree (`LazyBody::stub`).
+    pub(super) fn check(&mut self, oxc_parser::LazyBody { program, call_assignment_targets, in_function, early, stub }: oxc_parser::LazyBody<'_, '_>, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) -> bool {
         if self.failed {
-            return;
+            return true;
+        }
+        if stub {
+            return early.is_some_and(|early| !verify_early() && self.checked_by_parse(program, call_assignment_targets, in_function, early));
         }
         if verify_early() && crate::trace::Dev::EarlyVerify.value() == Some("stat") {
             eprintln!("early-stat: {} {} {} deferred={} at_load={}", if early.is_some() { "sure" } else { "unsure" }, program.span.start, program.span.end - program.span.start, self.call_only_deferred, super::call_only::compiles_at_load(program, false, false));
@@ -319,7 +324,7 @@ impl BodyFacts {
             && !verify_early()
             && self.checked_by_parse(program, call_assignment_targets, in_function, early)
         {
-            return;
+            return true;
         }
         // Its early errors are OXC's alone: the program carries the strictness the body
         // inherits as a directive, which `early::program_early_errors` exists to supply where
@@ -328,7 +333,7 @@ impl BodyFacts {
             || call_assignment_targets && super::annex_b_targets::invalid_target(program).is_some()
         {
             self.failed = true;
-            return;
+            return true;
         }
         let built = super::semantic_stats::builder(program).with_check_syntax_error(true).build(program);
         if verify_early() && early.is_some() && !built.diagnostics.is_empty() {
@@ -336,7 +341,7 @@ impl BodyFacts {
         }
         if !built.diagnostics.is_empty() {
             self.failed = true;
-            return;
+            return true;
         }
         let inner = self.compose_released(program, built.semantic.scoping());
         if verify_early()
@@ -353,6 +358,7 @@ impl BodyFacts {
             requests.extend(super::Engine::native_source_requests(program, built.semantic.scoping(), *specialized, global_script_calls));
         }
         self.add_facts(&built.semantic, program, in_function, &inner);
+        true
     }
 
     /// Takes the parse's verdict on a body it found no early error could lie in

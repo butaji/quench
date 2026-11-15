@@ -266,11 +266,16 @@ impl<H: Host> Vm<H> {
         let realm = self.realm.globals;
         let state = self.heap.await_state_mut(resume.state).expect("a running await reaction keeps its state");
         debug_assert!(matches!(state, AwaitState::Spent), "an await state re-arms only once spent");
-        *state = AwaitState::arm(AwaitKind::function(continuation), realm, resume.promise);
+        let generator = resume.role.generator();
+        let kind = match generator {
+            None => AwaitKind::function(continuation),
+            Some(generator) => AwaitKind::generator_await(generator, continuation),
+        };
+        *state = AwaitState::arm(kind, realm, resume.promise);
         let roots = self.active_call_roots.len();
         self.active_call_roots.push(resume.state);
         self.active_call_roots.push(source);
-        let attached = self.attach_await_reactions(p, resume.state, resume.promise, None, source);
+        let attached = self.attach_await_reactions(p, resume.state, resume.promise, generator, source);
         self.active_call_roots.truncate(roots);
         attached
     }
@@ -283,7 +288,8 @@ impl<H: Host> Vm<H> {
         generator: Option<Value>,
         source: Value,
     ) -> Result<(), JsError> {
-        let source = if self.host.observes_promise_lifecycle()
+        let observes = self.host.observes_promise_lifecycle();
+        let source = if observes
             && !self.is_promise(source)
             && !self.is_object_like(source)
         {
@@ -298,7 +304,8 @@ impl<H: Host> Vm<H> {
         };
         // Materialize the await reaction's Promise resource for host lifecycle
         // observation, even though the continuation consumes no result value.
-        let next = if self.host.observes_promise_lifecycle() {
+        // The observer read above stands: without one, nothing above ran guest code.
+        let next = if observes {
             self.with_call_roots([source], |vm| {
                 vm.promise_object_with_parent(
                     vm.promise_record(source).and_then(|record| record.host_context().get()),
@@ -520,7 +527,7 @@ impl<H: Host> Vm<H> {
         // A fulfilled async function resumption may chain the queue's next ones in the lane;
         // the activation in the slot when the run ends is then the last of them.
         let roots = self.active_call_roots.len();
-        let chained = initial_error.is_none() && resume.role.generator().is_none();
+        let chained = initial_error.is_none() && !matches!(resume.role, AwaitRole::AsyncGeneratorYield(_));
         let outer_chain = if chained {
             self.active_call_roots.push(resume.state);
             self.active_call_roots.push(resume.promise);
@@ -616,7 +623,14 @@ impl<H: Host> Vm<H> {
         result: Result<FrameOutcome, JsError>,
     ) -> Result<(), JsError> {
         match task {
-            ChainTask::Await(resume) => self.finish_async_activation(p, resume, frame, result),
+            ChainTask::Await(resume) => {
+                self.finish_async_activation(p, resume, frame, result)?;
+                // As `resume_await` after the activation: its generator takes its next request.
+                match resume.role.generator() {
+                    Some(generator) => self.resume_async_generator_queue(p, generator),
+                    None => Ok(()),
+                }
+            }
             ChainTask::Done { settled } => {
                 self.pool_frame(frame);
                 match result {
@@ -690,9 +704,11 @@ impl<H: Host> Vm<H> {
         let (handler, _, next) = self.chain_gates()?;
         let realm = self.realm.globals;
         let (function, pc) = match self.heap.await_state_mut(handler) {
-            Some(AwaitState::Pending { kind: AwaitKind::AsyncFunction(continuation), realm: resumes, .. })
-                if *resumes == realm && continuation.frame.program == program && next.is_undefined() =>
-            {
+            Some(AwaitState::Pending {
+                kind: AwaitKind::AsyncFunction(continuation) | AwaitKind::AsyncGeneratorAwait { continuation, .. },
+                realm: resumes,
+                ..
+            }) if *resumes == realm && continuation.frame.program == program && next.is_undefined() => {
                 (continuation.frame.function, continuation.frame.pc)
             }
             Some(_) => return None,
@@ -732,8 +748,8 @@ impl<H: Host> Vm<H> {
         let (handler, value, next) = (job.handler, job.value, job.next);
         let job = match self.heap.await_state_mut(handler) {
             Some(awaiting) => {
-                let ResumedAwait { continuation, promise, .. } = awaiting.resume()?;
-                let resume = AwaitResume { state: handler, promise, role: AwaitRole::AsyncFunction, rejected: false };
+                let ResumedAwait { continuation, promise, role, .. } = awaiting.resume()?;
+                let resume = AwaitResume { state: handler, promise, role, rejected: false };
                 ChainedJob::Await { resume, continuation: continuation?, value }
             }
             None => {
@@ -826,6 +842,8 @@ impl<H: Host> Vm<H> {
         program: ProgramId,
         frame: usize,
         pc: usize,
+        awaited: u16,
+        destination: u16,
     ) -> Option<Result<(), JsError>> {
         let chain = self.await_chain.filter(|chain| chain.frame == frame && frame + 1 == self.frames.len())?;
         let ChainTask::Await(resume) = chain.task else {
@@ -836,23 +854,24 @@ impl<H: Host> Vm<H> {
         let Some(PendingJob::Reaction(job)) = self.realm.jobs.front() else {
             return None;
         };
-        let (realm, handler) = (self.realm.globals, job.handler);
+        let realm = self.realm.globals;
+        // As `chain_gates`, read once.
+        if job.rejected || job.execution_context.get().is_some() || job.realm != realm || !job.next.is_undefined() {
+            return None;
+        }
+        let handler = job.handler;
         match self.heap.await_state_mut(handler) {
-            Some(AwaitState::Pending { kind: AwaitKind::AsyncFunction(continuation), realm: resumes, .. })
-                if *resumes == realm && continuation.frame.program == program => {}
+            Some(AwaitState::Pending {
+                kind: AwaitKind::AsyncFunction(continuation) | AwaitKind::AsyncGeneratorAwait { continuation, .. },
+                realm: resumes,
+                ..
+            }) if *resumes == realm && continuation.frame.program == program => {}
             _ => return None,
         }
-        let (_, _, next) = self.chain_gates()?;
-        if !next.is_undefined() {
+        if !self.chain_gates_open() {
             return None;
         }
-        let body = p.function(self.frames[frame].function as usize);
-        let instruction = super::dispatch_fast::decoded_instruction(body, *body.code.get(pc)?);
-        let Some(FrameOutcome::Await { value, destination, frame: None }) =
-            self.lane_stop_awaits(p, frame, Some(instruction), pc)
-        else {
-            return None;
-        };
+        let value = self.lane_await_value(p, frame, awaited, destination, pc)?;
         Some(self.chain_await_into_slot(p, frame, chain.roots, resume, value, destination))
     }
 
@@ -1010,13 +1029,13 @@ impl<H: Host> Vm<H> {
             unreachable!("a chained await resumption was admitted");
         };
         let (state, awaited) = (job.handler, job.value);
-        let Some(ResumedAwait { continuation: Some(continuation), promise, .. }) =
+        let Some(ResumedAwait { continuation: Some(continuation), promise, role, .. }) =
             self.heap.await_state_mut(state).and_then(AwaitState::resume)
         else {
             unreachable!("an admitted await resumption holds its activation");
         };
         self.realm.jobs.pop_front();
-        let next = AwaitResume { state, promise, role: AwaitRole::AsyncFunction, rejected: false };
+        let next = AwaitResume { state, promise, role, rejected: false };
         self.active_call_roots[roots] = state;
         self.active_call_roots[roots + 1] = promise;
         let resume_register = continuation.resume_register;
@@ -1100,19 +1119,10 @@ impl<H: Host> Vm<H> {
                     Some(destination),
                     resume.promise,
                 );
-                if resume.role.generator().is_none() {
-                    self.await_again(p, resume, continuation, value)?;
-                } else {
-                    let AwaitRole::AsyncGeneratorAwait(generator) = resume.role else {
-                        unreachable!("an await inside an async generator body resumes its generator");
-                    };
-                    self.enqueue_async_resume(
-                        p,
-                        AwaitKind::generator_await(generator, continuation),
-                        resume.promise,
-                        value,
-                    )?;
-                }
+                // An async generator's body awaits from its last await's reaction too
+                // (`AwaitRole::AsyncGeneratorAwait`): its spent state takes the continuation.
+                debug_assert!(!matches!(resume.role, AwaitRole::AsyncGeneratorYield(_)), "a yield's await resumes no frame");
+                self.await_again(p, resume, continuation, value)?;
             }
             super::FrameOutcome::Await {
                 frame: Some(frame), ..

@@ -59,6 +59,12 @@ pub(super) struct StartupIntrinsics {
     depth: usize,
     swapped: Vec<SwappedProperty>,
     regexp: Option<super::regexp::LegacyRegExpSnapshot>,
+    /// Whether every root above was old (marked) when the last collection ended. A minor
+    /// collection then leaves them out: an old value's mark stays until the next full
+    /// collection, which traces every root, and a write into an old holder logs it for the
+    /// minor collection anyway, so pushing them would only pop thousands of marked values.
+    /// Any change to the roots clears it.
+    pub(super) roots_old: bool,
 }
 
 impl StartupIntrinsics {
@@ -103,6 +109,11 @@ impl<H: Host> Vm<H> {
 
     /// Values the snapshot keeps alive: holders, their sealed values, the symbol keys and
     /// accessor functions of their sealed shapes, and the script's state of a swap.
+    /// Whether a minor collection may leave out `startup_intrinsic_roots` (`roots_old`).
+    pub(super) fn startup_roots_old(&self) -> bool {
+        self.startup_intrinsics.roots_old
+    }
+
     pub(super) fn startup_intrinsic_roots(&self) -> impl Iterator<Item = Value> + '_ {
         let intrinsics = &self.startup_intrinsics;
         intrinsics
@@ -164,6 +175,7 @@ impl<H: Host> Vm<H> {
             .collect();
         self.startup_intrinsics.shape_roots = self.shape_roots(&sealed);
         self.startup_intrinsics.holders = sealed;
+        self.startup_intrinsics.roots_old = false;
     }
 
     /// A namespace built after bootstrap joins the captured intrinsics before guest code
@@ -177,6 +189,7 @@ impl<H: Host> Vm<H> {
         roots.extend(self.shape_roots(std::slice::from_ref(&sealed)));
         self.startup_intrinsics.shape_roots = roots.into_boxed_slice();
         self.startup_intrinsics.holders.push(sealed);
+        self.startup_intrinsics.roots_old = false;
     }
 
     /// `holder`'s current shape and slot values.
@@ -231,6 +244,7 @@ impl<H: Host> Vm<H> {
     /// Puts every recorded intrinsic back to its sealed state until the matching
     /// `leave_startup_intrinsics`. A property the script made non-configurable keeps its state.
     pub(crate) fn enter_startup_intrinsics(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        self.startup_intrinsics.roots_old = false;
         self.startup_intrinsics.depth += 1;
         if self.startup_intrinsics.depth > 1 {
             return Ok(());
@@ -252,6 +266,8 @@ impl<H: Host> Vm<H> {
                     key,
                     previous: current,
                 });
+                // A collection inside this loop may have found the roots old: this one is new.
+                self.startup_intrinsics.roots_old = false;
                 if !self.redefine_slot_property(p, holder, key, original)? {
                     self.startup_intrinsics.swapped.pop();
                 }
@@ -264,6 +280,7 @@ impl<H: Host> Vm<H> {
     /// the host changed meanwhile (a lazy data property it materialized) keeps the change: its
     /// state, with the originals still in place, becomes its sealed state.
     pub(crate) fn leave_startup_intrinsics(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+        self.startup_intrinsics.roots_old = false;
         self.startup_intrinsics.depth -= 1;
         if self.startup_intrinsics.depth > 0 {
             return Ok(());
@@ -274,12 +291,14 @@ impl<H: Host> Vm<H> {
                 let holder = self.startup_intrinsics.holders[index].holder;
                 if let Some(sealed) = self.sealed_holder(holder) {
                     self.startup_intrinsics.holders[index] = sealed;
+                    self.startup_intrinsics.roots_old = false;
                     resealed = true;
                 }
             }
         }
         if resealed {
             self.startup_intrinsics.shape_roots = self.shape_roots(&self.startup_intrinsics.holders);
+            self.startup_intrinsics.roots_old = false;
         }
         // The swap list stays traced until every script value is back in place.
         let swapped = self.startup_intrinsics.swapped.clone();
@@ -369,7 +388,7 @@ impl StartupIntrinsics {
     /// The sealed holders for a snapshot (`crate::snapshot`); a snapshot is taken outside every
     /// `enter_startup_intrinsics`, so nothing is swapped.
     pub(super) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
-        let Self { holders, shape_roots, depth, swapped, regexp } = self;
+        let Self { holders, shape_roots, depth, swapped, regexp, roots_old: _ } = self;
         if *depth != 0 || !swapped.is_empty() || regexp.is_some() {
             return Err(crate::snapshot::SnapshotError::unsupported("a startup intrinsics scope"));
         }
@@ -387,6 +406,6 @@ impl StartupIntrinsics {
         let holders = crate::snapshot::read_list(reader, |reader| {
             Ok(SealedHolder { holder: reader.value()?, shape: reader.u32()?, values: reader.values()?.into() })
         })?;
-        Ok(Self { holders, shape_roots: reader.values()?.into(), depth: 0, swapped: Vec::new(), regexp: None })
+        Ok(Self { holders, shape_roots: reader.values()?.into(), depth: 0, swapped: Vec::new(), regexp: None, roots_old: false })
     }
 }
