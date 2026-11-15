@@ -784,6 +784,10 @@ pub(crate) struct ProgramStore {
     global_eval_programs: FxHashMap<super::eval::eval_source::EvalSource, ProgramId>,
     /// Compiled direct evals by text and the caller facts the compilation reads.
     direct_eval_programs: FxHashMap<super::eval::eval_source::DirectEvalKey, ProgramId>,
+    /// Strict direct evals by text and caller facts: a strict eval's program is its own Script
+    /// per evaluation (its eval origin is not shared), so a later eval of the same text makes a
+    /// new program over the latest one's code (`eval_cache.rs`).
+    strict_direct_eval_code: FxHashMap<super::eval::eval_source::DirectEvalKey, ProgramId>,
     owned_scripts: FxHashMap<ProgramId, OwnedScript>,
     /// Completed reclamation passes; see `reclaim_unreferenced`.
     reclaim_passes: u64,
@@ -825,6 +829,7 @@ impl Default for ProgramStore {
             programs: Vec::new(),
             global_eval_programs: FxHashMap::default(),
             direct_eval_programs: FxHashMap::default(),
+            strict_direct_eval_code: FxHashMap::default(),
             owned_scripts: FxHashMap::default(),
             reclaim_passes: 0,
             unchecked_reclaimable: 0,
@@ -1042,6 +1047,7 @@ impl ProgramStore {
     pub(crate) fn reset(&mut self, main: Rc<ResidualProgram>) -> ProgramId {
         self.global_eval_programs.clear();
         self.direct_eval_programs.clear();
+        self.strict_direct_eval_code.clear();
         self.owned_scripts.clear();
         self.programs.clear();
         self.unchecked_reclaimable = 0;
