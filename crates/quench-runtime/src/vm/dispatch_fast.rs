@@ -15965,7 +15965,7 @@ fn lane_call_keeping_activation<H: Host>(
         return lane_activate_gathering(cx, r, ip, &target, window, this).map_err(Some);
     }
     if target.entry == CallEntry::Keeps {
-        return lane_activate_keeping_window(cx, r, ip, &target, window, this).map_err(Some);
+        return lane_activate_keeping_window::<H, false>(cx, r, ip, &target, window, this).map_err(Some);
     }
     let arguments = ActivationArguments::Window(window);
     lane_activate_keeping::<H, false>(cx, r, ip, &target, arguments, this, false, None).map_err(Some)
@@ -15976,7 +15976,7 @@ fn lane_call_keeping_activation<H: Host>(
 /// call's push is (`lane_fill_window`, `lane_enter_window`) with the values kept after its
 /// registers, as `lane_activate_keeping` keeps them, and the activation marked keeping.
 #[inline(always)]
-fn lane_activate_keeping_window<H: Host>(
+fn lane_activate_keeping_window<H: Host, const GENERAL: bool>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
@@ -16007,7 +16007,7 @@ fn lane_activate_keeping_window<H: Host>(
         vm.lane_stack.values.set_top(registers.0.add(window_size + lane_values::CONTEXT));
         registers
     };
-    let entered = lane_enter_window::<H, false, false>(cx, r, ip, target, callee_registers, argc, this, false, None);
+    let entered = lane_enter_window::<H, GENERAL, false>(cx, r, ip, target, callee_registers, argc, this, false, None);
     if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations.last_mut().map(|activation| &mut activation.kind) {
         script.forwards = true;
     }
@@ -16789,6 +16789,11 @@ fn lane_activate<H: Host>(
     // activation): the keeping activation holds them after the registers. A callee no legacy
     // reflection observes is passed its parameters alone, as its frame would keep them.
     if argc > target.params && (!target.drops_extra_arguments() || target.forwards()) {
+        // A call keeping every value it was passed, a rest body's array aside, takes the plain
+        // push with the values after its registers.
+        if !constructs && target.entry != CallEntry::Gathers {
+            return lane_activate_keeping_window::<H, true>(cx, r, ip, target, arguments, this);
+        }
         return lane_activate_keeping::<H, true>(
             cx,
             r,
