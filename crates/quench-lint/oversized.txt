@@ -2925,7 +2925,6 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_native_value 
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_passed_frame_call 42
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_promise_native 52
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_push_frame_call 138
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_read_capture_value 42
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_resume_generator_frame 44
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_return_from 47
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_return_script_frame 68

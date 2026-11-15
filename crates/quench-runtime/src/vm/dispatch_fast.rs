@@ -6389,13 +6389,7 @@ fn lane_read_capture_value<H: Host, const PLAIN: bool>(
         } else {
             (vm.cached_direct_capture(frame, depth, slot), None)
         };
-        if depth == 0
-            && let Some((slots, None)) = vm.current_capture_slots(frame)
-            && let Some(slots) = unsafe { &*slots }.dense_storage()
-        {
-            unsafe { (*cx).registers.set_capture(slots) };
-        }
-        (value, source, false)
+        (value, source, depth == 0 && frame_capture_at_root(cx, frame))
     } else {
         // A frameless activation's function has no environment of its own.
         let Some((slots, root)) = vm.walked_capture_slots(env, false, depth) else {
@@ -6478,53 +6472,11 @@ script_handler! {
     }
 }
 
-/// The root environment `depth` parent links out from the running activation's closure
-/// environment, while each link is an environment: no capture walk, as a root binding's
-/// records read it (`lane_load_root_binding`, `lane_store_root_binding`).
-#[inline(always)]
-fn lane_root_environment<H: Host>(cx: *mut LaneContext<H>, depth: u16) -> Option<Value> {
-    let vm = unsafe { vm(cx) };
-    let mut env = unsafe { (*cx).registers }.env();
-    if env.is_deleted() {
-        return None;
-    }
-    for _ in 0..depth {
-        let Some(Cell::Environment { parent, .. }) = vm.heap.get(env) else { return None };
-        env = *parent;
-    }
-    Some(env)
-}
-
-/// Whether the capture at `depth` and `slot` of the running activation is a root
-/// environment's slot that holds its binding itself (`RootSlotRule::Binding`): no global
-/// var, global lexical or module import projection reads through it, so the slot answers
-/// each read and takes each store. The capture walk and the plain parent links must reach
-/// the same environment. Which slots those are is fixed per program, and a record's scope
-/// chain is fixed by its function, so the answer holds for the record.
-fn lane_root_binding_slot<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> bool {
-    // The parent links first: most captures end at a function's environment.
-    let Some(root) = lane_root_environment(cx, depth) else { return false };
-    let vm = unsafe { vm(cx) };
-    let slots = match vm.heap.get(root) {
-        Some(Cell::Environment { function, slots, .. }) if *function == super::ROOT_FUNCTION_ID => std::ptr::from_ref(slots),
-        _ => return false,
-    };
-    let env = unsafe { (*cx).registers }.env();
-    let Some((walked, Some(program))) = vm.walked_capture_slots(env, false, depth) else {
-        return false;
-    };
-    if !std::ptr::eq(slots, walked) {
-        return false;
-    }
-    let owner = program.map_or(vm.active_program, ProgramId::from_raw);
-    vm.programs.root_slot(owner, slot) == crate::bytecode::RootSlotRule::Binding
-}
-
 script_handler! {
     /// A `LoadCapture` of a root environment's binding slot (`lane_root_binding_slot`), as a
     /// module function reads a top-level `const`: the slot of the root environment the parent
-    /// links reach while the root owns it and it holds a value; any other read, a frame's,
-    /// one in its temporal dead zone or of a slot another environment shares, takes the walk.
+    /// links reach while the root owns it and it holds a value; any other read, one in its
+    /// temporal dead zone or of a slot another environment shares, takes the walk.
     fn lane_load_root_binding<>(cx, r, ip, i, view) {
         let imm = i.imm();
         let slot = usize::from(ImmediateLayout::capture_slot(imm));
@@ -15500,6 +15452,8 @@ use wasm_calls::{known_call_handler, reference_call_handler};
 use denoted::{denoted_handler, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
+mod root_bindings;
+use root_bindings::{frame_capture_at_root, lane_root_binding_slot, lane_root_environment};
 mod native_calls; mod generator_yields; use generator_yields::yield_handler;
 mod array_steps;
 mod for_in_steps;
