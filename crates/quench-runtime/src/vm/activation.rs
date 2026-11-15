@@ -61,6 +61,11 @@ pub(crate) enum CallCompletion {
     /// target's invariants (`Vm::trap_result_error`): a read yields what the trap returned, a
     /// store the value stored.
     Trapped(TrapCheck),
+    /// A JavaScript call of an exported Wasm function whose frame the lane pushed
+    /// (`dispatch_fast::lane_wasm_export_frame`): the frame returns its result encoded, which
+    /// converts to its JavaScript value by the result's scalar type (`None`: no result,
+    /// `undefined`); a trap leaving the frame becomes the `RuntimeError` the caller sees.
+    WasmExport(Option<crate::WasmType>),
 }
 
 /// How a proxy trap's result is checked against its target: a read, a store, or a strict

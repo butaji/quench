@@ -1157,6 +1157,51 @@ impl<H: Host> Vm<H> {
         Ok(wrapper)
     }
 
+    /// The JavaScript value of an exported function's encoded `result` of scalar type `ty`
+    /// (`CallCompletion::WasmExport`), whose decoding allocates nothing; `undefined` for none.
+    pub(super) fn wasm_export_result(&self, result: Value, ty: Option<WasmType>) -> Value {
+        let Some(ty) = ty else { return Value::UNDEFINED };
+        match self.decode_wasm_value_in(result, ty, None) {
+            Ok(WasmValue::I32(value)) => Value::number(f64::from(value)),
+            Ok(WasmValue::F32(bits)) => Value::number(f64::from(f32::from_bits(bits))),
+            Ok(WasmValue::F64(bits)) => Value::number(f64::from_bits(bits)),
+            _ => unreachable!("a pushed export's result is a validated scalar"),
+        }
+    }
+
+    /// The exported function `callee` names, when a JavaScript call can push its frame in place
+    /// (`dispatch_fast::lane_wasm_export_frame`): an interpreted function of a Wasm program
+    /// whose parameters encode without allocating (`i32`, `f32`) from the Numbers `args` holds,
+    /// so converting them runs no JavaScript, and whose result decodes without allocating.
+    /// Its program, function, instance environment, encoded arguments and result type.
+    pub(super) fn wasm_export_frame_call(
+        &mut self,
+        callee: Value,
+        args: &[Value],
+    ) -> Option<(crate::vm::ProgramId, u32, Value, smallvec::SmallVec<[Value; WASM_INLINE_ARGUMENTS]>, Option<WasmType>)> {
+        let closure = self.wasm_exported_closure(callee)?;
+        let &FunctionRecord { kind: FunctionKind::User(program, index), env, .. } = self.heap.function(closure)? else {
+            return None;
+        };
+        let signatures = self.programs.wasm_signatures_shared(program)?;
+        let signature = signatures.defined_signature(index)?;
+        let result = match signature.results.as_slice() {
+            [] => None,
+            &[ty @ (WasmType::I32 | WasmType::F32 | WasmType::F64)] => Some(ty),
+            _ => return None,
+        };
+        let mut encoded = smallvec::SmallVec::with_capacity(signature.params.len());
+        for (position, &ty) in signature.params.iter().enumerate() {
+            let number = args.get(position).copied().unwrap_or(Value::UNDEFINED).as_number()?;
+            encoded.push(self.encode_wasm_value(match ty {
+                WasmType::I32 => WasmValue::I32(Self::uint32_from_value(number) as i32),
+                WasmType::F32 => WasmValue::F32((number as f32).to_bits()),
+                _ => return None,
+            }));
+        }
+        Some((program, index, env, encoded, result))
+    }
+
     /// The Wasm closure behind an exported-function wrapper.
     fn wasm_exported_closure(&self, value: Value) -> Option<Value> {
         match self.heap.function(value)? {
@@ -1268,7 +1313,7 @@ impl<H: Host> Vm<H> {
     /// activations become frames first), as V8 captures the stack at the throw; made where a
     /// handler takes it, its stack would name only the handler's frame. It stays a trap
     /// (`JsError::wasm_trap`), which no Wasm handler catches.
-    fn trap_raised_in_javascript(&mut self, p: &ResidualProgram, mut error: JsError) -> JsError {
+    pub(super) fn trap_raised_in_javascript(&mut self, p: &ResidualProgram, mut error: JsError) -> JsError {
         let Some(trap) = error.wasm_trap().filter(|_| error.thrown_value().is_none()) else {
             return error;
         };

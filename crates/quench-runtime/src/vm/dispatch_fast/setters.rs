@@ -119,6 +119,7 @@ impl<H: Host> Vm<H> {
         match completion {
             CallCompletion::Constructor(this) if !self.is_object_like(value) => *this,
             CallCompletion::Assigned | CallCompletion::Trapped(TrapCheck { access: TrapAccess::Store | TrapAccess::StrictStore, .. }) => self.read(caller, destination),
+            CallCompletion::WasmExport(result) => self.wasm_export_result(value, *result),
             _ => value,
         }
     }

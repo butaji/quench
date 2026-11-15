@@ -341,6 +341,27 @@ impl<H: Host> Vm<H> {
         id: u32,
         arguments: crate::bytecode::RegisterWindow,
     ) -> Result<crate::stack::GuestCallGuard, JsError> {
+        let caller = &self.frames[caller];
+        let arguments_base = usize::from(arguments.base);
+        let arguments: *const [Value] =
+            &caller.registers[arguments_base..arguments_base + usize::from(arguments.count)];
+        let env = caller.env;
+        // SAFETY: the caller's registers stay in place while the callee's frame is filled.
+        self.push_wasm_frame_over(p, id, env, unsafe { &*arguments })
+    }
+
+    /// Activate Wasm function `id` of the active program `p` over instance environment
+    /// `env`, passed the encoded `arguments`: the frame a Wasm call pushes
+    /// (`push_wasm_frame`), or a JavaScript call of an exported function
+    /// (`dispatch_fast::lane_wasm_export_frame`).
+    #[inline(always)]
+    pub(super) fn push_wasm_frame_over(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        env: Value,
+        arguments: &[Value],
+    ) -> Result<crate::stack::GuestCallGuard, JsError> {
         // An in-loop activation grows the frame stack, not the native stack, so it counts
         // against the live guest-call budget.
         let function = &p.function(id as usize);
@@ -355,10 +376,6 @@ impl<H: Host> Vm<H> {
             .frame_pool
             .pop()
             .unwrap_or_else(|| Box::new(Frame::empty(program, with_base)));
-        let caller = &self.frames[caller];
-        let arguments_base = usize::from(arguments.base);
-        let arguments =
-            &caller.registers[arguments_base..arguments_base + usize::from(arguments.count)];
         // Each slot is written once: parameters land where the function
         // keeps them, every other local and register takes its default.
         let local_arguments = &arguments[..arguments
@@ -378,7 +395,7 @@ impl<H: Host> Vm<H> {
         frame.pc = 0;
         frame.pc_is_resume = true;
         frame.binding_site_pc = None;
-        frame.env = caller.env;
+        frame.env = env;
         frame.this = Value::UNDEFINED;
         frame.captured = false;
         frame.with_base = with_base;
@@ -2708,6 +2725,12 @@ impl<H: Host> Vm<H> {
                     }
                     if let Some(step) = pending.completion.take_array_step() {
                         self.abandon_array_step(*step);
+                    }
+                    // A trap leaving an exported function's frame reaches its JavaScript
+                    // caller as a `RuntimeError`, as the native call's (`call_wasm_exported_function`).
+                    if matches!(pending.completion, CallCompletion::WasmExport(_)) {
+                        let caller_residual = executing.retained.clone();
+                        error = self.trap_raised_in_javascript(caller_residual.as_deref().unwrap_or(entry_program), error);
                     }
                     // An async callee's abrupt completion rejects its promise, which the
                     // call yields; the caller resumes after the call.
