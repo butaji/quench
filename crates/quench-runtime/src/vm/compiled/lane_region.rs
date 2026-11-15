@@ -156,6 +156,16 @@ struct State {
     proofs: LocalProofs,
 }
 
+/// A dense element a read loaded (`LocalProofs::elements`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct KnownElement {
+    values: ir::Value,
+    index: ir::Value,
+    address: ir::Value,
+    bits: ir::Value,
+    present: bool,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FieldValue {
     /// Receiver home until its next definition (`None` is the fixed `this`).
@@ -185,6 +195,10 @@ struct LocalProofs {
     int32_projections: smallvec::SmallVec<[(ir::Value, ir::Value); INLINE_NUMBER_PROJECTIONS]>,
     /// Dense array views by the tagged base they prove, until an instruction that could change an array's storage (`retains_array_views`).
     arrays: smallvec::SmallVec<[(ir::Value, super::DenseArrayView); INLINE_ARRAY_VIEWS]>,
+    /// Dense elements a read loaded, until an instruction that may write any element: their
+    /// backing and index, the element's address and bits, and whether the read proved them
+    /// present (no hole). A store to the same element reuses the read's bounds proof and bits.
+    elements: smallvec::SmallVec<[KnownElement; INLINE_ARRAY_VIEWS]>,
     /// Whether this block read the code's invalidation word since the last helper that may change a Stable fact's subject
     /// (run JavaScript, write a prototype, name a method): every Stable fact the code folded holds until such a helper (`Lowering::hold_stable`).
     stable: bool,
@@ -218,7 +232,7 @@ impl State {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), stable: false, realm: false,
-            arrays: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
+            arrays: smallvec::SmallVec::new(), elements: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
     }
 
     /// The `headers` index of an owner: a register, or fixed `this` (`None`).
@@ -232,6 +246,7 @@ impl State {
         self.proofs.fields.clear();
         self.proofs.int32_projections.clear();
         self.proofs.arrays.clear();
+        self.proofs.elements.clear();
         self.proofs.headers.fill(None);
         self.proofs.readable.clear();
         self.proofs.layouts.clear();
@@ -913,6 +928,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
             .all(|other| other.int32_projections.contains(projection))).collect();
         state.proofs.arrays = first.arrays.iter().copied().filter(|view| rest.iter()
             .all(|other| other.arrays.contains(view))).collect();
+        state.proofs.elements = first.elements.iter().copied().filter(|element| rest.iter()
+            .all(|other| other.elements.contains(element))).collect();
         state.proofs.stable = first.stable && rest.iter().all(|other| other.stable);
         state.proofs.realm = first.realm && rest.iter().all(|other| other.realm);
         // A block a rotated latch also enters has an edge `rest` does not hold: only a sealable block keeps the homes.
@@ -2009,6 +2026,7 @@ impl Lowering<'_, '_> {
         // Only the same pre-branch SSA definition can survive both numeric arms.
         state.proofs.fields.retain(|field| incoming.proofs.fields.contains(field));
         state.proofs.int32_projections.retain(|projection| incoming.proofs.int32_projections.contains(projection));
+        state.proofs.elements.retain(|element| incoming.proofs.elements.contains(element));
         state.proofs.meet_homed(&incoming.proofs.homed);
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
             let current = state.values[index];
@@ -2505,6 +2523,11 @@ impl Lowering<'_, '_> {
         self.left_here = self.generic.contains(&pc);
         if self.unit.markers.contains(&pc) || !retains_array_views(&self.program.constants, instruction) {
             state.proofs.arrays.clear();
+        }
+        // An element store reads the proofs first and retires them itself (`set_index`).
+        if self.unit.markers.contains(&pc) || !(reads_only(&self.program.constants, instruction)
+            || instruction.op().class().eq(Class::SetIndex)) {
+            state.proofs.elements.clear();
         }
         if let Some(read) = self.hoisted.get(&pc).copied() {
             self.hoisted_read(state, instruction, read);
@@ -3861,6 +3884,7 @@ impl Lowering<'_, '_> {
         if let Some(array) = self.loop_array(pc as usize, Some(instruction.register_b())).filter(|array| number && array.writable) {
             self.loop_element_write(state, array, pc, instruction, exit);
             state.proofs.arrays.clear();
+            state.proofs.elements.clear();
             state.proofs.fields.clear();
             state.proofs.stable = false;
             return true;
@@ -3894,6 +3918,7 @@ impl Lowering<'_, '_> {
             self.reload_dense_arrays(pc as usize);
         }
         state.proofs.arrays.clear();
+        state.proofs.elements.clear();
         state.proofs.fields.clear();
         // The helper may write a prototype's element or mapped argument.
         state.proofs.stable = false;
@@ -3919,6 +3944,23 @@ impl Lowering<'_, '_> {
             self.builder.def_var(variables.values, values);
             self.builder.def_var(variables.length, length);
         }
+    }
+
+    /// Records `element` as loaded, replacing any older record of its backing and index.
+    fn know_element(&mut self, state: &mut State, element: KnownElement) {
+        let (values, index) = (self.resolved(element.values), self.resolved(element.index));
+        state.proofs.elements.retain(|known| (self.resolved(known.values), self.resolved(known.index)) != (values, index));
+        state.proofs.elements.push(element);
+    }
+
+    /// The element of `values` at `index` a read loaded, if no element write followed.
+    fn known_element(&self, state: &State, values: ir::Value, index: ir::Value) -> Option<KnownElement> {
+        let (values, index) = (self.resolved(values), self.resolved(index));
+        state.proofs.elements.iter().copied().find(|known| (self.resolved(known.values), self.resolved(known.index)) == (values, index))
+    }
+
+    fn resolved(&self, value: ir::Value) -> ir::Value {
+        self.builder.func.dfg.resolve_aliases(value)
     }
 
     /// The hoisted view's elements' address and count.
@@ -3952,11 +3994,13 @@ impl Lowering<'_, '_> {
             let offset = self.ins().imul_imm_s(offset, std::mem::size_of::<crate::Value>() as i64);
             let address = self.ins().iadd(values, offset);
             let value = self.ins().load(types::I64, regions::elements(), address, 0);
+            self.know_element(state, KnownElement { values, index, address, bits: value, present: false });
             return self.set_tagged(state, destination, value);
         }
         if array.views == ElementViews::Dense {
             let view = super::DenseArrayView { values, length, writable: array.writable, uncounted: array.writable };
-            let value = super::emit_dense_element(&mut self.builder, view, index, exit, in_bounds).1;
+            let (address, value) = super::emit_dense_element(&mut self.builder, view, index, exit, in_bounds);
+            self.know_element(state, KnownElement { values, index, address, bits: value, present: true });
             return self.set_tagged(state, destination, value);
         }
         let kind = self.hoisted_kind(array);
@@ -3979,6 +4023,16 @@ impl Lowering<'_, '_> {
         // append helper is a call every live value is spilled around, which a loop that
         // never appends should not pay (a site that left compiles it, `left_here`).
         if !self.left_here {
+            // The same element a read of this backing loaded, with no element write since: the
+            // read's bounds proof holds, and its bits are the element's (a hole leaves).
+            if let Some(known) = self.known_element(state, values, index) {
+                if !known.present {
+                    let present = self.ins().icmp_imm_u(IntCC::NotEqual, known.bits, Value::DELETED.to_bits() as i64);
+                    emit_js_guard(&mut self.builder, present, exit);
+                }
+                self.ins().store(regions::elements(), value, known.address, 0);
+                return;
+            }
             let view = super::DenseArrayView { values, length, writable: true, uncounted: true };
             return self.index_write(state, index, value, view, exit, in_bounds);
         }
