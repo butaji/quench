@@ -2083,6 +2083,10 @@ pub(super) struct LaneStack {
     /// The JavaScript-backed import a Wasm call last activated (`wasm_calls::lane_activate_js_import`),
     /// read off its wrapper once; a collection forgets it (`forget_dead_callees`).
     pub(super) js_import: Option<JsImportPlan>,
+    /// The bound function without bound arguments a `lane_function_call` last forwarded through,
+    /// with its target and bound receiver, which never change (`Vm::bound_function_parts`); a
+    /// collection forgets it (`forget_dead_callees`).
+    pub(super) bound_call: Option<(Value, Value, Value)>,
     /// The forwarding constructor bodies call targets name (`ScriptCallTarget::forwarded_method`),
     /// each once: a program's bodies are fixed, so the table only grows with distinct ones.
     forwarded_methods: Vec<crate::bytecode::ForwardedThisMethod>,
@@ -2139,6 +2143,7 @@ impl Default for LaneStack {
             trap_checks: Vec::new(),
             to_wasm: Vec::new(),
             js_import: None,
+            bound_call: None,
             forwarded_methods: Vec::new(),
             activation_limit: std::cell::Cell::new(0),
             generation: NO_SCRIPT_GENERATION,
@@ -2306,6 +2311,7 @@ impl LaneStack {
     pub(super) fn forget_dead_callees(&mut self, live: impl Fn(Value) -> bool) {
         self.wasm_export = None;
         self.js_import = None;
+        self.bound_call = None;
         self.call_sites.get_mut().retain(|_, targets| { targets.retain(|target| target.identity().is_none_or(&live)); !targets.is_empty() });
     }
 
@@ -14533,6 +14539,15 @@ script_handler! {
             let (receiver, args) = window.split_first().map_or((Value::UNDEFINED, &[][..]), |(first, rest)| (*first, rest));
             resume!(cx, lane_function_call_activation(cx, r, ip, i, r.get(i.c), receiver, args))
         }
+        // A bound function without bound arguments the lane last forwarded through, whose
+        // target the site linked: its target and receiver, read once (`LaneStack::bound_call`).
+        if let Some((bound, target, this)) = vm.lane_stack.bound_call
+            && bound == r.get(i.b)
+            && vm.script_call_holds(link, target)
+            && !vm.tier_may_run(crate::jit_mode::Tier::ANY)
+        {
+            resume!(cx, lane_function_call_activation(cx, r, ip, i, target, this, window))
+        }
         let Some(super::function::Forwarded { callee, receiver, args, kind, through_call }) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
             resume!(cx, lane_bound_arguments_call(cx, r, ip, i));
         };
@@ -14552,7 +14567,23 @@ script_handler! {
             let value = lane_native_value(cx, ip, i, native, callee, receiver, args);
             resume!(cx, lane_native_complete(cx, ip, i, value));
         }
+        if matches!(kind, Some(FunctionKind::User(..))) {
+            lane_remember_bound_call(vm, r.get(i.b));
+        }
         resume!(cx, lane_function_call_activation(cx, r, ip, i, callee, receiver, args))
+    }
+}
+
+/// Remembers `callee` for `lane_function_call`'s bound fast path (`LaneStack::bound_call`)
+/// when it is a bound function without bound arguments of a user function.
+#[inline(never)]
+fn lane_remember_bound_call<H: Host>(vm: &mut Vm<H>, callee: Value) {
+    let Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) = vm.heap.function(callee) else {
+        return;
+    };
+    let Some((target, this, bound)) = vm.bound_function_parts(*env) else { return };
+    if bound.is_empty() && matches!(vm.heap.function(target), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
+        vm.lane_stack.bound_call = Some((callee, target, this));
     }
 }
 
