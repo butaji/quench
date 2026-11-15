@@ -46,6 +46,11 @@ impl<H: Host> Vm<H> {
             }
             _ => self.prove_geometry_getter(shape, prototype, atom, epoch)?,
         };
+        if native == Native::TypedArrayLengthGetter
+            && let Some(length) = self.typed_cached_length(object)
+        {
+            return Some(length);
+        }
         self.pure_native_value(native, object)
     }
 

@@ -1147,6 +1147,17 @@ impl TypedViewCache {
 }
 
 impl<H: Host> Vm<H> {
+    /// The element count of the typed array `object` from its current cached entry
+    /// (`TypedViewCache`): what its intrinsic `length` getter answers, where the entry holds,
+    /// since every event that could detach, resize or move its buffer ends the view epoch.
+    #[inline(always)]
+    pub(super) fn typed_cached_length(&self, object: Value) -> Option<Value> {
+        let entry = self.typed_views.entry(object);
+        // `fill_typed_view` clamps the count to `i32::MAX`: a longer view takes the full read.
+        (entry.view == object.to_bits() && entry.epoch == crate::heap::view_epoch() && entry.length < i32::MAX as usize)
+            .then(|| Value::number(entry.length as f64))
+    }
+
     /// The element of the typed array `object` at `key` from its cached entry
     /// (`TypedViewCache`), when `object` has a current one of kind `KIND` (or any kind) and
     /// `key` is an int32 inside it. `None` otherwise; the caller fills the entry
