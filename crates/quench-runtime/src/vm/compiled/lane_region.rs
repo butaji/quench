@@ -1742,7 +1742,7 @@ pub(super) fn lower(
         lowering.forward[catch.target] = None;
         lowering.sealable.remove(catch.target);
     }
-    lowering.entered.insert(entry_pc);
+    edges::enclosing_headers(&instructions, entry_pc, |at| coverage.lowered(at)).chain([entry_pc]).for_each(|pc| { lowering.entered.insert(pc); });
     lowering.stable.start = entry_pc;
     {
         let pc = entry_pc;

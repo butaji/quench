@@ -52,3 +52,11 @@ pub(super) fn entered_once(instructions: &[WideInstruction], start: usize, lower
     instructions.iter().enumerate().filter(|(pc, _)| lowered(*pc))
         .all(|(pc, instruction)| successors(pc, *instruction).into_iter().flatten().all(|target| target != start))
 }
+
+/// The headers of the loops that enclose the region entry `entry`: the targets before it of the
+/// backward jumps at or after it. A region entered inside a loop runs that loop's next
+/// iterations too, so these blocks are reached by the back edge and are lowered.
+pub(super) fn enclosing_headers(instructions: &[WideInstruction], entry: usize, lowered: impl Fn(usize) -> bool) -> impl Iterator<Item = usize> {
+    instructions.iter().enumerate().skip(entry).filter(move |(pc, _)| lowered(*pc))
+        .flat_map(move |(pc, instruction)| successors(pc, *instruction).into_iter().flatten().filter(move |target| *target < entry && *target <= pc))
+}
