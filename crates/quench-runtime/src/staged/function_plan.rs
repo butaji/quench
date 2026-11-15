@@ -10,7 +10,7 @@
 
 use super::decode::DecodeContext;
 use super::{Allocation, Operation};
-use crate::bytecode::{GenericStep, Op, Register, WideInstruction};
+use crate::bytecode::{GenericStep, JsDenotation, Op, Register, WideInstruction};
 
 /// A plan operation's word and proof are its registers and a proof slot to come (K-PROOF):
 /// the plan names what an instruction reads, never a copy of a fact.
@@ -28,6 +28,8 @@ pub(crate) enum Exit {
 /// What the plan holds for one PC.
 #[derive(Clone, Debug)]
 pub(crate) enum PlanOp {
+    /// The instruction does nothing but continue (its denotation is `JsDenotation::Noop`).
+    Continue,
     Staged(PlanOperation),
     Generic(GenericStep),
     Exit(Exit),
@@ -47,6 +49,9 @@ fn suspends(op: Op) -> bool {
 fn plan_op(instructions: &[WideInstruction], pc: usize, context: DecodeContext<'_>) -> PlanOp {
     let instruction = instructions[pc];
     let op = instruction.op();
+    if op.js_denotation() == JsDenotation::Noop {
+        return PlanOp::Continue;
+    }
     let staged = Operation::decode(instruction, context).or_else(|| {
         let (destination, allocation) = Allocation::decode(instruction, &instructions[pc + 1..])?;
         Some(Operation::Allocate { destination, allocation, proof: () })
