@@ -2315,15 +2315,6 @@ impl Object {
     /// record's own-field hint holds (`Vm::form_hint`), so that one compare proves the exact
     /// shape, no dictionary, no exotic access and where the values live. Every cache records
     /// `exact_shape`, which leaves the form out.
-    /// The object's layout id (`heap::layouts`): an equal guard word proves the exact shape
-    /// and storage form (`hint_shape`), the prototype, the kind and the integrity together, in
-    /// one compare of the record's one header word.
-    /// The object's layout id (`heap::layouts`): equal ids name equal header words.
-    #[inline(always)]
-    pub(crate) fn layout_id(&self) -> u32 {
-        self.layout
-    }
-
     #[inline(always)]
     pub(crate) fn guard_word(&self) -> u64 {
         u64::from(self.layout)
