@@ -2972,6 +2972,18 @@ impl<H: Host> Vm<H> {
     /// that slot. Every prototype passed becomes a prototype first, so a later change to one
     /// advances `prototype_layout_epoch` and retires the entry.
     fn record_accessor_field_cache(&mut self, object: Value, atom: Atom, site: usize) {
+        self.record_accessor_cache(object, atom, site, false);
+    }
+
+    /// `record_accessor_field_cache` for a store site, whose entry names an accessor with a
+    /// setter (`cached_field_setter`).
+    pub(super) fn record_accessor_store_cache(&mut self, object: Value, atom: Atom, site: usize) {
+        self.record_accessor_cache(object, atom, site, true);
+    }
+
+    /// The accessor entry of a read (`setter` false: the accessor has a getter) or of a store
+    /// (`setter` true: it has a setter).
+    fn record_accessor_cache(&mut self, object: Value, atom: Atom, site: usize, setter: bool) {
         // The shared overflow site serves reads of every atom; an entry there would answer
         // one name's read with another's getter.
         if !self.field_cache_records(site) {
@@ -2987,7 +2999,7 @@ impl<H: Host> Vm<H> {
             // of the shape holds its own getter in the slot, read from it at each hit.
             let own_getter = slot < FIELD_CACHE_SLOT_CAPACITY
                 && !receiver.has_side_descriptors()
-                && self.slot_holds_getter(receiver, slot);
+                && self.slot_holds_accessor_part(receiver, slot, setter);
             if own_getter {
                 self.record_accessor_entry(
                     site,
@@ -3026,7 +3038,7 @@ impl<H: Host> Vm<H> {
             return;
         };
         if slot >= FIELD_CACHE_SLOT_CAPACITY
-            || !self.slot_holds_getter(holder_object, slot)
+            || !self.slot_holds_accessor_part(holder_object, slot, setter)
         {
             return;
         }
@@ -3077,6 +3089,18 @@ impl<H: Host> Vm<H> {
     /// The getter a field read of `atom` at cache index `site` calls on `object`, when the
     /// site's recorded accessor still answers it (`record_accessor_field_cache`).
     pub(super) fn cached_field_getter(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
+        self.cached_field_accessor(object, atom, site, false)
+    }
+
+    /// The setter a store of `atom` at cache index `site` calls on `object`, when the site's
+    /// recorded accessor still answers it (`record_accessor_store_cache`).
+    pub(super) fn cached_field_setter(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
+        self.cached_field_accessor(object, atom, site, true)
+    }
+
+    /// The getter (`setter` false) or setter the site's accessor entry names.
+    #[inline(always)]
+    fn cached_field_accessor(&self, object: Value, atom: Atom, site: usize, setter: bool) -> Option<Value> {
         let mut index = self.accessor_field_indices.get(site);
         if index == NO_ACCESSOR_FIELD {
             return None;
@@ -3099,12 +3123,18 @@ impl<H: Host> Vm<H> {
             self.heap.ordinary_object(cache.holder)?
         };
         match cache.slot_accessor {
+            // A slot that holds its getter alone is an accessor without a setter.
+            super::SlotAccessor::Getter if setter => None,
             super::SlotAccessor::Getter => self.heap.property_get(holder, usize::from(cache.slot)),
             super::SlotAccessor::Pair => match self.heap.get(self.heap.property_get(holder, usize::from(cache.slot))?) {
+                Some(Cell::AccessorPair { setter: found, .. }) if setter => Some(*found).filter(|found| !found.is_undefined()),
                 Some(Cell::AccessorPair { getter, .. }) => Some(*getter),
                 _ => None,
             },
-            super::SlotAccessor::Attributes => self.slot_attributes(holder, usize::from(cache.slot))?.getter,
+            super::SlotAccessor::Attributes => {
+                let attributes = self.slot_attributes(holder, usize::from(cache.slot))?;
+                if setter { attributes.setter } else { attributes.getter }
+            }
         }
     }
 
@@ -3237,14 +3267,15 @@ impl<H: Host> Vm<H> {
             && self.shape_slot_attributes(object.shape(), slot).is_some_and(|attributes| attributes.accessor)
     }
 
-    /// Whether `object`'s property at `slot` is an accessor with a getter, as `slot_attributes`
-    /// tells, building them only where its shape may hold an accessor.
-    fn slot_holds_getter(&self, object: &Object, slot: usize) -> bool {
+    /// Whether `object`'s property at `slot` is an accessor with a getter (with `setter`, a
+    /// setter), as `slot_attributes` tells, building them only where its shape may hold one.
+    fn slot_holds_accessor_part(&self, object: &Object, slot: usize, setter: bool) -> bool {
         self.slot_holds_accessor(object, slot)
-            && self
-                .slot_attributes(object, slot)
-                .is_some_and(|attributes| attributes.getter.is_some())
+            && self.slot_attributes(object, slot).is_some_and(|attributes| {
+                if setter { attributes.setter.is_some() } else { attributes.getter.is_some() }
+            })
     }
+
 
     /// Records `cache` as the site's newest inherited entry. An entry for its receiver shape
     /// is replaced in place; a site holding `INHERITED_FIELD_CACHE_WAYS` entries reuses its

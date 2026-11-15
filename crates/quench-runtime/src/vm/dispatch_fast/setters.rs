@@ -44,10 +44,20 @@ fn stored_setter<H: Host>(vm: &Vm<H>, object: Value, atom: crate::bytecode::Atom
 /// the call.
 pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction, object: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    if !met_setter(vm.field_cache_index(i.c)) {
+    let site = vm.field_cache_index(i.c);
+    if !met_setter(site) {
         return None;
     }
-    let setter = stored_setter(vm, object, i.imm())?;
+    // The site's accessor entry answers a receiver of a shape it met without the walk; a
+    // miss walks (`stored_setter`) and records the accessor for the next store.
+    let setter = match vm.cached_field_setter(object, i.imm(), site) {
+        Some(setter) if !vm.is_private_name(i.imm()) => setter,
+        _ => {
+            let setter = stored_setter(vm, object, i.imm())?;
+            vm.record_accessor_store_cache(object, i.imm(), site);
+            setter
+        }
+    };
     let target = lane_script_target(cx, setter).filter(|target| !target.forwards())?;
     let this = lane_call_this(vm, &target, object)?;
     // SAFETY: the record's value register is one of the running function's.
