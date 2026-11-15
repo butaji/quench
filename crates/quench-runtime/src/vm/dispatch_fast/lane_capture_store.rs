@@ -15,7 +15,7 @@ pub(super) fn lane_capture_store<H: Host>(cx: *mut LaneContext<H>, depth: u16, s
         && env.is_deleted()
         && let Some(capture) = lane_frame_capture(cx)
     {
-        unsafe { (*cx).capture = capture };
+        unsafe { (*cx).registers.set_capture(capture) };
         if let Some(slots) = capture_stores(capture)
             // SAFETY: the running function's dense capture slots, which admit this write
             // (`CAPTURE_STORES`); no collection runs in the lane.
