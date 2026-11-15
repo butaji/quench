@@ -202,8 +202,18 @@ impl<H: Host> Vm<H> {
         if self.heap.string(source).is_some() {
             self.require_source_compilation(p)?;
         }
+        // An ASCII rope compiles from a copy the string does not keep: its program keeps the
+        // rope (`SourceText::Rope`), whose pieces other strings share.
+        let unkept = self
+            .heap
+            .string(source)
+            .filter(|text| text.is_unflattened_ascii_rope())
+            .map(|text| text.flat_unkept().into_owned());
+        let unkept_text = unkept.as_ref().and_then(crate::vm::wtf16::FlatUnits::ascii_str);
         if let Some(source_text) = self.heap.string(source).cloned()
-            && let Some(literal) = crate::Engine::eval_single_regexp_literal(source_text.host_string())
+            && let Some(literal) = crate::Engine::eval_single_regexp_literal(
+                unkept_text.unwrap_or_else(|| source_text.host_string()),
+            )
         {
             let text = source_text.host_string();
             let start = text[..literal.span.start].encode_utf16().count() + 1;
@@ -231,8 +241,15 @@ impl<H: Host> Vm<H> {
             _ if let Some(value) = self.heap.string(source)  => value.clone(),
             _ => return Ok(source),
         };
+        if let Some(units) = &unkept {
+            // Hash the copy in hand: hashing the string would make the rope flat for good.
+            self.heap.remember_string_hash(source, units.view().text_hash());
+        }
         let cache_source = Some(eval_source::EvalSource::of(&self.heap, source, &source_text));
-        let host_text = source_text.host_string();
+        let host_text = match unkept_text {
+            Some(text) => text,
+            None => source_text.host_string(),
+        };
         let text = if self.host.allows_natives_syntax() {
             strip_v8_optimization_intrinsics(host_text)
         } else {
@@ -291,7 +308,7 @@ impl<H: Host> Vm<H> {
         source_name: &str,
         cache_source: Option<eval_source::EvalSource>,
         host_script: bool,
-        shared_text: Option<std::rc::Rc<str>>,
+        shared_text: Option<crate::bytecode::SourceText>,
     ) -> Result<Value, JsError> {
         let host_script = host_script && !self.direct_eval;
         let mode = self.specialization_part();

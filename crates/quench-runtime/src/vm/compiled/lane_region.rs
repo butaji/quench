@@ -4109,7 +4109,11 @@ impl Lowering<'_, '_> {
             // The same element a read of this backing loaded, with no element write since: the
             // read's bounds proof holds, and its bits are the element's (a hole leaves).
             if let Some(known) = self.known_element(state, values, index) {
-                if !known.present {
+                // A Number view of the read's bits (`register_number_value`) already
+                // proved it no hole: the hole is a tag the Number test leaves at.
+                let bits = self.builder.func.dfg.resolve_aliases(known.bits);
+                let number = state.proofs.numbers.iter().any(|(source, _)| *source == bits);
+                if !known.present && !number {
                     let present = self.ins().icmp_imm_u(IntCC::NotEqual, known.bits, Value::DELETED.to_bits() as i64);
                     emit_js_guard(&mut self.builder, present, exit);
                 }

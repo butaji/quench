@@ -19,7 +19,13 @@ fn get_trap_call<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::
     if handler.is_null() || vm.is_private_name(atom) {
         return None;
     }
-    let trap = vm.plain_property_lookup(handler, crate::vm::PropertyKey::string(vm.runtime_atoms.get))??;
+    // The handler's `get` through the fact table (`Vm::ordinary_chain_read_proved`), else
+    // the plain walk, which declines an accessor.
+    let trap = match vm.ordinary_chain_read_proved(handler, vm.runtime_atoms.get) {
+        Some(ChainRead::Value(trap)) => trap,
+        Some(ChainRead::Absent) => return None,
+        _ => vm.plain_property_lookup(handler, crate::vm::PropertyKey::string(vm.runtime_atoms.get))??,
+    };
     vm.shape_leaves_atom_unconstrained(target, atom).then_some((trap, handler, [target, vm.atom_string(atom), object]))
 }
 

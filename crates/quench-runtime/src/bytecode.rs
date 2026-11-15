@@ -1794,7 +1794,7 @@ pub(crate) struct RegisterRoots {
     /// `ALL_LIVE_AT_ENTRY` where liveness proves no bound.
     entry_live: u16,
     dead_call_results: crate::heap::ThinBoxSlice<u32>,
-    masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+    pub(crate) masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
 }
 
 /// Uncovered, which bounds no register live at entry.
@@ -3486,6 +3486,48 @@ pub(crate) enum SourceText {
     Local(std::rc::Rc<str>),
     Static(&'static str),
     Kept(KeptText),
+    /// The text of an eval's guest string that was a rope of ASCII text: the program keeps the
+    /// rope, whose pieces other strings share, and makes the text flat only when read, never
+    /// inside the string (`RopeText`).
+    Rope(RopeText),
+}
+
+/// A rope's text, made flat on first read into a buffer of its own. Inspector code-load
+/// evaluates `function testN() { ${payload} }` per iteration: each program kept its own
+/// 2 MB flat copy for the function `testN` it defines, never read again, where the rope's
+/// pieces share the payload.
+#[derive(Clone)]
+pub(crate) struct RopeText {
+    string: crate::vm::wtf16::JsString,
+    flat: std::rc::Rc<std::cell::OnceCell<std::rc::Rc<str>>>,
+}
+
+impl RopeText {
+    /// The text's length in bytes, which for ASCII is its units, read without making it flat.
+    pub(crate) fn len_units(&self) -> usize {
+        self.string.len()
+    }
+
+    /// `string`'s text kept as its rope, when it is an unflattened rope of ASCII text.
+    pub(crate) fn of(string: &crate::vm::wtf16::JsString) -> Option<Self> {
+        string.is_unflattened_ascii_rope().then(|| Self { string: string.clone(), flat: Default::default() })
+    }
+}
+
+impl std::ops::Deref for RopeText {
+    type Target = str;
+    fn deref(&self) -> &str {
+        self.flat.get_or_init(|| {
+            let units = self.string.flat_unkept();
+            std::rc::Rc::from(units.ascii_str().expect("an ASCII rope flattens to ASCII text"))
+        })
+    }
+}
+
+impl std::fmt::Debug for RopeText {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("RopeText").field("len", &self.string.len()).field("flat", &self.flat.get().is_some()).finish()
+    }
 }
 
 /// Text inside kept bytes: valid UTF-8, checked when made (`KeptText::new`).
@@ -3557,6 +3599,17 @@ pub(crate) fn split_kept_source(entry: KeptBytes, source_len: usize) -> Result<(
 
 pub(crate) use binary::append_kept_source;
 
+impl SourceText {
+    /// The text's length in bytes, read without making a rope flat.
+    #[allow(clippy::len_without_is_empty)]
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Rope(rope) => rope.len_units(),
+            text => str::len(text),
+        }
+    }
+}
+
 impl std::ops::Deref for SourceText {
     type Target = str;
     fn deref(&self) -> &str {
@@ -3565,6 +3618,7 @@ impl std::ops::Deref for SourceText {
             Self::Local(text) => text,
             Self::Static(text) => text,
             Self::Kept(text) => text,
+            Self::Rope(text) => text,
         }
     }
 }

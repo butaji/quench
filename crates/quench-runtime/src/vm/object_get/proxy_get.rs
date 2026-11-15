@@ -198,12 +198,40 @@ impl<H: Host> Vm<H> {
         if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) || !self.shape_names_own_keys(target) {
             return false;
         }
+        // The fact table's word for the target's layout says whether its shape holds the name
+        // and in which slot, without a shape lookup.
+        // A collection, date, regexp, promise or iterator holds its own names on its shape as
+        // an ordinary object does (`Heap::ordinary_builtin_object`).
+        let facts = self
+            .heap
+            .ordinary_object(target)
+            .or_else(|| self.heap.ordinary_builtin_object(target))
+            .filter(|data| !data.has_side_descriptors() && self.plain_named_key(atom))
+            .and_then(|data| Some((data.layout_id(), super::super::PropertyKey::string(atom).key32()?, data)));
+        if let Some((layout, key32, data)) = facts
+            && let Some(word) = self.symbol_load_proofs.word(layout, key32)
+        {
+            use super::super::symbol_load_proof::{KIND_ABSENT, KIND_ABSENT_OWN, KIND_GETTER, KIND_INHERITED, KIND_OWN};
+            match word.kind() {
+                KIND_OWN => {
+                    return self.shape_slot_attributes(data.shape(), word.slot()).is_some_and(|attributes| attributes.configurable);
+                }
+                KIND_INHERITED | KIND_ABSENT | KIND_ABSENT_OWN => return true,
+                KIND_GETTER if word.hops() > 0 => return true,
+                _ => {}
+            }
+        }
         let Some(data) = self.shape_property_lookup(target, atom) else {
             return false;
         };
         let shape = data.shape();
         match self.shape_slot(shape, atom) {
-            None => true,
+            None => {
+                if let Some((layout, key32, _)) = facts {
+                    self.symbol_load_proofs.record_absent_own(layout, key32);
+                }
+                true
+            }
             Some(slot) => self.shape_slot_attributes(shape, slot).is_some_and(|attributes| attributes.configurable),
         }
     }

@@ -326,7 +326,7 @@ impl<H: Host> Vm<H> {
             lane_returned,
             lane_native,
             lane_native_returned,
-            active_layout: _, active_constants: _, active_field_entries: _, field_entries_epoch: _,
+            active_context: _, program_contexts: _, idle_context: _, active_field_entries: _, field_entries_epoch: _,
             active_program: _,
             profile: _,
             shapes,
@@ -782,6 +782,7 @@ impl<H: Host> Vm<H> {
                 }),
             }
         }
+        self.programs.bump_context_epoch();
     }
 }
 

@@ -94,7 +94,10 @@ impl<H: Host> Vm<H> {
         if !entry.this_binding.binds_receiver() {
             return None;
         }
-        if entry.view.is_null() {
+        // A closure of the same function over the same environment, as an immediately
+        // invoked function expression makes at each run of its enclosing body: every fact
+        // of the entry holds for it but its identity.
+        if entry.view.is_null() || env == entry.env {
             return Some(ScriptCallTarget { callee, env, ..*entry });
         }
         if entry.capture.is_null() {

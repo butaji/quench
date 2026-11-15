@@ -2965,7 +2965,10 @@ impl<H: Host> Vm<H> {
         if owner.constructor() == state.constructor {
             match owner {
                 crate::heap::RegExpLegacyOwner::Enabled(_) => {
-                    state.legacy = LegacyStatics { last: matched(input), input_override: None };
+                    let previous = std::mem::replace(&mut state.legacy, LegacyStatics { last: matched(input), input_override: None });
+                    if let LegacyRegExpMatch::Matched { matched, .. } = previous.last {
+                        matched.recycle();
+                    }
                 }
                 crate::heap::RegExpLegacyOwner::Disabled(_) => {
                     state.legacy = LegacyStatics { last: LegacyRegExpMatch::Invalid, input_override: None };
