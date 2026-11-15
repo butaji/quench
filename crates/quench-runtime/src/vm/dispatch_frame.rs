@@ -1527,6 +1527,20 @@ impl<H: Host> Vm<H> {
     /// `run_frame_general_with_error` of a resumed generator's or async function's frame
     /// `frame` with no error to raise. Without JS tiers the general loop would only enter the
     /// lane at the frame's PC, so the lane runs from here (`run_frame_from_lane`).
+    /// `run_resumed_frame`, or the general loop raising `error` into the frame where a
+    /// resumption throws.
+    pub(super) fn run_resumed_frame_or_raise(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        error: Option<JsError>,
+    ) -> Result<FrameOutcome, JsError> {
+        match error {
+            None => self.run_resumed_frame(p, frame),
+            error => self.run_frame_general_with_error(p, frame, error),
+        }
+    }
+
     pub(super) fn run_resumed_frame(&mut self, p: &ResidualProgram, frame: usize) -> Result<FrameOutcome, JsError> {
         let (program, function, pc) = (self.frames[frame].program, self.frames[frame].function, self.frames[frame].pc);
         // With JS tiers the loop may run the resumed frame in a tier instead of the lane,
@@ -1613,13 +1627,13 @@ impl<H: Host> Vm<H> {
             self.frames[frame].pc_is_resume = true;
             return Some(FrameOutcome::Complete(value));
         }
-        if asynchronous {
-            return self.lane_stop_awaits(p, frame, Some(instruction), pc);
-        }
         if !instruction.op().is_yield() {
-            return None;
+            return asynchronous.then(|| self.lane_stop_awaits(p, frame, Some(instruction), pc)).flatten();
         }
         let value = self.read(frame, instruction.register_b());
+        // An async generator's `yield` resolves a promise for the value, as the general step
+        // does (`promise_for_value`), where that observes nothing.
+        let value = if asynchronous { self.lane_promise_resolve(p, self.intrinsic_promise_constructor(), value)? } else { value };
         self.frames[frame].pc = pc + 1;
         self.frames[frame].pc_is_resume = true;
         Some(FrameOutcome::Yield {

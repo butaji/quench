@@ -1621,11 +1621,7 @@ impl<H: Host> Vm<H> {
             let previous_global = vm.switch_realm_global(realm);
             vm.activate_frame(&mut frame);
             vm.frames.push(frame);
-            let result = vm.run_frame_general_with_error(
-                &execution_program,
-                vm.frames.len() - 1,
-                initial_error,
-            );
+            let result = vm.run_resumed_frame_or_raise(&execution_program, vm.frames.len() - 1, initial_error);
             let mut frame = vm.frames.pop().expect("async generator frame exists");
             vm.deactivate_frame(&mut frame, &result);
             vm.set_active_program(previous_program);
