@@ -7183,7 +7183,11 @@ script_handler! {
         let string_base = base.is_some_and(|base| {
             (unsafe { vm(cx) }).heap.is_string(base)
         });
+        let geometry_base = base.is_some_and(|base| lane_geometry_read(unsafe { vm(cx) }, base, i.imm()).is_some());
         let handler: Option<Handler> = match lane_field_site_tier(unsafe { vm(cx) }, code, i) {
+            // A site that read a typed array's, DataView's, Map's or Set's geometry mostly
+            // reads such views, as a loop over one does: it reads the intrinsic getter first.
+            _ if geometry_base => Some(lane_get_field_geometry::<H>),
             // A string primitive reads `String.prototype`, whatever tier its entries name,
             // where the site admits that read; any other read of one is the general read's.
             _ if string_base && (unsafe { vm(cx) }).string_field_site_cacheable(code, i.imm()) => {
@@ -7237,6 +7241,30 @@ script_handler! {
             requicken::<H>(ip, handler);
         }
         sibling!(lane_get_field::<H>, r, ip, Carried::script_in(cx, view))
+    }
+}
+
+/// The intrinsic geometry getter's value of `atom` on `base` (`Vm::typed_array_geometry_read`)
+/// for a geometry name (`AtomClass::VIRTUAL_FIELD`); `None` for any other read.
+#[inline(always)]
+fn lane_geometry_read<H: Host>(vm: &mut Vm<H>, base: Value, atom: crate::bytecode::Atom) -> Option<Value> {
+    if !vm.atom_class(atom).contains(super::object::AtomClass::VIRTUAL_FIELD) {
+        return None;
+    }
+    vm.typed_array_geometry_read(base, atom)
+}
+
+script_handler! {
+    /// `lane_get_field` at a site that read a view's geometry (`lane_get_field_miss`): the
+    /// intrinsic getter's value where the receiver shadows it nowhere
+    /// (`Vm::typed_array_geometry_read`); any other read takes `lane_get_field`.
+    fn lane_get_field_geometry<>(cx, r, ip, i, view) {
+        let base = unsafe { lane_single_field_base(cx, r, i.b) };
+        let Some(value) = base.and_then(|base| lane_geometry_read(unsafe { vm(cx) }, base, i.imm())) else {
+            sibling!(lane_get_field::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
 
