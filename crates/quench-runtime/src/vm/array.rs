@@ -683,7 +683,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn array_push_one(&mut self, this: Value, value: Value) -> Option<Value> {
         let object = self.heap.record_array(this)?;
         let length = object.elements().len();
-        if !object.holds_ordinary_elements() || length >= MAX_ARRAY_LENGTH || !self.chain_holds_no_index(object.proto())
+        if !object.holds_ordinary_elements() || length >= MAX_ARRAY_LENGTH || !self.link_chain_holds_no_index(object.proto_link())
         {
             return None;
         }
@@ -692,6 +692,14 @@ impl<H: Host> Vm<H> {
         }
         self.heap.push_array_element(this, value)?;
         Some(Value::length(length + 1))
+    }
+
+    /// `chain_holds_no_index` of the prototype `link` names, matched undecoded against the
+    /// held proof's links.
+    #[inline(always)]
+    fn link_chain_holds_no_index(&self, link: crate::heap::ProtoLink) -> bool {
+        self.heap.dependencies().index_free_chain().is_some_and(|proof| proof.links.contains(&link.bits()))
+            || self.prove_index_free_chain(link.prototype())
     }
 
     /// The staged append (`staged::builtins::array_push_one`) of `value` to `array`, whose

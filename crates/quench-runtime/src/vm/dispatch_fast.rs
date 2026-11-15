@@ -15246,10 +15246,10 @@ mod wasm_gc;
 use wasm_gc::wasm_gc_handler;
 
 impl<H: Host> Vm<H> {
-    /// A native call's value where its common case completes in place, without guest code,
-    /// a new cell or a raised error: a dense `push` or `pop`, `charCodeAt`, an ASCII `charAt`,
-    /// a collection lookup, `Array.isArray`. `None` leaves the call to the native itself, whose
-    /// own steps begin with the same cases.
+    /// A native call's value where its common case completes in place, without guest code
+    /// or a raised error: a dense `push` or `pop`, `charCodeAt`, an ASCII `charAt`, a
+    /// collection lookup, `Array.isArray`, `JSON.stringify` of plain data (a new string).
+    /// `None` leaves the call to the native itself, whose own steps begin with the same cases.
     #[inline(always)]
     fn steady_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         let first = args.first().copied();
@@ -15261,8 +15261,8 @@ impl<H: Host> Vm<H> {
             Native::MapGet | Native::MapHas | Native::SetHas | Native::WeakMapGet | Native::WeakMapHas
             | Native::WeakSetHas => self.pure_collection_lookup(native, receiver, first.unwrap_or(Value::UNDEFINED)),
             Native::MapSet if self.map_set(receiver, args) => Some(receiver),
-            Native::ArrayIsArray => self.steady_is_array(first.unwrap_or(Value::UNDEFINED))
-                .map(|holds| if holds { Value::TRUE } else { Value::FALSE }),
+            Native::ArrayIsArray => self.steady_is_array(first.unwrap_or(Value::UNDEFINED)).map(Value::boolean),
+            Native::JsonStringify => self.json_stringify_plain_call(args),
             _ => None,
         }
     }
