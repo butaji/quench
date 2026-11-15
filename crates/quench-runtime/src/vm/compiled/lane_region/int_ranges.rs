@@ -11,7 +11,7 @@
 
 use super::packed_ranges::{result, State};
 use super::*;
-use crate::vm::operations::NumberArithmetic;
+use crate::vm::operations::{NumberArithmetic, NumberRelation};
 
 /// Passes before a unit proves nothing: each failed pass relaxes at least one header
 /// assumption of a register, so a unit settles in a few and the bound guards compile time.
@@ -45,8 +45,66 @@ impl IntRanges {
     pub(super) fn in_bounds(&self, pc: usize) -> bool { self.in_bounds.contains(pc) }
 }
 
+/// A loop bound guarded on the loop's entering edge to be at most a hoisted dense array's
+/// length: `limit` is an int32 register the loop never writes and compares its indexes with,
+/// `array` the register of an array the loop hoists, and no instruction of the loop can change
+/// a length. Every arrival at `header` then has `limit <= array.length`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct LoopBound {
+    pub(super) header: usize,
+    pub(super) limit: Register,
+    pub(super) array: Register,
+    /// The register the loop writes and compares with `limit`: the index the entry guards
+    /// non-negative when its range there is unknown.
+    pub(super) index: Register,
+}
+
+/// The loop bounds of `arrays`' loops (`LoopBound`). A loop whose header left before
+/// (`generic`) takes none, so a bound its entry keeps failing is not guarded again.
+pub(super) fn loop_bounds(program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
+    facts: &super::super::facts::Facts, arrays: &[LoopArray], generic: &[usize],
+    hoisted_dense: &dyn Fn(usize) -> bool) -> Vec<LoopBound> {
+    let mut bounds = Vec::new();
+    for array in arrays.iter().filter(|array| array.views == ElementViews::Dense) {
+        let ArraySource::Register(register) = array.source else { continue };
+        let (header, back) = (array.header, array.back);
+        if generic.contains(&header) || back >= unit.instructions.len() { continue }
+        let body = header..=back;
+        if body.clone().any(|pc| disturbs_lengths(unit.instructions[pc], hoisted_dense(pc), generic.contains(&pc))) { continue }
+        let written: BTreeSet<Register> = body.clone().flat_map(|pc| writes(unit.instructions[pc])).collect();
+        let types = facts.at(header);
+        for pc in body.clone() {
+            let instruction = unit.instructions[pc];
+            if !instruction.op().is_jump_binary_false()
+                || NumberRelation::from_operator(instruction.binary_operator_field()).is_none() { continue }
+            let (Some(left), Some(right)) = (instruction.operand_b().register_index(), instruction.operand_c().register_index()) else { continue };
+            for (limit, index) in [(left, right), (right, left)] {
+                let int = |register: Register| types.and_then(|types| types.get(usize::from(register))).is_some_and(|ty| ty.is_subtype(Type::INT32));
+                let bound = LoopBound { header, limit, array: register, index };
+                if int(limit) && int(index) && limit != register && !written.contains(&limit) && written.contains(&index)
+                    && !bounds.contains(&bound) { bounds.push(bound); }
+            }
+        }
+    }
+    let _ = program;
+    bounds
+}
+
+/// Whether `instruction` may change an array's length or run guest code that can: all but
+/// numeric steps, moves, jumps and reads of a hoisted dense view (`hoisted_dense`), whose
+/// misses leave; `generic` instructions run guest code.
+fn disturbs_lengths(instruction: WideInstruction, hoisted_dense: bool, generic: bool) -> bool {
+    let class = instruction.op().class();
+    let quiet = matches!(class, Class::Move | Class::LoadConst | Class::Nop | Class::Jump | Class::JumpTrue
+            | Class::JumpFalse | Class::JumpBinaryFalse | Class::IncDec)
+        || instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
+        || (class == Class::GetIndex && hoisted_dense);
+    !quiet || generic
+}
+
 struct Analysis<'a> {
     program: &'a ResidualProgram,
+    bounds: &'a [LoopBound],
     unit: &'a super::super::lane_unit::Unit,
     facts: &'a super::super::facts::Facts,
     entry: usize,
@@ -65,13 +123,13 @@ type Relaxed = BTreeMap<(usize, Register), Widening>;
 /// The ranges of `unit` entered at `entry`, where each `entering` register is guarded to its
 /// range by the entry: `generic` are the PCs that run guest code natively.
 pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
-    facts: &super::super::facts::Facts, entry: usize, entering: &[(Register, IntRange)], generic: &[usize],
+    facts: &super::super::facts::Facts, entry: usize, entering: &[(Register, IntRange)], bounds: &[LoopBound], generic: &[usize],
     hoisted_dense: &dyn Fn(usize) -> bool) -> IntRanges {
     let mut headers = CompoundBitSet::with_capacity(unit.instructions.len());
     for (pc, instruction) in unit.instructions.iter().enumerate() {
         for target in successors(pc, *instruction).into_iter().flatten().filter(|target| *target <= pc) { headers.insert(target); }
     }
-    let analysis = Analysis { program, unit, facts, entry, entering, headers, generic, hoisted_dense };
+    let analysis = Analysis { program, bounds, unit, facts, entry, entering, headers, generic, hoisted_dense };
     let mut relaxed = Relaxed::new();
     for _ in 0..WIDENING_ROUNDS {
         match analysis.pass(&relaxed) {
@@ -148,6 +206,10 @@ impl Analysis<'_> {
             };
         }
         state.relations = fresh.relations;
+        for bound in self.bounds.iter().filter(|bound| bound.header == pc) {
+            let arrays = &mut state.relations.length_of[usize::from(bound.limit)];
+            if !arrays.contains(&bound.array) { arrays.push(bound.array); }
+        }
         assumed[pc] = carried;
         Some(state)
     }
@@ -195,7 +257,7 @@ impl Analysis<'_> {
             _ => return false,
         };
         let Some((array, index)) = array.zip(index) else { return false };
-        (self.hoisted_dense)(pc) && state.relations.below[usize::from(index)] == Some(array)
+        (self.hoisted_dense)(pc) && state.relations.below[usize::from(index)].contains(&array)
             && state.ranges[usize::from(index)].is_some_and(|range| range.min >= 0)
     }
 
@@ -217,19 +279,14 @@ impl Analysis<'_> {
             && let Some(FieldLookup::Atom { base, .. }) = instruction.field_lookup()
             && let Some(array) = base.register_index().filter(|array| *array != instruction.result_register()) {
             // A result outside the unit's registers has no relation to keep.
-            if let Some(slot) = state.relations.length_of.get_mut(usize::from(instruction.result_register())) { *slot = Some(array); }
+            if let Some(slot) = state.relations.length_of.get_mut(usize::from(instruction.result_register())) { *slot = smallvec::smallvec![array]; }
         }
     }
 
     /// Whether `instruction` may change an array's length or run guest code that can: all but
     /// numeric steps, moves, jumps and reads of a hoisted dense view, whose misses leave.
     fn disturbs_lengths(&self, pc: usize, instruction: WideInstruction) -> bool {
-        let class = instruction.op().class();
-        let quiet = matches!(class, Class::Move | Class::LoadConst | Class::Nop | Class::Jump | Class::JumpTrue
-                | Class::JumpFalse | Class::JumpBinaryFalse | Class::IncDec)
-            || instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
-            || (matches!(class, Class::GetIndex) && (self.hoisted_dense)(pc));
-        !quiet || self.generic.contains(&pc)
+        disturbs_lengths(instruction, (self.hoisted_dense)(pc), self.generic.contains(&pc))
     }
 }
 

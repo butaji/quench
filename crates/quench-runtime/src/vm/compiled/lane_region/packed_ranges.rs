@@ -3,36 +3,39 @@
 use super::*;
 use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 
-/// What ranges cannot say: a register's relation to an array's `length`, naming the
-/// register that holds the array. A relation dies with either register's next write.
+/// The registers holding arrays one relation names.
+pub(super) type Arrays = smallvec::SmallVec<[Register; 2]>;
+
+/// What ranges cannot say: a register's relation to arrays' `length`s, naming the registers
+/// that hold the arrays. A relation dies with either register's next write.
 #[derive(Clone)]
 pub(super) struct Relations {
-    /// Registers holding the `length` of the named register's array.
-    pub(super) length_of: Vec<Option<Register>>,
-    /// Registers known below the `length` of the named register's array.
-    pub(super) below: Vec<Option<Register>>,
+    /// Registers holding at most the `length` of each named register's array: a read of the
+    /// length, or a loop bound its entry guarded (`int_ranges::LoopBound`).
+    pub(super) length_of: Vec<Arrays>,
+    /// Registers known below the `length` of each named register's array.
+    pub(super) below: Vec<Arrays>,
 }
 
 impl Relations {
-    fn new(registers: usize) -> Self { Self { length_of: vec![None; registers], below: vec![None; registers] } }
+    fn new(registers: usize) -> Self { Self { length_of: vec![Arrays::new(); registers], below: vec![Arrays::new(); registers] } }
 
     fn kill(&mut self, register: Register) {
         for slot in self.length_of.iter_mut().chain(self.below.iter_mut()) {
-            if *slot == Some(register) { *slot = None; }
+            slot.retain(|array| *array != register);
         }
-        self.length_of[usize::from(register)] = None;
-        self.below[usize::from(register)] = None;
+        self.length_of[usize::from(register)].clear();
+        self.below[usize::from(register)].clear();
     }
 
     pub(super) fn clear(&mut self) {
-        self.length_of.fill(None);
-        self.below.fill(None);
+        self.length_of.iter_mut().chain(self.below.iter_mut()).for_each(Arrays::clear);
     }
 
     fn join(&mut self, other: &Self) {
         let pairs = self.length_of.iter_mut().zip(&other.length_of).chain(self.below.iter_mut().zip(&other.below));
         for (known, incoming) in pairs {
-            if known != incoming { *known = None; }
+            known.retain(|array| incoming.contains(array));
         }
     }
 }
@@ -61,10 +64,12 @@ impl State {
     }
 
     pub(super) fn copy(&mut self, to: Register, from: Register) {
-        let (length, below) = (self.relations.length_of[usize::from(from)], self.relations.below[usize::from(from)]);
+        let (mut length, mut below) = (self.relations.length_of[usize::from(from)].clone(), self.relations.below[usize::from(from)].clone());
         self.set(to, self.ranges[usize::from(from)], self.current.contains(usize::from(from)));
-        self.relations.length_of[usize::from(to)] = length.filter(|array| *array != to);
-        self.relations.below[usize::from(to)] = below.filter(|array| *array != to);
+        length.retain(|array| *array != to);
+        below.retain(|array| *array != to);
+        self.relations.length_of[usize::from(to)] = length;
+        self.relations.below[usize::from(to)] = below;
     }
 
     fn write_field(&mut self, range: IntRange) {
@@ -105,10 +110,11 @@ impl State {
 
     /// `small < big` holds, `big` holding an array's `length`: `small` is an index of it.
     fn bound_below_length(&mut self, [small, big]: [Operand; 2]) {
-        if let Some((index, length)) = small.register_index().zip(big.register_index())
-            && let Some(array) = self.relations.length_of[usize::from(length)]
-            && array != index {
-            self.relations.below[usize::from(index)] = Some(array);
+        if let Some((index, length)) = small.register_index().zip(big.register_index()) {
+            for array in self.relations.length_of[usize::from(length)].clone() {
+                let below = &mut self.relations.below[usize::from(index)];
+                if array != index && !below.contains(&array) { below.push(array); }
+            }
         }
     }
 

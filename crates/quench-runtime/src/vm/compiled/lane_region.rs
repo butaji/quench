@@ -588,6 +588,9 @@ struct Lowering<'a, 'f> {
     hoisted: BTreeMap<usize, LoopRead>,
     /// Loop-invariant array bases whose views their loop's entry proves (`loop_arrays`).
     loop_arrays: Vec<LoopArray>,
+    /// Loop bounds the entering edge guards below a hoisted dense array's length
+    /// (`int_ranges::LoopBound`), so the loop's accesses below the bound need no bounds check.
+    loop_bounds: Vec<int_ranges::LoopBound>,
     /// Each hoisted base's tagged value and view, by register, across its loop's iterations.
     array_vars: BTreeMap<ArraySource, ArrayVariables>,
     views: ElementViews,
@@ -1684,6 +1687,7 @@ pub(super) fn lower(
         intrinsics: Vec::new(),
         hoisted: BTreeMap::new(),
         loop_arrays: Vec::new(),
+        loop_bounds: Vec::new(),
         array_vars: BTreeMap::new(),
         views,
         loop_fields: Vec::new(),
@@ -1806,7 +1810,9 @@ pub(super) fn lower(
             read.pc == at && read.owner.is_none() && instructions[at].op().class().eq(Class::LoadCapture))),
         lowering.views, typed_captures);
     lowering.entering = lowering.entering_ranges(entry_pc);
-    lowering.ranges = int_ranges::analyze(program, unit, &lowering.facts, entry_pc, &lowering.entering, generic, &|pc| lowering.dense_loop_access(pc));
+    lowering.loop_bounds = int_ranges::loop_bounds(program, unit, &lowering.facts, &lowering.loop_arrays, generic, &|pc| lowering.dense_loop_access(pc));
+    lowering.guard_bound_indexes(entry_pc, generic);
+    lowering.ranges = int_ranges::analyze(program, unit, &lowering.facts, entry_pc, &lowering.entering, &lowering.loop_bounds, generic, &|pc| lowering.dense_loop_access(pc));
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
         lowering.hoists.entry(field.header).or_default().push(InvariantRead { pc: field.reads[0], owner: Some(field.owner), rooted: false });
@@ -2496,6 +2502,20 @@ impl Lowering<'_, '_> {
         let types = self.facts.at(entry);
         self.int_entries.iter().copied().filter(|&(register, range)| range != IntRange::FULL && self.is_live(entry, register)
             && types.and_then(|types| types.get(usize::from(register))).is_some_and(|ty| ty.is_subtype(Type::INT32))).collect()
+    }
+
+    /// Entering ranges for the loop bounds' indexes: an index live and int32 at `entry` whose
+    /// range there is unknown is guarded non-negative once, so the ranges pass proves its reads
+    /// within the length the bound guards. An entry that left before (`generic`) guards none.
+    fn guard_bound_indexes(&mut self, entry: usize, generic: &[usize]) {
+        if generic.contains(&entry) { return }
+        let types = self.facts.at(entry);
+        for bound in self.loop_bounds.clone() {
+            let index = bound.index;
+            if !self.is_live(entry, index) || self.entering.iter().any(|(register, _)| *register == index)
+                || !types.and_then(|types| types.get(usize::from(index))).is_some_and(|ty| ty.is_subtype(Type::INT32)) { continue }
+            self.entering.push((index, IntRange::NON_NEGATIVE));
+        }
     }
 
     /// Leaves at `pc` where an entering register is below its range's minimum: the one guard
@@ -3825,6 +3845,16 @@ impl Lowering<'_, '_> {
                     self.builder.def_var(variables.length, view.length);
                     let unproved = self.ins().iconst(types::I32, 0);
                     self.builder.def_var(variables.room, unproved);
+                    // Each bound the loop compares its indexes with is at most the length: one
+                    // guard here stands for the bounds check of every access below the bound.
+                    let bounds: Vec<Register> = self.loop_bounds.iter()
+                        .filter(|bound| bound.header == header && array.source == ArraySource::Register(bound.array))
+                        .map(|bound| bound.limit).collect();
+                    for limit in bounds {
+                        let limit = self.int(state, limit, exit);
+                        let within = self.ins().icmp(IntCC::SignedLessThanOrEqual, limit, view.length);
+                        emit_js_guard(&mut self.builder, within, exit);
+                    }
                 }
                 ElementViews::Typed => self.hoist_typed_view(array, bits, variables, exit),
             }
