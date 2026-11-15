@@ -2728,21 +2728,23 @@ impl<H: Host> Vm<H> {
                 _ => false,
             };
             let named = regexp_named_capture_ranges(&matched);
+            // A match or capture of the whole input is the input itself, as a pattern that
+            // parses a whole line or URL returns: no copy of its text.
+            let input_value = vm.string_value_from(argument, &input);
             // The captures are copied out, so an input rope not yet flat is read through a
             // reused buffer and stays a rope: flattening it gave every input a kept copy of
             // its text (V8-v7 RegExp's check run, whose results are used: 16,661 input variants
             // of 2-4 KB each, 2.3 MB at its peak).
             let (values, groups) = match input.with_ascii_rope_bytes(|bytes| {
-                vm.regexp_result_captures(&matched, &named, super::wtf16::Units::Ascii(bytes))
+                vm.regexp_result_captures(&matched, &named, super::wtf16::Units::Ascii(bytes), input_value)
             }) {
                 Some(captures) => captures?,
                 None => {
                     let units = input.units();
-                    vm.regexp_result_captures(&matched, &named, units)?
+                    vm.regexp_result_captures(&matched, &named, units, input_value)?
                 }
             };
             let index = Value::number(matched.range.start as f64);
-            let input_value = vm.string_value_from(argument, &input);
             let array = crate::heap::ArrayObject::new(Self::empty_object(vm.array_proto), values);
             let result = match vm.regexp_result_layout() {
                 // The recorded layout: the array is allocated with its properties, by the
@@ -2779,13 +2781,21 @@ impl<H: Host> Vm<H> {
         matched: &quench_regexp::Match,
         named: &[(String, Option<std::ops::Range<usize>>)],
         units: super::wtf16::Units<'_>,
+        whole: Value,
     ) -> Result<(crate::heap::ArrayElements, Value), JsError> {
+        let length = units.len();
         let values = crate::heap::ArrayElements::from_fn(1 + matched.captures.len(), |index| {
             let range = match index.checked_sub(1) {
                 None => Some(matched.range.clone()),
                 Some(capture) => matched.captures[capture].clone(),
             };
-            range.map_or(Value::UNDEFINED, |range| self.heap.alloc_string(JsString::from_unit_run(units.slice(range))))
+            range.map_or(Value::UNDEFINED, |range| {
+                if range.start == 0 && range.end == length {
+                    whole
+                } else {
+                    self.heap.alloc_string(JsString::from_unit_run(units.slice(range)))
+                }
+            })
         });
         let groups = self.regexp_groups_object(named, units)?;
         Ok((values, groups))
