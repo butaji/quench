@@ -46,14 +46,15 @@ impl Drop for ParseArena {
     fn drop(&mut self) {
         // SAFETY: the allocator is taken once, here, and not used after.
         let mut allocator = unsafe { std::mem::ManuallyDrop::take(&mut self.0) };
-        let tree = allocator.used_bytes();
         allocator.reset();
-        // A large tree's pages are the program's compile-time working set, not the next parse's
-        // head start: they go back now, not at a collection that throughput never runs.
-        if tree > WARM_TREE_BYTES {
-            let chunk = allocator.capacity();
-            release_free_pages(&allocator, chunk);
-        }
+        // Only the arena's top `WARM_TREE_BYTES` stay resident for the next parse: the pages
+        // below are a past parse's working set, not the next one's head start, and go back now,
+        // not at a collection that throughput never runs. The tree's final size does not bound
+        // them: lazily parsed bodies leave it before the drop, after touching their pages
+        // (first-inspector-code-load: a 2 MB source left 21.6 MB resident under a tree that
+        // ended below the limit).
+        let chunk = allocator.capacity();
+        release_free_pages_below(&allocator, chunk, WARM_TREE_BYTES);
         // The larger arena stays warm: it serves every parse the smaller one does.
         let warm = WARM.take();
         WARM.set(Some(match warm {
@@ -101,6 +102,12 @@ pub(crate) fn expire_warm_arena() {
 /// the arena's capacity while it held one chunk; with more, its free space is not one range,
 /// and nothing is returned.
 pub(crate) fn release_free_pages(allocator: &Allocator, chunk: usize) {
+    release_free_pages_below(allocator, chunk, 0);
+}
+
+/// `release_free_pages`, keeping the `kept` bytes of free space nearest the cursor resident:
+/// the arena allocates downward, so its next allocations land there first.
+pub(crate) fn release_free_pages_below(allocator: &Allocator, chunk: usize, kept: usize) {
     #[cfg(unix)]
     if allocator.capacity() == chunk {
         // The arena allocates downward from the end of its chunk: the free space lies below
@@ -109,7 +116,7 @@ pub(crate) fn release_free_pages(allocator: &Allocator, chunk: usize) {
         let start = (cursor.addr() + allocator.used_bytes()).saturating_sub(chunk);
         // SAFETY: sysconf only reads a system constant.
         let page = usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).unwrap_or(4096);
-        let (from, to) = (start.next_multiple_of(page), cursor.addr() / page * page);
+        let (from, to) = (start.next_multiple_of(page), cursor.addr().saturating_sub(kept) / page * page);
         if to > from {
             // SAFETY: the pages lie in the chunk's free space, which holds no live allocation;
             // a later allocation there faults in zeroed pages.
