@@ -600,6 +600,7 @@ enum PendingJob {
     Reaction(promise::PromiseJob),
     Thenable(promise::ThenableJob),
 }
+const _: () = assert!(size_of::<PendingJob>() == 48);
 
 impl PendingJob {
     /// Pushes the values the job holds onto `roots`, which keep them alive while it runs.

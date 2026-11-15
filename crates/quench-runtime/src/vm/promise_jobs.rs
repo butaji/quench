@@ -456,7 +456,7 @@ impl<H: Host> Vm<H> {
                 next: reaction.next,
                 rejected: state == PromiseState::Rejected,
                 value,
-                execution_context: reaction.execution_context.get(),
+                execution_context: reaction.execution_context,
             }));
     }
 
@@ -499,7 +499,7 @@ impl<H: Host> Vm<H> {
         reaction: PromiseJob,
     ) -> Result<(), JsError> {
         let value = reaction.value;
-        self.run_promise_job(reaction.realm, reaction.execution_context, |vm| {
+        self.run_promise_job(reaction.realm, reaction.execution_context.get(), |vm| {
             // An await's state is both handlers: taking its continuation is the one lookup.
             let awaited = vm.heap.await_state_mut(reaction.handler).map(AwaitState::resume);
             let await_reaction = awaited.is_some();
@@ -509,7 +509,7 @@ impl<H: Host> Vm<H> {
             }
             if !await_reaction
                 && !reaction.rejected
-                && reaction.execution_context.is_none()
+                && reaction.execution_context.get().is_none()
                 && let Some(settled) = vm.run_chained_reaction(reaction.handler, value, reaction.next)
             {
                 return settled;
@@ -645,7 +645,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         thenable: super::promise::ThenableJob,
     ) -> Result<(), JsError> {
-        self.run_promise_job(thenable.realm, thenable.execution_context, |vm| {
+        self.run_promise_job(thenable.realm, thenable.execution_context.get(), |vm| {
             if vm.is_intrinsic_promise_then(thenable.then)
                 && vm.is_promise(thenable.thenable)
                 && (vm.realm.promise.reaction_capabilities.is_empty()
