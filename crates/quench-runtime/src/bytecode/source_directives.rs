@@ -49,7 +49,7 @@ impl SourceDirectives {
     }
 }
 
-impl CompiledScript {
+impl crate::CompiledScript {
     /// The value of the source's last `//# sourceURL=` directive, found when it loaded.
     pub fn source_url(&self) -> Option<&str> {
         self.directives().and_then(|directives| directives.source_url.as_deref())
