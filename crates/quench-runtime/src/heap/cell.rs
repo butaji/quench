@@ -3357,12 +3357,14 @@ impl EnvironmentScopeRef {
         Self(std::num::NonZeroUsize::new(pointer as usize).expect("a box is never null"))
     }
 
+    #[inline(always)]
     fn scope(&self) -> Option<&EnvironmentScope> {
         // SAFETY: an untagged word is the pointer `boxed` leaked, owned by `self` until `Drop`.
         (self.0.get() & INLINE_SCOPE_TAG == 0)
             .then(|| unsafe { &*(self.0.get() as *const EnvironmentScope) })
     }
 
+    #[inline(always)]
     pub(crate) fn program(&self) -> Option<u32> {
         match self.scope() {
             Some(scope) => scope.program,

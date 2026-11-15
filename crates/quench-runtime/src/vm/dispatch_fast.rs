@@ -13195,7 +13195,13 @@ impl<H: Host> Vm<H> {
     #[cold]
     #[inline(never)]
     fn relink_site_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
-        self.relink_known_closure(callee, linked).or_else(|| self.relink_closure(callee, linked))
+        // Only a call-only closure (`Value::known_closure`) takes the known form.
+        if callee.as_known_closure().is_some()
+            && let Some(index) = self.relink_known_closure(callee, linked)
+        {
+            return Some(index);
+        }
+        self.relink_closure(callee, linked)
     }
 
     /// The site record of `link` notes entry `index`'s callee (`Vm::note_site_callee`).

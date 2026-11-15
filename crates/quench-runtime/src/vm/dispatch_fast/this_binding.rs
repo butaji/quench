@@ -17,6 +17,7 @@ pub(super) enum ThisBinding {
 
 impl ThisBinding {
     /// Whether the callee binds `this` to the call's receiver.
+    #[inline(always)]
     pub(super) fn binds_receiver(self) -> bool {
         matches!(self, ThisBinding::Sloppy | ThisBinding::Strict)
     }
