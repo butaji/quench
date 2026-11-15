@@ -405,7 +405,7 @@ impl NumberBitwiseStage<i32> for I32BitwiseStage {
 }
 
 #[inline(always)]
-fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) -> f64 {
+pub(super) fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) -> f64 {
     let bits = operation.apply(&mut I32BitwiseStage, left, right);
     if operation == NumberBitwise::ShiftRightUnsigned {
         f64::from(bits as u32)

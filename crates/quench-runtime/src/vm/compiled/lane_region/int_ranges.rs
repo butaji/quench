@@ -98,7 +98,7 @@ fn disturbs_lengths(instruction: WideInstruction, hoisted_dense: bool, generic: 
     let quiet = matches!(class, Class::Move | Class::LoadConst | Class::Nop | Class::Jump | Class::JumpTrue
             | Class::JumpFalse | Class::JumpBinaryFalse | Class::IncDec)
         || instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
-        || (class == Class::GetIndex && hoisted_dense);
+        || (matches!(class, Class::GetIndex | Class::SetIndex) && hoisted_dense);
     !quiet || generic
 }
 

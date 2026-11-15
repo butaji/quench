@@ -111,8 +111,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         // arena data is as it was at the checkpoint, and the escaped strings and templates
         // inside the body are removed.
         unsafe { allocator.set_cursor_ptr(marker) };
-        // The bodies released inside it leave the tree with it.
-        self.lazy_function_bodies.retain(|start| !inside(start));
+        // The bodies released inside it leave the tree with it: they were released after its
+        // body began, so they end the list.
+        while self.lazy_function_bodies.last().is_some_and(|start| inside(start)) {
+            self.lazy_function_bodies.pop();
+        }
         self.lazy_function_bodies.push(span.start);
         let directives = ArenaVec::from_iter_in(directives, &self.ast);
         FunctionBody::boxed(span, directives, ArenaVec::new_in(self), self)
@@ -416,7 +419,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         if let Some(id) = &id
             && matches!(func_kind, FunctionKind::Declaration | FunctionKind::DefaultExport)
         {
-            self.declare_function_name(id.name.as_str(), r#async || generator.is_some());
+            self.declare_function_name(id.name, r#async || generator.is_some());
         }
         let home = match func_kind {
             FunctionKind::ClassMethod | FunctionKind::ObjectMethod => crate::early::Home::Method,
@@ -431,7 +434,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         if let Some(id) = &id
             && func_kind == FunctionKind::Expression
         {
-            self.early.declare(id.name.as_str(), crate::early::DeclKind::OwnName);
+            self.early.declare(id.name, crate::early::DeclKind::OwnName);
         }
         // `new.target` is allowed in a function's parameters and body (but not arrow
         // functions, which are parsed via `parse_function_body` directly).
@@ -688,7 +691,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// Declares a function declaration's name where it lies (`early`): lexical in a block,
     /// where a plain function in sloppy code also binds in the function around it (Annex B),
     /// which the tracker does not model.
-    fn declare_function_name(&mut self, name: &'a str, async_or_generator: bool) {
+    fn declare_function_name(&mut self, name: oxc_str::Ident<'a>, async_or_generator: bool) {
         if !self.early.active() {
             return;
         }

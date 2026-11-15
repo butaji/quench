@@ -112,8 +112,15 @@ impl<'f> FreeNameCheck<'f> {
 
     /// Adds the free names of `body`, as the parser releases it.
     pub(in crate::compile) fn check(&mut self, body: oxc_parser::LazyBody<'_, '_>) {
-        let built = crate::compile::semantic_stats::builder(body.program).build(body.program);
-        if let Some((start, names)) = free_names(body.program, built.semantic.scoping(), &[]) {
+        // The parse's free names where it found them (`LazyBody::early`), else the analysis'.
+        let found = match body.early {
+            Some(early) => crate::compile::lazy_bodies::parse_free_names(body.program, early),
+            None => {
+                let built = crate::compile::semantic_stats::builder(body.program).build(body.program);
+                free_names(body.program, built.semantic.scoping(), &[])
+            }
+        };
+        if let Some((start, names)) = found {
             self.found.insert(start.wrapping_add(self.delta), names);
         }
     }

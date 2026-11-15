@@ -133,7 +133,7 @@ impl<H: Host> Vm<H> {
             let index = super::super::object_static::array_index(self.heap.string(key)?.host_string());
             if let Some(index) = index {
                 // A present dense element is an own data property; any other index is the general read's.
-                let element = array.elements().get(index as usize).copied().filter(|element| !element.is_deleted());
+                let element = array.elements().get(index as usize).filter(|element| !element.is_deleted());
                 return element.map(ChainRead::Value);
             }
         }

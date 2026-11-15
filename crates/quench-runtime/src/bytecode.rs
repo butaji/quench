@@ -1490,7 +1490,32 @@ enum RecordUse {
 pub struct FunctionSlot {
     header: FunctionHeader,
     record: std::cell::OnceCell<std::rc::Rc<Function>>,
-    unlowered: std::cell::RefCell<Option<std::rc::Rc<Function>>>,
+    unlowered: std::cell::RefCell<Option<Unlowered>>,
+}
+
+/// A slot's unlowered record: as compiled, for a function about to run (a first-call chunk's),
+/// or packed (`binary::pack_unlowered`) for one a whole load left unread, which most such
+/// functions stay (a 3.4 MB bundle: 12K functions, 2K ever called).
+#[derive(Clone, Debug)]
+enum Unlowered {
+    Record(std::rc::Rc<Function>),
+    Packed(Box<binary::PackedUnlowered>),
+}
+
+impl Unlowered {
+    fn function(&self) -> Function {
+        match self {
+            Self::Record(function) => Function::clone(function),
+            Self::Packed(packed) => binary::unpack_unlowered(packed),
+        }
+    }
+
+    fn into_function(self) -> Function {
+        match self {
+            Self::Record(function) => std::rc::Rc::unwrap_or_clone(function),
+            Self::Packed(packed) => binary::unpack_unlowered(&packed),
+        }
+    }
 }
 
 impl FunctionSlot {
@@ -1517,7 +1542,16 @@ impl FunctionSlot {
         Self {
             header: FunctionHeader::of(&function),
             record: std::cell::OnceCell::new(),
-            unlowered: std::cell::RefCell::new(Some(std::rc::Rc::new(function))),
+            unlowered: std::cell::RefCell::new(Some(Unlowered::Record(std::rc::Rc::new(function)))),
+        }
+    }
+
+    /// An unlowered function its load leaves unread: its record kept packed until its first read.
+    pub(crate) fn unlowered_packed(function: Function) -> Self {
+        Self {
+            header: FunctionHeader::of(&function),
+            record: std::cell::OnceCell::new(),
+            unlowered: std::cell::RefCell::new(Some(Unlowered::Packed(binary::pack_unlowered(&function)))),
         }
     }
 
@@ -3914,8 +3948,8 @@ impl ResidualProgram {
         let unlowered = {
             let mut unlowered = self.functions[index].unlowered.borrow_mut();
             match purpose {
-                RecordUse::Kept => unlowered.take(),
-                RecordUse::Transient => unlowered.clone(),
+                RecordUse::Kept => unlowered.take().map(Unlowered::into_function),
+                RecordUse::Transient => unlowered.as_ref().map(Unlowered::function),
             }
         };
         if let Some(unlowered) = unlowered {
@@ -3965,8 +3999,7 @@ impl ResidualProgram {
     /// would have lowered it (`compile::lower_settled`), with its register roots.
     #[cold]
     #[inline(never)]
-    fn lower_unlowered(&self, index: usize, unlowered: std::rc::Rc<Function>) -> Function {
-        let mut function = std::rc::Rc::unwrap_or_clone(unlowered);
+    fn lower_unlowered(&self, index: usize, mut function: Function) -> Function {
         if self.rewrite_ranges.kept_pending { crate::compile::settle_deferred_rewrite(self, index as u32, &mut function); }
         let undefined_constant = *self.undefined_constant.get_or_init(|| {
             let index = self.constants.iter().position(|constant| matches!(constant, Constant::Undefined))

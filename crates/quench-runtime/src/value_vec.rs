@@ -305,6 +305,9 @@ pub(crate) struct ValueArena {
     released_values: usize,
     /// The narrow-run words the current compaction wrote, for its `QUENCH_TRACE=gc` census.
     narrowed_words: usize,
+    /// Shapes a narrow run of which widened for a value without a narrow form: their objects
+    /// keep ordinary runs from then on, so a run is not narrowed and widened again each cycle.
+    widened_shapes: rustc_hash::FxHashSet<u32>,
     shape_lengths: Vec<u32>,
     /// The slot owners of every shape (`ValueArena::slot_owner`): each shape's chain starts at
     /// its `shape_chains` index in `chain_owners`, which names, per slot, the shape that added
@@ -325,6 +328,9 @@ pub(crate) struct ValueArena {
     free_dictionaries: Vec<u32>,
     next_dictionary: u32,
     nursery: Nursery,
+    /// Values the arena held, past its idle nursery and released runs, after the last full
+    /// collection (`GenerationalPacing::arena_growth_reached`).
+    settled_values: usize,
 }
 
 impl Default for ValueArena {
@@ -334,6 +340,7 @@ impl Default for ValueArena {
             free: [const { Vec::new() }; BUCKETS],
             released_values: 0,
             narrowed_words: 0,
+            widened_shapes: rustc_hash::FxHashSet::default(),
             shape_lengths: vec![0],
             shape_chains: Vec::new(),
             chain_owners: Vec::new(),
@@ -345,6 +352,7 @@ impl Default for ValueArena {
             free_dictionaries: Vec::new(),
             next_dictionary: 0,
             nursery: Nursery::default(),
+            settled_values: 0,
         }
     }
 }
@@ -376,7 +384,7 @@ impl ValueArena {
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
-        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _ } = self;
+        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _, widened_shapes: _ } = self;
         writer.values(values);
         for bucket in free {
             writer.u32s(bucket);
@@ -424,12 +432,14 @@ impl ValueArena {
     }
 
     pub(crate) fn reset(&mut self) {
+        self.widened_shapes.clear();
         self.shape_readers.reset();
         self.values.clear();
         for bucket in &mut self.free {
             bucket.clear();
         }
         self.released_values = 0;
+        self.settled_values = 0;
         self.shape_lengths.truncate(1);
         self.shape_lengths[0] = 0;
         self.dictionaries.clear();
@@ -453,6 +463,7 @@ impl ValueArena {
     }
 
     pub(crate) fn reset_shapes(&mut self) {
+        self.widened_shapes.clear();
         self.shape_readers.reset();
         self.slot_readers.reset();
         self.tracking = false;
@@ -693,6 +704,7 @@ impl ValueArena {
     /// narrow run is released. The owner stores the result (`Object::set_properties`).
     pub(crate) fn widen(&mut self, vector: ValueVec) -> ValueVec {
         debug_assert!(vector.is_narrow() && !self.holds_young_run(vector));
+        self.widened_shapes.insert(vector.auxiliary());
         let values = self.narrow_values(vector);
         self.release_held(vector);
         let mut wide = ValueVec { start: vector.start & !START_MASK | EMPTY_START, auxiliary: vector.auxiliary & !NARROW_FORM };
@@ -955,11 +967,35 @@ impl ValueArena {
     /// the young range: to a released run of its size class, else down to the nursery's
     /// floor, which rises past it. Survivors must come in the order of their starts, so each
     /// one moved to the floor lands at or below its source.
-    pub(crate) fn evacuate_young(&mut self, vector: &mut ValueVec) {
+    pub(crate) fn evacuate_young(&mut self, vector: &mut ValueVec, narrows: bool) {
         debug_assert!(self.holds_young_run(*vector));
-        let capacity = Self::ordered_capacity(*vector, self.len(*vector));
+        let length = self.len(*vector);
         let source = vector.start();
-        let target = match self.free[Self::bucket(capacity)].pop() {
+        if narrows && length > 0 && self.narrows_to_fewer_words(*vector, length) {
+            let mut narrow = *vector;
+            narrow.auxiliary |= NARROW_FORM;
+            let capacity = Self::ordered_capacity(narrow, length);
+            let target = self.young_target(capacity, source);
+            // The target lies before the source (a free range or the nursery floor below it),
+            // so word `k` is written after values `2k` and `2k + 1` are read only when apart:
+            // read the values first.
+            let words = self.narrow_words_of(source, length);
+            self.values[target..target + words.len()].copy_from_slice(&words);
+            self.values[target + words.len()..target + capacity].fill(Value::UNDEFINED);
+            narrow.relocate(target);
+            *vector = narrow;
+            return;
+        }
+        let capacity = Self::ordered_capacity(*vector, length);
+        let target = self.young_target(capacity, source);
+        self.values.copy_within(source..source + capacity, target);
+        vector.relocate(target);
+    }
+
+    /// Where a surviving young run of `capacity` words at `source` moves: a free range of its
+    /// class, or the nursery floor, which never passes the source.
+    fn young_target(&mut self, capacity: usize, source: usize) -> usize {
+        match self.free[Self::bucket(capacity)].pop() {
             Some(target) => {
                 self.released_values -= capacity;
                 target as usize
@@ -970,9 +1006,17 @@ impl ValueArena {
                 self.nursery.floor += capacity;
                 target
             }
-        };
-        self.values.copy_within(source..source + capacity, target);
-        vector.relocate(target);
+        }
+    }
+
+    /// The narrow words of the `length` values at `source`, each of which has a narrow form.
+    fn narrow_words_of(&self, source: usize, length: usize) -> smallvec::SmallVec<[Value; 16]> {
+        (0..narrow_words(length)).map(|word| {
+            let low = self.values[source + 2 * word].to_narrow().expect("checked narrow");
+            let high = if 2 * word + 1 < length { self.values[source + 2 * word + 1].to_narrow().expect("checked narrow") } else { 0 };
+            let (first, second) = if cfg!(target_endian = "little") { (low, high) } else { (high, low) };
+            Value::from_bits(u64::from(first) | u64::from(second) << 32)
+        }).collect()
     }
 
     /// Ends a collection's young cycle once its survivors have left (`evacuate_young`): the
@@ -1073,13 +1117,15 @@ impl ValueArena {
         self.values.len()
     }
 
-    /// Its length, capacity, released values and nursery range, for `QUENCH_TRACE=gc`.
+    /// Its length, capacity, released values, held values against the last full collection's
+    /// (`GenerationalPacing::arena_growth_reached`) and nursery range, for `QUENCH_TRACE=gc`.
     pub(crate) fn trace_summary(&self) -> String {
         let n = self.nursery;
         let free_classes = self.free.iter().enumerate().filter(|(_, list)| !list.is_empty())
             .map(|(class, list)| format!("{class}:{}", list.len())).collect::<Vec<_>>().join(",");
-        format!("arena_len={} arena_cap={} released={} nursery={}..{}..{} free=[{free_classes}]",
-            self.values.len(), self.values.capacity(), self.released_values, n.floor, n.top, n.end)
+        format!("arena_len={} arena_cap={} released={} arena_held={} arena_settled={} nursery={}..{}..{} free=[{free_classes}]",
+            self.values.len(), self.values.capacity(), self.released_values, self.occupied_values(), self.settled_values,
+            n.floor, n.top, n.end)
     }
 
     #[inline(always)] pub(crate) fn release(&mut self, vector: ValueVec) {
@@ -1125,6 +1171,22 @@ impl ValueArena {
             && self.released_values >= (self.values.len() - idle_nursery) / COMPACTION_RELEASED_SHARE_DIVISOR
     }
 
+    /// Values held past the idle nursery and the released runs.
+    pub(crate) fn occupied_values(&self) -> usize {
+        let idle_nursery = self.nursery.end - self.nursery.top;
+        (self.values.len() - idle_nursery).saturating_sub(self.released_values)
+    }
+
+    /// Records what a full collection left (`GenerationalPacing::arena_growth_reached`).
+    pub(crate) fn settle_after_full(&mut self) {
+        self.settled_values = self.occupied_values();
+    }
+
+    /// The values the last full collection left held (`settle_after_full`).
+    pub(crate) fn settled_values(&self) -> usize {
+        self.settled_values
+    }
+
     pub(crate) fn has_compact_range(&self, vector: ValueVec) -> bool {
         vector.has_compact_range()
     }
@@ -1143,7 +1205,7 @@ impl ValueArena {
             target <= source,
             "property ranges must compact in source order"
         );
-        if narrows && !vector.is_narrow() && length > 0 && self.narrows_to_fewer_words(source, length) {
+        if narrows && !vector.is_narrow() && length > 0 && self.narrows_to_fewer_words(*vector, length) {
             let mut narrow = *vector;
             narrow.auxiliary |= NARROW_FORM;
             let capacity = Self::ordered_capacity(narrow, length);
@@ -1170,10 +1232,17 @@ impl ValueArena {
         capacity
     }
 
+    /// Whether `length` values fill a smaller class as a narrow run (census).
+    pub(crate) fn narrow_class_smaller(&self, length: usize) -> bool {
+        capacity_class(narrow_words(length)) < capacity_class(length)
+    }
+
     /// Whether the `length` values at `source` all have a narrow form and fill a smaller
     /// class as a narrow run than as values.
-    fn narrows_to_fewer_words(&self, source: usize, length: usize) -> bool {
+    fn narrows_to_fewer_words(&self, vector: ValueVec, length: usize) -> bool {
+        let source = vector.start();
         capacity_class(narrow_words(length)) < capacity_class(length)
+            && !self.widened_shapes.contains(&vector.auxiliary())
             && self.values[source..source + length].iter().all(|value| value.to_narrow().is_some())
     }
 
@@ -1471,7 +1540,7 @@ mod tests {
         assert_eq!(arena.stats().2, 0);
         // Survivors 3 and 6 move down to the floor in start order; the rest is reclaimed.
         for index in [3, 6] {
-            arena.evacuate_young(&mut runs[index]);
+            arena.evacuate_young(&mut runs[index], false);
         }
         arena.finish_young_cycle();
         assert_eq!((runs[3].start(), runs[6].start()), (floor, floor + MIN_CAPACITY));
@@ -1484,7 +1553,7 @@ mod tests {
         // A survivor takes a released run of its class before the floor.
         arena.release(runs[3]);
         let mut survivor = young(&mut arena, 30.0);
-        arena.evacuate_young(&mut survivor);
+        arena.evacuate_young(&mut survivor, false);
         assert_eq!(survivor.start(), floor);
         assert_eq!(arena.get(survivor, 1).unwrap().as_number(), Some(30.5));
         // A range that no longer ends the arena serves young runs up to its end, then ordinary

@@ -294,7 +294,7 @@ impl LoopPlanner<'_> {
             global_reads: &global_reads(unit), facts: VmFacts::STATIC, generic,
             direct: &BTreeMap::new(), frame_captures: &[], isa: self.isa,
             entry_fields,
-            plan: super::lane_region::RegionPlan {
+            plan: super::lane_region::RegionPlan { entry_bounds: self.observation.entry_bounds,
                 coverage: super::lane_region::Coverage::Loop { header, backedge, poll: false },
                 completion: super::lane_region::Completion::Body, views: self.views,
             },

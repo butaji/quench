@@ -208,7 +208,7 @@ pub(super) fn lane_array_object<H: Host>(vm: &Vm<H>, receiver: Value) -> Option<
 /// which HasProperty finds and Get reads observing nothing.
 #[inline(always)]
 fn lane_dense_element<H: Host>(vm: &Vm<H>, receiver: Value, index: usize) -> Option<Value> {
-    let element = *lane_array_object(vm, receiver)?.elements().get(index)?;
+    let element = lane_array_object(vm, receiver)?.elements().get(index)?;
     (!element.is_deleted()).then_some(element)
 }
 

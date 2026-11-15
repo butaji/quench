@@ -477,7 +477,8 @@ impl<H: Host> Vm<H> {
         let Some(elements) = self.heap.array_elements(environment) else {
             return Err(JsError("async generator return state is invalid".into()));
         };
-        let [generator, promise] = elements.as_slice() else {
+        let held_values = elements.as_slice();
+        let [generator, promise] = &*held_values else {
             return Err(JsError("async generator return state is malformed".into()));
         };
         let (generator, promise) = (*generator, *promise);
@@ -527,7 +528,8 @@ impl<H: Host> Vm<H> {
         let Some(elements) = self.heap.array_elements(environment) else {
             return Err(JsError("async generator return state is invalid".into()));
         };
-        let [generator, promise] = elements.as_slice() else {
+        let held_values = elements.as_slice();
+        let [generator, promise] = &*held_values else {
             return Err(JsError("async generator return state is malformed".into()));
         };
         let (generator, promise) = (*generator, *promise);
@@ -555,7 +557,8 @@ impl<H: Host> Vm<H> {
         let Some(elements) = self.heap.array_elements(environment) else {
             return Err(JsError("async delegate return state is invalid".into()));
         };
-        let [generator, iterator, destination] = elements.as_slice() else {
+        let held_values = elements.as_slice();
+        let [generator, iterator, destination] = &*held_values else {
             return Err(JsError("async delegate return state is malformed".into()));
         };
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -599,7 +602,7 @@ impl<H: Host> Vm<H> {
             on_fulfilled: Value::UNDEFINED,
             on_rejected: Value::UNDEFINED,
             next: target,
-            execution_context: self.host.capture_job_context(self.promise_record(target).and_then(|record| record.host_context.get())).into(),
+            execution_context: self.host.capture_job_context(self.promise_record(target).and_then(|record| record.host_context().get())).into(),
         };
         if record.state() == PromiseState::Pending {
             self.promise_record_mut(source)
@@ -1068,7 +1071,8 @@ impl<H: Host> Vm<H> {
         let Some(elements) = self.heap.array_elements(env) else {
             return Err(JsError("async delegate reaction state is invalid".into()));
         };
-        let [generator, destination, throwing, adapter, _async_from_sync] = elements.as_slice()
+        let held_values = elements.as_slice();
+        let [generator, destination, throwing, adapter, _async_from_sync] = &*held_values
         else {
             return Err(JsError("async delegate reaction state is malformed".into()));
         };
@@ -1147,9 +1151,9 @@ impl<H: Host> Vm<H> {
         };
         let generator = elements
             .first()
-            .copied()
+            
             .ok_or_else(|| JsError("async delegate rejection state is malformed".into()))?;
-        let async_from_sync = elements.get(4).is_some_and(|value| self.truthy(*value));
+        let async_from_sync = elements.get(4).is_some_and(|value| self.truthy(value));
         let error = JsError::thrown(reason, "delegated async iterator rejected".into());
         if async_from_sync {
             self.fail_async_generator_delegate(generator, error)

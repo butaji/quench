@@ -81,7 +81,7 @@ impl<H: Host> Vm<H> {
         equal
     }
 
-    fn plain_array_elements(&self, value: Value) -> Option<&[Value]> {
+    fn plain_array_elements(&self, value: Value) -> Option<std::borrow::Cow<'_, [Value]>> {
         let array = self.heap.array(value)?;
         if array.proto() != self.array_proto
             || array.has_side_descriptors()
@@ -105,7 +105,7 @@ impl<H: Host> Vm<H> {
         left.len() == right.len()
             && left
                 .iter()
-                .zip(right)
+                .zip(right.iter())
                 .all(|(&a, &b)| self.plain_equal_values(a, b, constructor, ancestors))
     }
 

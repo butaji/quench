@@ -425,6 +425,17 @@ impl Value {
         Self(value.to_bits())
     }
 
+    /// `number` without branches, for loops over many values: the same encoding, chosen by
+    /// selects so that a column of mixed integral and fractional doubles costs the same per value.
+    #[inline(always)]
+    pub(crate) fn number_unpredictable(value: f64) -> Self {
+        let integer = truncate_to_i32(value);
+        // `&` and `|`, not `&&` and `||`: no branch between the tests.
+        let integral = (f64::from(integer) == value) & ((integer != 0) | (value.to_bits() == 0));
+        let double = std::hint::select_unpredictable(value.is_nan(), CANONICAL_NAN, value.to_bits());
+        Self(std::hint::select_unpredictable(integral, Self::integer(integer).0, double))
+    }
+
     /// `number` of a value an `i32` operation overflowed to: outside the `i32` integers and
     /// never NaN, so `number` stores its bits as they are; inline, where `number` is a call.
     #[inline(always)] pub(crate) fn overflowed_integer(value: f64) -> Self {
@@ -579,6 +590,15 @@ impl Value {
         } else {
             None
         }
+    }
+
+    /// `as_number` without branches, for loops over many values: whether the value is a
+    /// Number, whether it is an int32 (whose payload is its low 32 bits), and its bits as a
+    /// double (the Number itself when it is a double).
+    #[inline(always)]
+    pub(crate) fn number_parts(self) -> (bool, bool, f64) {
+        let int = self.has_int_tag_field();
+        (int || !self.is_tagged(), int, f64::from_bits(self.0))
     }
 
     /// Both operands as Numbers.

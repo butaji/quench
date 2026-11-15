@@ -1053,6 +1053,7 @@ impl<H: Host> Vm<H> {
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.closure_shapes = [None; _];
         self.resolver_function_shape = None;
+        self.bound_function_shape = None;
         self.function_name_shapes.clear();
         self.closure_templates.fill(None);
         self.iterator_result_header = None;

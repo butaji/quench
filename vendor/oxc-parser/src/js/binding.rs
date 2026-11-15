@@ -176,7 +176,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             if let PropertyKey::StaticIdentifier(ident) = &key {
                 shorthand = true;
                 self.check_identifier_with_span(key_cur_kind, self.ctx, ident.span);
-                self.declare_binding(ident.name.as_str());
+                self.declare_binding(ident.name);
                 let identifier =
                     BindingPattern::new_binding_identifier(ident.span, ident.name, self);
                 self.context_add(Context::In, |p| p.parse_initializer(start, identifier))

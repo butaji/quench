@@ -530,8 +530,8 @@ impl<H: Host> Vm<H> {
         } else {
             elements.len()
         };
-        let values = elements.get(..length)?;
-        (!values.iter().any(|value| value.is_deleted())).then(|| values.to_vec())
+        let values = elements.range(0..length.min(elements.len()));
+        (length <= elements.len() && !elements.range(0..length.min(elements.len())).any(|value| value.is_deleted())).then(|| values.collect())
     }
 
     /// The length of `list` where CreateListFromArrayLike reads its first elements as they
@@ -544,7 +544,7 @@ impl<H: Host> Vm<H> {
         if self.heap.sparse_length(list).is_some() {
             return None;
         }
-        let elements = array.elements().as_slice();
+        let elements = array.elements();
         let length = if array.is_arguments_object() {
             if array.has_indexed_descriptors() {
                 return None;
@@ -553,8 +553,7 @@ impl<H: Host> Vm<H> {
         } else {
             elements.len()
         };
-        let values = elements.get(..length)?;
-        (!values.iter().any(|value| value.is_deleted())).then_some(length)
+        (length <= elements.len() && !elements.range(0..length).any(|value| value.is_deleted())).then_some(length)
     }
 
     #[quench_macros::operation_semantics(resolve_step_operation)]

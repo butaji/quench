@@ -22,7 +22,6 @@ pub(super) fn lane_apply_activation<H: Host>(
         Native::FunctionApply => (r.get(i.c), argument(0), argument(1)),
         _ => (argument(0), argument(1), *args.get(2)?),
     };
-    let listed = !(native == Native::FunctionApply && (list.is_undefined() || list.is_null()));
     #[cfg(feature = "profile-lane-exits")]
     {
         let vm = unsafe { vm(cx) };
@@ -39,11 +38,13 @@ pub(super) fn lane_apply_activation<H: Host>(
             vm.lane_stack.activations.len(),
         ));
     }
-    lane_list_activation(cx, r, ip, i, callee, receiver, list, listed)
+    let absent = native == Native::FunctionApply && (list.is_undefined() || list.is_null());
+    lane_list_activation(cx, r, ip, i, callee, receiver, list, if absent { None } else { Some(unsafe { vm(cx) }.dense_list_length(list)?) })
 }
 
 /// `callee`'s activation with `receiver` and the elements of `list`, a dense array without
-/// holes (none when not `listed`), for an applied call or a spread call (`CallArray`), whose
+/// holes whose first `listed` stored elements are the arguments (`Vm::dense_list_length`;
+/// none when `None`), for an applied call or a spread call (`CallArray`), whose
 /// argument array the call's spread evaluation built; `None` for any other list.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
@@ -55,10 +56,10 @@ pub(super) fn lane_list_activation<H: Host>(
     callee: Value,
     receiver: Value,
     list: Value,
-    listed: bool,
+    listed: Option<usize>,
 ) -> Option<Result<(Registers, Ip), Ip>> {
     let vm = unsafe { vm(cx) };
-    let length = if listed { vm.dense_list_length(list)? } else { 0 };
+    let length = listed.unwrap_or(0);
     // A bound function or `Function.prototype.call` forwards the list to the function it
     // names (`Vm::forwarded_call`), which a forwarded call activates; the elements are copied
     // out first, as a frame call's are.
@@ -66,7 +67,7 @@ pub(super) fn lane_list_activation<H: Host>(
         vm.heap.function(callee),
         Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall | Native::FunctionCall), .. })
     ) {
-        let elements: smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]> = vm.heap.array_elements(list).map_or(&[][..], |elements| &elements.as_slice()[..length]).iter().copied().collect();
+        let elements: smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]> = vm.heap.array_elements(list).map_or_else(smallvec::SmallVec::new, |elements| elements.range(0..length).collect());
         let Some(super::function::Forwarded { callee: target, receiver, args, kind, .. }) = vm.forwarded_call(callee, receiver, elements) else {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::record_detail("applied forwarding declined".into());
@@ -93,14 +94,15 @@ pub(super) fn lane_list_activation<H: Host>(
         // the elements copied out first: making the caller's
         // activations frames moves no heap array, but the callee may change the list.
         let elements: smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]> =
-            vm.heap.array_elements(list).map_or(&[][..], |elements| &elements.as_slice()[..length]).iter().copied().collect();
+            vm.heap.array_elements(list).map_or_else(smallvec::SmallVec::new, |elements| elements.range(0..length).collect());
         return Some(Err(lane_passed_frame_call(cx, r, ip, i, callee, receiver, FrameCallArguments::List(&elements)).into_loop()));
     };
     let Some(this) = lane_call_this(vm, &target, receiver) else {
         return Some(Err(exit(ip)));
     };
     // Read after the resolution above, which runs no guest code but may allocate.
-    let elements: &[Value] = if listed { &vm.heap.array_elements(list)?.as_slice()[..length] } else { &[] };
+    let held = if listed.is_some() { vm.heap.array_elements(list)?.values_cow() } else { std::borrow::Cow::Borrowed(&[][..]) };
+    let elements: &[Value] = if listed.is_some() { &held[..length] } else { &[] };
     Some(lane_activate_passed(cx, r, ip, &target, elements, this))
 }
 
@@ -129,7 +131,7 @@ pub(super) fn lane_spread_native_call<H: Host>(
     if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
         return Some(Resumed::Exit(exit(ip)));
     }
-    let args = smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::from_slice(vm.heap.array_elements(list)?.as_slice());
+    let args = vm.heap.array_elements(list)?.iter().collect::<smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]>>();
     let value = lane_native_value(cx, ip, i, native, callee, receiver, &args);
     Some(lane_native_complete(cx, ip, i, value))
 }

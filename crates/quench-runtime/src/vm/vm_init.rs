@@ -173,6 +173,7 @@ impl<H: Host> Vm<H> {
             instanceof_proofs: std::array::from_fn(|_| (Value::UNDEFINED, crate::heap::ProtoLink::NULL, None)),
             closure_shapes: [None; 2],
             resolver_function_shape: None,
+            bound_function_shape: None,
             closure_templates: Box::new([None; CLOSURE_TEMPLATES]),
             iterator_result_header: None,
             reused_iterator_result: Value::UNDEFINED,

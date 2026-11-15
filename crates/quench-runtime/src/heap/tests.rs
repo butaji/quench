@@ -1312,11 +1312,12 @@ fn memory_census_counts_array_allocations_once_across_storage_and_collection() {
     assert_eq!(shared.dense_array_elements_bytes, source_payload_bytes);
     assert_eq!(shared.dense_array_headers_bytes, header_bytes);
 
-    heap.array_elements_mut(direct).unwrap().make_mut().push(Value::integer(4));
+    // A double has no narrow form, so the collection below keeps the grown backing wide.
+    heap.array_elements_mut(direct).unwrap().make_mut().push(Value::number(0.5));
     let grown = heap.array_elements(direct).unwrap();
     assert!(grown.capacity() > source.capacity());
     let grown_payload_bytes = grown.capacity() * size_of::<Value>();
-    assert_eq!(source.as_slice(), &[Value::integer(1), Value::integer(2), Value::integer(3)]);
+    assert_eq!(&*source.as_slice(), &[Value::integer(1), Value::integer(2), Value::integer(3)]);
     heap.collect([empty_direct, empty_legacy, direct, legacy]);
     let detached = heap.memory_composition();
     assert_eq!(detached.dense_array_backing_count, 2);

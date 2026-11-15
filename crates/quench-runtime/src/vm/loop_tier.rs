@@ -31,12 +31,27 @@ pub(super) struct LoopTier {
     /// The cache site the latest run left at, which the interpreter then ran and whose entry
     /// the next entry re-patches (`lane_loop_repatch`).
     miss: Option<u32>,
+    /// Entries the published code's guards declined in a row, and whether the next compilation
+    /// guards no loop bound on entry: a loop that appends past its bound misses every entry.
+    entry_misses: u16,
+    pub(super) unbounded: bool,
 }
 
 impl LoopTier {
     pub(super) fn weigh_run(&mut self, backedges: u64) {
         self.runs = self.runs.saturating_add(1);
+        self.entry_misses = 0;
         self.iterations = self.iterations.saturating_add(backedges);
+    }
+
+    /// Counts an entry the published code's guards declined: past `widen_after_leaves` in a row,
+    /// the code goes and the next compilation guards no loop bound on entry, once.
+    pub(super) fn missed_entry(&mut self) {
+        if self.unbounded || self.compilations >= TIERS.loops.max_compilations { return; }
+        self.entry_misses += 1;
+        if self.entry_misses < TIERS.loops.widen_after_leaves { return; }
+        self.unbounded = true;
+        if let Some(code) = self.code.take() { code.retire(); }
     }
 
     pub(super) fn weigh_decline(&mut self) {
@@ -258,7 +273,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     });
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
-        int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds };
+        int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded };
     let policy = machine.heap.memory_policy();
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
         &observation, policy, program, function, helpers,
@@ -316,7 +331,9 @@ pub(super) fn lane_loop_arrays<H: Host>(vm: &mut Vm<H>, r: Registers, region: &L
 /// (`append_dense_element`, `fill_dense_hole`).
 fn push_dense_array<H: Host>(vm: &mut Vm<H>, value: Value, written: bool, entry: &mut LoopEntry) -> Option<()> {
     if !written {
-        let elements = vm.heap.record_array(value)?.elements().as_slice();
+        // A region reads the values in place: a narrow backing widens first.
+        vm.heap.widen_array_elements(value);
+        let elements = vm.heap.record_array(value)?.elements().wide_values()?;
         return entry.push_array(elements.as_ptr().cast_mut(), elements.len(), elements.len());
     }
     if vm.dense_array_length(value).is_none() || !vm.prototypes_hold_no_index(value) {

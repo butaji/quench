@@ -419,9 +419,9 @@ impl Heap {
     pub(crate) fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut Object> {
         if let Some(record_id) = value.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-            let object = unsafe { self.object_records.get_live_mut_storing(record_id, stored, &self.properties) };
-            widen_narrow_run(object, &mut self.properties);
-            return Some(object);
+            // A narrow run stays: the stores that borrow this way (`property_set`) take a
+            // narrow value in place and widen the run for any other.
+            return Some(unsafe { self.object_records.get_live_mut_storing(record_id, stored, &self.properties) });
         }
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.

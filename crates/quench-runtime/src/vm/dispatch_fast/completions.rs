@@ -221,7 +221,7 @@ pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, va
 
 /// Restore the lane state `activation`'s caller runs with, as its return does: the lane
 /// stack below its window, the caller's registers, records and memory, and a JavaScript
-/// caller's receiver, environment and captures. Returns the caller's memory and the
+/// caller's context words stay below its registers. Returns the caller's memory and the
 /// returning activation's receiver, which the context held while it ran.
 #[inline(always)]
 pub(super) fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: &Activation) -> (MemoryView, Value) {
@@ -235,11 +235,6 @@ pub(super) fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: 
         (*cx).registers = activation.caller_registers;
         (*cx).base = activation.caller_base;
         (*cx).memory = caller_memory;
-    }
-    if let ActivationKind::Script(script) = &activation.kind {
-        unsafe {
-            (*cx).capture = script.caller_capture;
-        }
     }
     (caller_memory, this)
 }

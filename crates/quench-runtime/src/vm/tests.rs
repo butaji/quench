@@ -2828,7 +2828,6 @@ fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
         .array_elements(values)
         .unwrap()
         .iter()
-        .copied()
         .filter(|value| vm.is_promise(*value))
         .collect();
     assert_eq!(promises.len(), 6);

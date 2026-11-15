@@ -242,7 +242,7 @@ impl Heap {
                 }
             } else if let Some(array) = array {
                 let elements = array.elements();
-                let element_bytes = elements.capacity() * size_of::<Value>();
+                let element_bytes = elements.value_bytes();
                 other_cell_payload_bytes += payload_bytes.saturating_sub(element_bytes);
                 let identity = elements.as_ptr() as usize;
                 let allocated_bytes = elements.allocated_bytes();
