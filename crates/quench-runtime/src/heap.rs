@@ -1262,6 +1262,16 @@ impl Heap {
     /// `mark_prototype` of a prototype other than the one it marked last.
     #[inline(never)]
     fn mark_new_prototype(&mut self, prototype: Value) {
+        // A prototype marked and watched before, as most allocations' prototypes are, only
+        // takes the recent entry when its run is still wide: no exclusive access, which
+        // widens and barriers.
+        if self.object(prototype).is_some_and(|object| {
+            object.was_used_as_prototype() && object.watched_subject().is_some() && !object.properties().is_narrow()
+        }) {
+            self.marked_prototypes.rotate_right(1);
+            self.marked_prototypes[0] = Some(prototype);
+            return;
+        }
         let Some(unwatched) = self.prototype_object_mut(prototype).map(|object| object.watched_subject().is_none()) else {
             return;
         };
