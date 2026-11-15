@@ -64,6 +64,15 @@ impl Drop for ParseArena {
     }
 }
 
+/// Returns the pages of a finished whole-program parse's free space but the `WARM_TREE_BYTES`
+/// nearest its cursor, at once, not when the arena is handed back: lazily parsed bodies were
+/// checked into it and left it, and their pages would otherwise stay resident under every
+/// function the program compiles after (mandreel: its 2.7 MB function's check left 33 MB
+/// resident under that function's own compile).
+pub(crate) fn release_parsed_free_pages(allocator: &ParseArena) {
+    release_free_pages_below(allocator, allocator.capacity(), WARM_TREE_BYTES);
+}
+
 /// The arena for parsing a whole program of `text`: the warm arena, when its chunk holds as
 /// much as `arena(text)` reserves.
 pub(crate) fn sized_arena(text: &str) -> ParseArena {
