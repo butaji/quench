@@ -113,14 +113,8 @@ fn loop_condition_reads_the_field_a_called_function_writes() {
     let source = r#"function advance(state) { state.count = (state.count - 1) | 0; }
         function run(state) { while (state.count > 0) advance(state); }
         const s = {count: 4000}; run(s); print(String(s.count));"#;
-    let program = Engine::specialize(source, "loop-call-field.js").unwrap();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), ["0"]);
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    assert_eq!(run.outcome.printed, ["0"]);
 }
 
 #[test]
@@ -143,14 +137,8 @@ fn typed_field_call_materializes_after_effects_once() {
         if (state.count !== 1500 || calls !== 1) throw 'replayed callee effects';
         print(state.count + ':' + calls);
     })();"#;
-    let program = Engine::specialize(source, "typed-call-recovery.js").unwrap();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), ["1500:1"]);
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    assert_eq!(run.outcome.printed, ["1500:1"]);
 }
 
 #[test]
@@ -188,17 +176,8 @@ fn typed_bitwise_branches_preserve_coercion_and_prefix_effects() {
             try {{ throws(7n); }} catch (error) {{ print(error instanceof TypeError); }}
             print(writes);
         "#);
-        let program = Engine::specialize(&source, "typed-bitwise-branch.js").unwrap();
-        let mut results = Vec::new();
-        for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-            let output = Rc::new(RefCell::new(Vec::new()));
-            let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-            vm.set_execution_mode(mode);
-            vm.execute(&program).unwrap();
-            results.push(output.borrow().clone());
-        }
-        assert_eq!(results[0], results[1], "operator {operator}");
-        assert_eq!(&results[1][results[1].len() - 5..], ["24000", "true", "4001:1", "true", "4002"]);
+        let run = assert_tier_agrees(&source, Tier::Full, Expect::ENGAGED);
+        assert_eq!(&run.outcome.printed[run.outcome.printed.len() - 5..], ["24000", "true", "4001:1", "true", "4002"]);
     }
 }
 
@@ -332,17 +311,8 @@ fn default_osr_integer_bound_admission_preserves_fractional_and_effectful_compar
         }
         print(comparisons);
     "#;
-    let program = Engine::specialize(source, "osr-bound-edges.js").unwrap();
-    let mut results = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        results.push(output.borrow().clone());
-    }
-    assert_eq!(results[0], results[1]);
-    assert_eq!(results[1], ["0", "0", "1", "1", "2", "2001", "0", "2001", "2000", "2001", "2002"]);
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    assert_eq!(run.outcome.printed, ["0", "0", "1", "1", "2", "2001", "0", "2001", "2000", "2001", "2002"]);
 }
 
 #[test]
@@ -15304,14 +15274,8 @@ for (var q = 0; q < 3000; q++) s += b.m();
 print(s);
 })();
 "#;
-    let program = Engine::specialize(source, "inherited-field-proofs.js").unwrap();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), ["27000"], "{mode:?}");
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    assert_eq!(run.outcome.printed, ["27000"]);
 }
 
 #[test]
@@ -19749,14 +19713,8 @@ fn environment_rest_gathers_nothing_from_too_few_values() {
       }
       print(JSON.stringify(seen.slice(0, 4)) + ' ' + seen.every((rest, index) => rest.length === [0, 0, 0, 2][index % 4]));
     "#;
-    let program = Engine::specialize(source, "environment-rest-too-few.js").unwrap();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), ["[[],[],[],[3,4]] true"], "{mode:?}");
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    assert_eq!(run.outcome.printed, ["[[],[],[],[3,4]] true"]);
 }
 
 #[test]
@@ -20307,15 +20265,8 @@ fn lane_name_loads_resolve_undefined_intrinsics_and_call_receivers() {
       out.push(hot(function () { return Number.isInteger(parseInt("12", 10)) ? 2 : 0; }));
       print(out.join(" "));
     "#;
-    let program = Engine::specialize(source, "lane-name-loads.js").unwrap();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), ["3000 3000 3000 10515 3000 6000 3000 6000"], "{mode:?}");
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    assert_eq!(run.outcome.printed, ["3000 3000 3000 10515 3000 6000 3000 6000"]);
 }
 
 #[test]
@@ -20341,15 +20292,8 @@ fn lane_generator_window_mapped_arguments_alias_parameters_through_the_owning_ac
       }
       print(String(total));
     "#;
-    let program = Engine::specialize(source, "lane-window-arguments.js").unwrap();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), ["2000"], "{mode:?}");
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    assert_eq!(run.outcome.printed, ["2000"]);
 }
 
 #[test]
@@ -20366,15 +20310,8 @@ fn lane_intrinsic_native_reads_keep_each_name_its_own_native() {
              hot(function (i) { return b.m(i & 3); }),
              hot(function (i) { return { __proto__: null, v: i }.v & 1; })].join(" "));
     "#;
-    let program = Engine::specialize(source, "lane-intrinsic-natives.js").unwrap();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), ["3000 4500 1500"], "{mode:?}");
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    assert_eq!(run.outcome.printed, ["3000 4500 1500"]);
 }
 
 #[cfg(not(quench_profiled))]
