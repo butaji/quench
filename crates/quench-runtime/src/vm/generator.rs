@@ -599,7 +599,7 @@ impl<H: Host> Vm<H> {
             on_fulfilled: Value::UNDEFINED,
             on_rejected: Value::UNDEFINED,
             next: target,
-            execution_context: self.host.capture_job_context(self.promise_record(target).and_then(|record| record.host_context.get())).into(),
+            execution_context: self.host.capture_job_context(self.promise_record(target).and_then(|record| record.host_context().get())).into(),
         };
         if record.state() == PromiseState::Pending {
             self.promise_record_mut(source)

@@ -471,7 +471,7 @@ impl crate::heap::PromiseCell {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
         let record = &self.record;
         let (state, result, rejection, host_context) =
-            (record.state(), record.result(), record.rejection(), record.host_context);
+            (record.state(), record.result(), record.rejection(), record.host_context());
         // A snapshot holds no module record (`PromiseRuntime::write_snapshot`), so no promise
         // is a module's evaluation promise.
         if record.module_evaluation {
