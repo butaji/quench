@@ -185,28 +185,17 @@ impl<H: Host> Vm<H> {
     /// shape lookup excludes) or a collection. `false` for an index key, an arguments
     /// object, a dictionary-shaped target or any other exotic one.
     pub(in crate::vm) fn shape_leaves_atom_unconstrained(&self, target: Value, atom: Atom) -> bool {
-        if let Some(array) = self.heap.array(target).and_then(|_| self.object_data(target)).filter(|array| !array.is_arguments_object()) {
-            // An array's `length` is non-configurable and writable unless a descriptor says
-            // otherwise; its elements are configurable unless a descriptor was recorded.
-            if atom == self.length_atom {
-                return !array.has_length_descriptor();
-            }
-            if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) {
-                return array.is_extensible() && !array.has_indexed_descriptors();
-            }
-        }
-        if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) || !self.shape_names_own_keys(target) {
-            return false;
-        }
         // The fact table's word for the target's layout says whether its shape holds the name
-        // and in which slot, without a shape lookup.
+        // and in which slot, without a shape lookup, ahead of the array and index checks: a
+        // plain named key is no index, and a non-arguments ordinary object names its own keys
+        // on its shape.
         // A collection, date, regexp, promise or iterator holds its own names on its shape as
         // an ordinary object does (`Heap::ordinary_builtin_object`).
         let facts = self
             .heap
             .ordinary_object(target)
             .or_else(|| self.heap.ordinary_builtin_object(target))
-            .filter(|data| !data.has_side_descriptors() && self.plain_named_key(atom))
+            .filter(|data| !data.is_arguments_object() && !data.has_side_descriptors() && self.plain_named_key(atom))
             .and_then(|data| Some((data.layout_id(), super::super::PropertyKey::string(atom).key32()?, data)));
         if let Some((layout, key32, data)) = facts
             && let Some(word) = self.symbol_load_proofs.word(layout, key32)
@@ -220,6 +209,19 @@ impl<H: Host> Vm<H> {
                 KIND_GETTER | KIND_GETTER_SLOT | KIND_GETTER_PAIR if word.hops() > 0 => return true,
                 _ => {}
             }
+        }
+        if let Some(array) = self.heap.array(target).and_then(|_| self.object_data(target)).filter(|array| !array.is_arguments_object()) {
+            // An array's `length` is non-configurable and writable unless a descriptor says
+            // otherwise; its elements are configurable unless a descriptor was recorded.
+            if atom == self.length_atom {
+                return !array.has_length_descriptor();
+            }
+            if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) {
+                return array.is_extensible() && !array.has_indexed_descriptors();
+            }
+        }
+        if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) || !self.shape_names_own_keys(target) {
+            return false;
         }
         let Some(data) = self.shape_property_lookup(target, atom) else {
             return false;
